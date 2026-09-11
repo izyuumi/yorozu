@@ -30,6 +30,7 @@ import { defaultTools, runAgent } from "./index.js";
 import type { Provider } from "./provider.js";
 import { probe } from "./probe.js";
 import { startScheduler } from "./scheduler.js";
+import { closeBrowser } from "./tools/browser.js";
 import { appendTranscript, transcriptDir } from "./transcripts.js";
 
 const DEFAULT_STATE_DIR = join(homedir(), "Library", "Application Support", "Yorozu");
@@ -237,16 +238,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
   );
 
   return {
-    close: () =>
-      new Promise<void>((done) => {
-        stopped = true;
-        scheduler.stop();
-        if (retry) clearTimeout(retry);
+    close: async () => {
+      stopped = true;
+      scheduler.stop();
+      if (retry) clearTimeout(retry);
+      // Whatever the agent opened in the browser goes away with the sidecar.
+      await closeBrowser();
+      return new Promise<void>((done) => {
         const ws = socket;
         if (!ws || ws.readyState === WebSocket.CLOSED) return done();
         ws.once("close", () => done());
         ws.close();
-      }),
+      });
+    },
   };
 }
 
