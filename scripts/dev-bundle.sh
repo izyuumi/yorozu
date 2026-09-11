@@ -16,6 +16,9 @@ BIN="$(swift build --package-path apps/mac -c "$CONFIG" --show-bin-path)/YorozuM
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp "$BIN" "$APP/Contents/MacOS/Yorozu"
+# The native tool host ships inside the bundle so it shares the app's signature: TCC keys
+# Accessibility and Screen Recording on that, and the helper is what actually needs them.
+cp "$(dirname "$BIN")/yorozu-native" "$APP/Contents/MacOS/yorozu-native"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
