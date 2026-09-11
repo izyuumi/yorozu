@@ -11,7 +11,7 @@ final class Sidecar: ObservableObject {
 
     /// Dev default: `swift run` from `apps/mac` leaves the repo layout reachable.
     /// Override with YOROZU_RUNTIME_CMD; the DMG will point it at the bundled runtime.
-    private static let defaultCommand = "node ../../packages/runtime/dist/serve.js"
+    static let defaultCommand = "node ../../packages/runtime/dist/serve.js"
 
     @Published private(set) var state = "starting"
     @Published private(set) var qr: NSImage?
@@ -25,6 +25,8 @@ final class Sidecar: ObservableObject {
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", command]
+        // Whatever the provider cards configured, including the Keychain API key.
+        process.environment = ProviderSettings.environment()
         process.standardOutput = output
         do {
             try process.run()
@@ -87,10 +89,7 @@ struct PairingView: View {
             } else {
                 ProgressView("Waiting for the runtime…").frame(height: 220)
             }
-            Button("Quit") { NSApp.terminate(nil) }
         }
-        .padding()
-        .frame(width: 260)
     }
 }
 
@@ -111,7 +110,14 @@ struct YorozuMacApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            PairingView(sidecar: sidecar)
+            VStack(spacing: 12) {
+                PairingView(sidecar: sidecar)
+                Divider()
+                ProvidersView()
+                Button("Quit") { NSApp.terminate(nil) }
+            }
+            .padding()
+            .frame(width: 300)
         } label: {
             Image(systemName: sidecar.isPaired ? "circle.fill" : "circle.dotted")
         }
