@@ -5,5 +5,9 @@ let package = Package(
     name: "YorozuShared",
     platforms: [.macOS(.v15), .iOS(.v18)],
     products: [.library(name: "YorozuShared", targets: ["YorozuShared"])],
-    targets: [.target(name: "YorozuShared")]
+    targets: [
+        .target(name: "YorozuShared"),
+        .executableTarget(name: "YorozuFixtureGen", dependencies: ["YorozuShared"]),
+        .testTarget(name: "YorozuSharedTests", dependencies: ["YorozuShared"]),
+    ]
 )
