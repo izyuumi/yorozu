@@ -375,3 +375,43 @@ showing the snapshot the link was built from.
 
 The e2e harness proves the wire path: `e2e/fake-provider.mjs` calls `echo` on its first turn,
 and `run.sh` waits for the phone to log `YOROZU-E2E-TOOL echo` beside the streamed reply.
+
+## Approvals
+
+Every tool with an effect outside the runtime declares an `actionClass` — the spec's list:
+`send-message`, `purchase`, `delete-file`, `book`, `transfer-money`, `run-command`,
+`edit-file`. Today that is `shell` (`run-command`) and `fs_write` (`edit-file`); the browser
+tools stay undeclared until a later ticket decides which of their verbs actually reach the
+world. A tool with no `actionClass` only reads, and is never gated. Alongside it each tool
+carries a small extractor that turns the call's arguments into what the card names
+(`{ target, amount? }`), so `shell` cards say which command and `fs_write` cards say which file.
+
+The gate sits in the agent loop, before the tool runs, and returns one of three verdicts:
+
+1. **The floor**, set during onboarding and kept in `<state dir>/approval.json`: any action at
+   or above `moneyThreshold`, and any `delete-file` outside the state directory when
+   `confirmIrreversibleDeletes` is on. The floor always asks. A `never` rule cannot reach it —
+   that is the whole point of having one, so "stop asking me" can never end up spending money
+   or deleting files on its own.
+2. **The rules**, in the same file. A rule naming a target beats the class-level rule, because
+   it is the more specific promise. `never` denies, `always` allows.
+3. **Precedent**, from `<state dir>/approvals.jsonl` — one append-only row per answer. Three
+   consistent yeses for a class and the agent stops asking about it. Mixed answers, fewer than
+   three, or none: ask.
+
+Asking means the sidecar emits an `approval_card` to every paired device and parks the tool
+call until an `approval_answer` carrying that `actionId` comes back. Unanswered after ten
+minutes it resolves as a refusal rather than hanging the turn, and an interrupt settles any
+card still on screen. **Yes** runs the tool, **No** refuses it, and **Never** writes a
+permanent rule — class-level, narrowed to the target only when the user actually named one.
+**Discuss** decides nothing: it logs nothing, hands the agent a note asking it to explain
+itself, and the card comes back with a fresh `actionId` when the agent tries again. A typed
+`yes`, `no` or `never` in the thread answers the card the buttons would have.
+
+`ApprovalCardView` lives in `packages/shared-swift` and renders the four buttons for both
+platforms; the phone wires it into the thread today, and the Mac chat picks it up unchanged
+when the local chat UI lands. The two floor settings are the last step of the Mac onboarding
+wizard, which read-modify-writes `approval.json` so the rules the runtime learned are not lost.
+
+No new event kind was needed: `approval_card` and `approval_answer` were already mirrored in
+both `events.ts` and `Events.swift`.

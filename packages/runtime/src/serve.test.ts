@@ -1,4 +1,5 @@
-import { mkdtempSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startRelay, type Relay } from "@yorozu/relay";
@@ -11,6 +12,7 @@ import {
   open,
   seal,
   toBase64Url,
+  type ApprovalCardData,
   type YorozuEvent,
 } from "@yorozu/shared";
 import { afterEach, expect, test, vi } from "vitest";
@@ -92,4 +94,146 @@ test("a sealed message from a phone round-trips through the agent loop", async (
   expect(event).toMatchObject({ threadId: "home", kind: "message", data: { role: "agent", text: "pong" } });
   expect(lines).toContain("STATE paired");
   expect(fetchMock.mock.calls[0]![0]).toBe("https://example.invalid/v1/chat/completions");
+});
+
+/** A turn in which the model calls `shell`, which carries the `run-command` action class. */
+const shellTurn = (cmd: string) =>
+  new Response(
+    `data: ${JSON.stringify({
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              { index: 0, id: "call_1", function: { name: "shell", arguments: JSON.stringify({ cmd }) } },
+            ],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+    })}\n\n` + "data: [DONE]\n\n",
+    { headers: { "content-type": "text/event-stream" } },
+  );
+
+/**
+ * The card that ended an `eventsUntil` batch. The batch also holds what led up to it — the
+ * `tool_call` the gate stopped, for one — so the card is the last event, not the first.
+ */
+function cardOf(events: YorozuEvent[]): ApprovalCardData {
+  const last = events.at(-1);
+  if (last?.kind !== "approval_card") throw new Error(`expected a card, got ${last?.kind}`);
+  return last.data;
+}
+
+/** A paired phone plus the session key, so a test can talk sealed events both ways. */
+async function pairedPhone(responses: (() => Response)[]) {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-approval-serve-"));
+
+  let qrLine!: (line: string) => void;
+  const qrPrinted = new Promise<string>((resolve) => (qrLine = resolve));
+  const queue = [...responses];
+
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${relay.port}`,
+    stateDir: dir,
+    provider: openaiCompat({
+      baseUrl: "https://example.invalid",
+      model: "m",
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => queue.shift()!()),
+    }),
+    log: (line) => {
+      if (line.startsWith("QR ")) qrLine(line.slice(3));
+    },
+  });
+
+  const qr = decodeQrPayload(await qrPrinted);
+  const { phone, keys } = await connectPhone(relay.port, qr.roomId!, qr.token);
+  await phone.next();
+
+  const phoneKeys = generateKeypair();
+  const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
+  phone.frame(encodeBody({ t: "hello", pub: toBase64Url(phoneKeys.publicKey) }), keys);
+
+  const send = (event: Omit<YorozuEvent, "id" | "threadId" | "ts" | "agentId">): void => {
+    const full = { id: randomUUID(), threadId: "home", ts: Date.now(), agentId: "phone", ...event };
+    const box = seal(sessionKey, Buffer.from(JSON.stringify(full as YorozuEvent)));
+    phone.frame(encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }), keys);
+  };
+
+  /** Everything the sidecar sends, up to and including the first event `done` accepts. */
+  async function eventsUntil(done: (event: YorozuEvent) => boolean): Promise<YorozuEvent[]> {
+    const seen: YorozuEvent[] = [];
+    for (;;) {
+      const body = frameBody((await phone.next()).payload);
+      const plain = open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c));
+      const event = JSON.parse(Buffer.from(plain).toString()) as YorozuEvent;
+      seen.push(event);
+      if (done(event)) return seen;
+    }
+  }
+
+  const isReply = (event: YorozuEvent): boolean =>
+    event.kind === "message" && event.data.role === "agent";
+
+  return { dir, send, eventsUntil, isReply };
+}
+
+test("a never answer is permanent: the same action is refused again without a second card", async () => {
+  // The command is never run: both turns are refused before `shell` is reached.
+  const cmd = "rm -rf /tmp/yorozu-must-not-run";
+  const { dir, send, eventsUntil, isReply } = await pairedPhone([
+    () => shellTurn(cmd),
+    () => sse("I left it alone."),
+    () => shellTurn(cmd),
+    () => sse("Still leaving it alone."),
+  ]);
+
+  send({ kind: "message", data: { role: "user", text: "tidy up" } });
+
+  const batch = await eventsUntil((event) => event.kind === "approval_card");
+  expect(batch.at(-1)).toMatchObject({
+    kind: "approval_card",
+    data: { actionClass: "run-command", target: cmd },
+  });
+  const { actionId } = cardOf(batch);
+
+  send({ kind: "approval_answer", data: { actionId, answer: "never" } });
+  await eventsUntil(isReply);
+
+  // The rule is on disk, so the identical action must not reach the phone a second time.
+  expect(JSON.parse(readFileSync(join(dir, "approval.json"), "utf8")).rules).toEqual([
+    { actionClass: "run-command", decision: "never" },
+  ]);
+
+  send({ kind: "message", data: { role: "user", text: "tidy up again" } });
+  const second = await eventsUntil(isReply);
+  expect(second.filter((event) => event.kind === "approval_card")).toEqual([]);
+});
+
+test("discuss leaves the action pending and the card comes back", async () => {
+  const cmd = "rm -rf /tmp/yorozu-must-not-run-either";
+  const { send, eventsUntil, isReply } = await pairedPhone([
+    () => shellTurn(cmd),
+    // Having explained itself, the agent tries again, which re-presents the card.
+    () => shellTurn(cmd),
+    () => sse("Understood, I will skip it."),
+  ]);
+
+  send({ kind: "message", data: { role: "user", text: "tidy up" } });
+
+  const firstId = cardOf(await eventsUntil((event) => event.kind === "approval_card")).actionId;
+  send({ kind: "approval_answer", data: { actionId: firstId, answer: "discuss" } });
+
+  const second = await eventsUntil((event) => event.kind === "approval_card");
+  expect(second.at(-1)).toMatchObject({
+    kind: "approval_card",
+    data: { actionClass: "run-command", target: cmd },
+  });
+  // A fresh action ID: the pending action was re-presented, not resumed.
+  expect(cardOf(second).actionId).not.toBe(firstId);
+
+  // A typed "no" answers the card just as the button would.
+  send({ kind: "message", data: { role: "user", text: "no" } });
+  const tail = await eventsUntil(isReply);
+  expect(tail.at(-1)).toMatchObject({ data: { role: "agent", text: "Understood, I will skip it." } });
 });

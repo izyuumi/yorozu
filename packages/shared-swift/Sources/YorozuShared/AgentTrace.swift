@@ -74,16 +74,19 @@ public func mainTrace(from events: [YorozuEvent]) -> [YorozuEvent] {
     }
 }
 
-/// One line of the thread: either a message bubble or a delegation card in the place the
-/// delegation started. Everything else an agent emitted lives behind its card.
+/// One line of the thread: a message bubble, a delegation card in the place the delegation
+/// started, or an approval card waiting to be answered. Everything else an agent emitted lives
+/// behind its card.
 public enum ChatRow: Identifiable, Equatable, Sendable {
     case message(YorozuEvent)
     case delegation(DelegationCard)
+    case approval(YorozuEvent)
 
     public var id: String {
         switch self {
         case .message(let event): event.id
         case .delegation(let card): card.id
+        case .approval(let event): event.id
         }
     }
 }
@@ -99,6 +102,10 @@ public func chatRows(from events: [YorozuEvent]) -> [ChatRow] {
             rows.append(.delegation(card))
         } else if event.parentAgentId == nil, case .message = event.payload {
             rows.append(.message(event))
+        } else if case .approvalCard = event.payload {
+            // Approval cards are never folded away: one raised inside a delegation still has to
+            // reach the thread, because nothing happens until the user answers it.
+            rows.append(.approval(event))
         }
     }
     return rows
