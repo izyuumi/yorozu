@@ -1,0 +1,20 @@
+name: Catalog
+
+# The catalog ships as one asset of a rolling release the clients fetch daily.
+on:
+  push:
+    branches: [main]
+    paths: ["catalog/**"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: gh release create catalog --title Catalog --notes "Rolling model catalog." || true
+      - run: gh release upload catalog catalog/models.json --clobber

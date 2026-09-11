@@ -1,5 +1,6 @@
 import type { EventPayload, YorozuEvent } from "@yorozu/shared";
 import { checkApproval, type ActionClass, type AskFn } from "./approval.js";
+import { autoAssignTool } from "./assign.js";
 import type { Memory } from "./memory.js";
 import { rememberTool } from "./memory.js";
 import type { Message, Provider, ToolCall, ToolDef } from "./provider.js";
@@ -28,6 +29,8 @@ export * from "./cron.js";
 export * from "./scheduler.js";
 export * from "./transcripts.js";
 export * from "./chain.js";
+export * from "./catalog.js";
+export * from "./assign.js";
 export * from "./claude.js";
 export * from "./codex.js";
 export * from "./probe.js";
@@ -88,6 +91,7 @@ export const defaultTools: Tool[] = [
   inputKeyTool,
   ...browserTools,
   skillTool,
+  autoAssignTool,
 ];
 
 export type AgentEvent =
