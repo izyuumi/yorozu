@@ -109,3 +109,22 @@ open apps/mac/.build/Yorozu.app              # or run the binary directly to see
 ```
 
 Every launch prints one `CHECK <grant> granted|denied` line per grant to stdout.
+
+## Scheduler and transcripts
+
+Jobs live as JSON in `<YOROZU_STATE_DIR>/schedule.json`: an ID, the thread the job fires in, the
+instruction, either a `when` (ISO 8601 one-shot) or a `cron`, who created it and when it last ran.
+The agent manages them with `schedule(instruction, at | cron)`, `unschedule(id)` and
+`list_schedule`. Cron is a 5-field expression (`minute hour day-of-month month day-of-week`)
+matched against local time by `src/cron.ts` — numbers, `*`, `*/n`, lists and ranges, no dependency.
+
+There is no heartbeat: `startScheduler` wakes every 30s, asks which jobs are due, and hands each to
+the sidecar, which runs it as a turn in the job's own thread and emits the reply to the phone
+exactly as if the user had typed it. One-shots are dropped once fired; cron jobs record `lastRun`
+so a second tick inside the same minute cannot double-fire them.
+
+Every event the sidecar sees is appended to `<YOROZU_STATE_DIR>/transcripts/YYYY-MM-DD.jsonl`
+(UTC day), readable back with `readTranscripts(since)` and by the agent through the
+`read_transcripts` tool. A fresh schedule is seeded with the nightly consolidation job
+(`0 3 * * *`, thread `system`), which tells the agent to read the last 24h and `remember` the
+durable facts memory does not already hold. Unschedule it and it stays gone.

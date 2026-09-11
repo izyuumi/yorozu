@@ -86,7 +86,14 @@ test("loop dispatches a streamed tool call and returns final text", async () => 
     messages: unknown[];
     tools: { function: { name: string } }[];
   };
-  expect(sent.tools.map((t) => t.function.name)).toEqual(["echo", "remember"]);
+  expect(sent.tools.map((t) => t.function.name)).toEqual([
+    "echo",
+    "remember",
+    "schedule",
+    "unschedule",
+    "list_schedule",
+    "read_transcripts",
+  ]);
   expect(sent.messages.at(-2)).toEqual({
     role: "assistant",
     content: "",
