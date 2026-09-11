@@ -214,11 +214,15 @@ public actor RelayClient {
             let nonce = body.n.flatMap({ Data(base64URLEncoded: $0) }),
             let ciphertext = body.c.flatMap({ Data(base64URLEncoded: $0) })
         else { return }
+        // Several phones can be paired at once: the Mac seals a copy per device and the relay
+        // broadcasts all of them, so a frame we cannot open is simply another device's and is
+        // dropped without a word.
+        guard let plain = try? YorozuCrypto.open(key: sessionKey, nonce: nonce, ciphertext: ciphertext)
+        else { return }
         do {
-            let plain = try YorozuCrypto.open(key: sessionKey, nonce: nonce, ciphertext: ciphertext)
             updates?.yield(.event(try JSONDecoder().decode(YorozuEvent.self, from: plain)))
         } catch {
-            updates?.yield(.failed("undecryptable frame: \(error.localizedDescription)"))
+            updates?.yield(.failed("undecodable event: \(error.localizedDescription)"))
         }
     }
 
