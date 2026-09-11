@@ -24,11 +24,17 @@ struct OnboardingView: View {
             Text(step.detail)
                 .fixedSize(horizontal: false, vertical: true)
                 .foregroundStyle(.secondary)
-            Label(granted ? "Granted" : "Waiting…", systemImage: granted ? "checkmark.circle.fill" : "circle.dotted")
-                .foregroundStyle(granted ? .green : .secondary)
+            if step == .approvals {
+                ApprovalFloorView()
+            } else {
+                Label(granted ? "Granted" : "Waiting…", systemImage: granted ? "checkmark.circle.fill" : "circle.dotted")
+                    .foregroundStyle(granted ? .green : .secondary)
+            }
             Spacer()
             HStack {
-                if step == .neverSleep {
+                if step == .approvals {
+                    EmptyView()
+                } else if step == .neverSleep {
                     Toggle("Keep this Mac awake", isOn: neverSleepBinding)
                 } else {
                     Button("Open System Settings", action: openSettings)
@@ -44,7 +50,7 @@ struct OnboardingView: View {
             }
         }
         .padding(20)
-        .frame(width: 460, height: 280)
+        .frame(width: 460, height: 320)
         // Restarted on every step, so only the step on screen is polled.
         .task(id: index) {
             while !Task.isCancelled {
@@ -82,7 +88,7 @@ enum OnboardingWindow {
     static func show() {
         if window == nil {
             let panel = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 460, height: 280),
+                contentRect: NSRect(x: 0, y: 0, width: 460, height: 320),
                 styleMask: [.titled, .closable],
                 backing: .buffered,
                 defer: false

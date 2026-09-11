@@ -21,11 +21,13 @@ import {
   seal,
   signFrame,
   toBase64Url,
+  type ApprovalCardData,
   type Keypair,
   type YorozuEvent,
 } from "@yorozu/shared";
 import WebSocket from "ws";
 import { agentsDir, installAgents, loadAgent, MAIN_AGENT } from "./agents.js";
+import type { Action, AskResult } from "./approval.js";
 import { chainFromEnv } from "./chain.js";
 import { delegateTool } from "./delegate.js";
 import { defaultTools, eventPayload, runAgent } from "./index.js";
@@ -38,6 +40,24 @@ import { appendTranscript, transcriptDir } from "./transcripts.js";
 
 const DEFAULT_STATE_DIR = join(homedir(), "Library", "Application Support", "Yorozu");
 const RECONNECT_MS = 2_000;
+/** An unanswered card is not a yes: it expires into a refusal rather than hanging the turn. */
+const APPROVAL_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * A yes / no / never typed in the thread instead of tapped on the card. A `never` only
+ * narrows to the target when the user actually named it, so "never" alone stays class-level
+ * and "never buy from that shop" does not silently cover every shop.
+ */
+export function typedAnswer(text: string, card: ApprovalCardData): AskResult | null {
+  const typed = text.trim().toLowerCase();
+  if (/^(yes|y|ok|okay|sure)\b/.test(typed)) return { answer: "yes" };
+  if (/^(no|n|nope|stop)\b/.test(typed)) return { answer: "no" };
+  if (/^never\b/.test(typed)) {
+    const target = card.target.toLowerCase();
+    return { answer: "never", ...(target && typed.includes(target) ? { target: card.target } : {}) };
+  }
+  return null;
+}
 /** Only reached if the user deleted agents/main.md: the bundled one is installed on startup. */
 const SYSTEM = "You are Yorozu, a personal assistant running on the user's Mac.";
 
@@ -129,6 +149,47 @@ export function serve(options: ServeOptions = {}): Sidecar {
     sendEvent(event);
   }
 
+  /** Cards on screen somewhere, waiting to be answered, by action ID. */
+  const pending = new Map<string, { card: ApprovalCardData; settle: (result: AskResult) => void }>();
+
+  /**
+   * Puts a card in front of every paired device and blocks the tool call until one of them
+   * answers it. The turn is suspended here, so an interrupt and the timeout both have to be
+   * able to settle it.
+   */
+  function ask(action: Action, context?: { threadId: string; agentId: string }): Promise<AskResult> {
+    const actionId = randomUUID();
+    const card: ApprovalCardData = {
+      actionId,
+      actionClass: action.actionClass,
+      target: action.target,
+      ...(action.amount !== undefined ? { amount: action.amount } : {}),
+    };
+    return new Promise<AskResult>((resolve) => {
+      const timer = setTimeout(() => {
+        pending.delete(actionId);
+        resolve({ answer: "no" });
+      }, APPROVAL_TIMEOUT_MS);
+      timer.unref?.();
+      pending.set(actionId, {
+        card,
+        settle: (result) => {
+          clearTimeout(timer);
+          pending.delete(actionId);
+          resolve(result);
+        },
+      });
+      emit({
+        id: randomUUID(),
+        threadId: context?.threadId ?? "home",
+        ts: Date.now(),
+        agentId: context?.agentId ?? MAIN_AGENT,
+        kind: "approval_card",
+        data: card,
+      });
+    });
+  }
+
   /**
    * One agent turn in `threadId`, however it was started — a phone message or a due job —
    * with its reply emitted to the phone the same way either way.
@@ -161,6 +222,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           main,
           emit,
           turn: runTurn,
+          ask,
           dir: agents,
           signal: turn.signal,
         }),
@@ -171,6 +233,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         messages: [{ role: "user", content: text }],
         tools,
         context: { threadId, agentId: MAIN_AGENT },
+        ask,
         signal: turn.signal,
       })) {
         if (event.type === "text") {
@@ -232,9 +295,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (event.kind === "interrupt") {
         for (const turn of running) turn.abort();
         running.clear();
+        // A turn parked on a card would never notice the abort otherwise.
+        for (const { settle } of [...pending.values()]) settle({ answer: "no" });
+        return;
+      }
+      if (event.kind === "approval_answer") {
+        pending.get(event.data.actionId)?.settle({ answer: event.data.answer });
         return;
       }
       if (event.kind !== "message" || event.data.role !== "user") return;
+      // A plain "yes" while a card is up answers the card rather than starting a turn.
+      const [oldest] = pending.values();
+      const typed = oldest && typedAnswer(event.data.text, oldest.card);
+      if (typed) return oldest.settle(typed);
       runTurn(event.threadId, event.data.text).catch((e: unknown) =>
         state(`agent-error ${String(e)}`),
       );

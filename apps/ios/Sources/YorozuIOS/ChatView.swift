@@ -1,7 +1,7 @@
 import SwiftUI
 import YorozuShared
 
-/// The one thread. Threads, history and approval cards arrive in later tickets.
+/// The one thread. Threads and history arrive in later tickets.
 struct ChatView: View {
     @Bindable var model: ChatModel
 
@@ -44,6 +44,14 @@ struct ChatView: View {
                             }
                         case .delegation(let card):
                             DelegationCardView(card: card).id(card.id)
+                        case .approval(let event):
+                            if case .approvalCard(let card) = event.payload {
+                                ApprovalCardView(
+                                    card: card,
+                                    answered: model.answered.contains(card.actionId)
+                                ) { model.answer(card.actionId, $0) }
+                                .id(event.id)
+                            }
                         }
                     }
                     MainActivityRow(events: model.events)

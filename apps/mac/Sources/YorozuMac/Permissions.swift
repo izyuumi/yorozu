@@ -7,6 +7,8 @@ import IOKit.hid
 /// as plain functions of system state so a later ticket can unit test them without the UI.
 enum Permission: String, CaseIterable, Identifiable {
     case accessibility, screenRecording, fullDiskAccess, automation, inputMonitoring, neverSleep
+    /// Not a TCC grant: the last step of the same wizard, where the approval floor is set.
+    case approvals
 
     var id: String { rawValue }
 
@@ -18,6 +20,7 @@ enum Permission: String, CaseIterable, Identifiable {
         case .automation: "Automation"
         case .inputMonitoring: "Input Monitoring"
         case .neverSleep: "Never Sleep"
+        case .approvals: "Approvals"
         }
     }
 
@@ -35,6 +38,8 @@ enum Permission: String, CaseIterable, Identifiable {
             "Lets the agent synthesise keystrokes and clicks so it can act on what it sees."
         case .neverSleep:
             "Keeps this Mac awake so the agent can answer your phone while you are away. Reversible here or in the menu at any time."
+        case .approvals:
+            "The agent asks before acting when it is unsure, and learns from your answers. These two limits it can never learn its way past."
         }
     }
 
@@ -46,7 +51,7 @@ enum Permission: String, CaseIterable, Identifiable {
         case .fullDiskAccess: "Privacy_AllFiles"
         case .automation: "Privacy_Automation"
         case .inputMonitoring: "Privacy_ListenEvent"
-        case .neverSleep: nil
+        case .neverSleep, .approvals: nil
         }
         return pane.flatMap { URL(string: "x-apple.systempreferences:com.apple.preference.security?\($0)") }
     }
@@ -60,6 +65,8 @@ enum Permission: String, CaseIterable, Identifiable {
         case .automation: Permission.automationTargets.allSatisfy { Permission.hasAutomation(bundleID: $0.bundleID) }
         case .inputMonitoring: IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
         case .neverSleep: NeverSleep.shared.isRunning
+        // Nothing to verify: the floor always has a value, defaulted before it is ever shown.
+        case .approvals: true
         }
     }
 
@@ -77,8 +84,8 @@ enum Permission: String, CaseIterable, Identifiable {
             _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
         case .automation:
             _ = isGranted()  // the probe itself is what makes macOS ask.
-        case .fullDiskAccess, .neverSleep:
-            break  // No API: only the System Settings pane can grant these.
+        case .fullDiskAccess, .neverSleep, .approvals:
+            break  // No API: only the System Settings pane, or the user, can settle these.
         }
     }
 

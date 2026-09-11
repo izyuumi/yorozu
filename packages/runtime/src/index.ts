@@ -1,4 +1,5 @@
 import type { EventPayload, YorozuEvent } from "@yorozu/shared";
+import { checkApproval, type ActionClass, type AskFn } from "./approval.js";
 import type { Memory } from "./memory.js";
 import { rememberTool } from "./memory.js";
 import type { Message, Provider, ToolCall, ToolDef } from "./provider.js";
@@ -17,6 +18,7 @@ import { shellTool } from "./tools/shell.js";
 import { readTranscriptsTool } from "./transcripts.js";
 
 export * from "./provider.js";
+export * from "./approval.js";
 export * from "./frontmatter.js";
 export * from "./agents.js";
 export * from "./skills.js";
@@ -46,6 +48,13 @@ export interface TurnContext {
 }
 
 export interface Tool extends ToolDef {
+  /**
+   * Set when the tool has an effect outside the runtime. Declaring it puts every call
+   * through the approval engine; leaving it off means the tool only reads.
+   */
+  actionClass?: ActionClass;
+  /** Derives what the approval card names, from this call's arguments. */
+  action?(args: Record<string, unknown>): { target: string; amount?: number };
   run(args: Record<string, unknown>, context?: TurnContext): string | Promise<string>;
 }
 
@@ -129,6 +138,11 @@ export interface RunOptions {
   memory?: Pick<Memory, "recallForPrompt">;
   /** Thread and agent the turn belongs to; passed to every tool call. */
   context?: TurnContext;
+  /**
+   * How to put an approval card in front of the user. Without it there is nobody to ask,
+   * so tools carrying an `actionClass` run ungated — the CLI and the unit tests.
+   */
+  ask?: AskFn;
   /** Guard against a model that never stops calling tools. */
   maxTurns?: number;
   /**
@@ -189,9 +203,16 @@ export async function* runAgent(
       const tool = tools.find((t) => t.name === call.name);
       let result: string;
       try {
-        result = tool
-          ? await tool.run(JSON.parse(call.arguments || "{}"), options.context)
-          : `unknown tool: ${call.name}`;
+        if (!tool) {
+          result = `unknown tool: ${call.name}`;
+        } else {
+          const args = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
+          // The gate runs before the tool does: a refusal is what the model gets back.
+          const refused = options.ask
+            ? await checkApproval(tool, args, options.ask, options.context)
+            : null;
+          result = refused ?? (await tool.run(args, options.context));
+        }
       } catch (e) {
         result = `error: ${e instanceof Error ? e.message : String(e)}`;
       }

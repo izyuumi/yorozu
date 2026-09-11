@@ -26,6 +26,8 @@ final class ChatModel {
     /// Starts pessimistic: the relay tells us the truth in its `joined` reply.
     private(set) var ownerOnline = false
     private(set) var failure: String?
+    /// Action IDs already answered from this device, so the card stops offering buttons.
+    private(set) var answered: Set<String> = []
     var draft = ""
 
     private var client: RelayClient?
@@ -98,6 +100,21 @@ final class ChatModel {
             payload: .message(MessageData(role: .user, text: text))
         )
         upsert(event)
+        Task { try? await client.send(event) }
+    }
+
+    /// Answers a pending approval card. `Discuss` is answered too: the runtime keeps the
+    /// action pending and sends a fresh card, with a new action ID, after it has explained.
+    func answer(_ actionId: String, _ answer: ApprovalAnswerData.Answer) {
+        guard let client else { return }
+        answered.insert(actionId)
+        let event = YorozuEvent(
+            id: UUID().uuidString,
+            threadId: Self.threadId,
+            ts: Int(Date().timeIntervalSince1970 * 1000),
+            agentId: "phone",
+            payload: .approvalAnswer(ApprovalAnswerData(actionId: actionId, answer: answer))
+        )
         Task { try? await client.send(event) }
     }
 

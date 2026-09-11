@@ -24,6 +24,8 @@ export const fsReadTool: Tool = {
 export const fsWriteTool: Tool = {
   name: "fs_write",
   description: "Write a text file, creating or replacing it and any missing parent directories.",
+  actionClass: "edit-file",
+  action: ({ path }) => ({ target: expandHome(String(path ?? "")) }),
   parameters: {
     type: "object",
     properties: {

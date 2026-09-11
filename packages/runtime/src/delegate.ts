@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { EventPayload, YorozuEvent } from "@yorozu/shared";
 import { agentsDir, inherit, listAgents, MAIN_AGENT, type AgentConfig } from "./agents.js";
+import type { AskFn } from "./approval.js";
 import { chainFromEnv } from "./chain.js";
 import { eventPayload, runAgent, type Tool } from "./index.js";
 import { memoryDir, memoryFor } from "./memory.js";
@@ -28,6 +29,8 @@ export interface DelegateOptions {
   emit(event: YorozuEvent): void;
   /** The programmatic-turn path: how a background delegation reports its result back. */
   turn(threadId: string, text: string): Promise<void>;
+  /** The main agent's approval channel: a specialist is gated exactly as its parent is. */
+  ask?: AskFn;
   /** Defaults to the state directory's agents folder. */
   dir?: string;
   /** Cancels this delegation with the rest of the tree. */
@@ -72,6 +75,7 @@ async function runSpecialist(
       tools,
       memory: memoryFor(agent.memory ? join(memoryDir(), agent.memory) : memoryDir()),
       context: { threadId, agentId: agent.name },
+      ...(options.ask ? { ask: options.ask } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
     })) {
       const payload = eventPayload(event);

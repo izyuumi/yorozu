@@ -186,7 +186,8 @@ public struct ApprovalCardData: Codable, Equatable, Sendable {
 }
 
 public struct ApprovalAnswerData: Codable, Equatable, Sendable {
-    public enum Answer: String, Codable, Sendable { case yes, no, never, discuss }
+    /// Declaration order is the order the card shows the four buttons in.
+    public enum Answer: String, Codable, Sendable, CaseIterable { case yes, no, never, discuss }
     public var actionId: String
     public var answer: Answer
     public init(actionId: String, answer: Answer) {
