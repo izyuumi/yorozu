@@ -14,7 +14,7 @@ enum ProviderSettings {
     static func environment() -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         let defaults = UserDefaults.standard
-        for key in [baseUrlKey, chainKey] {
+        for key in [baseUrlKey, chainKey, BrowserSettings.key] {
             if let value = defaults.string(forKey: key), !value.isEmpty { environment[key] = value }
         }
         if let key = Keychain.read(), !key.isEmpty { environment["YOROZU_API_KEY"] = key }

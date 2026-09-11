@@ -3,6 +3,7 @@ import type { Memory } from "./memory.js";
 import { rememberTool } from "./memory.js";
 import type { Message, Provider, ToolCall, ToolDef } from "./provider.js";
 import { listScheduleTool, scheduleTool, unscheduleTool } from "./scheduler.js";
+import { browserTools } from "./tools/browser.js";
 import { readTranscriptsTool } from "./transcripts.js";
 
 export * from "./provider.js";
@@ -14,6 +15,7 @@ export * from "./chain.js";
 export * from "./claude.js";
 export * from "./codex.js";
 export * from "./probe.js";
+export * from "./tools/browser.js";
 
 /** One line per event, as the agent loop will emit them. */
 export function describeEvent(event: YorozuEvent): string {
@@ -49,6 +51,7 @@ export const defaultTools: Tool[] = [
   unscheduleTool,
   listScheduleTool,
   readTranscriptsTool,
+  ...browserTools,
 ];
 
 export type AgentEvent =
