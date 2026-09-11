@@ -56,6 +56,34 @@ enum Keychain {
     static var hasKey: Bool { read()?.isEmpty == false }
 }
 
+/// One subcommand of the runtime sidecar — `probe`, `assign`, `assign-cron` — run to
+/// completion with the settings' environment. The same binary the app spawns for the relay;
+/// the settings talk to it by argument rather than over the relay.
+enum RuntimeCommand {
+    /// Dev default: `swift run` from `apps/mac` leaves the repo layout reachable.
+    /// Override with YOROZU_RUNTIME_CMD; the DMG will point it at the bundled runtime.
+    static let defaultCommand = "node ../../packages/runtime/dist/serve.js"
+
+    static func output(_ arguments: String) -> Data? {
+        let command = (ProcessInfo.processInfo.environment["YOROZU_RUNTIME_CMD"]
+            ?? defaultCommand) + " " + arguments
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", command]
+        process.environment = ProviderSettings.environment()
+        process.standardOutput = output
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return data
+    }
+}
+
 /// One JSON line from `<runtime> probe`: whether each card is usable, and why not.
 struct ProbeReport: Decodable {
     struct Card: Decodable {
@@ -76,34 +104,11 @@ final class ProviderProbe: ObservableObject {
     func run() {
         guard !running else { return }
         running = true
-        let command = (ProcessInfo.processInfo.environment["YOROZU_RUNTIME_CMD"]
-            ?? Sidecar.defaultCommand) + " probe"
-        let environment = ProviderSettings.environment()
         Task { [weak self] in
-            let data = await Task.detached { Self.capture(command, environment) }.value
+            let data = await Task.detached { RuntimeCommand.output("probe") }.value
             self?.report = data.flatMap { try? JSONDecoder().decode(ProbeReport.self, from: $0) }
             self?.running = false
         }
-    }
-
-    nonisolated private static func capture(
-        _ command: String,
-        _ environment: [String: String]
-    ) -> Data? {
-        let process = Process()
-        let output = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", command]
-        process.environment = environment
-        process.standardOutput = output
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return data
     }
 }
 

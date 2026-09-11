@@ -26,6 +26,7 @@ import {
 } from "@yorozu/shared";
 import WebSocket from "ws";
 import { agentsDir, installAgents, loadAgent, MAIN_AGENT } from "./agents.js";
+import { autoAssign, revertAssign, setAssignCron, type AssignMode } from "./assign.js";
 import { chainFromEnv } from "./chain.js";
 import { delegateTool } from "./delegate.js";
 import { defaultTools, runAgent } from "./index.js";
@@ -308,7 +309,23 @@ export function serve(options: ServeOptions = {}): Sidecar {
 }
 
 if (import.meta.main) {
-  // `probe` answers the Mac app's provider cards and exits; no argument serves.
-  if (argv[2] === "probe") stdout.write(`${JSON.stringify(await probe())}\n`);
-  else serve();
+  // Subcommands answer the Mac app's settings and exit; no argument serves.
+  const [command, argument, extra] = argv.slice(2);
+  const mode = (name?: string): AssignMode => (name === "research" ? "research" : "catalog");
+  switch (command) {
+    case "probe":
+      stdout.write(`${JSON.stringify(await probe())}\n`);
+      break;
+    case "assign":
+      stdout.write(await autoAssign({ mode: mode(argument) }));
+      break;
+    case "assign-revert":
+      stdout.write(`${revertAssign()}\n`);
+      break;
+    case "assign-cron":
+      stdout.write(`${setAssignCron(argument ?? "", mode(extra))}\n`);
+      break;
+    default:
+      serve();
+  }
 }

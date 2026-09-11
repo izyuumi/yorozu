@@ -338,3 +338,45 @@ helper still works wherever the parent process already holds those grants.
 
 The native tools are tested against a fake helper speaking the same line protocol, so they need
 no AX, no display and no Mac; the `shell` and `fs` tests are real.
+
+## Model catalog and auto-assign
+
+`catalog/models.json` is the catalog: one row per model, keyed by the same provider spec
+`YOROZU_MODEL_CHAIN` takes (`claude-cli/claude-opus-5`, `openai/gpt-5.6-sol`), carrying price per
+million tokens, context in thousands, strengths and the date the row was checked. A price nobody
+publishes is `null` rather than a guess — that is what the two subscription-CLI rows and the
+custom OpenAI-compatible endpoint say, since their cost is a login or the operator's own bill.
+
+`.github/workflows/catalog.yml` uploads the file to a rolling release tagged `catalog` on every
+push to `main` that touches `catalog/`, so clients have one stable URL to fetch:
+
+| Source | When it is used |
+| --- | --- |
+| `<YOROZU_STATE_DIR>/catalog.json` | the cached asset, while it is under 24h old |
+| `YOROZU_CATALOG_URL` (default the `catalog` release asset) | when the cache is missing or a day old |
+| the stale cache, then `catalog/models.json` in the repo | when that fetch fails — offline is not empty |
+| `<YOROZU_STATE_DIR>/catalog.overlay.json` | always, merged over the result field by field, by id |
+
+The overlay is the only file research mode writes; the catalog is never rewritten, so a local
+correction survives every refresh and a bad overlay is one file to delete.
+
+`autoAssign` hands the default model every agent file and the catalog and asks for one model per
+agent with a one-line reason. Each pick is written into that file's `model:` frontmatter — the
+rest of the file, head and body, is left exactly as it was — and the run returns a unified diff.
+The texts it replaced go to `assign.backup.json`, which is what Revert puts back.
+
+In `research` mode the model first goes at the web through the agent loop with the runtime's
+web-facing tools (`web_search` and `fetch` when the search ticket lands them, the browser tools
+until then) and its answer is merged into the overlay before the picks are made.
+
+It runs three ways: the `auto_assign_models` tool, so the agent can be told to do it and the
+`schedule` tool can file it for later; `node dist/serve.js assign [catalog|research]`, which the
+Mac app's **Assign now** button runs, showing the diff in a sheet with **Revert**; and the cron
+field beside it, which is `assign-cron`, one job with a fixed id that the field creates, updates
+or removes rather than piling up duplicates.
+
+```sh
+node dist/serve.js assign research   # refresh prices, assign, print the diff
+node dist/serve.js assign-revert     # put the last run's files back
+node dist/serve.js assign-cron '0 4 * * 1' catalog
+```

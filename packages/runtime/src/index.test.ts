@@ -109,6 +109,7 @@ test("loop dispatches a streamed tool call and returns final text", async () => 
     "browser.eval",
     "browser.close",
     "skill",
+    "auto_assign_models",
   ]);
   expect(sent.messages.at(-2)).toEqual({
     role: "assistant",
