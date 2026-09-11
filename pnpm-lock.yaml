@@ -45,12 +45,15 @@ importers:
 
   packages/shared:
     devDependencies:
+      '@types/node':
+        specifier: ^22.20.2
+        version: 22.20.2
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
       vitest:
         specifier: ^3.2.4
-        version: 3.2.7(@types/node@26.5.1)
+        version: 3.2.7(@types/node@22.20.2)
 
 packages:
 
@@ -821,7 +824,7 @@ snapshots:
 
   '@types/ws@8.18.1':
     dependencies:
-      '@types/node': 26.5.1
+      '@types/node': 22.20.2
 
   '@vitest/expect@3.2.7':
     dependencies:

@@ -20,4 +20,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: swift build --package-path packages/shared-swift
+      - run: swift test --package-path packages/shared-swift
       - run: swift build --package-path apps/mac

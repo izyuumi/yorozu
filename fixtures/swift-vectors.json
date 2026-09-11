@@ -1,0 +1,15 @@
+{
+  "alicePriv" : "OMRZWO7iAYsuX1rZ2vny_eJdyNtCWvSYkFS6I5l8D0I",
+  "alicePub" : "eZGsNQzKsHHApoyUww6tny-CzkUkLSgZWtrpoFZiPXE",
+  "bobPriv" : "eCOb3sTGNvDVVYF04_ocQf7W83B1QZv3MjrH15bnMmc",
+  "bobPub" : "4bnq6ZB571A91mvhHyQFUSBWS5kw0smiRGitr5AKal0",
+  "ciphertext" : "9BYgvjb4-hq8I3YnKTgKb9m7CJCoWMRk2hojKid8ydIbnFHfGaf-vj291GY",
+  "nonce" : "CVwmLEd8SQVrAycs",
+  "plaintext" : "eW9yb3p1IGNyb3NzLWxhbmd1YWdlIHZlY3Rvcg",
+  "qr" : "{\"relayUrl\":\"wss:\\\/\\\/relay.yumi.to\",\"macPubkey\":\"eZGsNQzKsHHApoyUww6tny-CzkUkLSgZWtrpoFZiPXE\",\"v\":1,\"token\":\"nJYec_k-oBTY7LO1QwEDiA\"}",
+  "sessionKey" : "g3yYoFz1daBAtJLeD5R7wOJpFHP9ZKBAXz1SJCWP0go",
+  "signPriv" : "GoKs7rBkBwwGzQ37fuRG9OIWNNOoe2yY9mWCQFa60D8",
+  "signPub" : "B2g7xXm109jOxb00_xK2rW6oLcAR2af4fwYNFFFhR8U",
+  "signature" : "BSrD9noHtKNO3QYa-vrjX6AX7MM3RSEdq65J3AOCIMCvc9d01zCwa7pxuVKUXBoHblQDJBufJmBie8RAhqfpAA",
+  "source" : "swift"
+}
