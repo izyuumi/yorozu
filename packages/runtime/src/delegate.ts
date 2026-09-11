@@ -11,7 +11,7 @@ import { join } from "node:path";
 import type { EventPayload, YorozuEvent } from "@yorozu/shared";
 import { agentsDir, inherit, listAgents, MAIN_AGENT, type AgentConfig } from "./agents.js";
 import { chainFromEnv } from "./chain.js";
-import { runAgent, type Tool } from "./index.js";
+import { eventPayload, runAgent, type Tool } from "./index.js";
 import { memoryDir, memoryFor } from "./memory.js";
 import type { Provider } from "./provider.js";
 
@@ -32,18 +32,6 @@ export interface DelegateOptions {
   dir?: string;
   /** Cancels this delegation with the rest of the tree. */
   signal?: AbortSignal;
-}
-
-/** Tool arguments are raw model output: a broken JSON string must not kill the event. */
-function safeArgs(json: string): Record<string, unknown> {
-  try {
-    const parsed: unknown = JSON.parse(json || "{}");
-    return typeof parsed === "object" && parsed !== null
-      ? (parsed as Record<string, unknown>)
-      : { value: parsed };
-  } catch {
-    return { raw: json };
-  }
 }
 
 /** One specialist turn, seeded with `task` as its only message. Returns its final text. */
@@ -69,29 +57,33 @@ async function runSpecialist(
   );
 
   let text = "";
-  for await (const event of runAgent({
-    provider,
-    system: agent.prompt,
-    messages: [{ role: "user", content: task }],
-    tools,
-    memory: memoryFor(agent.memory ? join(memoryDir(), agent.memory) : memoryDir()),
-    context: { threadId, agentId: agent.name },
-    ...(options.signal ? { signal: options.signal } : {}),
-  })) {
-    if (event.type === "tool_call") {
-      emit({
-        kind: "tool_call",
-        data: { callId: event.call.id, name: event.call.name, args: safeArgs(event.call.arguments) },
-      });
-    } else if (event.type === "tool_result") {
-      emit({
-        kind: "tool_result",
-        data: { callId: event.id, ok: !event.result.startsWith("error:"), output: event.result },
-      });
-    } else if (event.type === "final") {
-      text = event.text;
-      emit({ kind: "message", data: { role: "agent", text } });
+  let reported = false;
+  /** `done` is what closes the phone's inline card for this delegation. */
+  const report = (): void => {
+    reported = true;
+    emit({ kind: "message", data: { role: "agent", text, done: true } });
+  };
+
+  try {
+    for await (const event of runAgent({
+      provider,
+      system: agent.prompt,
+      messages: [{ role: "user", content: task }],
+      tools,
+      memory: memoryFor(agent.memory ? join(memoryDir(), agent.memory) : memoryDir()),
+      context: { threadId, agentId: agent.name },
+      ...(options.signal ? { signal: options.signal } : {}),
+    })) {
+      const payload = eventPayload(event);
+      if (payload) emit(payload);
+      else if (event.type === "final") {
+        text = event.text;
+        report();
+      }
     }
+  } finally {
+    // A specialist that threw or was cancelled must not leave the card spinning forever.
+    if (!reported) report();
   }
   return text;
 }

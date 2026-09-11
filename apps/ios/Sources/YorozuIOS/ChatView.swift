@@ -20,6 +20,7 @@ struct ChatView: View {
                 messages
                 composer
             }
+            .agentTraceDestination { model.events }
             .navigationTitle("Home")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -33,11 +34,19 @@ struct ChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
-                    ForEach(model.events, id: \.id) { event in
-                        if case .message(let data) = event.payload {
-                            Bubble(data: data).id(event.id)
+                    // A delegation collapses to one card where it started; what the specialist
+                    // did is behind it, and the main agent's own tool use is behind the row.
+                    ForEach(chatRows(from: model.events)) { row in
+                        switch row {
+                        case .message(let event):
+                            if case .message(let data) = event.payload {
+                                Bubble(data: data).id(event.id)
+                            }
+                        case .delegation(let card):
+                            DelegationCardView(card: card).id(card.id)
                         }
                     }
+                    MainActivityRow(events: model.events)
                 }
                 .padding()
             }

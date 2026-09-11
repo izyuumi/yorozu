@@ -132,9 +132,14 @@ public struct MessageData: Codable, Equatable, Sendable {
     public enum Role: String, Codable, Sendable { case user, agent }
     public var role: Role
     public var text: String
-    public init(role: Role, text: String) {
+    /// Set on the last message a delegated agent emits, so the phone's inline card for that
+    /// delegation stops spinning. A flag rather than a kind of its own: the final message is
+    /// already the thing that ends a delegation.
+    public var done: Bool?
+    public init(role: Role, text: String, done: Bool? = nil) {
         self.role = role
         self.text = text
+        self.done = done
     }
 }
 

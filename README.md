@@ -338,3 +338,40 @@ helper still works wherever the parent process already holds those grants.
 
 The native tools are tested against a fake helper speaking the same line protocol, so they need
 no AX, no display and no Mac; the `shell` and `fs` tests are real.
+
+## Subagent drill-down
+
+Everything the loop does now reaches the phone, not just the reply: `runTurn` and `delegate`
+share `eventPayload`, so the main agent's tool calls and results travel as `tool_call` and
+`tool_result` events tagged `agentId: "main"`, and a specialist's carry its own name plus
+`parentAgentId`. (`thought` has no producer yet — the runtime's loop emits no thoughts — but
+the views render one the moment something does.)
+
+A delegation ends with the specialist's last message carrying `done: true` in `MessageData`.
+That flag is the whole protocol addition: a delegation's end *is* its final message, so it
+needed a field rather than a kind, and the flag is emitted from a `finally` so a specialist
+that threw or was interrupted still closes its card instead of spinning forever.
+
+`packages/shared-swift/Sources/YorozuShared/AgentTrace.swift` turns a thread's events into what
+is drawn, as pure functions the Mac reuses:
+
+| Function | Result |
+| --- | --- |
+| `delegationCards(from:)` | one `DelegationCard` per delegation — name, running/done, its events |
+| `chatRows(from:)` | the thread in order: message bubbles, plus each card where its delegation started |
+| `mainTrace(from:)` | the main agent's own thoughts, tool calls and results |
+
+Cards are grouped by agent *and* delegation, not by agent alone: a card closes on its `done`
+message, so the same specialist called twice is two cards. An event counts as delegated when it
+carries a `parentAgentId`, which is what the runtime tags with and which can never catch the
+phone's own events.
+
+`TraceViews.swift` holds the three views: `DelegationCardView` (the inline card),
+`MainActivityRow` (the collapsed `working… <tool>` line under the latest message, which draws
+nothing until the main agent has run something), and `AgentTraceView` (the page both push).
+Navigation is by value — `.agentTraceDestination { model.events }` on the stack resolves a
+`TraceTarget` against the *live* event list, so an open trace keeps streaming rather than
+showing the snapshot the link was built from.
+
+The e2e harness proves the wire path: `e2e/fake-provider.mjs` calls `echo` on its first turn,
+and `run.sh` waits for the phone to log `YOROZU-E2E-TOOL echo` beside the streamed reply.

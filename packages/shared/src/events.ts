@@ -20,6 +20,12 @@ export interface EventBase {
 export interface MessageData {
   role: "user" | "agent";
   text: string;
+  /**
+   * Set on the last message a delegated agent emits, so the phone's inline card for that
+   * delegation stops spinning. A flag rather than a kind of its own: the final message is
+   * already the thing that ends a delegation.
+   */
+  done?: boolean;
 }
 
 export interface ThoughtData {

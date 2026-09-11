@@ -89,7 +89,8 @@ test("a sync delegation runs the specialist and returns its final text", async (
       agentId: "calendar",
       parentAgentId: "main",
       kind: "message",
-      data: { role: "agent", text: "Tuesday at 3pm is free." },
+      // `done` closes the phone's inline card for this delegation.
+      data: { role: "agent", text: "Tuesday at 3pm is free.", done: true },
     }),
   ]);
   // The list of agents reaches the model, so it can pick one.
