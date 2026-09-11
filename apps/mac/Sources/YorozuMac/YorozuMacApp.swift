@@ -131,6 +131,8 @@ struct YorozuMacApp: App {
                 PairingView(sidecar: sidecar)
                 Divider()
                 ProvidersView()
+                Divider()
+                BrowserView()
                 Button("Quit") { NSApp.terminate(nil) }
             }
             .padding()

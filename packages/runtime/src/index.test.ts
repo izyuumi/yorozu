@@ -93,6 +93,12 @@ test("loop dispatches a streamed tool call and returns final text", async () => 
     "unschedule",
     "list_schedule",
     "read_transcripts",
+    "browser.open",
+    "browser.snapshot",
+    "browser.click",
+    "browser.type",
+    "browser.eval",
+    "browser.close",
   ]);
   expect(sent.messages.at(-2)).toEqual({
     role: "assistant",
