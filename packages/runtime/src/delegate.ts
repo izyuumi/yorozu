@@ -1,0 +1,162 @@
+/**
+ * `delegate(agent, task, background?)`: the main agent's one handle on the specialists.
+ * Depth is 2 — a specialist never gets `delegate` itself, so it cannot delegate on.
+ * Sync by default; `background: true` reports back later as a new turn in the same thread.
+ * Every event a specialist emits carries its own `agentId` and `parentAgentId: "main"`.
+ * See docs/spec-v1.html section 3.
+ */
+
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
+import type { EventPayload, YorozuEvent } from "@yorozu/shared";
+import { agentsDir, inherit, listAgents, MAIN_AGENT, type AgentConfig } from "./agents.js";
+import { chainFromEnv } from "./chain.js";
+import { runAgent, type Tool } from "./index.js";
+import { memoryDir, memoryFor } from "./memory.js";
+import type { Provider } from "./provider.js";
+
+export const DELEGATE_TOOL = "delegate";
+
+export interface DelegateOptions {
+  /** The main agent's provider; a specialist inherits it unless it names its own model. */
+  provider: Provider;
+  /** The main agent's tools. The specialist gets these minus `delegate`, minus its allowlist. */
+  tools: Tool[];
+  /** The main agent's own config: what an absent frontmatter field inherits. */
+  main: AgentConfig;
+  /** Logs and forwards a specialist's event exactly as the main agent's own. */
+  emit(event: YorozuEvent): void;
+  /** The programmatic-turn path: how a background delegation reports its result back. */
+  turn(threadId: string, text: string): Promise<void>;
+  /** Defaults to the state directory's agents folder. */
+  dir?: string;
+  /** Cancels this delegation with the rest of the tree. */
+  signal?: AbortSignal;
+}
+
+/** Tool arguments are raw model output: a broken JSON string must not kill the event. */
+function safeArgs(json: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(json || "{}");
+    return typeof parsed === "object" && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : { value: parsed };
+  } catch {
+    return { raw: json };
+  }
+}
+
+/** One specialist turn, seeded with `task` as its only message. Returns its final text. */
+async function runSpecialist(
+  options: DelegateOptions,
+  agent: AgentConfig,
+  provider: Provider,
+  task: string,
+  threadId: string,
+): Promise<string> {
+  const emit = (payload: EventPayload): void =>
+    options.emit({
+      id: randomUUID(),
+      threadId,
+      ts: Date.now(),
+      agentId: agent.name,
+      parentAgentId: MAIN_AGENT,
+      ...payload,
+    });
+
+  const tools = options.tools.filter(
+    (tool) => tool.name !== DELEGATE_TOOL && (!agent.tools || agent.tools.includes(tool.name)),
+  );
+
+  let text = "";
+  for await (const event of runAgent({
+    provider,
+    system: agent.prompt,
+    messages: [{ role: "user", content: task }],
+    tools,
+    memory: memoryFor(agent.memory ? join(memoryDir(), agent.memory) : memoryDir()),
+    context: { threadId, agentId: agent.name },
+    ...(options.signal ? { signal: options.signal } : {}),
+  })) {
+    if (event.type === "tool_call") {
+      emit({
+        kind: "tool_call",
+        data: { callId: event.call.id, name: event.call.name, args: safeArgs(event.call.arguments) },
+      });
+    } else if (event.type === "tool_result") {
+      emit({
+        kind: "tool_result",
+        data: { callId: event.id, ok: !event.result.startsWith("error:"), output: event.result },
+      });
+    } else if (event.type === "final") {
+      text = event.text;
+      emit({ kind: "message", data: { role: "agent", text } });
+    }
+  }
+  return text;
+}
+
+const describe = (agent: AgentConfig): string =>
+  agent.description ? `${agent.name} (${agent.description})` : agent.name;
+
+export function delegateTool(options: DelegateOptions): Tool {
+  const dir = options.dir ?? agentsDir();
+  const specialists = (): AgentConfig[] =>
+    listAgents(dir).filter((agent) => agent.name !== MAIN_AGENT);
+  const known = specialists();
+
+  return {
+    name: DELEGATE_TOOL,
+    description:
+      "Hand a task to a specialist agent and get its answer. Specialists cannot delegate " +
+      `further: one needing another returns what it needs, and you re-delegate. Agents: ${
+        known.map(describe).join(", ") || "none"
+      }.`,
+    parameters: {
+      type: "object",
+      properties: {
+        agent: { type: "string", enum: known.map((agent) => agent.name) },
+        task: { type: "string", description: "Everything the specialist needs, in full." },
+        background: {
+          type: "boolean",
+          description:
+            "Return immediately; the result arrives later as a new turn in this thread.",
+        },
+      },
+      required: ["agent", "task"],
+    },
+
+    async run({ agent, task, background }, context) {
+      const name = String(agent ?? "");
+      const found = specialists().find((candidate) => candidate.name === name);
+      if (!found) return `no such agent: ${name}`;
+
+      const config = inherit(found, options.main);
+      // Resolved from the file's own field: inheriting means reusing the provider we hold.
+      const provider = found.model ? chainFromEnv(found.model) : options.provider;
+      const threadId = context?.threadId ?? "home";
+      const text = String(task ?? "");
+
+      if (!background) {
+        const result = await runSpecialist(options, config, provider, text, threadId);
+        return options.signal?.aborted ? `delegation to ${name} was interrupted` : result;
+      }
+
+      const id = randomUUID();
+      void runSpecialist(options, config, provider, text, threadId)
+        .then((result) =>
+          options.signal?.aborted
+            ? undefined
+            : options.turn(threadId, `delegation ${id} finished: ${result}`),
+        )
+        .catch((e: unknown) =>
+          options
+            .turn(threadId, `delegation ${id} failed: ${e instanceof Error ? e.message : String(e)}`)
+            .catch(() => {
+              // Nothing left to report it to.
+            }),
+        );
+      return `delegation ${id} started: ${name} is working in the background`;
+    },
+  };
+}

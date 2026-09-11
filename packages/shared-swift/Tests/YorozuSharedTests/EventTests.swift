@@ -24,6 +24,7 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
                 ThreadSummary(id: "home", title: "Home", archived: false, pinned: true)
             ]))
         case .threadArchive: .threadArchive(ThreadArchiveData())
+        case .interrupt: .interrupt(InterruptData())
         case .syncRequest: .syncRequest(SyncRequestData(lastSeen: ["home": "e9"]))
         case .syncDelta:
             .syncDelta(SyncDeltaData(events: [

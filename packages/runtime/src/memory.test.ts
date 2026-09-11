@@ -139,6 +139,7 @@ test("the remember tool writes through YOROZU_MEMORY_DIR", () => {
       "browser.type",
       "browser.eval",
       "browser.close",
+      "skill",
     ]);
     expect(rememberTool.run({ fact: "user lives in Kyoto", kind: "bogus" })).toMatch(
       /^remembered: \d{4}-\d{2}-\d{2}-user-lives-in-kyoto\.md$/,
