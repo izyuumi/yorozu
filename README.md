@@ -59,6 +59,44 @@ tool; `recallForPrompt` returns a compact block that `runAgent` prepends to the 
 when given a `memory`. Vector recall is not implemented yet: `searchByEmbedding` returns nothing
 until sqlite-vec or provider embeddings land.
 
+## Providers
+
+Three cards, as in the spec: Claude, Codex, OpenAI-compatible. Any one green is enough.
+
+| Adapter | Spec prefix | How it authenticates |
+| --- | --- | --- |
+| `claudeCli` | `claude-cli/<model>` | the installed `claude` binary and its subscription login (`claude auth status --json`) |
+| `codexCli` | `codex-cli/<model>` | the installed `codex` binary and its subscription login (`codex login status`) |
+| `openaiCompat` | `openai/<model>` | `YOROZU_BASE_URL` + `YOROZU_API_KEY` |
+
+Both CLI adapters use the vendor SDK for auth and streaming only — the runtime keeps its own
+loop. The Claude adapter hands our `ToolDef`s to the SDK as an in-process MCP server and then
+*denies* every call from `canUseTool`: the attempted call is the `tool_call` event the loop
+wants, and the loop, not the CLI, runs the tool. (A tool named in `allowedTools` would be
+auto-approved and executed in-process, which is why none are listed.) The Codex SDK has no
+custom-tool mechanism, so that adapter streams text and ignores `tools`; keep a tool-capable
+provider behind it in the chain.
+
+`YOROZU_MODEL_CHAIN` is a comma list, primary first:
+
+```sh
+YOROZU_MODEL_CHAIN=claude-cli/claude-sonnet-5,codex-cli/gpt-5.6,openai/gpt-4o-mini
+```
+
+The first provider to emit an event wins. Anything that fails *before* its first event — auth,
+HTTP 401/403/429, transport — advances to the next one; after the first event the turn is
+half-spoken, so failures propagate rather than replay. Unset, the chain is the single
+OpenAI-compatible adapter, as before.
+
+`node dist/serve.js probe` prints one JSON line (`{"claude":{"ok":true},…,"chain":"…"}`) with
+each card's state and never prints a secret. The Mac app's menu bar window uses it to colour the
+cards, offers a Terminal.app login for the two CLIs (both logins are interactive browser round
+trips), stores the OpenAI-compatible key in the Keychain, and passes base URL, key and chain to
+the sidecar as environment variables.
+
+Note that `@openai/codex-sdk` depends on `@openai/codex`, which vendors a ~277 MB platform
+binary; the SDK is pointed at the user's own `codex` on PATH when there is one.
+
 ## Relay
 
 The relay forwards ciphertext between Mac and phone and can read none of it. Rooms are keyed by

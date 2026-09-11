@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { env, stdout } from "node:process";
+import { argv, env, stdout } from "node:process";
 import {
   deriveSessionKey,
   encodeQrPayload,
@@ -25,8 +25,10 @@ import {
   type YorozuEvent,
 } from "@yorozu/shared";
 import WebSocket from "ws";
+import { chainFromEnv } from "./chain.js";
 import { defaultTools, runAgent } from "./index.js";
-import { openaiCompat, type Provider } from "./provider.js";
+import type { Provider } from "./provider.js";
+import { probe } from "./probe.js";
 import { startScheduler } from "./scheduler.js";
 import { appendTranscript, transcriptDir } from "./transcripts.js";
 
@@ -78,7 +80,7 @@ type FrameBody = { t: "hello"; pub: string } | { t: "box"; n: string; c: string 
 export interface ServeOptions {
   relayUrl?: string;
   stateDir?: string;
-  /** Defaults to the OpenAI-compatible adapter configured from the environment. */
+  /** Defaults to the model chain configured from the environment. */
   provider?: Provider;
   /** Defaults to stdout. */
   log?: (line: string) => void;
@@ -96,13 +98,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   env.YOROZU_STATE_DIR = dir;
   const transcripts = transcriptDir(dir);
   const keys = loadKeys(dir);
-  const provider =
-    options.provider ??
-    openaiCompat({
-      baseUrl: env.YOROZU_BASE_URL ?? "https://api.openai.com/v1",
-      apiKey: env.YOROZU_API_KEY,
-      model: env.YOROZU_MODEL ?? "gpt-4o-mini",
-    });
+  const provider = options.provider ?? chainFromEnv();
   const log = options.log ?? ((line: string) => void stdout.write(`${line}\n`));
   const state = (name: string) => log(`STATE ${name}`);
 
@@ -254,4 +250,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
   };
 }
 
-if (import.meta.main) serve();
+if (import.meta.main) {
+  // `probe` answers the Mac app's provider cards and exits; no argument serves.
+  if (argv[2] === "probe") stdout.write(`${JSON.stringify(await probe())}\n`);
+  else serve();
+}

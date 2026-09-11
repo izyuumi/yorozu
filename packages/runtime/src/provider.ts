@@ -3,6 +3,11 @@
  * tool dispatch and history. See docs/spec-v1.html section 2.
  */
 
+import { execFile } from "node:child_process";
+import { accessSync, constants } from "node:fs";
+import { delimiter, join } from "node:path";
+import { env } from "node:process";
+
 export interface ToolCall {
   id: string;
   name: string;
@@ -58,6 +63,70 @@ async function* sseData(res: Response): AsyncGenerator<string> {
   }
   const last = buf.trim();
   if (last.startsWith("data:")) yield last.slice(5).trim();
+}
+
+/**
+ * Shared by the two subscription-CLI adapters below this file: they talk to a local
+ * binary rather than an HTTP endpoint, so they need to find it and to flatten our
+ * message list into the single prompt those CLIs take.
+ */
+
+/** Path of the first executable of that name on PATH, or undefined. Never runs it. */
+export function onPath(name: string): string | undefined {
+  for (const dir of (env.PATH ?? "").split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Not here; keep walking PATH.
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Runs a CLI and resolves both its streams. Used by the auth probes only, and they need
+ * both: `codex login status` reports on stderr and still exits 0.
+ */
+export function runCli(
+  file: string,
+  args: string[],
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { timeout: 10_000 }, (error, stdout, stderr) =>
+      error ? reject(error) : resolve({ stdout, stderr }),
+    );
+  });
+}
+
+/** The system messages, which the CLIs take separately from the conversation. */
+export const systemOf = (messages: Message[]): string =>
+  messages
+    .filter((m) => m.role === "system")
+    .map((m) => m.content)
+    .join("\n\n");
+
+/**
+ * The conversation as one prompt. The CLIs own no history here — the loop replays the
+ * whole transcript each turn, exactly as it does for the HTTP adapter.
+ */
+export function renderTranscript(messages: Message[]): string {
+  const lines: string[] = [];
+  for (const message of messages) {
+    if (message.role === "system") continue;
+    if (message.role === "tool") {
+      lines.push(`Tool result (${message.tool_call_id}): ${message.content}`);
+      continue;
+    }
+    const calls = (message.tool_calls ?? []).map(
+      (call) => `\n[called ${call.name} with ${call.arguments} as ${call.id}]`,
+    );
+    const body = `${message.content}${calls.join("")}`;
+    if (body) lines.push(`${message.role === "user" ? "User" : "Assistant"}: ${body}`);
+  }
+  return lines.join("\n\n");
 }
 
 export function openaiCompat(config: OpenAICompatConfig): Provider & {
