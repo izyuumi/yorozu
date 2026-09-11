@@ -1,4 +1,5 @@
 import SwiftUI
+import YorozuShared
 
 @main
 struct YorozuApp: App {
@@ -12,7 +13,17 @@ struct RootView: View {
 
     var body: some View {
         if model.isPaired {
-            ChatView(model: model)
+            ThreadListView(
+                threads: model.threads,
+                onCreate: { model.createThread(title: $0) },
+                onArchive: model.archive
+            ) { thread in
+                ChatView(model: model, thread: thread)
+                    .toolbar {
+                        Button("Unpair", systemImage: "qrcode") { model.unpair() }
+                    }
+            }
+            .task { model.start() }
         } else {
             ScannerView { text in
                 do {
