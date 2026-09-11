@@ -5,6 +5,15 @@ import type { Message, Provider, ToolCall, ToolDef } from "./provider.js";
 import { listScheduleTool, scheduleTool, unscheduleTool } from "./scheduler.js";
 import { skillTool } from "./skills.js";
 import { browserTools } from "./tools/browser.js";
+import { fsListTool, fsReadTool, fsWriteTool } from "./tools/fs.js";
+import {
+  inputClickTool,
+  inputKeyTool,
+  inputTypeTool,
+  screenCaptureTool,
+  screenReadTool,
+} from "./tools/native.js";
+import { shellTool } from "./tools/shell.js";
 import { readTranscriptsTool } from "./transcripts.js";
 
 export * from "./provider.js";
@@ -21,6 +30,9 @@ export * from "./claude.js";
 export * from "./codex.js";
 export * from "./probe.js";
 export * from "./tools/browser.js";
+export * from "./tools/shell.js";
+export * from "./tools/fs.js";
+export * from "./tools/native.js";
 
 /** One line per event, as the agent loop will emit them. */
 export function describeEvent(event: YorozuEvent): string {
@@ -56,6 +68,15 @@ export const defaultTools: Tool[] = [
   unscheduleTool,
   listScheduleTool,
   readTranscriptsTool,
+  shellTool,
+  fsReadTool,
+  fsWriteTool,
+  fsListTool,
+  screenReadTool,
+  screenCaptureTool,
+  inputClickTool,
+  inputTypeTool,
+  inputKeyTool,
   ...browserTools,
   skillTool,
 ];

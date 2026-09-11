@@ -287,3 +287,54 @@ existing skill directories drop in unchanged, nothing is copied or rewritten. On
 names and descriptions are listed into the main system prompt; the body loads on demand through
 the `skill(name)` tool. Agent and skill names from the model are resolved against the listing
 rather than joined into a path.
+
+## Native tools
+
+`packages/runtime/src/tools/shell.ts` and `fs.ts` are plain Node: a command line through
+`/bin/sh` with its combined output and exit status, and unrestricted file access running as the
+user. Both cap a result at 20 000 characters — a result the model cannot afford is no use to
+it. A non-zero exit is returned, not thrown: the model asked what happens, and the output plus
+the status is the answer.
+
+Screen and input need frameworks Node cannot reach, so `apps/mac` builds a second executable
+beside the menu bar app: `yorozu-native`, which speaks one JSON request per line on stdin and
+one response per line on stdout. The runtime spawns it once and multiplexes every call over
+that pipe, matching each reply by the `rid` the helper echoes back (`rid`, not `id`: an element
+ID travels as `id`, and the two must not collide).
+
+| Tool | Helper command | What it does |
+| --- | --- | --- |
+| `shell` | — | a command through `/bin/sh`, combined output, optional `cwd` and timeout |
+| `fs_read` / `fs_write` / `fs_list` | — | read a file, write one creating parents, list a directory |
+| `screen_read` | `ax.read` | frontmost window as an indented tree: element ID, role, label, value, bounds |
+| `screen_capture` | `screen.capture` | ScreenCaptureKit grab of the main display, saved as a PNG |
+| `input_click` | `input.click` | CGEvent click on an element ID or on screen coordinates |
+| `input_type` | `input.type` | CGEvent Unicode typing, so it is keyboard-layout independent |
+| `input_key` | `input.key` | one key plus `cmd`/`shift`/`ctrl`/`alt`/`fn`, for shortcuts |
+
+These names use `_` where the spec writes `.`, because provider function names are limited to
+`[A-Za-z0-9_-]` and `screen.read` would be rejected.
+
+Element IDs (`e1`, `e2`, …) are handed out by `ax.read` and live only inside the helper: an
+`AXUIElement` reference means nothing to any other process, so only the IDs cross the pipe.
+They stay valid until the next read. The walk is bounded at depth 12 and 400 nodes and skips
+hidden and zero-sized elements with their subtrees — nothing clickable is lost, and a real tree
+stays readable (Finder's window comes back as 400 nodes even so).
+
+`screen_read` falls back to a screenshot on its own when the frontmost window exposes no tree,
+as the spec asks, so the model gets something to work with rather than a dead end it has to
+notice. `screen_capture` saves the PNG under `<YOROZU_STATE_DIR>/screenshots` and returns its
+path rather than image content: none of the three adapters can carry an image back into a turn
+today — the OpenAI-compatible one sends tool results as plain strings, the Claude one denies
+every call and never sees a result, and Codex takes no tools at all — so an image-bearing tool
+result would be plumbing with nothing on the other end.
+
+`YOROZU_NATIVE_CMD` is the helper command, run through `/bin/sh`, defaulting to the
+`swift build` product (`apps/mac/.build/debug/yorozu-native`) resolved from the runtime's
+`dist/tools`. The Mac app overrides it with the copy inside its own bundle, which is also what
+makes the grants stick: TCC keys Accessibility and Screen Recording on the bundle's signature,
+so `scripts/dev-bundle.sh` copies the helper in next to the app binary. Without a bundle the
+helper still works wherever the parent process already holds those grants.
+
+The native tools are tested against a fake helper speaking the same line protocol, so they need
+no AX, no display and no Mac; the `shell` and `fs` tests are real.

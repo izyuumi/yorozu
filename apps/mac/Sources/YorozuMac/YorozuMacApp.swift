@@ -26,7 +26,14 @@ final class Sidecar: ObservableObject {
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", command]
         // Whatever the provider cards configured, including the Keychain API key.
-        process.environment = ProviderSettings.environment()
+        var environment = ProviderSettings.environment()
+        // The native tool host, if this build is bundled: quoted because the runtime runs the
+        // command through /bin/sh, and an .app can sit in a path with spaces in it.
+        if environment["YOROZU_NATIVE_CMD"] == nil,
+           let helper = Bundle.main.url(forAuxiliaryExecutable: "yorozu-native") {
+            environment["YOROZU_NATIVE_CMD"] = "'\(helper.path)'"
+        }
+        process.environment = environment
         process.standardOutput = output
         do {
             try process.run()
