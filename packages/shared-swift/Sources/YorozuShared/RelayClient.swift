@@ -60,24 +60,12 @@ private struct Inbound: Decodable {
 ///
 /// Transport only — it owns no UI state, so the Mac app can reuse it for its own client half.
 /// Mirrors the sidecar in packages/runtime/src/serve.ts.
-public actor RelayClient {
-    public enum State: String, Sendable {
-        case connecting
-        /// Accepted into the room; the Mac may still be offline.
-        case joined
-        /// `hello` sent and the session key derived: sealed events can flow.
-        case paired
-        case closed
-    }
-
-    public enum Update: Sendable {
-        case state(State)
-        /// The relay's view of whether the room's Mac holds a live socket. Frames sent while
-        /// it is false are buffered by the relay and drained when the Mac returns.
-        case ownerOnline(Bool)
-        case event(YorozuEvent)
-        case failed(String)
-    }
+public actor RelayClient: ChatTransport {
+    /// Spelled as nested names because this client predates ``ChatTransport`` and its callers
+    /// already say `RelayClient.State`. `ownerOnline` is the relay's view of whether the room's
+    /// Mac holds a live socket: frames sent while it is false are buffered and drained later.
+    public typealias State = TransportState
+    public typealias Update = TransportUpdate
 
     private let pairing: QrPayload
     private let identity: PhoneIdentity

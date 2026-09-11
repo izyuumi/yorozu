@@ -33,6 +33,7 @@ import { autoAssign, revertAssign, setAssignCron, type AssignMode } from "./assi
 import { chainFromEnv } from "./chain.js";
 import { delegateTool } from "./delegate.js";
 import { defaultTools, eventPayload, runAgent } from "./index.js";
+import { localSocketPath, startLocalChannel, type Send } from "./local.js";
 import type { Provider } from "./provider.js";
 import { probe } from "./probe.js";
 import { startScheduler } from "./scheduler.js";
@@ -162,15 +163,23 @@ export function serve(options: ServeOptions = {}): Sidecar {
    */
   const devices = new Map<string, Uint8Array>();
 
+  /**
+   * The same thing for devices on the local socket, which need no key: the Mac app is one more
+   * paired device, it just reached us without the relay. Kept apart from ``devices`` only
+   * because what it stores per device is a writer rather than a session key.
+   */
+  const locals = new Map<string, Send>();
+
   let socket: WebSocket | null = null;
   let retry: NodeJS.Timeout | null = null;
   let stopped = false;
   /** Seals and sends to one paired device. Replaced per connection, a no-op while there is none. */
   let sendTo: (device: string, event: YorozuEvent) => void = () => {};
 
-  /** The same event to every paired phone. */
+  /** The same event to every paired device, through the relay or over the local socket. */
   const broadcast = (event: YorozuEvent): void => {
     for (const device of devices.keys()) sendTo(device, event);
+    for (const send of locals.values()) send(event);
   };
 
   /** Everything the runtime sees is logged first: the nightly job reads the log back. */
@@ -328,6 +337,72 @@ export function serve(options: ServeOptions = {}): Sidecar {
     emit(message(reply));
   }
 
+  /**
+   * One event from a paired device, however it reached us — a sealed relay frame or a line on
+   * the local socket. `reply` answers that one device; the thread admin cases answer all of
+   * them, so a second device sees the same list.
+   */
+  function handleEvent(event: YorozuEvent, reply: Send): void {
+    appendTranscript(event, transcripts);
+    appendThreadEvent(event, dir);
+
+    switch (event.kind) {
+      case "interrupt":
+        for (const turn of running) turn.abort();
+        running.clear();
+        // A turn parked on a card would never notice the abort otherwise.
+        for (const { settle } of [...pending.values()]) settle({ answer: "no" });
+        return;
+      case "approval_answer":
+        pending.get(event.data.actionId)?.settle({ answer: event.data.answer });
+        return;
+      // Thread admin is answered to every device, so a second phone sees the same list.
+      case "thread_create":
+        createThread(event.data.title, dir);
+        return broadcast(threadList());
+      case "thread_archive":
+        archiveThread(event.threadId, dir);
+        return broadcast(threadList());
+      case "thread_list":
+        return reply(threadList());
+      case "sync_request":
+        return reply(syncDelta(event.data.lastSeen));
+    }
+
+    if (event.kind !== "message" || event.data.role !== "user") return;
+    // A plain "yes" while a card is up answers the card rather than starting a turn.
+    const [oldest] = pending.values();
+    const typed = oldest && typedAnswer(event.data.text, oldest.card);
+    if (typed) return oldest.settle(typed);
+    runTurn(event.threadId, event.data.text, true).catch((e: unknown) =>
+      state(`agent-error ${String(e)}`),
+    );
+  }
+
+  /**
+   * The relay-free path in: the Mac app's own chat UI connects here instead of pairing. Its
+   * first frame is the thread list, exactly as a phone's `hello` is answered with one.
+   */
+  const local = startLocalChannel({
+    path: localSocketPath(dir),
+    onOpen: (device, send) => {
+      locals.set(device, send);
+      state("local-connected");
+      send(threadList());
+    },
+    onEvent: (device, event) => {
+      try {
+        handleEvent(event, locals.get(device) ?? (() => {}));
+      } catch (e) {
+        state(`local-event-error ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+    onClose: (device) => {
+      locals.delete(device);
+    },
+    onError: state,
+  });
+
   function connect(): void {
     state("connecting");
     const ws = new WebSocket(relayUrl);
@@ -381,40 +456,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const opened = openFrom(body);
       if (!opened) return;
       const [device, event] = opened;
-      appendTranscript(event, transcripts);
-      appendThreadEvent(event, dir);
-
-      switch (event.kind) {
-        case "interrupt":
-          for (const turn of running) turn.abort();
-          running.clear();
-          // A turn parked on a card would never notice the abort otherwise.
-          for (const { settle } of [...pending.values()]) settle({ answer: "no" });
-          return;
-        case "approval_answer":
-          pending.get(event.data.actionId)?.settle({ answer: event.data.answer });
-          return;
-        // Thread admin is answered to every device, so a second phone sees the same list.
-        case "thread_create":
-          createThread(event.data.title, dir);
-          return broadcast(threadList());
-        case "thread_archive":
-          archiveThread(event.threadId, dir);
-          return broadcast(threadList());
-        case "thread_list":
-          return sendTo(device, threadList());
-        case "sync_request":
-          return sendTo(device, syncDelta(event.data.lastSeen));
-      }
-
-      if (event.kind !== "message" || event.data.role !== "user") return;
-      // A plain "yes" while a card is up answers the card rather than starting a turn.
-      const [oldest] = pending.values();
-      const typed = oldest && typedAnswer(event.data.text, oldest.card);
-      if (typed) return oldest.settle(typed);
-      runTurn(event.threadId, event.data.text, true).catch((e: unknown) =>
-        state(`agent-error ${String(e)}`),
-      );
+      handleEvent(event, (answer) => sendTo(device, answer));
     }
 
     ws.on("open", () => state("connected"));
@@ -479,6 +521,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       stopped = true;
       scheduler.stop();
       if (retry) clearTimeout(retry);
+      await local.close();
       // Whatever the agent opened in the browser goes away with the sidecar.
       await closeBrowser();
       return new Promise<void>((done) => {

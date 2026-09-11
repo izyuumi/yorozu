@@ -1,0 +1,185 @@
+import Foundation
+
+extension ThreadSummary {
+    /// The thread that always exists, so the list is never empty — not even before pairing.
+    public static let home = ThreadSummary(id: "home", title: "Home", archived: false, pinned: true)
+}
+
+/// Every thread a client knows about: the connection, the events per thread, and whether the
+/// runtime is reachable. Shared by both apps — what differs between them is the
+/// ``ChatTransport`` handed in, the relay on the phone and the local socket on the Mac.
+///
+/// History is read from the ``ThreadCache`` first when there is one, so the phone opens and
+/// reads offline; `sync_delta` fills in whatever happened since. The Mac passes no cache: the
+/// thread logs on its own disk are the originals.
+@MainActor
+@Observable
+public final class ChatModel {
+    public private(set) var threads: [ThreadSummary] = [.home]
+    /// Events per thread id, oldest first.
+    public private(set) var events: [String: [YorozuEvent]] = [:]
+    public private(set) var state: TransportState = .connecting
+    /// Starts pessimistic: the transport tells us the truth when it connects.
+    public private(set) var ownerOnline = false
+    public private(set) var failure: String?
+    /// Action IDs already answered from this device, so the card stops offering buttons.
+    public private(set) var answered: Set<String> = []
+    /// One composer draft per thread, so switching threads does not lose what was typed.
+    public var drafts: [String: String] = [:]
+
+    /// Called once the transport can carry events. The iOS end-to-end harness drives its first
+    /// message from here; the Mac app has no use for it.
+    public var onPaired: (() -> Void)?
+    /// Called whenever the runtime sends a new thread list.
+    public var onThreads: (() -> Void)?
+    /// Called for every event kept in a thread, after it has been applied.
+    public var onEvent: ((YorozuEvent) -> Void)?
+
+    private let transport: any ChatTransport
+    private let cache: ThreadCache?
+    /// What this client tags the events it emits with.
+    private let device: String
+    private var started = false
+
+    public init(transport: any ChatTransport, cache: ThreadCache? = nil, device: String = "phone") {
+        self.transport = transport
+        self.cache = cache
+        self.device = device
+        guard let cache else { return }
+        let cached = cache.threads()
+        if !cached.isEmpty { threads = cached }
+        for thread in threads { events[thread.id] = cache.events(threadId: thread.id) }
+    }
+
+    /// Connects and applies updates until the transport ends. Calling it twice does nothing.
+    public func start() {
+        guard !started else { return }
+        started = true
+        Task { [weak self] in
+            guard let stream = await self?.transport.connect() else { return }
+            for await update in stream { self?.apply(update) }
+        }
+    }
+
+    public func close() {
+        Task { [transport] in await transport.close() }
+    }
+
+    public func send(in thread: ThreadSummary) {
+        let text = (drafts[thread.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        drafts[thread.id] = ""
+        send(text, in: thread.id)
+    }
+
+    public func send(_ text: String, in threadId: String) {
+        let event = YorozuEvent(
+            id: UUID().uuidString,
+            threadId: threadId,
+            ts: Int(Date().timeIntervalSince1970 * 1000),
+            agentId: device,
+            payload: .message(MessageData(role: .user, text: text))
+        )
+        upsert(event)
+        emit(event)
+    }
+
+    public func createThread(title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The runtime mints the id and answers every device with the new list.
+        emit(
+            .threadCreate(ThreadCreateData(title: trimmed.isEmpty ? nil : trimmed)),
+            in: ThreadSummary.home.id
+        )
+    }
+
+    public func archive(_ thread: ThreadSummary) {
+        guard !thread.pinned else { return }
+        // Optimistic: the runtime's `thread_list` is what finally decides.
+        threads.removeAll { $0.id == thread.id }
+        emit(.threadArchive(ThreadArchiveData()), in: thread.id)
+    }
+
+    /// Answers a pending approval card, in the thread the card was raised in. `Discuss` is
+    /// answered too: the runtime keeps the action pending and sends a fresh card, with a new
+    /// action ID, after it has explained itself.
+    public func answer(_ actionId: String, in threadId: String, _ answer: ApprovalAnswerData.Answer) {
+        answered.insert(actionId)
+        emit(.approvalAnswer(ApprovalAnswerData(actionId: actionId, answer: answer)), in: threadId)
+    }
+
+    private func emit(_ payload: YorozuEvent.Payload, in threadId: String) {
+        emit(
+            YorozuEvent(
+                id: UUID().uuidString,
+                threadId: threadId,
+                ts: Int(Date().timeIntervalSince1970 * 1000),
+                agentId: device,
+                payload: payload
+            )
+        )
+    }
+
+    private func emit(_ event: YorozuEvent) {
+        Task { [transport] in try? await transport.send(event) }
+    }
+
+    /// Asks for everything each thread has gained since the last event we hold.
+    private func requestSync() {
+        emit(
+            .syncRequest(SyncRequestData(lastSeen: events.compactMapValues { $0.last?.id })),
+            in: ThreadSummary.home.id
+        )
+    }
+
+    private func apply(_ update: TransportUpdate) {
+        switch update {
+        case .state(let state):
+            self.state = state
+            if state == .paired {
+                failure = nil
+                requestSync()
+                onPaired?()
+            }
+        case .ownerOnline(let online):
+            ownerOnline = online
+        case .event(let event):
+            switch event.payload {
+            case .threadList(let data):
+                threads = data.threads.filter { !$0.archived }
+                cache?.save(threads: threads)
+                onThreads?()
+            case .syncDelta(let data):
+                for event in data.events { upsert(event) }
+            default:
+                upsert(event)
+            }
+        case .failed(let reason):
+            failure = reason
+        }
+    }
+
+    /// Every kind is kept, per thread, in arrival order: the thread draws the messages and the
+    /// approval cards, and the thoughts, tool calls and results behind them are what the
+    /// drill-down traces. It is also what the cache holds, so a relaunch redraws the same
+    /// thread offline.
+    ///
+    /// Agent replies stream as repeated events under one id, each carrying the whole text so
+    /// far, so the newest wins in place instead of appending a duplicate bubble.
+    private func upsert(_ event: YorozuEvent) {
+        var thread = events[event.threadId] ?? []
+        if let index = thread.firstIndex(where: { $0.id == event.id }) {
+            thread[index] = event
+        } else {
+            thread.append(event)
+        }
+        events[event.threadId] = thread
+        cache?.save(events: thread, threadId: event.threadId)
+        onEvent?(event)
+    }
+
+    /// The thread's title, for anything that has only an id. Falls back to the id itself.
+    public func title(of threadId: String) -> String {
+        threads.first { $0.id == threadId }?.title ?? threadId
+    }
+}

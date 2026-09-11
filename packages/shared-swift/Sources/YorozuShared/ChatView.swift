@@ -1,10 +1,24 @@
 import SwiftUI
-import YorozuShared
 
-/// One thread's messages. Pushed by ``ThreadListView``, which owns the navigation stack.
-struct ChatView: View {
-    @Bindable var model: ChatModel
-    let thread: ThreadSummary
+/// One thread's messages, shared by both apps: the phone pushes it from ``ThreadListView``, the
+/// Mac shows it as the detail half of its split view. Either way it has to sit inside a
+/// navigation stack, which is what the trace drill-down pushes onto.
+public struct ChatView: View {
+    public let model: ChatModel
+    public let thread: ThreadSummary
+    /// Shown while the runtime is unreachable. The two apps lose it differently: the phone's
+    /// frames are buffered by the relay, the Mac's sidecar is simply not running yet.
+    public let offlineNotice: String
+
+    public init(
+        model: ChatModel,
+        thread: ThreadSummary,
+        offlineNotice: String = "Mac offline — messages are held by the relay until it returns."
+    ) {
+        self.model = model
+        self.thread = thread
+        self.offlineNotice = offlineNotice
+    }
 
     private var events: [YorozuEvent] { model.events[thread.id] ?? [] }
 
@@ -12,13 +26,10 @@ struct ChatView: View {
         Binding(get: { model.drafts[thread.id] ?? "" }, set: { model.drafts[thread.id] = $0 })
     }
 
-    var body: some View {
+    public var body: some View {
         VStack(spacing: 0) {
             if !model.ownerOnline {
-                Banner(
-                    text: "Mac offline — messages are held by the relay until it returns.",
-                    systemImage: "desktopcomputer.trianglebadge.exclamationmark"
-                )
+                Banner(text: offlineNotice, systemImage: "desktopcomputer.trianglebadge.exclamationmark")
             }
             if let failure = model.failure {
                 Banner(text: failure, systemImage: "exclamationmark.triangle")
@@ -26,10 +37,12 @@ struct ChatView: View {
             messages
             composer
         }
-        // Inside the list's stack: a trace pushed from here keeps streaming this thread.
+        // Inside the stack: a trace pushed from here keeps streaming this thread.
         .agentTraceDestination { events }
         .navigationTitle(thread.title)
-        .navigationBarTitleDisplayMode(.inline)
+        #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+        #endif
     }
 
     private var messages: some View {
@@ -76,6 +89,7 @@ struct ChatView: View {
             Button("Send", systemImage: "arrow.up.circle.fill") { model.send(in: thread) }
                 .labelStyle(.iconOnly)
                 .font(.title2)
+                .buttonStyle(.plain)
                 .disabled(draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .padding()
@@ -83,14 +97,18 @@ struct ChatView: View {
     }
 }
 
+/// Semantic fills rather than UIKit colours: the same bubble has to draw on both platforms.
 private struct Bubble: View {
     let data: MessageData
 
     var body: some View {
         Text(data.text)
+            .textSelection(.enabled)
             .padding(10)
-            .background(data.role == .user ? Color.accentColor.opacity(0.15) : Color(.secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .background(
+                data.role == .user ? AnyShapeStyle(Color.accentColor.opacity(0.15)) : AnyShapeStyle(.quaternary),
+                in: RoundedRectangle(cornerRadius: 12)
+            )
             .frame(maxWidth: .infinity, alignment: data.role == .user ? .trailing : .leading)
     }
 }
@@ -104,6 +122,6 @@ private struct Banner: View {
             .font(.footnote)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(8)
-            .background(Color(.secondarySystemBackground))
+            .background(.quaternary)
     }
 }

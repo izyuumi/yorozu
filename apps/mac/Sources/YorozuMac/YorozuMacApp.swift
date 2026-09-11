@@ -100,7 +100,6 @@ struct PairingView: View {
                 set: { $0 ? neverSleep.start() : neverSleep.stop() }
             ))
             Button("Set Up Permissions…") { OnboardingWindow.show() }
-            Button("Quit") { NSApp.terminate(nil) }
         }
     }
 }
@@ -111,6 +110,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Permission.logAll()
             NeverSleep.shared.restoreFromDefaults()
             Sidecar.shared.start()
+            // Connects to the sidecar's local socket once it is listening. Not tied to the
+            // window: the chat has to keep up while the menu bar window is closed.
+            LocalChat.start()
             OnboardingWindow.showIfFirstLaunch()
         }
     }
@@ -131,21 +133,12 @@ struct YorozuMacApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            VStack(spacing: 12) {
-                PairingView(sidecar: sidecar)
-                Divider()
-                ProvidersView()
-                Divider()
-                BrowserView()
-                Divider()
-                ModelsView()
-                Button("Quit") { NSApp.terminate(nil) }
-            }
-            .padding()
-            .frame(width: 300)
+            ChatWindowView()
         } label: {
             Image(systemName: sidecar.isPaired ? "circle.fill" : "circle.dotted")
         }
         .menuBarExtraStyle(.window)
+
+        Settings { SettingsView(sidecar: sidecar) }
     }
 }
