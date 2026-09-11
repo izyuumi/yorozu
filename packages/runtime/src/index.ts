@@ -10,6 +10,10 @@ export * from "./memory.js";
 export * from "./cron.js";
 export * from "./scheduler.js";
 export * from "./transcripts.js";
+export * from "./chain.js";
+export * from "./claude.js";
+export * from "./codex.js";
+export * from "./probe.js";
 
 /** One line per event, as the agent loop will emit them. */
 export function describeEvent(event: YorozuEvent): string {
