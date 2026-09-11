@@ -9,10 +9,6 @@ import YorozuShared
 final class Sidecar: ObservableObject {
     static let shared = Sidecar()
 
-    /// Dev default: `swift run` from `apps/mac` leaves the repo layout reachable.
-    /// Override with YOROZU_RUNTIME_CMD; the DMG will point it at the bundled runtime.
-    static let defaultCommand = "node ../../packages/runtime/dist/serve.js"
-
     @Published private(set) var state = "starting"
     @Published private(set) var qr: NSImage?
 
@@ -21,7 +17,8 @@ final class Sidecar: ObservableObject {
     var isPaired: Bool { state == "paired" }
 
     func start() {
-        let command = ProcessInfo.processInfo.environment["YOROZU_RUNTIME_CMD"] ?? Self.defaultCommand
+        let command = ProcessInfo.processInfo.environment["YOROZU_RUNTIME_CMD"]
+            ?? RuntimeCommand.defaultCommand
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", command]
@@ -140,6 +137,8 @@ struct YorozuMacApp: App {
                 ProvidersView()
                 Divider()
                 BrowserView()
+                Divider()
+                ModelsView()
                 Button("Quit") { NSApp.terminate(nil) }
             }
             .padding()

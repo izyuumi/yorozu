@@ -10,8 +10,10 @@ export interface Frontmatter {
   body: string;
 }
 
+const HEAD = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+
 export function frontmatter(text: string): Frontmatter {
-  const head = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text);
+  const head = HEAD.exec(text);
   const fields = new Map<string, string>();
   for (const line of head?.[1]?.split(/\r?\n/) ?? []) {
     const colon = line.indexOf(":");
@@ -24,4 +26,20 @@ export function frontmatter(text: string): Frontmatter {
     }
   }
   return { fields, body: text.slice(head?.[0]?.length ?? 0).trim() };
+}
+
+/**
+ * Sets one field, in place, on the raw file text: everything the file already held —
+ * comments, spacing, the body — survives. A file without a head gets one. `key` is always
+ * the runtime's own, never model input.
+ */
+export function setField(text: string, key: string, value: string): string {
+  const head = HEAD.exec(text);
+  if (!head) return `---\n${key}: ${value}\n---\n${text}`;
+  const line = new RegExp(`^${key}:.*$`, "m");
+  const fields = head[1]!;
+  const next = line.test(fields)
+    ? fields.replace(line, `${key}: ${value}`)
+    : `${fields}\n${key}: ${value}`;
+  return `---\n${next}\n---\n${text.slice(head[0].length)}`;
 }
