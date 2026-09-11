@@ -208,6 +208,52 @@ what gives the app its `application-identifier` entitlement, and without one eve
 fails with `-34018` (`errSecMissingEntitlement`), so pairing never persists. It needs no developer
 account.
 
+## Threads
+
+A thread is an append-only log: `<YOROZU_STATE_DIR>/threads/<id>.jsonl`, one event per line,
+with `threads.json` beside it as the index (`id`, `title`, `createdAt`, `archived`). `home` is
+seeded on first run, is pinned, and never archives — `archiveThread("home")` refuses, and a
+hand-edited index claiming otherwise is repaired on the next read. Only conversation events are
+logged (`message`, `thought`, `tool_call`, `tool_result`, `approval_card`, `approval_answer`);
+sync and thread admin are control traffic and leave no trace.
+
+Every turn runs in its own thread and is given that thread's history as context: `threadHistory`
+replays the last 40 messages and nothing cleverer yet (there is a `TODO` in `src/threads.ts` for
+summarising what falls off the front). A turn nobody typed — a due job, a background delegation —
+is recorded as the user message it stands in for, so the thread reads back whole.
+
+The phone drives it with the events the protocol already has: `thread_create` (optional title),
+`thread_archive` (the thread is the event's own `threadId`), and `thread_list`, which the sidecar
+also sends unprompted the moment a device pairs. `sync_request` carries `lastSeen`, a last-held
+event id per thread, and is answered with one `sync_delta` holding everything after those ids
+across *every* live thread — capped at 200 events each, and an id the log no longer has means the
+tail rather than nothing.
+
+### Several phones at once
+
+The sidecar keeps one session key per device, keyed by the X25519 key that phone announced in its
+`hello`, instead of the single newest-wins key it had before. Agent events are sealed once per
+device and broadcast; relay frames carry no sender, so an inbound box is attributed to whichever
+session key opens it, which is also how a `sync_request` is answered to just the phone that asked.
+Because every phone receives the copies meant for the others, `RelayClient` drops a frame it
+cannot open silently rather than reporting it.
+
+Join tokens stay one-time, but a burnt one is now replaced immediately: pairing mints the next
+token and prints a fresh `QR` line, so the Mac's menu bar is always showing a code a second device
+can use.
+
+### Phone-side cache
+
+`ThreadCache` in `packages/shared-swift` keeps the thread list and one file per thread under
+`Application Support/threads`, each sealed with AES-GCM (CryptoKit) under a 32-byte key the app
+stores in the Keychain (`CacheStore`, next to the pairing in `Keychain`). Application Support is
+readable by anything that reaches the container, so the encryption — not the location — is what
+protects it. A cache is only a cache: a missing, tampered or wrong-key file reads back empty, and
+the `sync_request` the app sends on connect refills it. Unpairing deletes the files and the key.
+
+That is what makes the app work offline: the list and every thread are read from disk at launch,
+before the relay is even reachable.
+
 ## Browser
 
 `packages/runtime/src/tools/browser.ts` drives a Chromium-family browser over CDP — the protocol

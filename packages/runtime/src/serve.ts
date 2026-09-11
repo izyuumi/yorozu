@@ -22,6 +22,7 @@ import {
   signFrame,
   toBase64Url,
   type ApprovalCardData,
+  type EventPayload,
   type Keypair,
   type YorozuEvent,
 } from "@yorozu/shared";
@@ -36,6 +37,16 @@ import type { Provider } from "./provider.js";
 import { probe } from "./probe.js";
 import { startScheduler } from "./scheduler.js";
 import { listSkills, skillsDir, skillsPrompt } from "./skills.js";
+import {
+  appendThreadEvent,
+  archiveThread,
+  createThread,
+  eventsAfter,
+  HOME_THREAD,
+  listThreads,
+  threadHistory,
+  threadSummaries,
+} from "./threads.js";
 import { closeBrowser } from "./tools/browser.js";
 import { useProviderSearch } from "./tools/search.js";
 import { appendTranscript, transcriptDir } from "./transcripts.js";
@@ -141,16 +152,32 @@ export function serve(options: ServeOptions = {}): Sidecar {
   /** One controller per running turn, so an `interrupt` cancels every tree at once. */
   const running = new Set<AbortController>();
 
+  // Home exists before any phone asks for it.
+  listThreads(dir);
+
+  /**
+   * Session key per paired device, keyed by the X25519 public key it announced. Several
+   * phones can be paired at once, so every agent event is sealed once per device; the map
+   * outlives the socket, so a reconnect unpairs nobody.
+   */
+  const devices = new Map<string, Uint8Array>();
+
   let socket: WebSocket | null = null;
   let retry: NodeJS.Timeout | null = null;
   let stopped = false;
-  /** Seals and sends to the paired phone. Replaced per connection, a no-op while there is none. */
-  let sendEvent: (event: YorozuEvent) => void = () => {};
+  /** Seals and sends to one paired device. Replaced per connection, a no-op while there is none. */
+  let sendTo: (device: string, event: YorozuEvent) => void = () => {};
+
+  /** The same event to every paired phone. */
+  const broadcast = (event: YorozuEvent): void => {
+    for (const device of devices.keys()) sendTo(device, event);
+  };
 
   /** Everything the runtime sees is logged first: the nightly job reads the log back. */
   function emit(event: YorozuEvent): void {
     appendTranscript(event, transcripts);
-    sendEvent(event);
+    appendThreadEvent(event, dir);
+    broadcast(event);
   }
 
   /** Cards on screen somewhere, waiting to be answered, by action ID. */
@@ -185,7 +212,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       });
       emit({
         id: randomUUID(),
-        threadId: context?.threadId ?? "home",
+        threadId: context?.threadId ?? HOME_THREAD,
         ts: Date.now(),
         agentId: context?.agentId ?? MAIN_AGENT,
         kind: "approval_card",
@@ -194,11 +221,49 @@ export function serve(options: ServeOptions = {}): Sidecar {
     });
   }
 
+  const control = (payload: EventPayload): YorozuEvent => ({
+    id: randomUUID(),
+    threadId: HOME_THREAD,
+    ts: Date.now(),
+    agentId: MAIN_AGENT,
+    ...payload,
+  });
+
+  const threadList = (): YorozuEvent =>
+    control({ kind: "thread_list", data: { threads: threadSummaries(dir) } });
+
+  /** Everything the device has not seen, across every live thread, in one frame. */
+  const syncDelta = (lastSeen: Record<string, string>): YorozuEvent =>
+    control({
+      kind: "sync_delta",
+      data: {
+        events: listThreads(dir)
+          .filter((thread) => !thread.archived)
+          .flatMap((thread) => eventsAfter(thread.id, lastSeen?.[thread.id], dir)),
+      },
+    });
+
   /**
    * One agent turn in `threadId`, however it was started — a phone message or a due job —
    * with its reply emitted to the phone the same way either way.
    */
-  async function runTurn(threadId: string, text: string): Promise<void> {
+  async function runTurn(threadId: string, text: string, recorded = false): Promise<void> {
+    // A turn the phone did not send — a due job, a background delegation — is still part of
+    // the thread, so it is recorded as the user message it stands in for.
+    if (!recorded) {
+      appendThreadEvent(
+        {
+          id: randomUUID(),
+          threadId,
+          ts: Date.now(),
+          agentId: MAIN_AGENT,
+          kind: "message",
+          data: { role: "user", text },
+        },
+        dir,
+      );
+    }
+
     // The reply streams under one id: every delta re-sends the whole text so far, so the phone
     // replaces that message in place and a dropped frame still converges. Only the finished
     // reply goes through `emit`, so the transcript keeps one line per turn rather than one
@@ -234,7 +299,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
       for await (const event of runAgent({
         provider,
         system,
-        messages: [{ role: "user", content: text }],
+        // The thread's own history is the context, compacted by `threadHistory`.
+        messages: threadHistory(threadId, dir),
         tools,
         context: { threadId, agentId: MAIN_AGENT },
         ask,
@@ -242,7 +308,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       })) {
         if (event.type === "text") {
           reply += event.text;
-          sendEvent(message(reply));
+          broadcast(message(reply));
         } else if (event.type === "final") {
           reply = event.text;
         } else {
@@ -266,9 +332,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
     state("connecting");
     const ws = new WebSocket(relayUrl);
     socket = ws;
-    // One phone at a time: the relay frames carry no sender, so the newest pairing wins
-    // until threads (ticket "Threads") give each device an identity.
-    let sessionKey: Uint8Array | null = null;
     let room: string | null = null;
 
     const sendFrame = (body: FrameBody): void => {
@@ -277,42 +340,79 @@ export function serve(options: ServeOptions = {}): Sidecar {
       ws.send(JSON.stringify({ type: "frame", payload, sig: toBase64Url(sig) }));
     };
 
-    sendEvent = (event: YorozuEvent): void => {
-      if (!sessionKey || ws.readyState !== WebSocket.OPEN) return;
-      const box = seal(sessionKey, Buffer.from(JSON.stringify(event)));
+    sendTo = (device: string, event: YorozuEvent): void => {
+      const key = devices.get(device);
+      if (!key || ws.readyState !== WebSocket.OPEN) return;
+      const box = seal(key, Buffer.from(JSON.stringify(event)));
       sendFrame({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) });
     };
+
+    /**
+     * Frames carry no sender, so the device that sent one is whichever session key opens it.
+     * A box sealed for another phone is simply not ours to read.
+     */
+    function openFrom(body: { n: string; c: string }): [string, YorozuEvent] | null {
+      for (const [device, key] of devices) {
+        try {
+          const plain = open(key, fromBase64Url(body.n), fromBase64Url(body.c));
+          return [device, JSON.parse(Buffer.from(plain).toString()) as YorozuEvent];
+        } catch {
+          // Not sealed for us: try the next paired device.
+        }
+      }
+      return null;
+    }
 
     /** Everything here is attacker-controlled: a bad frame must not kill the sidecar. */
     function onFrame(payload: unknown): void {
       if (typeof payload !== "string") return;
       const body = JSON.parse(Buffer.from(payload, "base64url").toString()) as FrameBody;
       if (body.t === "hello") {
-        sessionKey = deriveSessionKey(keys.session.privateKey, fromBase64Url(body.pub));
+        devices.set(body.pub, deriveSessionKey(keys.session.privateKey, fromBase64Url(body.pub)));
         state("paired");
+        // A phone that has just paired needs the thread list before it can ask for anything.
+        sendTo(body.pub, threadList());
+        // Join tokens are one-time, so the one in the printed QR has just been burnt: mint the
+        // next one now, and the Mac's menu bar shows a QR a second device can still use.
+        ws.send(JSON.stringify({ type: "mint" }));
         return;
       }
-      if (body.t !== "box" || !sessionKey) return;
-      const plain = open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c));
-      const event = JSON.parse(Buffer.from(plain).toString()) as YorozuEvent;
+      if (body.t !== "box") return;
+      const opened = openFrom(body);
+      if (!opened) return;
+      const [device, event] = opened;
       appendTranscript(event, transcripts);
-      if (event.kind === "interrupt") {
-        for (const turn of running) turn.abort();
-        running.clear();
-        // A turn parked on a card would never notice the abort otherwise.
-        for (const { settle } of [...pending.values()]) settle({ answer: "no" });
-        return;
+      appendThreadEvent(event, dir);
+
+      switch (event.kind) {
+        case "interrupt":
+          for (const turn of running) turn.abort();
+          running.clear();
+          // A turn parked on a card would never notice the abort otherwise.
+          for (const { settle } of [...pending.values()]) settle({ answer: "no" });
+          return;
+        case "approval_answer":
+          pending.get(event.data.actionId)?.settle({ answer: event.data.answer });
+          return;
+        // Thread admin is answered to every device, so a second phone sees the same list.
+        case "thread_create":
+          createThread(event.data.title, dir);
+          return broadcast(threadList());
+        case "thread_archive":
+          archiveThread(event.threadId, dir);
+          return broadcast(threadList());
+        case "thread_list":
+          return sendTo(device, threadList());
+        case "sync_request":
+          return sendTo(device, syncDelta(event.data.lastSeen));
       }
-      if (event.kind === "approval_answer") {
-        pending.get(event.data.actionId)?.settle({ answer: event.data.answer });
-        return;
-      }
+
       if (event.kind !== "message" || event.data.role !== "user") return;
       // A plain "yes" while a card is up answers the card rather than starting a turn.
       const [oldest] = pending.values();
       const typed = oldest && typedAnswer(event.data.text, oldest.card);
       if (typed) return oldest.settle(typed);
-      runTurn(event.threadId, event.data.text).catch((e: unknown) =>
+      runTurn(event.threadId, event.data.text, true).catch((e: unknown) =>
         state(`agent-error ${String(e)}`),
       );
     }
