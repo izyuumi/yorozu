@@ -8,3 +8,4 @@ dist/
 *.xcworkspace/
 apps/ios/Derived/
 apps/ios/e2e/.logs/
+*.dmg

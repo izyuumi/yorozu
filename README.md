@@ -608,3 +608,116 @@ that the mode is `0600`, and that the socket is gone once the sidecar closes; `C
 drives the model over a fake transport, which is the protocol's whole point. One thing the tests
 pinned down: the model sends each event in a task of its own, so the order they reach the
 transport in is not fixed — every event carries its own ids and the runtime matches on those.
+
+## Install
+
+The fresh-Mac walkthrough, in the order spec section 10 asks for:
+
+1. Download `Yorozu-<version>.dmg` from the [Releases](https://github.com/izyuumi/yorozu/releases)
+   page.
+2. Open it and drag **Yorozu** onto the Applications shortcut beside it. Eject the disk image
+   and launch Yorozu from Applications — it is a menu bar app, so it appears as an icon in the
+   status bar rather than a window in the Dock.
+3. The permission wizard opens on first launch and walks one grant per page: Accessibility,
+   Screen Recording, Full Disk Access, Automation, Input Monitoring. Each page deep-links to
+   its System Settings pane and re-checks every two seconds, so Continue unlocks on its own
+   once the grant is green. Any step can be skipped and redone later from
+   **Set Up Permissions…**.
+4. Provider cards: one green card is enough. Claude and Codex log in through their own CLIs in
+   Terminal; the OpenAI-compatible card takes a base URL and an API key, which is stored in the
+   Keychain.
+5. Set the two approval floor settings — what the agent may do unasked, and what always needs a
+   yes.
+6. Pick the browser the agent drives: the bundled Chromium (downloaded on first use) or one of
+   your installed browsers. Either way it runs in a profile of its own.
+7. Consent to never-sleep if you want the Mac reachable while it is idle. It is a `caffeinate`
+   process the app owns, and it dies with the app.
+8. Settings → **Pairing** is now showing a pairing QR. Open the Yorozu iOS app and scan it. Done.
+   The menu bar window itself is the chat; ⌘, or the gear at the foot of the sidebar is the way
+   to everything else.
+
+Updates are Sparkle: **Check for Updates…** in the gear menu at the foot of the sidebar, against
+the appcast published beside each release.
+
+### The relay
+
+The Mac and the phone only ever meet through a relay, so one has to be reachable from both. The
+app's Settings → **Relay** field is the URL the sidecar dials; it defaults to
+`ws://100.100.1.1:8787`, the Mac mini above over Tailscale, and moves to the hosted relay later.
+
+Self-host it either way:
+
+```sh
+docker build -t yorozu-relay -f apps/relay/Dockerfile . && docker run -p 8787:8787 yorozu-relay
+```
+
+or, to keep it running on a Mac you already own, as a LaunchAgent:
+
+```sh
+pnpm --filter @yorozu/relay build
+./scripts/install-relay-launchagent.sh          # writes ~/Library/LaunchAgents/to.yumi.yorozu.relay.plist
+```
+
+That one binds every interface on `PORT` (8787), keeps itself alive across crashes and reboots,
+and logs to `~/Library/Logs/yorozu-relay.log`. Reach it over Tailscale rather than a forwarded
+port: the relay is blind, but it is still a service, and Tailscale is what keeps it off the
+public internet. `launchctl bootout gui/$(id -u)/to.yumi.yorozu.relay` stops it.
+
+## Building the DMG
+
+`scripts/build-mac.sh` is the shipping build, as against `scripts/dev-bundle.sh` above:
+
+```sh
+VERSION=0.1.0 ./scripts/build-mac.sh          # prints dist/Yorozu-0.1.0.dmg
+```
+
+It builds the workspace and the Swift release binaries, then assembles `Yorozu.app` with the
+runtime *inside* it — the official `node` for this platform downloaded to
+`Contents/Resources/node`, and the sidecar plus its production dependencies deployed next to
+it — so the app needs nothing installed to run. `YOROZU_RUNTIME_CMD` defaults to that bundled
+pair whenever the app finds it, and falls back to the dev checkout layout otherwise.
+
+It is deliberately not *this machine's* `node`: a Homebrew node is a stub linked against
+`@rpath/libnode.<abi>.dylib` and a dozen other Homebrew dylibs that no `.app` carries, so a
+bundle built around one dies at launch with "Library not loaded" — and because the app only
+checks that the bundled node *exists* before preferring it, that failure is silent: the
+sidecar never starts and the menu bar sits at `starting`. The nodejs.org build links nothing
+but system frameworks. The tarball is cached in `dist/`, and the build runs `node --version`
+once before signing so a node that cannot start fails the build rather than the user.
+
+The bundle is Developer ID signed with the hardened runtime and `apps/mac/Yorozu.entitlements`,
+which is only the three exceptions Node needs: JIT, unsigned executable memory, and library
+validation off (the bundled `node` links Homebrew's dylibs). There is no sandbox — the agent
+drives the whole Mac. The DMG is signed too.
+
+Note that the bundled runtime is large: `@openai/codex` and `@anthropic-ai/claude-agent-sdk`
+vendor ~277 MB and ~194 MB of platform binaries respectively, which is most of the DMG. Moving
+those to a first-run download is what the distribution ticket means by "runtime downloads on
+first run".
+
+### Notarizing
+
+Notarization needs an App Store Connect API key — the `.p8`, its key ID, and the **issuer ID**
+from the Users and Access → Integrations page. Store it once as a keychain profile and
+`build-mac.sh` picks it up. Without one it prints `notarization skipped: no profile` and
+carries on, leaving the DMG Developer ID signed but not notarized — Gatekeeper then asks on
+first launch instead of opening silently.
+
+```sh
+xcrun notarytool store-credentials yorozu-notary \
+  --key ~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8 --key-id <KEYID> --issuer <ISSUER-UUID>
+```
+
+### Sparkle
+
+The update feed is signed with an EdDSA key whose private half lives in the login keychain and
+never leaves it:
+
+```sh
+./apps/mac/.build/artifacts/sparkle/Sparkle/bin/generate_keys   # once, prints the public key
+./scripts/appcast.sh                                            # writes dist/appcast.xml
+```
+
+The public key goes in `SU_PUBLIC_KEY` in `build-mac.sh`, which writes it into the app's
+`Info.plist` beside `SUFeedURL`. `.github/workflows/release.yml` runs the whole chain on a `v*`
+tag and uploads the DMG and the appcast to the release.

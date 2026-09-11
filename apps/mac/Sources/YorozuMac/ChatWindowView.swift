@@ -53,6 +53,7 @@ struct ChatWindowView: View {
                     openSettings()
                 }
                 Button("Set Up Permissions…") { OnboardingWindow.show() }
+                CheckForUpdatesButton()
                 Divider()
                 Button("Quit Yorozu") { NSApp.terminate(nil) }
             } label: {
@@ -73,9 +74,9 @@ struct ChatWindowView: View {
     }
 }
 
-/// Everything that is not chat. These four used to be stacked in the menu bar window itself;
-/// the window is the chat now, so they live in the standard Settings scene where ⌘, and the
-/// gear menu both find them.
+/// Everything that is not chat. These used to be stacked in the menu bar window itself; the
+/// window is the chat now, so they live in the standard Settings scene where ⌘, and the gear
+/// menu both find them.
 struct SettingsView: View {
     @ObservedObject var sidecar: Sidecar
 
@@ -92,6 +93,9 @@ struct SettingsView: View {
             }
             Tab("Models", systemImage: "square.stack.3d.up") {
                 pane { ModelsView() }
+            }
+            Tab("Relay", systemImage: "antenna.radiowaves.left.and.right") {
+                pane { RelayView() }
             }
         }
         .frame(width: 480, height: 460)
