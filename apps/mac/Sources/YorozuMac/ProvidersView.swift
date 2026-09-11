@@ -17,6 +17,8 @@ enum ProviderSettings {
         for key in [baseUrlKey, chainKey, BrowserSettings.key] {
             if let value = defaults.string(forKey: key), !value.isEmpty { environment[key] = value }
         }
+        // Unlike the others, the relay has a default worth sending even when nothing is stored.
+        environment[RelaySettings.key] = RelaySettings.url
         if let key = Keychain.read(), !key.isEmpty { environment["YOROZU_API_KEY"] = key }
         return environment
     }
@@ -60,9 +62,21 @@ enum Keychain {
 /// completion with the settings' environment. The same binary the app spawns for the relay;
 /// the settings talk to it by argument rather than over the relay.
 enum RuntimeCommand {
-    /// Dev default: `swift run` from `apps/mac` leaves the repo layout reachable.
-    /// Override with YOROZU_RUNTIME_CMD; the DMG will point it at the bundled runtime.
-    static let defaultCommand = "node ../../packages/runtime/dist/serve.js"
+    /// The runtime bundled by `scripts/build-mac.sh` when there is one, else the dev
+    /// default: `swift run` from `apps/mac` leaves the repo layout reachable. Quoted
+    /// because the command is run through `/bin/sh` and an .app can sit in a path with
+    /// spaces. Override either with YOROZU_RUNTIME_CMD.
+    static let defaultCommand: String = {
+        guard let resources = Bundle.main.resourceURL else {
+            return "node ../../packages/runtime/dist/serve.js"
+        }
+        let node = resources.appendingPathComponent("node").path
+        let serve = resources.appendingPathComponent("runtime/dist/serve.js").path
+        guard FileManager.default.isExecutableFile(atPath: node),
+              FileManager.default.isReadableFile(atPath: serve)
+        else { return "node ../../packages/runtime/dist/serve.js" }
+        return "'\(node)' '\(serve)'"
+    }()
 
     static func output(_ arguments: String) -> Data? {
         let command = (ProcessInfo.processInfo.environment["YOROZU_RUNTIME_CMD"]
