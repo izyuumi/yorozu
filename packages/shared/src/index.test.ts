@@ -51,8 +51,17 @@ test("every spec'd kind exists", () => {
 });
 
 test("QR payloads round-trip and untrusted input is rejected", () => {
-  const qr: QrPayload = { v: 1, relayUrl: "wss://relay.yumi.to", macPubkey: "AAA", token: "t" };
+  const qr: QrPayload = {
+    v: 1,
+    relayUrl: "wss://relay.yumi.to",
+    macPubkey: "AAA",
+    token: "t",
+    roomId: "r",
+  };
   expect(decodeQrPayload(encodeQrPayload(qr))).toEqual(qr);
+  const { roomId, ...legacy } = qr;
+  expect(decodeQrPayload(encodeQrPayload(legacy))).toEqual(legacy);
+  expect(() => decodeQrPayload(JSON.stringify({ ...qr, roomId: 1 }))).toThrow();
   expect(() => decodeQrPayload('{"v":2}')).toThrow();
   expect(() => decodeQrPayload("null")).toThrow();
   expect(() => decodeQrPayload("not json")).toThrow();

@@ -101,10 +101,15 @@ export type YorozuEvent = EventBase & EventPayload;
 export interface QrPayload {
   v: 1;
   relayUrl: string;
-  /** Mac X25519 public key, base64url, 32 raw bytes. */
+  /** Mac X25519 public key, base64url, 32 raw bytes. Used for the session key agreement. */
   macPubkey: string;
   /** One-time relay join token. */
   token: string;
+  /**
+   * Relay room to join: base64url sha256 of the Mac's Ed25519 relay key, which is a
+   * different key from `macPubkey` and so cannot be derived from it.
+   */
+  roomId?: string;
 }
 
 export const encodeQrPayload = (payload: QrPayload): string => JSON.stringify(payload);
@@ -118,7 +123,8 @@ export function decodeQrPayload(text: string): QrPayload {
     (p as QrPayload).v !== 1 ||
     typeof (p as QrPayload).relayUrl !== "string" ||
     typeof (p as QrPayload).macPubkey !== "string" ||
-    typeof (p as QrPayload).token !== "string"
+    typeof (p as QrPayload).token !== "string" ||
+    !["string", "undefined"].includes(typeof (p as QrPayload).roomId)
   ) {
     throw new Error("not a Yorozu v1 QR payload");
   }

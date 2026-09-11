@@ -32,16 +32,25 @@ importers:
       '@yorozu/shared':
         specifier: workspace:*
         version: link:../shared
+      ws:
+        specifier: ^8.21.3
+        version: 8.21.3
     devDependencies:
       '@types/node':
-        specifier: ^22.20.2
-        version: 22.20.2
+        specifier: ^26.5.1
+        version: 26.5.1
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
+      '@yorozu/relay':
+        specifier: workspace:*
+        version: link:../../apps/relay
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
       vitest:
         specifier: ^3.2.4
-        version: 3.2.7(@types/node@22.20.2)
+        version: 3.2.7(@types/node@26.5.1)
 
   packages/shared:
     devDependencies:
