@@ -1,11 +1,33 @@
 import { expect, test, vi } from "vitest";
-import { describeEvent, runAgent } from "./index.js";
+import { describeEvent, eventPayload, runAgent } from "./index.js";
 import { openaiCompat } from "./provider.js";
 
 test("describes an event", () => {
   expect(describeEvent({ id: "e1", threadId: "home", kind: "thought" })).toBe(
     "[home] thought",
   );
+});
+
+test("tool events become wire payloads; the turn's own text does not", () => {
+  expect(
+    eventPayload({ type: "tool_call", call: { id: "c1", name: "echo", arguments: '{"text":"hi"}' } }),
+  ).toEqual({ kind: "tool_call", data: { callId: "c1", name: "echo", args: { text: "hi" } } });
+
+  // Arguments are raw model output: unparseable JSON travels as-is rather than killing the event.
+  expect(
+    eventPayload({ type: "tool_call", call: { id: "c2", name: "echo", arguments: "{oops" } }),
+  ).toMatchObject({ data: { args: { raw: "{oops" } } });
+
+  expect(eventPayload({ type: "tool_result", id: "c1", name: "echo", result: "hi" })).toEqual({
+    kind: "tool_result",
+    data: { callId: "c1", ok: true, output: "hi" },
+  });
+  expect(
+    eventPayload({ type: "tool_result", id: "c1", name: "echo", result: "error: boom" }),
+  ).toMatchObject({ data: { ok: false } });
+
+  expect(eventPayload({ type: "text", text: "hi" })).toBeNull();
+  expect(eventPayload({ type: "final", text: "hi" })).toBeNull();
 });
 
 /** An SSE response body built from scripted chat-completion chunks. */

@@ -57,6 +57,31 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     #expect(json?["parentAgentId"] == nil)
 }
 
+@Test func aFinishedDelegationFlagsItsLastMessage() throws {
+    let event = YorozuEvent(
+        id: "e1",
+        threadId: "home",
+        ts: 1,
+        agentId: "calendar",
+        parentAgentId: "main",
+        payload: .message(MessageData(role: .agent, text: "booked", done: true))
+    )
+    #expect(try roundTrip(event) == event)
+    let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(event)) as? [String: Any]
+    #expect((json?["data"] as? [String: Any])?["done"] as? Bool == true)
+
+    // Absent on every other message, so the flag means exactly one thing on the wire.
+    let plain = YorozuEvent(
+        id: "e2",
+        threadId: "home",
+        ts: 1,
+        agentId: "main",
+        payload: .message(MessageData(role: .agent, text: "hi"))
+    )
+    let plainJson = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plain)) as? [String: Any]
+    #expect((plainJson?["data"] as? [String: Any])?["done"] == nil)
+}
+
 @Test func qrPayloadsRoundTripAndUntrustedInputIsRejected() throws {
     let qr = QrPayload(relayUrl: "wss://relay.yumi.to", macPubkey: "AAA", token: "t", roomId: "r")
     #expect(try QrPayload.decode(qr.encoded()) == qr)

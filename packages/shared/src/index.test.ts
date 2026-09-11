@@ -26,6 +26,22 @@ test("subagent events carry a parent", () => {
   expect(event.parentAgentId).toBe("main");
 });
 
+test("a delegated agent's last message flags the delegation done", () => {
+  const event: YorozuEvent = {
+    ...base,
+    agentId: "calendar",
+    parentAgentId: "main",
+    kind: "message",
+    data: { role: "agent", text: "booked", done: true },
+  };
+  if (event.kind !== "message") throw new Error("unreachable");
+  expect(event.data.done).toBe(true);
+  // Absent everywhere else, so the flag means exactly one thing.
+  const plain: YorozuEvent = { ...base, kind: "message", data: { role: "agent", text: "hi" } };
+  if (plain.kind !== "message") throw new Error("unreachable");
+  expect(plain.data.done).toBeUndefined();
+});
+
 test("sync_delta nests events", () => {
   const inner: YorozuEvent = { ...base, kind: "thread_archive", data: {} };
   const event: YorozuEvent = { ...base, kind: "sync_delta", data: { events: [inner] } };

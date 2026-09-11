@@ -103,6 +103,10 @@ PIDS+=($!)
 # reply proves the sealed round trip. Check both, nearest cause first.
 wait_for "$WORK/sidecar.log" "^STATE paired" "the phone to pair" 45
 wait_for "$WORK/app.log" "YOROZU-E2E-REPLY $REPLY" "the agent's reply" 45
+# The fake provider's first turn calls `echo`: the phone logging it proves a tool call reaches
+# the trace the drill-down draws, not just the message.
+wait_for "$WORK/app.log" "YOROZU-E2E-TOOL echo" "the agent's tool call" 45
 
 say "PASS — the phone received: $(grep -m1 'YOROZU-E2E-REPLY' "$WORK/app.log")"
+grep -m1 'YOROZU-E2E-TOOL' "$WORK/app.log"
 grep '^STATE ' "$WORK/sidecar.log"

@@ -28,7 +28,7 @@ import WebSocket from "ws";
 import { agentsDir, installAgents, loadAgent, MAIN_AGENT } from "./agents.js";
 import { chainFromEnv } from "./chain.js";
 import { delegateTool } from "./delegate.js";
-import { defaultTools, runAgent } from "./index.js";
+import { defaultTools, eventPayload, runAgent } from "./index.js";
 import type { Provider } from "./provider.js";
 import { probe } from "./probe.js";
 import { startScheduler } from "./scheduler.js";
@@ -178,6 +178,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
           sendEvent(message(reply));
         } else if (event.type === "final") {
           reply = event.text;
+        } else {
+          // The main agent's own tool calls and results, tagged like a specialist's so the
+          // phone can draw the same trace for both. Its own id: only the reply streams.
+          const payload = eventPayload(event);
+          if (payload) {
+            emit({ id: randomUUID(), threadId, ts: Date.now(), agentId: MAIN_AGENT, ...payload });
+          }
         }
       }
     } finally {

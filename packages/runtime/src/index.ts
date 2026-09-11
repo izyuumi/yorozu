@@ -1,4 +1,4 @@
-import type { YorozuEvent } from "@yorozu/shared";
+import type { EventPayload, YorozuEvent } from "@yorozu/shared";
 import type { Memory } from "./memory.js";
 import { rememberTool } from "./memory.js";
 import type { Message, Provider, ToolCall, ToolDef } from "./provider.js";
@@ -86,6 +86,39 @@ export type AgentEvent =
   | { type: "tool_call"; call: ToolCall }
   | { type: "tool_result"; id: string; name: string; result: string }
   | { type: "final"; text: string };
+
+/** Tool arguments are raw model output: a broken JSON string must not kill the event. */
+export function safeArgs(json: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(json || "{}");
+    return typeof parsed === "object" && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : { value: parsed };
+  } catch {
+    return { raw: json };
+  }
+}
+
+/**
+ * The wire payload for one loop event, or null for the ones that are no event of their own:
+ * `text` deltas and `final` are the turn's single message, which the caller owns. Shared so
+ * the main agent's turn and a delegated one report their tool use identically.
+ */
+export function eventPayload(event: AgentEvent): EventPayload | null {
+  if (event.type === "tool_call") {
+    return {
+      kind: "tool_call",
+      data: { callId: event.call.id, name: event.call.name, args: safeArgs(event.call.arguments) },
+    };
+  }
+  if (event.type === "tool_result") {
+    return {
+      kind: "tool_result",
+      data: { callId: event.id, ok: !event.result.startsWith("error:"), output: event.result },
+    };
+  }
+  return null;
+}
 
 export interface RunOptions {
   provider: Provider;

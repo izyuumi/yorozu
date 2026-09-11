@@ -121,20 +121,27 @@ final class ChatModel {
         }
     }
 
+    /// Every kind is kept, in arrival order: the thread draws the messages, and the thoughts,
+    /// tool calls and results behind them are what the drill-down traces.
+    ///
     /// Agent replies stream as repeated events under one id, each carrying the whole text so
     /// far, so the newest wins in place instead of appending a duplicate bubble.
     private func upsert(_ event: YorozuEvent) {
-        guard case .message(let data) = event.payload, event.threadId == Self.threadId else {
-            return
-        }
+        guard event.threadId == Self.threadId else { return }
         if let index = events.firstIndex(where: { $0.id == event.id }) {
             events[index] = event
         } else {
             events.append(event)
         }
-        if autoSend != nil, data.role == .agent {
-            // The harness reads this off `simctl launch --console-pty`.
+        // The harness reads these off `simctl launch --console-pty`.
+        guard autoSend != nil else { return }
+        switch event.payload {
+        case .message(let data) where data.role == .agent:
             print("YOROZU-E2E-REPLY \(data.text)")
+        case .toolCall(let data):
+            print("YOROZU-E2E-TOOL \(data.name)")
+        default:
+            break
         }
     }
 }
