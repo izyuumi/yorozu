@@ -5,6 +5,10 @@ import type { Message, Provider, ToolCall, ToolDef } from "./provider.js";
 
 export * from "./provider.js";
 export * from "./memory.js";
+export * from "./chain.js";
+export * from "./claude.js";
+export * from "./codex.js";
+export * from "./probe.js";
 
 /** One line per event, as the agent loop will emit them. */
 export function describeEvent(event: YorozuEvent): string {
