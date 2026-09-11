@@ -1,0 +1,107 @@
+import AppKit
+import SwiftUI
+import YorozuShared
+
+/// The menu bar window: threads on the left, the chat on the right, and everything that is not
+/// chat behind the gear. The detail half has its own `NavigationStack`, which is what the
+/// subagent drill-down and the trace pages push onto.
+struct ChatWindowView: View {
+    @State private var selection: String? = ThreadSummary.home.id
+    @Environment(\.openSettings) private var openSettings
+    @ObservedObject private var sidecar = Sidecar.shared
+
+    private var model: ChatModel { LocalChat.model }
+
+    /// Falls back to the first thread, so archiving the selected one leaves a chat on screen.
+    private var thread: ThreadSummary? {
+        model.threads.first { $0.id == selection } ?? model.threads.first
+    }
+
+    var body: some View {
+        NavigationSplitView {
+            ThreadSidebar(
+                threads: model.threads,
+                selection: $selection,
+                onCreate: { model.createThread(title: $0) },
+                onArchive: model.archive
+            )
+            .frame(minWidth: 180)
+            .safeAreaInset(edge: .bottom) { gear }
+        } detail: {
+            NavigationStack {
+                if let thread {
+                    ChatView(
+                        model: model,
+                        thread: thread,
+                        offlineNotice: "Runtime not reachable — see Settings for its state."
+                    )
+                } else {
+                    ContentUnavailableView("No thread", systemImage: "bubble.left.and.bubble.right")
+                }
+            }
+        }
+        .frame(width: 720, height: 480)
+    }
+
+    /// Pairing, providers, browser, models and the wizard all moved into the Settings scene when
+    /// the window became the chat; this is the way back to them, plus the sidecar's state.
+    private var gear: some View {
+        HStack(spacing: 6) {
+            Menu {
+                Button("Settings…") {
+                    NSApp.activate(ignoringOtherApps: true)
+                    openSettings()
+                }
+                Button("Set Up Permissions…") { OnboardingWindow.show() }
+                Divider()
+                Button("Quit Yorozu") { NSApp.terminate(nil) }
+            } label: {
+                Label("Yorozu", systemImage: "gearshape")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            Spacer(minLength: 0)
+            Text(sidecar.state)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .help("Relay state reported by the runtime")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.bar)
+    }
+}
+
+/// Everything that is not chat. These four used to be stacked in the menu bar window itself;
+/// the window is the chat now, so they live in the standard Settings scene where ⌘, and the
+/// gear menu both find them.
+struct SettingsView: View {
+    @ObservedObject var sidecar: Sidecar
+
+    var body: some View {
+        TabView {
+            Tab("Pairing", systemImage: "qrcode") {
+                pane { PairingView(sidecar: sidecar) }
+            }
+            Tab("Providers", systemImage: "cpu") {
+                pane { ProvidersView() }
+            }
+            Tab("Browser", systemImage: "globe") {
+                pane { BrowserView() }
+            }
+            Tab("Models", systemImage: "square.stack.3d.up") {
+                pane { ModelsView() }
+            }
+        }
+        .frame(width: 480, height: 460)
+    }
+
+    private func pane(@ViewBuilder content: () -> some View) -> some View {
+        ScrollView {
+            content()
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}

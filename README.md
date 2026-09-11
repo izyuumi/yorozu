@@ -557,3 +557,54 @@ Tests: `fetch` runs against a local HTTP server, `web_search` against a fake CDP
 serving a canned DuckDuckGo page, and the calendar, reminders and mail tools against a fake
 helper speaking the line protocol — including one that answers every mail command with
 -1743, so the denied-Automation path is covered without needing a Mac that denies it.
+
+## Mac local chat
+
+The Mac runs the same chat as the phone, without the relay in the middle. The sidecar opens a
+second way in beside its websocket: a Unix domain socket at `<state dir>/local.sock`, carrying
+the same newline-delimited `YorozuEvent` JSON, in the clear. Nothing is encrypted because there
+is nothing to encrypt against — the app and the sidecar are the same user on the same machine —
+so the socket's mode is the access control, `0600` and nothing else. A socket file left by a
+killed sidecar is removed before the bind; the live one goes away with `close()`.
+
+Each connection is one more device in the sidecar's session map, so it costs nothing to reach:
+`broadcast` already sends every reply, approval card and thread list to every paired device, and
+a local client is simply one that needed no session key. Connecting is all the pairing there is,
+and it is answered with the thread list the way a phone's `hello` is. The per-device event
+handling that used to live inside the websocket's frame handler is now one `handleEvent` both
+paths call, so the two cannot drift: thread admin broadcasts, `thread_list` and `sync_request`
+answer the one device that asked, a typed `yes` still answers a card, and anything else is a turn.
+
+| Client | Transport | Keys | Cache |
+| --- | --- | --- | --- |
+| iOS | `RelayTransport` — the existing `RelayClient` over the blind relay | X25519 session key per device | encrypted `ThreadCache`, so the phone reads offline |
+| Mac | `LocalSocketTransport` — `local.sock` | none | none: this machine's thread logs are the originals |
+
+`ChatTransport` is the seam, and it is all the two apps disagree about. `ChatModel`, `ChatView`,
+`ThreadListView`, the trace views and the approval card now all live in `packages/shared-swift`
+and compile for both platforms; what was iOS-only and stayed there is the pairing lifecycle
+(`Session`, `PairingStore`, `CacheStore`, the QR scanner) and the end-to-end harness. The model
+grew no knowledge of either platform: it takes a transport, an optional cache, and the device
+name to tag its own events with. Three optional hooks — `onPaired`, `onThreads`, `onEvent` —
+are how the iOS harness drives its first message and how the Mac logs that the list arrived,
+which keeps the test scaffolding out of the shared model.
+
+Making the views cross-platform cost two UIKit colours (`.secondarySystemBackground` became the
+semantic `.quaternary` fill) and one `#if os(iOS)` around `navigationBarTitleDisplayMode`. The
+phone's list pushes its chat; the Mac shows it beside the list, so `ThreadSidebar` is a second
+list view — selection instead of a push, context menu instead of a swipe — sharing the ordering
+(`visibleThreads`) and the `+` (`NewThreadButton`) with `ThreadListView` rather than copying them.
+
+The menu bar window is now a `NavigationSplitView`: threads left, chat right, the detail half in
+its own `NavigationStack` so the subagent drill-down and trace pages have somewhere to push.
+Pairing QR, providers, browser and models moved into a standard `Settings` scene, reachable with
+⌘, or from the gear at the foot of the sidebar, which also holds the permissions wizard, quit,
+and the sidecar's relay state. The model is built and connected from `applicationDidFinishLaunching`
+rather than from the window, because a menu bar window only exists while it is open and replies
+and approval cards have to keep arriving either way.
+
+Tests: `local.test.ts` round-trips a turn over the socket and checks that a broadcast reaches it,
+that the mode is `0600`, and that the socket is gone once the sidecar closes; `ChatModelTests`
+drives the model over a fake transport, which is the protocol's whole point. One thing the tests
+pinned down: the model sends each event in a task of its own, so the order they reach the
+transport in is not fixed — every event carries its own ids and the runtime matches on those.
