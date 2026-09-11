@@ -141,3 +141,19 @@ test("rate limits frames per room", async () => {
   for (let i = 0; i < 80; i++) phone.send({ type: "frame", payload, sig });
   expect(await phone.closed).toBe(4029);
 });
+
+test("tells phones whether the room's mac is online", async () => {
+  relay = await startRelay(0);
+  const macKeys = keypair();
+  const room = roomId(macKeys.pub);
+  const mac = await connectMac(relay.port, macKeys);
+  const { phone } = await connectPhone(relay.port, room, await mintToken(mac));
+  expect(await phone.next()).toMatchObject({ type: "joined", ownerOnline: true });
+
+  mac.ws.close();
+  await mac.closed;
+  expect(await phone.next()).toMatchObject({ type: "owner", online: false });
+
+  await connectMac(relay.port, macKeys);
+  expect(await phone.next()).toMatchObject({ type: "owner", online: true });
+});
