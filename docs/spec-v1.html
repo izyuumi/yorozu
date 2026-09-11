@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yorozu v1 Spec</title>
+<style>
+:root{--bg:oklch(18% 0.03 260);--sur:oklch(23% 0.03 260);--sur2:oklch(28% 0.03 260);--tx:oklch(93% 0.01 80);--mut:oklch(72% 0.01 80);--cy:oklch(78% 0.13 210);--vi:oklch(72% 0.15 300);--bd:oklch(34% 0.03 260)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text",Helvetica,Arial,sans-serif}
+main{max-width:72ch;margin:0 auto;padding:2rem 1.25rem 4rem}
+h1{font-size:2.4rem;letter-spacing:-0.02em;margin:0 0 .25rem;text-wrap:balance}
+h2{font-size:1.35rem;margin:2.5rem 0 .75rem;border-bottom:1px solid var(--bd);padding-bottom:.35rem}
+h3{font-size:1.05rem;margin:1.5rem 0 .5rem;color:var(--cy)}
+time{color:var(--mut);font-size:.9rem;display:block;margin-bottom:1.5rem}
+p,li{max-width:70ch}
+code{background:var(--sur2);padding:.1em .35em;border-radius:3px;font-size:.92em}
+pre{background:var(--sur);border:1px solid var(--bd);padding:.9rem;border-radius:4px;overflow-x:auto;font-size:.88rem}
+table{border-collapse:collapse;width:100%;font-size:.93rem;margin:.75rem 0}
+th,td{text-align:left;padding:.45rem .6rem;border-bottom:1px solid var(--bd);vertical-align:top}
+th{color:var(--mut);font-weight:600}
+.lead{background:var(--sur);border:1px solid var(--bd);padding:1rem 1.2rem;border-radius:4px;margin:1rem 0 2rem}
+.lead strong{color:var(--cy)}
+details{background:var(--sur);border:1px solid var(--bd);border-radius:4px;padding:.6rem .9rem;margin:.75rem 0}
+summary{cursor:pointer;font-weight:600}
+summary:focus-visible,a:focus-visible{outline:2px solid var(--vi);outline-offset:2px}
+a{color:var(--cy)}
+.out{color:var(--mut)}
+@media (max-width:480px){h1{font-size:1.8rem}th,td{padding:.35rem .4rem;font-size:.85rem}}
+</style>
+</head>
+<body>
+<main>
+<time datetime="2026-09-12T04:50:00+09:00">2026-09-12T04:50:00+09:00</time>
+<h1>Yorozu v1 Spec</h1>
+<p class="out">Out-of-box personal AI assistant for macOS, remote-controlled from iOS through a blind E2E relay. Result of a 30-question grill session between Yumi and Molty, 2026-09-12.</p>
+
+<div class="lead">
+<p><strong>Differentiator:</strong> install, grant every macOS permission once, scan one QR, start talking. Everything else already exists somewhere; the install path and the approval engine do not.</p>
+<p><strong>Not OpenClaw:</strong> clean-room harness. One loop, agents as markdown files, full permissions by default, AI-gated approvals that learn, phone-native session list.</p>
+</div>
+
+<h2>1. Architecture</h2>
+<table>
+<tr><th>Component</th><th>Tech</th><th>Role</th></tr>
+<tr><td>Mac app</td><td>Swift, SwiftUI, non-sandboxed, Developer ID</td><td>Menu bar, TCC onboarding, provider cards, settings, local chat UI, native tool host (AX, ScreenCaptureKit, CGEvent, EventKit)</td></tr>
+<tr><td>Runtime</td><td>Node sidecar bundled in app, TypeScript</td><td>Agent loop, provider adapters, tools, memory, approval engine, scheduler</td></tr>
+<tr><td>iOS app</td><td>SwiftUI, shared views with Mac</td><td>Thread list, chat, subagent drill-down, approval cards, QR pairing, local encrypted cache</td></tr>
+<tr><td>Relay</td><td>Single Go or Node binary, websocket</td><td>Blind byte forwarder. Keypair rooms, 24h ciphertext buffer, rate limits. Self-hostable, one docker command</td></tr>
+<tr><td>Model catalog</td><td>JSON on GitHub Releases</td><td>Prices, context, strengths. Client caches daily, bundled fallback</td></tr>
+</table>
+<p>Monorepo: <code>apps/mac</code>, <code>apps/ios</code>, <code>apps/relay</code>, <code>packages/runtime</code>, <code>packages/shared</code> (protocol types, Swift + TS). License MIT. Bundle ID <code>to.yumi.yorozu</code>.</p>
+
+<h2>2. Providers</h2>
+<ul>
+<li>Onboarding shows three cards: Claude, Codex, OpenAI-compatible. Any one green unlocks the app.</li>
+<li>Claude and Codex: detect installed CLI on PATH and logged-in state. Missing login runs <code>claude login</code> / <code>codex login</code> in embedded terminal. Nothing bundled, no redistribution.</li>
+<li>OpenAI-compatible: base URL + key. Model IDs via <code>/models</code>, price unknown unless catalog overlay provides it.</li>
+<li>Runtime owns the loop. Each provider is a thin adapter: <code>stream(messages, tools)</code> and <code>auth()</code>. Claude Agent SDK and Codex SDK used only for auth and streaming. No harness registry, no per-model runtime switching.</li>
+<li>Routing: settings hold primary model and fallback chain. Auth or rate-limit failure moves to next in chain. Agent file frontmatter may set <code>model:</code>.</li>
+<li><strong>Auto-assign button:</strong> default model reads every agent <code>.md</code> plus catalog, writes <code>model:</code> into each frontmatter. Shown as diff, revertible. Can run on cron (daily, weekly, monthly). Two knowledge sources, user picks: GitHub catalog, or research mode where the model web-searches current pricing and writes a local catalog overlay.</li>
+</ul>
+
+<h2>3. Agents</h2>
+<ul>
+<li>Agent = <code>agents/&lt;name&gt;.md</code>. Frontmatter is opt-in restriction only: <code>model</code>, <code>tools</code> allowlist, <code>memory</code> scope. Absent field = inherit main agent's full tools and full memory.</li>
+<li>Main agent talks to user. One tool <code>delegate(agent, task, background?)</code>. Depth 2 hard limit; specialists cannot delegate. A specialist needing another specialist returns a structured "needs X" and main re-delegates.</li>
+<li>Sync by default. <code>background: true</code> returns immediately; completion arrives as an event in the same thread. User interrupt cancels the whole tree.</li>
+<li>Every agent emits per-step events (thought, tool call, tool result, final) tagged with agent ID and parent ID. Drives the phone drill-down.</li>
+<li>Skills: AgentSkills format, <code>skills/&lt;name&gt;/SKILL.md</code>. Existing skills drop in unchanged. Loaded on demand by name.</li>
+</ul>
+
+<h2>4. Tools</h2>
+<table>
+<tr><th>Tool</th><th>Implementation</th></tr>
+<tr><td>shell, fs</td><td>Node, unrestricted, runs as user</td></tr>
+<tr><td>screen.read</td><td>AX tree of frontmost window as text with element IDs. Primary.</td></tr>
+<tr><td>screen.capture</td><td>ScreenCaptureKit screenshot. Fallback when AX empty.</td></tr>
+<tr><td>input</td><td>CGEvent click/type/key on element bounds or coordinates</td></tr>
+<tr><td>browser</td><td>CDP. Settings picker: bundled Chromium (downloaded first run) or any installed Chromium-family browser launched with a separate profile dir. Safari/Firefox choice falls to AX route. Agent never touches user tabs.</td></tr>
+<tr><td>calendar, reminders</td><td>EventKit via Swift host</td></tr>
+<tr><td>mail</td><td>AppleScript via Swift host</td></tr>
+<tr><td>fetch</td><td>Node, readability extraction</td></tr>
+<tr><td>search</td><td>Provider-native web search when active provider has it; else drive Chromium to a search engine</td></tr>
+<tr><td>schedule</td><td>Cron-style. <code>schedule(when, instruction)</code>. Fires as a new turn in a thread. No heartbeat.</td></tr>
+<tr><td>remember</td><td><code>remember(fact, kind)</code> writes markdown with provenance</td></tr>
+<tr><td>delegate</td><td>See section 3</td></tr>
+</table>
+
+<h2>5. Memory</h2>
+<ul>
+<li><code>memory/</code> directory of plain markdown. Files are truth. User-editable, Obsidian-openable, git-able.</li>
+<li>SQLite with FTS5 + sqlite-vec is a derived index, rebuildable from files. Local embedding model; provider embeddings when a key exists.</li>
+<li>Writes: explicit <code>remember</code> during conversation, plus nightly consolidation job (via scheduler) that reads the day's transcripts, extracts missed facts, dedupes, promotes. Every fact carries date and thread provenance.</li>
+<li>Approval decisions are a memory kind of their own. See section 6.</li>
+<li>Single user. Shared memory across all threads and devices.</li>
+</ul>
+
+<h2>6. Approval engine</h2>
+<p>Technically unrestricted. AI decides whether to ask. Code enforces the floor and the learned rules.</p>
+<ul>
+<li>Every external action carries <code>class</code> (send-message, purchase, delete-file, book, transfer-money, run-command, edit-file, ...), <code>target</code>, optional <code>amount</code>.</li>
+<li><strong>Floor</strong>, set at onboarding, two settings: money threshold per action; whether irreversible deletes outside app directories need confirmation. Code-enforced, cannot be overridden by "never."</li>
+<li><strong>Decision log</strong>: append-only rows (class, target pattern, decision, timestamp). Checked in code before any prompt.</li>
+<li>No precedent → ask once. Consistent precedent → act, mention in passing. Mixed → ask.</li>
+<li><strong>Never</strong> writes a permanent rule row. Matches by class unless the user names a target. "Never ask about sending emails" covers all recipients. Guaranteed: the user is not asked again.</li>
+<li>Phone card: <strong>Yes / No / Never / Discuss</strong>. Discuss keeps the action pending; agent explains reasoning and options in chat, then re-presents the card. Typed replies also accepted.</li>
+</ul>
+
+<h2>7. Sessions and phone UX</h2>
+<ul>
+<li>Thread list. Tap + to create; optional name. Pinned "Home" thread never archives.</li>
+<li>Thread view is a plain chat between user and main agent, Signal/WhatsApp shape.</li>
+<li>When a specialist is running, an inline card appears. Tap opens the specialist's live trace: thoughts, tool calls, output.</li>
+<li>Phone keeps an encrypted local cache. On connect it sends last-seen event ID per thread; Mac streams the delta. Readable offline.</li>
+<li>Mac app shows the same SwiftUI chat locally, no relay hop.</li>
+</ul>
+
+<h2>8. Relay and pairing</h2>
+<ul>
+<li>Mac generates a keypair at install. Room ID = hash of public key. Mac registers with a signed challenge.</li>
+<li>QR carries Mac public key + one-time join token. Phone joins; relay verifies signature, drops unsigned frames, rate-limits per room.</li>
+<li>Phone and Mac do key exchange; relay forwards ciphertext only. No accounts, no email, no readable state.</li>
+<li>Mac offline: relay buffers ciphertext per room, 24h TTL, size-capped. Phone shows "delivered to relay, Mac offline."</li>
+<li>Onboarding sets Mac to never sleep with consent.</li>
+<li>Any number of phones/iPads pair to one Mac. Single user.</li>
+<li>No APNs in v1; phone must be foreground to receive.</li>
+</ul>
+
+<h2>9. Distribution</h2>
+<ul>
+<li>Mac: Developer ID signed, notarized DMG, Sparkle auto-update, GitHub Releases. Node sidecar and Chromium download on first run.</li>
+<li>iOS: TestFlight day one, App Store once stable.</li>
+<li>Relay: Docker image, one command. Yumi hosts a default instance.</li>
+</ul>
+
+<h2>10. Onboarding flow</h2>
+<ol>
+<li>Open DMG, drag to Applications, launch.</li>
+<li>TCC wizard: Accessibility, Screen Recording, Full Disk Access, Automation, Input Monitoring. Each step verifies grant, retries.</li>
+<li>Provider cards. At least one green.</li>
+<li>Two floor settings.</li>
+<li>Browser picker.</li>
+<li>Never-sleep consent.</li>
+<li>QR shown. Scan from iOS app. Done.</li>
+</ol>
+
+<h2>11. Out of v1</h2>
+<ul>
+<li>APNs push</li>
+<li>Plugin system</li>
+<li>Multi-user</li>
+<li>Audio and microphone listening</li>
+<li>Smart task-type routing, quota balancing</li>
+<li>App Store release</li>
+<li><strong>Stripe subscription with credits.</strong> Hosted proxy as a fourth provider card. Because it speaks OpenAI-compatible, the v1 adapter already handles it; only billing and key issuance are new. No v1 architecture change required.</li>
+</ul>
+
+<h2>12. Risks</h2>
+<ul>
+<li>Scope: three codebases plus runtime. Roughly three months solo to reach daily-driver parity with current OpenClaw use.</li>
+<li>Subscription CLI auth terms may change. OpenAI-compat path is the safe floor.</li>
+<li>AX coverage gaps in Electron apps push more work to screenshot fallback.</li>
+<li>Never-rule matching too narrow re-prompts and breaks the "never" promise; too broad over-authorizes. Class-level default with optional target is the chosen balance.</li>
+</ul>
+
+<details>
+<summary>Decision log (Q1–Q30)</summary>
+<ol>
+<li>Differentiator: out-of-box install, with session UX folded in</li>
+<li>Relay: blind, E2E, Mac holds state</li>
+<li>Relay impl: custom tiny service; APNs v2</li>
+<li>Runtime: Node sidecar, Swift shell</li>
+<li>Auth: detect installed CLIs, embedded login</li>
+<li>Loop: own loop, thin adapters (OpenClaw does the same, minus harness registry)</li>
+<li>Agents: markdown files, full inherit by default, depth 2</li>
+<li>Delegation: sync default, background flag, interrupt cancels tree</li>
+<li>Sessions: user-created threads, subagent drill-down page</li>
+<li>Memory: markdown truth, SQLite index</li>
+<li>Memory writes: explicit remember + nightly consolidation</li>
+<li>Approval: two-setting floor, learned log, Never is permanent</li>
+<li>Screen: AX primary, screenshot fallback</li>
+<li>Browser: CDP, user picks bundled Chromium or installed browser</li>
+<li>Mac distribution: signed DMG, Sparkle, GitHub Releases</li>
+<li>iOS: TestFlight first, App Store when stable</li>
+<li>Mac UI: menu bar, onboarding, settings, shared chat view</li>
+<li>Single user, N devices</li>
+<li>Scheduler: cron-style tool, no heartbeat</li>
+<li>Routing: default + per-agent override + fallback, plus auto-assign button and cron</li>
+<li>Catalog: GitHub release JSON cached daily, plus research mode</li>
+<li>Search: provider-native, Chromium fallback</li>
+<li>Skills: AgentSkills format</li>
+<li>Relay auth: keypair rooms, signed join, no accounts</li>
+<li>Offline: 24h ciphertext buffer, never-sleep</li>
+<li>History: phone local cache, delta sync</li>
+<li>Approval card: Yes / No / Never / Discuss</li>
+<li>Monorepo, MIT</li>
+<li>Name: Yorozu</li>
+<li>v1 cut line confirmed; Stripe credits noted for v2</li>
+</ol>
+</details>
+</main>
+</body>
+</html>
