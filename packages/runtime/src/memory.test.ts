@@ -126,20 +126,8 @@ test("the remember tool writes through YOROZU_MEMORY_DIR", () => {
   const previous = env.YOROZU_MEMORY_DIR;
   env.YOROZU_MEMORY_DIR = dir;
   try {
-    expect(defaultTools.map((t) => t.name)).toEqual([
-      "echo",
-      "remember",
-      "schedule",
-      "unschedule",
-      "list_schedule",
-      "read_transcripts",
-      "browser.open",
-      "browser.snapshot",
-      "browser.click",
-      "browser.type",
-      "browser.eval",
-      "browser.close",
-    ]);
+    // index.test.ts pins the whole list; here it only matters that this tool is in it.
+    expect(defaultTools.map((t) => t.name)).toContain("remember");
     expect(rememberTool.run({ fact: "user lives in Kyoto", kind: "bogus" })).toMatch(
       /^remembered: \d{4}-\d{2}-\d{2}-user-lives-in-kyoto\.md$/,
     );
