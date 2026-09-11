@@ -14,6 +14,19 @@ Out-of-box personal AI assistant for macOS, remote-controlled from iOS through a
 - `packages/shared` — protocol event types shared by the TypeScript workspaces.
 - `packages/shared-swift` — SwiftUI views shared by the Mac and iOS apps.
 
+## Memory
+
+Facts live as one markdown file per fact in `YOROZU_MEMORY_DIR` (default
+`<YOROZU_STATE_DIR>/memory`, itself defaulting to `~/Library/Application Support/Yorozu`).
+Frontmatter carries `kind` (`preference`, `decision`, `correction`, `fact`, `approval`),
+`created`, `threadId` and `agentId`. The files are the truth: edit them by hand or in Obsidian.
+
+The SQLite FTS5 index next to them (`.index.sqlite`) is derived, and is rebuilt from the files
+whenever it is missing or their mtimes have moved. The agent writes facts with the `remember`
+tool; `recallForPrompt` returns a compact block that `runAgent` prepends to the system prompt
+when given a `memory`. Vector recall is not implemented yet: `searchByEmbedding` returns nothing
+until sqlite-vec or provider embeddings land.
+
 ## Relay
 
 The relay forwards ciphertext between Mac and phone and can read none of it. Rooms are keyed by
