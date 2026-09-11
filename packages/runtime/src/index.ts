@@ -31,6 +31,7 @@ export * from "./memory.js";
 export * from "./cron.js";
 export * from "./scheduler.js";
 export * from "./transcripts.js";
+export * from "./threads.js";
 export * from "./chain.js";
 export * from "./catalog.js";
 export * from "./assign.js";

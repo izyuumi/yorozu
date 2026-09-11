@@ -2,18 +2,13 @@ import Foundation
 import Security
 import YorozuShared
 
-/// The pairing survives reinstall-free restarts in the Keychain: it holds the phone's private
-/// keys, so it must never reach `UserDefaults` or a plain file.
-enum PairingStore {
-    struct Stored: Codable {
-        var pairing: QrPayload
-        var identity: PhoneIdentity
-    }
-
+/// The one place this app talks to the Keychain. Everything it holds is a secret the phone
+/// must not leak to `UserDefaults` or a plain file: the pairing's private keys, and the key
+/// the local thread cache is encrypted with.
+enum Keychain {
     private static let service = "to.yumi.yorozu.ios"
-    private static let account = "pairing"
 
-    private static var query: [String: Any] {
+    private static func query(_ account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -21,22 +16,19 @@ enum PairingStore {
         ]
     }
 
-    static func load() -> Stored? {
-        var query = self.query
+    static func load(_ account: String) -> Data? {
+        var query = query(account)
         query[kSecReturnData as String] = true
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-            let data = item as? Data
-        else { return nil }
-        return try? JSONDecoder().decode(Stored.self, from: data)
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess else { return nil }
+        return item as? Data
     }
 
-    static func save(_ stored: Stored) throws {
-        let data = try JSONEncoder().encode(stored)
-        SecItemDelete(query as CFDictionary)
-        var attributes = query
+    static func save(_ data: Data, account: String) throws {
+        SecItemDelete(query(account) as CFDictionary)
+        var attributes = query(account)
         attributes[kSecValueData as String] = data
-        // Pairing is only ever used while the user is present; no backup to another device.
+        // Only ever used while the user is present; no backup to another device.
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         let status = SecItemAdd(attributes as CFDictionary, nil)
         guard status == errSecSuccess else {
@@ -44,7 +36,29 @@ enum PairingStore {
         }
     }
 
+    static func clear(_ account: String) {
+        SecItemDelete(query(account) as CFDictionary)
+    }
+}
+
+/// The pairing survives restarts in the Keychain: it holds the phone's private keys.
+enum PairingStore {
+    struct Stored: Codable {
+        var pairing: QrPayload
+        var identity: PhoneIdentity
+    }
+
+    private static let account = "pairing"
+
+    static func load() -> Stored? {
+        Keychain.load(account).flatMap { try? JSONDecoder().decode(Stored.self, from: $0) }
+    }
+
+    static func save(_ stored: Stored) throws {
+        try Keychain.save(JSONEncoder().encode(stored), account: account)
+    }
+
     static func clear() {
-        SecItemDelete(query as CFDictionary)
+        Keychain.clear(account)
     }
 }

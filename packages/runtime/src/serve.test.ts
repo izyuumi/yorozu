@@ -13,6 +13,9 @@ import {
   seal,
   toBase64Url,
   type ApprovalCardData,
+  type EventKind,
+  type EventPayload,
+  type QrPayload,
   type YorozuEvent,
 } from "@yorozu/shared";
 import { afterEach, expect, test, vi } from "vitest";
@@ -87,11 +90,22 @@ test("a sealed message from a phone round-trips through the agent loop", async (
     keys,
   );
 
-  const reply = frameBody((await phone.next()).payload);
-  const plain = open(sessionKey, fromBase64Url(reply.n), fromBase64Url(reply.c));
-  const event = JSON.parse(Buffer.from(plain).toString()) as YorozuEvent;
+  const openNext = async (): Promise<YorozuEvent> => {
+    const body = frameBody((await phone.next()).payload);
+    const plain = open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c));
+    return JSON.parse(Buffer.from(plain).toString()) as YorozuEvent;
+  };
 
-  expect(event).toMatchObject({ threadId: "home", kind: "message", data: { role: "agent", text: "pong" } });
+  // Pairing is greeted with the thread list; the agent's reply follows it.
+  expect(await openNext()).toMatchObject({
+    kind: "thread_list",
+    data: { threads: [{ id: "home", title: "Home", pinned: true }] },
+  });
+  expect(await openNext()).toMatchObject({
+    threadId: "home",
+    kind: "message",
+    data: { role: "agent", text: "pong" },
+  });
   expect(lines).toContain("STATE paired");
   expect(fetchMock.mock.calls[0]![0]).toBe("https://example.invalid/v1/chat/completions");
 });
@@ -236,4 +250,133 @@ test("discuss leaves the action pending and the card comes back", async () => {
   send({ kind: "message", data: { role: "user", text: "no" } });
   const tail = await eventsUntil(isReply);
   expect(tail.at(-1)).toMatchObject({ data: { role: "agent", text: "Understood, I will skip it." } });
+});
+
+/** Pairing burns a token, so the sidecar prints one QR per device that can still join. */
+function qrQueue() {
+  const printed: string[] = [];
+  const waiting: ((qr: string) => void)[] = [];
+  return {
+    push(qr: string) {
+      const waiter = waiting.shift();
+      if (waiter) waiter(qr);
+      else printed.push(qr);
+    },
+    next(): Promise<QrPayload> {
+      const ready = printed.shift();
+      return (ready ? Promise.resolve(ready) : new Promise<string>((r) => waiting.push(r))).then(
+        decodeQrPayload,
+      );
+    },
+  };
+}
+
+/** A fake phone: joins, says hello, then seals and opens events under its own session key. */
+async function pairPhone(port: number, qr: QrPayload) {
+  const { phone, keys } = await connectPhone(port, qr.roomId!, qr.token);
+  expect(await phone.next()).toMatchObject({ type: "joined" });
+  const identity = generateKeypair();
+  const sessionKey = deriveSessionKey(identity.privateKey, fromBase64Url(qr.macPubkey));
+  phone.frame(encodeBody({ t: "hello", pub: toBase64Url(identity.publicKey) }), keys);
+
+  return {
+    send(threadId: string, payload: EventPayload): void {
+      const event: YorozuEvent = { id: randomUUID(), threadId, ts: Date.now(), agentId: "phone", ...payload };
+      const box = seal(sessionKey, Buffer.from(JSON.stringify(event)));
+      phone.frame(
+        encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }),
+        keys,
+      );
+    },
+    /** The next event of `kind` this phone can open: frames for the other device are not ours. */
+    async next(kind: EventKind): Promise<YorozuEvent> {
+      for (;;) {
+        const frame = await phone.next();
+        if (frame?.type !== "frame") continue;
+        const body = frameBody(frame.payload);
+        let event: YorozuEvent;
+        try {
+          event = JSON.parse(
+            Buffer.from(open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c))).toString(),
+          ) as YorozuEvent;
+        } catch {
+          continue; // Sealed for the other phone.
+        }
+        if (event.kind === kind) return event;
+      }
+    },
+  };
+}
+
+test("two phones pair at once and see the same threads, events and deltas", async () => {
+  relay = await startRelay(0);
+  const qrs = qrQueue();
+
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${relay.port}`,
+    stateDir: mkdtempSync(join(tmpdir(), "yorozu-serve-")),
+    provider: openaiCompat({
+      baseUrl: "https://example.invalid",
+      model: "m",
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => sse("pong")),
+    }),
+    log: (line) => {
+      if (line.startsWith("QR ")) qrs.push(line.slice(3));
+    },
+  });
+
+  const first = await pairPhone(relay.port, await qrs.next());
+  // The first pairing burnt that token; the sidecar minted the next one for the second phone.
+  const second = await pairPhone(relay.port, await qrs.next());
+
+  for (const phone of [first, second]) {
+    expect(await phone.next("thread_list")).toMatchObject({
+      data: { threads: [{ id: "home", title: "Home", archived: false, pinned: true }] },
+    });
+  }
+
+  // A turn started on one phone is answered to both.
+  first.send("home", { kind: "message", data: { role: "user", text: "ping" } });
+  for (const phone of [first, second]) {
+    expect(await phone.next("message")).toMatchObject({
+      threadId: "home",
+      data: { role: "agent", text: "pong" },
+    });
+  }
+
+  // So is a thread created on either of them.
+  second.send("home", { kind: "thread_create", data: { title: "Groceries" } });
+  const [listed, alsoListed] = [await first.next("thread_list"), await second.next("thread_list")];
+  expect(listed).toEqual(alsoListed);
+  expect(listed.kind === "thread_list" && listed.data.threads.map((t) => t.title)).toEqual([
+    "Home",
+    "Groceries",
+  ]);
+  const groceries =
+    listed.kind === "thread_list" ? listed.data.threads[1]!.id : "";
+
+  second.send(groceries, { kind: "message", data: { role: "user", text: "milk" } });
+  expect(await second.next("message")).toMatchObject({ threadId: groceries });
+
+  // A device that holds nothing gets every thread's history in one delta.
+  first.send("home", { kind: "sync_request", data: { lastSeen: {} } });
+  const delta = await first.next("sync_delta");
+  expect(
+    delta.kind === "sync_delta" &&
+      delta.data.events.map((e) => `${e.threadId === "home" ? "home" : "groceries"}:${e.kind === "message" ? e.data.text : e.kind}`),
+  ).toEqual(["home:ping", "home:pong", "groceries:milk", "groceries:pong"]);
+
+  // And a delta from a known id is only what came after it.
+  first.send("home", { kind: "sync_request", data: { lastSeen: { home: "nope" } } });
+  expect((await first.next("sync_delta")).kind).toBe("sync_delta");
+
+  // Home never archives; anything else does, for every device at once.
+  first.send("home", { kind: "thread_archive", data: {} });
+  expect(await second.next("thread_list")).toMatchObject({
+    data: { threads: [{ id: "home", archived: false }, { id: groceries, archived: false }] },
+  });
+  first.send(groceries, { kind: "thread_archive", data: {} });
+  expect(await second.next("thread_list")).toMatchObject({
+    data: { threads: [{ id: "home", archived: false }, { id: groceries, archived: true }] },
+  });
 });

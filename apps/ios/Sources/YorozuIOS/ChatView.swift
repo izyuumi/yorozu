@@ -1,33 +1,35 @@
 import SwiftUI
 import YorozuShared
 
-/// The one thread. Threads and history arrive in later tickets.
+/// One thread's messages. Pushed by ``ThreadListView``, which owns the navigation stack.
 struct ChatView: View {
     @Bindable var model: ChatModel
+    let thread: ThreadSummary
+
+    private var events: [YorozuEvent] { model.events[thread.id] ?? [] }
+
+    private var draft: Binding<String> {
+        Binding(get: { model.drafts[thread.id] ?? "" }, set: { model.drafts[thread.id] = $0 })
+    }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                if !model.ownerOnline {
-                    Banner(
-                        text: "Mac offline — messages are held by the relay until it returns.",
-                        systemImage: "desktopcomputer.trianglebadge.exclamationmark"
-                    )
-                }
-                if let failure = model.failure {
-                    Banner(text: failure, systemImage: "exclamationmark.triangle")
-                }
-                messages
-                composer
+        VStack(spacing: 0) {
+            if !model.ownerOnline {
+                Banner(
+                    text: "Mac offline — messages are held by the relay until it returns.",
+                    systemImage: "desktopcomputer.trianglebadge.exclamationmark"
+                )
             }
-            .agentTraceDestination { model.events }
-            .navigationTitle("Home")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                Button("Unpair", systemImage: "qrcode") { model.unpair() }
+            if let failure = model.failure {
+                Banner(text: failure, systemImage: "exclamationmark.triangle")
             }
+            messages
+            composer
         }
-        .task { model.start() }
+        // Inside the list's stack: a trace pushed from here keeps streaming this thread.
+        .agentTraceDestination { events }
+        .navigationTitle(thread.title)
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private var messages: some View {
@@ -36,7 +38,7 @@ struct ChatView: View {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     // A delegation collapses to one card where it started; what the specialist
                     // did is behind it, and the main agent's own tool use is behind the row.
-                    ForEach(chatRows(from: model.events)) { row in
+                    ForEach(chatRows(from: events)) { row in
                         switch row {
                         case .message(let event):
                             if case .message(let data) = event.payload {
@@ -49,16 +51,16 @@ struct ChatView: View {
                                 ApprovalCardView(
                                     card: card,
                                     answered: model.answered.contains(card.actionId)
-                                ) { model.answer(card.actionId, $0) }
+                                ) { model.answer(card.actionId, in: thread.id, $0) }
                                 .id(event.id)
                             }
                         }
                     }
-                    MainActivityRow(events: model.events)
+                    MainActivityRow(events: events)
                 }
                 .padding()
             }
-            .onChange(of: model.events.last?.id) { _, id in
+            .onChange(of: events.last?.id) { _, id in
                 guard let id else { return }
                 withAnimation { proxy.scrollTo(id, anchor: .bottom) }
             }
@@ -67,14 +69,14 @@ struct ChatView: View {
 
     private var composer: some View {
         HStack(spacing: 8) {
-            TextField("Message", text: $model.draft, axis: .vertical)
+            TextField("Message", text: draft, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...5)
-                .onSubmit(model.send)
-            Button("Send", systemImage: "arrow.up.circle.fill", action: model.send)
+                .onSubmit { model.send(in: thread) }
+            Button("Send", systemImage: "arrow.up.circle.fill") { model.send(in: thread) }
                 .labelStyle(.iconOnly)
                 .font(.title2)
-                .disabled(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .padding()
         .background(.bar)
