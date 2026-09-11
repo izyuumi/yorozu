@@ -260,16 +260,20 @@ public enum JSONValue: Codable, Equatable, Sendable {
 public struct QrPayload: Codable, Equatable, Sendable {
     public var v: Int
     public var relayUrl: String
-    /// Mac X25519 public key, base64url, 32 raw bytes.
+    /// Mac X25519 public key, base64url, 32 raw bytes. Used for the session key agreement.
     public var macPubkey: String
     /// One-time relay join token.
     public var token: String
+    /// Relay room to join: base64url sha256 of the Mac's Ed25519 relay key, which is a
+    /// different key from `macPubkey` and so cannot be derived from it.
+    public var roomId: String?
 
-    public init(v: Int = 1, relayUrl: String, macPubkey: String, token: String) {
+    public init(v: Int = 1, relayUrl: String, macPubkey: String, token: String, roomId: String? = nil) {
         self.v = v
         self.relayUrl = relayUrl
         self.macPubkey = macPubkey
         self.token = token
+        self.roomId = roomId
     }
 
     public func encoded() throws -> String {

@@ -57,8 +57,11 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
 }
 
 @Test func qrPayloadsRoundTripAndUntrustedInputIsRejected() throws {
-    let qr = QrPayload(relayUrl: "wss://relay.yumi.to", macPubkey: "AAA", token: "t")
+    let qr = QrPayload(relayUrl: "wss://relay.yumi.to", macPubkey: "AAA", token: "t", roomId: "r")
     #expect(try QrPayload.decode(qr.encoded()) == qr)
+    // Payloads minted before rooms were carried in the QR still decode.
+    let legacy = QrPayload(relayUrl: "wss://relay.yumi.to", macPubkey: "AAA", token: "t")
+    #expect(try QrPayload.decode(legacy.encoded()).roomId == nil)
     #expect(throws: (any Error).self) { try QrPayload.decode(#"{"v":2,"relayUrl":"","macPubkey":"","token":""}"#) }
     #expect(throws: (any Error).self) { try QrPayload.decode("not json") }
 }

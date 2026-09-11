@@ -5,16 +5,23 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "yorozu-serve": "./dist/serve.js"
+  },
   "scripts": {
     "build": "tsc -p .",
     "cli": "pnpm build && node dist/cli.js",
+    "serve": "pnpm build && node dist/serve.js",
     "test": "vitest run"
   },
   "dependencies": {
-    "@yorozu/shared": "workspace:*"
+    "@yorozu/shared": "workspace:*",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
-    "@types/node": "^22.20.2",
+    "@types/node": "^26.5.1",
+    "@types/ws": "^8.18.1",
+    "@yorozu/relay": "workspace:*",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }

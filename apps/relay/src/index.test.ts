@@ -1,7 +1,6 @@
-import { generateKeyPairSync, type KeyObject } from "node:crypto";
 import { afterEach, expect, test } from "vitest";
-import WebSocket from "ws";
 import { roomId, signChallenge, startRelay, type Relay } from "./index.js";
+import { client, connectMac, connectPhone, keypair, mintToken } from "./testing.js";
 
 let relay: Relay;
 
@@ -10,63 +9,6 @@ afterEach(async () => {
 });
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-function keypair() {
-  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
-  return { pub: publicKey.export({ format: "jwk" }).x as string, priv: privateKey };
-}
-
-/** Minimal client: queue inbound JSON so tests can await messages in order. */
-function client(port: number) {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
-  const queue: any[] = [];
-  const waiters: ((v: any) => void)[] = [];
-  ws.on("message", (d) => {
-    const msg = JSON.parse(d.toString());
-    const waiter = waiters.shift();
-    if (waiter) waiter(msg);
-    else queue.push(msg);
-  });
-  return {
-    ws,
-    send: (msg: unknown) => ws.send(JSON.stringify(msg)),
-    next: (): Promise<any> =>
-      queue.length > 0 ? Promise.resolve(queue.shift()) : new Promise((r) => waiters.push(r)),
-    closed: new Promise<number>((r) => ws.on("close", (code) => r(code))),
-    open: new Promise<void>((r) => ws.on("open", () => r())),
-  };
-}
-
-async function connectMac(port: number, keys: { pub: string; priv: KeyObject }) {
-  const mac = client(port);
-  await mac.open;
-  const { nonce } = await mac.next();
-  mac.send({ type: "register", pubkey: keys.pub, nonceSig: signChallenge(nonce, keys.priv) });
-  const registered = await mac.next();
-  expect(registered).toMatchObject({ type: "registered", roomId: roomId(keys.pub) });
-  return mac;
-}
-
-async function mintToken(mac: ReturnType<typeof client>) {
-  mac.send({ type: "mint" });
-  const { token } = await mac.next();
-  return token as string;
-}
-
-async function connectPhone(port: number, room: string, token: string) {
-  const keys = keypair();
-  const phone = client(port);
-  await phone.open;
-  await phone.next(); // nonce
-  phone.send({
-    type: "join",
-    roomId: room,
-    token,
-    phonePubkey: keys.pub,
-    sig: signChallenge(token, keys.priv),
-  });
-  return { phone, keys };
-}
 
 test("room id is base64url sha256 of the raw public key", () => {
   const { pub } = keypair();
