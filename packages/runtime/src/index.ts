@@ -1,7 +1,10 @@
 import type { YorozuEvent } from "@yorozu/shared";
+import type { Memory } from "./memory.js";
+import { rememberTool } from "./memory.js";
 import type { Message, Provider, ToolCall, ToolDef } from "./provider.js";
 
 export * from "./provider.js";
+export * from "./memory.js";
 
 /** One line per event, as the agent loop will emit them. */
 export function describeEvent(event: YorozuEvent): string {
@@ -24,7 +27,7 @@ export const echoTool: Tool = {
   run: ({ text }) => String(text ?? ""),
 };
 
-export const defaultTools: Tool[] = [echoTool];
+export const defaultTools: Tool[] = [echoTool, rememberTool];
 
 export type AgentEvent =
   | { type: "text"; text: string }
@@ -37,6 +40,8 @@ export interface RunOptions {
   system: string;
   messages: Message[];
   tools?: Tool[];
+  /** When set, facts recalled for the latest user message lead the system prompt. */
+  memory?: Pick<Memory, "recallForPrompt">;
   /** Guard against a model that never stops calling tools. */
   maxTurns?: number;
 }
@@ -51,8 +56,15 @@ export async function* runAgent(
     description,
     parameters,
   }));
+  const lastUser = options.messages.findLast((m) => m.role === "user");
+  const recall = lastUser
+    ? (options.memory?.recallForPrompt(lastUser.content) ?? "")
+    : "";
   const history: Message[] = [
-    { role: "system", content: options.system },
+    {
+      role: "system",
+      content: recall ? `${recall}\n\n${options.system}` : options.system,
+    },
     ...options.messages,
   ];
 
