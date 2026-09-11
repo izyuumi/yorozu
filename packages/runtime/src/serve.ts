@@ -27,6 +27,8 @@ import {
 import WebSocket from "ws";
 import { defaultTools, runAgent } from "./index.js";
 import { openaiCompat, type Provider } from "./provider.js";
+import { startScheduler } from "./scheduler.js";
+import { appendTranscript, transcriptDir } from "./transcripts.js";
 
 const DEFAULT_STATE_DIR = join(homedir(), "Library", "Application Support", "Yorozu");
 const RECONNECT_MS = 2_000;
@@ -88,7 +90,12 @@ export interface Sidecar {
 
 export function serve(options: ServeOptions = {}): Sidecar {
   const relayUrl = options.relayUrl ?? env.YOROZU_RELAY_URL ?? "ws://127.0.0.1:8787";
-  const keys = loadKeys(options.stateDir ?? env.YOROZU_STATE_DIR ?? DEFAULT_STATE_DIR);
+  const dir = options.stateDir ?? env.YOROZU_STATE_DIR ?? DEFAULT_STATE_DIR;
+  // Memory and the schedule tools resolve their own paths from the environment:
+  // publish the choice so an explicit `stateDir` moves the whole runtime, not just the keys.
+  env.YOROZU_STATE_DIR = dir;
+  const transcripts = transcriptDir(dir);
+  const keys = loadKeys(dir);
   const provider =
     options.provider ??
     openaiCompat({
@@ -102,6 +109,39 @@ export function serve(options: ServeOptions = {}): Sidecar {
   let socket: WebSocket | null = null;
   let retry: NodeJS.Timeout | null = null;
   let stopped = false;
+  /** Seals and sends to the paired phone. Replaced per connection, a no-op while there is none. */
+  let sendEvent: (event: YorozuEvent) => void = () => {};
+
+  /** Everything the runtime sees is logged first: the nightly job reads the log back. */
+  function emit(event: YorozuEvent): void {
+    appendTranscript(event, transcripts);
+    sendEvent(event);
+  }
+
+  /**
+   * One agent turn in `threadId`, however it was started — a phone message or a due job —
+   * with its reply emitted to the phone the same way either way.
+   */
+  async function runTurn(threadId: string, text: string): Promise<void> {
+    let reply = "";
+    for await (const event of runAgent({
+      provider,
+      system: SYSTEM,
+      messages: [{ role: "user", content: text }],
+      tools: defaultTools,
+      context: { threadId, agentId: "main" },
+    })) {
+      if (event.type === "final") reply = event.text;
+    }
+    emit({
+      id: randomUUID(),
+      threadId,
+      ts: Date.now(),
+      agentId: "main",
+      kind: "message",
+      data: { role: "agent", text: reply },
+    });
+  }
 
   function connect(): void {
     state("connecting");
@@ -118,31 +158,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
       ws.send(JSON.stringify({ type: "frame", payload, sig: toBase64Url(sig) }));
     };
 
-    const sendEvent = (event: YorozuEvent): void => {
-      if (!sessionKey) return;
+    sendEvent = (event: YorozuEvent): void => {
+      if (!sessionKey || ws.readyState !== WebSocket.OPEN) return;
       const box = seal(sessionKey, Buffer.from(JSON.stringify(event)));
       sendFrame({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) });
     };
-
-    async function answer(incoming: YorozuEvent & { kind: "message" }): Promise<void> {
-      let text = "";
-      for await (const event of runAgent({
-        provider,
-        system: SYSTEM,
-        messages: [{ role: "user", content: incoming.data.text }],
-        tools: defaultTools,
-      })) {
-        if (event.type === "final") text = event.text;
-      }
-      sendEvent({
-        id: randomUUID(),
-        threadId: incoming.threadId,
-        ts: Date.now(),
-        agentId: "main",
-        kind: "message",
-        data: { role: "agent", text },
-      });
-    }
 
     /** Everything here is attacker-controlled: a bad frame must not kill the sidecar. */
     function onFrame(payload: unknown): void {
@@ -156,8 +176,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (body.t !== "box" || !sessionKey) return;
       const plain = open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c));
       const event = JSON.parse(Buffer.from(plain).toString()) as YorozuEvent;
+      appendTranscript(event, transcripts);
       if (event.kind !== "message" || event.data.role !== "user") return;
-      answer(event).catch((e: unknown) => state(`agent-error ${String(e)}`));
+      runTurn(event.threadId, event.data.text).catch((e: unknown) =>
+        state(`agent-error ${String(e)}`),
+      );
     }
 
     ws.on("open", () => state("connected"));
@@ -208,10 +231,20 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   connect();
 
+  // No heartbeat: the runner only wakes to ask which jobs are due.
+  const scheduler = startScheduler(
+    (job) =>
+      void runTurn(job.threadId, job.instruction).catch((e: unknown) =>
+        state(`job-error ${job.id} ${String(e)}`),
+      ),
+    { dir },
+  );
+
   return {
     close: () =>
       new Promise<void>((done) => {
         stopped = true;
+        scheduler.stop();
         if (retry) clearTimeout(retry);
         const ws = socket;
         if (!ws || ws.readyState === WebSocket.CLOSED) return done();
