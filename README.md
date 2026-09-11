@@ -166,3 +166,49 @@ Every event the sidecar sees is appended to `<YOROZU_STATE_DIR>/transcripts/YYYY
 `read_transcripts` tool. A fresh schedule is seeded with the nightly consolidation job
 (`0 3 * * *`, thread `system`), which tells the agent to read the last 24h and `remember` the
 durable facts memory does not already hold. Unschedule it and it stays gone.
+
+## Browser
+
+`packages/runtime/src/tools/browser.ts` drives a Chromium-family browser over CDP — the protocol
+is JSON over one WebSocket and `ws` is already a dependency, so there is no puppeteer or
+playwright here. The browser is launched with `--remote-debugging-port=<free port>`,
+`--user-data-dir=<YOROZU_STATE_DIR>/browser-profile` and `--no-first-run`: a profile of the
+agent's own, so the user's tabs, cookies and logins are never touched.
+
+| Tool | What it does |
+| --- | --- |
+| `browser.open(url)` | opens a tab already navigated to `url`, returns its tab ID |
+| `browser.snapshot(tabId)` | title, URL, visible text, and every interactive element numbered |
+| `browser.click(tabId, ref)` | clicks the element with that number from the latest snapshot |
+| `browser.type(tabId, ref, text)` | focuses it, sets its value, fires `input` and `change` |
+| `browser.eval(tabId, js)` | evaluates JavaScript and returns the result as JSON |
+| `browser.close(tabId)` | closes a tab the agent opened |
+
+A snapshot parks the interactive elements on `window.__yorozu` and numbers them, so `click` and
+`type` name one by number instead of the model inventing a selector; a stale number is an error
+telling it to snapshot again. Only tabs the agent opened are tracked, and `close` refuses any
+other tab — the sidecar closes all of them (and the process) on shutdown.
+
+`YOROZU_BROWSER` carries the Mac app's **Browser** picker:
+
+| Value | Meaning |
+| --- | --- |
+| `bundled` | Chrome for Testing, downloaded into `<YOROZU_STATE_DIR>/chrome` on first use |
+| an absolute path | that executable, e.g. `/Applications/Brave Browser.app/Contents/MacOS/Brave Browser` |
+| unset | the first installed browser detected, else bundled |
+
+Detection looks for Chrome, Chromium, Brave, Edge and Arc at their known bundle paths under
+`/Applications`. The bundled download resolves the `mac-arm64` Stable build from the official
+[Chrome for Testing endpoint](https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json),
+logs its progress, checks the zip against its declared length, expands it with `ditto` (which
+preserves the bundle's signature, and which Node's stdlib cannot do), and fails loudly rather
+than leaving a partial download behind.
+
+Tests run against an in-process fake CDP server that answers the Target and Runtime methods, so
+they need no browser and pass on Linux CI. The real-launch test is skipped unless
+`YOROZU_BROWSER` is set:
+
+```sh
+YOROZU_BROWSER=/Applications/Brave\ Browser.app/Contents/MacOS/Brave\ Browser \
+  pnpm --filter @yorozu/runtime test
+```
