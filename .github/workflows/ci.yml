@@ -22,3 +22,17 @@ jobs:
       - run: swift build --package-path packages/shared-swift
       - run: swift test --package-path packages/shared-swift
       - run: swift build --package-path apps/mac
+
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The Xcode project is generated, not checked in; see apps/ios/Project.swift.
+      - run: brew install --cask tuist
+      - run: tuist generate --no-open --path apps/ios
+      - run: |
+          xcodebuild build \
+            -workspace apps/ios/Yorozu.xcworkspace \
+            -scheme YorozuIOS \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO

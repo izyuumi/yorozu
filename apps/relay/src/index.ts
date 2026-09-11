@@ -96,6 +96,16 @@ function bufferFrame(room: Room, raw: string, now: number): void {
   }
 }
 
+/**
+ * Tells the room's phones whether its Mac holds a live socket, so they can show an offline
+ * banner instead of a silent send. This is routing state the relay already keeps — it says
+ * nothing about the ciphertext, so the relay stays blind.
+ */
+function notifyOwner(room: Room, online: boolean): void {
+  const raw = JSON.stringify({ type: "owner", online });
+  for (const phone of room.phones) phone.send(raw);
+}
+
 function drainBuffer(room: Room, mac: WebSocket, now: number): void {
   pruneBuffer(room, now);
   for (const entry of room.buffer) mac.send(entry.raw);
@@ -163,6 +173,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           conn.roomId = id;
           conn.key = key;
           ws.send(JSON.stringify({ type: "registered", roomId: id }));
+          notifyOwner(room, true);
           drainBuffer(room, ws, now);
           return;
         }
@@ -209,7 +220,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           conn.room = room;
           conn.roomId = id;
           conn.key = key;
-          ws.send(JSON.stringify({ type: "joined", roomId: id }));
+          ws.send(JSON.stringify({ type: "joined", roomId: id, ownerOnline: room.mac !== null }));
           return;
         }
 
@@ -241,7 +252,10 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
     ws.on("close", () => {
       const { room, roomId: id } = conn;
       if (!room || !id) return;
-      if (room.mac === ws) room.mac = null;
+      if (room.mac === ws) {
+        room.mac = null;
+        notifyOwner(room, false);
+      }
       room.phones.delete(ws);
       dropRoomIfIdle(id, room);
     });

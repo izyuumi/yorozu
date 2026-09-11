@@ -8,7 +8,7 @@ Out-of-box personal AI assistant for macOS, remote-controlled from iOS through a
 ## Layout
 
 - `apps/mac` — SwiftUI menu bar app, native tool host (SwiftPM executable, macOS 15+).
-- `apps/ios` — SwiftUI iOS app sources (SwiftPM library, iOS 18+).
+- `apps/ios` — SwiftUI iOS app (Tuist-generated Xcode project, iOS 18+).
 - `apps/relay` — blind websocket relay that forwards ciphertext between Mac and phone.
 - `packages/runtime` — Node agent loop, provider adapters, tools, memory, scheduler.
 - `packages/shared` — protocol event types shared by the TypeScript workspaces.
@@ -166,3 +166,44 @@ Every event the sidecar sees is appended to `<YOROZU_STATE_DIR>/transcripts/YYYY
 `read_transcripts` tool. A fresh schedule is seeded with the nightly consolidation job
 (`0 3 * * *`, thread `system`), which tells the agent to read the last 24h and `remember` the
 durable facts memory does not already hold. Unschedule it and it stays gone.
+
+## iOS app
+
+`apps/ios` is a real app target (bundle ID `to.yumi.yorozu.ios`, iOS 18+) depending on
+`packages/shared-swift` by local path. Its Xcode project is generated from `apps/ios/Project.swift`
+by Tuist and is not checked in — two manifests are fewer files than the eleven `tuist generate`
+emits, and they cannot drift from the sources.
+
+```sh
+tuist generate --no-open --path apps/ios       # writes Yorozu.xcworkspace
+xcodebuild build -workspace apps/ios/Yorozu.xcworkspace -scheme YorozuIOS \
+  -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO
+```
+
+Scanning the QR from the Mac's menu bar stores the payload together with a freshly generated
+device identity — Ed25519 for relay frame signatures, X25519 for the session key — in the
+Keychain, then opens the one `Home` thread. `RelayClient` in `packages/shared-swift` is the phone
+half of the relay protocol (join, cleartext `hello`, sealed events); it owns no UI state, so the
+Mac app can reuse it for local chat later.
+
+Replies stream: the sidecar re-sends one message event per delta under a stable event id, each
+carrying the whole text so far, and the phone replaces that message in place rather than appending.
+The relay answers `joined` with `ownerOnline` and pushes `{"type":"owner","online":…}` whenever a
+room's Mac connects or drops; that drives the "Mac offline" banner. Presence is routing state the
+relay already keeps to decide whether to forward or buffer, so it stays blind to the ciphertext.
+
+Join tokens are one-time, so re-pairing needs a fresh QR once the phone's socket has closed. Token
+refresh belongs with the Threads ticket, which gives each device a lasting identity.
+
+### End-to-end proof
+
+`apps/ios/e2e/run.sh` is a test helper, not product code. It starts the relay, a fake
+OpenAI-compatible provider (`e2e/fake-provider.mjs`, pointed at by `YOROZU_BASE_URL`) and the
+runtime sidecar, creates a throwaway iPhone simulator, builds and installs the app, injects the
+sidecar's pairing QR with `-yorozuPair '<json>'` (the simulator has no camera) plus `-yorozuSend hi`,
+and asserts the streamed reply reaches the phone. The simulator is shut down and deleted on exit.
+
+Unlike the CI compile check above, that build keeps code signing on: ad-hoc simulator signing is
+what gives the app its `application-identifier` entitlement, and without one every Keychain write
+fails with `-34018` (`errSecMissingEntitlement`), so pairing never persists. It needs no developer
+account.

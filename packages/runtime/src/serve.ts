@@ -119,6 +119,20 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * with its reply emitted to the phone the same way either way.
    */
   async function runTurn(threadId: string, text: string): Promise<void> {
+    // The reply streams under one id: every delta re-sends the whole text so far, so the phone
+    // replaces that message in place and a dropped frame still converges. Only the finished
+    // reply goes through `emit`, so the transcript keeps one line per turn rather than one
+    // per delta.
+    const id = randomUUID();
+    const message = (reply: string): YorozuEvent => ({
+      id,
+      threadId,
+      ts: Date.now(),
+      agentId: "main",
+      kind: "message",
+      data: { role: "agent", text: reply },
+    });
+
     let reply = "";
     for await (const event of runAgent({
       provider,
@@ -127,16 +141,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
       tools: defaultTools,
       context: { threadId, agentId: "main" },
     })) {
-      if (event.type === "final") reply = event.text;
+      if (event.type === "text") {
+        reply += event.text;
+        sendEvent(message(reply));
+      } else if (event.type === "final") {
+        reply = event.text;
+      }
     }
-    emit({
-      id: randomUUID(),
-      threadId,
-      ts: Date.now(),
-      agentId: "main",
-      kind: "message",
-      data: { role: "agent", text: reply },
-    });
+    emit(message(reply));
   }
 
   function connect(): void {
