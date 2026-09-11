@@ -39,6 +39,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadCreate = "thread_create"
         case threadList = "thread_list"
         case threadArchive = "thread_archive"
+        case interrupt
         case syncRequest = "sync_request"
         case syncDelta = "sync_delta"
     }
@@ -53,6 +54,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadCreate(ThreadCreateData)
         case threadList(ThreadListData)
         case threadArchive(ThreadArchiveData)
+        case interrupt(InterruptData)
         case syncRequest(SyncRequestData)
         case syncDelta(SyncDeltaData)
 
@@ -67,6 +69,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadCreate: .threadCreate
             case .threadList: .threadList
             case .threadArchive: .threadArchive
+            case .interrupt: .interrupt
             case .syncRequest: .syncRequest
             case .syncDelta: .syncDelta
             }
@@ -94,6 +97,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadCreate: payload = .threadCreate(try c.decode(ThreadCreateData.self, forKey: .data))
         case .threadList: payload = .threadList(try c.decode(ThreadListData.self, forKey: .data))
         case .threadArchive: payload = .threadArchive(try c.decode(ThreadArchiveData.self, forKey: .data))
+        case .interrupt: payload = .interrupt(try c.decode(InterruptData.self, forKey: .data))
         case .syncRequest: payload = .syncRequest(try c.decode(SyncRequestData.self, forKey: .data))
         case .syncDelta: payload = .syncDelta(try c.decode(SyncDeltaData.self, forKey: .data))
         }
@@ -117,6 +121,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadCreate(let d): try c.encode(d, forKey: .data)
         case .threadList(let d): try c.encode(d, forKey: .data)
         case .threadArchive(let d): try c.encode(d, forKey: .data)
+        case .interrupt(let d): try c.encode(d, forKey: .data)
         case .syncRequest(let d): try c.encode(d, forKey: .data)
         case .syncDelta(let d): try c.encode(d, forKey: .data)
         }
@@ -210,6 +215,12 @@ public struct ThreadListData: Codable, Equatable, Sendable {
 
 /// Archives `threadId` from the base fields; carries nothing of its own.
 public struct ThreadArchiveData: Codable, Equatable, Sendable {
+    public init() {}
+}
+
+/// The user pressed stop: cancel the turn running in `threadId` and every agent it
+/// delegated to. Carries nothing of its own.
+public struct InterruptData: Codable, Equatable, Sendable {
     public init() {}
 }
 

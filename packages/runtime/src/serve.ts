@@ -25,16 +25,20 @@ import {
   type YorozuEvent,
 } from "@yorozu/shared";
 import WebSocket from "ws";
+import { agentsDir, installAgents, loadAgent, MAIN_AGENT } from "./agents.js";
 import { chainFromEnv } from "./chain.js";
+import { delegateTool } from "./delegate.js";
 import { defaultTools, runAgent } from "./index.js";
 import type { Provider } from "./provider.js";
 import { probe } from "./probe.js";
 import { startScheduler } from "./scheduler.js";
+import { listSkills, skillsDir, skillsPrompt } from "./skills.js";
 import { closeBrowser } from "./tools/browser.js";
 import { appendTranscript, transcriptDir } from "./transcripts.js";
 
 const DEFAULT_STATE_DIR = join(homedir(), "Library", "Application Support", "Yorozu");
 const RECONNECT_MS = 2_000;
+/** Only reached if the user deleted agents/main.md: the bundled one is installed on startup. */
 const SYSTEM = "You are Yorozu, a personal assistant running on the user's Mac.";
 
 export interface Keys {
@@ -103,6 +107,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const log = options.log ?? ((line: string) => void stdout.write(`${line}\n`));
   const state = (name: string) => log(`STATE ${name}`);
 
+  // The main agent is a file like every specialist; the skills on disk are listed into its
+  // prompt once, at startup, and their bodies load on demand through the `skill` tool.
+  const agents = installAgents(agentsDir(dir));
+  const main = loadAgent(MAIN_AGENT, agents) ?? { name: MAIN_AGENT, prompt: SYSTEM };
+  const system = [main.prompt, skillsPrompt(listSkills(skillsDir(dir)))]
+    .filter(Boolean)
+    .join("\n\n");
+  /** One controller per running turn, so an `interrupt` cancels every tree at once. */
+  const running = new Set<AbortController>();
+
   let socket: WebSocket | null = null;
   let retry: NodeJS.Timeout | null = null;
   let stopped = false;
@@ -129,26 +143,48 @@ export function serve(options: ServeOptions = {}): Sidecar {
       id,
       threadId,
       ts: Date.now(),
-      agentId: "main",
+      agentId: MAIN_AGENT,
       kind: "message",
       data: { role: "agent", text: reply },
     });
 
+    const turn = new AbortController();
+    running.add(turn);
     let reply = "";
-    for await (const event of runAgent({
-      provider,
-      system: SYSTEM,
-      messages: [{ role: "user", content: text }],
-      tools: defaultTools,
-      context: { threadId, agentId: "main" },
-    })) {
-      if (event.type === "text") {
-        reply += event.text;
-        sendEvent(message(reply));
-      } else if (event.type === "final") {
-        reply = event.text;
+    try {
+      // Built per turn: `delegate` carries this turn's abort signal down to its children.
+      const tools = [
+        ...defaultTools,
+        delegateTool({
+          provider,
+          tools: defaultTools,
+          main,
+          emit,
+          turn: runTurn,
+          dir: agents,
+          signal: turn.signal,
+        }),
+      ];
+      for await (const event of runAgent({
+        provider,
+        system,
+        messages: [{ role: "user", content: text }],
+        tools,
+        context: { threadId, agentId: MAIN_AGENT },
+        signal: turn.signal,
+      })) {
+        if (event.type === "text") {
+          reply += event.text;
+          sendEvent(message(reply));
+        } else if (event.type === "final") {
+          reply = event.text;
+        }
       }
+    } finally {
+      running.delete(turn);
     }
+    // An interrupted turn says nothing: the user already knows they stopped it.
+    if (turn.signal.aborted) return;
     emit(message(reply));
   }
 
@@ -186,6 +222,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const plain = open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c));
       const event = JSON.parse(Buffer.from(plain).toString()) as YorozuEvent;
       appendTranscript(event, transcripts);
+      if (event.kind === "interrupt") {
+        for (const turn of running) turn.abort();
+        running.clear();
+        return;
+      }
       if (event.kind !== "message" || event.data.role !== "user") return;
       runTurn(event.threadId, event.data.text).catch((e: unknown) =>
         state(`agent-error ${String(e)}`),

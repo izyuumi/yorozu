@@ -99,6 +99,7 @@ test("loop dispatches a streamed tool call and returns final text", async () => 
     "browser.type",
     "browser.eval",
     "browser.close",
+    "skill",
   ]);
   expect(sent.messages.at(-2)).toEqual({
     role: "assistant",

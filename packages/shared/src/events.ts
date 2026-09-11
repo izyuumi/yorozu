@@ -70,6 +70,12 @@ export interface ThreadListData {
 /** Archives `threadId` from the base fields; carries nothing of its own. */
 export type ThreadArchiveData = Record<string, never>;
 
+/**
+ * The user pressed stop: cancel the turn running in `threadId` and every agent it
+ * delegated to. Carries nothing of its own.
+ */
+export type InterruptData = Record<string, never>;
+
 /** Last event id the device already holds, per thread. */
 export interface SyncRequestData {
   lastSeen: Record<string, string>;
@@ -90,6 +96,7 @@ export type EventPayload =
   | { kind: "thread_create"; data: ThreadCreateData }
   | { kind: "thread_list"; data: ThreadListData }
   | { kind: "thread_archive"; data: ThreadArchiveData }
+  | { kind: "interrupt"; data: InterruptData }
   | { kind: "sync_request"; data: SyncRequestData }
   | { kind: "sync_delta"; data: SyncDeltaData };
 

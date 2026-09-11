@@ -3,10 +3,15 @@ import type { Memory } from "./memory.js";
 import { rememberTool } from "./memory.js";
 import type { Message, Provider, ToolCall, ToolDef } from "./provider.js";
 import { listScheduleTool, scheduleTool, unscheduleTool } from "./scheduler.js";
+import { skillTool } from "./skills.js";
 import { browserTools } from "./tools/browser.js";
 import { readTranscriptsTool } from "./transcripts.js";
 
 export * from "./provider.js";
+export * from "./frontmatter.js";
+export * from "./agents.js";
+export * from "./skills.js";
+export * from "./delegate.js";
 export * from "./memory.js";
 export * from "./cron.js";
 export * from "./scheduler.js";
@@ -52,6 +57,7 @@ export const defaultTools: Tool[] = [
   listScheduleTool,
   readTranscriptsTool,
   ...browserTools,
+  skillTool,
 ];
 
 export type AgentEvent =
@@ -71,6 +77,12 @@ export interface RunOptions {
   context?: TurnContext;
   /** Guard against a model that never stops calling tools. */
   maxTurns?: number;
+  /**
+   * Cancels the run: the loop stops at the next event, tool call or turn boundary, and
+   * breaking out of the provider's iterator closes the underlying stream. A delegating
+   * agent passes its own signal down, so one abort stops the whole tree.
+   */
+  signal?: AbortSignal;
 }
 
 /** Runs the model, dispatches tool calls, loops until the model stops calling. */
@@ -97,9 +109,11 @@ export async function* runAgent(
 
   let text = "";
   for (let turn = 0; turn < (options.maxTurns ?? 10); turn++) {
+    if (options.signal?.aborted) break;
     text = "";
     const calls: ToolCall[] = [];
     for await (const event of options.provider.stream(history, defs)) {
+      if (options.signal?.aborted) break;
       if (event.type === "text") {
         text += event.text;
         yield event;
@@ -117,6 +131,7 @@ export async function* runAgent(
     if (!calls.length) break;
 
     for (const call of calls) {
+      if (options.signal?.aborted) break;
       const tool = tools.find((t) => t.name === call.name);
       let result: string;
       try {

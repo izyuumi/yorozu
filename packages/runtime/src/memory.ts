@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { env } from "node:process";
 import { DatabaseSync } from "node:sqlite";
+import { frontmatter } from "./frontmatter.js";
 import type { Tool } from "./index.js";
 
 export const MEMORY_KINDS = [
@@ -75,17 +76,12 @@ function serialize(fact: Fact): string {
 
 /** Tolerant of hand-edited files: unknown keys are ignored, missing ones default. */
 function parse(path: string, text: string): Fact {
-  const head = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text);
-  const fields = new Map<string, string>();
-  for (const line of head?.[1]?.split(/\r?\n/) ?? []) {
-    const colon = line.indexOf(":");
-    if (colon > 0) fields.set(line.slice(0, colon).trim(), line.slice(colon + 1).trim());
-  }
+  const { fields, body } = frontmatter(text);
   const kind = fields.get("kind") as MemoryKind;
   return {
     path,
     kind: MEMORY_KINDS.includes(kind) ? kind : "fact",
-    body: text.slice(head?.[0]?.length ?? 0).trim(),
+    body,
     created: fields.get("created") ?? "",
     threadId: fields.get("threadId") ?? "",
     agentId: fields.get("agentId") ?? "",
@@ -255,13 +251,19 @@ export function openMemory(dir = memoryDir()): Memory {
   };
 }
 
-let shared: Memory | undefined;
+const instances = new Map<string, Memory>();
 
-/** Process-wide instance for the `remember` tool. Reopens if the directory changes. */
-export function defaultMemory(): Memory {
-  if (shared?.dir !== memoryDir()) shared = openMemory();
-  return shared;
+/**
+ * Process-wide instance per directory: the `remember` tool uses the default one, an agent
+ * with a `memory:` scope uses its own subdirectory, and neither reopens SQLite per turn.
+ */
+export function memoryFor(dir = memoryDir()): Memory {
+  let memory = instances.get(dir);
+  if (!memory) instances.set(dir, (memory = openMemory(dir)));
+  return memory;
 }
+
+export const defaultMemory = (): Memory => memoryFor(memoryDir());
 
 /** Compact block to prepend to a system prompt. Empty when nothing matches. */
 export const recallForPrompt = (query: string, limit?: number): string =>

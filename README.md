@@ -253,3 +253,37 @@ they need no browser and pass on Linux CI. The real-launch test is skipped unles
 YOROZU_BROWSER=/Applications/Brave\ Browser.app/Contents/MacOS/Brave\ Browser \
   pnpm --filter @yorozu/runtime test
 ```
+
+## Agents, delegation and skills
+
+Every agent is a markdown file in `<YOROZU_STATE_DIR>/agents/<name>.md`: the body is its system
+prompt, the frontmatter is opt-in restriction only. `model` is a provider spec the way
+`YOROZU_MODEL_CHAIN` takes one, `tools` is an allowlist of tool names, `memory` is a
+subdirectory of the memory directory to recall from, and `description` is the one line the main
+agent sees when choosing. An absent field inherits the main agent's, so the shortest useful
+specialist is a file with no frontmatter at all. `main.md` is the main agent's own prompt.
+
+The five bundled agents (`main`, `calendar`, `email`, `browser`, `reservation`) live in
+`packages/runtime/agents/` and are copied into the state directory on first run; a file you
+edited is never written over, and one you delete comes back on the next start.
+
+The main agent has one handle on the rest: `delegate(agent, task, background?)`. It runs the
+specialist with its own message list seeded with `task` and returns its final text. Depth is
+hard-capped at 2 — the specialist's tool list never contains `delegate`, so a specialist that
+needs another specialist says what it needs and the main agent re-delegates. With
+`background: true` the call returns a `delegation <id> started` line immediately and the result
+arrives later as a new turn in the same thread (`delegation <id> finished: <result>`), through
+the same programmatic-turn path the scheduler uses. Every event a specialist emits carries
+`agentId: <specialist>` and `parentAgentId: "main"`, which is what the phone's drill-down will
+render.
+
+An `interrupt` event from the phone aborts the whole tree: the sidecar holds one `AbortController`
+per running turn, `runAgent` takes the signal and stops at the next event, tool call or turn
+boundary, and `delegate` passes the same signal to its children. An interrupted turn emits no
+reply.
+
+Skills are read in the AgentSkills format from `<YOROZU_STATE_DIR>/skills/<name>/SKILL.md` —
+existing skill directories drop in unchanged, nothing is copied or rewritten. On startup their
+names and descriptions are listed into the main system prompt; the body loads on demand through
+the `skill(name)` tool. Agent and skill names from the model are resolved against the listing
+rather than joined into a path.
