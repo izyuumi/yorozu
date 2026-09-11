@@ -37,6 +37,7 @@ import { probe } from "./probe.js";
 import { startScheduler } from "./scheduler.js";
 import { listSkills, skillsDir, skillsPrompt } from "./skills.js";
 import { closeBrowser } from "./tools/browser.js";
+import { useProviderSearch } from "./tools/search.js";
 import { appendTranscript, transcriptDir } from "./transcripts.js";
 
 const DEFAULT_STATE_DIR = join(homedir(), "Library", "Application Support", "Yorozu");
@@ -125,6 +126,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const transcripts = transcriptDir(dir);
   const keys = loadKeys(dir);
   const provider = options.provider ?? chainFromEnv();
+  // `web_search` asks the running chain for native search before it drives a browser.
+  useProviderSearch(provider);
   const log = options.log ?? ((line: string) => void stdout.write(`${line}\n`));
   const state = (name: string) => log(`STATE ${name}`);
 

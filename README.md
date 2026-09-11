@@ -457,3 +457,57 @@ node dist/serve.js assign research   # refresh prices, assign, print the diff
 node dist/serve.js assign-revert     # put the last run's files back
 node dist/serve.js assign-cron '0 4 * * 1' catalog
 ```
+## Calendar, reminders, mail, fetch and search
+
+Calendar and reminders are EventKit, mail is AppleScript, and both live in the same
+`yorozu-native` helper for the same reason the screen tools do: Node can reach neither.
+`apps/mac/Sources/YorozuNative/Apple.swift` adds eleven commands to the line protocol.
+
+| Tool | Helper command | What it does |
+| --- | --- | --- |
+| `calendar_list` | `calendar.list` | the user's calendars and whether each is writable |
+| `calendar_events` | `calendar.events` | events in a window, defaulting to the next seven days |
+| `calendar_create` | `calendar.create` | a new event, returning the id the others take |
+| `calendar_update` | `calendar.update` | changes only the fields given |
+| `calendar_delete` | `calendar.delete` | one event — one occurrence of a series, not the series |
+| `reminders_list` | `reminders.list` | open reminders, soonest due first |
+| `reminders_create` | `reminders.create` | a new reminder, with an optional due date and list |
+| `reminders_complete` | `reminders.complete` | marks one done |
+| `mail_unread` | `mail.unread` | unread inbox messages, with the id `mail_read` takes |
+| `mail_read` | `mail.read` | one message, header line then body |
+| `mail_send` | `mail.send` | sends from the user's Mail account |
+
+EventKit is asked for access through the macOS 14+ full-access APIs
+(`requestFullAccessToEvents`, `requestFullAccessToReminders`): write needs them, and asking
+for less would turn every create into a failure later instead of a refusal now. That grant
+is keyed on the Info.plist, so `scripts/dev-bundle.sh` carries the two `…FullAccess…` usage
+descriptions beside the older ones.
+
+Mail has no framework — its scripting dictionary is the only way in — so those three go
+through `NSAppleScript`. Automation is a separate TCC grant, and on a Mac that has never
+given it the Apple event comes back as **-1743**. That one code is translated into a sentence
+naming the setting to change, so the model reports something the user can act on rather than
+crashing or guessing. Dates cross the pipe as ISO 8601; a string with no zone is read as the
+user's own local time, which is what a model writing `2026-09-12T14:00` means.
+
+`fetch(url)` is plain Node: GET, redirects followed, and the readability pass is a heuristic
+rather than a dependency. Scripts, styles and `<head>` go with their contents, nav, header,
+footer, aside and form go as boilerplate, and when a page marks its own content with
+`<article>` or `<main>` that subtree is all that is kept — unless it is a tenth the size of
+the body, which means the wrapper is a stub and the body is the article. What is left is
+tags off, entities decoded, whitespace collapsed, capped at 20 000 characters like every
+other tool result. The URL reported back is where the redirects ended, not where they began.
+
+`web_search(query)` follows the spec's two paths. `Provider.search` is a new optional
+capability on the adapter interface: a provider that has native search implements it, the
+chain forwards to the first one that does, and `claudeCli` implements it with Claude Code's
+own `WebSearch` — the one call that *wants* the CLI to run a tool, so it is allowed rather
+than denied the way `stream` denies everything. With no such provider, or when the native
+search fails, the fallback drives DuckDuckGo's no-JavaScript endpoint through the agent's own
+browser profile and reads the results off the page, unwrapping DuckDuckGo's redirector to the
+real URLs. Top 8 either way, and the tab is closed again whichever way it goes.
+
+Tests: `fetch` runs against a local HTTP server, `web_search` against a fake CDP endpoint
+serving a canned DuckDuckGo page, and the calendar, reminders and mail tools against a fake
+helper speaking the line protocol — including one that answers every mail command with
+-1743, so the denied-Automation path is covered without needing a Mac that denies it.

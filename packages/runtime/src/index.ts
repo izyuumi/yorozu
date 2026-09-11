@@ -6,8 +6,11 @@ import { rememberTool } from "./memory.js";
 import type { Message, Provider, ToolCall, ToolDef } from "./provider.js";
 import { listScheduleTool, scheduleTool, unscheduleTool } from "./scheduler.js";
 import { skillTool } from "./skills.js";
+import { appleTools } from "./tools/apple.js";
 import { browserTools } from "./tools/browser.js";
+import { fetchTool } from "./tools/fetch.js";
 import { fsListTool, fsReadTool, fsWriteTool } from "./tools/fs.js";
+import { webSearchTool } from "./tools/search.js";
 import {
   inputClickTool,
   inputKeyTool,
@@ -38,6 +41,9 @@ export * from "./tools/browser.js";
 export * from "./tools/shell.js";
 export * from "./tools/fs.js";
 export * from "./tools/native.js";
+export * from "./tools/apple.js";
+export * from "./tools/fetch.js";
+export * from "./tools/search.js";
 
 /** One line per event, as the agent loop will emit them. */
 export function describeEvent(event: YorozuEvent): string {
@@ -92,6 +98,9 @@ export const defaultTools: Tool[] = [
   ...browserTools,
   skillTool,
   autoAssignTool,
+  ...appleTools,
+  fetchTool,
+  webSearchTool,
 ];
 
 export type AgentEvent =

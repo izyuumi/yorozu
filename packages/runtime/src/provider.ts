@@ -37,6 +37,11 @@ export type ProviderEvent =
 export interface Provider {
   stream(messages: Message[], tools: ToolDef[]): AsyncIterable<ProviderEvent>;
   auth(): Promise<{ ok: boolean; reason?: string }>;
+  /**
+   * Provider-native web search, as already-read results rather than raw HTML. Optional:
+   * a provider without one is why `web_search` keeps a browser fallback. See tools/search.ts.
+   */
+  search?(query: string): Promise<string>;
 }
 
 export interface OpenAICompatConfig {
