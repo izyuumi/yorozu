@@ -240,7 +240,10 @@ enum Native {
 
     static func handle(_ request: [String: Any]) async -> [String: Any] {
         do {
-            switch request["cmd"] as? String ?? "" {
+            let cmd = request["cmd"] as? String ?? ""
+            // Calendar, reminders and mail live in Apple.swift; everything else is here.
+            if let result = try await Apple.handle(cmd, request) { return result }
+            switch cmd {
             case "ax.read": return try axRead(request)
             case "screen.capture": return try await screenCapture()
             case "input.click": return try click(request)

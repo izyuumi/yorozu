@@ -86,6 +86,42 @@ export function claudeCli(config: ClaudeCliConfig = {}): Provider {
       }
     },
 
+    /**
+     * Claude Code carries a server-side `WebSearch`, which is the spec's provider-native
+     * search. Unlike `stream`, this one call *wants* the CLI to run its own tool, so the
+     * tool is allowed rather than denied and the answer comes back as read text.
+     */
+    async search(text) {
+      const session = query({
+        prompt:
+          `Search the web for: ${text}\n\n` +
+          'Reply with up to 8 results, one per line, as "title — url — one sentence". ' +
+          "No preamble and no closing remarks.",
+        options: {
+          ...(config.model ? { model: config.model } : {}),
+          tools: ["WebSearch"],
+          allowedTools: ["WebSearch"],
+          settingSources: [],
+          maxTurns: 6,
+        },
+      });
+
+      let answer = "";
+      try {
+        for await (const message of session) {
+          if (message.type !== "assistant") continue;
+          for (const block of message.message.content) {
+            if (block.type === "text") answer += block.text;
+          }
+        }
+      } finally {
+        session.close();
+      }
+      const trimmed = answer.trim();
+      if (!trimmed) throw new Error("claude: web search returned nothing");
+      return trimmed;
+    },
+
     async *stream(messages, tools) {
       const server = createSdkMcpServer({
         name: SERVER,

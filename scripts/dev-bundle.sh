@@ -37,7 +37,11 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <string>Yorozu drives Calendar, Mail, Reminders and System Events on your behalf.</string>
   <key>NSCalendarsUsageDescription</key>
   <string>Yorozu reads and writes your calendar when you ask it to.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Yorozu reads and writes your calendar when you ask it to.</string>
   <key>NSRemindersUsageDescription</key>
+  <string>Yorozu reads and writes your reminders when you ask it to.</string>
+  <key>NSRemindersFullAccessUsageDescription</key>
   <string>Yorozu reads and writes your reminders when you ask it to.</string>
   <key>NSSystemAdministrationUsageDescription</key>
   <string>Yorozu needs Full Disk Access to read and write files anywhere you can.</string>

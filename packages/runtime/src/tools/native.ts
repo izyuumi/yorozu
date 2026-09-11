@@ -130,8 +130,14 @@ export function defaultNativeHost(): NativeHost {
   return shared;
 }
 
-/** A helper-reported failure is a thrown error: the loop turns it into `error: …`. */
-async function ask(cmd: string, args: Record<string, unknown> = {}): Promise<NativeResponse> {
+/**
+ * A helper-reported failure is a thrown error: the loop turns it into `error: …`. Shared
+ * with the calendar, reminders and mail tools, which speak the same pipe.
+ */
+export async function askNative(
+  cmd: string,
+  args: Record<string, unknown> = {},
+): Promise<NativeResponse> {
   const response = await defaultNativeHost().request(cmd, args);
   if (!response.ok) throw new Error(String(response.error ?? `${cmd} failed`));
   return response;
@@ -175,7 +181,7 @@ export function formatTree(node: AxNode, depth = 0): string[] {
  * on the other end. The path is what the provider chain, and the user, can actually use.
  */
 export async function captureScreen(dir = join(stateDir(), "screenshots")): Promise<string> {
-  const response = await ask("screen.capture");
+  const response = await askNative("screen.capture");
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}.png`);
   writeFileSync(file, Buffer.from(String(response.png ?? ""), "base64"));
@@ -190,7 +196,7 @@ export const screenReadTool: Tool = {
     "a screenshot when the window exposes no tree.",
   parameters: { type: "object", properties: {}, required: [] },
   run: async () => {
-    const response = await ask("ax.read");
+    const response = await askNative("ax.read");
     const tree = response.tree as AxNode | undefined;
     const lines = tree?.id ? formatTree(tree) : [];
     // Spec: the screenshot is the automatic fallback when the tree is empty, so the model
@@ -225,7 +231,7 @@ export const inputClickTool: Tool = {
     required: [],
   },
   run: async ({ id, x, y }) => {
-    const response = await ask("input.click", {
+    const response = await askNative("input.click", {
       ...(id ? { id: String(id) } : { x: Number(x), y: Number(y) }),
     });
     const at = response.clicked as { x: number; y: number };
@@ -243,7 +249,7 @@ export const inputTypeTool: Tool = {
   },
   run: async ({ text }) => {
     const body = String(text ?? "");
-    await ask("input.type", { text: body });
+    await askNative("input.type", { text: body });
     return `typed ${body.length} characters`;
   },
 };
@@ -267,7 +273,7 @@ export const inputKeyTool: Tool = {
   },
   run: async ({ key, modifiers }) => {
     const names = Array.isArray(modifiers) ? modifiers.map(String) : [];
-    await ask("input.key", { key: String(key ?? ""), modifiers: names });
+    await askNative("input.key", { key: String(key ?? ""), modifiers: names });
     return `pressed ${[...names, String(key ?? "")].join("+")}`;
   },
 };

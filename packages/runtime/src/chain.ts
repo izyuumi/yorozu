@@ -17,8 +17,13 @@ export function composeProviders(
   fallbacks: Provider[] = [],
 ): Provider {
   const all = [primary, ...fallbacks];
+  // Search is a capability, not a turn: the first provider that has one answers, and the
+  // chain has none at all when nobody does, which is what makes `web_search` fall back.
+  const searcher = all.find((provider) => provider.search);
 
   return {
+    ...(searcher ? { search: (query: string) => searcher.search!(query) } : {}),
+
     /** Any one green unlocks the app, so the first usable provider decides. */
     async auth() {
       let reason: string | undefined;
