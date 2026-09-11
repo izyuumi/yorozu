@@ -7,9 +7,11 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc -p .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "gen:fixtures": "node scripts/gen-fixtures.ts"
   },
   "devDependencies": {
+    "@types/node": "^22.20.2",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }
