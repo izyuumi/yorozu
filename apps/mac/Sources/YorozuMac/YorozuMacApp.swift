@@ -73,6 +73,7 @@ private extension String {
 
 struct PairingView: View {
     @ObservedObject var sidecar: Sidecar
+    @ObservedObject private var neverSleep = NeverSleep.shared
 
     var body: some View {
         VStack(spacing: 12) {
@@ -87,6 +88,12 @@ struct PairingView: View {
             } else {
                 ProgressView("Waiting for the runtime…").frame(height: 220)
             }
+            Divider()
+            Toggle("Never sleep", isOn: Binding(
+                get: { neverSleep.isRunning },
+                set: { $0 ? neverSleep.start() : neverSleep.stop() }
+            ))
+            Button("Set Up Permissions…") { OnboardingWindow.show() }
             Button("Quit") { NSApp.terminate(nil) }
         }
         .padding()
@@ -96,11 +103,20 @@ struct PairingView: View {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        MainActor.assumeIsolated { Sidecar.shared.start() }
+        MainActor.assumeIsolated {
+            Permission.logAll()
+            NeverSleep.shared.restoreFromDefaults()
+            Sidecar.shared.start()
+            OnboardingWindow.showIfFirstLaunch()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        MainActor.assumeIsolated { Sidecar.shared.stop() }
+        MainActor.assumeIsolated {
+            Sidecar.shared.stop()
+            // Quitting is not the user opting out: keep the preference for the next launch.
+            NeverSleep.shared.stop(persist: false)
+        }
     }
 }
 

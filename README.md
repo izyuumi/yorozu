@@ -74,3 +74,38 @@ Run it with one command (`PORT` defaults to 8787):
 ```sh
 docker build -t yorozu-relay -f apps/relay/Dockerfile . && docker run -p 8787:8787 yorozu-relay
 ```
+
+## Permissions and never-sleep
+
+`apps/mac/Sources/YorozuMac/Permissions.swift` holds every grant check as a plain function, and
+`Onboarding.swift` walks them one page at a time: Accessibility, Screen Recording, Full Disk
+Access, Automation, Input Monitoring, Never Sleep. Each page deep-links to its System Settings
+pane, re-checks every two seconds, and only unlocks Continue once the check is green or the step
+is explicitly skipped. The wizard opens on first launch (`onboardingCompleted` in `UserDefaults`)
+and again from **Set Up Permissions…** in the menu bar window.
+
+| Grant | Check |
+| --- | --- |
+| Accessibility | `AXIsProcessTrusted()` |
+| Screen Recording | `CGPreflightScreenCaptureAccess()` |
+| Full Disk Access | opening `~/Library/Safari/Bookmarks.plist` or the TCC database |
+| Automation | `NSAppleScript` probe per app; error `-1743` means denied |
+| Input Monitoring | `IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)` |
+
+Never-sleep is a `caffeinate -dims` child process the app owns — no `pmset`, no sudo, and the
+assertion dies with the app. Toggle it in the wizard or the menu bar window; the choice is
+remembered in `neverSleep`.
+
+### Dev bundle
+
+TCC keys grants by bundle ID and code signature, and a bare `swift run` binary has neither, so
+every rebuild would look like a new app. `scripts/dev-bundle.sh` wraps the build product in a
+minimal `.app` (bundle ID `to.yumi.yorozu`, `LSUIElement`, usage descriptions) and ad-hoc signs
+it, so grants stick across rebuilds:
+
+```sh
+./scripts/dev-bundle.sh                      # prints apps/mac/.build/Yorozu.app
+open apps/mac/.build/Yorozu.app              # or run the binary directly to see the checks
+```
+
+Every launch prints one `CHECK <grant> granted|denied` line per grant to stdout.
