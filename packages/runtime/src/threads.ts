@@ -27,6 +27,11 @@ export interface ThreadRecord {
   archived: boolean;
   /** Pinned threads lead the phone's list. Absent on every thread written before the flag. */
   pinned?: boolean;
+  /**
+   * The `<providerId>/<model>` spec this thread's turns lead with. Absent — the usual case —
+   * means the configured chain and nothing thread-specific. See `setThreadModel`.
+   */
+  model?: string;
 }
 
 /** Kinds that belong to a thread's history. Control traffic is not logged. */
@@ -142,6 +147,29 @@ export const pinThread = (id: string, pinned: boolean, dir = stateDir()): boolea
   setFlag(id, dir, "pinned", pinned);
 
 /**
+ * Runs this thread on one model rather than the configured chain: `spec` is a
+ * `<providerId>/<model>` from `providers.json`, and null puts it back on the default. The spec
+ * is not validated here — a provider that has since been renamed or deleted is a chain that
+ * falls through to the default one, which is the same thing that happens to a spec that fails.
+ *
+ * False when there is no such thread, or when it is on that model already.
+ */
+export function setThreadModel(id: string, spec: string | null, dir = stateDir()): boolean {
+  const threads = listThreads(dir);
+  const thread = threads.find((candidate) => candidate.id === id);
+  const model = spec?.trim() || undefined;
+  if (!thread || thread.model === model) return false;
+  if (model) thread.model = model;
+  else delete thread.model;
+  saveThreads(threads, dir);
+  return true;
+}
+
+/** The spec a thread's turns lead with, or undefined for the configured chain. */
+export const threadModel = (id: string, dir = stateDir()): string | undefined =>
+  listThreads(dir).find((thread) => thread.id === id)?.model;
+
+/**
  * Sets one boolean on one thread and writes the index back, but only when the value is new:
  * both flags are toggles a second device may already have set, and an idempotent frame should
  * not rewrite the file or claim it changed anything.
@@ -180,12 +208,18 @@ export const threadSummaries = (dir = stateDir()): ThreadSummary[] =>
       lastActivity: lastActivity(thread, dir),
       ...(preview === undefined ? {} : { lastMessage: preview }),
       pinned: thread.pinned ?? false,
+      ...(thread.model ? { model: thread.model } : {}),
     };
   });
 
-const logFile = (threadId: string, dir: string): string =>
-  // The id is a UUID, but it arrives from the phone: keep it a file name regardless.
-  join(threadsDir(dir), `${threadId.replace(/[^\w.-]/g, "_")}.jsonl`);
+/**
+ * One of a thread's files: its log, or the rolling summary beside it. The id is a UUID, but it
+ * arrives from the phone: keep it a file name regardless.
+ */
+export const threadFile = (threadId: string, suffix: string, dir = stateDir()): string =>
+  join(threadsDir(dir), `${threadId.replace(/[^\w.-]/g, "_")}${suffix}`);
+
+const logFile = (threadId: string, dir: string): string => threadFile(threadId, ".jsonl", dir);
 
 /** Whether anything was ever appended to the thread's log. */
 const hasLog = (threadId: string, dir: string): boolean => {
@@ -234,16 +268,13 @@ export function eventsAfter(
 }
 
 /**
- * The thread's messages as model context, oldest first.
- *
- * Compaction is the last `HISTORY_LIMIT` messages and nothing cleverer.
- * TODO: summarise what falls off the front instead of dropping it — the spec wants a rolling
- * summary plus the recent tail, which needs a provider call and a place to cache the summary.
+ * Every message in the thread as model context, oldest first — the whole log, however long.
+ * `threadHistory` is the window of it a turn is given; summary.ts reads the rest, which is
+ * what it rolls up.
  */
-export function threadHistory(threadId: string, dir = stateDir(), vision = false): Message[] {
+export function threadMessages(threadId: string, dir = stateDir(), vision = false): Message[] {
   return readThreadEvents(threadId, dir)
     .filter((event) => event.kind === "message")
-    .slice(-HISTORY_LIMIT)
     .map((event) => {
       const role = event.data.role === "user" ? ("user" as const) : ("assistant" as const);
       const attachment = event.data.attachment;
@@ -262,3 +293,11 @@ export function threadHistory(threadId: string, dir = stateDir(), vision = false
       return { role, content: event.data.text ? `${event.data.text}\n\n${note}` : note };
     });
 }
+
+/**
+ * The window of the thread a turn is given: the last `HISTORY_LIMIT` messages. What fell off
+ * the front is not dropped — `contextFor` in summary.ts puts a rolling summary of it in front
+ * of this.
+ */
+export const threadHistory = (threadId: string, dir = stateDir(), vision = false): Message[] =>
+  threadMessages(threadId, dir, vision).slice(-HISTORY_LIMIT);

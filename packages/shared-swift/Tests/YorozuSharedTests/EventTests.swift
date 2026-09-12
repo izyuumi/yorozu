@@ -62,6 +62,12 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         case .threadArchive: .threadArchive(ThreadArchiveData(archived: false))
         case .threadRename: .threadRename(ThreadRenameData(title: "Weekend plans"))
         case .threadPin: .threadPin(ThreadPinData(pinned: true))
+        case .threadSetModel: .threadSetModel(ThreadSetModelData(model: "claude/claude-opus-5"))
+        case .modelList:
+            .modelList(ModelListData(models: [
+                ModelOption(id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude"),
+                ModelOption(id: "local/", label: "LM Studio", providerLabel: "LM Studio"),
+            ]))
         case .interrupt: .interrupt(InterruptData())
         case .syncRequest: .syncRequest(SyncRequestData(lastSeen: ["home": "e9"]))
         case .syncDelta:
@@ -209,6 +215,8 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     let old = try JSONDecoder().decode(ThreadSummary.self, from: v1)
     #expect(old.lastMessage == nil)
     #expect(old.pinned == false)
+    // And a thread on no model of its own, which is what "Default" is.
+    #expect(old.model == nil)
     #expect(old.displayTitle == "New chat")
     #expect(old.lastActivityDate == Date(timeIntervalSince1970: 0.001))
 }
@@ -359,4 +367,42 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     let tolerant = try JSONDecoder().decode(ProgressCardData.self, from: wire)
     #expect(tolerant.steps.first?.state == .pending)
     #expect(tolerant.percent == nil)
+}
+
+
+/// The thread's model crosses the wire as the spec the runtime knows it by, and going back to
+/// the default is the absence of one — which is what an encoded nil is.
+@Test func aThreadCarriesTheModelItRunsOn() throws {
+    let summary = ThreadSummary(
+        id: "t1",
+        title: "Kyoto in April",
+        archived: false,
+        lastActivity: 1,
+        model: "claude/claude-opus-5"
+    )
+    let encoded = try JSONEncoder().encode(summary)
+    #expect(try JSONDecoder().decode(ThreadSummary.self, from: encoded) == summary)
+    let json = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+    #expect(json?["model"] as? String == "claude/claude-opus-5")
+
+    // The runtime writes `null` for "back to the default"; this end writes the field away
+    // entirely. Both decode to nil, which is what makes the two forms one meaning.
+    #expect(try JSONEncoder().encode(ThreadSetModelData(model: nil)) == Data("{}".utf8))
+    let explicitNull = try JSONDecoder().decode(
+        ThreadSetModelData.self,
+        from: Data(#"{"model":null}"#.utf8)
+    )
+    #expect(explicitNull.model == nil)
+}
+
+/// A menu row names the provider as well as the model, unless that would say it twice.
+@Test func aModelOptionNamesItsProvider() {
+    #expect(
+        ModelOption(id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude")
+            .menuLabel == "Claude · claude-opus-5"
+    )
+    #expect(
+        ModelOption(id: "local/", label: "LM Studio", providerLabel: "LM Studio").menuLabel
+            == "LM Studio"
+    )
 }

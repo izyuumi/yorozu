@@ -11,6 +11,7 @@ const {
   keyEnvVar,
   keyFor,
   loadProviders,
+  modelOptions,
   providersFile,
   saveProviders,
   seedProviders,
@@ -80,4 +81,19 @@ test("an entry's key comes from its own variable, or the single-key environment"
   expect(keyFor(entry!)).toBe("from-the-old-single-key-setup");
   env.YOROZU_KEY_WORK = "this-entry-s-own-key";
   expect(keyFor(entry!)).toBe("this-entry-s-own-key");
+});
+
+test("the models offered to a phone are the enabled specs, with names to draw", () => {
+  expect(
+    modelOptions([
+      { id: "claude", kind: "claude-cli", label: "Claude", models: ["claude-opus-5", "claude-sonnet-5"], enabled: true },
+      { id: "local", kind: "openai-compat", label: "LM Studio", baseUrl: "http://x", keyRef: "work", models: [], enabled: true },
+      { id: "off", kind: "codex-cli", label: "Codex", models: ["gpt-5.6"], enabled: false },
+    ]),
+  ).toEqual([
+    { id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude" },
+    { id: "claude/claude-sonnet-5", label: "claude-sonnet-5", providerLabel: "Claude" },
+    // An entry with no models of its own offers the one it is already configured to use.
+    { id: "local/", label: "LM Studio", providerLabel: "LM Studio" },
+  ]);
 });

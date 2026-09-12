@@ -8,6 +8,7 @@
  * Keychain, and the sidecar reads it from the environment under ``keyEnvVar(keyRef)``.
  */
 
+import type { ModelOption } from "@yorozu/shared";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "node:process";
@@ -123,6 +124,26 @@ export function specsOf(entries: ProviderEntry[]): string[] {
       entry.models.length ? entry.models.map((model) => `${entry.id}/${model}`) : [`${entry.id}/`],
     );
 }
+
+/**
+ * The same specs as ``specsOf``, carrying the names a picker draws: what the sidecar publishes
+ * to the phones as `model_list`, so a thread can be put on one model by name. Nothing secret
+ * is in it — an entry's id, its label and its models, and never its `keyRef` or `baseUrl`.
+ */
+export const modelOptions = (entries: ProviderEntry[]): ModelOption[] =>
+  entries
+    .filter((entry) => entry.enabled)
+    .flatMap((entry) =>
+      entry.models.length
+        ? entry.models.map((model) => ({
+            id: `${entry.id}/${model}`,
+            label: model,
+            providerLabel: entry.label,
+          }))
+        : // An entry with no models offers whatever it is already configured to use, which has
+          // no name of its own to show: the provider's own is the honest label for it.
+          [{ id: `${entry.id}/`, label: entry.label, providerLabel: entry.label }],
+    );
 
 /**
  * First run, and the migration off the three hard-coded cards: whatever the probes say is

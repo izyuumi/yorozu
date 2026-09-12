@@ -44,6 +44,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadArchive = "thread_archive"
         case threadRename = "thread_rename"
         case threadPin = "thread_pin"
+        case threadSetModel = "thread_set_model"
+        case modelList = "model_list"
         case interrupt
         case syncRequest = "sync_request"
         case syncDelta = "sync_delta"
@@ -66,6 +68,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadArchive(ThreadArchiveData)
         case threadRename(ThreadRenameData)
         case threadPin(ThreadPinData)
+        case threadSetModel(ThreadSetModelData)
+        case modelList(ModelListData)
         case interrupt(InterruptData)
         case syncRequest(SyncRequestData)
         case syncDelta(SyncDeltaData)
@@ -88,6 +92,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadArchive: .threadArchive
             case .threadRename: .threadRename
             case .threadPin: .threadPin
+            case .threadSetModel: .threadSetModel
+            case .modelList: .modelList
             case .interrupt: .interrupt
             case .syncRequest: .syncRequest
             case .syncDelta: .syncDelta
@@ -123,6 +129,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadArchive: payload = .threadArchive(try c.decode(ThreadArchiveData.self, forKey: .data))
         case .threadRename: payload = .threadRename(try c.decode(ThreadRenameData.self, forKey: .data))
         case .threadPin: payload = .threadPin(try c.decode(ThreadPinData.self, forKey: .data))
+        case .threadSetModel: payload = .threadSetModel(try c.decode(ThreadSetModelData.self, forKey: .data))
+        case .modelList: payload = .modelList(try c.decode(ModelListData.self, forKey: .data))
         case .interrupt: payload = .interrupt(try c.decode(InterruptData.self, forKey: .data))
         case .syncRequest: payload = .syncRequest(try c.decode(SyncRequestData.self, forKey: .data))
         case .syncDelta: payload = .syncDelta(try c.decode(SyncDeltaData.self, forKey: .data))
@@ -154,6 +162,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadArchive(let d): try c.encode(d, forKey: .data)
         case .threadRename(let d): try c.encode(d, forKey: .data)
         case .threadPin(let d): try c.encode(d, forKey: .data)
+        case .threadSetModel(let d): try c.encode(d, forKey: .data)
+        case .modelList(let d): try c.encode(d, forKey: .data)
         case .interrupt(let d): try c.encode(d, forKey: .data)
         case .syncRequest(let d): try c.encode(d, forKey: .data)
         case .syncDelta(let d): try c.encode(d, forKey: .data)
@@ -375,6 +385,9 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     public var lastMessage: String?
     /// Pinned threads lead the phone's list.
     public var pinned: Bool
+    /// The `<providerId>/<model>` spec this thread's turns run on. Nil — nearly always — means
+    /// the Mac's configured chain, which is what the picker draws as "Default".
+    public var model: String?
 
     public init(
         id: String,
@@ -382,7 +395,8 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         archived: Bool,
         lastActivity: Double,
         lastMessage: String? = nil,
-        pinned: Bool = false
+        pinned: Bool = false,
+        model: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -390,6 +404,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         self.lastActivity = lastActivity
         self.lastMessage = lastMessage
         self.pinned = pinned
+        self.model = model
     }
 
     /// Hand-written only to tolerate a runtime older than the last two fields: both were added
@@ -402,6 +417,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         lastActivity = try c.decode(Double.self, forKey: .lastActivity)
         lastMessage = try c.decodeIfPresent(String.self, forKey: .lastMessage)
         pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
+        model = try c.decodeIfPresent(String.self, forKey: .model)
     }
 
     /// What a list draws: an untitled thread is one the runtime has not named yet.
@@ -428,6 +444,41 @@ public struct ThreadArchiveData: Codable, Equatable, Sendable {
 public struct ThreadPinData: Codable, Equatable, Sendable {
     public var pinned: Bool
     public init(pinned: Bool) { self.pinned = pinned }
+}
+
+/// Sets the thread named in the event's base fields to one model, as a spec from
+/// ``ModelListData``. Nil — which encodes as an absent field, and which the runtime reads the
+/// same as an explicit null — puts the thread back on the Mac's configured chain.
+public struct ThreadSetModelData: Codable, Equatable, Sendable {
+    public var model: String?
+    public init(model: String?) { self.model = model }
+}
+
+/// One model a thread can be put on, named the way a picker draws it.
+public struct ModelOption: Codable, Equatable, Sendable, Identifiable {
+    /// The `<providerId>/<model>` spec. What ``ThreadSetModelData`` carries.
+    public var id: String
+    /// The model's own name, e.g. "claude-opus-5".
+    public var label: String
+    /// The provider entry it belongs to, e.g. "Claude". What a menu groups on.
+    public var providerLabel: String
+
+    public init(id: String, label: String, providerLabel: String) {
+        self.id = id
+        self.label = label
+        self.providerLabel = providerLabel
+    }
+
+    /// Both names on one line, which is what a menu row has room for: the provider is what
+    /// tells two models with similar names apart.
+    public var menuLabel: String { label == providerLabel ? label : "\(providerLabel) · \(label)" }
+}
+
+/// Every model the Mac is configured for. Pushed with the thread list rather than asked for,
+/// so a picker one tap from a thread has real names before it is opened.
+public struct ModelListData: Codable, Equatable, Sendable {
+    public var models: [ModelOption]
+    public init(models: [ModelOption]) { self.models = models }
 }
 
 /// The user pressed stop: cancel the turn running in `threadId` and every agent it

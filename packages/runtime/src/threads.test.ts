@@ -13,7 +13,9 @@ import {
   pinThread,
   readThreadEvents,
   renameThread,
+  setThreadModel,
   threadHistory,
+  threadModel,
   threadSummaries,
   threadsDir,
 } from "./threads.js";
@@ -201,6 +203,29 @@ test("pinning is a flag on the thread, and idempotent", () => {
 
   expect(pinThread(thread.id, false, dir)).toBe(true);
   expect(listThreads(dir)[0]!.pinned).toBe(false);
+});
+
+test("a thread's model is a spec on the thread, and the default is its absence", () => {
+  const thread = createThread("Groceries", dir);
+  expect(threadModel(thread.id, dir)).toBeUndefined();
+  // A thread on the default chain says nothing about a model at all, rather than "".
+  expect(threadSummaries(dir)[0]!.model).toBeUndefined();
+
+  expect(setThreadModel(thread.id, "claude/claude-opus-5", dir)).toBe(true);
+  expect(setThreadModel(thread.id, "claude/claude-opus-5", dir)).toBe(false);
+  expect(setThreadModel("nope", "claude/claude-opus-5", dir)).toBe(false);
+  expect(threadModel(thread.id, dir)).toBe("claude/claude-opus-5");
+  expect(threadSummaries(dir)[0]!.model).toBe("claude/claude-opus-5");
+
+  // Back to the default: the field goes, so a thread on the chain looks like one that was
+  // never pinned to anything.
+  expect(setThreadModel(thread.id, null, dir)).toBe(true);
+  expect(setThreadModel(thread.id, null, dir)).toBe(false);
+  expect(listThreads(dir)[0]).not.toHaveProperty("model");
+  // An empty spec is how a picker says "Default" over the wire, and means the same thing.
+  setThreadModel(thread.id, "codex/gpt-5.6", dir);
+  expect(setThreadModel(thread.id, "  ", dir)).toBe(true);
+  expect(threadModel(thread.id, dir)).toBeUndefined();
 });
 
 test("an attachment reaches a vision model as bytes and a text-only one as its name", () => {

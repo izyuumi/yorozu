@@ -44,6 +44,9 @@ public final class ChatModel {
     public private(set) var generating: Set<String> = []
     /// Every device the runtime answers, newest list wins. Only the Mac's Settings draws these.
     public private(set) var devices: [DeviceInfo] = []
+    /// Every model a thread can be put on, as the Mac has it configured. Arrives with the
+    /// thread list; empty until then, which is a picker that offers only Default.
+    public private(set) var models: [ModelOption] = []
     /// Messages typed with nowhere to send them, oldest first. Persisted, so a phone closed on
     /// the underground still has them when it comes back up. See ``OutboxItem``.
     public private(set) var outbox: [OutboxItem] = []
@@ -128,6 +131,12 @@ public final class ChatModel {
                 event(.threadCreate(ThreadCreateData(title: nil)), in: threadId),
                 queue: queue
             )
+            // A model chosen in a chat that had not been sent in yet is held on the draft,
+            // because there was no thread to set it on. This is that moment, and it goes
+            // before the message so the first turn already runs on it.
+            if let model = draft.model {
+                deliver(event(.threadSetModel(ThreadSetModelData(model: model)), in: threadId), queue: queue)
+            }
             self.draft = nil
             synced.insert(draft, at: 0)
         }
@@ -281,6 +290,19 @@ public final class ChatModel {
         emit(.threadPin(ThreadPinData(pinned: pinned)), in: thread.id)
     }
 
+    /// Runs this thread on one model rather than the Mac's configured chain: `model` is a spec
+    /// from ``models``, and nil puts it back on the default. A thread nothing has been sent in
+    /// yet keeps the choice on the draft — there is no thread on the Mac to set it on until the
+    /// first message, which carries it along (see ``send(_:in:attachment:)``).
+    public func setModel(_ thread: ThreadSummary, _ model: String?) {
+        guard draft?.id != thread.id else {
+            draft?.model = model
+            return
+        }
+        set(thread.id) { $0.model = model }
+        emit(.threadSetModel(ThreadSetModelData(model: model)), in: thread.id)
+    }
+
     /// Applies a flag to the thread here and now, so the row moves under the swipe rather than a
     /// round trip later. Optimistic: the runtime's next `thread_list` is what finally decides.
     private func set(_ threadId: String, _ change: (inout ThreadSummary) -> Void) {
@@ -384,6 +406,9 @@ public final class ChatModel {
                 onThreads?()
             case .syncDelta(let data):
                 for event in data.events { upsert(event) }
+            // What the model picker offers, sent with every thread list. Not a thread's event.
+            case .modelList(let data):
+                models = data.models
             // About the devices rather than in a thread, like the thread list above it.
             case .deviceList(let data):
                 devices = data.devices
@@ -431,6 +456,17 @@ public final class ChatModel {
             thread("Tax return", "Filed — the receipt is in Documents.", 40),
         ]
         listed = true
+    }
+
+    /// Test-only: the models a Mac with two providers configured would publish, and a thread
+    /// already put on the second of them — which is what a screenshot of the picker is about.
+    public func previewModels(in threadId: String) {
+        models = [
+            ModelOption(id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude"),
+            ModelOption(id: "claude/claude-sonnet-5", label: "claude-sonnet-5", providerLabel: "Claude"),
+            ModelOption(id: "codex/gpt-5.6", label: "gpt-5.6", providerLabel: "Codex"),
+        ]
+        set(threadId) { $0.model = "claude/claude-sonnet-5" }
     }
 
     /// Test-only: one message waiting for the Mac and one the outbox gave up on, so the two

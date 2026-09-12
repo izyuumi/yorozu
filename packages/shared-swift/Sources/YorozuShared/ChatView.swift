@@ -24,6 +24,9 @@ public struct ChatView: View {
     /// The message being replied to, quoted above the field until it is sent or dismissed.
     @State private var replyQuote: String?
     @State private var searching = false
+    /// Screenshot only: draws the model menu's own contents as a popover, because nothing on a
+    /// simulator can open a real menu. See ``ChatShowcase``.
+    @State private var modelShowcase = ChatShowcase.modelMenu
     @State private var search = ""
     /// Which hit the arrows are on. Reset whenever the term changes.
     @State private var hit = 0
@@ -94,6 +97,22 @@ public struct ChatView: View {
             .navigationBarTitleDisplayMode(.inline)
         #endif
         .toolbar {
+            // A thread on a model of its own says so under its title. Only then: the default is
+            // the case that needs no caption, and a line saying so on every thread is noise.
+            if let caption = modelCaption {
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 0) {
+                        Text(thread.displayTitle)
+                            .font(.headline)
+                            .lineLimit(1)
+                        Text(caption)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
             }
@@ -102,8 +121,17 @@ public struct ChatView: View {
                     ExportThreadButton(title: thread.displayTitle) {
                         threadMarkdown(thread: thread, events: events)
                     }
+                    // Nothing to choose between until the runtime has said what it has.
+                    if !model.models.isEmpty {
+                        Menu("Model", systemImage: "cpu") { modelPicker }
+                    }
                 }
             }
+        }
+        // Screenshot only: the menu's own choices, raised far enough down the screen that the
+        // caption they set is in the same picture. Nothing on a simulator can open a real menu.
+        .sheet(isPresented: $modelShowcase) {
+            List { modelPicker }.presentationDetents([.fraction(0.45)])
         }
         // Opened from the magnifier rather than always on show: a thread is for reading, and
         // a permanent search field would be one more thing to read past — and on iOS 26 it
@@ -131,6 +159,31 @@ public struct ChatView: View {
         } message: {
             Text("Allow microphone access and speech recognition in Settings to dictate.")
         }
+    }
+
+    /// The thread's model as the menu offers it: Default, then every spec the Mac published,
+    /// with a tick against the one in force. Inline, so it draws as a list of choices rather
+    /// than as a submenu of a submenu.
+    @ViewBuilder private var modelPicker: some View {
+        Picker("Model", selection: modelBinding) {
+            Text("Default").tag(String?.none)
+            ForEach(model.models) { option in
+                Text(option.menuLabel).tag(String?.some(option.id))
+            }
+        }
+        .pickerStyle(.inline)
+    }
+
+    private var modelBinding: Binding<String?> {
+        Binding(get: { thread.model }, set: { model.setModel(thread, $0) })
+    }
+
+    /// What the caption under the title says, or nil for a thread on the default chain. A spec
+    /// the Mac no longer offers still gets a caption: the thread really is set to it, and
+    /// saying so is how the user finds out it wants changing.
+    private var modelCaption: String? {
+        guard let spec = thread.model else { return nil }
+        return model.models.first { $0.id == spec }?.menuLabel ?? spec
     }
 
     private var messages: some View {
@@ -433,6 +486,10 @@ public enum ChatShowcase {
     public static var search: String?
     /// A message, which puts its quote chip above the field.
     public static var quote: String?
+    /// Draws the "…" menu's Model choices as a popover over the toolbar. A screenshot needs
+    /// them on screen and nothing on a simulator can open a real menu; the contents are the
+    /// menu's own, not a copy of them.
+    public static var modelMenu = false
     /// Puts the share extension's composer on screen. The app draws it only for a screenshot:
     /// nothing on a simulator can open a real share sheet on demand, and the composer is the
     /// part worth showing anyway.

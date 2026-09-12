@@ -267,10 +267,31 @@ logged (`message`, `thought`, `tool_call`, `tool_result`, `approval_card`, `appr
 `question_card`, `question_answer`, `progress_card`);
 sync and thread admin are control traffic and leave no trace.
 
-Every turn runs in its own thread and is given that thread's history as context: `threadHistory`
-replays the last 40 messages and nothing cleverer yet (there is a `TODO` in `src/threads.ts` for
-summarising what falls off the front). A turn nobody typed — a due job, a background delegation —
+Every turn runs in its own thread and is given that thread's history as context: the system
+prompt, then a rolling summary of whatever has scrolled out, then the last 40 messages
+(`contextFor` in `src/summary.ts`). A turn nobody typed — a due job, a background delegation —
 is recorded as the user message it stands in for, so the thread reads back whole.
+
+### Rolling summary
+
+Once a thread outgrows the 40-message window, what falls off the front is summarised rather than
+dropped: `<state dir>/threads/<id>.summary.md`, a few hundred words in front of the window as
+`Earlier in this thread: …`. It is regenerated incrementally — one cheap completion folds the
+newly evicted messages into the summary already on disk, and a marker on the file's first line
+records how many messages it accounts for — so the cost is per eviction, not per turn. It runs
+after the reply has been sent and is never awaited, so it cannot delay an answer, and a provider
+that fails leaves the summary that was there for the next turn to try again. The file is derived:
+delete it and the next eviction rebuilds it from the log.
+
+### One thread, one model
+
+A thread can be put on a model of its own: `thread_set_model` carries a `<id>/<model>` spec (or
+null, for the default), the sidecar keeps it in `threads.json` and hands it back on every
+`ThreadSummary`, and that thread's turns run on a chain with that spec in front and the
+configured chain behind it — so one unreachable provider is a slower turn rather than a thread
+that cannot answer. The models on offer travel to the phones as `model_list`, pushed alongside
+`thread_list` so the picker in the chat's "…" menu has real names the moment it is opened. A
+thread not on the default says which model under its title; a thread on the default says nothing.
 
 The phone drives it with the events the protocol already has: `thread_create` (optional title),
 `thread_rename`, `thread_archive` (the thread is the event's own `threadId`), and `thread_list`,

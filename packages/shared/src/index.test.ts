@@ -64,12 +64,14 @@ test("every spec'd kind exists", () => {
     "thread_archive",
     "thread_rename",
     "thread_pin",
+    "thread_set_model",
+    "model_list",
     "sync_request",
     "sync_delta",
     "device_list",
     "device_remove",
   ];
-  expect(kinds).toHaveLength(15);
+  expect(kinds).toHaveLength(17);
 });
 
 test("a thread summary carries what a list row draws", () => {
@@ -117,6 +119,56 @@ test("archiving carries an optional flag, and pinning a required one", () => {
   const pin: YorozuEvent = { ...base, kind: "thread_pin", data: { pinned: true } };
   if (pin.kind !== "thread_pin") throw new Error("unreachable");
   expect(pin.data.pinned).toBe(true);
+});
+
+test("a thread carries the model it runs on, and setting it is a spec or null", () => {
+  const listed: YorozuEvent = {
+    ...base,
+    threadId: "",
+    kind: "thread_list",
+    data: {
+      threads: [
+        {
+          id: "t1",
+          title: "Kyoto in April",
+          archived: false,
+          lastActivity: 1,
+          model: "claude/claude-opus-5",
+        },
+      ],
+    },
+  };
+  if (listed.kind !== "thread_list") throw new Error("unreachable");
+  expect(listed.data.threads[0]?.model).toBe("claude/claude-opus-5");
+
+  const set: YorozuEvent = {
+    ...base,
+    kind: "thread_set_model",
+    data: { model: "claude/claude-opus-5" },
+  };
+  if (set.kind !== "thread_set_model") throw new Error("unreachable");
+  expect(set.data.model).toBe("claude/claude-opus-5");
+
+  // Back to the configured chain, as null or as the absent field a Swift client encodes.
+  for (const data of [{ model: null }, {}]) {
+    const back: YorozuEvent = { ...base, kind: "thread_set_model", data };
+    if (back.kind !== "thread_set_model") throw new Error("unreachable");
+    expect(back.data.model ?? null).toBeNull();
+  }
+});
+
+test("the model list names every spec a thread can be put on", () => {
+  const event: YorozuEvent = {
+    ...base,
+    threadId: "",
+    kind: "model_list",
+    data: {
+      models: [{ id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude" }],
+    },
+  };
+  if (event.kind !== "model_list") throw new Error("unreachable");
+  expect(event.data.models[0]?.providerLabel).toBe("Claude");
+  expect(JSON.parse(JSON.stringify(event))).toEqual(event);
 });
 
 test("a device list carries what the Settings window draws", () => {
