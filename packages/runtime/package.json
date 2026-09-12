@@ -6,7 +6,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "yorozu-serve": "./dist/serve.js"
+    "yorozu-serve": "./dist/serve.js",
+    "yorozu-mcp": "./dist/mcp-bridge.js"
   },
   "scripts": {
     "build": "tsc -p .",
