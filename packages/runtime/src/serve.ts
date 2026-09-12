@@ -50,6 +50,7 @@ import {
   currentThread,
   eventsAfter,
   listThreads,
+  pinThread,
   renameThread,
   threadHistory,
   threadSummaries,
@@ -594,7 +595,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
         renameThread(event.threadId, event.data.title, dir);
         return broadcast(threadList());
       case "thread_archive":
-        archiveThread(event.threadId, dir);
+        archiveThread(event.threadId, dir, event.data.archived ?? true);
+        return broadcast(threadList());
+      case "thread_pin":
+        pinThread(event.threadId, event.data.pinned, dir);
         return broadcast(threadList());
       case "thread_list":
         return reply(threadList());

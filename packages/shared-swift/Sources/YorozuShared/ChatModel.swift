@@ -31,6 +31,14 @@ public final class ChatModel {
     public var drafts: [String: String] = [:]
     /// Every device the runtime answers, newest list wins. Only the Mac's Settings draws these.
     public private(set) var devices: [DeviceInfo] = []
+    /// Threads an agent reply landed in while they were not the one open. What the list's dots
+    /// draw, and kept in the cache so closing the app does not mark everything read.
+    public private(set) var unread: Set<String> = []
+    /// The thread the user is looking at, set by whatever owns the navigation. A reply arriving
+    /// here is read on arrival; a reply anywhere else raises a dot. Nil means none is open.
+    public var openThread: String? {
+        didSet { if let openThread { markRead(openThread) } }
+    }
 
     /// Called once the transport can carry events. The iOS end-to-end harness drives its first
     /// message from here; the Mac app has no use for it.
@@ -54,6 +62,7 @@ public final class ChatModel {
         self.device = device
         guard let cache else { return }
         synced = cache.threads()
+        unread = cache.unread()
         for thread in synced { events[thread.id] = cache.events(threadId: thread.id) }
     }
 
@@ -140,12 +149,40 @@ public final class ChatModel {
         emit(.threadRename(ThreadRenameData(title: trimmed)), in: thread.id)
     }
 
-    public func archive(_ thread: ThreadSummary) {
-        // An unsent draft is nowhere but here, so dropping it is the whole of archiving it.
-        guard draft?.id != thread.id else { return discardDraft(thread.id) }
-        // Optimistic: the runtime's `thread_list` is what finally decides.
-        synced.removeAll { $0.id == thread.id }
-        emit(.threadArchive(ThreadArchiveData()), in: thread.id)
+    public func archive(_ thread: ThreadSummary) { setArchived(thread, true) }
+
+    /// Archives a thread, or brings it back out of the archive.
+    public func setArchived(_ thread: ThreadSummary, _ archived: Bool) {
+        // An unsent draft is nowhere but here, so dropping it is the whole of archiving it —
+        // and there is nothing to bring back afterwards.
+        guard draft?.id != thread.id else {
+            if archived { discardDraft(thread.id) }
+            return
+        }
+        set(thread.id) { $0.archived = archived }
+        emit(.threadArchive(ThreadArchiveData(archived: archived)), in: thread.id)
+    }
+
+    /// Pins a thread to the top of the list, or unpins it. A draft cannot be pinned: it does not
+    /// exist anywhere the pin could be remembered.
+    public func setPinned(_ thread: ThreadSummary, _ pinned: Bool) {
+        guard draft?.id != thread.id else { return }
+        set(thread.id) { $0.pinned = pinned }
+        emit(.threadPin(ThreadPinData(pinned: pinned)), in: thread.id)
+    }
+
+    /// Applies a flag to the thread here and now, so the row moves under the swipe rather than a
+    /// round trip later. Optimistic: the runtime's next `thread_list` is what finally decides.
+    private func set(_ threadId: String, _ change: (inout ThreadSummary) -> Void) {
+        guard let index = synced.firstIndex(where: { $0.id == threadId }) else { return }
+        change(&synced[index])
+    }
+
+    /// Clears a thread's unread dot. Called for whichever thread is open, so reading is what
+    /// marks it read.
+    public func markRead(_ threadId: String) {
+        guard unread.remove(threadId) != nil else { return }
+        cache?.save(unread: unread)
     }
 
     /// Answers a pending approval card, in the thread the card was raised in. `Discuss` is
@@ -183,11 +220,22 @@ public final class ChatModel {
     }
 
     /// Asks for everything each thread has gained since the last event we hold.
-    private func requestSync() {
+    public func requestSync() {
         emit(
             .syncRequest(SyncRequestData(lastSeen: events.compactMapValues { $0.last?.id })),
             in: ""
         )
+    }
+
+    /// What a pull-to-refresh does: ask for a fresh thread list and every event we are behind on.
+    ///
+    /// The wait is the whole of the "async" here. Both answers arrive over the transport as
+    /// ordinary events rather than as a reply to await, so the pull holds its spinner long enough
+    /// to read as an action taken instead of blinking out before the frames land.
+    public func refresh() async {
+        emit(.threadList(ThreadListData(threads: [])), in: "")
+        requestSync()
+        try? await Task.sleep(for: .milliseconds(700))
     }
 
     private func apply(_ update: TransportUpdate) {
@@ -204,7 +252,9 @@ public final class ChatModel {
         case .event(let event):
             switch event.payload {
             case .threadList(let data):
-                synced = data.threads.filter { !$0.archived }
+                // Archived threads are kept: the phone's list draws them in a section of their
+                // own, which is also the only place they can be brought back from.
+                synced = data.threads
                 listed = true
                 cache?.save(threads: synced)
                 onThreads?()
@@ -238,6 +288,13 @@ public final class ChatModel {
         }
         events[event.threadId] = thread
         cache?.save(events: thread, threadId: event.threadId)
+        // A reply that lands in a thread nobody is looking at is what a dot is for. Streaming
+        // replaces one event in place, so a reply raises the dot once rather than per chunk.
+        if case .message(let data) = event.payload, data.role == .agent,
+            event.threadId != openThread, unread.insert(event.threadId).inserted
+        {
+            cache?.save(unread: unread)
+        }
         onEvent?(event)
     }
 

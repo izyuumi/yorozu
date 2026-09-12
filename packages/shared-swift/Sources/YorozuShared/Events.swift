@@ -40,6 +40,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadList = "thread_list"
         case threadArchive = "thread_archive"
         case threadRename = "thread_rename"
+        case threadPin = "thread_pin"
         case interrupt
         case syncRequest = "sync_request"
         case syncDelta = "sync_delta"
@@ -58,6 +59,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadList(ThreadListData)
         case threadArchive(ThreadArchiveData)
         case threadRename(ThreadRenameData)
+        case threadPin(ThreadPinData)
         case interrupt(InterruptData)
         case syncRequest(SyncRequestData)
         case syncDelta(SyncDeltaData)
@@ -76,6 +78,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadList: .threadList
             case .threadArchive: .threadArchive
             case .threadRename: .threadRename
+            case .threadPin: .threadPin
             case .interrupt: .interrupt
             case .syncRequest: .syncRequest
             case .syncDelta: .syncDelta
@@ -107,6 +110,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadList: payload = .threadList(try c.decode(ThreadListData.self, forKey: .data))
         case .threadArchive: payload = .threadArchive(try c.decode(ThreadArchiveData.self, forKey: .data))
         case .threadRename: payload = .threadRename(try c.decode(ThreadRenameData.self, forKey: .data))
+        case .threadPin: payload = .threadPin(try c.decode(ThreadPinData.self, forKey: .data))
         case .interrupt: payload = .interrupt(try c.decode(InterruptData.self, forKey: .data))
         case .syncRequest: payload = .syncRequest(try c.decode(SyncRequestData.self, forKey: .data))
         case .syncDelta: payload = .syncDelta(try c.decode(SyncDeltaData.self, forKey: .data))
@@ -134,6 +138,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadList(let d): try c.encode(d, forKey: .data)
         case .threadArchive(let d): try c.encode(d, forKey: .data)
         case .threadRename(let d): try c.encode(d, forKey: .data)
+        case .threadPin(let d): try c.encode(d, forKey: .data)
         case .interrupt(let d): try c.encode(d, forKey: .data)
         case .syncRequest(let d): try c.encode(d, forKey: .data)
         case .syncDelta(let d): try c.encode(d, forKey: .data)
@@ -222,22 +227,52 @@ public struct ThreadRenameData: Codable, Equatable, Sendable {
     public init(title: String) { self.title = title }
 }
 
-public struct ThreadSummary: Codable, Equatable, Sendable {
+public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     /// Empty until the runtime auto-titles the thread or the user renames it.
     public var title: String
     public var archived: Bool
     /// When the thread was last written to, epoch milliseconds. What the lists order on.
     public var lastActivity: Double
-    public init(id: String, title: String, archived: Bool, lastActivity: Double) {
+    /// One line of the newest message in the thread, whoever said it, for a row's preview.
+    /// Nil in a thread nothing has been said in yet, so a row draws nothing rather than a blank.
+    public var lastMessage: String?
+    /// Pinned threads lead the phone's list.
+    public var pinned: Bool
+
+    public init(
+        id: String,
+        title: String,
+        archived: Bool,
+        lastActivity: Double,
+        lastMessage: String? = nil,
+        pinned: Bool = false
+    ) {
         self.id = id
         self.title = title
         self.archived = archived
         self.lastActivity = lastActivity
+        self.lastMessage = lastMessage
+        self.pinned = pinned
+    }
+
+    /// Hand-written only to tolerate a runtime older than the last two fields: both were added
+    /// after v1 shipped, and a cached list written before them must still read back.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        archived = try c.decode(Bool.self, forKey: .archived)
+        lastActivity = try c.decode(Double.self, forKey: .lastActivity)
+        lastMessage = try c.decodeIfPresent(String.self, forKey: .lastMessage)
+        pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
     }
 
     /// What a list draws: an untitled thread is one the runtime has not named yet.
     public var displayTitle: String { title.isEmpty ? "New chat" : title }
+
+    /// ``lastActivity`` as a date, which is what a row formats relative to now.
+    public var lastActivityDate: Date { Date(timeIntervalSince1970: lastActivity / 1000) }
 }
 
 public struct ThreadListData: Codable, Equatable, Sendable {
@@ -245,9 +280,18 @@ public struct ThreadListData: Codable, Equatable, Sendable {
     public init(threads: [ThreadSummary]) { self.threads = threads }
 }
 
-/// Archives `threadId` from the base fields; carries nothing of its own.
+/// Archives `threadId` from the base fields, or brings it back when ``archived`` is false.
+/// The flag is optional because the frame meant "archive" before unarchiving existed, and a
+/// phone from then still sends `{}`.
 public struct ThreadArchiveData: Codable, Equatable, Sendable {
-    public init() {}
+    public var archived: Bool?
+    public init(archived: Bool? = nil) { self.archived = archived }
+}
+
+/// Pins or unpins `threadId` from the base fields.
+public struct ThreadPinData: Codable, Equatable, Sendable {
+    public var pinned: Bool
+    public init(pinned: Bool) { self.pinned = pinned }
 }
 
 /// The user pressed stop: cancel the turn running in `threadId` and every agent it
