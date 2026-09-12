@@ -84,6 +84,13 @@ export type Join = { roomId: string; phonePubkey: string; sig: string; token?: s
 export type Frame = { payload: string; sig: string };
 /** The Mac dropping a paired device: it is forgotten, and its sockets are closed. */
 export type Revoke = { pubkey: string };
+/**
+ * The Mac announcing every device it still considers paired. The relay replaces the room's
+ * known-device set with this list, which makes `devices.json` on the Mac the source of truth:
+ * a relay that lost its storage — a redeploy, an evicted object — heals on the next register
+ * instead of stranding every phone behind a 4001 until it is paired again.
+ */
+export type Devices = { devices: string[] };
 
 const strings = <K extends string>(
   msg: Record<string, unknown>,
@@ -106,6 +113,12 @@ export const parseFrame = (msg: Record<string, unknown>): Frame | null =>
 
 export const parseRevoke = (msg: Record<string, unknown>): Revoke | null =>
   strings(msg, "pubkey");
+
+/** Trimmed to the cap here, so neither relay has to remember to do it. */
+export const parseDevices = (msg: Record<string, unknown>, cap = MAX_DEVICES): Devices | null =>
+  Array.isArray(msg.devices) && msg.devices.every((key) => typeof key === "string")
+    ? { devices: (msg.devices as string[]).slice(-cap) }
+    : null;
 
 /**
  * Which known devices a room must forget to keep `pubkey` under the cap, oldest first. A

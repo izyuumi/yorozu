@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "vitest";
 import { roomId, signChallenge, startRelay, type Relay } from "./index.js";
+import { MAX_DEVICES } from "./protocol.js";
 import { client, connectMac, connectPhone, keypair, mintToken, rejoinPhone } from "./testing.js";
 
 let relay: Relay;
@@ -289,4 +290,84 @@ test("only a joined phone may ask about presence", async () => {
   await stranger.next(); // nonce
   stranger.send({ type: "owner" });
   expect(await stranger.closed).toBe(4001);
+});
+
+test("an announced device may rejoin, so state this relay lost comes back", async () => {
+  relay = await startRelay(0);
+  const macKeys = keypair();
+  const room = roomId(macKeys.pub);
+  const mac = await connectMac(relay.port, macKeys);
+  const phoneKeys = keypair();
+
+  // Nothing has ever paired here: the rejoin is refused until the Mac says otherwise.
+  expect(await (await rejoinPhone(relay.port, room, phoneKeys)).closed).toBe(4001);
+
+  mac.send({ type: "devices", devices: [phoneKeys.pub] });
+  const phone = await rejoinPhone(relay.port, room, phoneKeys);
+  expect(await phone.next()).toMatchObject({ type: "joined", roomId: room });
+});
+
+test("a shorter announced list drops the devices missing from it", async () => {
+  relay = await startRelay(0);
+  const macKeys = keypair();
+  const room = roomId(macKeys.pub);
+  const mac = await connectMac(relay.port, macKeys);
+  const [gone, kept] = [keypair(), keypair()];
+  mac.send({ type: "devices", devices: [gone.pub, kept.pub] });
+
+  // The Mac's list is the source of truth, so a key absent from the next one is unpaired.
+  mac.send({ type: "devices", devices: [kept.pub] });
+  expect(await (await rejoinPhone(relay.port, room, gone)).closed).toBe(4001);
+  expect(await (await rejoinPhone(relay.port, room, kept)).next()).toMatchObject({
+    type: "joined",
+  });
+});
+
+test("an announce that has not caught up yet leaves a connected device alone", async () => {
+  relay = await startRelay(0);
+  const macKeys = keypair();
+  const room = roomId(macKeys.pub);
+  const mac = await connectMac(relay.port, macKeys);
+  const { phone, keys } = await connectPhone(relay.port, room, await mintToken(mac));
+  expect(await phone.next()).toMatchObject({ type: "joined" });
+
+  // The phone has just spent its token and the Mac is still being told about it, so an
+  // announce that predates the news must not unpair it. `revoke` is what does that.
+  mac.send({ type: "devices", devices: [] });
+  mac.send({ type: "mint" });
+  await mac.next(); // the token, which is answered after the announce ahead of it
+
+  expect(await (await rejoinPhone(relay.port, room, keys)).next()).toMatchObject({
+    type: "joined",
+  });
+});
+
+test("an announced list past the cap keeps the last MAX_DEVICES of it", async () => {
+  relay = await startRelay(0);
+  const macKeys = keypair();
+  const room = roomId(macKeys.pub);
+  const mac = await connectMac(relay.port, macKeys);
+  const announced = Array.from({ length: MAX_DEVICES + 1 }, () => keypair());
+  mac.send({ type: "devices", devices: announced.map(({ pub }) => pub) });
+
+  // The first one announced is the one over the cap; the last is inside it.
+  expect(await (await rejoinPhone(relay.port, room, announced[0]!)).closed).toBe(4001);
+  expect(await (await rejoinPhone(relay.port, room, announced.at(-1)!)).next()).toMatchObject({
+    type: "joined",
+  });
+});
+
+test("only the room's mac may announce devices, and a malformed list closes the socket", async () => {
+  relay = await startRelay(0);
+  const macKeys = keypair();
+  const mac = await connectMac(relay.port, macKeys);
+
+  const stranger = client(relay.port, roomId(macKeys.pub));
+  await stranger.open;
+  await stranger.next(); // nonce
+  stranger.send({ type: "devices", devices: [] });
+  expect(await stranger.closed).toBe(4001);
+
+  mac.send({ type: "devices", devices: [1] });
+  expect(await mac.closed).toBe(4001);
 });

@@ -21,6 +21,7 @@ import {
   dropCount,
   evictions,
   newBucket,
+  parseDevices,
   parseFrame,
   parseJoin,
   parseRegister,
@@ -237,6 +238,20 @@ export class Room implements DurableObject {
     await this.state.storage.put(devicePrefix + pubkey, now);
   }
 
+  /**
+   * Drops a device the Mac no longer considers paired: it is forgotten, so it cannot rejoin
+   * against the nonce, and its sockets go now rather than at their next reconnect.
+   */
+  private async forget(pubkeys: readonly string[]): Promise<void> {
+    if (pubkeys.length === 0) return;
+    await this.state.storage.delete(pubkeys.map((key) => devicePrefix + key));
+    const gone = new Set(pubkeys);
+    for (const phone of this.sockets("phone")) {
+      const key = (phone.deserializeAttachment() as Conn | null)?.key;
+      if (key && gone.has(key)) phone.close(CLOSE_PROTOCOL, "revoked");
+    }
+  }
+
   private async handle(ws: WebSocket, data: string | ArrayBuffer): Promise<void> {
     const raw = typeof data === "string" ? data : new TextDecoder().decode(data);
     const now = Date.now();
@@ -311,13 +326,34 @@ export class Room implements DurableObject {
         if (conn.role !== "mac") return ws.close(CLOSE_PROTOCOL, "not registered");
         const revoke = parseRevoke(msg);
         if (!revoke) return ws.close(CLOSE_PROTOCOL, "bad revoke");
-        await storage.delete(devicePrefix + revoke.pubkey);
+        return await this.forget([revoke.pubkey]);
+      }
+
+      // The Mac's whole paired list, sent right after `register` and again whenever it
+      // changes. It replaces what this room knows rather than adding to it, so the Mac's
+      // `devices.json` is the source of truth and storage this object lost comes back.
+      //
+      // A device holding a live socket is kept whatever the list says: it has just proved
+      // itself, and the Mac's file may not have caught up with a token join it is still
+      // being told about. Unpairing a connected phone is what `revoke` is for.
+      case "devices": {
+        if (conn.role !== "mac") return ws.close(CLOSE_PROTOCOL, "not registered");
+        const announced = parseDevices(msg);
+        if (!announced) return ws.close(CLOSE_PROTOCOL, "bad devices");
+        const keep = new Set(announced.devices);
         for (const phone of this.sockets("phone")) {
-          if ((phone.deserializeAttachment() as Conn | null)?.key === revoke.pubkey) {
-            phone.close(CLOSE_PROTOCOL, "revoked");
-          }
+          const key = (phone.deserializeAttachment() as Conn | null)?.key;
+          if (key) keep.add(key);
         }
-        return;
+        const known = new Set(
+          [...(await storage.list<number>({ prefix: devicePrefix })).keys()].map((key) =>
+            key.slice(devicePrefix.length),
+          ),
+        );
+        for (const pubkey of keep) {
+          if (!known.has(pubkey)) await storage.put(devicePrefix + pubkey, now);
+        }
+        return await this.forget([...known].filter((pubkey) => !keep.has(pubkey)));
       }
 
       case "join": {

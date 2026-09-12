@@ -263,6 +263,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
    */
   const devicesFile = join(dir, "devices.json");
   const devices = new Map<string, { key: Uint8Array; record: DeviceRecord }>();
+  /**
+   * Announces the paired list to the relay, which replaces what it knows with it. Assigned
+   * per connection, a no-op while there is none.
+   */
+  let announceDevices: () => void = () => {};
   const saveDevices = (): void => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -270,6 +275,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
       JSON.stringify([...devices.values()].map(({ record }) => record)),
       { mode: 0o600 },
     );
+    // This file is what the relay's known-device set is rebuilt from, so it is told whenever
+    // the file changes rather than only at register time.
+    announceDevices();
   };
   const remember = (record: DeviceRecord): void => {
     devices.set(record.pub, {
@@ -654,6 +662,22 @@ export function serve(options: ServeOptions = {}): Sidecar {
       ws.send(JSON.stringify({ type: "frame", payload, sig: toBase64Url(sig) }));
     };
 
+    /**
+     * The relay learns who is paired from us, not the other way round: a relay that lost its
+     * storage would otherwise refuse every rejoin with a 4001 until each phone paired again.
+     *
+     * The relay replaces its whole set with this list, so it is only sent when every paired
+     * device carries the signing key the relay knows it by. A record from before that key was
+     * kept cannot be named, and announcing the rest would unpair it; its next `hello` fills
+     * the key in, and the announces resume.
+     */
+    announceDevices = (): void => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const records = [...devices.values()].map(({ record }) => record);
+      if (records.some(({ signingPub }) => signingPub === undefined)) return;
+      ws.send(JSON.stringify({ type: "devices", devices: records.map((r) => r.signingPub) }));
+    };
+
     revokeAtRelay = (signingPub: string): void => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "revoke", pubkey: signingPub }));
@@ -767,6 +791,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           case "registered":
             room = String(msg.roomId);
             state("registered");
+            announceDevices();
             return ws.send(JSON.stringify({ type: "mint" }));
           case "token": {
             const pairing = encodePairingString({
