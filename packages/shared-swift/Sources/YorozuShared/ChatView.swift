@@ -433,6 +433,10 @@ public enum ChatShowcase {
     public static var search: String?
     /// A message, which puts its quote chip above the field.
     public static var quote: String?
+    /// Puts the share extension's composer on screen. The app draws it only for a screenshot:
+    /// nothing on a simulator can open a real share sheet on demand, and the composer is the
+    /// part worth showing anyway.
+    public static var share = false
 
     static func apply(
         dictation engine: Dictation,

@@ -53,6 +53,12 @@ final class E2EHarness {
         case "queued":
             model.previewThreads()
             model.previewQueued(in: model.threads[0].id)
+        case "share":
+            model.previewThreads()
+            ChatShowcase.share = true
+            // The runtime behind a screenshot has no threads of its own, and its empty
+            // `thread_list` would otherwise wipe the seeded ones out from under the picker.
+            model.onThreads = { [weak model] in model?.previewThreads() }
         case "link":
             model.previewThreads()
             LinkPreviewStore.shared.preload(
