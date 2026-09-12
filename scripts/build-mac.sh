@@ -16,7 +16,7 @@ VERSION=${VERSION:-0.1.0}
 DIST=${DIST:-dist}
 IDENTITY=${IDENTITY:-"Developer ID Application: Yumi Izumi (AN5KM8QGEF)"}
 NOTARY_PROFILE=${NOTARY_PROFILE:-yorozu-notary}
-FEED_URL=${FEED_URL:-https://github.com/izyuumi/yorozu/releases/latest/download/appcast.xml}
+FEED_URL=${FEED_URL:-https://dl.yumi.to/appcast.xml}
 # The public half of the EdDSA key `generate_keys` put in the login keychain; the private
 # half never leaves it, and scripts/appcast.sh signs each update with it.
 SU_PUBLIC_KEY=${SU_PUBLIC_KEY:-pD6gPv1CP/XDvIJXbztjQRTIkgR/kfMMYT/Mpp8aQvI=}
