@@ -2,20 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- No sandbox: the agent drives the whole Mac, which is the point of the app. -->
-  <!-- V8 compiles JavaScript to memory it then executes; the hardened runtime forbids
-       that unless the binary says so. Both keys are what Node needs to start at all. -->
   <key>com.apple.security.cs.allow-jit</key><true/>
   <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
-  <!-- The bundled Node links Homebrew's dylibs, signed by neither us nor Apple. -->
-  <key>com.apple.security.cs.disable-library-validation</key><true/>
-
-  <!-- Resource access under the hardened runtime. Not sandbox keys: with --options runtime
-       these are what let the process reach the protected resource *after* TCC has said yes,
-       and without them the grant the user just made has no effect. An Info.plist usage
-       string alone is not enough. Both binaries are signed with this file (codesign --deep),
-       which matters most for apple-events: that is what yorozu-native drives Finder, Mail,
-       Safari and the rest with. -->
   <key>com.apple.security.automation.apple-events</key><true/>
   <key>com.apple.security.device.camera</key><true/>
   <key>com.apple.security.device.audio-input</key><true/>
