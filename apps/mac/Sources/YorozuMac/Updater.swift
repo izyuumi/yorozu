@@ -35,6 +35,9 @@ enum Updates {
 
     private static let delegate = UpdaterDelegate()
 
+    /// Touches `controller`, which is what starts the updater and its hourly schedule.
+    static func start() { _ = controller }
+
     /// The Settings toggle. Reading and writing Sparkle's own property rather than a second
     /// preference of ours: Sparkle persists it, and two places to store one fact is one place
     /// too many.
