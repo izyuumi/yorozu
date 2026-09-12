@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
@@ -56,5 +56,5 @@ test("the tool passes cwd and the timeout through", async () => {
   expect(String(await shellTool.run({ cmd: "sleep 5", timeoutMs: 100 }))).toContain(
     "killed after 100ms",
   );
-  expect(String(await shellTool.run({ cmd: "pwd -P", cwd: "/tmp" }))).toBe("/private/tmp");
+  expect(String(await shellTool.run({ cmd: "pwd -P", cwd: "/tmp" }))).toBe(realpathSync("/tmp"));
 });
