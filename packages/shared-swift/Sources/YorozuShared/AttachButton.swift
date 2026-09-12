@@ -28,7 +28,7 @@ struct AttachButton: View {
             Image(systemName: "plus")
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: 44, height: 44)
+                .frame(width: controlTarget, height: controlTarget)
                 .contentShape(.rect)
         }
         .menuStyle(.button)

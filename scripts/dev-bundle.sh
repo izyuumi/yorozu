@@ -14,11 +14,18 @@ swift build --package-path apps/mac -c "$CONFIG"
 BIN="$(swift build --package-path apps/mac -c "$CONFIG" --show-bin-path)/YorozuMac"
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp "$BIN" "$APP/Contents/MacOS/Yorozu"
 # The native tool host ships inside the bundle so it shares the app's signature: TCC keys
 # Accessibility and Screen Recording on that, and the helper is what actually needs them.
 cp "$(dirname "$BIN")/yorozu-native" "$APP/Contents/MacOS/yorozu-native"
+
+# Sparkle, and the rpath that finds it. Same two steps as scripts/build-mac.sh and for the
+# same reason: SwiftPM links the framework as @rpath but only gives the binary @loader_path,
+# which in a bundle is Contents/MacOS, so without this the app dies at launch with "Library
+# not loaded". Before signing — install_name_tool rewrites the binary.
+cp -R "$(dirname "$BIN")/Sparkle.framework" "$APP/Contents/Frameworks/"
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/Yorozu"
 
 # The icon. Xcode compiles apps/ios/Resources/AppIcon.icon straight into an asset catalog
 # for iOS, but this bundle is assembled by hand and has no catalog, so it takes the .icns

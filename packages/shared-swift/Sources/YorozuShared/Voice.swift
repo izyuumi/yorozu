@@ -214,7 +214,7 @@ public struct MicButton: View {
             Image(systemName: dictation.listening ? "mic.fill" : "mic")
                 .font(.body)
                 .foregroundStyle(dictation.listening ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                .frame(width: 44, height: 44)
+                .frame(width: controlTarget, height: controlTarget)
                 .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.plain)

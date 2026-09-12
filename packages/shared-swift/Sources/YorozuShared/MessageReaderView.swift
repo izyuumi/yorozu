@@ -30,12 +30,19 @@ public struct MessageReaderView: View {
             .navigationTitle(title)
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.large)
+            #else
+                // A phone sheet is the size of the phone. A Mac sheet is the size of its
+                // content, and a `ScrollView` will happily be eighty points tall, so the page
+                // this is meant to be has to be asked for.
+                .frame(minWidth: 620, idealWidth: 720, minHeight: 420, idealHeight: 560)
             #endif
+            // Copy is `.automatic` rather than `.primaryAction`: a sheet on the Mac has no
+            // title bar, so SwiftUI gives it a generated bottom bar and fills it from the
+            // placements it knows — a `.primaryAction` was dropped there and Copy was simply
+            // missing. `.automatic` lands at the leading end of that bar, opposite Done, and
+            // still resolves to the trailing side of the phone's navigation bar.
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItem(placement: .automatic) {
                     Button {
                         copyToPasteboard(text)
                         withAnimation { copied = true }
@@ -49,6 +56,9 @@ public struct MessageReaderView: View {
                         try? await Task.sleep(for: .seconds(2))
                         withAnimation { copied = false }
                     }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
                 }
             }
         }

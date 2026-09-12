@@ -53,6 +53,8 @@ public struct MessageBubble: View {
     private let onResend: (() -> Void)?
 
     @State private var reading = false
+    /// Mac only: whether the pointer is over this message, which is what shows its actions.
+    @State private var hovering = false
     /// Set by the thread's search field; every hit inside this bubble is drawn highlighted.
     @Environment(\.searchHighlight) private var highlight
 
@@ -116,36 +118,65 @@ public struct MessageBubble: View {
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .animation(.easeOut(duration: 0.18), value: speaking)
-        .contextMenu {
-            Button("Copy", systemImage: "doc.on.doc") { copyToPasteboard(data.text) }
-            if let onReply {
-                Button("Reply", systemImage: "arrowshape.turn.up.left") { onReply(parts.body) }
-            }
-            if !isUser, !id.isEmpty {
-                // One utterance at a time, so this is a toggle rather than a second voice.
-                Button(speaking ? "Stop" : "Listen", systemImage: speaking ? "stop" : "speaker.wave.2") {
-                    if speaking {
-                        Speaker.shared.stop()
-                    } else {
-                        Speaker.shared.speak(parts.body, id: id)
-                    }
-                }
-            }
-            if truncated {
-                Button("Read full message", systemImage: "text.alignleft") { reading = true }
-            }
-            if let onRetry {
-                Button("Retry", systemImage: "arrow.clockwise", action: onRetry)
-            }
-            if let onDelete {
-                // Local only, which the menu says outright: the word "Delete" on its own
-                // would promise something this button cannot do.
-                Button("Remove from this device", systemImage: "trash", role: .destructive, action: onDelete)
-            }
-        }
+        .contextMenu { actions }
+        #if os(macOS)
+            // An explicit shape, so the whole row tracks the pointer and not only the parts
+            // of it something is drawn in.
+            .contentShape(.rect)
+            .onHover { hovering = $0 }
+        #endif
         .sheet(isPresented: $reading) {
             MessageReaderView(text: parts.body, title: isUser ? "Message" : "Reply")
         }
+    }
+
+    /// Everything that can be done to one message. Shared by the context menu and, on the Mac,
+    /// by the hover control — the two are the same list, not two lists that have to agree.
+    @ViewBuilder private var actions: some View {
+        Button("Copy", systemImage: "doc.on.doc") { copyToPasteboard(data.text) }
+        if let onReply {
+            Button("Reply", systemImage: "arrowshape.turn.up.left") { onReply(parts.body) }
+        }
+        if !isUser, !id.isEmpty {
+            // One utterance at a time, so this is a toggle rather than a second voice.
+            Button(speaking ? "Stop" : "Listen", systemImage: speaking ? "stop" : "speaker.wave.2") {
+                if speaking {
+                    Speaker.shared.stop()
+                } else {
+                    Speaker.shared.speak(parts.body, id: id)
+                }
+            }
+        }
+        if truncated {
+            Button("Read full message", systemImage: "text.alignleft") { reading = true }
+        }
+        if let onRetry {
+            Button("Retry", systemImage: "arrow.clockwise", action: onRetry)
+        }
+        if let onDelete {
+            // Local only, which the menu says outright: the word "Delete" on its own
+            // would promise something this button cannot do.
+            Button("Remove from this device", systemImage: "trash", role: .destructive, action: onDelete)
+        }
+    }
+
+    @ViewBuilder private var hoverActions: some View {
+        #if os(macOS)
+            Menu { actions } label: {
+                Image(systemName: "ellipsis.circle.fill")
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.title3)
+            }
+            // The same styling as the composer's own menu button.
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .opacity(hovering ? 1 : 0)
+            .allowsHitTesting(hovering)
+            .animation(.easeOut(duration: 0.12), value: hovering)
+            .accessibilityLabel("Message actions")
+        #endif
     }
 
     /// What the outbox has to say about this message, under it and in the quiet of a caption:
@@ -153,7 +184,12 @@ public struct MessageBubble: View {
     /// outright and offers the retry rather than hiding it in a long press.
     @ViewBuilder private func caption(_ status: OutboxStatus) -> some View {
         let label = Label {
-            Text(status == .failed ? "Not sent — tap to retry" : status.label)
+            // "tap" on a Mac is a phone app talking to the wrong person.
+            #if os(macOS)
+                Text(status == .failed ? "Not sent — click to retry" : status.label)
+            #else
+                Text(status == .failed ? "Not sent — tap to retry" : status.label)
+            #endif
         } icon: {
             Image(systemName: status.symbol)
         }
@@ -162,7 +198,7 @@ public struct MessageBubble: View {
         .padding(.horizontal, 4)
 
         if status == .failed, let onResend {
-            Button(action: onResend) { label.frame(minHeight: 44) }
+            Button(action: onResend) { label.frame(minHeight: controlTarget) }
                 .buttonStyle(.plain)
                 .accessibilityHint("Sends this message again")
         } else {
@@ -191,6 +227,17 @@ public struct MessageBubble: View {
             isUser ? AnyShapeStyle(Color.accentColor.opacity(0.18)) : AnyShapeStyle(.quaternary),
             in: RoundedRectangle(cornerRadius: 18, style: .continuous)
         )
+        // The message's actions as a control of their own, because on the Mac the context
+        // menu never opens: the text is selectable, selectable text brings AppKit's own
+        // contextual menu — Look Up, Translate, Copy, Font — and that menu wins over this
+        // view's. Reply, Listen, Read full message and Remove had no way in at all.
+        //
+        // Here rather than on the row, and above the frame below rather than under it: this
+        // is the bubble's own outline, and the frame below is only as wide as a bubble may
+        // get — hanging the button off that put it half a window away from a short message.
+        #if os(macOS)
+            .overlay(alignment: isUser ? .topLeading : .topTrailing) { hoverActions }
+        #endif
         // A bubble stops short of the far edge, so which side it is on stays readable as
         // who said it even when the message is long.
         .frame(maxWidth: 560, alignment: isUser ? .trailing : .leading)

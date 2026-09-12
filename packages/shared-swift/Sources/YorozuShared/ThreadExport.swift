@@ -102,7 +102,7 @@ public struct ThreadMarkdown: Transferable, Sendable {
     }
 
     /// A file name with nothing in it a file system would object to.
-    var filename: String {
+    public var filename: String {
         let safe = title.components(separatedBy: CharacterSet(charactersIn: "/\\:?%*|\"<>")).joined(
             separator: "-"
         )

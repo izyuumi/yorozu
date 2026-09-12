@@ -2,9 +2,16 @@ import AppKit
 import SwiftUI
 import YorozuShared
 
-/// The menu bar window: threads on the left, the chat on the right, and everything that is not
+/// The chat window: threads on the left, the chat on the right, and everything that is not
 /// chat behind the gear. The detail half has its own `NavigationStack`, which is what the
 /// subagent drill-down and the trace pages push onto.
+///
+/// A real window rather than the menu bar popover this used to be. A `MenuBarExtra` window has
+/// no toolbar to put the thread's own controls in, cannot be resized, closes itself the moment
+/// a share picker or a reader sheet takes focus, and gives the app no menu bar to hang ⌘N, ⌘F
+/// or Stop off — so on the Mac half of the chat's features were simply unreachable. See
+/// ``YorozuMacApp``, where the menu bar item is now the way to this window rather than the
+/// place the chat lives.
 struct ChatWindowView: View {
     @State private var selection: String?
     @Environment(\.openSettings) private var openSettings
@@ -28,12 +35,25 @@ struct ChatWindowView: View {
         NavigationSplitView {
             ThreadSidebar(
                 threads: model.threads,
+                unread: model.unread,
                 selection: $selection,
                 onCreate: { selection = model.newDraft().id },
                 onRename: { model.rename($0, to: $1) },
-                onArchive: model.archive
+                onArchive: model.setArchived,
+                onPin: model.setPinned,
+                // Search reaches into this Mac's own thread logs, which is every word of them.
+                messageText: { id in
+                    (model.events[id] ?? []).compactMap {
+                        if case .message(let data) = $0.payload { return data.text }
+                        return nil
+                    }
+                    .joined(separator: " ")
+                },
+                exportMarkdown: model.markdown(of:)
             )
-            .frame(minWidth: 180)
+            // 220 rather than 180: a row is a title, a relative time and a line of preview, and
+            // below about this the time starts eating the title it is meant to caption.
+            .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 360)
             .safeAreaInset(edge: .bottom) { gear }
         } detail: {
             NavigationStack {
@@ -48,13 +68,21 @@ struct ChatWindowView: View {
                 }
             }
         }
-        .frame(width: 720, height: 480)
-        // Selecting something else is what discards a draft nothing was ever sent in.
-        .onChange(of: selection) { old, new in
+        // A floor rather than a fixed size: the window is resizable now, and the chat has to
+        // stay legible at the narrowest a window is worth having.
+        .frame(minWidth: 640, minHeight: 420)
+        // Selecting something else is what discards a draft nothing was ever sent in, and what
+        // tells the model which thread is being read — a reply landing in the open thread is
+        // read on arrival, and one landing anywhere else raises a dot in the sidebar.
+        .onChange(of: selection, initial: true) { old, new in
             if let old, old != new { model.discardDraft(old) }
+            model.openThread = new
         }
         .onAppear { if model.listed { open() } }
         .onChange(of: model.listed) { _, listed in if listed { open() } }
+        // Screenshot harness only: prints the window number `screencapture -l` wants. Inert
+        // unless a showcase argument was passed — see ``Showcase``.
+        .background(WindowNumberReporter())
     }
 
     /// Pairing, providers, browser, models and the wizard all moved into the Settings scene when
