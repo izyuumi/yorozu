@@ -41,8 +41,16 @@ enum Showcase {
         seed()
     }
 
-    /// See the `default` case below.
+    /// The draft the approval scenes seed into. Remembered, so re-seeding on a later thread
+    /// list does not leave a second empty draft behind — a draft is not in the runtime's list
+    /// and so is never the thing that got wiped.
     private static var approvalDraft: String?
+
+    private static func draft(_ model: ChatModel) -> String {
+        let id = approvalDraft ?? model.newDraft().id
+        approvalDraft = id
+        return id
+    }
 
     private static func seed(_ model: ChatModel) {
         switch launchArgument("yorozuShowcase") {
@@ -76,13 +84,22 @@ enum Showcase {
                 for: URL(string: "https://cooking.example.com/roast-chicken")!
             )
             model.previewLink(in: model.threads[0].id)
+        // The v1.5 approval scenes. Each one is a draft thread of its own, for the same reason
+        // the plain approval scene is — see the `default` case below.
+        case "card":
+            model.previewStructuredApproval(in: draft(model))
+        case "rule-editor":
+            ChatShowcase.ruleEditor = true
+            model.previewStructuredApproval(in: draft(model))
+        case "batch":
+            model.previewBatchApproval(in: draft(model))
+        case "proposal":
+            model.previewRuleProposal(in: draft(model))
         default:
             // The one scene whose thread is a draft rather than a synced one. Remembered, so
             // re-seeding on a later thread list does not leave a second empty draft behind —
             // a draft is not in the runtime's list and so is never the thing that got wiped.
-            let draft = approvalDraft ?? model.newDraft().id
-            approvalDraft = draft
-            model.previewApproval(in: draft)
+            model.previewApproval(in: draft(model))
         }
         if let scene = launchArgument("yorozuScene") {
             model.previewChat(in: model.threads.first?.id ?? model.newDraft().id)
@@ -149,8 +166,23 @@ struct WindowNumberReporter: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            guard Showcase.active, !reported, let number = window?.windowNumber else { return }
+            guard Showcase.active, !reported, let window else { return }
+            let number = window.windowNumber
             reported = true
+            // `-yorozuWindowSize 920x900`. Every picture in a set wants the same frame, and the
+            // app remembers where its window was last put — which is right for a person and
+            // wrong for a set of screenshots meant to be compared. Done here rather than from
+            // the outside with System Events, which needs Accessibility for whatever runs the
+            // script and fails silently without it.
+            if let size = launchArgument("yorozuWindowSize") {
+                let parts = size.split(separator: "x").compactMap { Double($0) }
+                if parts.count == 2 {
+                    window.setFrame(
+                        NSRect(x: 140, y: 120, width: parts[0], height: parts[1]),
+                        display: true
+                    )
+                }
+            }
             // Flushed like the other YOROZU-MAC lines: stdout is block-buffered whenever it is
             // not a terminal, and the harness kills the app rather than asking it to exit.
             print("YOROZU-MAC window=\(number)")

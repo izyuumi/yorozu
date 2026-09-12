@@ -3,24 +3,31 @@ import SwiftUI
 /// The approval card: the agent asking permission for one external action. It reads like a
 /// system permission prompt rather than a chat bubble, because that is what it is — a request
 /// to act on your behalf — and the answers stack the way a permission prompt's do: the thing you
-/// most likely want on top, the permanent version under it, the refusal below, and the escape
-/// hatch as a plain link. See docs/spec-v1.html section 6.
+/// most likely want on top, the wider grants under it, the refusal below, and the escape hatch
+/// as a plain link.
+///
+/// What it shows is the concrete payload, not the tool that would commit it: who it lands on,
+/// which account it comes out of, how much, what it says, and the one line the tool declares
+/// about what happens afterwards. A decision can only be as good as what was in front of it.
+/// See docs/spec-v1.html section 6 and docs/spec-v1.5.md.
 public struct ApprovalCardView: View {
     public let card: ApprovalCardData
     /// Answered cards keep their place in the thread but stop offering buttons.
     public let answered: Bool
     /// What was chosen, when known on this device; nil means answered elsewhere.
     public let chosen: ApprovalAnswerData.Answer?
-    public let answer: (ApprovalAnswerData.Answer) -> Void
+    public let answer: (ApprovalAnswerData.Answer, ApprovalRule?) -> Void
 
     @State private var appeared = false
+    @State private var editingRule: ApprovalRule?
+    @State private var itemsExpanded = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(
         card: ApprovalCardData,
         answered: Bool = false,
         chosen: ApprovalAnswerData.Answer? = nil,
-        answer: @escaping (ApprovalAnswerData.Answer) -> Void
+        answer: @escaping (ApprovalAnswerData.Answer, ApprovalRule?) -> Void
     ) {
         self.card = card
         self.answered = answered
@@ -37,6 +44,11 @@ public struct ApprovalCardView: View {
                     .font(.title2.weight(.semibold).monospacedDigit())
                     .accessibilityLabel("Amount")
             }
+            scopeRows
+            content
+            items
+            consequence
+            if card.mustConfirm == true { confirmNote }
             if answered {
                 outcome
             } else {
@@ -55,10 +67,21 @@ public struct ApprovalCardView: View {
         .offset(y: appeared || reduceMotion ? 0 : 12)
         .onAppear {
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { appeared = true }
+            // Screenshot only, and inert otherwise — see ``ChatShowcase``.
+            if ChatShowcase.ruleEditor, !answered { editingRule = card.suggestedRule }
         }
         .sensoryFeedback(.warning, trigger: appeared) { _, shown in shown && !answered }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Approval needed: \(verb.sentence)")
+        // The rule the "Always allow" button is really about. Nothing is saved until Save.
+        .sheet(item: $editingRule) { rule in
+            RuleEditorView(rule: rule, title: "Always allow") { edited in
+                editingRule = nil
+                answer(.always, edited)
+            } onCancel: {
+                editingRule = nil
+            }
+        }
     }
 
     // MARK: Pieces
@@ -101,18 +124,144 @@ public struct ApprovalCardView: View {
         }
     }
 
+    /// Recipient, merchant, account, category, quantity — whichever the tool could fill in.
+    @ViewBuilder private var scopeRows: some View {
+        let rows = card.scope?.rows ?? []
+        if !rows.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(rows, id: \.label) { row in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(row.label)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 74, alignment: .leading)
+                        Text(row.value)
+                            .font(.callout)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+            }
+        }
+    }
+
+    /// What would actually be sent, as far as the card carries it.
+    @ViewBuilder private var content: some View {
+        if let summary = card.scope?.contentSummary, !summary.isEmpty {
+            Text(summary)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(5)
+                .textSelection(.enabled)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+
+    /// The exact list one decision covers. Collapsed past a handful, because the point is that
+    /// the list is *exact* rather than that it fills the screen — but every item is reachable.
+    @ViewBuilder private var items: some View {
+        if let items = card.items, !items.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
+                        itemsExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: itemsExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                        Text("^[\(items.count) item](inflect: true) in this batch")
+                            .font(.subheadline.weight(.medium))
+                        Spacer(minLength: 0)
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityHint("This decision covers exactly these items")
+
+                ForEach(itemsExpanded ? items : Array(items.prefix(Self.itemsShown))) { item in
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("•").foregroundStyle(.tertiary)
+                        Text(item.label).font(.callout)
+                        if let detail = item.detail, !detail.isEmpty {
+                            Text(detail)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+                if !itemsExpanded, items.count > Self.itemsShown {
+                    Text("and \(items.count - Self.itemsShown) more")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+
+    /// How many items are shown before the list collapses.
+    private static let itemsShown = 4
+
+    /// The one line the tool declares about what happens once this runs.
+    @ViewBuilder private var consequence: some View {
+        if let line = card.scope?.consequence, !line.isEmpty {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "arrow.turn.down.right").font(.caption)
+                Text(line).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+            }
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Set on the actions no rule may ever stand in for, so the card says why it is here.
+    private var confirmNote: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "exclamationmark.shield.fill").font(.caption)
+            Text("Yorozu always asks about this kind of action, whatever rules are saved.")
+                .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(.orange)
+    }
+
     private var choices: some View {
         VStack(spacing: 8) {
-            choice(.yes, "Allow", prominent: true)
-            choice(.always, "Allow and don't ask again", prominent: false)
+            choice(.yes, "Allow once", prominent: true)
+            // A grant that ends with the turn, so it is offered wherever a card is — but it
+            // has nothing to promise about the actions no rule may stand in for either.
+            choice(.task, "Allow for this task", prominent: false)
+            if card.mustConfirm != true, let suggestion = card.suggestedRule {
+                Button {
+                    editingRule = suggestion
+                } label: {
+                    Text(alwaysTitle)
+                        .frame(maxWidth: .infinity, minHeight: controlTarget)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(quietButtonTint)
+                .foregroundStyle(Color.primary)
+                .buttonBorderShape(.roundedRectangle(radius: 10))
+                .accessibilityHint("Opens a rule you can widen before saving")
+            }
             choice(.no, "Don't allow", prominent: false)
-            Button("Discuss first") { answer(.discuss) }
+            Button("Discuss first") { answer(.discuss, nil) }
                 .font(.subheadline)
                 .buttonStyle(.plain)
                 .foregroundStyle(.tint)
                 .frame(minHeight: controlTarget)
                 .accessibilityHint("Ask Yorozu to explain before deciding")
-            Text(alwaysNote)
+            Text(grantNote)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -122,7 +271,7 @@ public struct ApprovalCardView: View {
 
     private func choice(_ value: ApprovalAnswerData.Answer, _ title: String, prominent: Bool) -> some View {
         Button {
-            answer(value)
+            answer(value, nil)
         } label: {
             Text(title)
                 .font(.body.weight(prominent ? .semibold : .regular))
@@ -147,18 +296,31 @@ public struct ApprovalCardView: View {
 
     private var outcomeText: String {
         switch chosen {
-        case .yes: "Allowed"
-        case .always: "Allowed, and won't ask again"
+        case .yes: "Allowed once"
+        case .task: "Allowed for this task"
+        case .always: "Allowed, and saved as a rule"
         case .no: "Not allowed"
         case .discuss: "Discussing"
         case nil: "Answered on another device"
         }
     }
 
-    /// What the always button promises. Tapping it names no target, so the rule it writes is
-    /// class-level — saying anything narrower here would be a promise the card cannot keep.
-    private var alwaysNote: String {
-        "“Allow and don't ask again” covers every \(verb.noun) from now on."
+    /// The always button names the scope it would actually cover, because a button that says
+    /// "don't ask again" and then means something narrower is a promise the card cannot keep.
+    private var alwaysTitle: String {
+        guard let narrowed = card.suggestedRule?.summary else { return "Always allow…" }
+        return "Always allow \(narrowed)…"
+    }
+
+    /// What the grants under the first one actually promise. It only mentions rules when one
+    /// is on offer: a batch is not offered one, and neither is anything that must be confirmed.
+    private var grantNote: String {
+        if card.mustConfirm == true { return "This one cannot be turned into a rule." }
+        if card.suggestedRule == nil {
+            return "“Allow for this task” lasts until this task is done. This decision covers "
+                + "exactly the items listed above."
+        }
+        return "“Allow for this task” lasts until this task is done. A rule lasts until you revoke it."
     }
 
     private var cardBackground: Color {
@@ -179,7 +341,7 @@ public struct ApprovalCardView: View {
 
     // MARK: Wording
 
-    private struct Verb {
+    struct Verb {
         let sentence: String
         let noun: String
         let isCode: Bool
@@ -188,7 +350,11 @@ public struct ApprovalCardView: View {
     /// The wire class is kebab-case; the card speaks. Unknown classes fall back to the words
     /// in the class name, so a new tool never shows an empty card.
     private var verb: Verb {
-        switch card.actionClass {
+        Self.verb(for: card.actionClass)
+    }
+
+    static func verb(for actionClass: String) -> Verb {
+        switch actionClass {
         case "send-message": return Verb(sentence: "Send a message", noun: "message", isCode: false)
         case "purchase": return Verb(sentence: "Make a purchase", noun: "purchase", isCode: false)
         case "transfer-money": return Verb(sentence: "Transfer money", noun: "transfer", isCode: false)
@@ -197,8 +363,39 @@ public struct ApprovalCardView: View {
         case "edit-file": return Verb(sentence: "Change a file", noun: "file change", isCode: true)
         case "delete-file": return Verb(sentence: "Delete a file", noun: "file deletion", isCode: true)
         default:
-            let words = card.actionClass.replacingOccurrences(of: "-", with: " ")
+            let words = actionClass.replacingOccurrences(of: "-", with: " ")
             return Verb(sentence: words.prefix(1).uppercased() + words.dropFirst(), noun: words, isCode: false)
+        }
+    }
+}
+
+extension ApprovalRule {
+    /// The rule as one phrase, for a button and a settings row: "message to bob@example.com",
+    /// "purchase at Kurasu up to $48". Pure, so a test can check it without drawing anything.
+    public var summary: String {
+        let noun = ApprovalCardView.verb(for: actionClass).noun
+        var phrase = noun
+        if let recipient = scope?["recipient"] { phrase += " to \(recipient.phrase)" }
+        if let merchant = scope?["merchant"] { phrase += " at \(merchant.phrase)" }
+        if let account = scope?["account"] { phrase += " from \(account.phrase)" }
+        if let category = scope?["category"] { phrase += " in \(category.phrase)" }
+        if let target = scope?["target"] { phrase += " on \(target.phrase)" }
+        if let cap = maxAmount {
+            let amount = cap.formatted(.currency(code: Locale.current.currency?.identifier ?? "USD"))
+            phrase += " up to \(amount)"
+        }
+        return phrase
+    }
+}
+
+extension ApprovalRuleField {
+    /// One pattern in words. A glob and a prefix are shown as what they are, because the
+    /// difference between "anything at this domain" and "this address" is the whole point.
+    public var phrase: String {
+        switch mode {
+        case .exact: value
+        case .prefix: "\(value)…"
+        case .glob: value
         }
     }
 }

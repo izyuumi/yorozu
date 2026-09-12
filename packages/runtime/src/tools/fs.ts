@@ -6,6 +6,7 @@
 
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { summarize } from "../approval.js";
 import type { Tool } from "../index.js";
 import { expandHome, truncate } from "./shell.js";
 
@@ -25,7 +26,12 @@ export const fsWriteTool: Tool = {
   name: "fs_write",
   description: "Write a text file, creating or replacing it and any missing parent directories.",
   actionClass: "edit-file",
-  action: ({ path }) => ({ target: expandHome(String(path ?? "")) }),
+  action: ({ path, content }) => ({
+    target: expandHome(String(path ?? "")),
+    operation: "edit",
+    contentSummary: summarize(String(content ?? "")),
+    consequence: `Replaces ${expandHome(String(path ?? ""))} with this text.`,
+  }),
   parameters: {
     type: "object",
     properties: {

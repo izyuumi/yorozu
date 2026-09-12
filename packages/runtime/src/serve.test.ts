@@ -18,7 +18,7 @@ import {
   type QrPayload,
   type YorozuEvent,
 } from "@yorozu/shared";
-import type { AskResult } from "./approval.js";
+import { listRules, type AskResult, type Rule } from "./approval.js";
 import type { AddressInfo } from "node:net";
 import { afterEach, expect, test, vi } from "vitest";
 import { WebSocketServer } from "ws";
@@ -292,9 +292,14 @@ test("always runs the action and is permanent: the next one needs no second card
   expect(ran(await eventsUntil((event) => event.kind === "tool_result"))).toBe(true);
   await eventsUntil(isReply);
 
-  // The rule is on disk, so the identical action must not reach the phone a second time.
-  expect(JSON.parse(readFileSync(join(dir, "approval.json"), "utf8")).rules).toEqual([
-    { actionClass: "run-command", decision: "always" },
+  // The rule is on disk, scoped to the command the card actually showed rather than to every
+  // command there is, so the identical action must not reach the phone a second time.
+  expect(JSON.parse(readFileSync(join(dir, "approval.json"), "utf8")).rules).toMatchObject([
+    {
+      actionClass: "run-command",
+      decision: "always",
+      scope: { target: { mode: "exact", value: cmd }, operation: { mode: "exact", value: "run" } },
+    },
   ]);
 
   send({ kind: "message", data: { role: "user", text: "tidy up again" } });
@@ -303,10 +308,173 @@ test("always runs the action and is permanent: the next one needs no second card
   expect(ran(second)).toBe(true);
 });
 
+test("17: the card the phone gets carries the structured scope and a rule to widen", async () => {
+  const cmd = "echo yorozu-scope-ok";
+  const { send, eventsUntil } = await pairedPhone([() => shellTurn(cmd), () => sse("Done.")]);
+
+  send({ kind: "message", data: { role: "user", text: "tidy up" } });
+  const shown = cardOf(await eventsUntil((event) => event.kind === "approval_card"));
+
+  expect(shown.scope).toMatchObject({ operation: "run" });
+  expect(shown.scope?.consequence).toBeTruthy();
+  expect(shown.mustConfirm).toBeUndefined();
+  // Prefilled with the narrowest thing that covers it, which is this command and not every one.
+  expect(shown.suggestedRule).toMatchObject({
+    actionClass: "run-command",
+    decision: "always",
+    scope: { target: { mode: "exact", value: cmd }, operation: { mode: "exact", value: "run" } },
+  });
+});
+
+test("19: the phone saves the rule its editor produced, widened past the one command", async () => {
+  const first = "echo yorozu-editor-one";
+  const second = "echo yorozu-editor-two";
+  const { dir, send, eventsUntil, isReply } = await pairedPhone([
+    () => shellTurn(first),
+    () => sse("Done."),
+    () => shellTurn(second),
+    () => sse("Done again."),
+  ]);
+
+  send({ kind: "message", data: { role: "user", text: "tidy up" } });
+  const shown = cardOf(await eventsUntil((event) => event.kind === "approval_card"));
+
+  // What the editor sends back: the same rule with the target widened to a prefix.
+  send({
+    kind: "approval_answer",
+    data: {
+      actionId: shown.actionId,
+      answer: "always",
+      rule: {
+        ...shown.suggestedRule!,
+        scope: { target: { mode: "prefix", value: "echo yorozu-editor-" } },
+      },
+    },
+  });
+  await eventsUntil(isReply);
+
+  expect(JSON.parse(readFileSync(join(dir, "approval.json"), "utf8")).rules).toMatchObject([
+    { scope: { target: { mode: "prefix", value: "echo yorozu-editor-" } } },
+  ]);
+
+  // A different command the widened rule covers: no second card.
+  send({ kind: "message", data: { role: "user", text: "and the other one" } });
+  const tail = await eventsUntil((event) => event.kind === "tool_result");
+  expect(tail.filter((event) => event.kind === "approval_card")).toEqual([]);
+  expect(tail.at(-1)?.data.output).toContain("yorozu-editor-two");
+});
+
+test("18: allow for this task covers the rest of the turn and expires with it", async () => {
+  const cmd = "echo yorozu-task-ok";
+  const { dir, send, eventsUntil, isReply } = await pairedPhone([
+    () => shellTurn(cmd),
+    // Same command again inside the same turn: the grant covers it, so no second card.
+    () => shellTurn(cmd),
+    () => sse("Done."),
+    // A new turn, and the grant went with the old one.
+    () => shellTurn(cmd),
+    () => sse("Done again."),
+  ]);
+
+  send({ kind: "message", data: { role: "user", text: "tidy up twice" } });
+  const shown = cardOf(await eventsUntil((event) => event.kind === "approval_card"));
+  send({ kind: "approval_answer", data: { actionId: shown.actionId, answer: "task" } });
+
+  const rest = await eventsUntil(isReply);
+  expect(rest.filter((event) => event.kind === "approval_card")).toEqual([]);
+  expect(rest.filter((event) => event.kind === "tool_result")).toHaveLength(2);
+  // A bounded grant is not a rule: nothing was written down.
+  expect(listRules(dir)).toEqual([]);
+
+  send({ kind: "message", data: { role: "user", text: "again please" } });
+  const next = await eventsUntil((event) => event.kind === "approval_card");
+  expect(next.at(-1)).toMatchObject({ kind: "approval_card" });
+});
+
+test("22, 23: three approvals raise a proposal, and it activates nothing", async () => {
+  const cmd = "echo yorozu-proposal-ok";
+  const turns = [];
+  for (let i = 0; i < 4; i++) turns.push(() => shellTurn(cmd), () => sse("Done."));
+  const { dir, send, eventsUntil, isReply } = await pairedPhone(turns);
+
+  const approveOnce = async (): Promise<YorozuEvent[]> => {
+    send({ kind: "message", data: { role: "user", text: "tidy up" } });
+    const shown = cardOf(await eventsUntil((event) => event.kind === "approval_card"));
+    send({ kind: "approval_answer", data: { actionId: shown.actionId, answer: "yes" } });
+    return eventsUntil(isReply);
+  };
+
+  expect((await approveOnce()).filter((e) => e.kind === "rule_proposal")).toEqual([]);
+  expect((await approveOnce()).filter((e) => e.kind === "rule_proposal")).toEqual([]);
+  const third = await approveOnce();
+
+  const [proposal] = third.filter((event) => event.kind === "rule_proposal");
+  expect(proposal).toMatchObject({
+    kind: "rule_proposal",
+    data: {
+      approvals: 3,
+      rule: {
+        actionClass: "run-command",
+        decision: "always",
+        scope: { target: { mode: "exact", value: cmd } },
+      },
+    },
+  });
+
+  // Proposed, not stored, and not acting: the fourth still puts a card up.
+  expect(listRules(dir)).toEqual([]);
+  send({ kind: "message", data: { role: "user", text: "tidy up" } });
+  expect((await eventsUntil((event) => event.kind === "approval_card")).at(-1)).toMatchObject({
+    kind: "approval_card",
+  });
+});
+
+test("21: rules are listed, saved and revoked over the wire", async () => {
+  const { dir, send, eventsUntil } = await pairedPhone([]);
+
+  const rules = async (): Promise<YorozuEvent[]> => {
+    send({ kind: "rule_list", data: { rules: [] } });
+    return eventsUntil((event) => event.kind === "rule_list");
+  };
+
+  expect((await rules()).at(-1)).toMatchObject({ kind: "rule_list", data: { rules: [] } });
+
+  const saved = {
+    id: "rule-1",
+    actionClass: "send-message",
+    decision: "always" as const,
+    scope: { recipient: { mode: "exact" as const, value: "bob@example.com" } },
+  };
+  send({ kind: "rule_update", data: { rule: saved } });
+  expect((await eventsUntil((event) => event.kind === "rule_list")).at(-1)).toMatchObject({
+    data: { rules: [saved] },
+  });
+  expect(JSON.parse(readFileSync(join(dir, "approval.json"), "utf8")).rules).toMatchObject([saved]);
+
+  // Switched off rather than revoked: the same id comes back with the flag on it.
+  send({ kind: "rule_update", data: { rule: { ...saved, enabled: false } } });
+  expect((await eventsUntil((event) => event.kind === "rule_list")).at(-1)).toMatchObject({
+    data: { rules: [{ id: "rule-1", enabled: false }] },
+  });
+
+  send({ kind: "rule_delete", data: { ruleId: "rule-1" } });
+  expect((await eventsUntil((event) => event.kind === "rule_list")).at(-1)).toMatchObject({
+    data: { rules: [] },
+  });
+});
+
+const suggestion: Rule = {
+  id: "r1",
+  actionClass: "purchase",
+  decision: "always",
+  scope: { merchant: { mode: "exact", value: "the corner shop" } },
+};
+
 const card: ApprovalCardData = {
   actionId: "a1",
   actionClass: "purchase",
   target: "the corner shop",
+  suggestedRule: suggestion,
 };
 
 test.each<[string, AskResult | null]>([
@@ -317,16 +485,18 @@ test.each<[string, AskResult | null]>([
   // A bare "never" sounds permanent but is the one-off refusal: only the explicit wordings persist.
   ["never", { answer: "no" }],
   ["never mind", { answer: "no" }],
-  ["always", { answer: "always" }],
-  ["yes always", { answer: "always" }],
-  ["yes, always", { answer: "always" }],
-  ["yes and never ask", { answer: "always" }],
-  ["yes, and never ask again", { answer: "always" }],
-  ["never ask again", { answer: "always" }],
-  ["don't ask again", { answer: "always" }],
-  ["dont ask again", { answer: "always" }],
-  // The rule only narrows to the target when the user actually named it.
-  ["always buy from the corner shop", { answer: "always", target: "the corner shop" }],
+  ["always", { answer: "always", rule: suggestion }],
+  ["yes always", { answer: "always", rule: suggestion }],
+  ["yes, always", { answer: "always", rule: suggestion }],
+  ["yes and never ask", { answer: "always", rule: suggestion }],
+  ["yes, and never ask again", { answer: "always", rule: suggestion }],
+  ["never ask again", { answer: "always", rule: suggestion }],
+  ["don't ask again", { answer: "always", rule: suggestion }],
+  ["dont ask again", { answer: "always", rule: suggestion }],
+  // The bounded grant, which in prose is only ever "for this task" and its neighbours.
+  ["for this task", { answer: "task" }],
+  ["yes, for this task", { answer: "task" }],
+  ["just for this turn", { answer: "task" }],
   ["maybe later", null],
 ])("typedAnswer: %s", (text, expected) => {
   expect(typedAnswer(text, card)).toEqual(expected);

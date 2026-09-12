@@ -135,6 +135,9 @@ struct SettingsView: View {
             Tab("Devices", systemImage: "iphone.and.arrow.forward") {
                 pane { DevicesView(sidecar: sidecar) }
             }
+            Tab("Rules", systemImage: "checkmark.seal") {
+                pane { RulesView() }
+            }
             Tab("Permissions", systemImage: "lock.shield") {
                 pane { PermissionsView() }
             }
