@@ -19,8 +19,9 @@ Out-of-box personal AI assistant for macOS, remote-controlled from iOS through a
 `pnpm --filter @yorozu/runtime serve` (installed as the `yorozu-serve` bin) is what the Mac app
 spawns. It loads or creates the Mac's X25519 and Ed25519 keypairs, registers its relay room, mints
 a join token, prints the pairing payload, then answers each sealed message with the agent loop.
-Stdout is the protocol the Mac app reads: `STATE <state>` per relay transition, `QR <json>` per
-pairing payload.
+Stdout is the protocol the Mac app reads: `STATE <state>` per relay transition and, per pairing
+payload, `QR <string>` to draw plus `PAIR <string>` to copy — the same string both times. `MINT`
+on its stdin mints the next join token, which is what the Mac's **New code** button sends.
 
 | Variable | Default |
 | --- | --- |
@@ -28,10 +29,16 @@ pairing payload.
 | `YOROZU_RELAY_URL` | `wss://relay.yumi.to` (the hosted relay) |
 | `YOROZU_BASE_URL` / `YOROZU_API_KEY` / `YOROZU_MODEL` | `https://api.openai.com/v1`, unset, `gpt-4o-mini` |
 
-Pairing: the QR carries the Mac's X25519 key, the room ID and a one-time token. The phone joins the
-room, announces its own X25519 key in one cleartext `hello` frame (authenticated by the relay's
-per-frame signature check), and every frame after that is ChaCha20-Poly1305 sealed under the derived
-session key.
+Pairing: the code carries the Mac's X25519 key, the room ID and a one-time token, as one compact
+string — `yorozu://pair?v=1&relay=<urlencoded>&key=<base64url>&token=<base64url>&room=<base64url>`.
+The QR encodes that same string, so one parser (`decodePairingString` in `packages/shared`,
+`QrPayload.decode` in `packages/shared-swift`) serves the scanner, the paste field and the
+`yorozu://` link a phone opens when it is tapped in Messages. The older JSON form still decodes,
+so a phone paired before this stays paired.
+
+The phone joins the room, announces its own X25519 key in one cleartext `hello` frame
+(authenticated by the relay's per-frame signature check), and every frame after that is
+ChaCha20-Poly1305 sealed under the derived session key.
 
 ## Mac app
 
@@ -40,7 +47,8 @@ pnpm --filter @yorozu/runtime build            # sidecar must be built first
 swift run --package-path apps/mac              # dials wss://relay.yumi.to by default
 ```
 
-The menu bar window shows the relay state and the pairing QR. The sidecar command is
+The menu bar window shows the relay state, the pairing QR, the same code as selectable monospace
+text with a **Copy** button, and **New code** to mint a fresh token. The sidecar command is
 `YOROZU_RUNTIME_CMD`, run through `/bin/sh -c`, defaulting to
 `node ../../packages/runtime/dist/serve.js` (relative to `apps/mac`, i.e. the dev checkout layout);
 the shipped app will point it at the bundled runtime. The sidecar is killed when the app quits.
@@ -197,9 +205,11 @@ xcodebuild build -workspace apps/ios/Yorozu.xcworkspace -scheme YorozuIOS \
   -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO
 ```
 
-Scanning the QR from the Mac's menu bar stores the payload together with a freshly generated
-device identity — Ed25519 for relay frame signatures, X25519 for the session key — in the
-Keychain, then opens the one `Home` thread. `RelayClient` in `packages/shared-swift` is the phone
+An unpaired phone opens on a splash — icon, name, tagline, **Get started** — and its pair screen
+offers the two ways in: **Scan QR**, or the code pasted into a text field. A tapped `yorozu://`
+link pairs without either, through `onOpenURL`. However the code arrived, it is stored together
+with a freshly generated device identity — Ed25519 for relay frame signatures, X25519 for the
+session key — in the Keychain, then opens the one `Home` thread. `RelayClient` in `packages/shared-swift` is the phone
 half of the relay protocol (join, cleartext `hello`, sealed events); it owns no UI state, so the
 Mac app can reuse it for local chat later.
 
@@ -209,7 +219,7 @@ The relay answers `joined` with `ownerOnline` and pushes `{"type":"owner","onlin
 room's Mac connects or drops; that drives the "Mac offline" banner. Presence is routing state the
 relay already keeps to decide whether to forward or buffer, so it stays blind to the ciphertext.
 
-Join tokens are one-time, so re-pairing needs a fresh QR once the phone's socket has closed. Token
+Join tokens are one-time, so re-pairing needs a fresh code once the phone's socket has closed. Token
 refresh belongs with the Threads ticket, which gives each device a lasting identity.
 
 ### End-to-end proof
@@ -217,8 +227,8 @@ refresh belongs with the Threads ticket, which gives each device a lasting ident
 `apps/ios/e2e/run.sh` is a test helper, not product code. It starts the relay, a fake
 OpenAI-compatible provider (`e2e/fake-provider.mjs`, pointed at by `YOROZU_BASE_URL`) and the
 runtime sidecar, creates a throwaway iPhone simulator, builds and installs the app, injects the
-sidecar's pairing QR with `-yorozuPair '<json>'` (the simulator has no camera) plus `-yorozuSend hi`,
-and asserts the streamed reply reaches the phone. The simulator is shut down and deleted on exit.
+sidecar's `PAIR` string with `-yorozuPair '<string>'` (the simulator has no camera) plus
+`-yorozuSend hi`, and asserts the streamed reply reaches the phone. The simulator is shut down and deleted on exit.
 
 Unlike the CI compile check above, that build keeps code signing on: ad-hoc simulator signing is
 what gives the app its `application-identifier` entitlement, and without one every Keychain write
@@ -649,7 +659,8 @@ The fresh-Mac walkthrough, in the order spec section 10 asks for:
    your installed browsers. Either way it runs in a profile of its own.
 7. Consent to never-sleep if you want the Mac reachable while it is idle. It is a `caffeinate`
    process the app owns, and it dies with the app.
-8. Settings → **Pairing** is now showing a pairing QR. Open the Yorozu iOS app and scan it. Done.
+8. Settings → **Pairing** is now showing a pairing code. Open the Yorozu iOS app and scan the QR,
+   or press **Copy** and paste the string into the app — or message it to yourself and tap it. Done.
    The menu bar window itself is the chat; ⌘, or the gear at the foot of the sidebar is the way
    to everything else.
 

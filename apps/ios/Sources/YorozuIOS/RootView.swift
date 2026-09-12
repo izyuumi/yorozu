@@ -61,8 +61,18 @@ final class Session {
 
 struct RootView: View {
     @State private var session = Session()
+    /// Set once the user has pressed "Get started", so the splash is shown only before that.
+    @State private var pairing = false
 
     var body: some View {
+        content
+            // The pairing string is a `yorozu://` link: tapped in Messages, it pairs the phone.
+            .onOpenURL { url in
+                do { try session.pair(with: url.absoluteString) } catch { pairing = true }
+            }
+    }
+
+    @ViewBuilder private var content: some View {
         if let model = session.model {
             ThreadListView(
                 threads: model.threads,
@@ -74,15 +84,20 @@ struct RootView: View {
                         Button("Unpair", systemImage: "qrcode") { session.unpair() }
                     }
             }
+        } else if pairing {
+            PairView(onPair: pair)
         } else {
-            ScannerView { text in
-                do {
-                    try session.pair(with: text)
-                    return nil
-                } catch {
-                    return "Not a Yorozu pairing code."
-                }
-            }
+            SplashView { pairing = true }
+        }
+    }
+
+    /// Returns the message the pairing screens show, or nil when the code was good.
+    private func pair(with text: String) -> String? {
+        do {
+            try session.pair(with: text)
+            return nil
+        } catch {
+            return "Not a Yorozu pairing code."
         }
     }
 }

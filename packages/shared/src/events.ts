@@ -125,10 +125,51 @@ export interface QrPayload {
   roomId?: string;
 }
 
-export const encodeQrPayload = (payload: QrPayload): string => JSON.stringify(payload);
+/**
+ * One compact text form of the pairing payload, short enough for a QR and for a human to
+ * paste: `yorozu://pair?v=1&relay=<urlencoded>&key=<base64url>&token=<base64url>`. The QR
+ * carries this same string, so one parser serves the scanner, the paste field and the
+ * `yorozu://` URL scheme.
+ */
+export const encodePairingString = (payload: QrPayload): string => {
+  const query = new URLSearchParams({
+    v: "1",
+    relay: payload.relayUrl,
+    key: payload.macPubkey,
+    token: payload.token,
+  });
+  if (payload.roomId) query.set("room", payload.roomId);
+  return `yorozu://pair?${query}`;
+};
 
-/** Parses an untrusted QR string. Throws on anything that is not a v1 payload. */
+/** base64url alphabet, unpadded: Buffer's decoder would happily skip anything else. */
+const BASE64URL = /^[A-Za-z0-9_-]+$/;
+
+/** Parses an untrusted pairing string. Throws on anything that is not a v1 payload. */
+export function decodePairingString(text: string): QrPayload {
+  const query = new URL(text.trim()).searchParams;
+  const relayUrl = query.get("relay") ?? "";
+  const macPubkey = query.get("key") ?? "";
+  const token = query.get("token") ?? "";
+  const roomId = query.get("room") ?? undefined;
+  if (
+    query.get("v") !== "1" ||
+    relayUrl === "" ||
+    !BASE64URL.test(macPubkey) ||
+    !BASE64URL.test(token) ||
+    (roomId !== undefined && !BASE64URL.test(roomId))
+  ) {
+    throw new Error("not a Yorozu v1 pairing string");
+  }
+  return { v: 1, relayUrl, macPubkey, token, ...(roomId ? { roomId } : {}) };
+}
+
+/**
+ * Parses an untrusted QR string: the pairing string above, or the JSON form older phones
+ * were paired with. Throws on anything that is neither.
+ */
 export function decodeQrPayload(text: string): QrPayload {
+  if (text.trimStart().startsWith("yorozu:")) return decodePairingString(text);
   const p: unknown = JSON.parse(text);
   if (
     typeof p !== "object" ||

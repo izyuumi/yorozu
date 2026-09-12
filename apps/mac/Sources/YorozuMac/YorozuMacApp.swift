@@ -4,15 +4,19 @@ import SwiftUI
 import YorozuShared
 
 /// The Node runtime sidecar, spawned by the app and killed with it. Its stdout is the
-/// protocol: `STATE <state>` lines and one `QR <json>` line per pairing payload.
+/// protocol: `STATE <state>` lines, and a `QR <string>` plus `PAIR <string>` line per pairing
+/// payload. `MINT` back on its stdin asks for a fresh code.
 @MainActor
 final class Sidecar: ObservableObject {
     static let shared = Sidecar()
 
     @Published private(set) var state = "starting"
     @Published private(set) var qr: NSImage?
+    /// The same payload the QR carries, for copying and pasting into the phone.
+    @Published private(set) var pairingString: String?
 
     private let process = Process()
+    private let input = Pipe()
 
     var isPaired: Bool { state == "paired" }
 
@@ -32,6 +36,7 @@ final class Sidecar: ObservableObject {
         }
         process.environment = environment
         process.standardOutput = output
+        process.standardInput = input
         do {
             try process.run()
         } catch {
@@ -50,11 +55,19 @@ final class Sidecar: ObservableObject {
         if process.isRunning { process.terminate() }
     }
 
+    /// Asks the sidecar to mint the next join token, which prints a fresh pairing payload.
+    func newCode() {
+        guard process.isRunning else { return }
+        try? input.fileHandleForWriting.write(contentsOf: Data("MINT\n".utf8))
+    }
+
     private func apply(_ line: String) {
         if let name = line.dropping("STATE ") {
             state = name
-        } else if let json = line.dropping("QR "), (try? QrPayload.decode(json)) != nil {
-            qr = Self.qrImage(json)
+        } else if let text = line.dropping("QR "), (try? QrPayload.decode(text)) != nil {
+            qr = Self.qrImage(text)
+        } else if let text = line.dropping("PAIR "), (try? QrPayload.decode(text)) != nil {
+            pairingString = text
         }
     }
 
@@ -94,6 +107,21 @@ struct PairingView: View {
             } else {
                 ProgressView("Waiting for the runtime…").frame(height: 220)
             }
+            if let code = sidecar.pairingString {
+                // A field bound to a constant: selectable and scrollable, edits go nowhere.
+                HStack {
+                    TextField("", text: .constant(code))
+                        .font(.system(.caption, design: .monospaced))
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Pairing code")
+                    Button("Copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(code, forType: .string)
+                    }
+                }
+                Text("Or paste this code into the app.").font(.caption).foregroundStyle(.secondary)
+            }
+            Button("New code") { sidecar.newCode() }
             Divider()
             Toggle("Never sleep", isOn: Binding(
                 get: { neverSleep.isRunning },

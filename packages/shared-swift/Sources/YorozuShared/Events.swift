@@ -297,12 +297,47 @@ public struct QrPayload: Codable, Equatable, Sendable {
         String(decoding: try JSONEncoder().encode(self), as: UTF8.self)
     }
 
-    /// Parses an untrusted QR string. Throws on anything that is not a v1 payload.
+    /// The one parser for every way a pairing arrives: the QR, a pasted string, a tapped
+    /// `yorozu://` link, or the JSON form older codes carried. Throws on anything that is
+    /// not a v1 payload.
     public static func decode(_ text: String) throws -> QrPayload {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("yorozu:") { return try decodePairingString(text) }
         let payload = try JSONDecoder().decode(QrPayload.self, from: Data(text.utf8))
         guard payload.v == 1 else {
             throw YorozuCrypto.CryptoError.malformed("not a Yorozu v1 QR payload")
         }
         return payload
+    }
+
+    /// `yorozu://pair?v=1&relay=<urlencoded>&key=<base64url>&token=<base64url>`, the compact
+    /// form the Mac shows for copying and encodes in the QR.
+    private static func decodePairingString(_ text: String) throws -> QrPayload {
+        func malformed() -> Error {
+            YorozuCrypto.CryptoError.malformed("not a Yorozu v1 pairing string")
+        }
+        /// Base64url, unpadded, is the only thing the keys and the token are ever spelled in.
+        /// The same check `decodePairingString` makes in TypeScript, so neither side accepts a
+        /// code the other would refuse.
+        func base64Url(_ value: String?) throws -> String {
+            let alphabet = CharacterSet(
+                charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+            )
+            guard let value, !value.isEmpty, value.unicodeScalars.allSatisfy(alphabet.contains) else {
+                throw malformed()
+            }
+            return value
+        }
+        let items = URLComponents(string: text)?.queryItems ?? []
+        let query = Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
+        guard query["v"] == "1", let relayUrl = query["relay"], !relayUrl.isEmpty else {
+            throw malformed()
+        }
+        return QrPayload(
+            relayUrl: relayUrl,
+            macPubkey: try base64Url(query["key"]),
+            token: try base64Url(query["token"]),
+            roomId: query["room"].flatMap { $0.isEmpty ? nil : $0 }
+        )
     }
 }
