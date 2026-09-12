@@ -143,6 +143,11 @@ export interface ThreadSummary {
   lastMessage?: string;
   /** Pinned threads lead the list. Absent from a runtime older than the flag, meaning not pinned. */
   pinned?: boolean;
+  /**
+   * The model this thread's turns run on, as a `<providerId>/<model>` spec. Absent means the
+   * configured chain, which is what nearly every thread wants — see `thread_set_model`.
+   */
+  model?: string;
 }
 
 export interface ThreadListData {
@@ -161,6 +166,34 @@ export interface ThreadArchiveData {
 /** Pins or unpins `threadId` from the base fields. */
 export interface ThreadPinData {
   pinned: boolean;
+}
+
+/**
+ * Sets `threadId` from the base fields to one model, as a `<providerId>/<model>` spec from
+ * `model_list`. Null — or an absent field, which is how a Swift client encodes it — puts the
+ * thread back on the configured chain.
+ */
+export interface ThreadSetModelData {
+  model?: string | null;
+}
+
+/** One model a thread can be set to, named the way a picker wants to draw it. */
+export interface ModelOption {
+  /** The `<providerId>/<model>` spec. What `thread_set_model` carries. */
+  id: string;
+  /** The model's own name, e.g. "claude-opus-5". */
+  label: string;
+  /** The provider entry it belongs to, e.g. "Claude". What groups the picker. */
+  providerLabel: string;
+}
+
+/**
+ * Every model the Mac is configured for, pushed alongside `thread_list` so a phone's picker
+ * has real names rather than specs it would have to invent labels for. Device-facing only:
+ * the providers themselves, and their keys, never leave the Mac.
+ */
+export interface ModelListData {
+  models: ModelOption[];
 }
 
 /**
@@ -225,6 +258,8 @@ export type EventPayload =
   | { kind: "thread_archive"; data: ThreadArchiveData }
   | { kind: "thread_rename"; data: ThreadRenameData }
   | { kind: "thread_pin"; data: ThreadPinData }
+  | { kind: "thread_set_model"; data: ThreadSetModelData }
+  | { kind: "model_list"; data: ModelListData }
   | { kind: "interrupt"; data: InterruptData }
   | { kind: "sync_request"; data: SyncRequestData }
   | { kind: "sync_delta"; data: SyncDeltaData }

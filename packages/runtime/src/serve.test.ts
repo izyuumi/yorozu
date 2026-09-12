@@ -102,6 +102,9 @@ test("a sealed message from a phone round-trips through the agent loop", async (
   // Pairing is greeted with the thread list — empty, on a state dir nothing has happened in —
   // and the agent's reply follows it.
   expect(await openNext()).toMatchObject({ kind: "thread_list", data: { threads: [] } });
+  // And what a thread can be put on, so the phone's model picker has names. Empty here: the
+  // provider is injected by the test, so there is no providers.json to publish.
+  expect(await openNext()).toMatchObject({ kind: "model_list", data: { models: [] } });
   // Pairing changed who the devices are, so the new list follows it.
   expect(await openNext()).toMatchObject({ kind: "device_list" });
   expect(await openNext()).toMatchObject({

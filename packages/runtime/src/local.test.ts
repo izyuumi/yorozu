@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { localSocketPath } from "./local.js";
 import { openaiCompat } from "./provider.js";
 import { serve, type Sidecar } from "./serve.js";
+import { threadModel } from "./threads.js";
 
 let relay: Relay;
 let sidecar: Sidecar;
@@ -52,6 +53,15 @@ const toolTurn = (name: string, args: Record<string, unknown>) =>
 async function localSidecar(responses: (() => Response)[] = []) {
   relay = await startRelay(0);
   const dir = mkdtempSync(join(tmpdir(), "yorozu-local-"));
+  // Two entries with named models, so `model_list` has something to publish. The turns
+  // themselves run on the injected provider, not on these.
+  writeFileSync(
+    join(dir, "providers.json"),
+    JSON.stringify([
+      { id: "claude", kind: "claude-cli", label: "Claude", models: ["claude-opus-5"], enabled: true },
+      { id: "codex", kind: "codex-cli", label: "Codex", models: ["gpt-5.6"], enabled: true },
+    ]),
+  );
   const queue = [...responses];
   sidecar = serve({
     relayUrl: `ws://127.0.0.1:${relay.port}`,
@@ -317,4 +327,48 @@ test("a progress card re-reported under the same id moves in place", async () =>
   expect(cards[1]).toMatchObject({
     data: { title: "Booking a table", steps: [{ state: "done" }], percent: 100 },
   });
+});
+
+test("the models a thread can run on arrive with the thread list, and one can be picked", async () => {
+  const { dir, path } = await localSidecar();
+  socket = await connectLocal(path);
+  const events = reader(socket);
+
+  // Published unasked, alongside the list: a picker has names before it is ever opened.
+  const models = await events.nextOf("model_list");
+  expect(models.kind === "model_list" && models.data.models).toEqual([
+    { id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude" },
+    { id: "codex/gpt-5.6", label: "gpt-5.6", providerLabel: "Codex" },
+  ]);
+
+  send(socket, "t1", { kind: "thread_create", data: { title: "Kyoto" } });
+  await events.nextOf("thread_list");
+
+  send(socket, "t1", { kind: "thread_set_model", data: { model: "codex/gpt-5.6" } });
+  const listed = await events.nextOf("thread_list");
+  expect(listed.kind === "thread_list" && listed.data.threads[0]?.model).toBe("codex/gpt-5.6");
+  // It is the thread's, so it outlives the socket that set it.
+  expect(threadModel("t1", dir)).toBe("codex/gpt-5.6");
+
+  // And "Default" is the same frame with nothing in it.
+  send(socket, "t1", { kind: "thread_set_model", data: { model: null } });
+  const back = await events.nextOf("thread_list");
+  expect(back.kind === "thread_list" && back.data.threads[0]?.model).toBeUndefined();
+});
+
+test("a thread set to a model the user has since deleted still gets an answer", async () => {
+  const { path } = await localSidecar();
+  socket = await connectLocal(path);
+  const events = reader(socket);
+  await events.nextOf("thread_list");
+
+  send(socket, "t1", { kind: "thread_create", data: { title: "Kyoto" } });
+  await events.nextOf("thread_list");
+  send(socket, "t1", { kind: "thread_set_model", data: { model: "gone/x" } });
+  await events.nextOf("thread_list");
+
+  // The spec cannot be built at all, so the turn falls all the way back to the configured
+  // chain: an answer from the default beats no answer.
+  send(socket, "t1", { kind: "message", data: { role: "user", text: "ping" } });
+  expect(await events.nextOf("message")).toMatchObject({ data: { role: "agent", text: "pong" } });
 });

@@ -108,6 +108,16 @@ export function chainFromSpecs(specs: string[], entries = loadProviders()): Prov
   return composeProviders(primary, fallbacks);
 }
 
+/**
+ * One thread's own model in front of the chain everything else runs on: the spec is tried
+ * first, and a provider that fails before it has said anything falls through to the default,
+ * exactly as one entry of the chain falls through to the next. A spec naming a provider that
+ * no longer exists throws, as any other unknown spec does; it is the caller's business what to
+ * do about a thread set to a model the user has since deleted.
+ */
+export const chainWithPrimary = (spec: string, fallback: Provider, dir?: string): Provider =>
+  composeProviders(providerFromSpec(spec, loadProviders(dir)), [fallback]);
+
 /** The usable half of a probe report, in the order the report lists it. */
 export function autoSpecs(report: {
   providers: ProviderEntry[];

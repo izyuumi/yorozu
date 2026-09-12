@@ -15,8 +15,15 @@ vi.mock("@openai/codex-sdk", () => ({ Codex: vi.fn() }));
 const probeMock = vi.fn();
 vi.mock("./probe.js", () => ({ probe: probeMock }));
 
-const { autoChain, autoSpecs, chainFromEnv, composeProviders, NO_PROVIDER, providerFromSpec } =
-  await import("./chain.js");
+const {
+  autoChain,
+  autoSpecs,
+  chainFromEnv,
+  chainWithPrimary,
+  composeProviders,
+  NO_PROVIDER,
+  providerFromSpec,
+} = await import("./chain.js");
 
 function provider(events: ProviderEvent[], failsWith?: Error): Provider {
   return {
@@ -81,6 +88,28 @@ test("specs name a provider and a model", () => {
   expect(() => providerFromSpec("claude-cli/claude-sonnet-5")).not.toThrow();
   expect(() => providerFromSpec("codex-cli/gpt-5.6")).not.toThrow();
   expect(() => providerFromSpec("hal9000/hal")).toThrow("unknown provider");
+});
+
+test("a thread's own model leads, with the default chain behind it", async () => {
+  const state = mkdtempSync(join(tmpdir(), "yorozu-chain-"));
+  saveProviders(
+    [{ id: "work", kind: "claude-cli", label: "Work", models: ["claude-opus-5"], enabled: true }],
+    state,
+  );
+  const fallback = provider([
+    { type: "text", text: "the default answered" },
+    { type: "done", reason: "stop" },
+  ]);
+
+  // The spec resolves against providers.json, as a chain entry does.
+  const chain = chainWithPrimary("work/claude-opus-5", fallback, state);
+  expect(typeof chain.stream).toBe("function");
+  // And the default chain really is behind it: green there is green for the thread, which is
+  // what keeps a thread on an unreachable model usable.
+  expect(await chain.auth()).toEqual({ ok: true });
+
+  // A spec naming a provider that has since been deleted cannot be built at all, and says so.
+  expect(() => chainWithPrimary("gone/x", fallback, state)).toThrow("unknown provider");
 });
 
 test("the chain is read from the environment, primary first", async () => {

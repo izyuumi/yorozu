@@ -33,15 +33,16 @@ import WebSocket from "ws";
 import { agentsDir, installAgents, loadAgent, MAIN_AGENT } from "./agents.js";
 import type { Action, AskResult } from "./approval.js";
 import { autoAssign, revertAssign, setAssignCron, type AssignMode } from "./assign.js";
-import { chainFromEnv } from "./chain.js";
+import { chainFromEnv, chainWithPrimary } from "./chain.js";
 import { delegateTool } from "./delegate.js";
 import { defaultTools, eventPayload, runAgent, type TurnContext } from "./index.js";
 import { localSocketPath, startLocalChannel, type Send } from "./local.js";
 import type { Provider } from "./provider.js";
 import { probe } from "./probe.js";
-import { listEntryModels } from "./providers.js";
+import { listEntryModels, loadProviders, modelOptions } from "./providers.js";
 import { startScheduler } from "./scheduler.js";
 import { listSkills, skillsDir, skillsPrompt } from "./skills.js";
+import { contextFor, updateSummary } from "./summary.js";
 // Mirrors PING in apps/relay/src/protocol.ts; the shipped runtime must not depend on the relay package.
 const PING = JSON.stringify({ type: "ping" });
 import {
@@ -53,7 +54,9 @@ import {
   listThreads,
   pinThread,
   renameThread,
+  setThreadModel,
   threadHistory,
+  threadModel,
   threadSummaries,
 } from "./threads.js";
 import { closeBrowser } from "./tools/browser.js";
@@ -412,6 +415,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
     control({ kind: "thread_list", data: { threads: threadSummaries(dir) } });
 
   /**
+   * What a thread can be put on, by name. Sent with the thread list rather than on request: a
+   * phone's model picker is one tap away from the thread it is about, and asking for the list
+   * at that point would draw an empty menu first.
+   */
+  const modelList = (): YorozuEvent =>
+    control({ kind: "model_list", data: { models: modelOptions(loadProviders(dir)) } });
+
+  /**
    * Every device this Mac answers, the local socket's clients included: the Mac app is one more
    * paired device, it just reached us without the relay.
    */
@@ -495,6 +506,21 @@ export function serve(options: ServeOptions = {}): Sidecar {
       data: { role: "agent", text: reply, ...(done ? { done: true } : {}) },
     });
 
+    // A thread put on a model of its own leads with it and keeps the configured chain behind
+    // it, so one unreachable provider is a slower turn rather than a thread that cannot answer.
+    // Resolved per turn: the picker may have been used since the last one. A spec naming a
+    // provider the user has since deleted cannot be built at all — that thread falls all the
+    // way back to the default chain, because an answer from the wrong model beats none.
+    const spec = threadModel(threadId, dir);
+    let turnProvider = provider;
+    if (spec) {
+      try {
+        turnProvider = chainWithPrimary(spec, provider, dir);
+      } catch (e) {
+        state(`model-error ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
     const turn = new AbortController();
     running.add(turn);
     let reply = "";
@@ -515,7 +541,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         askUserTool(questions.ask),
         reportProgressTool(reportProgress),
         delegateTool({
-          provider,
+          provider: turnProvider,
           tools: [...defaultTools, reportProgressTool(reportProgress)],
           main,
           emit,
@@ -526,10 +552,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
         }),
       ];
       for await (const event of runAgent({
-        provider,
+        provider: turnProvider,
         system,
-        // The thread's own history is the context, compacted by `threadHistory`.
-        messages: threadHistory(threadId, dir, provider.vision === true),
+        // The rolling summary of what has scrolled out, then the recent window.
+        messages: contextFor(threadId, dir, turnProvider.vision === true),
         tools,
         context: { threadId, agentId: MAIN_AGENT },
         ask,
@@ -565,6 +591,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
     broadcast(final);
     // Deliberately not awaited: titling is a second completion and must never delay a reply.
     void autoTitle(threadId).catch((e: unknown) => state(`title-error ${String(e)}`));
+    // Nor is the summary: it is only ever needed by the *next* turn, and a thread that has not
+    // outgrown its window does no work here at all. A failure leaves the summary as it was.
+    void updateSummary(threadId, turnProvider, dir).catch((e: unknown) =>
+      state(`summary-error ${String(e)}`),
+    );
   }
 
   /**
@@ -652,7 +683,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
         pinThread(event.threadId, event.data.pinned, dir);
         return broadcast(threadList());
       case "thread_list":
-        return reply(threadList());
+        reply(threadList());
+        return reply(modelList());
+      case "thread_set_model":
+        setThreadModel(event.threadId, event.data.model ?? null, dir);
+        return broadcast(threadList());
       case "device_list":
         return reply(deviceList());
       case "device_remove":
@@ -681,6 +716,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       locals.set(device, send);
       state("local-connected");
       send(threadList());
+      send(modelList());
       pushDevices();
     },
     onEvent: (device, event) => {
@@ -779,6 +815,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         state("paired");
         // A phone that has just paired needs the thread list before it can ask for anything.
         sendTo(body.pub, threadList());
+        sendTo(body.pub, modelList());
         // And every device's list of devices has just gained one.
         pushDevices();
         // Join tokens are one-time, so the one in the printed QR has just been burnt: mint the

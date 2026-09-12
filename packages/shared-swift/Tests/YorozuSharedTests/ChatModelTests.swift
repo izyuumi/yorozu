@@ -364,3 +364,59 @@ private func summary(
     model.delete("e2", in: "nosuchthread")
     #expect(model.events["home"]?.map(\.id) == ["e2"])
 }
+
+@MainActor
+@Test func theModelsOnOfferComeFromTheRuntimeAndPickingOneSetsTheThread() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    let options = [
+        ModelOption(id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude"),
+        ModelOption(id: "codex/gpt-5.6", label: "gpt-5.6", providerLabel: "Codex"),
+    ]
+    let thread = ThreadSummary(id: "t1", title: "Kyoto", archived: false, lastActivity: 1)
+
+    // Until the runtime says otherwise there is nothing to pick from, and so only Default.
+    #expect(model.models.isEmpty)
+    await transport.yield(.event(event("m1", .modelList(ModelListData(models: options)))))
+    await transport.yield(.event(event("l1", .threadList(ThreadListData(threads: [thread])))))
+    #expect(await eventually { model.models == options && model.threads == [thread] })
+    // A list is not a thread's history: it must not land in one as a bubble.
+    #expect(model.events[""] == nil)
+
+    model.setModel(model.threads[0], "codex/gpt-5.6")
+    // Applied here and now, so the caption and the tick move under the tap rather than a round
+    // trip later, and sent for the runtime to persist.
+    #expect(model.threads[0].model == "codex/gpt-5.6")
+    // Pairing already sent a `sync_request`, so it is the next one that is the pick.
+    let picked = await sent(by: transport, atLeast: 2)
+    #expect(picked.last?.threadId == "t1")
+    #expect(picked.last?.payload == .threadSetModel(ThreadSetModelData(model: "codex/gpt-5.6")))
+
+    model.setModel(model.threads[0], nil)
+    #expect(model.threads[0].model == nil)
+    let cleared = await sent(by: transport, atLeast: 3)
+    #expect(cleared.last?.payload == .threadSetModel(ThreadSetModelData(model: nil)))
+}
+
+/// A model picked in a chat nothing has been sent in yet has no thread on the Mac to be set on.
+/// It waits on the draft and goes out with the message that creates the thread, ahead of it, so
+/// the very first turn already runs on what was picked.
+@MainActor
+@Test func aModelPickedInADraftGoesOutWithTheMessageThatCreatesTheThread() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    let draft = model.newDraft()
+
+    // Pairing's own `sync_request` is all that has gone out so far.
+    let before = await transport.sent.count
+
+    model.setModel(draft, "claude/claude-opus-5")
+    #expect(model.draft?.model == "claude/claude-opus-5")
+    // Still nothing on the wire: there is no thread there to set anything on.
+    #expect(await transport.sent.count == before)
+
+    model.send("hi", in: draft.id)
+    let created = await sent(by: transport, atLeast: before + 3)
+    #expect(created.dropFirst(before).map(\.payload.kind) == [.threadCreate, .threadSetModel, .message])
+    #expect(created.dropFirst(before).allSatisfy { $0.threadId == draft.id })
+}

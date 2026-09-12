@@ -59,6 +59,21 @@ final class E2EHarness {
             // The runtime behind a screenshot has no threads of its own, and its empty
             // `thread_list` would otherwise wipe the seeded ones out from under the picker.
             model.onThreads = { [weak model] in model?.previewThreads() }
+        case "model":
+            // Re-seeded whenever the runtime sends a list, for the same reason as `share`: the
+            // Mac behind a screenshot has no threads, and its empty `thread_list` would
+            // otherwise wipe these out — along with the model this one is set to.
+            let seed = { [weak model] in
+                model?.previewThreads()
+                guard let thread = model?.threads.first?.id else { return }
+                model?.previewChat(in: thread)
+                model?.previewModels(in: thread)
+            }
+            seed()
+            model.onThreads = seed
+            // Nothing on a simulator can open a menu, so the menu's own contents are drawn as
+            // a popover over the button they hang off.
+            ChatShowcase.modelMenu = true
         case "link":
             model.previewThreads()
             LinkPreviewStore.shared.preload(
