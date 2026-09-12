@@ -630,7 +630,7 @@ transport in is not fixed — every event carries its own ids and the runtime ma
 
 The fresh-Mac walkthrough, in the order spec section 10 asks for:
 
-1. Download `Yorozu-<version>.dmg` from the [Releases](https://github.com/izyuumi/yorozu/releases)
+1. Download `Yorozu-<version>.dmg` from https://dl.yumi.to/Yorozu-0.1.0.dmg (or the private GitHub Releases page)
    page.
 2. Open it and drag **Yorozu** onto the Applications shortcut beside it. Eject the disk image
    and launch Yorozu from Applications — it is a menu bar app, so it appears as an icon in the
