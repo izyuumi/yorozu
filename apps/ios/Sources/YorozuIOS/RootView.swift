@@ -78,6 +78,7 @@ struct RootView: View {
     /// The thread ids pushed on the list's stack: at most one, and what lets the app open a
     /// thread by itself rather than waiting to be tapped.
     @State private var path: [String] = []
+    @State private var settings = false
 
     var body: some View {
         content
@@ -99,12 +100,24 @@ struct RootView: View {
                 path: $path,
                 onCreate: { path = [model.newDraft().id] },
                 onRename: { model.rename($0, to: $1) },
-                onArchive: model.archive
+                onArchive: model.archive,
+                onSettings: { settings = true }
             ) { thread in
                 ChatView(model: model, thread: thread)
-                    .toolbar {
-                        Button("Unpair", systemImage: "qrcode") { session.unpair() }
-                    }
+            }
+            // Unpairing lives in Settings behind a confirmation now, which is the only place it
+            // belongs: it is not something to do by mistyping a tap in a chat.
+            .sheet(isPresented: $settings) {
+                // Read when the sheet opens rather than held: `markPaired` writes the pairing
+                // date behind our back, and Settings is opened far too rarely for one Keychain
+                // read to be worth caching.
+                let stored = PairingStore.load()
+                SettingsView(
+                    status: MacStatus(state: model.state, ownerOnline: model.ownerOnline),
+                    relayUrl: stored?.pairing.relayUrl ?? "—",
+                    pairedAt: stored?.pairedAt,
+                    onUnpair: session.unpair
+                )
             }
             // Launch and every return to the foreground land here: pick up where the day left
             // off while it is still warm, and start on a blank one when it is not.

@@ -204,13 +204,18 @@ public actor RelayClient: ChatTransport {
 
     /// The relay drops a socket that says nothing for long enough, and a phone in a quiet chat
     /// says nothing for hours. A ping is the cheapest thing that keeps it.
-    private func startPings(on socket: URLSessionWebSocketTask) {
+    ///
+    /// It is a `{"type":"ping"}` message rather than a websocket ping frame because that is what
+    /// the relay answers at its edge, leaving the room itself hibernated.
+    private func startPings() {
         pinger?.cancel()
         pinger = Task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.pingInterval)
                 guard !Task.isCancelled else { return }
-                socket.sendPing { _ in }
+                // A send that throws means the socket is already gone, and the receive loop is
+                // the one that reports that; there is nothing useful to do with it here.
+                try? await self.send(["type": "ping"])
             }
         }
     }
@@ -232,7 +237,7 @@ public actor RelayClient: ChatTransport {
         while true {
             do {
                 guard case .string(let text) = try await socket.receive() else { continue }
-                try handle(text, on: socket)
+                try handle(text)
             } catch {
                 // Our own cancellation is not a failure worth reporting.
                 if !stopped { updates?.yield(.failed(error.localizedDescription)) }
@@ -243,7 +248,7 @@ public actor RelayClient: ChatTransport {
 
     /// Everything here is attacker-controlled; a malformed frame must not tear the client down,
     /// so per-frame decode failures are reported and skipped rather than thrown.
-    private func handle(_ text: String, on socket: URLSessionWebSocketTask) throws {
+    private func handle(_ text: String) throws {
         guard let message = try? JSONDecoder().decode(Inbound.self, from: Data(text.utf8)) else {
             return
         }
@@ -260,9 +265,12 @@ public actor RelayClient: ChatTransport {
                 paired = true
                 onPaired?()
             }
-            startPings(on: socket)
+            startPings()
             updates?.yield(.state(.joined))
             updates?.yield(.ownerOnline(message.ownerOnline ?? false))
+            // `joined` carried presence as of the instant it was written; ask again so what the
+            // UI shows is the relay's live answer rather than anything either end remembered.
+            Task { await requestOwner() }
             Task { await sayHello() }
         case "owner":
             updates?.yield(.ownerOnline(message.online ?? false))
@@ -294,6 +302,12 @@ public actor RelayClient: ChatTransport {
         } catch {
             updates?.yield(.failed(error.localizedDescription))
         }
+    }
+
+    /// Asks the relay whether the room's Mac holds a socket right now. The reply is an ordinary
+    /// `owner` message, so it lands in the same place the relay's unprompted ones do.
+    private func requestOwner() async {
+        try? await send(["type": "owner"])
     }
 
     private func sayHello() async {

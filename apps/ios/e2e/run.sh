@@ -123,7 +123,9 @@ xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" \
   -yorozuSend "hi again" >"$WORK/app2.log" 2>&1 &
 PIDS+=($!)
 wait_for "$WORK/app2.log" "YOROZU-E2E paired" "the phone to rejoin without a token" 45
-wait_for "$WORK/app2.log" "YOROZU-E2E-REPLY \[Home\] $REPLY" "a reply after the relaunch" 45
+# Any title: the relaunch sends in a fresh draft, which the runtime auto-titles from the reply
+# it is still streaming, so which of the two names the line carries is a race and not the point.
+wait_for "$WORK/app2.log" "YOROZU-E2E-REPLY \[.*\] $REPLY" "a reply after the relaunch" 45
 
 say "PASS — the phone received:"
 grep -m2 'YOROZU-E2E-REPLY' "$WORK/app.log"

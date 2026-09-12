@@ -12,6 +12,8 @@ import {
   parseFrame,
   parseJoin,
   parseRegister,
+  PING,
+  PONG,
   TOKEN_TTL_MS,
   type Bucket,
 } from "./protocol.js";
@@ -149,6 +151,18 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
       }
 
       switch (msg.type) {
+        // The heartbeat both clients send on an otherwise quiet socket. The Worker relay
+        // answers it at the edge without waking the room; here there is nothing to wake.
+        case "ping":
+          return ws.send(PONG);
+
+        // "Is my Mac there?", asked by a phone after every join. Answered from the live socket
+        // rather than a stored flag, so it cannot go stale.
+        case "owner": {
+          if (conn.role !== "phone" || !conn.room) return ws.close(CLOSE_PROTOCOL, "not joined");
+          return ws.send(JSON.stringify({ type: "owner", online: conn.room.mac !== null }));
+        }
+
         case "register": {
           const reg = parseRegister(msg);
           if (!reg) return ws.close(CLOSE_PROTOCOL, "bad register");
