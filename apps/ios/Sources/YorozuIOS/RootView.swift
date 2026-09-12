@@ -69,7 +69,8 @@ final class Session {
             E2EHarness.attach(to: model)
             model.start()
             self.model = model
-            openPath = [threadToOpen(model.threads) ?? model.newDraft().id]
+            // Land on the thread list; Yumi prefers choosing over being dropped into the latest.
+            openPath = []
         } catch {
             failure = error.localizedDescription
         }
@@ -86,10 +87,6 @@ struct RootView: View {
     /// it before this view was ever built, so the first frame is already the chat.
     @State private var path: [String] = Session.shared.openPath
     @State private var settings = false
-    /// Whether the app has actually been away, rather than merely dimmed by a Control Centre
-    /// swipe. Only a real return to the foreground re-decides which thread is open — the launch
-    /// case is already decided, and re-deciding it would undo the seeding above.
-    @State private var wasBackgrounded = false
 
     var body: some View {
         content
@@ -142,16 +139,6 @@ struct RootView: View {
                     pairedAt: stored?.pairedAt,
                     onUnpair: session.unpair
                 )
-            }
-            // Every return to the foreground lands here: pick up where the day left off while it
-            // is still warm, and start on a blank one when it is not. Launch is not handled here
-            // — `path` was already seeded before the first frame, which is what stops the list
-            // flashing past on the way to the chat.
-            .onChange(of: scenePhase) { _, phase in
-                if phase == .background { wasBackgrounded = true }
-                guard phase == .active, wasBackgrounded else { return }
-                wasBackgrounded = false
-                path = [threadToOpen(model.threads) ?? model.newDraft().id]
             }
             // Pairing mid-session is the other way a model appears, and it decides an opening
             // thread of its own.
