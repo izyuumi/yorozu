@@ -14,6 +14,7 @@ let project = Project(
             deploymentTargets: .iOS("18.0"),
             infoPlist: .extendingDefault(with: [
                 "UILaunchScreen": [:],
+                "ITSAppUsesNonExemptEncryption": false,
                 "CFBundleDisplayName": "Yorozu",
                 "NSCameraUsageDescription": "Yorozu scans the pairing QR code shown by your Mac.",
                 // `yorozu://pair?...` is the pairing string itself: tapping one opens the app.
