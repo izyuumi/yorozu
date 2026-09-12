@@ -41,7 +41,8 @@ import { probe } from "./probe.js";
 import { listEntryModels } from "./providers.js";
 import { startScheduler } from "./scheduler.js";
 import { listSkills, skillsDir, skillsPrompt } from "./skills.js";
-import { PING } from "@yorozu/relay/dist/protocol.js";
+// Mirrors PING in apps/relay/src/protocol.ts; the shipped runtime must not depend on the relay package.
+const PING = JSON.stringify({ type: "ping" });
 import {
   appendThreadEvent,
   archiveThread,
