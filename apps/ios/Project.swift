@@ -14,6 +14,7 @@ let project = Project(
             deploymentTargets: .iOS("18.0"),
             infoPlist: .extendingDefault(with: [
                 "UILaunchScreen": [:],
+                "CFBundleDisplayName": "Yorozu",
                 "NSCameraUsageDescription": "Yorozu scans the pairing QR code shown by your Mac.",
                 // Both are build settings so that scripts/build-ios.sh can pass the version
                 // and the build number on the xcodebuild command line rather than editing a
@@ -22,12 +23,14 @@ let project = Project(
                 "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
             ]),
             sources: ["Sources/YorozuIOS/**"],
+            resources: ["Resources/**"],
             dependencies: [.package(product: "YorozuShared")],
             settings: .settings(base: [
                 // Automatic signing plus `xcodebuild -allowProvisioningUpdates` and an App
                 // Store Connect key: Xcode issues the distribution certificate and the App
                 // Store profile itself, so there is no .p12 or .mobileprovision to carry.
                 "DEVELOPMENT_TEAM": "AN5KM8QGEF",
+                "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
                 "CODE_SIGN_STYLE": "Automatic",
                 "MARKETING_VERSION": "0.1.0",
                 "CURRENT_PROJECT_VERSION": "1",
