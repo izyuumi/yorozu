@@ -321,6 +321,31 @@ the `sync_request` the app sends on connect refills it. Unpairing deletes the fi
 That is what makes the app work offline: the list and every thread are read from disk at launch,
 before the relay is even reachable.
 
+### Outbox
+
+Typing with the Mac asleep, or before the relay has paired the socket, is not an error: `send`
+queues the event instead of dropping it (`Outbox` in `packages/shared-swift`), the bubble appears
+in the thread captioned **Queued**, and the queue is flushed in order the moment `paired` and
+`ownerOnline` are both true. The queued events keep the ids they were given, so a message that did
+reach the runtime before the socket dropped is deduped there rather than said twice, and a thread
+started offline carries its `thread_create` ahead of the message that created it. Three refusals
+and the caption becomes **Not sent — tap to retry**; the queue steps over it and carries on.
+It holds 50 messages and stops re-sending one by itself after 48 hours. It is sealed in the same
+`ThreadCache`, so a phone closed on the underground still has it in the morning.
+
+### Thread list, export and link previews
+
+The phone's list is **Pinned**, then a section per stretch of time — Today, Yesterday, This week,
+Earlier — with the archive folded away at the bottom (`threadSections`, pure and table-tested).
+A thread's context menu and the chat's **…** both offer **Export as Markdown**: `threadMarkdown`
+renders the transcript with roles and timestamps and folds tool runs and delegations into
+`<details>` notes, and `ShareLink` writes it out as a real `.md`. The first bare URL in a reply —
+not one already inside a Markdown link or a code span — gets a compact preview row under the
+bubble, fetched on device by `LPMetadataProvider` with a 5 second timeout and cached in memory and
+under `Caches/Yorozu/link-previews`, keyed by the SHA-256 of the URL so a directory listing is not
+a reading list. Nothing about it blocks the thread: the row appears if and when the metadata lands,
+and a site that never answers leaves no gap.
+
 ## Browser
 
 `packages/runtime/src/tools/browser.ts` drives a Chromium-family browser over CDP — the protocol

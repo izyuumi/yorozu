@@ -70,9 +70,12 @@ final class Session {
             model.start()
             self.model = model
             // Land on the thread list; Yumi prefers choosing over being dropped into the latest.
-            // The screenshot harness is the one exception: it opens the thread it seeded.
-            let showcase = launchArgument("yorozuShowcase") != nil || launchArgument("yorozuScene") != nil
-            openPath = showcase ? model.threads.map(\.id).prefix(1).map { $0 } : []
+            // The screenshot harness is the one exception: it opens the thread it seeded,
+            // unless what it seeded is the list itself.
+            let showcase = launchArgument("yorozuShowcase") ?? launchArgument("yorozuScene")
+            openPath =
+                showcase == nil || showcase == "threads"
+                ? [] : model.threads.map(\.id).prefix(1).map { $0 }
         } catch {
             failure = error.localizedDescription
         }
@@ -124,6 +127,7 @@ struct RootView: View {
                     }
                     .joined(separator: " ")
                 },
+                exportMarkdown: model.markdown(of:),
                 onSettings: { settings = true }
             ) { thread in
                 ChatView(model: model, thread: thread)
