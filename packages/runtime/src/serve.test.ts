@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startRelay, type Relay } from "@yorozu/relay";
-import { connectPhone } from "@yorozu/relay/dist/testing.js";
+import { connectPhone, rejoinPhone } from "@yorozu/relay/dist/testing.js";
 import {
   decodeQrPayload,
   deriveSessionKey,
@@ -20,7 +20,7 @@ import {
 } from "@yorozu/shared";
 import { afterEach, expect, test, vi } from "vitest";
 import { openaiCompat } from "./provider.js";
-import { serve, type Sidecar } from "./serve.js";
+import { loadDevices, serve, type Sidecar } from "./serve.js";
 
 let relay: Relay;
 let sidecar: Sidecar;
@@ -108,6 +108,69 @@ test("a sealed message from a phone round-trips through the agent loop", async (
   });
   expect(lines).toContain("STATE paired");
   expect(fetchMock.mock.calls[0]![0]).toBe("https://example.invalid/v1/chat/completions");
+});
+
+test("a phone rejoins a restarted sidecar without pairing again", async () => {
+  relay = await startRelay(0);
+  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-rejoin-"));
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => sse("pong"));
+
+  // Two sidecars in a row over one state dir: the second is the "restart".
+  const start = () => {
+    let qrLine!: (line: string) => void;
+    const qr = new Promise<string>((resolve) => (qrLine = resolve));
+    const cast = serve({
+      relayUrl: `ws://127.0.0.1:${relay.port}`,
+      stateDir,
+      provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: fetchMock }),
+      log: (line) => {
+        if (line.startsWith("QR ")) qrLine(line.slice(3));
+      },
+    });
+    return { cast, qr };
+  };
+
+  const first = start();
+  const qr = decodeQrPayload(await first.qr);
+  const { phone, keys } = await connectPhone(relay.port, qr.roomId!, qr.token);
+  expect(await phone.next()).toMatchObject({ type: "joined" });
+
+  const phoneKeys = generateKeypair();
+  const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
+  const pub = toBase64Url(phoneKeys.publicKey);
+  phone.frame(encodeBody({ t: "hello", pub }), keys);
+  // The `hello` is what writes the phone into `devices.json`.
+  await vi.waitFor(() => expect(loadDevices(join(stateDir, "devices.json"))).toEqual([pub]));
+
+  phone.ws.close();
+  await first.cast.close();
+
+  // A rejoin: the one-time token is long burnt, so the phone proves itself to the relay against
+  // the connect nonce, and says no `hello` — the restarted sidecar has to know it from disk.
+  const second = start();
+  sidecar = second.cast;
+  await second.qr;
+  const again = await rejoinPhone(relay.port, qr.roomId!, keys);
+  expect(await again.next()).toMatchObject({ type: "joined" });
+
+  const sent: YorozuEvent = {
+    id: "e2",
+    threadId: "home",
+    ts: 2,
+    agentId: "phone",
+    kind: "message",
+    data: { role: "user", text: "ping" },
+  };
+  const box = seal(sessionKey, Buffer.from(JSON.stringify(sent)));
+  again.frame(encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }), keys);
+
+  const body = frameBody((await again.next()).payload);
+  const plain = open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c));
+  expect(JSON.parse(Buffer.from(plain).toString())).toMatchObject({
+    threadId: "home",
+    kind: "message",
+    data: { role: "agent", text: "pong" },
+  });
 });
 
 /** A turn in which the model calls `shell`, which carries the `run-command` action class. */

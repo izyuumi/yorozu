@@ -65,6 +65,12 @@ public final class ChatModel {
         Task { [transport] in await transport.close() }
     }
 
+    /// Called when the app comes back to the foreground: a socket that dropped while it was
+    /// suspended is re-dialled now instead of after the transport's backoff.
+    public func reconnect() {
+        Task { [transport] in await transport.reconnect() }
+    }
+
     public func send(in thread: ThreadSummary) {
         let text = (drafts[thread.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }

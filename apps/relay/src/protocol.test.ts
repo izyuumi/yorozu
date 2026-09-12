@@ -4,7 +4,9 @@ import {
   BUFFER_CAP_BYTES,
   BUFFER_TTL_MS,
   dropCount,
+  evictions,
   FRAMES_PER_SEC,
+  MAX_DEVICES,
   newBucket,
   parseFrame,
   parseJoin,
@@ -75,8 +77,23 @@ test("envelopes are accepted only when every field is a string", () => {
     token: "t",
   });
   expect(parseJoin({ roomId: "r", token: "t", phonePubkey: "p" })).toBeNull();
+  // A rejoin carries no token; a non-string one is still a malformed join.
+  expect(parseJoin({ roomId: "r", phonePubkey: "p", sig: "s" })).toMatchObject({ roomId: "r" });
+  expect(parseJoin({ roomId: "r", phonePubkey: "p", sig: "s" })?.token).toBeUndefined();
+  expect(parseJoin({ roomId: "r", token: 1, phonePubkey: "p", sig: "s" })).toBeNull();
 
   expect(parseFrame({ payload: "p", sig: "s" })).toMatchObject({ payload: "p" });
   expect(parseFrame({ payload: "p" })).toBeNull();
   expect(parseFrame({ payload: null, sig: "s" })).toBeNull();
+});
+
+test("known devices are capped, and a device already known evicts nobody", () => {
+  const known = Array.from({ length: MAX_DEVICES }, (_, i): [string, number] => [`k${i}`, i]);
+  expect(evictions(known, "k3")).toEqual([]);
+  expect(evictions(known.slice(0, 3), "new")).toEqual([]);
+  // Full, so the least recently paired one makes way for the newcomer.
+  expect(evictions(known, "new")).toEqual(["k0"]);
+  // Shrinking the cap sheds every device over it in one go, oldest first.
+  expect(evictions(known, "new", 3)).toEqual(["k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8",
+    "k9", "k10", "k11", "k12", "k13"]);
 });

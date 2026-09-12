@@ -129,6 +129,24 @@ export function loadKeys(dir: string): Keys {
 }
 
 /**
+ * The phones this Mac has paired with, by X25519 public key. Outlives a restart so a phone
+ * that rejoins the relay against its nonce — rather than pairing again with a fresh token —
+ * is still a device we know how to seal for.
+ *
+ * Only public keys: the session key is re-derived from our own private key on load, and a
+ * phone re-announces itself with `hello` on every join anyway. Losing the file costs nothing
+ * but one extra `hello`.
+ */
+export function loadDevices(file: string): string[] {
+  try {
+    const stored = JSON.parse(readFileSync(file, "utf8")) as unknown;
+    return Array.isArray(stored) ? stored.filter((pub): pub is string => typeof pub === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Frame bodies, base64url JSON inside the relay's opaque `payload`. `hello` is the phone
  * announcing its X25519 key; everything after it is sealed.
  */
@@ -179,9 +197,22 @@ export function serve(options: ServeOptions = {}): Sidecar {
   /**
    * Session key per paired device, keyed by the X25519 public key it announced. Several
    * phones can be paired at once, so every agent event is sealed once per device; the map
-   * outlives the socket, so a reconnect unpairs nobody.
+   * outlives the socket, so a reconnect unpairs nobody, and `devices.json` carries it across
+   * a restart, so neither does a relaunch of this sidecar.
    */
+  const devicesFile = join(dir, "devices.json");
   const devices = new Map<string, Uint8Array>();
+  const remember = (pub: string): void => {
+    devices.set(pub, deriveSessionKey(keys.session.privateKey, fromBase64Url(pub)));
+  };
+  for (const pub of loadDevices(devicesFile)) {
+    // A key on disk we can no longer agree with is simply dropped, not a reason not to start.
+    try {
+      remember(pub);
+    } catch {
+      // Not a usable X25519 key any more.
+    }
+  }
 
   /**
    * The same thing for devices on the local socket, which need no key: the Mac app is one more
@@ -523,7 +554,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (typeof payload !== "string") return;
       const body = JSON.parse(Buffer.from(payload, "base64url").toString()) as FrameBody;
       if (body.t === "hello") {
-        devices.set(body.pub, deriveSessionKey(keys.session.privateKey, fromBase64Url(body.pub)));
+        const known = devices.has(body.pub);
+        remember(body.pub);
+        if (!known) {
+          mkdirSync(dir, { recursive: true });
+          writeFileSync(devicesFile, JSON.stringify([...devices.keys()]), { mode: 0o600 });
+        }
         state("paired");
         // A phone that has just paired needs the thread list before it can ask for anything.
         sendTo(body.pub, threadList());

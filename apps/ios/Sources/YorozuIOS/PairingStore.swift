@@ -46,6 +46,14 @@ enum PairingStore {
     struct Stored: Codable {
         var pairing: QrPayload
         var identity: PhoneIdentity
+        /// Set once the relay has accepted this device. From then on the phone rejoins by
+        /// signing the connect nonce, so `pairing.token` — one-time, and long burnt — is not
+        /// sent again and is not kept either.
+        ///
+        /// Optional rather than defaulted: a synthesized `Codable` has no fallback for a missing
+        /// key, and absent is what a pairing stored before this existed looks like — which is
+        /// exactly a pairing whose token has not been redeemed yet.
+        var paired: Bool?
     }
 
     private static let account = "pairing"
@@ -60,5 +68,14 @@ enum PairingStore {
 
     static func clear() {
         Keychain.clear(account)
+    }
+
+    /// Records that the relay knows this device, and drops the spent token with it. Best effort:
+    /// failing to persist it costs a re-pair, not the running connection.
+    static func markPaired() {
+        guard var stored = load(), stored.paired != true else { return }
+        stored.paired = true
+        stored.pairing.token = ""
+        try? save(stored)
     }
 }

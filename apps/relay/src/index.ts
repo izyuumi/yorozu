@@ -7,6 +7,7 @@ import {
   CLOSE_PROTOCOL,
   CLOSE_RATE_LIMIT,
   dropCount,
+  evictions,
   newBucket,
   parseFrame,
   parseJoin,
@@ -45,6 +46,11 @@ type Room = {
   phones: Set<WebSocket>;
   /** token -> expiry epoch ms. Deleted on use: one-time. */
   tokens: Map<string, number>;
+  /**
+   * Phone signing pubkey -> when it last paired or rejoined. A known device rejoins against
+   * the connect nonce, so a background or a network change does not cost a new token.
+   */
+  devices: Map<string, number>;
   buffer: Buffered[];
   bucket: Bucket;
 };
@@ -59,7 +65,20 @@ type Conn = {
 };
 
 function newRoom(now: number): Room {
-  return { mac: null, phones: new Set(), tokens: new Map(), buffer: [], bucket: newBucket(now) };
+  return {
+    mac: null,
+    phones: new Set(),
+    tokens: new Map(),
+    devices: new Map(),
+    buffer: [],
+    bucket: newBucket(now),
+  };
+}
+
+/** Records a phone as a device this room knows. Capped, oldest evicted first. */
+function remember(room: Room, pubkey: string, now: number): void {
+  for (const key of evictions([...room.devices], pubkey)) room.devices.delete(key);
+  room.devices.set(pubkey, now);
 }
 
 function trimBuffer(room: Room, now: number): void {
@@ -94,7 +113,15 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
   const wss = new WebSocketServer({ port });
 
   const dropRoomIfIdle = (id: string, room: Room): void => {
-    if (!room.mac && room.phones.size === 0 && room.buffer.length === 0 && room.tokens.size === 0) {
+    // A room with known devices is kept: forgetting it would strand every paired phone on its
+    // next rejoin. Only a room nobody ever paired to is dropped.
+    if (
+      !room.mac &&
+      room.phones.size === 0 &&
+      room.buffer.length === 0 &&
+      room.tokens.size === 0 &&
+      room.devices.size === 0
+    ) {
       rooms.delete(id);
     }
   };
@@ -165,23 +192,35 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           if (!join) return ws.close(CLOSE_PROTOCOL, "bad join");
           const { roomId: id, token, phonePubkey, sig } = join;
           const room = rooms.get(id);
-          const expiresAt = room?.tokens.get(token);
-          if (!room || expiresAt === undefined) return ws.close(CLOSE_PROTOCOL, "unknown token");
-          if (now > expiresAt) {
-            room.tokens.delete(token);
-            return ws.close(CLOSE_PROTOCOL, "expired token");
-          }
+          if (!room) return ws.close(CLOSE_PROTOCOL, "unknown room");
           let key: KeyObject;
           try {
             key = publicKeyFrom(phonePubkey);
           } catch {
             return ws.close(CLOSE_PROTOCOL, "bad pubkey");
           }
-          // Verified before burning, so a bad signature cannot consume the token.
-          if (!verifySignature(token, sig, key)) {
-            return ws.close(CLOSE_BAD_SIGNATURE, "bad join signature");
+          if (token === undefined) {
+            // A rejoin: the room already knows this device, so it proves itself against the
+            // connect nonce rather than spending a token it no longer has.
+            if (!room.devices.has(phonePubkey)) return ws.close(CLOSE_PROTOCOL, "unknown device");
+            if (!verifySignature(conn.nonce, sig, key)) {
+              return ws.close(CLOSE_BAD_SIGNATURE, "bad join signature");
+            }
+            room.devices.set(phonePubkey, now);
+          } else {
+            const expiresAt = room.tokens.get(token);
+            if (expiresAt === undefined) return ws.close(CLOSE_PROTOCOL, "unknown token");
+            if (now > expiresAt) {
+              room.tokens.delete(token);
+              return ws.close(CLOSE_PROTOCOL, "expired token");
+            }
+            // Verified before burning, so a bad signature cannot consume the token.
+            if (!verifySignature(token, sig, key)) {
+              return ws.close(CLOSE_BAD_SIGNATURE, "bad join signature");
+            }
+            room.tokens.delete(token);
+            remember(room, phonePubkey, now);
           }
-          room.tokens.delete(token);
           room.phones.add(ws);
           conn.role = "phone";
           conn.room = room;
