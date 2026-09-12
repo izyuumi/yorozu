@@ -19,6 +19,18 @@ export const BUFFER_TTL_MS = 24 * 60 * 60_000;
 export const BUFFER_CAP_BYTES = 5 * 1024 * 1024;
 export const FRAMES_PER_SEC = 60;
 
+/**
+ * Application-level heartbeat. A socket that says nothing for minutes is dropped by whatever
+ * sits between the two ends, and neither end is told, so each one has to ask.
+ *
+ * These are whole messages rather than websocket ping frames because the Worker relay answers
+ * them with `state.setWebSocketAutoResponse`, which matches an exact message string: the edge
+ * replies and the Durable Object stays hibernated, so a heartbeat costs no wall time. Both
+ * relays also answer them in the handler, so the two behave identically on the wire.
+ */
+export const PING = JSON.stringify({ type: "ping" });
+export const PONG = JSON.stringify({ type: "pong" });
+
 /** Close codes. The relay closes rather than silently ignoring a bad frame. */
 export const CLOSE_PROTOCOL = 4001;
 export const CLOSE_BAD_SIGNATURE = 4003;

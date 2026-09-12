@@ -39,6 +39,7 @@ import type { Provider } from "./provider.js";
 import { probe } from "./probe.js";
 import { startScheduler } from "./scheduler.js";
 import { listSkills, skillsDir, skillsPrompt } from "./skills.js";
+import { PING } from "@yorozu/relay/dist/protocol.js";
 import {
   appendThreadEvent,
   archiveThread,
@@ -56,6 +57,15 @@ import { appendTranscript, transcriptDir } from "./transcripts.js";
 
 const DEFAULT_STATE_DIR = join(homedir(), "Library", "Application Support", "Yorozu");
 const RECONNECT_MS = 2_000;
+/**
+ * Heartbeat on the relay socket. Without it a quiet Mac is silently dropped by whatever sits
+ * between it and the relay — the relay then tells every phone the Mac is offline, while this
+ * process still holds a socket that looks ESTABLISHED and never hears otherwise, so the phone
+ * stays wrong until the app is restarted. Asking, and giving up on an unanswered ask, is what
+ * turns that into a reconnect.
+ */
+const PING_MS = 30_000;
+const PONG_MS = 10_000;
 /** An unanswered card is not a yes: it expires into a refusal rather than hanging the turn. */
 const APPROVAL_TIMEOUT_MS = 10 * 60_000;
 /** A title is a nicety: past this the thread keeps its placeholder rather than the phone waiting. */
@@ -159,6 +169,12 @@ export interface ServeOptions {
   provider?: Provider;
   /** Defaults to stdout. */
   log?: (line: string) => void;
+  /**
+   * How often to ping the relay, and how long to wait for the pong before giving the socket up
+   * for dead. Defaults to ``PING_MS``/``PONG_MS``; the tests turn them down so the timeout is
+   * something a test can wait for rather than something only a real half-open socket reaches.
+   */
+  heartbeat?: { pingMs: number; pongMs: number };
 }
 
 export interface Sidecar {
@@ -179,6 +195,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // `web_search` asks the running chain for native search before it drives a browser.
   useProviderSearch(provider);
   const log = options.log ?? ((line: string) => void stdout.write(`${line}\n`));
+  const heartbeat = options.heartbeat ?? { pingMs: PING_MS, pongMs: PONG_MS };
   const state = (name: string) => log(`STATE ${name}`);
 
   // The main agent is a file like every specialist; the skills on disk are listed into its
@@ -574,12 +591,43 @@ export function serve(options: ServeOptions = {}): Sidecar {
       handleEvent(event, (answer) => sendTo(device, answer));
     }
 
-    ws.on("open", () => state("connected"));
+    /**
+     * One ping every PING_MS, and the socket is declared dead if the pong does not come back
+     * within PONG_MS. `terminate()` rather than `close()`: a half-open socket will not complete
+     * a closing handshake, which is the case this exists for. The close handler then reconnects
+     * and re-registers, which is what puts the room's presence right again.
+     */
+    let pinger: NodeJS.Timeout | null = null;
+    let deadline: NodeJS.Timeout | null = null;
+    const stopHeartbeat = (): void => {
+      if (pinger) clearInterval(pinger);
+      if (deadline) clearTimeout(deadline);
+      pinger = deadline = null;
+    };
+
+    ws.on("open", () => {
+      state("connected");
+      pinger = setInterval(() => {
+        // Still waiting on the last pong: the deadline below owns the socket, not us.
+        if (deadline) return;
+        deadline = setTimeout(() => {
+          state("heartbeat-timeout");
+          ws.terminate();
+        }, heartbeat.pongMs);
+        ws.send(PING);
+      }, heartbeat.pingMs);
+      // Node keeps the process alive for a bare interval; the socket is what should.
+      pinger.unref();
+    });
 
     ws.on("message", (data) => {
       const msg = JSON.parse(data.toString()) as Record<string, unknown>;
       try {
         switch (msg.type) {
+          case "pong":
+            if (deadline) clearTimeout(deadline);
+            deadline = null;
+            return;
           case "nonce":
             return ws.send(
               JSON.stringify({
@@ -617,6 +665,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     ws.on("error", (e) => state(`error ${e.message}`));
 
     ws.on("close", () => {
+      stopHeartbeat();
       state("disconnected");
       if (!stopped) retry = setTimeout(connect, RECONNECT_MS);
     });

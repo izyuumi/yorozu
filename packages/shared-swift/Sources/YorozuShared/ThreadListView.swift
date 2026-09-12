@@ -68,6 +68,10 @@ private func threadLabel(_ thread: ThreadSummary) -> some View {
 /// is what lets the app open a thread by itself on launch. The path holds thread ids rather than
 /// summaries, so a draft that becomes a real thread mid-push keeps drawing.
 ///
+/// `onSettings` puts a gear beside the `+`. It is a callback rather than a view slot because the
+/// bar belongs to the navigation stack this view owns, so a caller cannot reach it from outside;
+/// optional because only the phone has a settings screen to open.
+///
 /// The Mac shows the same threads as a ``ThreadSidebar`` instead, because its chat lives beside
 /// the list rather than on top of it.
 public struct ThreadListView<Destination: View>: View {
@@ -76,6 +80,7 @@ public struct ThreadListView<Destination: View>: View {
     private let onCreate: () -> Void
     private let onRename: (ThreadSummary, String) -> Void
     private let onArchive: (ThreadSummary) -> Void
+    private let onSettings: (() -> Void)?
     private let destination: (ThreadSummary) -> Destination
 
     @State private var renaming: ThreadSummary?
@@ -86,6 +91,7 @@ public struct ThreadListView<Destination: View>: View {
         onCreate: @escaping () -> Void,
         onRename: @escaping (ThreadSummary, String) -> Void,
         onArchive: @escaping (ThreadSummary) -> Void,
+        onSettings: (() -> Void)? = nil,
         @ViewBuilder destination: @escaping (ThreadSummary) -> Destination
     ) {
         self.threads = threads
@@ -93,6 +99,7 @@ public struct ThreadListView<Destination: View>: View {
         self.onCreate = onCreate
         self.onRename = onRename
         self.onArchive = onArchive
+        self.onSettings = onSettings
         self.destination = destination
     }
 
@@ -117,6 +124,9 @@ public struct ThreadListView<Destination: View>: View {
             .navigationTitle("Threads")
             .toolbar {
                 Button("New thread", systemImage: "plus", action: onCreate)
+                if let onSettings {
+                    Button("Settings", systemImage: "gear", action: onSettings)
+                }
             }
             .navigationDestination(for: String.self) { id in
                 if let thread = threads.first(where: { $0.id == id }) {

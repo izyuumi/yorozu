@@ -1,5 +1,6 @@
-import { SELF } from "cloudflare:test";
+import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { expect, test } from "vitest";
+import type { Env } from "./worker.js";
 
 /**
  * The Durable Object relay, exercised the way a client does: one websocket per device
@@ -307,4 +308,85 @@ test("a mis-typed message closes the socket", async () => {
   await client.next(); // nonce
   client.send({ type: "nope" });
   expect(await client.closed()).toBe(4001);
+});
+
+test("answers the heartbeat without a close, so an idle socket can stay open", async () => {
+  const macKeys = await keypair();
+  const mac = await connectMac(macKeys);
+
+  // `setWebSocketAutoResponse` answers this at the edge so the room is never woken. The test
+  // pool runs the object in-process, where the handler answers it instead; either way the
+  // client sees a pong, and — the point of the test — the socket is not closed for an
+  // "unknown type".
+  mac.send({ type: "ping" });
+  expect(await mac.next()).toMatchObject({ type: "pong" });
+
+  // Still a working, registered socket afterwards.
+  mac.send({ type: "mint" });
+  expect(await mac.next()).toMatchObject({ type: "token" });
+});
+
+test("the auto-response pair is what answers a ping, and leaves presence alone", async () => {
+  const macKeys = await keypair();
+  const room = await roomId(macKeys.pub);
+  const mac = await connectMac(macKeys);
+  const { phone } = await connectPhone(room, await mintToken(mac));
+  expect(await phone.next()).toMatchObject({ type: "joined", ownerOnline: true });
+
+  // A heartbeat from either end is not traffic the other end should ever see.
+  mac.send({ type: "ping" });
+  expect(await mac.next()).toMatchObject({ type: "pong" });
+  phone.send({ type: "ping" });
+  expect(await phone.next()).toMatchObject({ type: "pong" });
+
+  // And the Mac is still the room's owner as far as a new phone is concerned.
+  const second = await connectPhone(room, await mintToken(mac));
+  expect(await second.phone.next()).toMatchObject({ type: "joined", ownerOnline: true });
+});
+
+test("presence survives hibernation: it is read off the live sockets, not remembered", async () => {
+  const macKeys = await keypair();
+  const room = await roomId(macKeys.pub);
+  const mac = await connectMac(macKeys);
+  const token = await mintToken(mac);
+
+  // What hibernation takes away is the instance: its fields, its closures, everything but the
+  // sockets and their attachments. So the check that the answer survives it is that the answer
+  // is computed from those — reach into the object and read the only state presence can come
+  // from. A `role: "mac"` in a surviving attachment is the whole of "the Mac is online".
+  // `cloudflare:test` types `env` from a declaration the test suite would otherwise have to
+  // carry a whole file for; the bindings are the Worker's own, so say so here instead.
+  const rooms = (env as unknown as Env).ROOM;
+  const id = rooms.idFromName(room);
+  await runInDurableObject(rooms.get(id), async (_room, state) => {
+    const roles = state.getWebSockets().map((ws) => (ws.deserializeAttachment() as any)?.role);
+    expect(roles).toContain("mac");
+  });
+
+  const { phone } = await connectPhone(room, token);
+  expect(await phone.next()).toMatchObject({ type: "joined", ownerOnline: true });
+
+  // The explicit query answers from that same live set, so a phone that has been asleep and
+  // cannot trust what it last heard has a way to ask rather than guess.
+  phone.send({ type: "owner" });
+  expect(await phone.next()).toMatchObject({ type: "owner", online: true });
+
+  // And it tracks the truth rather than a cached flag: with the Mac's socket gone, so is the
+  // attachment it was read from, and the same question answers false.
+  mac.ws.close();
+  expect(await phone.next()).toMatchObject({ type: "owner", online: false });
+  phone.send({ type: "owner" });
+  expect(await phone.next()).toMatchObject({ type: "owner", online: false });
+
+  await runInDurableObject(rooms.get(id), async (_room, state) => {
+    const roles = state.getWebSockets().map((ws) => (ws.deserializeAttachment() as any)?.role);
+    expect(roles).not.toContain("mac");
+  });
+});
+
+test("only a joined phone may ask about presence", async () => {
+  const stranger = await connect("some-room");
+  await stranger.next(); // nonce
+  stranger.send({ type: "owner" });
+  expect(await stranger.closed()).toBe(4001);
 });
