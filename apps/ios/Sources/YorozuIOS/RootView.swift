@@ -18,7 +18,13 @@ final class Session {
     private(set) var model: ChatModel?
     private(set) var failure: String?
 
-    init() {
+    /// One per app, not one per `RootView` value. SwiftUI re-runs a `@State` initializer every
+    /// time it rebuilds the view struct and keeps only the first result, so `Session()` inline
+    /// would leave a second session behind — and now that ``RelayClient`` reconnects forever,
+    /// that second session is a second socket rejoining the room for the life of the process.
+    static let shared = Session()
+
+    private init() {
         if let injected = launchArgument("yorozuPair") {
             // Surface the reason rather than silently falling back to the scanner.
             do { try pair(with: injected) } catch { failure = error.localizedDescription }
@@ -47,7 +53,12 @@ final class Session {
     private func connect(_ stored: PairingStore.Stored) {
         do {
             let model = ChatModel(
-                transport: try RelayClient(pairing: stored.pairing, identity: stored.identity),
+                transport: try RelayClient(
+                    pairing: stored.pairing,
+                    identity: stored.identity,
+                    paired: stored.paired == true,
+                    onPaired: PairingStore.markPaired
+                ),
                 cache: CacheStore.open()
             )
             E2EHarness.attach(to: model)
@@ -60,7 +71,8 @@ final class Session {
 }
 
 struct RootView: View {
-    @State private var session = Session()
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var session = Session.shared
     /// Set once the user has pressed "Get started", so the splash is shown only before that.
     @State private var pairing = false
 
@@ -69,6 +81,11 @@ struct RootView: View {
             // The pairing string is a `yorozu://` link: tapped in Messages, it pairs the phone.
             .onOpenURL { url in
                 do { try session.pair(with: url.absoluteString) } catch { pairing = true }
+            }
+            // iOS suspends the app and its socket with it. Coming back is the moment to re-dial,
+            // rather than waiting out a backoff that ran down while nothing was executing.
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { session.model?.reconnect() }
             }
     }
 

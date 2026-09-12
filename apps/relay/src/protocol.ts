@@ -9,6 +9,12 @@
  */
 
 export const TOKEN_TTL_MS = 10 * 60_000;
+/**
+ * How many phones a room remembers as known devices. A known device rejoins by answering the
+ * nonce challenge instead of spending a fresh one-time token, so it survives a background,
+ * a network change or an app relaunch. Past the cap the least recently paired one makes way.
+ */
+export const MAX_DEVICES = 16;
 export const BUFFER_TTL_MS = 24 * 60 * 60_000;
 export const BUFFER_CAP_BYTES = 5 * 1024 * 1024;
 export const FRAMES_PER_SEC = 60;
@@ -57,7 +63,12 @@ export function dropCount(
  * which the caller turns into a close.
  */
 export type Register = { pubkey: string; nonceSig: string };
-export type Join = { roomId: string; token: string; phonePubkey: string; sig: string };
+/**
+ * Two joins share one shape. With a `token` it is a first pairing and `sig` is over that
+ * one-time token; without one it is a rejoin by a device the room already knows and `sig` is
+ * over the connect nonce — the same challenge the Mac answers in `register`.
+ */
+export type Join = { roomId: string; phonePubkey: string; sig: string; token?: string };
 export type Frame = { payload: string; sig: string };
 
 const strings = <K extends string>(
@@ -69,8 +80,32 @@ const strings = <K extends string>(
 export const parseRegister = (msg: Record<string, unknown>): Register | null =>
   strings(msg, "pubkey", "nonceSig");
 
-export const parseJoin = (msg: Record<string, unknown>): Join | null =>
-  strings(msg, "roomId", "token", "phonePubkey", "sig");
+export const parseJoin = (msg: Record<string, unknown>): Join | null => {
+  const join = strings(msg, "roomId", "phonePubkey", "sig");
+  if (!join) return null;
+  if (msg.token === undefined) return join;
+  return typeof msg.token === "string" ? { ...join, token: msg.token } : null;
+};
 
 export const parseFrame = (msg: Record<string, unknown>): Frame | null =>
   strings(msg, "payload", "sig");
+
+/**
+ * Which known devices a room must forget to keep `pubkey` under the cap, oldest first. A
+ * device already known is re-recorded in place, so a rejoining phone evicts nobody.
+ *
+ * TODO: the Mac has no way to revoke a device yet; only the cap ever forgets one.
+ */
+export function evictions(
+  known: readonly [pubkey: string, at: number][],
+  pubkey: string,
+  cap = MAX_DEVICES,
+): string[] {
+  if (known.some(([key]) => key === pubkey)) return [];
+  const surplus = known.length - cap + 1;
+  if (surplus <= 0) return [];
+  return [...known]
+    .sort(([, a], [, b]) => a - b)
+    .slice(0, surplus)
+    .map(([key]) => key);
+}

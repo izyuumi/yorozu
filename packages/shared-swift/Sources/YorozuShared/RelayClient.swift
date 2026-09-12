@@ -49,6 +49,7 @@ private struct FrameBody: Codable {
 /// The relay's own control messages. Only the envelope is ours; `payload` stays opaque to it.
 private struct Inbound: Decodable {
     var type: String
+    var nonce: String?
     var payload: String?
     var ownerOnline: Bool?
     var online: Bool?
@@ -57,6 +58,11 @@ private struct Inbound: Decodable {
 /// Phone side of the blind relay: join a room with the one-time token from the pairing QR,
 /// announce our X25519 key in one cleartext `hello` frame, then exchange sealed
 /// ``YorozuEvent``s under the derived session key.
+///
+/// The socket is not expected to last: a phone is backgrounded, changes network and is
+/// relaunched. So the token is spent exactly once — after the first accepted join the relay
+/// knows this device, and every later join answers the connect nonce instead — and ``connect()``
+/// keeps re-dialling with a capped backoff until ``close()``.
 ///
 /// Transport only — it owns no UI state, so the Mac app can reuse it for its own client half.
 /// Mirrors the sidecar in packages/runtime/src/serve.ts.
@@ -67,18 +73,47 @@ public actor RelayClient: ChatTransport {
     public typealias State = TransportState
     public typealias Update = TransportUpdate
 
+    /// A dropped socket is retried at 1s, 2s, 4s … up to this, and reset by a join.
+    private static let maxBackoff: Double = 30
+    /// The relay keeps a socket that is talking; nothing else on an idle phone would.
+    private static let pingInterval: Duration = .seconds(30)
+
     private let pairing: QrPayload
     private let identity: PhoneIdentity
-    private let socket: URLSessionWebSocketTask
+    private let session: URLSession
+    private let dial: URL
     private let sessionKey: SymmetricKey
     private var updates: AsyncStream<Update>.Continuation?
 
+    private var socket: URLSessionWebSocketTask?
+    /// The challenge the relay issued on this socket; a rejoin signs it.
+    private var nonce = ""
+    /// True once the relay has accepted this device, so later joins need no token. Seeded by
+    /// the caller from whatever it persisted, and `onPaired` is how it learns to persist it.
+    private var paired: Bool
+    private let onPaired: (@Sendable () -> Void)?
+    private var joined = false
+    /// Set by ``close()``; the only thing that stops the reconnect loop.
+    private var stopped = false
+    private var attempt = 0
+    private var loop: Task<Void, Never>?
+    private var backoff: Task<Void, Never>?
+    private var pinger: Task<Void, Never>?
+
     /// Throws if the QR payload is not usable: a bad relay URL, a missing room, or a Mac
     /// public key the session key cannot be agreed from.
+    ///
+    /// - Parameters:
+    ///   - paired: whether the relay already knows this device, so the one-time token in
+    ///     `pairing` has been spent and must not be sent again.
+    ///   - onPaired: called once, the first time the relay accepts this device, so the caller
+    ///     can persist that fact. Called off the main actor.
     public init(
         pairing: QrPayload,
         identity: PhoneIdentity,
-        session: URLSession = .shared
+        paired: Bool = false,
+        session: URLSession = .shared,
+        onPaired: (@Sendable () -> Void)? = nil
     ) throws {
         guard let url = URL(string: pairing.relayUrl), url.scheme?.hasPrefix("ws") == true else {
             throw YorozuCrypto.CryptoError.malformed("relay URL is not a websocket URL")
@@ -102,29 +137,82 @@ public actor RelayClient: ChatTransport {
         }
         self.pairing = pairing
         self.identity = identity
-        self.socket = session.webSocketTask(with: dial)
+        self.session = session
+        self.dial = dial
+        self.paired = paired
+        self.onPaired = onPaired
         self.sessionKey = try YorozuCrypto.deriveSessionKey(
             myPriv: identity.sessionPrivateKey,
             theirPub: macPub
         )
     }
 
-    /// Opens the socket and yields every update until the connection ends. Calling it twice
-    /// replaces the previous stream's continuation, so treat it as one-shot per client.
+    /// Dials, and keeps re-dialling after every drop, yielding every update until ``close()``.
+    /// Calling it twice replaces the previous stream's continuation, so treat it as one-shot
+    /// per client.
     public func connect() -> AsyncStream<Update> {
         let (stream, continuation) = AsyncStream<Update>.makeStream()
         updates = continuation
-        continuation.yield(.state(.connecting))
-        socket.resume()
-        Task { await receiveLoop() }
+        loop?.cancel()
+        loop = Task { await self.reconnectLoop() }
         return stream
     }
 
+    /// Dials again now instead of waiting out the backoff — the app came back to the
+    /// foreground, where a socket dropped while it was suspended is worth nothing. A socket
+    /// that is joined is left alone.
+    public func reconnect() {
+        guard !stopped, !joined else { return }
+        attempt = 0
+        backoff?.cancel()
+        socket?.cancel()
+    }
+
     public func close() {
-        socket.cancel(with: .goingAway, reason: nil)
+        stopped = true
+        pinger?.cancel()
+        backoff?.cancel()
+        loop?.cancel()
+        socket?.cancel(with: .goingAway, reason: nil)
+        socket = nil
         updates?.yield(.state(.closed))
         updates?.finish()
         updates = nil
+    }
+
+    /// One dial per pass; the pass ends when the socket does. `.closed` is deliberately not
+    /// yielded between passes: the connection is not over, it is being retried.
+    private func reconnectLoop() async {
+        while !stopped {
+            updates?.yield(.state(.connecting))
+            joined = false
+            nonce = ""
+            let socket = session.webSocketTask(with: dial)
+            self.socket = socket
+            socket.resume()
+            await receiveLoop(socket)
+            pinger?.cancel()
+            guard !stopped else { return }
+            // 1s, 2s, 4s … capped, and back to 1s after a join that stuck.
+            let delay = min(Self.maxBackoff, pow(2, Double(attempt)))
+            attempt += 1
+            let backoff = Task<Void, Never> { try? await Task.sleep(for: .seconds(delay)) }
+            self.backoff = backoff
+            await backoff.value
+        }
+    }
+
+    /// The relay drops a socket that says nothing for long enough, and a phone in a quiet chat
+    /// says nothing for hours. A ping is the cheapest thing that keeps it.
+    private func startPings(on socket: URLSessionWebSocketTask) {
+        pinger?.cancel()
+        pinger = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.pingInterval)
+                guard !Task.isCancelled else { return }
+                socket.sendPing { _ in }
+            }
+        }
     }
 
     /// Seals `event` under the session key and sends it as one signed frame.
@@ -139,31 +227,40 @@ public actor RelayClient: ChatTransport {
         )
     }
 
-    private func receiveLoop() async {
-        do {
-            while true {
+    /// Returns when this socket ends, so the reconnect loop can dial the next one.
+    private func receiveLoop(_ socket: URLSessionWebSocketTask) async {
+        while true {
+            do {
                 guard case .string(let text) = try await socket.receive() else { continue }
-                try handle(text)
+                try handle(text, on: socket)
+            } catch {
+                // Our own cancellation is not a failure worth reporting.
+                if !stopped { updates?.yield(.failed(error.localizedDescription)) }
+                return
             }
-        } catch {
-            updates?.yield(.failed(error.localizedDescription))
-            updates?.yield(.state(.closed))
-            updates?.finish()
-            updates = nil
         }
     }
 
     /// Everything here is attacker-controlled; a malformed frame must not tear the client down,
     /// so per-frame decode failures are reported and skipped rather than thrown.
-    private func handle(_ text: String) throws {
+    private func handle(_ text: String, on socket: URLSessionWebSocketTask) throws {
         guard let message = try? JSONDecoder().decode(Inbound.self, from: Data(text.utf8)) else {
             return
         }
         switch message.type {
         case "nonce":
-            // The relay challenges every socket; only the Mac registers. We redeem the token.
+            // The relay challenges every socket; only the Mac registers. We join.
+            nonce = message.nonce ?? ""
             Task { await join() }
         case "joined":
+            joined = true
+            attempt = 0
+            // The relay remembers this device now, so the one-time token is done with.
+            if !paired {
+                paired = true
+                onPaired?()
+            }
+            startPings(on: socket)
             updates?.yield(.state(.joined))
             updates?.yield(.ownerOnline(message.ownerOnline ?? false))
             Task { await sayHello() }
@@ -176,20 +273,24 @@ public actor RelayClient: ChatTransport {
         }
     }
 
+    /// The first join spends the one-time token from the pairing code. Every later one signs the
+    /// connect nonce instead — the same challenge the Mac answers — which is what lets the phone
+    /// come back after a background, a network change or a relaunch without pairing again.
     private func join() async {
         do {
-            let token = pairing.token
+            let challenge = paired ? nonce : pairing.token
             let signature = try YorozuCrypto.signFrame(
                 priv: identity.signingPrivateKey,
-                data: Data(token.utf8)
+                data: Data(challenge.utf8)
             )
-            try await send([
+            var message = [
                 "type": "join",
                 "roomId": pairing.roomId ?? "",
-                "token": token,
                 "phonePubkey": identity.signingPublicKey.base64URLEncodedString(),
                 "sig": signature.base64URLEncodedString(),
-            ])
+            ]
+            if !paired { message["token"] = pairing.token }
+            try await send(message)
         } catch {
             updates?.yield(.failed(error.localizedDescription))
         }
@@ -240,6 +341,7 @@ public actor RelayClient: ChatTransport {
     }
 
     private func send(_ message: [String: String]) async throws {
+        guard let socket else { throw YorozuCrypto.CryptoError.malformed("not connected") }
         let data = try JSONSerialization.data(withJSONObject: message)
         try await socket.send(.string(String(decoding: data, as: UTF8.self)))
     }

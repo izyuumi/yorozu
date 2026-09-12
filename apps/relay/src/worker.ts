@@ -19,6 +19,7 @@ import {
   CLOSE_PROTOCOL,
   CLOSE_RATE_LIMIT,
   dropCount,
+  evictions,
   newBucket,
   parseFrame,
   parseJoin,
@@ -76,6 +77,9 @@ type Buffered = { raw: string; bytes: number; at: number };
 
 /** Buffer keys sort lexicographically, so zero-pad the sequence to keep them in order. */
 const bufferKey = (seq: number): string => `b:${String(seq).padStart(16, "0")}`;
+
+/** Known device keys: `p:<base64url phone signing pubkey>` -> when it last paired or rejoined. */
+const devicePrefix = "p:";
 
 export class Room implements DurableObject {
   private bucket: Bucket = newBucket(Date.now());
@@ -203,6 +207,19 @@ export class Room implements DurableObject {
     await this.state.storage.deleteAlarm();
   }
 
+  /**
+   * Records a phone as a device this room knows, so it can rejoin against the nonce after a
+   * background, a network change or an app relaunch. Capped, oldest evicted first.
+   */
+  private async remember(pubkey: string, now: number): Promise<void> {
+    const known = [...(await this.state.storage.list<number>({ prefix: devicePrefix }))].map(
+      ([key, at]): [string, number] => [key.slice(devicePrefix.length), at],
+    );
+    const drop = evictions(known, pubkey);
+    if (drop.length > 0) await this.state.storage.delete(drop.map((key) => devicePrefix + key));
+    await this.state.storage.put(devicePrefix + pubkey, now);
+  }
+
   private async handle(ws: WebSocket, data: string | ArrayBuffer): Promise<void> {
     const raw = typeof data === "string" ? data : new TextDecoder().decode(data);
     const now = Date.now();
@@ -262,19 +279,31 @@ export class Room implements DurableObject {
         const join = parseJoin(msg);
         if (!join) return ws.close(CLOSE_PROTOCOL, "bad join");
         const { roomId: id, token, phonePubkey, sig } = join;
-        const expiresAt = await storage.get<number>(`t:${token}`);
-        if (expiresAt === undefined || id !== conn.room) {
-          return ws.close(CLOSE_PROTOCOL, "unknown token");
-        }
-        if (now > expiresAt) {
+        if (id !== conn.room) return ws.close(CLOSE_PROTOCOL, "wrong room");
+        if (token === undefined) {
+          // A rejoin: the room already knows this device, so it proves itself against the
+          // connect nonce rather than spending a token it no longer has.
+          if ((await storage.get<number>(devicePrefix + phonePubkey)) === undefined) {
+            return ws.close(CLOSE_PROTOCOL, "unknown device");
+          }
+          if (!(await this.verify(conn.nonce, sig, phonePubkey))) {
+            return ws.close(CLOSE_BAD_SIGNATURE, "bad join signature");
+          }
+          await storage.put(devicePrefix + phonePubkey, now);
+        } else {
+          const expiresAt = await storage.get<number>(`t:${token}`);
+          if (expiresAt === undefined) return ws.close(CLOSE_PROTOCOL, "unknown token");
+          if (now > expiresAt) {
+            await storage.delete(`t:${token}`);
+            return ws.close(CLOSE_PROTOCOL, "expired token");
+          }
+          // Verified before burning, so a bad signature cannot consume the token.
+          if (!(await this.verify(token, sig, phonePubkey))) {
+            return ws.close(CLOSE_BAD_SIGNATURE, "bad join signature");
+          }
           await storage.delete(`t:${token}`);
-          return ws.close(CLOSE_PROTOCOL, "expired token");
+          await this.remember(phonePubkey, now);
         }
-        // Verified before burning, so a bad signature cannot consume the token.
-        if (!(await this.verify(token, sig, phonePubkey))) {
-          return ws.close(CLOSE_BAD_SIGNATURE, "bad join signature");
-        }
-        await storage.delete(`t:${token}`);
         ws.serializeAttachment({ ...conn, role: "phone", key: phonePubkey } satisfies Conn);
         ws.send(JSON.stringify({ type: "joined", roomId: id, ownerOnline: this.mac() !== null }));
         return;

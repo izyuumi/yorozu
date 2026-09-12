@@ -10,6 +10,15 @@ public protocol ChatTransport: Sendable {
     func connect() async -> AsyncStream<TransportUpdate>
     func send(_ event: YorozuEvent) async throws
     func close() async
+    /// Asks for a dial now rather than whenever the transport would have got round to it — the
+    /// app came back to the foreground. Must be safe to call on a healthy connection.
+    func reconnect() async
+}
+
+extension ChatTransport {
+    /// Nothing to do for a transport that reconnects on its own, which is every local one:
+    /// Network framework re-dials a Unix socket by itself.
+    public func reconnect() async {}
 }
 
 public enum TransportState: String, Sendable {

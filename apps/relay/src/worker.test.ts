@@ -103,6 +103,14 @@ async function connectPhone(room: string, token: string) {
   return { phone, keys };
 }
 
+/** Rejoins as a device the room already knows: no token, signature over the connect nonce. */
+async function rejoinPhone(room: string, keys: Keys): Promise<Client> {
+  const phone = await connect(room);
+  const { nonce } = await phone.next();
+  phone.send({ type: "join", roomId: room, phonePubkey: keys.pub, sig: await sign(nonce, keys) });
+  return phone;
+}
+
 async function frame(client: Client, payload: string, keys: Keys): Promise<void> {
   client.send({ type: "frame", payload, sig: await sign(payload, keys) });
 }
@@ -162,6 +170,52 @@ test("join tokens are one-time", async () => {
 
   const replay = await connectPhone(room, token);
   expect(await replay.phone.closed()).toBe(4001);
+});
+
+test("a known device rejoins against the nonce, with no second token", async () => {
+  const macKeys = await keypair();
+  const room = await roomId(macKeys.pub);
+  const mac = await connectMac(macKeys);
+  const { phone, keys } = await connectPhone(room, await mintToken(mac));
+  expect(await phone.next()).toMatchObject({ type: "joined" });
+
+  // The room remembers the device in storage, so the rejoin does not wait on the old socket.
+  phone.ws.close();
+
+  const again = await rejoinPhone(room, keys);
+  expect(await again.next()).toMatchObject({ type: "joined", ownerOnline: true });
+
+  // And it is a real join: frames flow without pairing again.
+  await frame(again, "YWZ0ZXItcmVqb2lu", keys);
+  expect(await mac.next()).toMatchObject({ type: "frame", payload: "YWZ0ZXItcmVqb2lu" });
+});
+
+test("rejects a nonce join from a pubkey the room does not know", async () => {
+  const macKeys = await keypair();
+  const room = await roomId(macKeys.pub);
+  await connectMac(macKeys);
+
+  const stranger = await rejoinPhone(room, await keypair());
+  expect(await stranger.closed()).toBe(4001);
+});
+
+test("a nonce join must be signed by the device it names", async () => {
+  const macKeys = await keypair();
+  const room = await roomId(macKeys.pub);
+  const mac = await connectMac(macKeys);
+  const { phone, keys } = await connectPhone(room, await mintToken(mac));
+  await phone.next(); // joined
+
+  const impostor = await connect(room);
+  await impostor.next(); // nonce
+  // The known pubkey, but signed with somebody else's key over somebody else's nonce.
+  impostor.send({
+    type: "join",
+    roomId: room,
+    phonePubkey: keys.pub,
+    sig: await sign("not the nonce", await keypair()),
+  });
+  expect(await impostor.closed()).toBe(4003);
 });
 
 test("rejects a registration with a bad challenge signature", async () => {

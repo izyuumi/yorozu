@@ -72,6 +72,23 @@ export async function mintToken(mac: Client): Promise<string> {
   return token as string;
 }
 
+/**
+ * Rejoins a room as a device it already knows: no token, and the signature is over the connect
+ * nonce. Does not await the `joined` reply.
+ */
+export async function rejoinPhone(target: Target, room: string, keys: Keys): Promise<Client> {
+  const phone = client(target, room);
+  await phone.open;
+  const { nonce } = await phone.next();
+  phone.send({
+    type: "join",
+    roomId: room,
+    phonePubkey: keys.pub,
+    sig: signChallenge(nonce, keys.priv),
+  });
+  return phone;
+}
+
 /** Joins a room with a fresh phone identity. Does not await the `joined` reply. */
 export async function connectPhone(
   target: Target,

@@ -5,6 +5,8 @@
 # Starts a relay, a fake OpenAI-compatible provider and the runtime sidecar, boots a throwaway
 # iPhone simulator, installs the app, injects the sidecar's pairing string as a launch argument
 # (the simulator has no camera), sends one message and asserts the streamed reply arrives.
+# Then it kills the app and launches it again with no pairing string at all, to prove the
+# phone rejoins the relay on its own and a message still round-trips.
 #
 # Usage: apps/ios/e2e/run.sh     — logs are kept in apps/ios/e2e/.logs for inspection.
 set -euo pipefail
@@ -32,7 +34,7 @@ cleanup() {
       xcrun simctl spawn "$UDID" log show --last 5m --style compact \
         --predicate 'process == "YorozuIOS"' >"$WORK/device.log" 2>/dev/null || true
     fi
-    for name in app sidecar relay provider device; do
+    for name in app app2 sidecar relay provider device; do
       [ -s "$WORK/$name.log" ] || continue
       printf '\n--- %s.log ---\n' "$name" >&2
       tail -30 "$WORK/$name.log" >&2
@@ -110,7 +112,18 @@ wait_for "$WORK/app.log" "YOROZU-E2E-TOOL echo" "the agent's tool call" 45
 # thread list names it: threads are created, synced and talked in end to end.
 wait_for "$WORK/app.log" "YOROZU-E2E-REPLY \[Groceries\] $REPLY" "the reply in the new thread" 45
 
+say "killing the app and launching it again with no pairing string"
+xcrun simctl terminate "$UDID" "$BUNDLE_ID"
+# No -yorozuPair this time: the phone has only what it persisted. Its one-time token is spent,
+# so joining at all means it rejoined the relay against the nonce as a device the room knows.
+xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" \
+  -yorozuSend "hi again" >"$WORK/app2.log" 2>&1 &
+PIDS+=($!)
+wait_for "$WORK/app2.log" "YOROZU-E2E paired" "the phone to rejoin without a token" 45
+wait_for "$WORK/app2.log" "YOROZU-E2E-REPLY \[Home\] $REPLY" "a reply after the relaunch" 45
+
 say "PASS — the phone received:"
 grep -m2 'YOROZU-E2E-REPLY' "$WORK/app.log"
 grep -m1 'YOROZU-E2E-TOOL' "$WORK/app.log"
+grep -m1 'YOROZU-E2E-REPLY' "$WORK/app2.log"
 grep '^STATE ' "$WORK/sidecar.log"

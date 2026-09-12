@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "vitest";
 import { roomId, signChallenge, startRelay, type Relay } from "./index.js";
-import { client, connectMac, connectPhone, keypair, mintToken } from "./testing.js";
+import { client, connectMac, connectPhone, keypair, mintToken, rejoinPhone } from "./testing.js";
 
 let relay: Relay;
 
@@ -71,6 +71,74 @@ test("join tokens are one-time", async () => {
 
   const replay = await connectPhone(relay.port, room, token);
   expect(await replay.phone.closed).toBe(4001);
+});
+
+test("a known device rejoins against the nonce, with no second token", async () => {
+  relay = await startRelay(0);
+  const macKeys = keypair();
+  const room = roomId(macKeys.pub);
+  const mac = await connectMac(relay.port, macKeys);
+  const { phone, keys } = await connectPhone(relay.port, room, await mintToken(mac));
+  expect(await phone.next()).toMatchObject({ type: "joined" });
+
+  phone.ws.close();
+  await phone.closed;
+  await sleep(50); // let the relay observe the disconnect
+
+  const again = await rejoinPhone(relay.port, room, keys);
+  expect(await again.next()).toMatchObject({ type: "joined", ownerOnline: true });
+
+  // And it is a real join: frames flow without pairing again.
+  const payload = Buffer.from("after-rejoin").toString("base64");
+  again.send({ type: "frame", payload, sig: signChallenge(payload, keys.priv) });
+  expect(await mac.next()).toMatchObject({ type: "frame", payload });
+});
+
+test("a known device rejoins even after the mac has gone away and come back", async () => {
+  relay = await startRelay(0);
+  const macKeys = keypair();
+  const room = roomId(macKeys.pub);
+  const mac = await connectMac(relay.port, macKeys);
+  const { phone, keys } = await connectPhone(relay.port, room, await mintToken(mac));
+  await phone.next(); // joined
+  phone.ws.close();
+  mac.ws.close();
+  await sleep(50);
+
+  await connectMac(relay.port, macKeys);
+  const again = await rejoinPhone(relay.port, room, keys);
+  expect(await again.next()).toMatchObject({ type: "joined" });
+});
+
+test("rejects a nonce join from a pubkey the room does not know", async () => {
+  relay = await startRelay(0);
+  const macKeys = keypair();
+  const room = roomId(macKeys.pub);
+  await connectMac(relay.port, macKeys);
+
+  const stranger = await rejoinPhone(relay.port, room, keypair());
+  expect(await stranger.closed).toBe(4001);
+});
+
+test("a nonce join must be signed by the device it names", async () => {
+  relay = await startRelay(0);
+  const macKeys = keypair();
+  const room = roomId(macKeys.pub);
+  const mac = await connectMac(relay.port, macKeys);
+  const { phone, keys } = await connectPhone(relay.port, room, await mintToken(mac));
+  await phone.next(); // joined
+
+  const impostor = client(relay.port, room);
+  await impostor.open;
+  await impostor.next(); // nonce
+  // The known pubkey, but signed with somebody else's key over somebody else's nonce.
+  impostor.send({
+    type: "join",
+    roomId: room,
+    phonePubkey: keys.pub,
+    sig: signChallenge("not the nonce", keypair().priv),
+  });
+  expect(await impostor.closed).toBe(4003);
 });
 
 test("rejects a registration with a bad challenge signature", async () => {
