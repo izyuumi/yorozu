@@ -61,10 +61,11 @@ test("every spec'd kind exists", () => {
     "thread_create",
     "thread_list",
     "thread_archive",
+    "thread_rename",
     "sync_request",
     "sync_delta",
   ];
-  expect(kinds).toHaveLength(11);
+  expect(kinds).toHaveLength(12);
 });
 
 test("pairing strings round-trip and untrusted input is rejected", () => {

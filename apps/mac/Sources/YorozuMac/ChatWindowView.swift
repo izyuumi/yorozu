@@ -22,7 +22,8 @@ struct ChatWindowView: View {
             ThreadSidebar(
                 threads: model.threads,
                 selection: $selection,
-                onCreate: { model.createThread(title: $0) },
+                onCreate: { model.createThread() },
+                onRename: { model.rename($0, to: $1) },
                 onArchive: model.archive
             )
             .frame(minWidth: 180)

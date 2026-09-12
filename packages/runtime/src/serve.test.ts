@@ -168,8 +168,11 @@ async function pairedPhone(responses: (() => Response)[]) {
   const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
   phone.frame(encodeBody({ t: "hello", pub: toBase64Url(phoneKeys.publicKey) }), keys);
 
-  const send = (event: Omit<YorozuEvent, "id" | "threadId" | "ts" | "agentId">): void => {
-    const full = { id: randomUUID(), threadId: "home", ts: Date.now(), agentId: "phone", ...event };
+  const send = (
+    event: Omit<YorozuEvent, "id" | "threadId" | "ts" | "agentId">,
+    threadId = "home",
+  ): void => {
+    const full = { id: randomUUID(), threadId, ts: Date.now(), agentId: "phone", ...event };
     const box = seal(sessionKey, Buffer.from(JSON.stringify(full as YorozuEvent)));
     phone.frame(encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }), keys);
   };
@@ -379,4 +382,66 @@ test("two phones pair at once and see the same threads, events and deltas", asyn
   expect(await second.next("thread_list")).toMatchObject({
     data: { threads: [{ id: "home", archived: false }, { id: groceries, archived: true }] },
   });
+});
+
+
+/** The threads of the next list that has more than Home in it: the pairing greeting has one. */
+async function threadsAfter(
+  eventsUntil: (done: (event: YorozuEvent) => boolean) => Promise<YorozuEvent[]>,
+): Promise<{ id: string; title: string }[]> {
+  const seen = await eventsUntil(
+    (event) => event.kind === "thread_list" && event.data.threads.length > 1,
+  );
+  const last = seen.at(-1)!;
+  return last.kind === "thread_list" ? last.data.threads : [];
+}
+
+const storedThreads = (dir: string): { title: string }[] =>
+  JSON.parse(readFileSync(join(dir, "threads.json"), "utf8")) as { title: string }[];
+
+test("the first reply names an untitled thread, and no later turn renames it", async () => {
+  const { dir, send, eventsUntil, isReply } = await pairedPhone([
+    () => sse("Sure — milk and eggs."),
+    // The titler's own completion, with the quotes and the full stop it was told not to use.
+    () => sse('"Groceries for the week."\n'),
+    () => sse("Added bread."),
+  ]);
+
+  // Nobody is asked for a title: the thread arrives empty and the lists draw a placeholder.
+  send({ kind: "thread_create", data: {} });
+  const [, created] = await threadsAfter(eventsUntil);
+  expect(created!.title).toBe("");
+
+  send({ kind: "message", data: { role: "user", text: "buy milk" } }, created!.id);
+  await eventsUntil(isReply);
+
+  // The title lands after the reply, in a fresh list.
+  expect(await threadsAfter(eventsUntil)).toEqual([
+    expect.objectContaining({ id: "home", title: "Home" }),
+    expect.objectContaining({ id: created!.id, title: "Groceries for the week" }),
+  ]);
+
+  // A second turn spends no completion on titling, so the queued third response is its reply.
+  send({ kind: "message", data: { role: "user", text: "and bread" } }, created!.id);
+  const second = await eventsUntil(isReply);
+  expect(second.at(-1)).toMatchObject({ data: { role: "agent", text: "Added bread." } });
+  expect(storedThreads(dir)[1]!.title).toBe("Groceries for the week");
+});
+
+test("a thread the user renamed keeps that title through its first turn", async () => {
+  // One response only: a named thread never asks for a second, so a titler call would hang.
+  const { dir, send, eventsUntil, isReply } = await pairedPhone([() => sse("Noted.")]);
+
+  send({ kind: "thread_create", data: {} });
+  const [, created] = await threadsAfter(eventsUntil);
+
+  send({ kind: "thread_rename", data: { title: "  Weekend plans  " } }, created!.id);
+  expect(await threadsAfter(eventsUntil)).toEqual([
+    expect.objectContaining({ id: "home" }),
+    expect.objectContaining({ id: created!.id, title: "Weekend plans" }),
+  ]);
+
+  send({ kind: "message", data: { role: "user", text: "hi" } }, created!.id);
+  await eventsUntil(isReply);
+  expect(storedThreads(dir)[1]!.title).toBe("Weekend plans");
 });

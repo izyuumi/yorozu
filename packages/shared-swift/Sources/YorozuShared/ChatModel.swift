@@ -84,13 +84,22 @@ public final class ChatModel {
         emit(event)
     }
 
-    public func createThread(title: String) {
+    /// Nobody is asked for a title: an unnamed thread is named by the runtime after its first
+    /// reply. A title is still accepted, for the rare caller that already has one.
+    public func createThread(title: String = "") {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         // The runtime mints the id and answers every device with the new list.
         emit(
             .threadCreate(ThreadCreateData(title: trimmed.isEmpty ? nil : trimmed)),
             in: ThreadSummary.home.id
         )
+    }
+
+    /// Renames a thread for good: a title the user typed is never auto-titled over.
+    public func rename(_ thread: ThreadSummary, to title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != thread.title else { return }
+        emit(.threadRename(ThreadRenameData(title: trimmed)), in: thread.id)
     }
 
     public func archive(_ thread: ThreadSummary) {
@@ -178,8 +187,9 @@ public final class ChatModel {
         onEvent?(event)
     }
 
-    /// The thread's title, for anything that has only an id. Falls back to the id itself.
+    /// The thread's title as a list would draw it, for anything that has only an id. Falls back
+    /// to the id itself.
     public func title(of threadId: String) -> String {
-        threads.first { $0.id == threadId }?.title ?? threadId
+        threads.first { $0.id == threadId }?.displayTitle ?? threadId
     }
 }

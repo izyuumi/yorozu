@@ -62,6 +62,11 @@ export interface ThreadCreateData {
   title?: string;
 }
 
+/** Renames `threadId` from the base fields. A title the user chose: auto-titling leaves it alone. */
+export interface ThreadRenameData {
+  title: string;
+}
+
 export interface ThreadSummary {
   id: string;
   title: string;
@@ -102,6 +107,7 @@ export type EventPayload =
   | { kind: "thread_create"; data: ThreadCreateData }
   | { kind: "thread_list"; data: ThreadListData }
   | { kind: "thread_archive"; data: ThreadArchiveData }
+  | { kind: "thread_rename"; data: ThreadRenameData }
   | { kind: "interrupt"; data: InterruptData }
   | { kind: "sync_request"; data: SyncRequestData }
   | { kind: "sync_delta"; data: SyncDeltaData };

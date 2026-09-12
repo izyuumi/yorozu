@@ -46,6 +46,7 @@ import {
   eventsAfter,
   HOME_THREAD,
   listThreads,
+  renameThread,
   threadHistory,
   threadSummaries,
 } from "./threads.js";
@@ -57,6 +58,22 @@ const DEFAULT_STATE_DIR = join(homedir(), "Library", "Application Support", "Yor
 const RECONNECT_MS = 2_000;
 /** An unanswered card is not a yes: it expires into a refusal rather than hanging the turn. */
 const APPROVAL_TIMEOUT_MS = 10 * 60_000;
+/** A title is a nicety: past this the thread keeps its placeholder rather than the phone waiting. */
+const TITLE_TIMEOUT_MS = 5_000;
+const TITLE_SYSTEM =
+  "Reply with a 3-5 word title for this conversation, no quotes, no trailing period";
+/** How much of the opening exchange the titler is shown. */
+const TITLE_CONTEXT_CHARS = 500;
+
+/** The model's answer as a title: one line, no quotes, no trailing period, and short. */
+export function cleanTitle(raw: string): string {
+  return raw
+    .split("\n")
+    .map((line) => line.replace(/["'`]/g, "").trim())
+    .find((line) => line !== "")
+    ?.replace(/[.\s]+$/, "")
+    .slice(0, 60) ?? "";
+}
 
 /**
  * A yes / no / never typed in the thread instead of tapped on the card. A `never` only
@@ -338,6 +355,55 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // An interrupted turn says nothing: the user already knows they stopped it.
     if (turn.signal.aborted) return;
     emit(message(reply));
+    // Deliberately not awaited: titling is a second completion and must never delay a reply.
+    void autoTitle(threadId).catch((e: unknown) => state(`title-error ${String(e)}`));
+  }
+
+  /**
+   * Names a thread from its opening exchange, once. Only a thread whose title is still empty is
+   * titled, which is also what keeps a rename the user typed: that title is not empty, so no
+   * later turn overwrites it.
+   */
+  async function autoTitle(threadId: string): Promise<void> {
+    const untitled = (): boolean =>
+      listThreads(dir).find((thread) => thread.id === threadId)?.title === "";
+    if (!untitled()) return;
+
+    const history = threadHistory(threadId, dir);
+    const opening = [
+      history.find((m) => m.role === "user")?.content,
+      history.find((m) => m.role === "assistant")?.content,
+    ]
+      .filter(Boolean)
+      .join("\n\n")
+      .slice(0, TITLE_CONTEXT_CHARS);
+    if (!opening) return;
+
+    const ask = async (): Promise<string> => {
+      let text = "";
+      for await (const event of provider.stream(
+        [
+          { role: "system", content: TITLE_SYSTEM },
+          { role: "user", content: opening },
+        ],
+        [],
+      )) {
+        if (event.type === "text") text += event.text;
+      }
+      return text;
+    };
+    const title = cleanTitle(
+      await Promise.race([
+        ask(),
+        new Promise<string>((resolve) => {
+          setTimeout(() => resolve(""), TITLE_TIMEOUT_MS).unref?.();
+        }),
+      ]),
+    );
+
+    // Re-checked: a rename may have landed while the titler was thinking.
+    if (!title || !untitled()) return;
+    if (renameThread(threadId, title, dir)) broadcast(threadList());
   }
 
   /**
@@ -362,6 +428,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
       // Thread admin is answered to every device, so a second phone sees the same list.
       case "thread_create":
         createThread(event.data.title, dir);
+        return broadcast(threadList());
+      case "thread_rename":
+        renameThread(event.threadId, event.data.title, dir);
         return broadcast(threadList());
       case "thread_archive":
         archiveThread(event.threadId, dir);

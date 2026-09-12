@@ -39,6 +39,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadCreate = "thread_create"
         case threadList = "thread_list"
         case threadArchive = "thread_archive"
+        case threadRename = "thread_rename"
         case interrupt
         case syncRequest = "sync_request"
         case syncDelta = "sync_delta"
@@ -54,6 +55,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadCreate(ThreadCreateData)
         case threadList(ThreadListData)
         case threadArchive(ThreadArchiveData)
+        case threadRename(ThreadRenameData)
         case interrupt(InterruptData)
         case syncRequest(SyncRequestData)
         case syncDelta(SyncDeltaData)
@@ -69,6 +71,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadCreate: .threadCreate
             case .threadList: .threadList
             case .threadArchive: .threadArchive
+            case .threadRename: .threadRename
             case .interrupt: .interrupt
             case .syncRequest: .syncRequest
             case .syncDelta: .syncDelta
@@ -97,6 +100,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadCreate: payload = .threadCreate(try c.decode(ThreadCreateData.self, forKey: .data))
         case .threadList: payload = .threadList(try c.decode(ThreadListData.self, forKey: .data))
         case .threadArchive: payload = .threadArchive(try c.decode(ThreadArchiveData.self, forKey: .data))
+        case .threadRename: payload = .threadRename(try c.decode(ThreadRenameData.self, forKey: .data))
         case .interrupt: payload = .interrupt(try c.decode(InterruptData.self, forKey: .data))
         case .syncRequest: payload = .syncRequest(try c.decode(SyncRequestData.self, forKey: .data))
         case .syncDelta: payload = .syncDelta(try c.decode(SyncDeltaData.self, forKey: .data))
@@ -121,6 +125,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadCreate(let d): try c.encode(d, forKey: .data)
         case .threadList(let d): try c.encode(d, forKey: .data)
         case .threadArchive(let d): try c.encode(d, forKey: .data)
+        case .threadRename(let d): try c.encode(d, forKey: .data)
         case .interrupt(let d): try c.encode(d, forKey: .data)
         case .syncRequest(let d): try c.encode(d, forKey: .data)
         case .syncDelta(let d): try c.encode(d, forKey: .data)
@@ -201,8 +206,15 @@ public struct ThreadCreateData: Codable, Equatable, Sendable {
     public init(title: String? = nil) { self.title = title }
 }
 
+/// Renames `threadId` from the base fields. A title the user chose: auto-titling leaves it alone.
+public struct ThreadRenameData: Codable, Equatable, Sendable {
+    public var title: String
+    public init(title: String) { self.title = title }
+}
+
 public struct ThreadSummary: Codable, Equatable, Sendable {
     public var id: String
+    /// Empty until the runtime auto-titles the thread or the user renames it.
     public var title: String
     public var archived: Bool
     public var pinned: Bool
@@ -212,6 +224,9 @@ public struct ThreadSummary: Codable, Equatable, Sendable {
         self.archived = archived
         self.pinned = pinned
     }
+
+    /// What a list draws: an untitled thread is one the runtime has not named yet.
+    public var displayTitle: String { title.isEmpty ? "New chat" : title }
 }
 
 public struct ThreadListData: Codable, Equatable, Sendable {

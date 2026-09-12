@@ -76,7 +76,8 @@ struct RootView: View {
         if let model = session.model {
             ThreadListView(
                 threads: model.threads,
-                onCreate: { model.createThread(title: $0) },
+                onCreate: { model.createThread() },
+                onRename: { model.rename($0, to: $1) },
                 onArchive: model.archive
             ) { thread in
                 ChatView(model: model, thread: thread)
