@@ -102,6 +102,7 @@ export function claudeCli(config: ClaudeCliConfig = {}): Provider {
           tools: ["WebSearch"],
           allowedTools: ["WebSearch"],
           settingSources: [],
+          strictMcpConfig: true,
           maxTurns: 6,
         },
       });
@@ -144,6 +145,7 @@ export function claudeCli(config: ClaudeCliConfig = {}): Provider {
           // this is Yorozu's loop, not a coding session.
           tools: [],
           settingSources: [],
+          strictMcpConfig: true,
           mcpServers: { [SERVER]: server },
           maxTurns: 1,
           // A tool named in `allowedTools` would be auto-approved and run in-process,

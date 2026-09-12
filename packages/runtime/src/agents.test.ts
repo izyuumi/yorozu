@@ -103,6 +103,22 @@ test("the bundled agents install once and never overwrite an edited file", () =>
   expect(loadAgent("email", dir)?.name).toBe("email");
 });
 
+test("a newer bundle refreshes untouched agents and leaves edited ones alone", () => {
+  const bundle = mkdtempSync(join(tmpdir(), "yorozu-bundle-"));
+  writeFileSync(join(bundle, "main.md"), "v1 main");
+  writeFileSync(join(bundle, "calendar.md"), "v1 calendar");
+  installAgents(dir, bundle);
+  write("main", "Mine now.");
+
+  writeFileSync(join(bundle, "main.md"), "v2 main");
+  writeFileSync(join(bundle, "calendar.md"), "v2 calendar");
+  installAgents(dir, bundle);
+
+  expect(readFileSync(join(dir, "main.md"), "utf8")).toBe("Mine now.");
+  expect(readFileSync(join(dir, "calendar.md"), "utf8")).toBe("v2 calendar");
+  expect(listAgents(dir).map((agent) => agent.name)).not.toContain(".bundled");
+});
+
 test("agents live under the state directory and unknown names resolve to nothing", () => {
   expect(agentsDir("/tmp/state")).toBe("/tmp/state/agents");
   expect(listAgents(join(dir, "nope"))).toEqual([]);
