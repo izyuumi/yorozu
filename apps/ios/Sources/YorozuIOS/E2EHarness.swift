@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import YorozuShared
 
 /// Simulators have no camera, so the end-to-end harness injects the QR payload (and a first
@@ -13,6 +14,23 @@ func launchArgument(_ name: String) -> String? {
     return arguments[index + 1]
 }
 
+/// A stand-in favicon for the showcase, drawn rather than bundled: a screenshot should not
+/// need a real site's icon, and the app should not ship one.
+@MainActor
+private func showcaseIcon() -> Data {
+    UIGraphicsImageRenderer(size: CGSize(width: 32, height: 32)).pngData { _ in
+        UIColor.systemOrange.setFill()
+        UIBezierPath(roundedRect: CGRect(x: 0, y: 0, width: 32, height: 32), cornerRadius: 7).fill()
+        ("C" as NSString).draw(
+            at: CGPoint(x: 9, y: 4),
+            withAttributes: [
+                .font: UIFont.boldSystemFont(ofSize: 20),
+                .foregroundColor: UIColor.white,
+            ]
+        )
+    }
+}
+
 /// Test harness only, and inert unless `-yorozuSend` was passed: it drives the first message and
 /// prints the lines `apps/ios/e2e/run.sh` asserts on. It hangs off the model's hooks rather than
 /// living inside it, so nothing about the harness ships in the shared model.
@@ -25,9 +43,24 @@ final class E2EHarness {
     private weak var model: ChatModel?
 
     static func attach(to model: ChatModel) {
-        // `-yorozuShowcase`: a local draft seeded with an approval card and a running turn, so
-        // the composer and the card can be screenshotted with no relay and no model at all.
-        if launchArgument("yorozuShowcase") != nil {
+        // `-yorozuShowcase <what>`: state seeded on this device alone, so a screenshot needs no
+        // relay and no model. Anything unrecognised is the approval card, which came first.
+        switch launchArgument("yorozuShowcase") {
+        case nil:
+            break
+        case "threads":
+            model.previewThreads()
+        case "queued":
+            model.previewThreads()
+            model.previewQueued(in: model.threads[0].id)
+        case "link":
+            model.previewThreads()
+            LinkPreviewStore.shared.preload(
+                LinkPreview(title: "Roast chicken with lemon and thyme", host: "cooking.example.com", icon: showcaseIcon()),
+                for: URL(string: "https://cooking.example.com/roast-chicken")!
+            )
+            model.previewLink(in: model.threads[0].id)
+        default:
             model.previewApproval(in: model.newDraft().id)
         }
         // `-yorozuScene`: the same idea one step further — a finished conversation, plus the

@@ -6,20 +6,81 @@ public func visibleThreads(_ threads: [ThreadSummary]) -> [ThreadSummary] {
     threads.filter { !$0.archived }.sorted { $0.lastActivity > $1.lastActivity }
 }
 
-/// The three groups the phone's list draws, in the order it draws them: pinned threads lead,
-/// the archive is tucked away at the bottom, and everything else is the list proper. Each group
-/// is most recently active first.
+/// One dated section of the list. The four are fixed and always in this order: a list that
+/// reorders its own headings is a list you have to read rather than scan.
+public struct ThreadSection: Equatable, Sendable, Identifiable {
+    public enum Group: String, CaseIterable, Sendable {
+        case today = "Today"
+        case yesterday = "Yesterday"
+        case thisWeek = "This week"
+        case earlier = "Earlier"
+    }
+
+    public var group: Group
+    public var threads: [ThreadSummary]
+
+    public var id: String { group.rawValue }
+    public var title: String { group.rawValue }
+
+    public init(group: Group, threads: [ThreadSummary]) {
+        self.group = group
+        self.threads = threads
+    }
+}
+
+/// Which heading a thread belongs under. A thread stamped in the future — a clock that is out
+/// by a minute, which phones are — is today rather than a section of its own.
+public func threadGroup(
+    for date: Date,
+    now: Date = Date(),
+    calendar: Calendar = .current
+) -> ThreadSection.Group {
+    // Days rather than hours, and measured against `now` rather than against the clock, so the
+    // sections are the ones the reader would name and a test can move the day.
+    let today = calendar.startOfDay(for: now)
+    let day = calendar.startOfDay(for: date)
+    if day >= today { return .today }
+    if day == calendar.date(byAdding: .day, value: -1, to: today) { return .yesterday }
+    // The current week as the calendar counts it, which is what "this week" means to the person
+    // reading it: the days since the week began, not the last seven days.
+    if calendar.isDate(date, equalTo: now, toGranularity: .weekOfYear) { return .thisWeek }
+    return .earlier
+}
+
+/// Threads split into the dated sections the list draws, newest first within each and empty
+/// sections left out. Pure, so the grouping is a table test rather than a screenshot.
+public func threadSections(
+    _ threads: [ThreadSummary],
+    now: Date = Date(),
+    calendar: Calendar = .current
+) -> [ThreadSection] {
+    let sorted = threads.sorted { $0.lastActivity > $1.lastActivity }
+    return ThreadSection.Group.allCases.compactMap { group in
+        let members = sorted.filter {
+            threadGroup(for: $0.lastActivityDate, now: now, calendar: calendar) == group
+        }
+        return members.isEmpty ? nil : ThreadSection(group: group, threads: members)
+    }
+}
+
+/// What the phone's list draws, in the order it draws it: pinned threads lead, then the rest
+/// under a heading per stretch of time, and the archive is folded away at the bottom. Each
+/// group is most recently active first.
 ///
 /// Pure, so a test can check the partition without a view.
 public struct ThreadGroups: Equatable, Sendable {
     public var pinned: [ThreadSummary]
+    /// Everything unpinned and unarchived, newest first. ``sections`` is the same threads under
+    /// their headings, which is what the phone draws.
     public var recent: [ThreadSummary]
+    public var sections: [ThreadSection]
     public var archived: [ThreadSummary]
 
-    public init(_ threads: [ThreadSummary]) {
+    public init(_ threads: [ThreadSummary], now: Date = Date(), calendar: Calendar = .current) {
         let live = visibleThreads(threads)
         pinned = live.filter(\.pinned)
         recent = live.filter { !$0.pinned }
+        sections = threadSections(recent, now: now, calendar: calendar)
         archived = threads.filter(\.archived).sorted { $0.lastActivity > $1.lastActivity }
     }
 
@@ -235,6 +296,7 @@ public struct ThreadListView<Destination: View>: View {
     private let onPin: (ThreadSummary, Bool) -> Void
     private let onRefresh: (() async -> Void)?
     private let messageText: (String) -> String
+    private let exportMarkdown: ((ThreadSummary) -> String)?
     private let onSettings: (() -> Void)?
     private let destination: (ThreadSummary) -> Destination
 
@@ -254,6 +316,7 @@ public struct ThreadListView<Destination: View>: View {
         onPin: @escaping (ThreadSummary, Bool) -> Void = { _, _ in },
         onRefresh: (() async -> Void)? = nil,
         messageText: @escaping (String) -> String = { _ in "" },
+        exportMarkdown: ((ThreadSummary) -> String)? = nil,
         onSettings: (() -> Void)? = nil,
         @ViewBuilder destination: @escaping (ThreadSummary) -> Destination
     ) {
@@ -267,6 +330,7 @@ public struct ThreadListView<Destination: View>: View {
         self.onPin = onPin
         self.onRefresh = onRefresh
         self.messageText = messageText
+        self.exportMarkdown = exportMarkdown
         self.onSettings = onSettings
         self.destination = destination
     }
@@ -283,7 +347,11 @@ public struct ThreadListView<Destination: View>: View {
                 if !groups.pinned.isEmpty {
                     Section("Pinned") { rows(groups.pinned) }
                 }
-                Section { rows(groups.recent) }
+                // Today, Yesterday, This week, Earlier: the headings are the only thing telling
+                // a thread from this morning apart from one from last month at a glance.
+                ForEach(groups.sections) { section in
+                    Section(section.title) { rows(section.threads) }
+                }
                 if !groups.archived.isEmpty {
                     Section { archive(groups.archived) }
                 }
@@ -367,6 +435,11 @@ public struct ThreadListView<Destination: View>: View {
                     thread.archived ? "Unarchive" : "Archive",
                     systemImage: thread.archived ? "tray.and.arrow.up" : "archivebox"
                 ) { onArchive(thread, !thread.archived) }
+                // Built here rather than up front: rendering a whole thread as Markdown is
+                // work, and a menu that is never opened should not have done it.
+                if let exportMarkdown {
+                    ExportThreadButton(title: thread.displayTitle) { exportMarkdown(thread) }
+                }
             }
         }
     }
