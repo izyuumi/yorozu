@@ -28,8 +28,17 @@ enum Keychain {
         SecItemDelete(query(account) as CFDictionary)
         var attributes = query(account)
         attributes[kSecValueData as String] = data
-        // Only ever used while the user is present; no backup to another device.
-        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        // After first unlock, not while unlocked: the phone rejoins the relay and decrypts its
+        // thread cache from the background, with the screen locked, and a `WhenUnlocked` item is
+        // unreadable there. `ThisDeviceOnly` keeps the rest of the promise — the item is not in
+        // any backup and cannot be restored onto another phone.
+        //
+        // What survives an app update is the item itself: the Keychain is not part of the app
+        // container, so replacing the bundle (TestFlight, or `simctl install` over the same
+        // bundle id) leaves it where it is. It stays that way as long as nothing here changes
+        // the service name or starts asking for an access group — an item written without one
+        // lives in the app's own group, and adding one later would look like a different item.
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let status = SecItemAdd(attributes as CFDictionary, nil)
         guard status == errSecSuccess else {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))

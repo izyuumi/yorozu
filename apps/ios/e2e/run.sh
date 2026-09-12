@@ -6,7 +6,9 @@
 # iPhone simulator, installs the app, injects the sidecar's pairing string as a launch argument
 # (the simulator has no camera), sends one message and asserts the streamed reply arrives.
 # Then it kills the app and launches it again with no pairing string at all, to prove the
-# phone rejoins the relay on its own and a message still round-trips.
+# phone rejoins the relay on its own and a message still round-trips. Finally it installs a
+# rebuilt bundle over the same bundle id — an app update, as far as the device is concerned —
+# and does it once more, which is what proves the pairing survives an update.
 #
 # Usage: apps/ios/e2e/run.sh     — logs are kept in apps/ios/e2e/.logs for inspection.
 set -euo pipefail
@@ -34,7 +36,7 @@ cleanup() {
       xcrun simctl spawn "$UDID" log show --last 5m --style compact \
         --predicate 'process == "YorozuIOS"' >"$WORK/device.log" 2>/dev/null || true
     fi
-    for name in app app2 sidecar relay provider device; do
+    for name in app app2 app3 sidecar relay provider device; do
       [ -s "$WORK/$name.log" ] || continue
       printf '\n--- %s.log ---\n' "$name" >&2
       tail -30 "$WORK/$name.log" >&2
@@ -134,8 +136,30 @@ wait_for "$WORK/app2.log" "YOROZU-E2E paired" "the phone to rejoin without a tok
 # it is still streaming, so which of the two names the line carries is a race and not the point.
 wait_for "$WORK/app2.log" "YOROZU-E2E-REPLY \[.*\] $REPLY" "a reply after the relaunch" 45
 
+say "reinstalling a rebuilt app over the paired one, as a TestFlight update does"
+xcrun simctl terminate "$UDID" "$BUNDLE_ID"
+# The same bundle id installed over itself is what an update is on the simulator, and the
+# nearest thing to TestFlight there is: the data container and the Keychain stay, the bundle
+# is replaced. The rebuild is incremental and usually a no-op; it is here so what gets
+# installed is a freshly produced bundle rather than the very bytes already on the device.
+xcodebuild build \
+  -workspace "$IOS/Yorozu.xcworkspace" \
+  -scheme YorozuIOS \
+  -destination "id=$UDID" \
+  -derivedDataPath "$WORK/dd" >>"$WORK/xcodebuild.log" 2>&1 ||
+  { tail -40 "$WORK/xcodebuild.log" >&2; exit 1; }
+xcrun simctl install "$UDID" "$WORK/dd/Build/Products/Debug-iphonesimulator/YorozuIOS.app"
+# Again with no pairing string: everything it needs is in the Keychain, which the install did
+# not touch, and the thread cache is in Application Support, which it did not touch either.
+xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" \
+  -yorozuSend "hi after the update" >"$WORK/app3.log" 2>&1 &
+PIDS+=($!)
+wait_for "$WORK/app3.log" "YOROZU-E2E paired" "the phone to rejoin after reinstalling" 45
+wait_for "$WORK/app3.log" "YOROZU-E2E-REPLY \[.*\] $REPLY" "a reply after the reinstall" 45
+
 say "PASS — the phone received:"
 grep -m2 'YOROZU-E2E-REPLY' "$WORK/app.log"
 grep -m1 'YOROZU-E2E-TOOL' "$WORK/app.log"
 grep -m1 'YOROZU-E2E-REPLY' "$WORK/app2.log"
+grep -m1 'YOROZU-E2E-REPLY' "$WORK/app3.log"
 grep '^STATE ' "$WORK/sidecar.log"

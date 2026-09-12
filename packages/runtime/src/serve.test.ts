@@ -701,3 +701,38 @@ test("a paired device the relay knows no name for holds the announce back", asyn
   await sidecar.close();
   await new Promise<void>((done) => fake.close(() => done()));
 });
+
+test("a second sidecar on the same state dir is the same Mac: same keys, same room", async () => {
+  // What an app update is, from the runtime's side: the bundle is replaced and the sidecar is
+  // launched again, on the state directory it always had — nothing in that path is version
+  // shaped. The keys are what the room id and every paired phone are pinned to, so a relaunch
+  // that generated new ones would silently unpair every device. It must not.
+  relay = await startRelay(0);
+  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-restart-"));
+  const paired = { pub: toBase64Url(generateKeypair().publicKey), signingPub: "s", lastSeen: 7 };
+  writeFileSync(join(stateDir, "devices.json"), JSON.stringify([paired]));
+
+  const start = async () => {
+    let pairing!: (line: string) => void;
+    const printed = new Promise<string>((resolve) => (pairing = resolve));
+    const started = serve({
+      relayUrl: `ws://127.0.0.1:${relay.port}`,
+      stateDir,
+      provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: vi.fn() }),
+      log: (line) => {
+        if (line.startsWith("QR ")) pairing(line.slice(3));
+      },
+    });
+    return { started, qr: decodeQrPayload(await printed) };
+  };
+
+  const first = await start();
+  await first.started.close();
+  const second = await start();
+  sidecar = second.started;
+
+  expect(second.qr.roomId).toBe(first.qr.roomId);
+  expect(second.qr.macPubkey).toBe(first.qr.macPubkey);
+  // And the phones it had paired with are still there — the install touched no file of ours.
+  expect(loadDevices(join(stateDir, "devices.json"))).toEqual([paired]);
+});

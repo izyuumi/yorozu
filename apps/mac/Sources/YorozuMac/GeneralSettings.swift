@@ -18,6 +18,7 @@ struct GeneralView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            AutomaticUpdatesToggle()
             CheckForUpdatesButton()
         }
     }
