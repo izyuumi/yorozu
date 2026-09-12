@@ -63,6 +63,10 @@ struct RootView: View {
     @State private var session = Session()
     /// Set once the user has pressed "Get started", so the splash is shown only before that.
     @State private var pairing = false
+    /// The thread ids pushed on the list's stack: at most one, and what lets the app open a
+    /// thread by itself rather than waiting to be tapped.
+    @State private var path: [String] = []
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         content
@@ -76,7 +80,8 @@ struct RootView: View {
         if let model = session.model {
             ThreadListView(
                 threads: model.threads,
-                onCreate: { model.createThread() },
+                path: $path,
+                onCreate: { path = [model.newDraft().id] },
                 onRename: { model.rename($0, to: $1) },
                 onArchive: model.archive
             ) { thread in
@@ -84,6 +89,16 @@ struct RootView: View {
                     .toolbar {
                         Button("Unpair", systemImage: "qrcode") { session.unpair() }
                     }
+            }
+            // Launch and every return to the foreground land here: pick up where the day left
+            // off while it is still warm, and start on a blank one when it is not.
+            .onChange(of: scenePhase, initial: true) { _, phase in
+                guard phase == .active else { return }
+                path = [threadToOpen(model.threads) ?? model.newDraft().id]
+            }
+            // Backing out of a draft without sending is what discards it.
+            .onChange(of: path) { old, new in
+                if let left = old.first, !new.contains(left) { model.discardDraft(left) }
             }
         } else if pairing {
             PairView(onPair: pair)

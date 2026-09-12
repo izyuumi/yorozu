@@ -26,8 +26,8 @@ private func message(_ id: String, _ text: String, thread: String = "home") -> Y
     let key = SymmetricKey(size: .bits256)
     let cache = temporaryCache(key: key)
     let threads = [
-        ThreadSummary(id: "home", title: "Home", archived: false, pinned: true),
-        ThreadSummary(id: "t2", title: "Groceries", archived: false, pinned: false),
+        ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1),
+        ThreadSummary(id: "t2", title: "Groceries", archived: false, lastActivity: 2),
     ]
     cache.save(threads: threads)
     cache.save(events: [message("e1", "hi"), message("e2", "there")], threadId: "home")

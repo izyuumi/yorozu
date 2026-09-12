@@ -43,8 +43,8 @@ import {
   appendThreadEvent,
   archiveThread,
   createThread,
+  currentThread,
   eventsAfter,
-  HOME_THREAD,
   listThreads,
   renameThread,
   threadHistory,
@@ -173,9 +173,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
   /** One controller per running turn, so an `interrupt` cancels every tree at once. */
   const running = new Set<AbortController>();
 
-  // Home exists before any phone asks for it.
-  listThreads(dir);
-
   /**
    * Session key per paired device, keyed by the X25519 public key it announced. Several
    * phones can be paired at once, so every agent event is sealed once per device; the map
@@ -241,7 +238,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       });
       emit({
         id: randomUUID(),
-        threadId: context?.threadId ?? HOME_THREAD,
+        threadId: context?.threadId ?? currentThread(dir),
         ts: Date.now(),
         agentId: context?.agentId ?? MAIN_AGENT,
         kind: "approval_card",
@@ -250,9 +247,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
     });
   }
 
+  /** A frame that is about the threads rather than in one: `threadId` is not read for these. */
   const control = (payload: EventPayload): YorozuEvent => ({
     id: randomUUID(),
-    threadId: HOME_THREAD,
+    threadId: "",
     ts: Date.now(),
     agentId: MAIN_AGENT,
     ...payload,
@@ -427,7 +425,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return;
       // Thread admin is answered to every device, so a second phone sees the same list.
       case "thread_create":
-        createThread(event.data.title, dir);
+        // The device minted the id: the message it typed follows straight after this frame.
+        createThread(event.data.title, dir, event.threadId || undefined);
         return broadcast(threadList());
       case "thread_rename":
         renameThread(event.threadId, event.data.title, dir);
