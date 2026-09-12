@@ -7,6 +7,7 @@ public struct MarkdownText: View {
     private let blocks: [MarkdownBlock]
     /// Drawn after the last block while the reply is still arriving.
     private let cursor: Bool
+    @Environment(\.searchHighlight) private var highlight
 
     public init(_ markdown: String, cursor: Bool = false) {
         self.blocks = markdownBlocks(markdown)
@@ -27,10 +28,10 @@ public struct MarkdownText: View {
         case .paragraph(let text):
             // The cursor sits inside the paragraph's own text so it follows the last word to
             // wherever the line wrapped, rather than sitting under it on a line of its own.
-            (Text(AttributedString.chatInline(text)) + (cursor && last ? Text(" ") : Text("")))
+            (Text(AttributedString.chatInline(text, highlight: highlight)) + (cursor && last ? Text(" ") : Text("")))
                 .overlayCursor(cursor && last)
         case .heading(let level, let text):
-            Text(AttributedString.chatInline(text))
+            Text(AttributedString.chatInline(text, highlight: highlight))
                 .font(headingFont(level))
                 .padding(.top, offset == 0 ? 0 : 4)
         case .code(let language, let text):
@@ -138,6 +139,7 @@ private struct CodeBlock: View {
 private struct MarkdownList: View {
     let ordered: Bool
     let items: [String]
+    @Environment(\.searchHighlight) private var highlight
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -147,7 +149,7 @@ private struct MarkdownList: View {
                         .foregroundStyle(.secondary)
                         // Numbers line up their own column; a wide list stays a list.
                         .monospacedDigit()
-                    Text(AttributedString.chatInline(item))
+                    Text(AttributedString.chatInline(item, highlight: highlight))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
@@ -163,6 +165,7 @@ private struct MarkdownList: View {
 private struct MarkdownTable: View {
     let header: [String]
     let rows: [[String]]
+    @Environment(\.searchHighlight) private var highlight
 
     private var columns: Int { max(header.count, rows.map(\.count).max() ?? 0) }
 
@@ -184,7 +187,7 @@ private struct MarkdownTable: View {
         Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
             GridRow {
                 ForEach(Array(cells(header).enumerated()), id: \.offset) { _, cell in
-                    Text(AttributedString.chatInline(cell))
+                    Text(AttributedString.chatInline(cell, highlight: highlight))
                         .font(.footnote.weight(.semibold))
                 }
             }
@@ -192,7 +195,7 @@ private struct MarkdownTable: View {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 GridRow {
                     ForEach(Array(cells(row).enumerated()), id: \.offset) { _, cell in
-                        Text(AttributedString.chatInline(cell))
+                        Text(AttributedString.chatInline(cell, highlight: highlight))
                             .font(.footnote)
                     }
                 }

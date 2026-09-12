@@ -335,6 +335,45 @@ public final class ChatModel {
         generating.insert(threadId)
     }
 
+    /// Test-only, alongside ``previewApproval``: a short finished conversation to search, quote
+    /// and read in, so the screenshots have a thread rather than an empty one.
+    public func previewChat(in threadId: String) {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        upsert(YorozuEvent(id: "showcase-ask", threadId: threadId, ts: now, agentId: device,
+            payload: .message(MessageData(role: .user, text: "Did we ever pay the Kitanoya invoice?"))))
+        upsert(YorozuEvent(id: "showcase-reply", threadId: threadId, ts: now + 1, agentId: "main",
+            payload: .message(MessageData(role: .agent, text: Self.previewReply, done: true))))
+        upsert(YorozuEvent(id: "showcase-thanks", threadId: threadId, ts: now + 2, agentId: device,
+            payload: .message(MessageData(role: .user, text: "Perfect. Remind me before the next one."))))
+    }
+
+    private static let previewReply = """
+        Yes — the **Kitanoya invoice** was paid on 3 March.
+
+        | Invoice | Date | Amount | Status |
+        | --- | --- | --- | --- |
+        | KTN-0148 | 3 Mar | ¥48,000 | Paid |
+        | KTN-0151 | 2 Apr | ¥12,400 | Due |
+
+        The March invoice cleared from the Sumitomo account the same afternoon it arrived, and \
+        the receipt is filed under Documents/Invoices/2026. The April invoice is still open: it \
+        was issued on the second and the terms on it are thirty days, so it falls due at the end \
+        of the month. Nothing has been scheduled for it yet.
+
+        A few other things worth knowing about that account:
+
+        - Every Kitanoya invoice since January has arrived by email rather than by post, which \
+          is why none of them are in the paper folder you checked.
+        - The amounts have crept up about eight percent since the autumn, all of it on the \
+          delivery line rather than on the goods themselves.
+        - Two invoices last year were paid twice, in June and in September, and both were \
+          refunded within the fortnight — so the account is square, but it is worth a glance \
+          before each payment goes out.
+
+        I can set a reminder for the twenty-eighth, a few days before the April invoice is due, \
+        and put the payment in front of you then rather than doing it quietly.
+        """
+
     private func upsert(_ event: YorozuEvent) {
         var thread = events[event.threadId] ?? []
         if let index = thread.firstIndex(where: { $0.id == event.id }) {

@@ -30,6 +30,22 @@ final class E2EHarness {
         if launchArgument("yorozuShowcase") != nil {
             model.previewApproval(in: model.newDraft().id)
         }
+        // `-yorozuScene`: the same idea one step further — a finished conversation, plus the
+        // one piece of view state each of these screenshots is about. A simulator has no
+        // microphone and nothing here can tap a magnifier, so both are seeded rather than done.
+        if let scene = launchArgument("yorozuScene") {
+            model.previewChat(in: model.newDraft().id)
+            switch scene {
+            case "dictation":
+                ChatShowcase.dictation = [0.2, 0.5, 0.8, 0.6, 0.9, 0.4, 0.7, 1.0, 0.5, 0.3, 0.6, 0.85]
+            case "search":
+                ChatShowcase.search = "invoice"
+            case "reply":
+                ChatShowcase.quote = "The April invoice is still open: it was issued on the second and the terms on it are thirty days."
+            default:
+                break
+            }
+        }
         guard let autoSend = launchArgument("yorozuSend") else { return }
         E2EHarness(model: model, autoSend: autoSend).wire()
     }

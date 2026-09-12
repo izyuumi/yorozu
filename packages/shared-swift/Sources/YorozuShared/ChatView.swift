@@ -18,6 +18,14 @@ public struct ChatView: View {
     /// Id of the reply whose first token just landed, which is the moment worth a tap.
     @State private var replyStarted: String?
     @State private var attachmentTooLarge = false
+    /// Dictation is per-open-thread: leaving the thread tears the audio down with the view.
+    @State private var dictation = Dictation()
+    /// The message being replied to, quoted above the field until it is sent or dismissed.
+    @State private var replyQuote: String?
+    @State private var searching = false
+    @State private var search = ""
+    /// Which hit the arrows are on. Reset whenever the term changes.
+    @State private var hit = 0
 
     /// Anchor for "scroll to the end". A zero-height view after the last row rather than the
     /// row itself: scrolling to the last row leaves its bottom edge under the composer.
@@ -38,6 +46,9 @@ public struct ChatView: View {
     private var rows: [ChatRow] { chatRows(from: events) }
 
     private var generating: Bool { model.generating.contains(thread.id) }
+
+    /// Every occurrence of the search term in this thread, in reading order.
+    private var hits: [SearchHit] { searchHits(in: events, term: search) }
 
     private var draft: Binding<String> {
         Binding(get: { model.drafts[thread.id] ?? "" }, set: { model.drafts[thread.id] = $0 })
@@ -81,6 +92,22 @@ public struct ChatView: View {
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
+            }
+        }
+        // Opened from the magnifier rather than always on show: a thread is for reading, and
+        // a permanent search field would be one more thing to read past — and on iOS 26 it
+        // would be one more bar under the composer, which already owns the bottom of a chat.
+        .threadSearch(text: $search, presented: $searching)
+        // A reply being read aloud follows the thread it is in: walking away stops it, which is
+        // the same thing every other app that talks does.
+        .onDisappear {
+            Speaker.shared.stop()
+            dictation.stop()
+        }
+        .task { ChatShowcase.apply(dictation: dictation, search: $search, searching: $searching, quote: $replyQuote) }
         // Sending, and the first token of the answer: the two moments the thread changes hands.
         .sensoryFeedback(.impact(weight: .light), trigger: sends)
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: replyStarted) { _, id in
@@ -90,6 +117,11 @@ public struct ChatView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Attachments are limited to 5 MB.")
+        }
+        .alert("Dictation needs permission", isPresented: $dictation.denied) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Allow microphone access and speech recognition in Settings to dictate.")
         }
     }
 
@@ -105,10 +137,12 @@ public struct ChatView: View {
                         case .message(let event):
                             if case .message(let data) = event.payload {
                                 MessageBubble(
+                                    id: event.id,
                                     data: data,
                                     streaming: event.id == streamingId,
                                     onRetry: data.role == .user ? { retry(data) } : nil,
-                                    onDelete: { model.delete(event.id, in: thread.id) }
+                                    onDelete: { model.delete(event.id, in: thread.id) },
+                                    onReply: { replyQuote = $0 }
                                 )
                                 .id(event.id)
                             }
@@ -149,6 +183,9 @@ public struct ChatView: View {
                     Color.clear.frame(height: 1).id(Self.bottomAnchor)
                 }
                 .padding()
+                // Handed down rather than threaded through every bubble, block and table cell
+                // between the field and the run of text a hit is inside.
+                .environment(\.searchHighlight, search)
             }
             // A thread opens on its newest message, like every other chat: the anchor does it
             // during layout, so there is no jump from the top to watch on the way in.
@@ -171,7 +208,9 @@ public struct ChatView: View {
                 withAnimation { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
             }
             .overlay(alignment: .bottom) {
-                if !atBottom {
+                // Not while searching: the arrows are already moving the thread about, and a
+                // pill offering to jump somewhere else would be arguing with them.
+                if !atBottom, search.isEmpty {
                     ScrollToBottomPill {
                         withAnimation { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
                     }
@@ -180,7 +219,29 @@ public struct ChatView: View {
                 }
             }
             .animation(.snappy, value: atBottom)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if !search.isEmpty {
+                    SearchHitBar(index: hit, total: hits.count) { step in
+                        guard !hits.isEmpty else { return }
+                        hit = (hit + step + hits.count) % hits.count
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            // A new term starts at its first hit; stepping moves to the next. Both end up here.
+            .onChange(of: search) { _, _ in
+                hit = 0
+                scrollToHit(proxy)
+            }
+            .onChange(of: hit) { _, _ in scrollToHit(proxy) }
+            .animation(.snappy, value: search.isEmpty)
         }
+    }
+
+    /// Puts the current hit in the middle of the screen, where a hit being read wants to be.
+    private func scrollToHit(_ proxy: ScrollViewProxy) {
+        guard hits.indices.contains(hit) else { return }
+        withAnimation { proxy.scrollTo(hits[hit].eventId, anchor: .center) }
     }
 
     private var composer: some View {
@@ -194,13 +255,19 @@ public struct ChatView: View {
                     .padding(.top, 8)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
+            if let quote = replyQuote {
+                ReplyChip(text: quote) { replyQuote = nil }
+                    .padding(.horizontal, 8)
+                    .padding(.top, 8)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
             HStack(alignment: .bottom, spacing: 4) {
                 AttachButton(
                     onPick: { attachment.wrappedValue = $0 },
                     onTooLarge: { attachmentTooLarge = true }
                 )
                 .disabled(generating)
-                TextField("Message Yorozu", text: draft, axis: .vertical)
+                TextField(dictation.listening ? "" : "Message Yorozu", text: draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.body)
                     .lineLimit(1...6)
@@ -215,6 +282,19 @@ public struct ChatView: View {
                         return .handled
                     }
                     .accessibilityLabel("Message")
+                    // While listening, the level takes the placeholder's place: the field is
+                    // already saying "type here", and what it needs to say now is "I can hear
+                    // you". Gone the moment there are words to show instead.
+                    .overlay(alignment: .leading) {
+                        if dictation.listening, draft.wrappedValue.isEmpty {
+                            LevelMeter(levels: dictation.levels).allowsHitTesting(false)
+                        }
+                    }
+                // Hidden mid-turn: there is nothing to dictate into until the turn is over.
+                if !generating, dictation.available {
+                    MicButton(dictation: dictation, draft: draft)
+                        .transition(.scale(scale: 0.8).combined(with: .opacity))
+                }
                 sendOrStop
                     .padding(.trailing, 6)
                     .frame(height: 44)
@@ -223,9 +303,13 @@ public struct ChatView: View {
         .background(fieldBackground, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         // While a turn runs the outline itself breathes in the accent: the field is the one
         // thing on screen that changes job, so it is the one thing that says "working".
-        .overlay(WorkingOutline(active: generating))
+        // Listening earns the same breathing outline a running turn does: in both, the field
+        // is doing something rather than waiting.
+        .overlay(WorkingOutline(active: generating || dictation.listening))
         .animation(.easeOut(duration: 0.18), value: attachment.wrappedValue != nil)
         .animation(.easeOut(duration: 0.18), value: generating)
+        .animation(.easeOut(duration: 0.18), value: replyQuote != nil)
+        .animation(.easeOut(duration: 0.18), value: dictation.listening)
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 8)
@@ -283,6 +367,13 @@ public struct ChatView: View {
 
     private func send() {
         guard canSend else { return }
+        // The quote goes into the message itself, as a blockquote, so a reply is one ordinary
+        // message and no client, cache or runtime has to learn a new field for it.
+        if let quote = replyQuote {
+            draft.wrappedValue = quotedMessage(quoting: quote, body: draft.wrappedValue)
+            replyQuote = nil
+        }
+        dictation.stop()
         model.send(in: thread)
         sends += 1
         // Sending is always a jump to the end: it is your own message, and you meant it.
@@ -317,6 +408,85 @@ private struct ChangeStamp: Equatable {
             case .message(let data): data.text
             default: events.last?.id ?? ""
             }
+    }
+}
+
+/// Test-only, and empty unless the screenshot harness filled it in: the parts of a chat that
+/// live in the view rather than in the model, and so cannot be seeded through ``ChatModel``.
+@MainActor
+public enum ChatShowcase {
+    /// A level trace, which puts the composer into its listening state.
+    public static var dictation: [Double]?
+    /// A term, which opens the search field over the transcript with it already typed.
+    public static var search: String?
+    /// A message, which puts its quote chip above the field.
+    public static var quote: String?
+
+    static func apply(
+        dictation engine: Dictation,
+        search term: Binding<String>,
+        searching: Binding<Bool>,
+        quote chip: Binding<String?>
+    ) {
+        if let levels = dictation { engine.preview(levels: levels) }
+        if let search {
+            term.wrappedValue = search
+            searching.wrappedValue = true
+        }
+        if let quote { chip.wrappedValue = quote }
+    }
+}
+
+/// What is being replied to, inside the composer surface above the field: the quote itself, and
+/// the way out of it. Dismissable, because changing your mind about a reply is not a mistake.
+private struct ReplyChip: View {
+    let text: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            QuoteStrip(text: snippet(text))
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove quote")
+        }
+    }
+}
+
+/// How many hits there are and which one you are on, over the transcript while searching.
+private struct SearchHitBar: View {
+    let index: Int
+    let total: Int
+    /// -1 for the hit above, +1 for the one below.
+    let step: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(total == 0 ? "No matches" : "\(index + 1) of \(total)")
+                .font(.footnote.monospacedDigit())
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            arrow("chevron.up", "Previous match", -1)
+            arrow("chevron.down", "Next match", 1)
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 4)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
+    }
+
+    private func arrow(_ symbol: String, _ label: String, _ direction: Int) -> some View {
+        Button { step(direction) } label: {
+            Image(systemName: symbol).font(.footnote.weight(.semibold)).frame(width: 44, height: 44)
+        }
+        .buttonStyle(.plain)
+        .disabled(total == 0)
+        .accessibilityLabel(label)
     }
 }
 
@@ -435,6 +605,22 @@ private struct Banner: View {
 }
 
 extension View {
+    /// Search over the transcript, in the navigation bar rather than wherever the platform
+    /// would otherwise put it. The Mac has no drawer to put it in and needs no `#available`
+    /// either: it takes the default placement, which is its own toolbar.
+    @ViewBuilder fileprivate func threadSearch(text: Binding<String>, presented: Binding<Bool>) -> some View {
+        #if os(iOS)
+            searchable(
+                text: text,
+                isPresented: presented,
+                placement: .navigationBarDrawer(displayMode: .automatic),
+                prompt: "Find in thread"
+            )
+        #else
+            searchable(text: text, isPresented: presented, prompt: "Find in thread")
+        #endif
+    }
+
     /// The composer floats over the thread scrolling under it. Liquid Glass where the OS has
     /// it, and the same material bar it has always been where it does not.
     @ViewBuilder fileprivate func composerBackground() -> some View {

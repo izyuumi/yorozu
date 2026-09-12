@@ -194,7 +194,9 @@ extension AttributedString {
     ///
     /// Never throws. A half-written span is the normal state of a streaming reply, so anything
     /// Foundation will not parse falls back to the literal text the model sent.
-    public static func chatInline(_ markdown: String) -> AttributedString {
+    /// `highlight` is the thread's search term, if any: every occurrence of it in the rendered
+    /// text gets a background. Empty — the usual case — costs a length check and nothing else.
+    public static func chatInline(_ markdown: String, highlight: String = "") -> AttributedString {
         guard
             var attributed = try? AttributedString(
                 markdown: markdown,
@@ -203,7 +205,7 @@ extension AttributedString {
                     failurePolicy: .returnPartiallyParsedIfPossible
                 )
             )
-        else { return AttributedString(markdown) }
+        else { return AttributedString(markdown).highlighting(highlight) }
         // SwiftUI honours the strong and emphasis intents by itself but leaves code looking
         // like prose, so that one run style is applied here. Ranges are collected first:
         // writing to the string while walking its runs invalidates the walk.
@@ -214,6 +216,6 @@ extension AttributedString {
             attributed[range].font = .body.monospaced()
             attributed[range].backgroundColor = .secondary.opacity(0.15)
         }
-        return attributed
+        return attributed.highlighting(highlight)
     }
 }

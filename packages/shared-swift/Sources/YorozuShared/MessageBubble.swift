@@ -34,27 +34,53 @@ extension Image {
 /// One message in a thread. The user's is drawn as they typed it — plain text, right-aligned,
 /// tinted — and the agent's is rendered Markdown, because that is what models reply in.
 ///
-/// Long-pressing one offers Copy, Retry and Delete; on the Mac the same menu is the right-click.
+/// Long-pressing one offers Copy, Reply, Listen, Retry and Delete; on the Mac the same menu is
+/// the right-click. A message too long to read in passing is shown as its opening, with the
+/// whole of it a tap away in a reader.
 public struct MessageBubble: View {
+    /// The event id, which is what says whether this is the bubble being read aloud.
+    private let id: String
     private let data: MessageData
     /// Whether this is the reply still being written, which is what earns the caret.
     private let streaming: Bool
     private let onRetry: (() -> Void)?
     private let onDelete: (() -> Void)?
+    /// Called with this message's text when the reader wants to quote it.
+    private let onReply: ((String) -> Void)?
+
+    @State private var reading = false
+    /// Set by the thread's search field; every hit inside this bubble is drawn highlighted.
+    @Environment(\.searchHighlight) private var highlight
 
     public init(
+        id: String = "",
         data: MessageData,
         streaming: Bool = false,
         onRetry: (() -> Void)? = nil,
-        onDelete: (() -> Void)? = nil
+        onDelete: (() -> Void)? = nil,
+        onReply: ((String) -> Void)? = nil
     ) {
+        self.id = id
         self.data = data
         self.streaming = streaming
         self.onRetry = onRetry
         self.onDelete = onDelete
+        self.onReply = onReply
     }
 
     private var isUser: Bool { data.role == .user }
+
+    /// A quoted reply is one message with a blockquote at the top, so the two halves are split
+    /// back apart to be drawn. Only for what the user sent: an agent's `>` is its own prose.
+    private var parts: (quote: String?, body: String) {
+        isUser ? splitQuote(data.text) : (nil, data.text)
+    }
+
+    /// Long messages are cut here and read in full in the sheet — but never while they are
+    /// still arriving, since truncating a streaming reply hides the part that is moving.
+    private var truncated: Bool { !streaming && needsReader(parts.body) }
+
+    private var speaking: Bool { Speaker.shared.speakingId == id && !id.isEmpty }
 
     public var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
@@ -64,10 +90,30 @@ public struct MessageBubble: View {
             if !data.text.isEmpty || streaming {
                 bubble
             }
+            if speaking {
+                SpeakingChip().transition(.scale(scale: 0.9).combined(with: .opacity))
+            }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+        .animation(.easeOut(duration: 0.18), value: speaking)
         .contextMenu {
             Button("Copy", systemImage: "doc.on.doc") { copyToPasteboard(data.text) }
+            if let onReply {
+                Button("Reply", systemImage: "arrowshape.turn.up.left") { onReply(parts.body) }
+            }
+            if !isUser, !id.isEmpty {
+                // One utterance at a time, so this is a toggle rather than a second voice.
+                Button(speaking ? "Stop" : "Listen", systemImage: speaking ? "stop" : "speaker.wave.2") {
+                    if speaking {
+                        Speaker.shared.stop()
+                    } else {
+                        Speaker.shared.speak(parts.body, id: id)
+                    }
+                }
+            }
+            if truncated {
+                Button("Read full message", systemImage: "text.alignleft") { reading = true }
+            }
             if let onRetry {
                 Button("Retry", systemImage: "arrow.clockwise", action: onRetry)
             }
@@ -77,16 +123,24 @@ public struct MessageBubble: View {
                 Button("Remove from this device", systemImage: "trash", role: .destructive, action: onDelete)
             }
         }
+        .sheet(isPresented: $reading) {
+            MessageReaderView(text: parts.body, title: isUser ? "Message" : "Reply")
+        }
     }
 
     private var bubble: some View {
-        Group {
-            if isUser {
-                // Users type prose, not Markdown: rendering their own `*` back at them as
-                // italics would be the app editing what they said.
-                Text(data.text).textSelection(.enabled)
-            } else {
-                MarkdownText(data.text, cursor: streaming).textSelection(.enabled)
+        VStack(alignment: .leading, spacing: 8) {
+            if let quote = parts.quote {
+                QuoteStrip(text: quote)
+            }
+            text
+            if truncated {
+                Button("Read more") { reading = true }
+                    .font(.footnote.weight(.medium))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
+                    .frame(minHeight: 28)
+                    .accessibilityHint("Opens the whole message")
             }
         }
         .padding(.horizontal, 12)
@@ -98,6 +152,37 @@ public struct MessageBubble: View {
         // A bubble stops short of the far edge, so which side it is on stays readable as
         // who said it even when the message is long.
         .frame(maxWidth: 560, alignment: isUser ? .trailing : .leading)
+    }
+
+    @ViewBuilder private var text: some View {
+        let body = truncated ? readerExcerpt(parts.body) : parts.body
+        if isUser {
+            // Users type prose, not Markdown: rendering their own `*` back at them as
+            // italics would be the app editing what they said. The one thing applied is
+            // the search highlight, which is the app answering a question they asked.
+            Text(AttributedString(body).highlighting(highlight)).textSelection(.enabled)
+        } else {
+            MarkdownText(body, cursor: streaming).textSelection(.enabled)
+        }
+    }
+}
+
+/// The message being replied to, above the reply: a rule down the side and the text quieted,
+/// which is what a blockquote has looked like since email.
+struct QuoteStrip: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Capsule().fill(.tint.opacity(0.5)).frame(width: 3)
+            Text(text)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityLabel("In reply to: \(text)")
     }
 }
 
