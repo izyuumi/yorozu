@@ -229,7 +229,7 @@ public struct ToolResultData: Codable, Equatable, Sendable {
     }
 }
 
-/// Pending external action awaiting a Yes / No / Never / Discuss answer.
+/// Pending external action awaiting a Yes / Yes-and-never-ask / No / Discuss answer.
 public struct ApprovalCardData: Codable, Equatable, Sendable {
     public var actionId: String
     /// e.g. "send-message", "purchase", "delete-file".
@@ -245,8 +245,9 @@ public struct ApprovalCardData: Codable, Equatable, Sendable {
 }
 
 public struct ApprovalAnswerData: Codable, Equatable, Sendable {
-    /// Declaration order is the order the card shows the four buttons in.
-    public enum Answer: String, Codable, Sendable, CaseIterable { case yes, no, never, discuss }
+    /// Declaration order is the order the card shows the four buttons in. `always` allows the
+    /// action and writes a rule, so the class is not asked about again — it is not a refusal.
+    public enum Answer: String, Codable, Sendable, CaseIterable { case yes, always, no, discuss }
     public var actionId: String
     public var answer: Answer
     public init(actionId: String, answer: Answer) {

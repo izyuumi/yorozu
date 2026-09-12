@@ -132,25 +132,39 @@ const mailer: Tool = {
   run: () => "sent",
 };
 
-test("never writes a class rule, and the next action of that class is denied without asking", async () => {
-  const ask = vi.fn(async (): Promise<AskResult> => ({ answer: "never" }));
+test("always allows the action, writes a class rule, and the next one runs without asking", async () => {
+  const ask = vi.fn(async (): Promise<AskResult> => ({ answer: "always" }));
 
-  expect(await checkApproval(mailer, { to: "bob" }, ask, undefined, dir)).toMatch(/not allowed/);
+  // Null is the gate letting the tool run: always is a yes, not a refusal.
+  expect(await checkApproval(mailer, { to: "bob" }, ask, undefined, dir)).toBeNull();
   // A different recipient, same class: the promise not to ask again has to hold.
-  expect(await checkApproval(mailer, { to: "carol" }, ask, undefined, dir)).toMatch(/not allowed/);
+  expect(await checkApproval(mailer, { to: "carol" }, ask, undefined, dir)).toBeNull();
 
   expect(ask).toHaveBeenCalledTimes(1);
-  expect(loadSettings(dir).rules).toEqual([{ actionClass: "send-message", decision: "never" }]);
-  expect(readLog(dir).map((row) => row.decision)).toEqual(["never"]);
+  expect(loadSettings(dir).rules).toEqual([{ actionClass: "send-message", decision: "always" }]);
+  expect(readLog(dir).map((row) => row.decision)).toEqual(["always"]);
 });
 
-test("a target the user named narrows the never rule to it", async () => {
-  await checkApproval(mailer, { to: "bob" }, async () => ({ answer: "never", target: "bob" }), undefined, dir);
+test("a target the user named narrows the always rule to it", async () => {
+  expect(
+    await checkApproval(mailer, { to: "bob" }, async () => ({ answer: "always", target: "bob" }), undefined, dir),
+  ).toBeNull();
 
   expect(loadSettings(dir).rules).toEqual([
-    { actionClass: "send-message", target: "bob", decision: "never" },
+    { actionClass: "send-message", target: "bob", decision: "always" },
   ]);
   expect(decideFromDisk({ actionClass: "send-message", target: "carol" }, dir)).toBe("ask");
+});
+
+test("no refuses this one action only: nothing is written, and the next one asks again", async () => {
+  const ask = vi.fn(async (): Promise<AskResult> => ({ answer: "no" }));
+
+  expect(await checkApproval(mailer, { to: "bob" }, ask, undefined, dir)).toMatch(/not allowed/);
+  expect(await checkApproval(mailer, { to: "bob" }, ask, undefined, dir)).toMatch(/not allowed/);
+
+  expect(ask).toHaveBeenCalledTimes(2);
+  expect(loadSettings(dir).rules).toEqual([]);
+  expect(readLog(dir).map((row) => row.decision)).toEqual(["no", "no"]);
 });
 
 test("discuss settles nothing: no rule, no log row, and the action stays pending", async () => {
@@ -173,9 +187,9 @@ test("three yeses stop the asking", async () => {
   expect(ask).toHaveBeenCalledTimes(3);
 });
 
-test("the floor asks again even once a never rule is on disk", async () => {
+test("the floor asks again even once an always rule is on disk", async () => {
   saveSettings(
-    { moneyThreshold: 10, confirmIrreversibleDeletes: true, rules: [{ actionClass: "purchase", decision: "never" }] },
+    { moneyThreshold: 10, confirmIrreversibleDeletes: true, rules: [{ actionClass: "purchase", decision: "always" }] },
     dir,
   );
   const shop: Tool = {
