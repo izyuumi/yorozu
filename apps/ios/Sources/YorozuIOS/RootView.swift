@@ -71,7 +71,8 @@ final class Session {
             self.model = model
             // Land on the thread list; Yumi prefers choosing over being dropped into the latest.
             // The screenshot harness is the one exception: it opens the thread it seeded.
-            openPath = launchArgument("yorozuShowcase") != nil ? model.threads.map(\.id).prefix(1).map { $0 } : []
+            let showcase = launchArgument("yorozuShowcase") != nil || launchArgument("yorozuScene") != nil
+            openPath = showcase ? model.threads.map(\.id).prefix(1).map { $0 } : []
         } catch {
             failure = error.localizedDescription
         }

@@ -43,6 +43,8 @@
   <string>Yorozu takes a picture only when you ask it to.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Yorozu listens only when you ask it to.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Yorozu turns what you dictate into the message you send.</string>
   <key>NSDesktopFolderUsageDescription</key>
   <string>Yorozu reads and writes files on your Desktop when you ask it to.</string>
   <key>NSDocumentsFolderUsageDescription</key>
