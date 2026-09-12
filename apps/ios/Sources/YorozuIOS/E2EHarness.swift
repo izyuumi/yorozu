@@ -2,18 +2,6 @@ import Foundation
 import UIKit
 import YorozuShared
 
-/// Simulators have no camera, so the end-to-end harness injects the QR payload (and a first
-/// message) as `-name value` launch arguments. Read straight from `ProcessInfo`: the
-/// `UserDefaults` argument domain tries to property-list-parse the value first, and a pairing
-/// string is not a plist.
-func launchArgument(_ name: String) -> String? {
-    let arguments = ProcessInfo.processInfo.arguments
-    guard let index = arguments.firstIndex(of: "-\(name)"), index + 1 < arguments.count else {
-        return nil
-    }
-    return arguments[index + 1]
-}
-
 /// A stand-in favicon for the showcase, drawn rather than bundled: a screenshot should not
 /// need a real site's icon, and the app should not ship one.
 @MainActor

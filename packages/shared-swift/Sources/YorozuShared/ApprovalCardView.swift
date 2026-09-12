@@ -44,6 +44,10 @@ public struct ApprovalCardView: View {
             }
         }
         .padding(16)
+        // Capped where a bubble is capped, and for the same reason: stretched across a wide
+        // Mac window the buttons end up the width of the screen and the card stops reading as
+        // a prompt. On a phone the cap is wider than the screen and changes nothing.
+        .frame(maxWidth: 560, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(cardBackground, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.separator))
@@ -106,7 +110,7 @@ public struct ApprovalCardView: View {
                 .font(.subheadline)
                 .buttonStyle(.plain)
                 .foregroundStyle(.tint)
-                .frame(minHeight: 44)
+                .frame(minHeight: controlTarget)
                 .accessibilityHint("Ask Yorozu to explain before deciding")
             Text(alwaysNote)
                 .font(.caption)
@@ -122,7 +126,7 @@ public struct ApprovalCardView: View {
         } label: {
             Text(title)
                 .font(.body.weight(prominent ? .semibold : .regular))
-                .frame(maxWidth: .infinity, minHeight: 44)
+                .frame(maxWidth: .infinity, minHeight: controlTarget)
         }
         .buttonStyle(.borderedProminent)
         .tint(prominent ? Color.accentColor : quietButtonTint)

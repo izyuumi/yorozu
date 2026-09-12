@@ -95,27 +95,41 @@ public struct ChatView: View {
         .navigationTitle(thread.displayTitle)
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+        #else
+            // A thread on a model of its own says so beside its title. Only then — the default
+            // is the case that needs no caption. The Mac has a title bar subtitle for exactly
+            // this; the phone's stacked `.principal` item is squeezed between the title it
+            // repeats and the buttons next to it when a window toolbar draws it.
+            .navigationSubtitle(modelCaption ?? "")
         #endif
         .toolbar {
-            // A thread on a model of its own says so under its title. Only then: the default is
-            // the case that needs no caption, and a line saying so on every thread is noise.
-            if let caption = modelCaption {
-                ToolbarItem(placement: .principal) {
-                    VStack(spacing: 0) {
-                        Text(thread.displayTitle)
-                            .font(.headline)
-                            .lineLimit(1)
-                        Text(caption)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+            #if os(iOS)
+                // A thread on a model of its own says so under its title, since a phone's
+                // navigation bar has nowhere else to put a caption.
+                if let caption = modelCaption {
+                    ToolbarItem(placement: .principal) {
+                        VStack(spacing: 0) {
+                            Text(thread.displayTitle)
+                                .font(.headline)
+                                .lineLimit(1)
+                            Text(caption)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        .accessibilityElement(children: .combine)
                     }
-                    .accessibilityElement(children: .combine)
                 }
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
-            }
+            #endif
+            // iOS only: there the search field is hidden until something asks for it, and this
+            // is the thing that asks. The Mac's toolbar shows the field itself, so a magnifier
+            // beside it would be a second control for the one already on screen — ⌘F focuses
+            // it instead, through the Edit menu. See ``ChatCommands``.
+            #if os(iOS)
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
+                }
+            #endif
             ToolbarItem(placement: .primaryAction) {
                 Menu("More", systemImage: "ellipsis") {
                     ExportThreadButton(title: thread.displayTitle) {
@@ -138,12 +152,44 @@ public struct ChatView: View {
         // would be one more bar under the composer, which already owns the bottom of a chat.
         .threadSearch(text: $search, presented: $searching)
         // A reply being read aloud follows the thread it is in: walking away stops it, which is
-        // the same thing every other app that talks does.
-        .onDisappear {
+        // the same thing every other app that talks does. Leaving a thread is the trigger on
+        // both platforms; the view going away is only the phone's, where it means the chat was
+        // popped off the stack. On the Mac the chat is a pane in a window that SwiftUI tears
+        // down and builds again for reasons of its own, and stopping on that cut a reply off
+        // mid-sentence and ended dictation mid-word, with nothing on screen having changed.
+        // Closing the window is handled where the window is — see ``ChatWindowView``.
+        .onChange(of: thread.id) { _, _ in
             Speaker.shared.stop()
             dictation.stop()
         }
-        .task { ChatShowcase.apply(dictation: dictation, search: $search, searching: $searching, quote: $replyQuote) }
+        #if os(iOS)
+            .onDisappear {
+                Speaker.shared.stop()
+                dictation.stop()
+            }
+        #endif
+        // Keyed on the thread: the Mac's split view builds its detail more than once while the
+        // window and the thread list settle, and a plain `.task` left the seeded state on
+        // whichever copy ran first rather than on the one on screen.
+        .task(id: thread.id) {
+            ChatShowcase.apply(dictation: dictation, search: $search, searching: $searching, quote: $replyQuote)
+        }
+        // What the Mac's Edit, Thread and Chat menus act on. The same four things the toolbar
+        // and the composer offer, published where a menu built by the scene can reach them.
+        #if os(macOS)
+            .focusedSceneValue(
+                \.chatCommands,
+                ChatCommands(
+                    find: { searching = true },
+                    exportTitle: thread.displayTitle,
+                    exportMarkdown: { threadMarkdown(thread: thread, events: events) },
+                    stop: generating ? { model.interrupt(in: thread.id) } : nil,
+                    models: model.models,
+                    model: thread.model,
+                    setModel: { model.setModel(thread, $0) }
+                )
+            )
+        #endif
         // Sending, and the first token of the answer: the two moments the thread changes hands.
         .sensoryFeedback(.impact(weight: .light), trigger: sends)
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: replyStarted) { _, id in
@@ -157,7 +203,11 @@ public struct ChatView: View {
         .alert("Dictation needs permission", isPresented: $dictation.denied) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Allow microphone access and speech recognition in Settings to dictate.")
+            #if os(macOS)
+                Text("Allow microphone access and speech recognition in System Settings to dictate.")
+            #else
+                Text("Allow microphone access and speech recognition in Settings to dictate.")
+            #endif
         }
     }
 
@@ -336,17 +386,28 @@ public struct ChatView: View {
                     .textFieldStyle(.plain)
                     .font(.body)
                     .lineLimit(1...6)
-                    .padding(.vertical, 11)
-                    .frame(minHeight: 44)
-                    // Hardware keyboards only, which is the whole point: on a paired iPad or a
-                    // Mac, Return sends and Shift-Return keeps typing. The on-screen keyboard
-                    // never gets here, so its Return still inserts a newline.
+                    .padding(.vertical, composerPadding)
+                    .frame(minHeight: controlTarget)
+                    // Hardware keyboards only, which is the whole point: on a paired iPad,
+                    // Return sends and Shift-Return keeps typing. The on-screen keyboard never
+                    // gets here, so its Return still inserts a newline. The Mac takes the same
+                    // pair as key equivalents on the send and stop buttons instead — see
+                    // ``View/macKey(_:)``, which explains why this modifier is not enough there.
                     .onKeyPress(.return, phases: .down) { press in
                         guard !press.modifiers.contains(.shift) else { return .ignored }
                         send()
                         return .handled
                     }
                     .accessibilityLabel("Message")
+                    // Shift-Return, on the Mac. AppKit's field editor ends editing on Return
+                    // whatever else is held down, and it is Shift-Return that gets there: plain
+                    // Return is taken first by the send button's key equivalent, which is why
+                    // `onSubmit` here means "Shift-Return" and not "Return". Ending editing also
+                    // selects the whole field, so without this the next keystroke would replace
+                    // the message rather than continue it.
+                    #if os(macOS)
+                        .onSubmit { draft.wrappedValue += "\n" }
+                    #endif
                     // While listening, the level takes the placeholder's place: the field is
                     // already saying "type here", and what it needs to say now is "I can hear
                     // you". Gone the moment there are words to show instead.
@@ -362,7 +423,7 @@ public struct ChatView: View {
                 }
                 sendOrStop
                     .padding(.trailing, 6)
-                    .frame(height: 44)
+                    .frame(height: controlTarget)
             }
         }
         .background(fieldBackground, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -399,11 +460,14 @@ public struct ChatView: View {
             } label: {
                 Image(systemName: "stop.fill")
                     .font(.footnote.weight(.bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 32, height: 32)
+                    // `.background` against `Color.primary`, not white against it: primary is
+                    // white in the dark, and a white glyph on it was an empty circle.
+                    .foregroundStyle(.background)
+                    .frame(width: sendCircle, height: sendCircle)
                     .background(Color.primary, in: Circle())
             }
             .buttonStyle(.plain)
+            .macKey(.escape)
             .accessibilityLabel("Stop")
             .transition(.scale(scale: 0.8).combined(with: .opacity))
         } else {
@@ -413,12 +477,13 @@ public struct ChatView: View {
                 Image(systemName: "arrow.up")
                     .font(.body.weight(.bold))
                     .foregroundStyle(canSend ? Color.white : Color.secondary)
-                    .frame(width: 32, height: 32)
+                    .frame(width: sendCircle, height: sendCircle)
                     .background(canSend ? Color.accentColor : Color.clear, in: Circle())
                     .overlay(Circle().strokeBorder(.separator, lineWidth: canSend ? 0 : 1.5))
             }
             .buttonStyle(.plain)
             .disabled(!canSend)
+            .macKey(.return)
             .accessibilityLabel("Send")
             .animation(.easeOut(duration: 0.15), value: canSend)
             .transition(.scale(scale: 0.8).combined(with: .opacity))
@@ -457,6 +522,36 @@ public struct ChatView: View {
     private func noteReplyStart() {
         guard let streamingId else { return }
         if replyStarted != streamingId { replyStarted = streamingId }
+    }
+}
+
+/// The send and stop circle, inside the ``controlTarget``-tall row the composer's controls
+/// share. Smaller than the row on both platforms, so the accent fill reads as a button rather
+/// than as a block — and not derived from ``controlTarget``, because a glyph in a circle stops
+/// being legible below about twenty points however small the row around it is.
+#if os(macOS)
+    private let sendCircle: CGFloat = 24
+#else
+    private let sendCircle: CGFloat = 32
+#endif
+
+extension View {
+    /// A key equivalent, on the Mac only.
+    ///
+    /// The composer's own `onKeyPress` never sees Return there: a `TextField` is an
+    /// `NSTextField` underneath and handles its keys in AppKit, below the pipeline SwiftUI
+    /// delivers key presses through. A key equivalent on the button is consulted first, by
+    /// AppKit, so this is the one place the keystroke can be caught — and one with no
+    /// modifiers leaves Shift-Return to the field, where it still inserts a newline.
+    ///
+    /// On iOS it is the `onKeyPress` modifier that works and a key equivalent that would
+    /// double up, so there this does nothing.
+    @ViewBuilder fileprivate func macKey(_ key: KeyEquivalent) -> some View {
+        #if os(macOS)
+            keyboardShortcut(key, modifiers: [])
+        #else
+            self
+        #endif
     }
 }
 
@@ -523,7 +618,7 @@ private struct ReplyChip: View {
                 Image(systemName: "xmark")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 44, height: 44)
+                    .frame(width: controlTarget, height: controlTarget)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Remove quote")
@@ -555,7 +650,9 @@ private struct SearchHitBar: View {
 
     private func arrow(_ symbol: String, _ label: String, _ direction: Int) -> some View {
         Button { step(direction) } label: {
-            Image(systemName: symbol).font(.footnote.weight(.semibold)).frame(width: 44, height: 44)
+            Image(systemName: symbol)
+                .font(.footnote.weight(.semibold))
+                .frame(width: controlTarget, height: controlTarget)
         }
         .buttonStyle(.plain)
         .disabled(total == 0)
@@ -604,17 +701,18 @@ private struct EmptyThreadView: View {
         "Find the invoice I saved last week",
     ]
 
+    /// The prompts go in the `actions` slot rather than in a stack under the view, which is
+    /// what centres the whole group as one thing. They used to be a sibling, with the
+    /// `ContentUnavailableView` pinned by `fixedSize` so it would stop taking the whole thread
+    /// and pushing them onto the composer — and on the Mac that asked it for its ideal height,
+    /// which is unbounded: the chat came out nineteen hundred points tall inside a five
+    /// hundred point window, with the composer and everything under it clipped away.
     var body: some View {
-        VStack(spacing: 20) {
-            Spacer(minLength: 0)
-            ContentUnavailableView {
-                Label("Start a conversation", systemImage: "bubble.left.and.bubble.right")
-            } description: {
-                Text("Ask your Mac to look something up, keep track of it, or do it for you.")
-            }
-            // Left to itself it takes the whole thread and pushes the prompts onto the
-            // composer; sized to its content, the two centre together as one group.
-            .fixedSize(horizontal: false, vertical: true)
+        ContentUnavailableView {
+            Label("Start a conversation", systemImage: "bubble.left.and.bubble.right")
+        } description: {
+            Text("Ask your Mac to look something up, keep track of it, or do it for you.")
+        } actions: {
             VStack(spacing: 8) {
                 ForEach(Self.examples, id: \.self) { example in
                     Button { onPrompt(example) } label: {
@@ -634,7 +732,6 @@ private struct EmptyThreadView: View {
                 }
             }
             .frame(maxWidth: 420)
-            Spacer(minLength: 0)
         }
         .padding()
     }

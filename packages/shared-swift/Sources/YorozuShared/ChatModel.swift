@@ -490,6 +490,42 @@ public final class ChatModel {
         }
     }
 
+    /// Test-only: a turn that used tools — one that worked, one that printed a diff, and one
+    /// that failed — so the grouped tool rows and their expanded output can be screenshotted
+    /// without a provider that actually calls anything.
+    public func previewTools(in threadId: String) {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        upsert(YorozuEvent(id: "showcase-tools-ask", threadId: threadId, ts: now, agentId: device,
+            payload: .message(MessageData(role: .user, text: "Tidy up the invoice script and run it"))))
+        let calls: [(String, String, [String: JSONValue], Bool, String)] = [
+            (
+                "t1", "read_file", ["path": .string("scripts/invoices.py")], true,
+                "import csv\nfrom pathlib import Path\n\nROWS = Path(\"invoices.csv\")\n"
+            ),
+            (
+                "t2", "edit_file", ["path": .string("scripts/invoices.py")], true,
+                "--- a/scripts/invoices.py\n+++ b/scripts/invoices.py\n@@ -1,4 +1,5 @@\n import csv\n+import sys\n from pathlib import Path\n-ROWS = Path(\"invoices.csv\")\n+ROWS = Path(sys.argv[1])\n"
+            ),
+            (
+                "t3", "run_command", ["command": .string("python scripts/invoices.py")], false,
+                "Traceback (most recent call last):\n  File \"scripts/invoices.py\", line 5\nIndexError: list index out of range\n"
+            ),
+        ]
+        for (offset, call) in calls.enumerated() {
+            let (id, name, args, ok, output) = call
+            upsert(YorozuEvent(id: "showcase-call-\(id)", threadId: threadId, ts: now + offset * 2 + 1,
+                agentId: "main", payload: .toolCall(ToolCallData(callId: id, name: name, args: args))))
+            upsert(YorozuEvent(id: "showcase-result-\(id)", threadId: threadId, ts: now + offset * 2 + 2,
+                agentId: "main", payload: .toolResult(ToolResultData(callId: id, ok: ok, output: output))))
+        }
+        upsert(YorozuEvent(id: "showcase-tools-reply", threadId: threadId, ts: now + 20, agentId: "main",
+            payload: .message(MessageData(
+                role: .agent,
+                text: "The script now takes the CSV as an argument, but it needs one — running it bare is what raised the `IndexError`. Pass the file and it goes through.",
+                done: true
+            ))))
+    }
+
     /// Test-only: a reply with a bare link in it, for the preview row.
     public func previewLink(in threadId: String) {
         upsert(

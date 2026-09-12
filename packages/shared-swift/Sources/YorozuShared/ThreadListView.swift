@@ -462,46 +462,134 @@ public struct ThreadListView<Destination: View>: View {
 }
 
 /// The Mac's thread list: the sidebar half of a split view, so picking a thread selects it
-/// rather than pushing it. Same rows and same ordering, and rename and archive from the row's
-/// context menu because there is nothing to swipe with a mouse.
+/// rather than pushing it. Same rows, same ordering and the same dated headings the phone
+/// draws — pinned first, then a section per stretch of time, with the archive folded away at
+/// the bottom — because a list that groups itself one way on the phone and another way on the
+/// Mac is two lists to learn.
+///
+/// The row actions are all in the context menu rather than behind a swipe: there is nothing to
+/// swipe with a pointer. Search is the sidebar's own field, over titles and over what each
+/// thread's cached messages say, exactly as on the phone.
 public struct ThreadSidebar: View {
     private let threads: [ThreadSummary]
+    private let unread: Set<String>
     @Binding private var selection: String?
     private let onCreate: () -> Void
     private let onRename: (ThreadSummary, String) -> Void
-    private let onArchive: (ThreadSummary) -> Void
+    private let onArchive: (ThreadSummary, Bool) -> Void
+    private let onPin: (ThreadSummary, Bool) -> Void
+    private let messageText: (String) -> String
+    private let exportMarkdown: ((ThreadSummary) -> String)?
 
     @State private var renaming: ThreadSummary?
+    @State private var query = ""
+    /// The archive opens closed: it is where threads go to stop being in the way.
+    @State private var showArchived = false
 
     public init(
         threads: [ThreadSummary],
+        unread: Set<String> = [],
         selection: Binding<String?>,
         onCreate: @escaping () -> Void,
         onRename: @escaping (ThreadSummary, String) -> Void,
-        onArchive: @escaping (ThreadSummary) -> Void
+        onArchive: @escaping (ThreadSummary, Bool) -> Void,
+        onPin: @escaping (ThreadSummary, Bool) -> Void = { _, _ in },
+        messageText: @escaping (String) -> String = { _ in "" },
+        exportMarkdown: ((ThreadSummary) -> String)? = nil
     ) {
         self.threads = threads
+        self.unread = unread
         self._selection = selection
         self.onCreate = onCreate
         self.onRename = onRename
         self.onArchive = onArchive
+        self.onPin = onPin
+        self.messageText = messageText
+        self.exportMarkdown = exportMarkdown
+    }
+
+    private var groups: ThreadGroups {
+        ThreadGroups(threads.filter { threadMatches($0, query: query, body: messageText($0.id)) })
     }
 
     public var body: some View {
+        let groups = groups
         List(selection: $selection) {
-            ForEach(visibleThreads(threads)) { thread in
-                ThreadRow(thread: thread)
-                    .tag(thread.id)
-                    .contextMenu {
-                        Button("Rename", systemImage: "pencil") { renaming = thread }
-                        Button("Archive", systemImage: "archivebox") { onArchive(thread) }
-                    }
+            if !groups.pinned.isEmpty {
+                Section("Pinned") { rows(groups.pinned) }
+            }
+            ForEach(groups.sections) { section in
+                Section(section.title) { rows(section.threads) }
+            }
+            if !groups.archived.isEmpty {
+                Section { archive(groups.archived) }
             }
         }
+        .animation(.default, value: threads)
+        .overlay { empty(groups) }
+        // In the sidebar itself rather than in the toolbar: the chat next to it has a search
+        // field of its own, and two searchable views in one window fight over the toolbar.
+        .searchable(text: $query, placement: .sidebar, prompt: "Search threads")
         .navigationTitle("Threads")
         .toolbar {
             Button("New thread", systemImage: "plus", action: onCreate)
         }
         .renameAlert($renaming, onRename: onRename)
+        // What the Mac's File menu acts on. Published from here because a new thread is the
+        // list's business and outlives whichever one is open — see ``ThreadCommands``.
+        #if os(macOS)
+            .focusedSceneValue(\.threadCommands, ThreadCommands(newThread: onCreate))
+        #endif
+    }
+
+    private func archive(_ threads: [ThreadSummary]) -> some View {
+        DisclosureGroup(isExpanded: $showArchived) {
+            rows(threads)
+        } label: {
+            Label("Archived (\(threads.count))", systemImage: "archivebox").font(.subheadline)
+        }
+    }
+
+    @ViewBuilder private func rows(_ threads: [ThreadSummary]) -> some View {
+        ForEach(threads) { thread in
+            ThreadRow(thread: thread, unread: unread.contains(thread.id))
+                .tag(thread.id)
+                .contextMenu { menu(thread) }
+        }
+    }
+
+    /// The same actions the phone offers, and in the same order: the phone has them split
+    /// between two swipes and a long press, and the Mac has one menu to put them all in.
+    @ViewBuilder private func menu(_ thread: ThreadSummary) -> some View {
+        Button("Rename", systemImage: "pencil") { renaming = thread }
+        if !thread.archived {
+            Button(
+                thread.pinned ? "Unpin" : "Pin",
+                systemImage: thread.pinned ? "pin.slash" : "pin"
+            ) { onPin(thread, !thread.pinned) }
+        }
+        Button(
+            thread.archived ? "Unarchive" : "Archive",
+            systemImage: thread.archived ? "tray.and.arrow.up" : "archivebox"
+        ) { onArchive(thread, !thread.archived) }
+        // Built here rather than up front: rendering a whole thread as Markdown is work, and
+        // a menu that is never opened should not have done it.
+        if let exportMarkdown {
+            ExportThreadButton(title: thread.displayTitle) { exportMarkdown(thread) }
+        }
+    }
+
+    @ViewBuilder private func empty(_ groups: ThreadGroups) -> some View {
+        if groups.isEmpty {
+            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ContentUnavailableView(
+                    "No threads yet",
+                    systemImage: "bubble.left.and.bubble.right",
+                    description: Text("Start one and it will be here, on this Mac and on your phone.")
+                )
+            } else {
+                ContentUnavailableView.search(text: query)
+            }
+        }
     }
 }

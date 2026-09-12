@@ -108,8 +108,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NeverSleep.shared.restoreFromDefaults()
             Sidecar.shared.start()
             // Connects to the sidecar's local socket once it is listening. Not tied to the
-            // window: the chat has to keep up while the menu bar window is closed.
+            // window: the chat has to keep up while the chat window is closed.
             LocalChat.start()
+            // Test harness only, and inert without a `-yorozuShowcase` argument. After
+            // `LocalChat.start`, whose thread hook it chains onto.
+            Showcase.attach(to: LocalChat.model)
             OnboardingWindow.showIfFirstLaunch()
         }
     }
@@ -127,14 +130,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct YorozuMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var sidecar = Sidecar.shared
+    @Environment(\.openWindow) private var openWindow
+
+    /// The chat window's id, so the status item can ask for it by name.
+    static let chatWindow = "chat"
 
     var body: some Scene {
-        MenuBarExtra {
+        // The chat is a real window. It used to be the menu bar item's own popover, which cost
+        // it a toolbar, a resizable frame, working sheets and share pickers, and any menu bar
+        // at all to hang ⌘N, ⌘F and Stop off — see ``ChatWindowView``.
+        Window("Yorozu", id: Self.chatWindow) {
             ChatWindowView()
+                .onAppear { WindowPresence.opened() }
+                .onDisappear {
+                    WindowPresence.closed()
+                    // Shutting the chat stops it talking. The chat view cannot do this itself
+                    // on the Mac — see the note on `onChange(of:)` in ``ChatView``.
+                    Speaker.shared.stop()
+                }
+        }
+        .defaultSize(width: 860, height: 560)
+        .commands { ChatMenus() }
+
+        // The status item is now the way to that window rather than the place the chat lives.
+        // A menu rather than a panel, because everything in it is one click that goes somewhere.
+        MenuBarExtra {
+            Button("Open Yorozu") { openWindow(id: Self.chatWindow) }
+                .keyboardShortcut("o")
+            Divider()
+            SettingsLink { Text("Settings…") }
+            CheckForUpdatesButton()
+            Divider()
+            // Not a control: the sidecar's own word for where the relay stands, which is the
+            // one thing worth knowing without opening anything.
+            Text(sidecar.state).disabled(true)
+            Divider()
+            Button("Quit Yorozu") { NSApp.terminate(nil) }
         } label: {
             Image(systemName: sidecar.isPaired ? "circle.fill" : "circle.dotted")
         }
-        .menuBarExtraStyle(.window)
 
         Settings { SettingsView(sidecar: sidecar) }
     }
