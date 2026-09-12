@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import YorozuKeepalive
 import YorozuPermissions
 
 /// Whether one grant is in place. The onboarding wizard and the Permissions tab draw the same
@@ -37,7 +38,13 @@ struct PermissionStatusRow: View {
             HStack {
                 Text(permission.title)
                 Spacer()
-                if permission == .neverSleep {
+                if permission == .startAtLogin {
+                    Toggle("Start Yorozu at login", isOn: Binding(
+                        get: { granted },
+                        set: { LoginItem.set($0) }
+                    ))
+                    .labelsHidden()
+                } else if permission == .neverSleep {
                     Toggle("Keep this Mac awake", isOn: Binding(
                         get: { neverSleep.isRunning },
                         set: { $0 ? neverSleep.start() : neverSleep.stop() }

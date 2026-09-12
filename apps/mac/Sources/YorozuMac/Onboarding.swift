@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import YorozuKeepalive
 import YorozuPermissions
 
 /// One `Permission` per page, in `Permission.allCases` order.
@@ -33,6 +34,17 @@ struct OnboardingView: View {
                 .foregroundStyle(.secondary)
             if step == .approvals {
                 ApprovalFloorView()
+            } else if step == .startAtLogin {
+                // Already turned on by the time this is drawn — see `.task` below. The toggle
+                // is here to say so, and to let the one user in a hundred who does not want it
+                // say no without hunting through System Settings.
+                Toggle("Start Yorozu at login", isOn: Binding(
+                    get: { granted },
+                    set: { LoginItem.set($0) }
+                ))
+                Text(LoginItem.statusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             } else if step == .neverSleep {
                 Toggle("Keep this Mac awake", isOn: neverSleepBinding)
             } else {
@@ -40,7 +52,7 @@ struct OnboardingView: View {
             }
             Spacer()
             HStack {
-                if step != .approvals && step != .neverSleep {
+                if !step.isAppSetting {
                     Button(step.canPrompt ? "Ask Again" : "Open System Settings") {
                         Task { await ask() }
                     }
@@ -66,7 +78,17 @@ struct OnboardingView: View {
             granted = await step.isGranted()
             // Asking for something already granted would be a prompt the user has to dismiss
             // for no reason, and for Automation a round of app launches for no reason.
-            if !granted { await ask() }
+            if !granted {
+                // The one step that is on by default: a Mac bought to answer a phone should
+                // not need this wizard run again after the first power cut. macOS shows no
+                // prompt for it, so turning it on here costs the user nothing to undo.
+                if step == .startAtLogin {
+                    LoginItem.set(true)
+                    granted = await step.isGranted()
+                } else {
+                    await ask()
+                }
+            }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 granted = await step.isGranted()

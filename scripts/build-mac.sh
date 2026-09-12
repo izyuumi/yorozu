@@ -21,6 +21,10 @@ VERSION=${VERSION:-0.1.0}
 BUILD=${BUILD:-$(git rev-list --count HEAD)}
 DIST=${DIST:-dist}
 IDENTITY=${IDENTITY:-"Developer ID Application: Yumi Izumi (AN5KM8QGEF)"}
+# Overridable so a test install can be built with an id of its own. Two bundles sharing one
+# id confuse LaunchServices about which of them `open -a` means, and the watchdog names its
+# LaunchAgent and its pause file after this — see apps/mac Keepalive.swift.
+BUNDLE_ID=${BUNDLE_ID:-to.yumi.yorozu}
 NOTARY_PROFILE=${NOTARY_PROFILE:-yorozu-notary}
 FEED_URL=${FEED_URL:-https://dl.yumi.to/appcast.xml}
 # The public half of the EdDSA key `generate_keys` put in the login keychain; the private
@@ -50,6 +54,10 @@ cp -R "$BIN/Sparkle.framework" "$APP/Contents/Frameworks/"
 # for iOS, but this bundle is assembled by hand and has no catalog, so it takes the .icns
 # that scripts/icon-render.sh renders from the same artwork.
 cp apps/mac/Resources/Yorozu.icns "$APP/Contents/Resources/Yorozu.icns"
+# The watchdog, which is a resource rather than an executable on purpose: it has to be
+# runnable by launchd when the app it supervises is not running at all.
+cp apps/mac/Resources/watchdog.sh "$APP/Contents/Resources/watchdog.sh"
+chmod +x "$APP/Contents/Resources/watchdog.sh"
 # SwiftPM links Sparkle as @rpath but only gives the binary @loader_path, which in a bundle
 # is Contents/MacOS. Point it at Contents/Frameworks, where the framework actually is, or
 # the app dies at launch with "Library not loaded". Before signing: this rewrites the binary.
@@ -101,7 +109,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key><string>Yorozu</string>
-  <key>CFBundleIdentifier</key><string>to.yumi.yorozu</string>
+  <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleName</key><string>Yorozu</string>
   <key>CFBundleIconFile</key><string>Yorozu</string>
   <key>CFBundlePackageType</key><string>APPL</string>
