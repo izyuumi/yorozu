@@ -35,6 +35,16 @@ public struct ThreadCache: Sendable {
         write(unread, to: "unread")
     }
 
+    /// Messages typed while there was nowhere to send them, oldest first. Sealed like the rest:
+    /// a message waiting to go out is as much of a secret as one that went.
+    public func outbox() -> [OutboxItem] {
+        read([OutboxItem].self, from: "outbox") ?? []
+    }
+
+    public func save(outbox: [OutboxItem]) {
+        write(outbox, to: "outbox")
+    }
+
     public func events(threadId: String) -> [YorozuEvent] {
         read([YorozuEvent].self, from: name(threadId)) ?? []
     }
