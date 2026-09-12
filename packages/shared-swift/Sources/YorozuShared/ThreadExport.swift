@@ -46,6 +46,9 @@ public func threadMarkdown(
         case .approval(let event):
             guard case .approvalCard(let card) = event.payload else { break }
             lines += ["", "> **Approval asked** — \(card.actionClass): \(card.target)"]
+        case .proposal(let event):
+            guard case .ruleProposal(let data) = event.payload else { break }
+            lines += ["", "> **Rule suggested** — \(data.rule.summary)"]
         case .question(let event):
             guard case .questionCard(let card) = event.payload else { break }
             lines += ["", "> **Question asked** — \(card.question)"]

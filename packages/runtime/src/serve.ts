@@ -31,7 +31,17 @@ import {
 } from "@yorozu/shared";
 import WebSocket from "ws";
 import { agentsDir, installAgents, loadAgent, MAIN_AGENT } from "./agents.js";
-import type { Action, AskResult } from "./approval.js";
+import {
+  cardFor,
+  deleteRule,
+  addRule,
+  listRules,
+  narrowestRule,
+  TaskGrants,
+  type Action,
+  type AskResult,
+  type Rule,
+} from "./approval.js";
 import { autoAssign, revertAssign, setAssignCron, type AssignMode } from "./assign.js";
 import { chainFromEnv, chainWithPrimary } from "./chain.js";
 import { delegateTool } from "./delegate.js";
@@ -110,7 +120,17 @@ export function typedAnswer(text: string, card: ApprovalCardData): AskResult | n
   const typed = text.trim().toLowerCase();
   if (/^(always|yes,? +always|yes,? +and +never +ask|never +ask +again|don'?t +ask +again)\b/.test(typed)) {
     const target = card.target.toLowerCase();
-    return { answer: "always", ...(target && typed.includes(target) ? { target: card.target } : {}) };
+    // Typed rather than tapped, so there is no editor and no edited rule: the card's own
+    // suggestion is the narrowest thing that covers what was just approved.
+    return {
+      answer: "always",
+      ...(card.suggestedRule ? { rule: card.suggestedRule } : {}),
+      ...(target && typed.includes(target) ? { target: card.target } : {}),
+    };
+  }
+  // The bounded grant, which only exists in prose as "for this task" and its neighbours.
+  if (/^(yes,? +)?(just )?(for|during) +(this|the) +(task|turn|one)\b/.test(typed)) {
+    return { answer: "task" };
   }
   if (/^(yes|y|ok|okay|sure)\b/.test(typed)) return { answer: "yes" };
   if (/^(no|n|nope|stop|never)\b/.test(typed)) return { answer: "no" };
@@ -340,12 +360,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
    */
   function ask(action: Action, context?: { threadId: string; agentId: string }): Promise<AskResult> {
     const actionId = randomUUID();
-    const card: ApprovalCardData = {
-      actionId,
-      actionClass: action.actionClass,
-      target: action.target,
-      ...(action.amount !== undefined ? { amount: action.amount } : {}),
-    };
+    const card = cardFor(actionId, action);
     return new Promise<AskResult>((resolve) => {
       const timer = setTimeout(() => {
         pending.delete(actionId);
@@ -370,6 +385,25 @@ export function serve(options: ServeOptions = {}): Sidecar {
       });
     });
   }
+
+  /**
+   * Repeated approvals, offered back as a rule. A card and nothing more: the rule is not
+   * stored, not active and not counted until the user saves it from the editor, which is
+   * what keeps an inferred scope from becoming authority on its own.
+   */
+  const proposeRule = (rule: Rule, approvals: number, context?: TurnContext): void =>
+    emit({
+      id: randomUUID(),
+      threadId: context?.threadId ?? currentThread(dir),
+      ts: Date.now(),
+      agentId: context?.agentId ?? MAIN_AGENT,
+      kind: "rule_proposal",
+      data: { proposalId: randomUUID(), rule, approvals },
+    });
+
+  /** Every stored rule, as the Rules screens list them. */
+  const ruleList = (): YorozuEvent =>
+    control({ kind: "rule_list", data: { rules: listRules(dir) } });
 
   /**
    * Questions the agent has put to the user. Raising one puts a card in front of every paired
@@ -534,6 +568,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
     let sent = "";
     try {
       // Built per turn: `delegate` carries this turn's abort signal down to its children.
+      // One per turn, shared with everything this turn delegates to, and dropped with the
+      // turn: that is exactly the life "Allow for this task" promises.
+      const grants = new TaskGrants();
       const tools = [
         ...defaultTools,
         // Both draw on the paired devices, so they only exist where there is somebody to draw
@@ -547,6 +584,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
           emit,
           turn: runTurn,
           ask,
+          grants,
+          onProposal: proposeRule,
           dir: agents,
           signal: turn.signal,
         }),
@@ -559,6 +598,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
         tools,
         context: { threadId, agentId: MAIN_AGENT },
         ask,
+        grants,
+        onProposal: proposeRule,
         signal: turn.signal,
       })) {
         if (event.type === "text") {
@@ -663,7 +704,23 @@ export function serve(options: ServeOptions = {}): Sidecar {
         questions.cancelAll();
         return;
       case "approval_answer":
-        pending.get(event.data.actionId)?.settle({ answer: event.data.answer });
+        pending.get(event.data.actionId)?.settle({
+          answer: event.data.answer,
+          ...(event.data.rule ? { rule: event.data.rule } : {}),
+        });
+        return;
+      // Rules are the user's own standing decisions, so saving and revoking are theirs to do
+      // from either device. Both answer everyone, so a second screen sees the same list.
+      case "rule_list":
+        return reply(ruleList());
+      case "rule_update":
+        addRule(event.data.rule, dir);
+        return broadcast(ruleList());
+      case "rule_delete":
+        deleteRule(event.data.ruleId, dir);
+        return broadcast(ruleList());
+      case "rule_proposal":
+        // Emitted by the runtime, never accepted from a device: a proposal is not a decision.
         return;
       case "question_answer":
         questions.answer(event.data.questionId, event.data.answer);

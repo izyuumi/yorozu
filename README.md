@@ -586,43 +586,95 @@ and `run.sh` waits for the phone to log `YOROZU-E2E-TOOL echo` beside the stream
 
 Every tool with an effect outside the runtime declares an `actionClass` — the spec's list:
 `send-message`, `purchase`, `delete-file`, `book`, `transfer-money`, `run-command`,
-`edit-file`. Today that is `shell` (`run-command`) and `fs_write` (`edit-file`); the browser
-tools stay undeclared until a later ticket decides which of their verbs actually reach the
-world. A tool with no `actionClass` only reads, and is never gated. Alongside it each tool
-carries a small extractor that turns the call's arguments into what the card names
-(`{ target, amount? }`), so `shell` cards say which command and `fs_write` cards say which file.
+`edit-file`. Today that is `shell` (`run-command`), `fs_write` (`edit-file`) and `mail_send`
+(`send-message`); the browser tools stay undeclared until a later ticket decides which of their
+verbs actually reach the world. A tool with no `actionClass` only reads, and is never gated.
+
+Alongside it each tool carries an extractor that turns the call's arguments into the
+**structured scope** of the action: the `target` and whichever of `operation`, `recipient`,
+`account`, `merchant`, `category`, `quantity`, `amount`, `contentSummary` and `consequence` it
+can honestly fill in. That is what the card shows and what a rule matches on, so a tool that
+fills in more is a tool the user can write a narrower rule about. The scope describes the
+payload being committed rather than the tool doing the committing — `consequence` is one line
+the tool declares about what happens afterwards, and `contentSummary` is the first 200
+characters of what would be sent.
+
+A tool may also declare a **batch**: `batch(args)` returns the exact items one decision covers,
+and the card lists them. The runtime keeps a hash of that list, so an item added or changed
+afterwards is not covered by the answer.
 
 The gate sits in the agent loop, before the tool runs, and returns one of three verdicts:
 
-1. **The floor**, set during onboarding and kept in `<state dir>/approval.json`: any action at
-   or above `moneyThreshold`, and any `delete-file` outside the state directory when
-   `confirmIrreversibleDeletes` is on. The floor always asks. An `always` rule cannot reach it —
-   that is the whole point of having one, so "stop asking me" can never end up spending money
-   or deleting files on its own.
-2. **The rules**, in the same file. A rule naming a target beats the class-level rule, because
-   it is the more specific promise. `always` allows; a hand-written `never` denies.
-3. **Precedent**, from `<state dir>/approvals.jsonl` — one append-only row per answer. Three
-   consistent yeses for a class and the agent stops asking about it. Mixed answers, fewer than
-   three, or none: ask.
+1. **The floor**, partly set during onboarding and kept in `<state dir>/approval.json`: any
+   action at or above `moneyThreshold`, any `delete-file` outside the state directory when
+   `confirmIrreversibleDeletes` is on, and — whatever is stored — every subscription, transfer,
+   securities trade and anything in the `crypto` category. The floor always asks. No rule and no
+   grant can reach it, which is the whole point of having one: "stop asking me" can never end up
+   spending money, moving it, or deleting files on its own.
+2. **The rules**, in the same file. A rule is global — it matches on the structured scope and
+   never on which agent is acting, so delegating work does not change what is authorized. Each
+   field it constrains carries a pattern (`exact`, `prefix` or `glob`, matched
+   case-insensitively) and it may carry a `maxAmount` cap; a field it leaves out is not checked
+   at all. Among the allows the most specific wins, but **a `never` wins over any allow it
+   overlaps with**, however much narrower that allow is — an overlap is exactly the ambiguity
+   worth resolving the safe way. A rule can be switched off (`enabled: false`) without being
+   lost, and the runtime keeps `lastUsed` and `useCount` on it so Settings can show what it is
+   actually doing.
+3. **Ask.** Nothing is inferred from history here. Repeated approvals produce a *proposal*, never
+   an automatic allow.
 
-Asking means the sidecar emits an `approval_card` to every paired device and parks the tool
-call until an `approval_answer` carrying that `actionId` comes back. Unanswered after ten
-minutes it resolves as a refusal rather than hanging the turn, and an interrupt settles any
-card still on screen. **Yes** runs the tool once, **No** refuses it once, and **Yes, and never
-ask again** runs it *and* writes a permanent `always` rule — class-level, narrowed to the target
-only when the user actually named one.
-**Discuss** decides nothing: it logs nothing, hands the agent a note asking it to explain
-itself, and the card comes back with a fresh `actionId` when the agent tries again. A typed
-`yes`, `no`, or `always` / `never ask again` / `don't ask again` in the thread answers the card
-the buttons would have; a bare `never` is the one-off refusal it sounds like.
+Every decision lands in `<state dir>/approvals.jsonl`, one append-only row carrying the scope it
+was judged against, who was acting, and — on an automatic allow — the `ruleId` that authorized
+it. That last field is the audit trail: it is how the user finds out which rule is doing
+something and what to revoke to stop it.
 
-`ApprovalCardView` lives in `packages/shared-swift` and renders the four buttons for both
-platforms; the phone wires it into the thread today, and the Mac chat picks it up unchanged
-when the local chat UI lands. The two floor settings are the last step of the Mac onboarding
-wizard, which read-modify-writes `approval.json` so the rules the runtime learned are not lost.
+Asking means the sidecar emits an `approval_card` to every paired device and parks that tool
+call until an `approval_answer` carrying the `actionId` comes back. Unanswered after ten minutes
+it resolves as a refusal rather than hanging the turn, and an interrupt settles any card still
+on screen. **A pending card only parks its own branch**: the loop starts every tool call in a
+turn together, so independent work carries on while one of them waits.
 
-No new event kind was needed: `approval_card` and `approval_answer` were already mirrored in
-both `events.ts` and `Events.swift`.
+There are three ways to say yes:
+
+- **Allow once** (`yes`) covers this one action.
+- **Allow for this task** (`task`) covers the same class and scope for the rest of this turn and
+  everything it delegates to, then expires — the grants live in a `TaskGrants` object created per
+  turn and passed down the tree, so nothing outlives the turn because nothing stores it.
+- **Always allow** opens a rule editor prefilled with the narrowest rule that covers the action
+  (`send-message` to *this recipient*, `purchase` at *this merchant* up to *half again* the
+  price). The user can widen any field to "Any" before saving, and the saved rule travels back on
+  the answer. It persists until revoked. The editor refuses to save a rule that pins nothing
+  down: blanket authorization across an action class is not offered. A batch card offers no rule
+  at all, because no standing rule can mean "exactly these items".
+
+**Don't allow** refuses this one action only. **Discuss** decides nothing: it logs nothing, hands
+the agent a note asking it to explain itself, and the card comes back with a fresh `actionId`
+when the agent tries again. A typed `yes`, `no`, `for this task`, or `always` / `never ask
+again` / `don't ask again` in the thread answers the card the buttons would have; a bare `never`
+is the one-off refusal it sounds like.
+
+After `PRECEDENT` (three) matching approvals inside 30 days, and only while no stored rule
+covers them already, the runtime emits a `rule_proposal` — "Yorozu noticed you always allow
+this. Make it a rule?", with **Review** (which opens the editor) and **Not now**. It activates
+nothing by itself: the proposal is a card, and only the editor's Save writes anything.
+
+A tool that commits money or messages calls `verifyApproved(actionId, finalScope)` immediately
+before committing, with the values it is actually about to use. Any change to price, quantity,
+recipient, account or batch membership between the card and that moment invalidates the
+approval, and the tool hands the model a note telling it to present the action again with the
+final values. The `actionId` reaches the tool on its `TurnContext`, set for the duration of that
+one approved call.
+
+`ApprovalCardView`, `RuleEditorView`, `RuleProposalCardView` and `RuleRowView` live in
+`packages/shared-swift`, so both platforms draw the same card, the same editor and the same
+rule rows. The Mac's Settings gains a **Rules** tab — list, enable/disable, edit, revoke, with
+each row's last use and count — which read-modify-writes `approval.json` directly, because the
+Mac and the runtime share a disk and the runtime re-reads that file on every decision. The
+phone's Settings gains a **Rules** row over the wire instead: `rule_list` asks for them,
+`rule_update` saves one and `rule_delete` revokes one, and any change is broadcast as a fresh
+`rule_list`. Four new event kinds — `rule_proposal`, `rule_list`, `rule_update`, `rule_delete` —
+are mirrored in both `events.ts` and `Events.swift`; `approval_card` and `approval_answer` grew
+optional fields, so a runtime or a phone from before v1.5 still decodes them.
 
 ## Questions and progress
 

@@ -63,7 +63,11 @@ export const shellTool: Tool = {
   description:
     "Run a shell command on the user's Mac and return its combined output and exit status.",
   actionClass: "run-command",
-  action: ({ cmd }) => ({ target: String(cmd ?? "") }),
+  action: ({ cmd }) => ({
+    target: String(cmd ?? ""),
+    operation: "run",
+    consequence: "Runs this command on the Mac with the user's own permissions.",
+  }),
   parameters: {
     type: "object",
     properties: {

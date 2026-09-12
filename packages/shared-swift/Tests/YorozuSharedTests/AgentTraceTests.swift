@@ -345,3 +345,33 @@ private func toolResult(_ id: String, ok: Bool = true, output: String = "", at t
     ])
     #expect(rows.map(\.id) == ["delegation-d1", "m1"])
 }
+
+/// A rule proposal is a row of its own, drawn where it was raised, and it survives an export:
+/// it is the one card that is not about permission but about what Yorozu noticed.
+@Test func aRuleProposalIsARowOfItsOwn() {
+    let rule = ApprovalRule(
+        id: "r1",
+        actionClass: "purchase",
+        decision: .always,
+        scope: ["merchant": ApprovalRuleField(mode: .exact, value: "Kurasu")]
+    )
+    let events = [
+        YorozuEvent(id: "m1", threadId: "t", ts: 1, agentId: "phone",
+            payload: .message(MessageData(role: .user, text: "reorder the coffee"))),
+        YorozuEvent(id: "p1", threadId: "t", ts: 2, agentId: "main",
+            payload: .ruleProposal(RuleProposalData(proposalId: "prop1", rule: rule, approvals: 3))),
+    ]
+
+    #expect(chatRows(from: events).map(\.id) == ["m1", "p1"])
+    guard case .proposal(let event) = chatRows(from: events)[1] else {
+        Issue.record("the proposal should be a row of its own")
+        return
+    }
+    #expect(event.id == "p1")
+
+    let markdown = threadMarkdown(
+        thread: ThreadSummary(id: "t", title: "Coffee", archived: false, lastActivity: 2),
+        events: events
+    )
+    #expect(markdown.contains("**Rule suggested** — purchase at Kurasu"))
+}

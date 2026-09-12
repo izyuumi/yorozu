@@ -83,6 +83,8 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
     case tools([ToolActivity])
     case delegation(DelegationCard)
     case approval(YorozuEvent)
+    /// A rule Yorozu is offering, not one it has applied.
+    case proposal(YorozuEvent)
     case question(YorozuEvent)
     case progress(YorozuEvent)
 
@@ -94,6 +96,7 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
         // event — the card and the delegation it started — and two rows need two ids.
         case .delegation(let card): "delegation-\(card.id)"
         case .approval(let event): event.id
+        case .proposal(let event): event.id
         case .question(let event): event.id
         case .progress(let event): event.id
         }
@@ -147,6 +150,8 @@ public func chatRows(from events: [YorozuEvent]) -> [ChatRow] {
         // being seen is the whole of what it is for.
         case .approvalCard:
             rows.append(.approval(event))
+        case .ruleProposal:
+            rows.append(.proposal(event))
         case .questionCard:
             rows.append(.question(event))
         case .progressCard:

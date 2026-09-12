@@ -8,6 +8,7 @@
  * names are limited to `[A-Za-z0-9_-]`.
  */
 
+import { summarize, verifyApproved } from "../approval.js";
 import type { Tool } from "../index.js";
 import { askNative } from "./native.js";
 import { truncate } from "./shell.js";
@@ -267,15 +268,35 @@ export const mailReadTool: Tool = {
   },
 };
 
+/** `to` as the card lists it: one address per line, blanks dropped. */
+export const recipientList = (to: string): string[] =>
+  to.split(",").map((address) => address.trim()).filter((address) => address !== "");
+
 export const mailSendTool: Tool = {
   name: "mail_send",
   description:
     "Send an email from the user's Mail account. Only send what the user approved: this " +
     "leaves the Mac and cannot be taken back.",
   // The one tool here with an effect outside the Mac, so it goes through the approval
-  // engine. `defaultAction` already reads `to`, which is exactly the recipient to name
-  // on the card.
+  // engine. It fills the card in properly: who it goes to, what it says, and — when it goes
+  // to several people at once — the exact list of them, which is what the one decision covers.
   actionClass: "send-message",
+  action: ({ to, subject, body }) => ({
+    target: String(to ?? ""),
+    operation: "send",
+    recipient: String(to ?? ""),
+    contentSummary: summarize(`${String(subject ?? "")}\n\n${String(body ?? "")}`.trim()),
+    consequence: "Sends this email from the user's own Mail account. It cannot be recalled.",
+  }),
+  batch: ({ to, subject }) => {
+    const recipients = recipientList(String(to ?? ""));
+    // One recipient is not a batch: the card already names them, and a list of one reads oddly.
+    if (recipients.length < 2) return [];
+    return recipients.map((recipient) => ({
+      label: recipient,
+      ...(subject ? { detail: String(subject) } : {}),
+    }));
+  },
   parameters: {
     type: "object",
     properties: {
@@ -285,9 +306,20 @@ export const mailSendTool: Tool = {
     },
     required: ["to", "subject", "body"],
   },
-  run: async (args) => {
+  run: async (args, context) => {
+    const to = required(args, "to");
+    // The last thing before the mail leaves: what was approved has to be what is being sent.
+    // Nothing here can change `to` behind the user's back, but a tool that commits is the
+    // right place to prove that rather than to assume it.
+    if (context?.actionId) {
+      const stale = verifyApproved(context.actionId, {
+        recipient: to,
+        items: mailSendTool.batch?.(args) ?? [],
+      });
+      if (stale) return stale;
+    }
     const response = await askNative("mail.send", {
-      to: required(args, "to"),
+      to,
       subject: String(args.subject ?? ""),
       body: String(args.body ?? ""),
     });
