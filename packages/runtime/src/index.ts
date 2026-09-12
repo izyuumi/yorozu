@@ -18,6 +18,7 @@ import {
   screenCaptureTool,
   screenReadTool,
 } from "./tools/native.js";
+import { requestPermissionTool } from "./tools/permissions.js";
 import { shellTool } from "./tools/shell.js";
 import { readTranscriptsTool } from "./transcripts.js";
 
@@ -101,6 +102,7 @@ export const defaultTools: Tool[] = [
   skillTool,
   autoAssignTool,
   ...appleTools,
+  requestPermissionTool,
   fetchTool,
   webSearchTool,
 ];

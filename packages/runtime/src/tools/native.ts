@@ -18,6 +18,7 @@ import { env } from "node:process";
 import { createInterface } from "node:readline";
 import type { Tool } from "../index.js";
 import { stateDir } from "../memory.js";
+import { permissionErrorFor } from "./permissions.js";
 import { truncate } from "./shell.js";
 
 /** AX reads and a ScreenCaptureKit grab are both fast; anything slower is a hang. */
@@ -26,7 +27,10 @@ const TIMEOUT_MS = 15_000;
 /**
  * Dev default is the `swift build` product, reachable from `dist/` in a checkout; the Mac
  * app passes `YOROZU_NATIVE_CMD` pointing into its own bundle, which is also what gives the
- * helper the TCC grants (they key on the bundle's signature, not on this path).
+ * helper the TCC grants (they key on the bundle's signature, not on this path). The helper
+ * additionally carries its own Info.plist in a linked `__TEXT,__info_plist` section: TCC
+ * reads the usage description out of the calling binary and denies outright when there is
+ * none, bundle or no bundle.
  */
 export const nativeCommand = (): string =>
   env.YOROZU_NATIVE_CMD ??
@@ -35,11 +39,17 @@ export const nativeCommand = (): string =>
 export interface NativeResponse {
   ok: boolean;
   error?: string;
+  /** The macOS grant that was missing, when that is why `ok` is false. */
+  permission?: string;
   [key: string]: unknown;
 }
 
 export interface NativeHost {
-  request(cmd: string, args?: Record<string, unknown>): Promise<NativeResponse>;
+  request(
+    cmd: string,
+    args?: Record<string, unknown>,
+    timeoutMs?: number,
+  ): Promise<NativeResponse>;
   close(): void;
 }
 
@@ -97,15 +107,15 @@ export function openNativeHost(command = nativeCommand()): NativeHost {
   }
 
   return {
-    request(cmd, args = {}) {
+    request(cmd, args = {}, timeoutMs = TIMEOUT_MS) {
       const helper = start();
       // `rid`, not `id`: an element ID travels as `id`, and the two must not collide.
       const rid = String(++lastId);
       return new Promise<NativeResponse>((resolve, reject) => {
         const timer = setTimeout(() => {
           pending.delete(rid);
-          reject(new Error(`${cmd} timed out after ${TIMEOUT_MS}ms`));
-        }, TIMEOUT_MS);
+          reject(new Error(`${cmd} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
         timer.unref?.();
         pending.set(rid, { resolve, reject, timer });
         helper.stdin!.write(`${JSON.stringify({ ...args, rid, cmd })}\n`);
@@ -136,13 +146,20 @@ export function defaultNativeHost(): NativeHost {
 /**
  * A helper-reported failure is a thrown error: the loop turns it into `error: …`. Shared
  * with the calendar, reminders and mail tools, which speak the same pipe.
+ *
+ * A failure that is really a missing macOS grant becomes a `PermissionError` instead, which
+ * tells the model to ask for that grant rather than to send the user to System Settings.
+ * Mapped here rather than in each tool so every command over this pipe gets it.
  */
 export async function askNative(
   cmd: string,
   args: Record<string, unknown> = {},
+  timeoutMs?: number,
 ): Promise<NativeResponse> {
-  const response = await defaultNativeHost().request(cmd, args);
-  if (!response.ok) throw new Error(String(response.error ?? `${cmd} failed`));
+  const response = await defaultNativeHost().request(cmd, args, timeoutMs);
+  if (!response.ok) {
+    throw permissionErrorFor(response) ?? new Error(String(response.error ?? `${cmd} failed`));
+  }
   return response;
 }
 

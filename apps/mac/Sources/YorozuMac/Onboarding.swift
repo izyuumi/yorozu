@@ -1,13 +1,20 @@
 import AppKit
 import SwiftUI
+import YorozuPermissions
 
-/// One `Permission` per page, in `Permission.allCases` order. Each page explains the grant,
-/// deep-links to its System Settings pane, and re-checks every two seconds until it goes green.
+/// One `Permission` per page, in `Permission.allCases` order.
+///
+/// Every page asks macOS for its grant the moment it appears, using the real API, so the
+/// user answers a system prompt instead of being sent to System Settings to find a checkbox.
+/// The page then polls until the answer lands and the badge turns green. "Skip" is always
+/// there: a grant nobody wants is a grant the agent can ask for again later, through the
+/// request_permission tool.
 struct OnboardingView: View {
     var onFinish: () -> Void
 
     @State private var index = 0
     @State private var granted = false
+    @State private var asking = false
     @State private var skipped: Set<Permission> = []
     @ObservedObject private var neverSleep = NeverSleep.shared
 
@@ -26,17 +33,21 @@ struct OnboardingView: View {
                 .foregroundStyle(.secondary)
             if step == .approvals {
                 ApprovalFloorView()
+            } else if step == .neverSleep {
+                Toggle("Keep this Mac awake", isOn: neverSleepBinding)
             } else {
-                PermissionBadge(granted: granted)
+                PermissionBadge(granted: granted, asking: asking)
             }
             Spacer()
             HStack {
-                if step == .approvals {
-                    EmptyView()
-                } else if step == .neverSleep {
-                    Toggle("Keep this Mac awake", isOn: neverSleepBinding)
-                } else {
-                    Button("Open System Settings", action: openSettings)
+                if step != .approvals && step != .neverSleep {
+                    Button(step.canPrompt ? "Ask Again" : "Open System Settings") {
+                        Task { await ask() }
+                    }
+                    .disabled(asking)
+                    if step.canPrompt, let url = step.settingsURL {
+                        Button("Open System Settings") { NSWorkspace.shared.open(url) }
+                    }
                 }
                 Spacer()
                 Button("Skip") {
@@ -49,24 +60,28 @@ struct OnboardingView: View {
             }
         }
         .padding(20)
-        .frame(width: 460, height: 320)
-        // Restarted on every step, so only the step on screen is polled.
+        .frame(width: 460, height: 340)
+        // Restarted on every step, so only the step on screen is asked for and polled.
         .task(id: index) {
+            granted = await step.isGranted()
+            // Asking for something already granted would be a prompt the user has to dismiss
+            // for no reason, and for Automation a round of app launches for no reason.
+            if !granted { await ask() }
             while !Task.isCancelled {
-                granted = step.isGranted()
                 try? await Task.sleep(for: .seconds(2))
+                granted = await step.isGranted()
             }
         }
     }
 
-    private var neverSleepBinding: Binding<Bool> {
-        Binding(get: { neverSleep.isRunning }, set: { $0 ? neverSleep.start() : neverSleep.stop() })
+    private func ask() async {
+        asking = true
+        granted = await step.request()
+        asking = false
     }
 
-    private func openSettings() {
-        // Ask first: several grants show a system prompt that also registers the app in the pane.
-        step.request()
-        if let url = step.settingsURL { NSWorkspace.shared.open(url) }
+    private var neverSleepBinding: Binding<Bool> {
+        Binding(get: { neverSleep.isRunning }, set: { $0 ? neverSleep.start() : neverSleep.stop() })
     }
 
     private func advance() {
@@ -87,7 +102,7 @@ enum OnboardingWindow {
     static func show() {
         if window == nil {
             let panel = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 460, height: 320),
+                contentRect: NSRect(x: 0, y: 0, width: 460, height: 340),
                 styleMask: [.titled, .closable],
                 backing: .buffered,
                 defer: false
