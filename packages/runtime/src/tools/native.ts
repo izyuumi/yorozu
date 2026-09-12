@@ -88,6 +88,9 @@ export function openNativeHost(command = nativeCommand()): NativeHost {
 
     // Kept drained so a chatty helper cannot block on a full stderr pipe.
     started.stderr!.resume();
+    // A helper that dies before reading stdin surfaces as EPIPE on the write; the exit
+    // handler already rejects every pending request, so the write error is just noise.
+    started.stdin!.on("error", () => {});
     started.on("exit", (code) => fail(`${command} exited with ${code}`));
     started.on("error", (error: Error) => fail(error.message));
     return started;
