@@ -1,8 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="rod" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.5"/><stop offset="0.1" stop-color="#FFFFFF" stop-opacity="0.88"/><stop offset="0.2" stop-color="#FFFFFF" stop-opacity="0.74"/><stop offset="0.35" stop-color="#FFFFFF" stop-opacity="0.68"/><stop offset="0.48" stop-color="#FFFFFF" stop-opacity="0.6"/><stop offset="0.62" stop-color="#FFFFFF" stop-opacity="0.52"/><stop offset="0.8" stop-color="#FFFFFF" stop-opacity="0.44"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0.38"/></linearGradient>
+    <linearGradient id="rodcap" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.56"/><stop offset="0.4" stop-color="#FFFFFF" stop-opacity="0.46"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0.34"/></linearGradient>
+    <linearGradient id="rodgloss" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0"/><stop offset="0.35" stop-color="#FFFFFF" stop-opacity="0.55"/><stop offset="0.7" stop-color="#FFFFFF" stop-opacity="0"/></linearGradient>
+  </defs>
   <g>
-    <rect x="150" y="286" width="724" height="44" rx="22" fill="rgba(255,255,255,0.62)"/>
-    <rect x="160" y="293" width="704" height="11" rx="5.5" fill="rgba(255,255,255,0.78)"/>
-    <rect x="150" y="286" width="26" height="44" rx="22" fill="rgba(255,255,255,0.48)"/>
-    <rect x="848" y="286" width="26" height="44" rx="22" fill="rgba(255,255,255,0.48)"/>
+    <rect x="118" y="275" width="788" height="46" rx="23" fill="url(#rod)"/>
+    <ellipse cx="133" cy="298" rx="15" ry="23" fill="url(#rodcap)"/>
+    <ellipse cx="891" cy="298" rx="15" ry="23" fill="url(#rodcap)"/>
+    <rect x="144" y="280" width="736" height="14" rx="7" fill="url(#rodgloss)"/>
   </g>
 </svg>
