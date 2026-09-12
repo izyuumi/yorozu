@@ -721,3 +721,70 @@ never leaves it:
 The public key goes in `SU_PUBLIC_KEY` in `build-mac.sh`, which writes it into the app's
 `Info.plist` beside `SUFeedURL`. `.github/workflows/release.yml` runs the whole chain on a `v*`
 tag and uploads the DMG and the appcast to the release.
+
+## TestFlight
+
+`scripts/build-ios.sh` is the phone's counterpart to `build-mac.sh`, and it is much the
+shorter of the two because Xcode does by hand what that one assembles: signing, packaging
+and the upload itself.
+
+```sh
+ASC_KEY_ID=<KEYID> ASC_ISSUER_ID=<ISSUER-UUID> VERSION=0.1.0 ./scripts/build-ios.sh
+```
+
+Signing is automatic. `apps/ios/Project.swift` carries `DEVELOPMENT_TEAM` and
+`CODE_SIGN_STYLE = Automatic`, and given `-allowProvisioningUpdates` plus an App Store
+Connect key, `xcodebuild` issues the distribution certificate and the App Store profile on
+its own — so there is no `.p12` and no `.mobileprovision` anywhere, in the repo or in CI.
+The same key authenticates the upload, which is why the export options say
+`destination: upload` rather than writing an `.ipa` for a second tool to send: one
+invocation, one credential, nothing on disk to leak. The key may be a path
+(`ASC_KEY_PATH`, defaulting to `~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8`) or
+base64 in `ASC_KEY_P8`, which is how CI carries it; that one is written out at mode 600 and
+removed on exit.
+
+The build number is `git rev-list --count HEAD`. It has to rise with every upload and never
+repeat, and the commit count does both without a file to bump and without differing between
+two checkouts of the same commit.
+
+`.github/workflows/testflight.yml` runs the whole thing on a `v*` tag from
+`ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8`.
+
+### The app record has to be made by hand, once
+
+Registering the bundle ID is an API call, and `scripts/asc.mjs` — a JWT signer and a `fetch`,
+`node:crypto` and nothing else — is enough for it:
+
+```sh
+node scripts/asc.mjs POST /v1/bundleIds '{"data":{"type":"bundleIds","attributes":
+  {"identifier":"to.yumi.yorozu.ios","name":"Yorozu iOS","platform":"IOS","seedId":"AN5KM8QGEF"}}}'
+```
+
+Creating the *app record* is not. `POST /v1/apps` answers
+`The resource 'apps' does not allow 'CREATE'`, and `fastlane produce` is no way round it:
+with an API key spaceship talks to that same endpoint, so it gets the same refusal. The only
+thing that can create one is an Apple ID web session, which means 2FA and a person. So the
+first upload for a new app needs one visit to
+[App Store Connect](https://appstoreconnect.apple.com/apps) → **+** → **New App**: iOS,
+name **Yorozu**, primary language English (U.S.), the bundle ID above, SKU `yorozu-ios`.
+Until that exists `xcodebuild -exportArchive` stops before it uploads, with
+`IDEDistributionFetchAppRecordStep … missingApp(bundleId: "to.yumi.yorozu.ios")` in its
+distribution log. Everything after it — certificate, profile, upload, every later release —
+is automatic.
+
+### External testers
+
+Internal testers (the team's own Apple IDs) can install a build the moment it finishes
+processing. A public link needs a beta group with external testing on, which is two more
+`asc.mjs` calls once the app record exists — `<APP-ID>` is the numeric id from
+`node scripts/asc.mjs GET '/v1/apps?filter[bundleId]=to.yumi.yorozu.ios'`:
+
+```sh
+node scripts/asc.mjs POST /v1/betaGroups '{"data":{"type":"betaGroups","attributes":
+  {"name":"Public","publicLinkEnabled":true,"publicLinkLimitEnabled":false},
+  "relationships":{"app":{"data":{"type":"apps","id":"<APP-ID>"}}}}}'
+node scripts/asc.mjs GET '/v1/apps/<APP-ID>/betaGroups'   # publicLink is in the response
+```
+
+The link only starts working once the build passes Beta App Review, which is a separate
+submission from App Review and usually a day or less.
