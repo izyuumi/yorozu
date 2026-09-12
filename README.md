@@ -681,8 +681,8 @@ transport in is not fixed — every event carries its own ids and the runtime ma
 
 The fresh-Mac walkthrough, in the order spec section 10 asks for:
 
-1. Download `Yorozu-<version>.dmg` from https://dl.yumi.to/Yorozu-0.1.0.dmg (or the private GitHub Releases page)
-   page.
+1. Download the newest `Yorozu-<version>-<build>.dmg` from https://dl.yumi.to/ (or the private
+   GitHub Releases page).
 2. Open it and drag **Yorozu** onto the Applications shortcut beside it. Eject the disk image
    and launch Yorozu from Applications — it is a menu bar app, so it appears as an icon in the
    status bar rather than a window in the Dock.
@@ -706,8 +706,12 @@ The fresh-Mac walkthrough, in the order spec section 10 asks for:
    The menu bar window itself is the chat; ⌘, or the gear at the foot of the sidebar is the way
    to everything else.
 
-Updates are Sparkle: **Check for Updates…** in the gear menu at the foot of the sidebar, against
-the appcast published beside each release.
+Updates are Sparkle, and they happen on their own: the app checks the appcast hourly,
+downloads a newer build in the background, and installs it — no dialog, no download, no drag —
+the next time it is not the frontmost app, relaunching itself when it is done. The sidecar
+comes back on the same `~/Library/Application Support/Yorozu`, so the room, the keys and every
+paired phone are exactly where they were. Settings → **General** has the toggle (on) and a
+**Check for Updates…** button for the impatient.
 
 ### The relay
 
@@ -739,8 +743,14 @@ public internet. `launchctl bootout gui/$(id -u)/to.yumi.yorozu.relay` stops it.
 `scripts/build-mac.sh` is the shipping build, as against `scripts/dev-bundle.sh` above:
 
 ```sh
-VERSION=0.1.0 ./scripts/build-mac.sh          # prints dist/Yorozu-0.1.0.dmg
+./scripts/build-mac.sh          # prints dist/Yorozu-0.1.0-54.dmg, version 0.1.0 build 54
 ```
+
+Neither number is typed: the marketing version is the latest `v*` tag and `CFBundleVersion` is
+the commit count, which rises with every commit and never repeats. Sparkle compares
+`CFBundleVersion`, so that is what makes one build newer than another, and the build number is
+in the DMG's name so two builds of one tag are two files rather than one URL with two meanings.
+`scripts/build-ios.sh` derives both the same way.
 
 It builds the workspace and the Swift release binaries, then assembles `Yorozu.app` with the
 runtime *inside* it — the official `node` for this platform downloaded to
@@ -790,8 +800,24 @@ never leaves it:
 ```
 
 The public key goes in `SU_PUBLIC_KEY` in `build-mac.sh`, which writes it into the app's
-`Info.plist` beside `SUFeedURL`. `.github/workflows/release.yml` runs the whole chain on a `v*`
-tag and uploads the DMG and the appcast to the release.
+`Info.plist` beside `SUFeedURL`, along with the keys that make updates automatic
+(`SUEnableAutomaticChecks`, `SUAutomaticallyUpdate`, `SUAllowsAutomaticUpdates`, and an hourly
+`SUScheduledCheckInterval`). Those are only a *default*, for a Mac that has never run the app;
+`apps/mac/Sources/YorozuMac/Updater.swift` turns the same three on once per machine so an
+answer given to an older build's "check automatically?" prompt does not keep the Mac on an old
+version forever.
+
+A release is one command, from a checkout standing on the tag:
+
+```sh
+git tag -a v0.2.0 -m v0.2.0
+./scripts/release.sh
+```
+
+It builds, notarizes, signs the appcast, copies the DMG and `appcast.xml` into `dist/dl` —
+what `dl.yumi.to` serves — and uploads both to that tag's GitHub release with `--clobber`.
+`.github/workflows/release.yml` runs the same chain on a `v*` tag (with `fetch-depth: 0`, or
+the commit count would be 1).
 
 ## TestFlight
 

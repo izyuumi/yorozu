@@ -7,7 +7,11 @@ jobs:
   mac:
     runs-on: macos-latest
     steps:
+      # Whole history: the build number is the commit count and the marketing version is the
+      # latest tag, and a shallow clone has neither.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -44,9 +48,8 @@ jobs:
             --key /tmp/key.p8 --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID"
           rm /tmp/key.p8
 
+      # No VERSION: the script derives it from the tag it is standing on.
       - name: Build, sign, notarize
-        env:
-          VERSION: ${{ github.ref_name }}
         run: ./scripts/build-mac.sh
 
       - name: Generate appcast
