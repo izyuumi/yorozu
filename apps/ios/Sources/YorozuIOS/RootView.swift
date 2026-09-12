@@ -78,7 +78,6 @@ struct RootView: View {
     /// The thread ids pushed on the list's stack: at most one, and what lets the app open a
     /// thread by itself rather than waiting to be tapped.
     @State private var path: [String] = []
-    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         content
