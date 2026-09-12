@@ -70,6 +70,8 @@ export type Register = { pubkey: string; nonceSig: string };
  */
 export type Join = { roomId: string; phonePubkey: string; sig: string; token?: string };
 export type Frame = { payload: string; sig: string };
+/** The Mac dropping a paired device: it is forgotten, and its sockets are closed. */
+export type Revoke = { pubkey: string };
 
 const strings = <K extends string>(
   msg: Record<string, unknown>,
@@ -90,11 +92,15 @@ export const parseJoin = (msg: Record<string, unknown>): Join | null => {
 export const parseFrame = (msg: Record<string, unknown>): Frame | null =>
   strings(msg, "payload", "sig");
 
+export const parseRevoke = (msg: Record<string, unknown>): Revoke | null =>
+  strings(msg, "pubkey");
+
 /**
  * Which known devices a room must forget to keep `pubkey` under the cap, oldest first. A
  * device already known is re-recorded in place, so a rejoining phone evicts nobody.
  *
- * TODO: the Mac has no way to revoke a device yet; only the cap ever forgets one.
+ * The cap is not the only thing that forgets one: the Mac revokes a device by name, which is
+ * the `revoke` message.
  */
 export function evictions(
   known: readonly [pubkey: string, at: number][],

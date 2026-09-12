@@ -62,6 +62,8 @@ async function connectLocal(path: string): Promise<Socket> {
 /** The socket's newline-delimited events, readable one at a time. */
 function reader(from: Socket) {
   const queue: YorozuEvent[] = [];
+  /** Everything that arrived, kept as well as queued: some things are counted, not awaited. */
+  const all: YorozuEvent[] = [];
   const waiting: ((event: YorozuEvent) => void)[] = [];
   let buffer = "";
 
@@ -73,6 +75,7 @@ function reader(from: Socket) {
     for (const line of lines) {
       if (!line.trim()) continue;
       const event = JSON.parse(line) as YorozuEvent;
+      all.push(event);
       const waiter = waiting.shift();
       if (waiter) waiter(event);
       else queue.push(event);
@@ -85,6 +88,7 @@ function reader(from: Socket) {
   };
 
   return {
+    all,
     next,
     /** The next event of `kind`: the reply is preceded by whatever the turn emitted first. */
     async nextOf(kind: EventKind): Promise<YorozuEvent> {
@@ -156,4 +160,53 @@ test("the socket is readable only by its owner and goes away with the sidecar", 
 
   await sidecar.close();
   expect(existsSync(path)).toBe(false);
+});
+
+test("one reply is one message event, however many deltas streamed it", async () => {
+  const { path } = await localSidecar();
+  socket = await connectLocal(path);
+  const events = reader(socket);
+  await events.nextOf("thread_list");
+
+  send(socket, "t1", { kind: "thread_create", data: { title: "Chores" } });
+  await events.nextOf("thread_list");
+  send(socket, "t1", { kind: "message", data: { role: "user", text: "ping" } });
+  expect(await events.nextOf("message")).toMatchObject({ data: { role: "agent", text: "pong" } });
+
+  // The deltas and the finished reply share one id and one text, so the finished one used to
+  // arrive as a second, identical event. Logged, yes; sent twice, no.
+  await new Promise((done) => setTimeout(done, 150));
+  const replies = events.all.filter(
+    (event) => event.kind === "message" && event.data.role === "agent",
+  );
+  expect(replies).toHaveLength(1);
+});
+
+test("the device list names every device, and is pushed when one comes or goes", async () => {
+  const { path } = await localSidecar();
+  socket = await connectLocal(path);
+  const events = reader(socket);
+  await events.nextOf("thread_list");
+
+  // Connecting is a change like any other, so the list arrives unasked...
+  const opened = await events.nextOf("device_list");
+  expect(opened.kind === "device_list" && opened.data.devices).toMatchObject([
+    { via: "local", online: true },
+  ]);
+  // ...and it can be asked for, which is what the Settings window does when it opens.
+  send(socket, "", { kind: "device_list", data: { devices: [] } });
+  const listed = await events.nextOf("device_list");
+  expect(listed.kind === "device_list" && listed.data.devices).toHaveLength(1);
+
+  // A second client is a second device, and everyone's list is stale the moment it connects.
+  const second = await connectLocal(path);
+  try {
+    const pushed = await events.nextOf("device_list");
+    expect(pushed.kind === "device_list" && pushed.data.devices).toHaveLength(2);
+    second.destroy();
+    const after = await events.nextOf("device_list");
+    expect(after.kind === "device_list" && after.data.devices).toHaveLength(1);
+  } finally {
+    second.destroy();
+  }
 });

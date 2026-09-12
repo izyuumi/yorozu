@@ -97,6 +97,37 @@ export interface SyncDeltaData {
   events: YorozuEvent[];
 }
 
+/**
+ * One device this Mac is paired with, as the Mac app's Devices tab lists them. Public keys
+ * only: they are identifiers here, and the short form of `pub` is what the user sees.
+ */
+export interface DeviceInfo {
+  /** X25519 public key, base64url. What the sidecar seals for, and the device's identity. */
+  pub: string;
+  /**
+   * Ed25519 key the relay knows the device by, when it announced one. A different key from
+   * `pub` and not derivable from it, so revoking at the relay needs it carried here.
+   */
+  signingPub?: string;
+  /** How the device reaches the runtime: through the relay, or on this Mac's local socket. */
+  via: "relay" | "local";
+  /** Epoch milliseconds the runtime last heard from it. */
+  lastSeen: number;
+  online: boolean;
+}
+
+export interface DeviceListData {
+  devices: DeviceInfo[];
+}
+
+/**
+ * Forget a device: dropped from `devices.json`, and the relay is told to revoke it so it
+ * cannot rejoin against the nonce either. Answered with a fresh `device_list`.
+ */
+export interface DeviceRemoveData {
+  pub: string;
+}
+
 /** Kind tag paired with its payload. Discriminates on `kind`. */
 export type EventPayload =
   | { kind: "message"; data: MessageData }
@@ -111,7 +142,9 @@ export type EventPayload =
   | { kind: "thread_rename"; data: ThreadRenameData }
   | { kind: "interrupt"; data: InterruptData }
   | { kind: "sync_request"; data: SyncRequestData }
-  | { kind: "sync_delta"; data: SyncDeltaData };
+  | { kind: "sync_delta"; data: SyncDeltaData }
+  | { kind: "device_list"; data: DeviceListData }
+  | { kind: "device_remove"; data: DeviceRemoveData };
 
 export type EventKind = EventPayload["kind"];
 

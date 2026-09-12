@@ -27,8 +27,7 @@ struct OnboardingView: View {
             if step == .approvals {
                 ApprovalFloorView()
             } else {
-                Label(granted ? "Granted" : "Waiting…", systemImage: granted ? "checkmark.circle.fill" : "circle.dotted")
-                    .foregroundStyle(granted ? .green : .secondary)
+                PermissionBadge(granted: granted)
             }
             Spacer()
             HStack {

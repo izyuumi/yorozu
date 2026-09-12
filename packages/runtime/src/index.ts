@@ -38,6 +38,7 @@ export * from "./assign.js";
 export * from "./claude.js";
 export * from "./codex.js";
 export * from "./probe.js";
+export * from "./providers.js";
 export * from "./tools/browser.js";
 export * from "./tools/shell.js";
 export * from "./tools/fs.js";

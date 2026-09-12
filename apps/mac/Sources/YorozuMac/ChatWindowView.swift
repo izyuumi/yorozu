@@ -66,7 +66,6 @@ struct ChatWindowView: View {
                     NSApp.activate(ignoringOtherApps: true)
                     openSettings()
                 }
-                Button("Set Up Permissions…") { OnboardingWindow.show() }
                 CheckForUpdatesButton()
                 Divider()
                 Button("Quit Yorozu") { NSApp.terminate(nil) }
@@ -96,20 +95,20 @@ struct SettingsView: View {
 
     var body: some View {
         TabView {
-            Tab("Pairing", systemImage: "qrcode") {
-                pane { PairingView(sidecar: sidecar) }
+            Tab("General", systemImage: "gearshape") {
+                pane { GeneralView() }
             }
             Tab("Providers", systemImage: "cpu") {
                 pane { ProvidersView() }
             }
-            Tab("Browser", systemImage: "globe") {
-                pane { BrowserView() }
-            }
             Tab("Models", systemImage: "square.stack.3d.up") {
                 pane { ModelsView() }
             }
-            Tab("Relay", systemImage: "antenna.radiowaves.left.and.right") {
-                pane { RelayView() }
+            Tab("Devices", systemImage: "iphone.and.arrow.forward") {
+                pane { DevicesView(sidecar: sidecar) }
+            }
+            Tab("Permissions", systemImage: "lock.shield") {
+                pane { PermissionsView() }
             }
         }
         .frame(width: 480, height: 460)

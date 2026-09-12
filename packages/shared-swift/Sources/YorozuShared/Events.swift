@@ -43,6 +43,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case interrupt
         case syncRequest = "sync_request"
         case syncDelta = "sync_delta"
+        case deviceList = "device_list"
+        case deviceRemove = "device_remove"
     }
 
     public enum Payload: Equatable, Sendable {
@@ -59,6 +61,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case interrupt(InterruptData)
         case syncRequest(SyncRequestData)
         case syncDelta(SyncDeltaData)
+        case deviceList(DeviceListData)
+        case deviceRemove(DeviceRemoveData)
 
         public var kind: Kind {
             switch self {
@@ -75,6 +79,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .interrupt: .interrupt
             case .syncRequest: .syncRequest
             case .syncDelta: .syncDelta
+            case .deviceList: .deviceList
+            case .deviceRemove: .deviceRemove
             }
         }
     }
@@ -104,6 +110,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .interrupt: payload = .interrupt(try c.decode(InterruptData.self, forKey: .data))
         case .syncRequest: payload = .syncRequest(try c.decode(SyncRequestData.self, forKey: .data))
         case .syncDelta: payload = .syncDelta(try c.decode(SyncDeltaData.self, forKey: .data))
+        case .deviceList: payload = .deviceList(try c.decode(DeviceListData.self, forKey: .data))
+        case .deviceRemove: payload = .deviceRemove(try c.decode(DeviceRemoveData.self, forKey: .data))
         }
     }
 
@@ -129,6 +137,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .interrupt(let d): try c.encode(d, forKey: .data)
         case .syncRequest(let d): try c.encode(d, forKey: .data)
         case .syncDelta(let d): try c.encode(d, forKey: .data)
+        case .deviceList(let d): try c.encode(d, forKey: .data)
+        case .deviceRemove(let d): try c.encode(d, forKey: .data)
         }
     }
 }
@@ -255,6 +265,47 @@ public struct SyncRequestData: Codable, Equatable, Sendable {
 public struct SyncDeltaData: Codable, Equatable, Sendable {
     public var events: [YorozuEvent]
     public init(events: [YorozuEvent]) { self.events = events }
+}
+
+/// One device this Mac is paired with, as the Devices tab lists them. Public keys only: they
+/// are identifiers here, and the short form of ``pub`` is what the user sees.
+public struct DeviceInfo: Codable, Equatable, Sendable, Identifiable {
+    /// How the device reaches the runtime.
+    public enum Via: String, Codable, Sendable { case relay, local }
+    /// X25519 public key, base64url. What the sidecar seals for, and the device's identity.
+    public var pub: String
+    /// Ed25519 key the relay knows the device by, when it announced one. A different key from
+    /// ``pub`` and not derivable from it, so revoking at the relay needs it carried here.
+    public var signingPub: String?
+    public var via: Via
+    /// Epoch milliseconds the runtime last heard from it.
+    public var lastSeen: Double
+    public var online: Bool
+
+    public var id: String { pub }
+
+    /// Enough of the key to tell two devices apart, which is all a list needs.
+    public var shortId: String { String(pub.prefix(8)) }
+
+    public init(pub: String, signingPub: String? = nil, via: Via, lastSeen: Double, online: Bool) {
+        self.pub = pub
+        self.signingPub = signingPub
+        self.via = via
+        self.lastSeen = lastSeen
+        self.online = online
+    }
+}
+
+public struct DeviceListData: Codable, Equatable, Sendable {
+    public var devices: [DeviceInfo]
+    public init(devices: [DeviceInfo]) { self.devices = devices }
+}
+
+/// Forget a device: dropped from the runtime's `devices.json`, and the relay is told to revoke
+/// it so it cannot rejoin against the nonce either. Answered with a fresh `device_list`.
+public struct DeviceRemoveData: Codable, Equatable, Sendable {
+    public var pub: String
+    public init(pub: String) { self.pub = pub }
 }
 
 /// Arbitrary JSON, for tool arguments the schema cannot know ahead of time.

@@ -41,6 +41,9 @@ private struct FrameBody: Codable {
     var t: String
     /// `hello`: phone X25519 public key, base64url.
     var pub: String?
+    /// `hello`: phone Ed25519 public key, the one the relay knows this device by. The Mac keeps
+    /// it so "remove this device" can be addressed to the relay as well as to itself.
+    var spub: String?
     /// `box`: nonce and ciphertext, base64url.
     var n: String?
     var c: String?
@@ -299,7 +302,11 @@ public actor RelayClient: ChatTransport {
     private func sayHello() async {
         do {
             try await sendFrame(
-                FrameBody(t: "hello", pub: identity.sessionPublicKey.base64URLEncodedString())
+                FrameBody(
+                    t: "hello",
+                    pub: identity.sessionPublicKey.base64URLEncodedString(),
+                    spub: identity.signingPublicKey.base64URLEncodedString()
+                )
             )
             updates?.yield(.state(.paired))
         } catch {

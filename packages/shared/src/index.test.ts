@@ -64,8 +64,26 @@ test("every spec'd kind exists", () => {
     "thread_rename",
     "sync_request",
     "sync_delta",
+    "device_list",
+    "device_remove",
   ];
-  expect(kinds).toHaveLength(12);
+  expect(kinds).toHaveLength(14);
+});
+
+test("a device list carries what the Settings window draws", () => {
+  const event: YorozuEvent = {
+    ...base,
+    threadId: "",
+    kind: "device_list",
+    data: {
+      devices: [{ pub: "k1", signingPub: "s1", via: "relay", lastSeen: 1, online: true }],
+    },
+  };
+  if (event.kind !== "device_list") throw new Error("unreachable");
+  expect(event.data.devices[0]?.via).toBe("relay");
+  const removal: YorozuEvent = { ...base, kind: "device_remove", data: { pub: "k1" } };
+  if (removal.kind !== "device_remove") throw new Error("unreachable");
+  expect(removal.data.pub).toBe("k1");
 });
 
 test("pairing strings round-trip and untrusted input is rejected", () => {

@@ -24,6 +24,7 @@ import {
   parseFrame,
   parseJoin,
   parseRegister,
+  parseRevoke,
   TOKEN_TTL_MS,
   type Bucket,
 } from "./protocol.js";
@@ -272,6 +273,21 @@ export class Room implements DurableObject {
         const expiresAt = now + TOKEN_TTL_MS;
         await storage.put(`t:${token}`, expiresAt);
         ws.send(JSON.stringify({ type: "token", token, expiresAt }));
+        return;
+      }
+
+      // The Mac unpairing a phone: forgotten, so it cannot rejoin against the nonce, and
+      // dropped now rather than at its next reconnect.
+      case "revoke": {
+        if (conn.role !== "mac") return ws.close(CLOSE_PROTOCOL, "not registered");
+        const revoke = parseRevoke(msg);
+        if (!revoke) return ws.close(CLOSE_PROTOCOL, "bad revoke");
+        await storage.delete(devicePrefix + revoke.pubkey);
+        for (const phone of this.sockets("phone")) {
+          if ((phone.deserializeAttachment() as Conn | null)?.key === revoke.pubkey) {
+            phone.close(CLOSE_PROTOCOL, "revoked");
+          }
+        }
         return;
       }
 
