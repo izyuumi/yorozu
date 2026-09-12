@@ -122,7 +122,8 @@ public struct ChatView: View {
                             if case .approvalCard(let card) = event.payload {
                                 ApprovalCardView(
                                     card: card,
-                                    answered: model.answered.contains(card.actionId)
+                                    answered: model.answered.contains(card.actionId),
+                                    chosen: model.choices[card.actionId]
                                 ) { model.answer(card.actionId, in: thread.id, $0) }
                                 .id(event.id)
                             }
@@ -183,21 +184,28 @@ public struct ChatView: View {
     }
 
     private var composer: some View {
-        VStack(spacing: 8) {
+        // One surface, like Messages: the attach button, the field, the staged file and the
+        // send control all live inside the same rounded container, so the eye reads one thing
+        // to type into rather than three controls in a row.
+        VStack(alignment: .leading, spacing: 0) {
             if let staged = attachment.wrappedValue {
                 StagedAttachment(attachment: staged) { attachment.wrappedValue = nil }
+                    .padding(.horizontal, 8)
+                    .padding(.top, 8)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            HStack(alignment: .bottom, spacing: 8) {
+            HStack(alignment: .bottom, spacing: 4) {
                 AttachButton(
                     onPick: { attachment.wrappedValue = $0 },
                     onTooLarge: { attachmentTooLarge = true }
                 )
-                TextField("Message", text: draft, axis: .vertical)
+                .disabled(generating)
+                TextField("Message Yorozu", text: draft, axis: .vertical)
                     .textFieldStyle(.plain)
+                    .font(.body)
                     .lineLimit(1...6)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(.quaternary, in: Capsule())
+                    .padding(.vertical, 11)
+                    .frame(minHeight: 44)
                     // Hardware keyboards only, which is the whole point: on a paired iPad or a
                     // Mac, Return sends and Shift-Return keeps typing. The on-screen keyboard
                     // never gets here, so its Return still inserts a newline.
@@ -206,27 +214,65 @@ public struct ChatView: View {
                         send()
                         return .handled
                     }
+                    .accessibilityLabel("Message")
                 sendOrStop
+                    .padding(.trailing, 6)
+                    .frame(height: 44)
             }
         }
-        .padding(.horizontal)
-        .padding(.vertical, 10)
+        .background(fieldBackground, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        // While a turn runs the outline itself breathes in the accent: the field is the one
+        // thing on screen that changes job, so it is the one thing that says "working".
+        .overlay(WorkingOutline(active: generating))
+        .animation(.easeOut(duration: 0.18), value: attachment.wrappedValue != nil)
+        .animation(.easeOut(duration: 0.18), value: generating)
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
         .composerBackground()
     }
 
+    private var fieldBackground: Color {
+        #if os(iOS)
+            Color(.secondarySystemGroupedBackground)
+        #else
+            Color(nsColor: .textBackgroundColor)
+        #endif
+    }
+
+    /// One slot, two states. Send is a filled accent circle only once there is something to
+    /// send; before that it is a hollow outline, so the eye is not pulled to a dead control.
+    /// Stop replaces it with a filled square in the same place: same size, same spot, new job.
     @ViewBuilder private var sendOrStop: some View {
         if generating {
-            Button("Stop", systemImage: "stop.circle.fill") { model.interrupt(in: thread.id) }
-                .labelStyle(.iconOnly)
-                .font(.title2)
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+            Button {
+                model.interrupt(in: thread.id)
+            } label: {
+                Image(systemName: "stop.fill")
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 32, height: 32)
+                    .background(Color.primary, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Stop")
+            .transition(.scale(scale: 0.8).combined(with: .opacity))
         } else {
-            Button("Send", systemImage: "arrow.up.circle.fill") { send() }
-                .labelStyle(.iconOnly)
-                .font(.title2)
-                .buttonStyle(.plain)
-                .disabled(!canSend)
+            Button {
+                send()
+            } label: {
+                Image(systemName: "arrow.up")
+                    .font(.body.weight(.bold))
+                    .foregroundStyle(canSend ? Color.white : Color.secondary)
+                    .frame(width: 32, height: 32)
+                    .background(canSend ? Color.accentColor : Color.clear, in: Circle())
+                    .overlay(Circle().strokeBorder(.separator, lineWidth: canSend ? 0 : 1.5))
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSend)
+            .accessibilityLabel("Send")
+            .animation(.easeOut(duration: 0.15), value: canSend)
+            .transition(.scale(scale: 0.8).combined(with: .opacity))
         }
     }
 
@@ -348,6 +394,30 @@ private struct EmptyThreadView: View {
             Spacer(minLength: 0)
         }
         .padding()
+    }
+}
+
+/// The composer's outline. Quiet at rest; while a turn runs it settles into the accent and
+/// breathes, which reads as activity without adding a spinner to the field. Reduce Motion
+/// gets the steady accent outline with no pulse.
+private struct WorkingOutline: View {
+    let active: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var bright = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 22, style: .continuous)
+            .strokeBorder(
+                active ? AnyShapeStyle(Color.accentColor.opacity(bright || reduceMotion ? 0.9 : 0.35))
+                       : AnyShapeStyle(.separator.opacity(0.6)),
+                lineWidth: active ? 1.5 : 1
+            )
+            .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: bright)
+            .onChange(of: active, initial: true) { _, running in
+                bright = running && !reduceMotion
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 }
 
