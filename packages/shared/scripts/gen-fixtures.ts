@@ -12,7 +12,7 @@ import {
   signFrame,
   toBase64Url,
 } from "../src/crypto.ts";
-import { encodeQrPayload, type QrPayload } from "../src/events.ts";
+import { encodePairingString, type QrPayload } from "../src/events.ts";
 import { VECTOR_PLAINTEXT, vectorsPath, type Vectors } from "../src/vectors.ts";
 
 const alice = generateKeypair();
@@ -42,7 +42,7 @@ const vectors: Vectors = {
   signPriv: toBase64Url(signer.privateKey),
   signPub: toBase64Url(signer.publicKey),
   signature: toBase64Url(signFrame(signer.privateKey, plaintext)),
-  qr: encodeQrPayload(qr),
+  qr: encodePairingString(qr),
 };
 
 const path = vectorsPath("ts");

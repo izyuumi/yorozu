@@ -16,6 +16,13 @@ let project = Project(
                 "UILaunchScreen": [:],
                 "CFBundleDisplayName": "Yorozu",
                 "NSCameraUsageDescription": "Yorozu scans the pairing QR code shown by your Mac.",
+                // `yorozu://pair?...` is the pairing string itself: tapping one opens the app.
+                "CFBundleURLTypes": [
+                    [
+                        "CFBundleURLName": "to.yumi.yorozu.pair",
+                        "CFBundleURLSchemes": ["yorozu"],
+                    ]
+                ],
                 // Both are build settings so that scripts/build-ios.sh can pass the version
                 // and the build number on the xcodebuild command line rather than editing a
                 // generated file that tuist rewrites on the next run.

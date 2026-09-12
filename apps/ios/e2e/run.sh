@@ -3,7 +3,7 @@
 # End-to-end proof for the iOS app, and a test helper only — nothing here ships.
 #
 # Starts a relay, a fake OpenAI-compatible provider and the runtime sidecar, boots a throwaway
-# iPhone simulator, installs the app, injects the sidecar's pairing QR as a launch argument
+# iPhone simulator, installs the app, injects the sidecar's pairing string as a launch argument
 # (the simulator has no camera), sends one message and asserts the streamed reply arrives.
 #
 # Usage: apps/ios/e2e/run.sh     — logs are kept in apps/ios/e2e/.logs for inspection.
@@ -75,8 +75,8 @@ YOROZU_RELAY_URL="ws://127.0.0.1:$RELAY_PORT" \
   YOROZU_API_KEY=fake \
   node "$ROOT/packages/runtime/dist/serve.js" >"$WORK/sidecar.log" 2>&1 &
 PIDS+=($!)
-wait_for "$WORK/sidecar.log" "^QR " "the pairing QR"
-QR=$(grep -m1 '^QR ' "$WORK/sidecar.log" | cut -c4-)
+wait_for "$WORK/sidecar.log" "^PAIR " "the pairing string"
+PAIR=$(grep -m1 '^PAIR ' "$WORK/sidecar.log" | cut -c6-)
 
 say "generating and building the app"
 tuist generate --no-open --path "$IOS" >/dev/null
@@ -97,7 +97,7 @@ xcrun simctl install "$UDID" "$WORK/dd/Build/Products/Debug-iphonesimulator/Yoro
 
 say "pairing, sending one message, and doing it again in a second thread"
 xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" \
-  -yorozuPair "$QR" -yorozuSend hi -yorozuThread Groceries >"$WORK/app.log" 2>&1 &
+  -yorozuPair "$PAIR" -yorozuSend hi -yorozuThread Groceries >"$WORK/app.log" 2>&1 &
 PIDS+=($!)
 # The sidecar seeing `paired` proves the phone joined and its hello landed; the app seeing the
 # reply proves the sealed round trip. Check both, nearest cause first.

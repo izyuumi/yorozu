@@ -3,17 +3,18 @@
  * Runtime sidecar. Pairs with phones through the blind relay and answers their messages
  * with the agent loop. See docs/spec-v1.html section 8.
  *
- * Stdout is the Mac app's only channel: one `STATE <state>` line per relay transition and
- * one `QR <json>` line carrying the pairing payload.
+ * Stdout is the Mac app's only channel: one `STATE <state>` line per relay transition and,
+ * per pairing payload, a `QR <string>` line to draw and a `PAIR <string>` line to copy —
+ * both the same pairing string. `MINT` on stdin asks the relay for a fresh join token.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { argv, env, stdout } from "node:process";
+import { argv, env, stdin, stdout } from "node:process";
 import {
   deriveSessionKey,
-  encodeQrPayload,
+  encodePairingString,
   fromBase64Url,
   generateKeypair,
   generateSigningKeypair,
@@ -127,6 +128,8 @@ export interface ServeOptions {
 
 export interface Sidecar {
   close(): Promise<void>;
+  /** Asks the relay for a fresh join token, which prints the next pairing payload. */
+  mint(): void;
 }
 
 export function serve(options: ServeOptions = {}): Sidecar {
@@ -487,16 +490,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
             room = String(msg.roomId);
             state("registered");
             return ws.send(JSON.stringify({ type: "mint" }));
-          case "token":
-            return log(
-              `QR ${encodeQrPayload({
-                v: 1,
-                relayUrl,
-                macPubkey: toBase64Url(keys.session.publicKey),
-                token: String(msg.token),
-                ...(room ? { roomId: room } : {}),
-              })}`,
-            );
+          case "token": {
+            const pairing = encodePairingString({
+              v: 1,
+              relayUrl,
+              macPubkey: toBase64Url(keys.session.publicKey),
+              token: String(msg.token),
+              ...(room ? { roomId: room } : {}),
+            });
+            // The same string twice: one line the Mac draws as a QR, one it offers to copy.
+            log(`QR ${pairing}`);
+            return log(`PAIR ${pairing}`);
+          }
           case "frame":
             return onFrame(msg.payload);
         }
@@ -525,6 +530,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
   );
 
   return {
+    mint: () => {
+      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "mint" }));
+    },
     close: async () => {
       stopped = true;
       scheduler.stop();
@@ -559,7 +567,17 @@ if (import.meta.main) {
     case "assign-cron":
       stdout.write(`${setAssignCron(argument ?? "", mode(extra))}\n`);
       break;
-    default:
-      serve();
+    default: {
+      const sidecar = serve();
+      // The Mac app's "New code" button, and the only thing stdin is for. Skipped on a
+      // terminal: reading one from a backgrounded shell job earns a SIGTTIN, and a person
+      // running the sidecar by hand has no button to press anyway.
+      if (!stdin.isTTY) {
+        stdin.on("data", (chunk) => {
+          if (chunk.toString().includes("MINT")) sidecar.mint();
+        });
+        stdin.on("error", () => {});
+      }
+    }
   }
 }
