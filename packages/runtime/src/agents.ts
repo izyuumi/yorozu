@@ -4,7 +4,7 @@
  * and an absent field inherits the main agent's. See docs/spec-v1.html section 3.
  */
 
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { frontmatter } from "./frontmatter.js";
@@ -34,13 +34,26 @@ export const agentsDir = (dir = stateDir()): string => join(dir, "agents");
 const BUNDLED = fileURLToPath(new URL("../agents", import.meta.url));
 
 /**
- * Copies the bundled agents into the state directory on first run. `force: false`
- * means a file the user edited — or deleted — is never written over.
+ * Installs the bundled agents into the state directory. A file the user edited is never
+ * written over; a file still identical to the copy last installed is refreshed when the
+ * bundle changes, so prompt fixes reach users who never touched their agents. The shadow
+ * copies under `.bundled/` are what "still identical" is measured against; a deleted
+ * agent comes back, since only the file's absence means missing.
  */
-export function installAgents(dir = agentsDir()): string {
+export function installAgents(dir = agentsDir(), bundled = BUNDLED): string {
   mkdirSync(dir, { recursive: true });
-  if (existsSync(BUNDLED)) {
-    cpSync(BUNDLED, dir, { recursive: true, force: false, errorOnExist: false });
+  if (!existsSync(bundled)) return dir;
+  const shadow = join(dir, ".bundled");
+  mkdirSync(shadow, { recursive: true });
+  for (const name of readdirSync(bundled).filter((f) => f.endsWith(".md"))) {
+    const next = readFileSync(join(bundled, name), "utf8");
+    const installed = join(dir, name);
+    const previous = join(shadow, name);
+    const untouched =
+      !existsSync(installed) ||
+      (existsSync(previous) && readFileSync(installed, "utf8") === readFileSync(previous, "utf8"));
+    if (untouched) writeFileSync(installed, next);
+    writeFileSync(previous, next);
   }
   return dir;
 }
