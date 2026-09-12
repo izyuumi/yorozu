@@ -1,12 +1,17 @@
 import AppKit
 import CoreImage.CIFilterBuiltins
 import SwiftUI
+import YorozuKeepalive
 import YorozuPermissions
 import YorozuShared
 
 /// The Node runtime sidecar, spawned by the app and killed with it. Its stdout is the
 /// protocol: `STATE <state>` lines, and a `QR <string>` plus `PAIR <string>` line per pairing
 /// payload. `MINT` back on its stdin asks for a fresh code.
+///
+/// It is also restarted when it dies. A sidecar that exits takes the relay, the phone and
+/// every tool with it while the app carries on looking perfectly alive in the menu bar, which
+/// is the quietest way for this Mac to stop working.
 @MainActor
 final class Sidecar: ObservableObject {
     static let shared = Sidecar()
@@ -19,15 +24,26 @@ final class Sidecar: ObservableObject {
     /// The same payload the QR carries, for copying and pasting into the phone.
     @Published private(set) var pairingString: String?
 
-    private let process = Process()
-    private let input = Pipe()
+    private var process: Process?
+    private var input = Pipe()
+    /// Consecutive failed starts, which is what the delay between them is derived from.
+    private var restarts = 0
+    /// Set by ``stop``, so quitting is not mistaken for a crash worth restarting.
+    private var stopping = false
 
     var isPaired: Bool { state == "paired" }
 
     func start() {
+        stopping = false
+        spawn()
+    }
+
+    private func spawn() {
         let command = ProcessInfo.processInfo.environment["YOROZU_RUNTIME_CMD"]
             ?? RuntimeCommand.defaultCommand
         let output = Pipe()
+        let process = Process()
+        input = Pipe()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", command]
         // Whatever the provider cards configured, including the Keychain API key.
@@ -45,23 +61,59 @@ final class Sidecar: ObservableObject {
             try process.run()
         } catch {
             state = "failed: \(error.localizedDescription)"
+            Log.write("sidecar: could not start — \(error.localizedDescription)")
+            scheduleRestart(ranFor: 0)
             return
         }
+        self.process = process
+        Log.write("sidecar: started (pid \(process.processIdentifier))")
+        let started = Date()
         Task { [weak self] in
-            for try await line in output.fileHandleForReading.bytes.lines {
-                self?.apply(line)
-            }
-            self?.state = "stopped"
+            // The stream ending — cleanly or by throwing — is the sidecar being gone, and
+            // both go to the same place. Anything else would drop a crash on the floor.
+            do {
+                for try await line in output.fileHandleForReading.bytes.lines {
+                    self?.apply(line)
+                }
+            } catch {}
+            self?.ended(ranFor: Date().timeIntervalSince(started))
         }
     }
 
     func stop() {
-        if process.isRunning { process.terminate() }
+        stopping = true
+        if process?.isRunning == true { process?.terminate() }
+    }
+
+    private func ended(ranFor seconds: TimeInterval) {
+        state = "stopped"
+        process = nil
+        guard !stopping else { return }
+        Log.write("sidecar: exited after \(Int(seconds))s")
+        scheduleRestart(ranFor: seconds)
+    }
+
+    /// Doubling from a second up to a minute, so a sidecar that cannot start does not spin,
+    /// and one that dies once is back before the phone notices.
+    ///
+    /// The count resets after a run that lasted a minute: that was a working sidecar that
+    /// later died, not the same failure over and over, and it deserves a fast retry.
+    private func scheduleRestart(ranFor seconds: TimeInterval) {
+        if seconds >= 60 { restarts = 0 }
+        let delay = min(pow(2, Double(restarts)), 60)
+        restarts += 1
+        state = "restarting in \(Int(delay))s"
+        Log.write("sidecar: restarting in \(Int(delay))s (attempt \(restarts))")
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self, !self.stopping else { return }
+            self.spawn()
+        }
     }
 
     /// Asks the sidecar to mint the next join token, which prints a fresh pairing payload.
     func newCode() {
-        guard process.isRunning else { return }
+        guard process?.isRunning == true else { return }
         try? input.fileHandleForWriting.write(contentsOf: Data("MINT\n".utf8))
     }
 
@@ -101,6 +153,14 @@ private extension String {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
+            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev"
+            Log.write("launch: build \(version) at \(Bundle.main.bundlePath)")
+            // Whatever the last quit left behind, this Mac is up now and wants supervising.
+            Watchdog.clearPause()
+            // Re-registered rather than only written once: an update moves the bundle, and an
+            // agent pointing at the old path supervises nothing.
+            if Watchdog.isEnabled { Watchdog.install() }
+            LoginItem.enableByDefaultOnce()
             Task { await Permission.logAll() }
             // Starts Sparkle here rather than when Settings is first opened: the whole point of
             // an automatic update is that nobody had to go looking for it.
@@ -119,6 +179,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
+            // A quit the user asked for has to stick, or the watchdog undoes it within the
+            // minute. A crash never gets here, writes no pause, and is relaunched — which is
+            // the whole distinction the pause file exists to draw.
+            //
+            // Sparkle's relaunch is not a quit: it is about to start the new build itself, and
+            // if that fails the watchdog is exactly who should notice.
+            if Updates.installing {
+                Log.write("quit: installing an update, watchdog left running")
+            } else {
+                Watchdog.pause()
+            }
             Sidecar.shared.stop()
             // Quitting is not the user opting out: keep the preference for the next launch.
             NeverSleep.shared.stop(persist: false)

@@ -163,7 +163,7 @@ pnpm --filter @yorozu/relay exec wrangler deploy
 
 `apps/mac/Sources/YorozuMac/Permissions.swift` holds every grant check as a plain function, and
 `Onboarding.swift` walks them one page at a time: Accessibility, Screen Recording, Full Disk
-Access, Automation, Input Monitoring, Never Sleep. Each page deep-links to its System Settings
+Access, Automation, Input Monitoring, Start at Login, Never Sleep. Each page deep-links to its System Settings
 pane, re-checks every two seconds, and only unlocks Continue once the check is green or the step
 is explicitly skipped. The wizard opens on first launch (`onboardingCompleted` in `UserDefaults`)
 and again from **Run Setup Wizard…** in Settings → **Permissions**, which is the same checks as a
@@ -180,6 +180,53 @@ live list: each row polls its own grant and deep-links to the same pane.
 Never-sleep is a `caffeinate -dims` child process the app owns — no `pmset`, no sudo, and the
 assertion dies with the app. Toggle it in the wizard or the menu bar window; the choice is
 remembered in `neverSleep`.
+
+## Staying alive
+
+A Mac that answers a phone has to be running Yorozu at all times, and on one morning it was
+not: no crash report, no log line, no login item to bring it back, and three releases it had
+never picked up. `apps/mac/Sources/YorozuKeepalive/Keepalive.swift` is the answer to each of
+those, and everything below writes to one file — `~/Library/Logs/Yorozu/app.log` — so `tail`
+over ssh is the whole diagnosis.
+
+| Failure | What brings it back |
+| --- | --- |
+| The Mac restarted | the login item, `SMAppService.mainApp` |
+| Yorozu died | the watchdog LaunchAgent, within a minute |
+| The Node sidecar died | the app respawns it, backing off 1s → 60s |
+| An update was downloaded and never installed | Sparkle installs and relaunches while no chat window is open |
+
+**Start at login** is `SMAppService.mainApp`: no helper and no plist of ours, and the user can
+see and revoke it in System Settings › General › Login Items. It is registered by the wizard's
+own step (on by default) and toggled in Settings → **General**, which shows `SMAppService`'s
+status rather than a preference of ours — macOS owns this one, and a second copy of the answer
+would be a copy that could be wrong.
+
+**Keep Yorozu running** is a user LaunchAgent, `to.yumi.yorozu.watchdog`, written to
+`~/Library/LaunchAgents` on every launch and bootstrapped into `gui/$UID`. Every 60 seconds it
+runs `Contents/Resources/watchdog.sh`, which is four lines: if no process is running out of the
+app's `Contents/MacOS`, `open -a` the bundle and say so in the log. It is deliberately outside
+the app — the failure it exists for is the app being gone, so nothing inside the app can be
+what notices — and `StartInterval` rather than launchd's `KeepAlive`, which would own the app's
+process and fight `open`, Dock activation and Sparkle's relaunch.
+
+Every path in the agent comes from the running bundle, never `/Applications`, so a test build
+under its own `BUNDLE_ID` supervises itself under its own label and cannot touch the real one:
+
+```sh
+BUNDLE_ID=to.yumi.yorozu.t46test ./scripts/build-mac.sh
+```
+
+**Quitting still quits.** ⌘Q would otherwise last 60 seconds. On the way out the app writes a
+deadline ten minutes ahead to
+`~/Library/Application Support/<bundle-id>.watchdog-pause`, and the script honours it; a crash
+gets nowhere near that code, writes nothing, and is relaunched. An unreadable or expired file
+is not a pause — when in doubt the watchdog supervises. The pause is cleared on the next
+launch, so a Mac that is up again is covered again, and Sparkle's relaunch does not write one
+at all: if installing the update fails, the watchdog is exactly who should notice.
+
+The agent it writes and the pause rule are unit-tested, script included —
+`env -u SDKROOT swift test --package-path apps/mac`.
 
 ### Dev bundle
 
@@ -938,6 +985,15 @@ The public key goes in `SU_PUBLIC_KEY` in `build-mac.sh`, which writes it into t
 `apps/mac/Sources/YorozuMac/Updater.swift` turns the same three on once per machine so an
 answer given to an older build's "check automatically?" prompt does not keep the Mac on an old
 version forever.
+
+Sparkle's scheduling is opaque from the outside — the Mac that sat three releases behind said
+nothing about why — so `Updates.logStatus()` writes one line to `~/Library/Logs/Yorozu/app.log`
+at launch and every hour: `canCheck`, whether automatic checks and downloads are on, the
+interval, and how long ago the last check was. If it cannot check it logs why (a session
+already running, or the updater not ready), and a check overdue by more than two intervals is
+nudged with `checkForUpdatesInBackground()`. Installing does not wait for a quit: with no chat
+window open Sparkle is told to install immediately, and never to postpone the relaunch. See
+[Staying alive](#staying-alive).
 
 A release is one command, from a checkout standing on the tag:
 

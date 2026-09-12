@@ -80,6 +80,10 @@ struct ChatMenus: Commands {
 enum WindowPresence {
     private static var open = 0
 
+    /// Whether anything is on screen that a relaunch would interrupt. Read by the updater
+    /// before it installs — see ``UpdaterDelegate``.
+    static var isOpen: Bool { open > 0 }
+
     static func opened() {
         open += 1
         NSApp.setActivationPolicy(.regular)

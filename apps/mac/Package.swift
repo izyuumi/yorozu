@@ -15,10 +15,16 @@ let package = Package(
     targets: [
         // Every macOS privacy grant, as one description the app and the helper share.
         .target(name: "YorozuPermissions"),
+        // The login item, the watchdog LaunchAgent and the log all three write to. A library
+        // rather than part of the app because the parts worth testing — the agent it writes
+        // and the pause a deliberate Quit leaves — are pure text, and a test cannot import
+        // an executable target.
+        .target(name: "YorozuKeepalive"),
         .executableTarget(
             name: "YorozuMac",
             dependencies: [
                 "YorozuPermissions",
+                "YorozuKeepalive",
                 .product(name: "YorozuShared", package: "shared-swift"),
                 .product(name: "Sparkle", package: "Sparkle")
             ]
@@ -39,6 +45,7 @@ let package = Package(
                     "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", helperPlist
                 ])
             ]
-        )
+        ),
+        .testTarget(name: "YorozuKeepaliveTests", dependencies: ["YorozuKeepalive"])
     ]
 )

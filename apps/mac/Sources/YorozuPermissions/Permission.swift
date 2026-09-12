@@ -21,21 +21,31 @@ import EventKit
 import IOKit.hid
 import MusicKit
 import Photos
+import ServiceManagement
 
 public enum Permission: String, CaseIterable, Identifiable, Sendable {
     case accessibility, screenRecording, inputMonitoring, fullDiskAccess
     case calendars, reminders, contacts, photos, music, location, camera, microphone
     case files, automation
-    /// Not TCC grants: the last two steps of the same wizard, where the Mac is told to stay
-    /// awake and the approval floor is set. They live here so the wizard and the Permissions
-    /// tab can walk one list.
-    case neverSleep, approvals
+    /// Not TCC grants: the last three steps of the same wizard, where the Mac is told to
+    /// start Yorozu at login and stay awake, and the approval floor is set. They live here so
+    /// the wizard and the Permissions tab can walk one list.
+    case startAtLogin, neverSleep, approvals
+
+    /// The steps macOS has no say over: Yorozu's own settings, asked for in the same wizard
+    /// because to the user they are the same list of things to turn on.
+    public var isAppSetting: Bool {
+        switch self {
+        case .startAtLogin, .neverSleep, .approvals: true
+        default: false
+        }
+    }
 
     public var id: String { rawValue }
 
-    /// The grants `yorozu-native` can report on and ask for. The last two are the app's own
-    /// settings, so the helper has nothing to say about them.
-    public static let requestable = allCases.filter { $0 != .neverSleep && $0 != .approvals }
+    /// The grants `yorozu-native` can report on and ask for. The app's own settings are not
+    /// among them, so the helper has nothing to say about those.
+    public static let requestable = allCases.filter { !$0.isAppSetting }
 
     public var title: String {
         switch self {
@@ -53,6 +63,7 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
         case .microphone: "Microphone"
         case .files: "Files & Folders"
         case .automation: "Automation"
+        case .startAtLogin: "Start at Login"
         case .neverSleep: "Never Sleep"
         case .approvals: "Approvals"
         }
@@ -89,6 +100,9 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
         case .automation:
             "Lets the agent drive Finder, Safari, Mail, Calendar, Messages and the rest. Each app asks "
                 + "separately and may launch while it does; anything that was not already open is quit again."
+        case .startAtLogin:
+            "Starts Yorozu whenever you log in, so a Mac that restarted overnight is answering your phone again "
+                + "before you notice it rebooted."
         case .neverSleep:
             "Keeps this Mac awake so the agent can answer your phone while you are away. Reversible here or in the menu at any time."
         case .approvals:
@@ -114,7 +128,7 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
         case .microphone: "Privacy_Microphone"
         case .files: "Privacy_FilesAndFolders"
         case .automation: "Privacy_Automation"
-        case .neverSleep, .approvals: nil
+        case .startAtLogin, .neverSleep, .approvals: nil
         }
         return pane.flatMap { URL(string: "x-apple.systempreferences:com.apple.preference.security?\($0)") }
     }
@@ -123,7 +137,7 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
     /// that pane, can turn it on. Everything else prompts.
     public var canPrompt: Bool {
         switch self {
-        case .fullDiskAccess, .neverSleep, .approvals: false
+        case .fullDiskAccess, .startAtLogin, .neverSleep, .approvals: false
         default: true
         }
     }
@@ -146,6 +160,9 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
         case .location: Permission.locationGranted()
         case .files: Permission.hasFileAccess()
         case .automation: Permission.automationGrants().count == Permission.automationTargets.count
+        // Read from macOS rather than from a preference of ours: the user can revoke a login
+        // item in System Settings, and then ours would be the only copy that still said yes.
+        case .startAtLogin: SMAppService.mainApp.status == .enabled
         case .neverSleep: UserDefaults.standard.bool(forKey: "neverSleep")
         // Nothing to verify: the floor always has a value, defaulted before it is ever shown.
         case .approvals: true
@@ -195,7 +212,7 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
             await Permission.probeAutomation()
         case .fullDiskAccess:
             if let settingsURL { NSWorkspace.shared.open(settingsURL) }
-        case .neverSleep, .approvals:
+        case .startAtLogin, .neverSleep, .approvals:
             break  // The app's own settings, not the OS's.
         }
         return await isGranted()
