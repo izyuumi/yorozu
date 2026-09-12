@@ -273,7 +273,19 @@ public struct ChatView: View {
                                     card: card,
                                     answered: model.answered.contains(card.actionId),
                                     chosen: model.choices[card.actionId]
-                                ) { model.answer(card.actionId, in: thread.id, $0) }
+                                ) { choice, rule in
+                                    model.answer(card.actionId, in: thread.id, choice, rule: rule)
+                                }
+                                .id(event.id)
+                            }
+                        case .proposal(let event):
+                            if case .ruleProposal(let proposal) = event.payload {
+                                RuleProposalCardView(
+                                    proposal: proposal,
+                                    handled: model.handledProposals.contains(proposal.proposalId),
+                                    onSave: { model.saveRule($0, proposalId: proposal.proposalId) },
+                                    onDismiss: { model.dismissProposal(proposal.proposalId) }
+                                )
                                 .id(event.id)
                             }
                         case .question(let event):
@@ -589,6 +601,9 @@ public enum ChatShowcase {
     /// nothing on a simulator can open a real share sheet on demand, and the composer is the
     /// part worth showing anyway.
     public static var share = false
+    /// Opens the approval card's rule editor over the card. Same reason as ``modelMenu``:
+    /// nothing on a simulator taps a button on demand, and the sheet is the part worth showing.
+    public static var ruleEditor = false
 
     static func apply(
         dictation engine: Dictation,

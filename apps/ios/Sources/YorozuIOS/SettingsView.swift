@@ -37,6 +37,8 @@ struct SettingsView: View {
     let relayUrl: String
     let pairedAt: Date?
     let onUnpair: () -> Void
+    /// The chat model, for the one screen behind here that talks to the Mac: the rules list.
+    let model: ChatModel
 
     @Environment(\.dismiss) private var dismiss
     @State private var confirmingUnpair = false
@@ -65,6 +67,15 @@ struct SettingsView: View {
                         LabeledContent("Paired since", value: pairedAt.formatted(date: .abbreviated, time: .shortened))
                     }
                 }
+                Section("Approvals") {
+                    NavigationLink {
+                        RulesListView(model: model)
+                    } label: {
+                        LabeledContent("Rules") {
+                            Text(model.rules.isEmpty ? "None" : "\(model.rules.count)")
+                        }
+                    }
+                }
                 Section("App") {
                     LabeledContent("Version", value: Self.version)
                     Link("Source on GitHub", destination: Self.repo)
@@ -88,6 +99,59 @@ struct SettingsView: View {
             } message: {
                 Text("Yorozu will forget its keys and cached threads. You will need to scan a new pairing code from your Mac.")
             }
+        }
+    }
+}
+
+
+/// The rules the Mac is acting on, as the phone shows them: what each covers and what it has
+/// been doing, and the one thing the phone can do about one — revoke it. Editing a rule is the
+/// Mac's job, because widening a scope is the decision that wants a keyboard and a wide screen.
+///
+/// Read over the wire rather than from a file, unlike the Mac's own Rules tab: rules live on
+/// the Mac, and `rule_list` is how the phone learns about them.
+struct RulesListView: View {
+    let model: ChatModel
+    @State private var confirmingDelete: ApprovalRule?
+
+    var body: some View {
+        List {
+            if model.rules.isEmpty {
+                ContentUnavailableView(
+                    "No rules yet",
+                    systemImage: "checkmark.seal",
+                    description: Text("Choose “Always allow” on an approval card to make one.")
+                )
+            } else {
+                Section {
+                    ForEach(model.rules) { rule in
+                        RuleRowView(rule: rule)
+                            .swipeActions(edge: .trailing) {
+                                Button("Revoke", role: .destructive) { confirmingDelete = rule }
+                            }
+                    }
+                } footer: {
+                    Text("Rules apply to every agent and last until you revoke them. Edit one on the Mac.")
+                }
+            }
+        }
+        .navigationTitle("Rules")
+        .navigationBarTitleDisplayMode(.inline)
+        // The Mac pushes a fresh list after any change, so this is only about opening the screen.
+        .onAppear { model.requestRules() }
+        .refreshable { model.requestRules() }
+        .confirmationDialog(
+            "Revoke this rule?",
+            isPresented: Binding(get: { confirmingDelete != nil }, set: { if !$0 { confirmingDelete = nil } }),
+            presenting: confirmingDelete
+        ) { rule in
+            Button("Revoke", role: .destructive) {
+                model.deleteRule(rule.id)
+                confirmingDelete = nil
+            }
+            Button("Cancel", role: .cancel) { confirmingDelete = nil }
+        } message: { rule in
+            Text("Yorozu will ask again before it does \(rule.summary).")
         }
     }
 }

@@ -1,5 +1,8 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test, vi } from "vitest";
-import { describeEvent, eventPayload, runAgent } from "./index.js";
+import { describeEvent, eventPayload, runAgent, type Tool } from "./index.js";
 import { openaiCompat } from "./provider.js";
 
 test("describes an event", () => {
@@ -233,4 +236,85 @@ test("a provider told its model cannot see says so, and is then never handed ima
   expect(
     openaiCompat({ baseUrl: "https://example.invalid", model: "m", vision: false }).vision,
   ).toBe(false);
+});
+
+/** Two tool calls in one turn: one gated, one not. */
+const twoCallTurn = [
+  {
+    choices: [
+      {
+        delta: {
+          tool_calls: [
+            { index: 0, id: "gated", function: { name: "mail_send", arguments: '{"to":"bob"}' } },
+            { index: 1, id: "free", function: { name: "look", arguments: "{}" } },
+          ],
+        },
+        finish_reason: "tool_calls",
+      },
+    ],
+  },
+];
+
+test("30: a call waiting on approval does not hold up the independent call beside it", async () => {
+  // The gate writes its decision log, and that must land in a throwaway directory rather than
+  // in the real one this machine's Yorozu uses.
+  vi.stubEnv("YOROZU_STATE_DIR", mkdtempSync(join(tmpdir(), "yorozu-branch-")));
+
+  const provider = openaiCompat({
+    baseUrl: "https://example.invalid",
+    apiKey: "k",
+    model: "m",
+    fetch: vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(sse(twoCallTurn))
+      .mockResolvedValueOnce(sse(finalTurn)),
+  });
+
+  /** Set the moment the ungated tool actually runs. */
+  let looked = false;
+  /** What the card saw of the world at the moment it was answered. */
+  let lookedBeforeAnswering = false;
+
+  const mailer: Tool = {
+    name: "mail_send",
+    description: "",
+    parameters: {},
+    actionClass: "send-message",
+    action: ({ to }) => ({ target: String(to ?? ""), recipient: String(to ?? "") }),
+    run: () => "sent",
+  };
+  const reader: Tool = {
+    name: "look",
+    description: "",
+    parameters: {},
+    run: () => {
+      looked = true;
+      return "looked";
+    },
+  };
+
+  const events = await Array.fromAsync(
+    runAgent({
+      provider,
+      system: "sys",
+      messages: [{ role: "user", content: "mail bob and look something up" }],
+      tools: [mailer, reader],
+      ask: async () => {
+        // A card is up. Whatever else the turn had to do should be getting on with it, so
+        // this yields the microtask queue a few times rather than answering instantly.
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+        lookedBeforeAnswering = looked;
+        return { answer: "yes" };
+      },
+    }),
+  );
+
+  expect(lookedBeforeAnswering).toBe(true);
+  // Both still come back, in the order the model asked for them, so the model reads them the
+  // way it wrote them.
+  expect(
+    events.filter((event) => event.type === "tool_result").map((event) => event.id),
+  ).toEqual(["gated", "free"]);
+
+  vi.unstubAllEnvs();
 });
