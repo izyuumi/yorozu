@@ -23,6 +23,7 @@ import {
   signFrame,
   toBase64Url,
   type ApprovalCardData,
+  type DeviceInfo,
   type EventPayload,
   type Keypair,
   type YorozuEvent,
@@ -37,6 +38,7 @@ import { defaultTools, eventPayload, runAgent } from "./index.js";
 import { localSocketPath, startLocalChannel, type Send } from "./local.js";
 import type { Provider } from "./provider.js";
 import { probe } from "./probe.js";
+import { listEntryModels } from "./providers.js";
 import { startScheduler } from "./scheduler.js";
 import { listSkills, skillsDir, skillsPrompt } from "./skills.js";
 import {
@@ -64,6 +66,12 @@ const TITLE_SYSTEM =
   "Reply with a 3-5 word title for this conversation, no quotes, no trailing period";
 /** How much of the opening exchange the titler is shown. */
 const TITLE_CONTEXT_CHARS = 500;
+/**
+ * How long a device counts as online for. The relay tells us nothing about a phone's socket —
+ * only the phone is told about ours — so "online" here means "has said something recently",
+ * which is the only honest answer the runtime has.
+ */
+const ONLINE_MS = 90_000;
 
 /** The model's answer as a title: one line, no quotes, no trailing period, and short. */
 export function cleanTitle(raw: string): string {
@@ -137,10 +145,24 @@ export function loadKeys(dir: string): Keys {
  * phone re-announces itself with `hello` on every join anyway. Losing the file costs nothing
  * but one extra `hello`.
  */
-export function loadDevices(file: string): string[] {
+export function loadDevices(file: string): DeviceRecord[] {
   try {
     const stored = JSON.parse(readFileSync(file, "utf8")) as unknown;
-    return Array.isArray(stored) ? stored.filter((pub): pub is string => typeof pub === "string") : [];
+    if (!Array.isArray(stored)) return [];
+    return stored.flatMap((entry): DeviceRecord[] => {
+      // Before this file carried anything but keys, it was a bare array of them.
+      if (typeof entry === "string") return [{ pub: entry, lastSeen: 0 }];
+      if (typeof entry !== "object" || entry === null) return [];
+      const record = entry as Record<string, unknown>;
+      if (typeof record.pub !== "string") return [];
+      return [
+        {
+          pub: record.pub,
+          ...(typeof record.signingPub === "string" ? { signingPub: record.signingPub } : {}),
+          lastSeen: typeof record.lastSeen === "number" ? record.lastSeen : 0,
+        },
+      ];
+    });
   } catch {
     return [];
   }
@@ -150,7 +172,21 @@ export function loadDevices(file: string): string[] {
  * Frame bodies, base64url JSON inside the relay's opaque `payload`. `hello` is the phone
  * announcing its X25519 key; everything after it is sealed.
  */
-type FrameBody = { t: "hello"; pub: string } | { t: "box"; n: string; c: string };
+type FrameBody =
+  | { t: "hello"; pub: string; spub?: string }
+  | { t: "box"; n: string; c: string };
+
+/**
+ * One line of `devices.json`. `signingPub` is the Ed25519 key the relay knows the device by,
+ * which the phone announces alongside its session key: it cannot be derived from `pub`, and
+ * revoking a device at the relay is addressed to it.
+ */
+export interface DeviceRecord {
+  pub: string;
+  signingPub?: string;
+  /** Epoch milliseconds we last heard from it; 0 for a device paired before this was kept. */
+  lastSeen: number;
+}
 
 export interface ServeOptions {
   relayUrl?: string;
@@ -181,6 +217,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const log = options.log ?? ((line: string) => void stdout.write(`${line}\n`));
   const state = (name: string) => log(`STATE ${name}`);
 
+  // A chain nobody is signed in to answers every turn with a 401. Said once, here, so the Mac
+  // app can show it instead of leaving the user to read auth errors in a chat bubble. Skipped
+  // for a caller-supplied provider: that one is the caller's business.
+  if (!options.provider) {
+    void provider
+      .auth()
+      .then((result) => state(result.ok ? "provider-ok" : "no-provider"))
+      .catch(() => state("no-provider"));
+  }
+
   // The main agent is a file like every specialist; the skills on disk are listed into its
   // prompt once, at startup, and their bodies load on demand through the `skill` tool.
   const agents = installAgents(agentsDir(dir));
@@ -198,14 +244,25 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * a restart, so neither does a relaunch of this sidecar.
    */
   const devicesFile = join(dir, "devices.json");
-  const devices = new Map<string, Uint8Array>();
-  const remember = (pub: string): void => {
-    devices.set(pub, deriveSessionKey(keys.session.privateKey, fromBase64Url(pub)));
+  const devices = new Map<string, { key: Uint8Array; record: DeviceRecord }>();
+  const saveDevices = (): void => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      devicesFile,
+      JSON.stringify([...devices.values()].map(({ record }) => record)),
+      { mode: 0o600 },
+    );
   };
-  for (const pub of loadDevices(devicesFile)) {
+  const remember = (record: DeviceRecord): void => {
+    devices.set(record.pub, {
+      key: deriveSessionKey(keys.session.privateKey, fromBase64Url(record.pub)),
+      record,
+    });
+  };
+  for (const record of loadDevices(devicesFile)) {
     // A key on disk we can no longer agree with is simply dropped, not a reason not to start.
     try {
-      remember(pub);
+      remember(record);
     } catch {
       // Not a usable X25519 key any more.
     }
@@ -229,6 +286,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
     for (const device of devices.keys()) sendTo(device, event);
     for (const send of locals.values()) send(event);
   };
+
+  /** Asks the relay to forget a device, so a revoked phone cannot rejoin against the nonce. */
+  let revokeAtRelay: (signingPub: string) => void = () => {};
 
   /** Everything the runtime sees is logged first: the nightly job reads the log back. */
   function emit(event: YorozuEvent): void {
@@ -290,6 +350,42 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const threadList = (): YorozuEvent =>
     control({ kind: "thread_list", data: { threads: threadSummaries(dir) } });
 
+  /**
+   * Every device this Mac answers, the local socket's clients included: the Mac app is one more
+   * paired device, it just reached us without the relay.
+   */
+  const deviceList = (): YorozuEvent => {
+    const now = Date.now();
+    const paired: DeviceInfo[] = [...devices.values()].map(({ record }) => ({
+      pub: record.pub,
+      ...(record.signingPub ? { signingPub: record.signingPub } : {}),
+      via: "relay",
+      lastSeen: record.lastSeen,
+      online: now - record.lastSeen < ONLINE_MS,
+    }));
+    const here: DeviceInfo[] = [...locals.keys()].map((device) => ({
+      pub: device,
+      via: "local",
+      lastSeen: now,
+      online: true,
+    }));
+    return control({ kind: "device_list", data: { devices: [...paired, ...here] } });
+  };
+
+  /** A device joined, left or was revoked: everyone's list is stale, so everyone gets a new one. */
+  const pushDevices = (): void => broadcast(deviceList());
+
+  /** Forgets a device here and at the relay. Unknown keys are a no-op, not an error. */
+  const forgetDevice = (pub: string): void => {
+    const known = devices.get(pub);
+    if (!known) return;
+    devices.delete(pub);
+    saveDevices();
+    if (known.record.signingPub) revokeAtRelay(known.record.signingPub);
+    state("revoked");
+    pushDevices();
+  };
+
   /** Everything the device has not seen, across every live thread, in one frame. */
   const syncDelta = (lastSeen: Record<string, string>): YorozuEvent =>
     control({
@@ -339,6 +435,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const turn = new AbortController();
     running.add(turn);
     let reply = "";
+    /** The last text already on the wire under `id`, so the final reply is not sent twice. */
+    let streamed: string | null = null;
     try {
       // Built per turn: `delegate` carries this turn's abort signal down to its children.
       const tools = [
@@ -366,6 +464,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       })) {
         if (event.type === "text") {
           reply += event.text;
+          streamed = reply;
           broadcast(message(reply));
         } else if (event.type === "final") {
           reply = event.text;
@@ -383,7 +482,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     // An interrupted turn says nothing: the user already knows they stopped it.
     if (turn.signal.aborted) return;
-    emit(message(reply));
+    // The finished reply is always logged, but only sent when it differs from the last delta:
+    // the deltas carry the whole text so far under this same id, so re-sending an identical
+    // one is a second `message` event for one reply.
+    const final = message(reply);
+    appendTranscript(final, transcripts);
+    appendThreadEvent(final, dir);
+    if (reply !== streamed) broadcast(final);
     // Deliberately not awaited: titling is a second completion and must never delay a reply.
     void autoTitle(threadId).catch((e: unknown) => state(`title-error ${String(e)}`));
   }
@@ -467,6 +572,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return broadcast(threadList());
       case "thread_list":
         return reply(threadList());
+      case "device_list":
+        return reply(deviceList());
+      case "device_remove":
+        return forgetDevice(event.data.pub);
       case "sync_request":
         return reply(syncDelta(event.data.lastSeen));
     }
@@ -491,6 +600,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       locals.set(device, send);
       state("local-connected");
       send(threadList());
+      pushDevices();
     },
     onEvent: (device, event) => {
       try {
@@ -501,6 +611,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     onClose: (device) => {
       locals.delete(device);
+      pushDevices();
     },
     onError: state,
   });
@@ -525,8 +636,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
       ws.send(JSON.stringify({ type: "frame", payload, sig: toBase64Url(sig) }));
     };
 
+    revokeAtRelay = (signingPub: string): void => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "revoke", pubkey: signingPub }));
+      }
+    };
+
     sendTo = (device: string, event: YorozuEvent): void => {
-      const key = devices.get(device);
+      const key = devices.get(device)?.key;
       if (!key || ws.readyState !== WebSocket.OPEN) return;
       const box = seal(key, Buffer.from(JSON.stringify(event)));
       sendFrame({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) });
@@ -537,7 +654,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
      * A box sealed for another phone is simply not ours to read.
      */
     function openFrom(body: { n: string; c: string }): [string, YorozuEvent] | null {
-      for (const [device, key] of devices) {
+      for (const [device, { key }] of devices) {
         try {
           const plain = open(key, fromBase64Url(body.n), fromBase64Url(body.c));
           return [device, JSON.parse(Buffer.from(plain).toString()) as YorozuEvent];
@@ -553,15 +670,20 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (typeof payload !== "string") return;
       const body = JSON.parse(Buffer.from(payload, "base64url").toString()) as FrameBody;
       if (body.t === "hello") {
-        const known = devices.has(body.pub);
-        remember(body.pub);
-        if (!known) {
-          mkdirSync(dir, { recursive: true });
-          writeFileSync(devicesFile, JSON.stringify([...devices.keys()]), { mode: 0o600 });
-        }
+        const known = devices.get(body.pub);
+        remember({
+          pub: body.pub,
+          ...(body.spub ? { signingPub: body.spub } : known?.record.signingPub
+            ? { signingPub: known.record.signingPub }
+            : {}),
+          lastSeen: Date.now(),
+        });
+        saveDevices();
         state("paired");
         // A phone that has just paired needs the thread list before it can ask for anything.
         sendTo(body.pub, threadList());
+        // And every device's list of devices has just gained one.
+        pushDevices();
         // Join tokens are one-time, so the one in the printed QR has just been burnt: mint the
         // next one now, and the Mac's menu bar shows a QR a second device can still use.
         ws.send(JSON.stringify({ type: "mint" }));
@@ -571,6 +693,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const opened = openFrom(body);
       if (!opened) return;
       const [device, event] = opened;
+      const known = devices.get(device);
+      // Hearing from a device is the only thing that makes it online, so the stamp is kept.
+      if (known) known.record.lastSeen = Date.now();
       handleEvent(event, (answer) => sendTo(device, answer));
     }
 
@@ -661,6 +786,10 @@ if (import.meta.main) {
   switch (command) {
     case "probe":
       stdout.write(`${JSON.stringify(await probe())}\n`);
+      break;
+    // The model list of one `openai-compat` entry, one id per line, for the Settings picker.
+    case "models":
+      stdout.write(`${(await listEntryModels(argument ?? "")).join("\n")}\n`);
       break;
     case "assign":
       stdout.write(await autoAssign({ mode: mode(argument) }));

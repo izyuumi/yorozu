@@ -29,12 +29,16 @@ public final class ChatModel {
     public private(set) var answered: Set<String> = []
     /// One composer draft per thread, so switching threads does not lose what was typed.
     public var drafts: [String: String] = [:]
+    /// Every device the runtime answers, newest list wins. Only the Mac's Settings draws these.
+    public private(set) var devices: [DeviceInfo] = []
 
     /// Called once the transport can carry events. The iOS end-to-end harness drives its first
     /// message from here; the Mac app has no use for it.
     public var onPaired: (() -> Void)?
     /// Called whenever the runtime sends a new thread list.
     public var onThreads: (() -> Void)?
+    /// Called whenever the runtime sends a new device list.
+    public var onDevices: (() -> Void)?
     /// Called for every event kept in a thread, after it has been applied.
     public var onEvent: ((YorozuEvent) -> Void)?
 
@@ -168,6 +172,16 @@ public final class ChatModel {
         Task { [transport] in try? await transport.send(event) }
     }
 
+    /// Asks the runtime who is paired. It also pushes a fresh list whenever one comes or goes.
+    public func requestDevices() {
+        emit(.deviceList(DeviceListData(devices: [])), in: "")
+    }
+
+    /// Forgets a paired device, here and at the relay. Answered with a new list.
+    public func removeDevice(_ pub: String) {
+        emit(.deviceRemove(DeviceRemoveData(pub: pub)), in: "")
+    }
+
     /// Asks for everything each thread has gained since the last event we hold.
     private func requestSync() {
         emit(
@@ -196,6 +210,10 @@ public final class ChatModel {
                 onThreads?()
             case .syncDelta(let data):
                 for event in data.events { upsert(event) }
+            // About the devices rather than in a thread, like the thread list above it.
+            case .deviceList(let data):
+                devices = data.devices
+                onDevices?()
             default:
                 upsert(event)
             }

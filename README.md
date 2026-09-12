@@ -68,7 +68,19 @@ until sqlite-vec or provider embeddings land.
 
 ## Providers
 
-Three cards, as in the spec: Claude, Codex, OpenAI-compatible. Any one green is enough.
+Three adapters, as in the spec: Claude, Codex, OpenAI-compatible. Any one signed in is enough.
+Which of them are configured, in what order, and with which models is a list the user owns —
+`<state dir>/providers.json` — not three cards the code knows about:
+
+```json
+[{ "id": "claude", "kind": "claude-cli", "label": "Claude", "models": ["claude-opus-5"], "enabled": true },
+ { "id": "work", "kind": "openai-compat", "label": "Work", "baseUrl": "https://…/v1", "keyRef": "work", "models": ["gpt-5.6"], "enabled": true }]
+```
+
+Order is chain order, each entry's models are tried in order, and every spec is
+`<id>/<model>` — in the chain, in an agent's `model:` frontmatter, and in the catalog. No secret
+is ever in that file: `keyRef` names a Keychain item, and the Mac app hands the sidecar the key
+as `YOROZU_KEY_<KEYREF>` (the old single `YOROZU_API_KEY` still works as a fallback).
 
 | Adapter | Spec prefix | How it authenticates |
 | --- | --- | --- |
@@ -84,7 +96,9 @@ auto-approved and executed in-process, which is why none are listed.) The Codex 
 custom-tool mechanism, so that adapter streams text and ignores `tools`; keep a tool-capable
 provider behind it in the chain.
 
-`YOROZU_MODEL_CHAIN` is a comma list, primary first:
+`YOROZU_MODEL_CHAIN` overrides the file. It is a comma list, primary first, and accepts both
+entry ids and the three built-in kind names, so a chain written before `providers.json` existed
+still resolves:
 
 ```sh
 YOROZU_MODEL_CHAIN=claude-cli/claude-sonnet-5,codex-cli/gpt-5.6,openai/gpt-4o-mini
@@ -92,14 +106,21 @@ YOROZU_MODEL_CHAIN=claude-cli/claude-sonnet-5,codex-cli/gpt-5.6,openai/gpt-4o-mi
 
 The first provider to emit an event wins. Anything that fails *before* its first event — auth,
 HTTP 401/403/429, transport — advances to the next one; after the first event the turn is
-half-spoken, so failures propagate rather than replay. Unset, the chain is the single
-OpenAI-compatible adapter, as before.
+half-spoken, so failures propagate rather than replay.
 
-`node dist/serve.js probe` prints one JSON line (`{"claude":{"ok":true},…,"chain":"…"}`) with
-each card's state and never prints a secret. The Mac app's menu bar window uses it to colour the
-cards, offers a Terminal.app login for the two CLIs (both logins are interactive browser round
-trips), stores the OpenAI-compatible key in the Keychain, and passes base URL, key and chain to
-the sidecar as environment variables.
+With neither the variable nor a `providers.json`, the runtime probes instead of guessing: the
+providers that answer become the chain, preferring the subscription CLIs over a paid key, and
+`providers.json` is seeded from that first probe. With none of them usable it says so once —
+`STATE no-provider`, which the Mac app draws as *No provider signed in* — rather than failing
+every turn with `auth failed: /models 401`.
+
+`node dist/serve.js probe` prints one JSON line (`{"claude":{"ok":true},…,"providers":[…],"status":{…}}`)
+with each provider's state and never prints a secret; `node dist/serve.js models <id>` prints what
+one `openai-compat` entry's `/models` publishes. Settings → **Providers** is that list: add and
+remove entries, drag to reorder, edit each one's models (fetched from `/models` for an endpoint,
+a curated default for the CLIs), pick the default model — which is just the head of the chain —
+and log in to the two CLIs through Terminal.app, since both logins are interactive browser round
+trips.
 
 Note that `@openai/codex-sdk` depends on `@openai/codex`, which vendors a ~277 MB platform
 binary; the SDK is pointed at the user's own `codex` on PATH when there is one.
@@ -145,7 +166,8 @@ pnpm --filter @yorozu/relay exec wrangler deploy
 Access, Automation, Input Monitoring, Never Sleep. Each page deep-links to its System Settings
 pane, re-checks every two seconds, and only unlocks Continue once the check is green or the step
 is explicitly skipped. The wizard opens on first launch (`onboardingCompleted` in `UserDefaults`)
-and again from **Set Up Permissions…** in the menu bar window.
+and again from **Run Setup Wizard…** in Settings → **Permissions**, which is the same checks as a
+live list: each row polls its own grant and deep-links to the same pane.
 
 | Grant | Check |
 | --- | --- |
@@ -276,6 +298,15 @@ cannot open silently rather than reporting it.
 Join tokens stay one-time, but a burnt one is now replaced immediately: pairing mints the next
 token and prints a fresh `QR` line, so the Mac's menu bar is always showing a code a second device
 can use.
+
+Those devices outlive a restart in `<state dir>/devices.json`, one record per device: the X25519
+key the session is agreed from, the Ed25519 key the relay knows it by (announced alongside it in
+`hello`), and when it was last heard from. The Mac app lists them over the local socket —
+`device_list`, pushed whenever a device comes or goes and askable at any time — with "online"
+meaning *said something in the last 90 seconds*, which is the only honest answer the runtime has:
+the relay tells phones whether the Mac is up, never the other way round. `device_remove` forgets
+one: dropped from `devices.json`, and a `revoke` message to the relay, which forgets the device
+and closes its socket, so it cannot rejoin against the nonce either. Both relays implement it.
 
 ### Phone-side cache
 
@@ -632,9 +663,11 @@ list view — selection instead of a push, context menu instead of a swipe — s
 
 The menu bar window is now a `NavigationSplitView`: threads left, chat right, the detail half in
 its own `NavigationStack` so the subagent drill-down and trace pages have somewhere to push.
-Pairing QR, providers, browser and models moved into a standard `Settings` scene, reachable with
-⌘, or from the gear at the foot of the sidebar, which also holds the permissions wizard, quit,
-and the sidecar's relay state. The model is built and connected from `applicationDidFinishLaunching`
+Everything that is not chat moved into a standard `Settings` scene, reachable with ⌘, or from the
+gear at the foot of the sidebar, which also holds quit and the sidecar's relay state. Five tabs:
+**General** (relay URL, browser, never sleep, updates), **Providers** (the list above),
+**Models** (auto-assign and its cron), **Devices** (who is paired, with pairing and revoking),
+**Permissions** (the onboarding checks, live). The model is built and connected from `applicationDidFinishLaunching`
 rather than from the window, because a menu bar window only exists while it is open and replies
 and approval cards have to keep arriving either way.
 
@@ -658,17 +691,18 @@ The fresh-Mac walkthrough, in the order spec section 10 asks for:
    its System Settings pane and re-checks every two seconds, so Continue unlocks on its own
    once the grant is green. Any step can be skipped and redone later from
    **Set Up Permissions…**.
-4. Provider cards: one green card is enough. Claude and Codex log in through their own CLIs in
-   Terminal; the OpenAI-compatible card takes a base URL and an API key, which is stored in the
-   Keychain.
+4. Settings → **Providers**: one signed-in provider is enough. Claude and Codex log in through
+   their own CLIs in Terminal; an OpenAI-compatible entry takes a base URL and an API key, which
+   is stored in the Keychain. The list is the chain, top to bottom, and the first model of the
+   first entry is the default.
 5. Set the two approval floor settings — what the agent may do unasked, and what always needs a
    yes.
 6. Pick the browser the agent drives: the bundled Chromium (downloaded on first use) or one of
    your installed browsers. Either way it runs in a profile of its own.
 7. Consent to never-sleep if you want the Mac reachable while it is idle. It is a `caffeinate`
    process the app owns, and it dies with the app.
-8. Settings → **Pairing** is now showing a pairing code. Open the Yorozu iOS app and scan the QR,
-   or press **Copy** and paste the string into the app — or message it to yourself and tap it. Done.
+8. Settings → **Devices** → **Pair Another Device…** shows a pairing code. Open the Yorozu iOS
+   app and scan the QR, or press **Copy** and paste the string into the app — or message it to yourself and tap it. Done.
    The menu bar window itself is the chat; ⌘, or the gear at the foot of the sidebar is the way
    to everything else.
 

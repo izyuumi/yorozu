@@ -99,6 +99,8 @@ test("a sealed message from a phone round-trips through the agent loop", async (
   // Pairing is greeted with the thread list — empty, on a state dir nothing has happened in —
   // and the agent's reply follows it.
   expect(await openNext()).toMatchObject({ kind: "thread_list", data: { threads: [] } });
+  // Pairing changed who the devices are, so the new list follows it.
+  expect(await openNext()).toMatchObject({ kind: "device_list" });
   expect(await openNext()).toMatchObject({
     threadId: "t1",
     kind: "message",
@@ -138,7 +140,9 @@ test("a phone rejoins a restarted sidecar without pairing again", async () => {
   const pub = toBase64Url(phoneKeys.publicKey);
   phone.frame(encodeBody({ t: "hello", pub }), keys);
   // The `hello` is what writes the phone into `devices.json`.
-  await vi.waitFor(() => expect(loadDevices(join(stateDir, "devices.json"))).toEqual([pub]));
+  await vi.waitFor(() =>
+    expect(loadDevices(join(stateDir, "devices.json")).map((device) => device.pub)).toEqual([pub]),
+  );
 
   phone.ws.close();
   await first.cast.close();
@@ -505,4 +509,56 @@ test("a thread the user renamed keeps that title through its first turn", async 
   send({ kind: "message", data: { role: "user", text: "hi" } }, created!.id);
   await eventsUntil(isReply);
   expect(storedThreads(dir)[0]!.title).toBe("Weekend plans");
+});
+
+test("a revoked device is forgotten here and at the relay", async () => {
+  relay = await startRelay(0);
+  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-revoke-"));
+
+  let qrLine!: (line: string) => void;
+  const qrPrinted = new Promise<string>((resolve) => (qrLine = resolve));
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${relay.port}`,
+    stateDir,
+    provider: openaiCompat({
+      baseUrl: "https://example.invalid",
+      model: "m",
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => sse("pong")),
+    }),
+    log: (line) => {
+      if (line.startsWith("QR ")) qrLine(line.slice(3));
+    },
+  });
+
+  const qr = decodeQrPayload(await qrPrinted);
+  const { phone, keys } = await connectPhone(relay.port, qr.roomId!, qr.token);
+  expect(await phone.next()).toMatchObject({ type: "joined" });
+
+  // The `hello` carries the relay identity as well as the session key: revoking a device at
+  // the relay is addressed to the Ed25519 key, which cannot be derived from the other one.
+  const phoneKeys = generateKeypair();
+  const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
+  const pub = toBase64Url(phoneKeys.publicKey);
+  phone.frame(encodeBody({ t: "hello", pub, spub: keys.pub }), keys);
+  const devicesFile = join(stateDir, "devices.json");
+  await vi.waitFor(() =>
+    expect(loadDevices(devicesFile)).toMatchObject([{ pub, signingPub: keys.pub }]),
+  );
+
+  // Sent as the Mac app sends it, which is the same handler either way in.
+  const remove: YorozuEvent = {
+    id: "r1",
+    threadId: "",
+    ts: 3,
+    agentId: "mac",
+    kind: "device_remove",
+    data: { pub },
+  };
+  const box = seal(sessionKey, Buffer.from(JSON.stringify(remove)));
+  phone.frame(encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }), keys);
+
+  await vi.waitFor(() => expect(loadDevices(devicesFile)).toEqual([]));
+  // And the relay has forgotten it too: the nonce rejoin a known device may make is refused.
+  const again = await rejoinPhone(relay.port, qr.roomId!, keys);
+  expect(await again.closed).toBe(4001);
 });

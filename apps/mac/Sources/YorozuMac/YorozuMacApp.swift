@@ -11,6 +11,9 @@ final class Sidecar: ObservableObject {
     static let shared = Sidecar()
 
     @Published private(set) var state = "starting"
+    /// Whether the runtime found a provider to use. Nil until it has looked. Kept apart from
+    /// `state`, which every relay transition overwrites.
+    @Published private(set) var providerSigned: Bool?
     @Published private(set) var qr: NSImage?
     /// The same payload the QR carries, for copying and pasting into the phone.
     @Published private(set) var pairingString: String?
@@ -63,7 +66,11 @@ final class Sidecar: ObservableObject {
 
     private func apply(_ line: String) {
         if let name = line.dropping("STATE ") {
-            state = name
+            switch name {
+            case "provider-ok": providerSigned = true
+            case "no-provider": providerSigned = false
+            default: state = name
+            }
         } else if let text = line.dropping("QR "), (try? QrPayload.decode(text)) != nil {
             qr = Self.qrImage(text)
         } else if let text = line.dropping("PAIR "), (try? QrPayload.decode(text)) != nil {
@@ -87,48 +94,6 @@ private extension String {
     /// The remainder after `prefix`, or nil when the line is not that kind.
     func dropping(_ prefix: String) -> String? {
         hasPrefix(prefix) ? String(dropFirst(prefix.count)) : nil
-    }
-}
-
-struct PairingView: View {
-    @ObservedObject var sidecar: Sidecar
-    @ObservedObject private var neverSleep = NeverSleep.shared
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Text("Relay: \(sidecar.state)").font(.headline)
-            if let qr = sidecar.qr {
-                Image(nsImage: qr)
-                    .interpolation(.none)
-                    .resizable()
-                    .frame(width: 220, height: 220)
-                    .accessibilityLabel("Pairing QR code")
-                Text("Scan from the Yorozu iOS app.").font(.caption).foregroundStyle(.secondary)
-            } else {
-                ProgressView("Waiting for the runtime…").frame(height: 220)
-            }
-            if let code = sidecar.pairingString {
-                // A field bound to a constant: selectable and scrollable, edits go nowhere.
-                HStack {
-                    TextField("", text: .constant(code))
-                        .font(.system(.caption, design: .monospaced))
-                        .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("Pairing code")
-                    Button("Copy") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(code, forType: .string)
-                    }
-                }
-                Text("Or paste this code into the app.").font(.caption).foregroundStyle(.secondary)
-            }
-            Button("New code") { sidecar.newCode() }
-            Divider()
-            Toggle("Never sleep", isOn: Binding(
-                get: { neverSleep.isRunning },
-                set: { $0 ? neverSleep.start() : neverSleep.stop() }
-            ))
-            Button("Set Up Permissions…") { OnboardingWindow.show() }
-        }
     }
 }
 

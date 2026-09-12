@@ -23,6 +23,11 @@ enum LocalChat {
             print("YOROZU-MAC threads=\(model.threads.count) [\(model.threads.map(\.title).joined(separator: ", "))]")
             fflush(stdout)
         }
+        model.onDevices = {
+            // The other line a `swift run` smoke test looks for: the Devices tab's list.
+            print("YOROZU-MAC devices=\(model.devices.count) [\(model.devices.map(\.shortId).joined(separator: ", "))]")
+            fflush(stdout)
+        }
         Task {
             // The sidecar is spawned a moment before this and binds the socket when it starts,
             // so there is nothing to connect to yet. Ten seconds is far longer than Node takes.

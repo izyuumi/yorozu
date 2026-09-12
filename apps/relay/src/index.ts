@@ -12,6 +12,7 @@ import {
   parseFrame,
   parseJoin,
   parseRegister,
+  parseRevoke,
   TOKEN_TTL_MS,
   type Bucket,
 } from "./protocol.js";
@@ -110,6 +111,8 @@ export type Relay = { port: number; close: () => Promise<void> };
 
 export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Relay> {
   const rooms = new Map<string, Room>();
+  /** Which device each phone socket joined as, so a revoke can close exactly that one. */
+  const phoneKeys = new WeakMap<WebSocket, string>();
   const wss = new WebSocketServer({ port });
 
   const dropRoomIfIdle = (id: string, room: Room): void => {
@@ -187,6 +190,19 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           return;
         }
 
+        // The Mac unpairing a phone: forgotten, so it cannot rejoin against the nonce, and
+        // dropped now rather than at its next reconnect.
+        case "revoke": {
+          if (conn.role !== "mac" || !conn.room) return ws.close(CLOSE_PROTOCOL, "not registered");
+          const revoke = parseRevoke(msg);
+          if (!revoke) return ws.close(CLOSE_PROTOCOL, "bad revoke");
+          conn.room.devices.delete(revoke.pubkey);
+          for (const phone of conn.room.phones) {
+            if (phoneKeys.get(phone) === revoke.pubkey) phone.close(CLOSE_PROTOCOL, "revoked");
+          }
+          return;
+        }
+
         case "join": {
           const join = parseJoin(msg);
           if (!join) return ws.close(CLOSE_PROTOCOL, "bad join");
@@ -222,6 +238,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
             remember(room, phonePubkey, now);
           }
           room.phones.add(ws);
+          phoneKeys.set(ws, phonePubkey);
           conn.role = "phone";
           conn.room = room;
           conn.roomId = id;

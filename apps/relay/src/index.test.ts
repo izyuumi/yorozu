@@ -110,6 +110,38 @@ test("a known device rejoins even after the mac has gone away and come back", as
   expect(await again.next()).toMatchObject({ type: "joined" });
 });
 
+test("a revoked device is dropped and cannot rejoin", async () => {
+  relay = await startRelay(0);
+  const macKeys = keypair();
+  const room = roomId(macKeys.pub);
+  const mac = await connectMac(relay.port, macKeys);
+  const { phone, keys } = await connectPhone(relay.port, room, await mintToken(mac));
+  expect(await phone.next()).toMatchObject({ type: "joined" });
+
+  // The Mac unpairs it: the live socket goes, and the nonce rejoin it used to be allowed
+  // to make is refused.
+  mac.send({ type: "revoke", pubkey: keys.pub });
+  expect(await phone.closed).toBe(4001);
+
+  const again = await rejoinPhone(relay.port, room, keys);
+  expect(await again.closed).toBe(4001);
+});
+
+test("only the room's mac may revoke, and a malformed revoke closes the socket", async () => {
+  relay = await startRelay(0);
+  const macKeys = keypair();
+  const mac = await connectMac(relay.port, macKeys);
+
+  const stranger = client(relay.port, roomId(macKeys.pub));
+  await stranger.open;
+  await stranger.next(); // nonce
+  stranger.send({ type: "revoke", pubkey: keypair().pub });
+  expect(await stranger.closed).toBe(4001);
+
+  mac.send({ type: "revoke" });
+  expect(await mac.closed).toBe(4001);
+});
+
 test("rejects a nonce join from a pubkey the room does not know", async () => {
   relay = await startRelay(0);
   const macKeys = keypair();

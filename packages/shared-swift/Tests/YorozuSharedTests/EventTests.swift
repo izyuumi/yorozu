@@ -31,6 +31,12 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
             .syncDelta(SyncDeltaData(events: [
                 YorozuEvent(id: "e2", threadId: "home", ts: 2, agentId: "main", payload: .thought(ThoughtData(text: "x")))
             ]))
+        case .deviceList:
+            .deviceList(DeviceListData(devices: [
+                DeviceInfo(pub: "k1", signingPub: "s1", via: .relay, lastSeen: 1_757_640_000_000, online: true),
+                DeviceInfo(pub: "local-1", via: .local, lastSeen: 1_757_640_000_001, online: true),
+            ]))
+        case .deviceRemove: .deviceRemove(DeviceRemoveData(pub: "k1"))
         }
     let event = YorozuEvent(
         id: "e1",
@@ -112,4 +118,33 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         try QrPayload.decode("yorozu://pair?v=1&relay=ws://r&key=not%20base64!&token=t")
     }
     #expect(throws: (any Error).self) { try QrPayload.decode("yorozu://nonsense") }
+}
+
+@Test func aDeviceListUsesTheSharedShape() throws {
+    let event = YorozuEvent(
+        id: "e1",
+        threadId: "",
+        ts: 1,
+        agentId: "main",
+        payload: .deviceList(
+            DeviceListData(devices: [
+                DeviceInfo(pub: "k1", signingPub: "s1", via: .relay, lastSeen: 2, online: false)
+            ])
+        )
+    )
+    let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(event)) as? [String: Any]
+    #expect(json?["kind"] as? String == "device_list")
+    let device = ((json?["data"] as? [String: Any])?["devices"] as? [[String: Any]])?.first
+    #expect(device?["pub"] as? String == "k1")
+    #expect(device?["signingPub"] as? String == "s1")
+    #expect(device?["via"] as? String == "relay")
+    #expect(device?["online"] as? Bool == false)
+
+    // What the runtime writes, decoded as the Mac app receives it: a local device has no
+    // relay identity, so `signingPub` is absent rather than empty.
+    let wire = #"{"id":"e1","threadId":"","ts":1,"agentId":"main","kind":"device_list","data":{"devices":[{"pub":"local-1","via":"local","lastSeen":3,"online":true}]}}"#
+    let decoded = try JSONDecoder().decode(YorozuEvent.self, from: Data(wire.utf8))
+    guard case .deviceList(let data) = decoded.payload else { return #expect(Bool(false)) }
+    #expect(data.devices.first?.signingPub == nil)
+    #expect(data.devices.first?.shortId == "local-1")
 }
