@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { matchesCron, parseCron } from "./cron.js";
 import type { Tool } from "./index.js";
 import { stateDir } from "./memory.js";
+import { currentThread } from "./threads.js";
 
 export interface Job {
   id: string;
@@ -88,7 +89,7 @@ export function addJob(input: NewJob, dir = stateDir()): Job {
 
   const job: Job = {
     id: randomUUID(),
-    threadId: input.threadId || "home",
+    threadId: input.threadId || currentThread(dir),
     instruction,
     createdBy: input.createdBy || "main",
     ...(when ? { when } : { cron: input.cron }),

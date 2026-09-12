@@ -217,12 +217,13 @@ public struct ThreadSummary: Codable, Equatable, Sendable {
     /// Empty until the runtime auto-titles the thread or the user renames it.
     public var title: String
     public var archived: Bool
-    public var pinned: Bool
-    public init(id: String, title: String, archived: Bool, pinned: Bool) {
+    /// When the thread was last written to, epoch milliseconds. What the lists order on.
+    public var lastActivity: Double
+    public init(id: String, title: String, archived: Bool, lastActivity: Double) {
         self.id = id
         self.title = title
         self.archived = archived
-        self.pinned = pinned
+        self.lastActivity = lastActivity
     }
 
     /// What a list draws: an untitled thread is one the runtime has not named yet.

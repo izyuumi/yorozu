@@ -6,7 +6,7 @@ import YorozuShared
 /// chat behind the gear. The detail half has its own `NavigationStack`, which is what the
 /// subagent drill-down and the trace pages push onto.
 struct ChatWindowView: View {
-    @State private var selection: String? = ThreadSummary.home.id
+    @State private var selection: String?
     @Environment(\.openSettings) private var openSettings
     @ObservedObject private var sidecar = Sidecar.shared
 
@@ -14,7 +14,14 @@ struct ChatWindowView: View {
 
     /// Falls back to the first thread, so archiving the selected one leaves a chat on screen.
     private var thread: ThreadSummary? {
-        model.threads.first { $0.id == selection } ?? model.threads.first
+        model.threads.first { $0.id == selection } ?? visibleThreads(model.threads).first
+    }
+
+    /// Opening the window is this app's "came back to the foreground": carry on with the most
+    /// recent thread while it is still warm, and start a fresh draft once it is not. The first
+    /// open of a launch happens before the sidecar has answered, so it waits for the list.
+    private func open() {
+        selection = threadToOpen(model.threads) ?? model.newDraft().id
     }
 
     var body: some View {
@@ -22,7 +29,7 @@ struct ChatWindowView: View {
             ThreadSidebar(
                 threads: model.threads,
                 selection: $selection,
-                onCreate: { model.createThread() },
+                onCreate: { selection = model.newDraft().id },
                 onRename: { model.rename($0, to: $1) },
                 onArchive: model.archive
             )
@@ -42,6 +49,12 @@ struct ChatWindowView: View {
             }
         }
         .frame(width: 720, height: 480)
+        // Selecting something else is what discards a draft nothing was ever sent in.
+        .onChange(of: selection) { old, new in
+            if let old, old != new { model.discardDraft(old) }
+        }
+        .onAppear { if model.listed { open() } }
+        .onChange(of: model.listed) { _, listed in if listed { open() } }
     }
 
     /// Pairing, providers, browser, models and the wizard all moved into the Settings scene when

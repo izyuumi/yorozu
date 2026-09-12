@@ -116,27 +116,30 @@ test("the local socket round-trips a turn and receives broadcasts, with no relay
   // phone whose `hello` just landed.
   expect(await events.nextOf("thread_list")).toMatchObject({
     kind: "thread_list",
-    data: { threads: [{ id: "home", title: "Home", pinned: true }] },
+    data: { threads: [] },
   });
 
-  send(socket, "home", { kind: "message", data: { role: "user", text: "ping" } });
+  // A draft, as the Mac's own chat makes one: the create carries the id the message lands in.
+  // Named up front, so no auto-title lands a thread list of its own in the middle of this.
+  send(socket, "t1", { kind: "thread_create", data: { title: "Chores" } });
+  await events.nextOf("thread_list");
+  send(socket, "t1", { kind: "message", data: { role: "user", text: "ping" } });
   expect(await events.nextOf("message")).toMatchObject({
-    threadId: "home",
+    threadId: "t1",
     kind: "message",
     data: { role: "agent", text: "pong" },
   });
 
   // Thread admin is broadcast rather than answered to one device: getting it proves the socket
   // sits in the sidecar's session map like any paired phone.
-  send(socket, "home", { kind: "thread_create", data: { title: "Groceries" } });
+  send(socket, "t2", { kind: "thread_create", data: { title: "Groceries" } });
   const listed = await events.nextOf("thread_list");
-  expect(listed.kind === "thread_list" && listed.data.threads.map((t) => t.title)).toEqual([
-    "Home",
-    "Groceries",
-  ]);
+  expect(
+    listed.kind === "thread_list" && listed.data.threads.map((t) => t.title).toSorted(),
+  ).toEqual(["Chores", "Groceries"]);
 
   // And a device that holds nothing is given the history it missed.
-  send(socket, "home", { kind: "sync_request", data: { lastSeen: {} } });
+  send(socket, "t1", { kind: "sync_request", data: { lastSeen: {} } });
   const delta = await events.nextOf("sync_delta");
   expect(
     delta.kind === "sync_delta" &&

@@ -6,14 +6,11 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { EventKind, ThreadSummary, YorozuEvent } from "@yorozu/shared";
 import { stateDir } from "./memory.js";
 import type { Message } from "./provider.js";
-
-/** Always exists, always pinned, never archives. */
-export const HOME_THREAD = "home";
 
 /** How much of a thread's log is replayed to the model as context. */
 export const HISTORY_LIMIT = 40;
@@ -44,21 +41,30 @@ export const threadsDir = (dir = stateDir()): string => join(dir, "threads");
 
 const indexFile = (dir: string): string => join(dir, "threads.json");
 
-const home = (): ThreadRecord => ({
-  id: HOME_THREAD,
-  title: "Home",
-  createdAt: new Date().toISOString(),
-  archived: false,
-});
-
 function saveThreads(threads: ThreadRecord[], dir: string): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(indexFile(dir), `${JSON.stringify(threads, null, 2)}\n`);
 }
 
 /**
- * Every thread, Home first. A missing, broken or hand-edited index is repaired rather than
- * thrown over: Home is re-seeded and un-archived on the way out.
+ * When the thread was last written to, as epoch milliseconds. The log's mtime rather than its
+ * last event: appends are the only writes, so it is the same answer without parsing the file.
+ * A thread with no log yet is as old as it is.
+ */
+const lastActivity = (thread: ThreadRecord, dir: string): number => {
+  try {
+    return statSync(logFile(thread.id, dir)).mtimeMs;
+  } catch {
+    return Date.parse(thread.createdAt) || 0;
+  }
+};
+
+/**
+ * Every live and archived thread, most recently active first. A missing, broken or hand-edited
+ * index reads as empty rather than throwing.
+ *
+ * Migration: Yorozu used to pin a thread called `home` that could not be archived. It is an
+ * ordinary thread now if anything was ever said in it, and gone if nothing was.
  */
 export function listThreads(dir = stateDir()): ThreadRecord[] {
   let stored: ThreadRecord[] = [];
@@ -68,19 +74,34 @@ export function listThreads(dir = stateDir()): ThreadRecord[] {
   } catch {
     // First run, or a file someone broke by hand.
   }
-  const rest = stored.filter((thread) => thread.id !== HOME_THREAD);
-  const threads = [{ ...(stored.find((t) => t.id === HOME_THREAD) ?? home()), archived: false }, ...rest];
+  const threads = stored.flatMap((thread) =>
+    thread.id !== "home"
+      ? [thread]
+      : hasLog(thread.id, dir)
+        ? [{ ...thread, title: thread.title || "Home" }]
+        : [],
+  );
   if (JSON.stringify(threads) !== JSON.stringify(stored)) saveThreads(threads, dir);
-  return threads;
+  return threads.sort((a, b) => lastActivity(b, dir) - lastActivity(a, dir));
 }
+
+/** The thread a turn that has none of its own belongs to: the newest one, or a new one. */
+export const currentThread = (dir = stateDir()): string =>
+  listThreads(dir).find((thread) => !thread.archived)?.id ?? createThread(undefined, dir).id;
 
 /**
  * A thread is created unnamed: nobody is asked for a title, the runtime writes one after the
  * first reply, and the lists draw a placeholder until then.
+ *
+ * `id` is the client's: a draft thread lives on the device until its first message, which is
+ * sent straight after the `thread_create` and has to land in the thread it was typed in. An id
+ * that already exists is returned as it stands rather than duplicated.
  */
-export function createThread(title?: string, dir = stateDir()): ThreadRecord {
+export function createThread(title?: string, dir = stateDir(), id: string = randomUUID()): ThreadRecord {
+  const existing = listThreads(dir).find((thread) => thread.id === id);
+  if (existing) return existing;
   const thread: ThreadRecord = {
-    id: randomUUID(),
+    id,
     title: title?.trim() ?? "",
     createdAt: new Date().toISOString(),
     archived: false,
@@ -104,9 +125,8 @@ export function renameThread(id: string, title: string, dir = stateDir()): boole
   return true;
 }
 
-/** False when there is no such thread, or when it is Home: Home never archives. */
+/** False when there is no such thread, or when it is archived already. */
 export function archiveThread(id: string, dir = stateDir()): boolean {
-  if (id === HOME_THREAD) return false;
   const threads = listThreads(dir);
   const thread = threads.find((candidate) => candidate.id === id);
   if (!thread || thread.archived) return false;
@@ -117,16 +137,25 @@ export function archiveThread(id: string, dir = stateDir()): boolean {
 
 /** What the phone's thread list renders. */
 export const threadSummaries = (dir = stateDir()): ThreadSummary[] =>
-  listThreads(dir).map(({ id, title, archived }) => ({
-    id,
-    title,
-    archived,
-    pinned: id === HOME_THREAD,
+  listThreads(dir).map((thread) => ({
+    id: thread.id,
+    title: thread.title,
+    archived: thread.archived,
+    lastActivity: lastActivity(thread, dir),
   }));
 
 const logFile = (threadId: string, dir: string): string =>
-  // The id is ours (a UUID or `home`), but it arrives from the phone: keep it a file name.
+  // The id is a UUID, but it arrives from the phone: keep it a file name regardless.
   join(threadsDir(dir), `${threadId.replace(/[^\w.-]/g, "_")}.jsonl`);
+
+/** Whether anything was ever appended to the thread's log. */
+const hasLog = (threadId: string, dir: string): boolean => {
+  try {
+    return statSync(logFile(threadId, dir)).size > 0;
+  } catch {
+    return false;
+  }
+};
 
 /** Appends to the thread's log. Control events (sync, thread admin) are not history. */
 export function appendThreadEvent(event: YorozuEvent, dir = stateDir()): void {

@@ -97,19 +97,22 @@ say "booting the simulator and installing"
 xcrun simctl bootstatus "$UDID" -b >/dev/null
 xcrun simctl install "$UDID" "$WORK/dd/Build/Products/Debug-iphonesimulator/YorozuIOS.app"
 
-say "pairing, sending one message, and doing it again in a second thread"
+say "pairing, sending one message in a fresh draft, and again in a second thread"
 xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" \
   -yorozuPair "$PAIR" -yorozuSend hi -yorozuThread Groceries >"$WORK/app.log" 2>&1 &
 PIDS+=($!)
 # The sidecar seeing `paired` proves the phone joined and its hello landed; the app seeing the
 # reply proves the sealed round trip. Check both, nearest cause first.
 wait_for "$WORK/sidecar.log" "^STATE paired" "the phone to pair" 45
-wait_for "$WORK/app.log" "YOROZU-E2E-REPLY \[Home\] $REPLY" "the agent's reply in Home" 45
+# The first message goes in a draft thread, which exists only on the phone until it is sent:
+# the reply coming back proves `thread_create` and the message that followed it both landed.
+# It is still untitled while the reply streams, so the phone draws it as "New chat".
+wait_for "$WORK/app.log" "YOROZU-E2E-REPLY \[New chat\] $REPLY" "the agent's reply in the draft" 45
 # The fake provider's first turn calls `echo`: the phone logging it proves a tool call reaches
 # the trace the drill-down draws, not just the message.
 wait_for "$WORK/app.log" "YOROZU-E2E-TOOL echo" "the agent's tool call" 45
-# The app creates `Groceries` on pairing and sends the same message there once the Mac's
-# thread list names it: threads are created, synced and talked in end to end.
+# The app also creates `Groceries` outright on pairing and sends the same message there:
+# a named thread is created, synced and talked in end to end.
 wait_for "$WORK/app.log" "YOROZU-E2E-REPLY \[Groceries\] $REPLY" "the reply in the new thread" 45
 
 say "killing the app and launching it again with no pairing string"

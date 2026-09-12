@@ -63,9 +63,9 @@ private func eventually(_ condition: @MainActor () -> Bool) async -> Bool {
                 "l1",
                 .threadList(
                     ThreadListData(threads: [
-                        .home,
-                        ThreadSummary(id: "t2", title: "Groceries", archived: false, pinned: false),
-                        ThreadSummary(id: "t3", title: "Gone", archived: true, pinned: false),
+                        ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1),
+                        ThreadSummary(id: "t2", title: "Groceries", archived: false, lastActivity: 2),
+                        ThreadSummary(id: "t3", title: "Gone", archived: true, lastActivity: 3),
                     ])
                 )
             )
@@ -98,10 +98,11 @@ private func eventually(_ condition: @MainActor () -> Bool) async -> Bool {
     await transport.yield(.state(.paired))
     model.start()
 
-    model.drafts[ThreadSummary.home.id] = "  hi  "
-    model.send(in: .home)
+    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
+    model.drafts[thread.id] = "  hi  "
+    model.send(in: thread)
     // The draft is spent, and the message is in the thread before the runtime has said anything.
-    #expect(model.drafts[ThreadSummary.home.id] == "")
+    #expect(model.drafts[thread.id] == "")
     #expect(model.events["home"]?.count == 1)
 
     model.answer("a1", in: "home", .never)
@@ -128,4 +129,62 @@ private func eventually(_ condition: @MainActor () -> Bool) async -> Bool {
     }
     #expect(typed.text == "hi")
     #expect(typed.role == .user)
+}
+
+@MainActor
+@Test func aDraftThreadIsNowhereButHereUntilItsFirstMessage() async throws {
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, device: "phone")
+    await transport.yield(.state(.paired))
+    model.start()
+
+    // It is in the list, at the top, and the runtime has heard nothing about it.
+    let draft = model.newDraft()
+    #expect(model.threads.map(\.id) == [draft.id])
+    #expect(draft.displayTitle == "New chat")
+    #expect(await transport.sent.allSatisfy { $0.payload.kind != .threadCreate })
+
+    // Backing out without sending leaves nothing behind.
+    model.discardDraft(draft.id)
+    #expect(model.threads.isEmpty)
+
+    // Sending in one creates it, under the id it was typed in, and the message follows.
+    let second = model.newDraft()
+    model.send("hi", in: second.id)
+    #expect(model.draft == nil)
+    #expect(model.threads.map(\.id) == [second.id])
+    var tries = 0
+    while await transport.sent.count < 2, tries < 300 {
+        try? await Task.sleep(for: .milliseconds(10))
+        tries += 1
+    }
+    let sent = await transport.sent
+    #expect(sent.filter { $0.payload.kind == .threadCreate }.map(\.threadId) == [second.id])
+    #expect(sent.filter { $0.payload.kind == .message }.map(\.threadId) == [second.id])
+    // And discarding it now is a no-op: it is a real thread, not a draft, any more.
+    model.discardDraft(second.id)
+    #expect(model.threads.map(\.id) == [second.id])
+}
+
+@Test func theThreadToOpenIsTheNewestOneWhileItIsStillWarm() {
+    let now = Date(timeIntervalSince1970: 100_000)
+    func thread(_ id: String, _ minutesAgo: Double, archived: Bool = false) -> ThreadSummary {
+        ThreadSummary(
+            id: id,
+            title: id,
+            archived: archived,
+            lastActivity: (now.timeIntervalSince1970 - minutesAgo * 60) * 1000
+        )
+    }
+
+    // Nothing to go back to: the app starts a fresh draft instead.
+    #expect(threadToOpen([], now: now) == nil)
+    // Newest wins, whatever order the list arrived in.
+    #expect(threadToOpen([thread("old", 90), thread("new", 10)], now: now) == "new")
+    #expect(threadToOpen([thread("new", 10), thread("old", 90)], now: now) == "new")
+    // Newest still counts when it is inside the window, and nothing does once it is outside.
+    #expect(threadToOpen([thread("edge", 119)], now: now) == "edge")
+    #expect(threadToOpen([thread("cold", 121)], now: now) == nil)
+    // An archived thread is not somewhere to be opened, however recent.
+    #expect(threadToOpen([thread("gone", 1, archived: true), thread("warm", 30)], now: now) == "warm")
 }

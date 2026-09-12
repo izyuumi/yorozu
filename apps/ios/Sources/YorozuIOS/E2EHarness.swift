@@ -23,8 +23,6 @@ final class E2EHarness {
     private let autoSend: String
     private let autoThread: String?
     private weak var model: ChatModel?
-    /// Threads the first message has already gone to, so a re-sent list sends nothing twice.
-    private var sentTo: Set<String> = []
 
     static func attach(to model: ChatModel) {
         guard let autoSend = launchArgument("yorozuSend") else { return }
@@ -40,15 +38,12 @@ final class E2EHarness {
     private func wire() {
         model?.onPaired = { [self] in
             print("YOROZU-E2E paired")
-            if let autoThread { model?.createThread(title: autoThread) }
-            send(to: ThreadSummary.home.id)
-        }
-        // Once the thread it asked for exists, the same first message goes there too.
-        model?.onThreads = { [self] in
-            guard let autoThread,
-                let thread = model?.threads.first(where: { $0.title == autoThread })
-            else { return }
-            send(to: thread.id)
+            // A draft, exactly as the `+` button makes one: the message below is what creates it.
+            if let draft = model?.newDraft() { model?.send(autoSend, in: draft.id) }
+            // And a second, named thread, to prove `thread_create` and its sync as well.
+            if let autoThread, let id = model?.createThread(title: autoThread) {
+                model?.send(autoSend, in: id)
+            }
         }
         model?.onEvent = { [self] event in
             switch event.payload {
@@ -61,10 +56,5 @@ final class E2EHarness {
                 break
             }
         }
-    }
-
-    private func send(to threadId: String) {
-        guard sentTo.insert(threadId).inserted else { return }
-        model?.send(autoSend, in: threadId)
     }
 }

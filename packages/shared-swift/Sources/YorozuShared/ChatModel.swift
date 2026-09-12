@@ -1,10 +1,5 @@
 import Foundation
 
-extension ThreadSummary {
-    /// The thread that always exists, so the list is never empty — not even before pairing.
-    public static let home = ThreadSummary(id: "home", title: "Home", archived: false, pinned: true)
-}
-
 /// Every thread a client knows about: the connection, the events per thread, and whether the
 /// runtime is reachable. Shared by both apps — what differs between them is the
 /// ``ChatTransport`` handed in, the relay on the phone and the local socket on the Mac.
@@ -15,7 +10,15 @@ extension ThreadSummary {
 @MainActor
 @Observable
 public final class ChatModel {
-    public private(set) var threads: [ThreadSummary] = [.home]
+    /// Every thread, the unsent draft included, newest first once a list has ordered them.
+    public var threads: [ThreadSummary] { draft.map { [$0] + synced } ?? synced }
+    /// The threads the runtime has told us about.
+    private var synced: [ThreadSummary] = []
+    /// The thread this device has started but not yet sent anything in, so the runtime has never
+    /// heard of it. There is at most one: starting another replaces it.
+    public private(set) var draft: ThreadSummary?
+    /// Whether a `thread_list` has arrived yet, so an app can wait before deciding what to open.
+    public private(set) var listed = false
     /// Events per thread id, oldest first.
     public private(set) var events: [String: [YorozuEvent]] = [:]
     public private(set) var state: TransportState = .connecting
@@ -46,9 +49,8 @@ public final class ChatModel {
         self.cache = cache
         self.device = device
         guard let cache else { return }
-        let cached = cache.threads()
-        if !cached.isEmpty { threads = cached }
-        for thread in threads { events[thread.id] = cache.events(threadId: thread.id) }
+        synced = cache.threads()
+        for thread in synced { events[thread.id] = cache.events(threadId: thread.id) }
     }
 
     /// Connects and applies updates until the transport ends. Calling it twice does nothing.
@@ -79,6 +81,13 @@ public final class ChatModel {
     }
 
     public func send(_ text: String, in threadId: String) {
+        if let draft, draft.id == threadId {
+            // A draft becomes real with its first message. The id is ours, so the message below
+            // lands in the thread this `thread_create` is about to mint on the other end.
+            emit(.threadCreate(ThreadCreateData(title: nil)), in: threadId)
+            self.draft = nil
+            synced.insert(draft, at: 0)
+        }
         let event = YorozuEvent(
             id: UUID().uuidString,
             threadId: threadId,
@@ -90,15 +99,34 @@ public final class ChatModel {
         emit(event)
     }
 
-    /// Nobody is asked for a title: an unnamed thread is named by the runtime after its first
-    /// reply. A title is still accepted, for the rare caller that already has one.
-    public func createThread(title: String = "") {
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        // The runtime mints the id and answers every device with the new list.
-        emit(
-            .threadCreate(ThreadCreateData(title: trimmed.isEmpty ? nil : trimmed)),
-            in: ThreadSummary.home.id
+    /// A thread that exists only on this device until its first message: nothing is sent until
+    /// then, so backing out of it leaves nothing behind. Replaces any draft still unsent.
+    @discardableResult
+    public func newDraft() -> ThreadSummary {
+        let thread = ThreadSummary(
+            id: UUID().uuidString,
+            title: "",
+            archived: false,
+            lastActivity: Date().timeIntervalSince1970 * 1000
         )
+        draft = thread
+        return thread
+    }
+
+    /// Throws away the draft when it is still the one named and still unsent. A draft that was
+    /// sent in is a real thread by then and is not this one any more.
+    public func discardDraft(_ threadId: String) {
+        if draft?.id == threadId { draft = nil }
+    }
+
+    /// Creates a thread on the runtime straight away, title and all. Only the end-to-end harness
+    /// wants this: what the apps do is start a ``newDraft()`` and let the first message create it.
+    @discardableResult
+    public func createThread(title: String = "") -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let id = UUID().uuidString
+        emit(.threadCreate(ThreadCreateData(title: trimmed.isEmpty ? nil : trimmed)), in: id)
+        return id
     }
 
     /// Renames a thread for good: a title the user typed is never auto-titled over.
@@ -109,9 +137,10 @@ public final class ChatModel {
     }
 
     public func archive(_ thread: ThreadSummary) {
-        guard !thread.pinned else { return }
+        // An unsent draft is nowhere but here, so dropping it is the whole of archiving it.
+        guard draft?.id != thread.id else { return discardDraft(thread.id) }
         // Optimistic: the runtime's `thread_list` is what finally decides.
-        threads.removeAll { $0.id == thread.id }
+        synced.removeAll { $0.id == thread.id }
         emit(.threadArchive(ThreadArchiveData()), in: thread.id)
     }
 
@@ -143,7 +172,7 @@ public final class ChatModel {
     private func requestSync() {
         emit(
             .syncRequest(SyncRequestData(lastSeen: events.compactMapValues { $0.last?.id })),
-            in: ThreadSummary.home.id
+            in: ""
         )
     }
 
@@ -161,8 +190,9 @@ public final class ChatModel {
         case .event(let event):
             switch event.payload {
             case .threadList(let data):
-                threads = data.threads.filter { !$0.archived }
-                cache?.save(threads: threads)
+                synced = data.threads.filter { !$0.archived }
+                listed = true
+                cache?.save(threads: synced)
                 onThreads?()
             case .syncDelta(let data):
                 for event in data.events { upsert(event) }

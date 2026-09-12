@@ -78,7 +78,7 @@ test("a sealed message from a phone round-trips through the agent loop", async (
 
   const sent: YorozuEvent = {
     id: "e1",
-    threadId: "home",
+    threadId: "t1",
     ts: 1,
     agentId: "phone",
     kind: "message",
@@ -96,13 +96,11 @@ test("a sealed message from a phone round-trips through the agent loop", async (
     return JSON.parse(Buffer.from(plain).toString()) as YorozuEvent;
   };
 
-  // Pairing is greeted with the thread list; the agent's reply follows it.
+  // Pairing is greeted with the thread list — empty, on a state dir nothing has happened in —
+  // and the agent's reply follows it.
+  expect(await openNext()).toMatchObject({ kind: "thread_list", data: { threads: [] } });
   expect(await openNext()).toMatchObject({
-    kind: "thread_list",
-    data: { threads: [{ id: "home", title: "Home", pinned: true }] },
-  });
-  expect(await openNext()).toMatchObject({
-    threadId: "home",
+    threadId: "t1",
     kind: "message",
     data: { role: "agent", text: "pong" },
   });
@@ -233,7 +231,7 @@ async function pairedPhone(responses: (() => Response)[]) {
 
   const send = (
     event: Omit<YorozuEvent, "id" | "threadId" | "ts" | "agentId">,
-    threadId = "home",
+    threadId = "t1",
   ): void => {
     const full = { id: randomUUID(), threadId, ts: Date.now(), agentId: "phone", ...event };
     const box = seal(sessionKey, Buffer.from(JSON.stringify(full as YorozuEvent)));
@@ -395,65 +393,67 @@ test("two phones pair at once and see the same threads, events and deltas", asyn
   // The first pairing burnt that token; the sidecar minted the next one for the second phone.
   const second = await pairPhone(relay.port, await qrs.next());
 
+  // Nothing has happened in this state dir, so the greeting is an empty list.
   for (const phone of [first, second]) {
-    expect(await phone.next("thread_list")).toMatchObject({
-      data: { threads: [{ id: "home", title: "Home", archived: false, pinned: true }] },
-    });
+    expect(await phone.next("thread_list")).toMatchObject({ data: { threads: [] } });
+  }
+
+  // A draft on the first phone: the id is the device's, and the message follows the create.
+  const chat = "draft-1";
+  first.send(chat, { kind: "thread_create", data: {} });
+  for (const phone of [first, second]) {
+    expect(await phone.next("thread_list")).toMatchObject({ data: { threads: [{ id: chat }] } });
   }
 
   // A turn started on one phone is answered to both.
-  first.send("home", { kind: "message", data: { role: "user", text: "ping" } });
+  first.send(chat, { kind: "message", data: { role: "user", text: "ping" } });
   for (const phone of [first, second]) {
     expect(await phone.next("message")).toMatchObject({
-      threadId: "home",
+      threadId: chat,
       data: { role: "agent", text: "pong" },
     });
   }
 
   // So is a thread created on either of them.
-  second.send("home", { kind: "thread_create", data: { title: "Groceries" } });
+  second.send("draft-2", { kind: "thread_create", data: { title: "Groceries" } });
   const [listed, alsoListed] = [await first.next("thread_list"), await second.next("thread_list")];
   expect(listed).toEqual(alsoListed);
-  expect(listed.kind === "thread_list" && listed.data.threads.map((t) => t.title)).toEqual([
-    "Home",
-    "Groceries",
-  ]);
-  const groceries =
-    listed.kind === "thread_list" ? listed.data.threads[1]!.id : "";
+  const groceries = "draft-2";
 
   second.send(groceries, { kind: "message", data: { role: "user", text: "milk" } });
   expect(await second.next("message")).toMatchObject({ threadId: groceries });
 
-  // A device that holds nothing gets every thread's history in one delta.
-  first.send("home", { kind: "sync_request", data: { lastSeen: {} } });
+  // A device that holds nothing gets every thread's history in one delta, newest thread first.
+  first.send(chat, { kind: "sync_request", data: { lastSeen: {} } });
   const delta = await first.next("sync_delta");
   expect(
     delta.kind === "sync_delta" &&
-      delta.data.events.map((e) => `${e.threadId === "home" ? "home" : "groceries"}:${e.kind === "message" ? e.data.text : e.kind}`),
-  ).toEqual(["home:ping", "home:pong", "groceries:milk", "groceries:pong"]);
+      delta.data.events.map((e) => `${e.threadId}:${e.kind === "message" ? e.data.text : e.kind}`),
+  ).toEqual([
+    `${groceries}:milk`,
+    `${groceries}:pong`,
+    `${chat}:ping`,
+    `${chat}:pong`,
+  ]);
 
   // And a delta from a known id is only what came after it.
-  first.send("home", { kind: "sync_request", data: { lastSeen: { home: "nope" } } });
+  first.send(chat, { kind: "sync_request", data: { lastSeen: { [chat]: "nope" } } });
   expect((await first.next("sync_delta")).kind).toBe("sync_delta");
 
-  // Home never archives; anything else does, for every device at once.
-  first.send("home", { kind: "thread_archive", data: {} });
+  // Any thread archives now, for every device at once.
+  first.send(chat, { kind: "thread_archive", data: {} });
   expect(await second.next("thread_list")).toMatchObject({
-    data: { threads: [{ id: "home", archived: false }, { id: groceries, archived: false }] },
-  });
-  first.send(groceries, { kind: "thread_archive", data: {} });
-  expect(await second.next("thread_list")).toMatchObject({
-    data: { threads: [{ id: "home", archived: false }, { id: groceries, archived: true }] },
+    data: { threads: [{ id: groceries, archived: false }, { id: chat, archived: true }] },
   });
 });
 
 
-/** The threads of the next list that has more than Home in it: the pairing greeting has one. */
+/** The threads of the next non-empty list: the pairing greeting on a fresh state dir has none. */
 async function threadsAfter(
   eventsUntil: (done: (event: YorozuEvent) => boolean) => Promise<YorozuEvent[]>,
 ): Promise<{ id: string; title: string }[]> {
   const seen = await eventsUntil(
-    (event) => event.kind === "thread_list" && event.data.threads.length > 1,
+    (event) => event.kind === "thread_list" && event.data.threads.length > 0,
   );
   const last = seen.at(-1)!;
   return last.kind === "thread_list" ? last.data.threads : [];
@@ -472,7 +472,7 @@ test("the first reply names an untitled thread, and no later turn renames it", a
 
   // Nobody is asked for a title: the thread arrives empty and the lists draw a placeholder.
   send({ kind: "thread_create", data: {} });
-  const [, created] = await threadsAfter(eventsUntil);
+  const [created] = await threadsAfter(eventsUntil);
   expect(created!.title).toBe("");
 
   send({ kind: "message", data: { role: "user", text: "buy milk" } }, created!.id);
@@ -480,7 +480,6 @@ test("the first reply names an untitled thread, and no later turn renames it", a
 
   // The title lands after the reply, in a fresh list.
   expect(await threadsAfter(eventsUntil)).toEqual([
-    expect.objectContaining({ id: "home", title: "Home" }),
     expect.objectContaining({ id: created!.id, title: "Groceries for the week" }),
   ]);
 
@@ -488,7 +487,7 @@ test("the first reply names an untitled thread, and no later turn renames it", a
   send({ kind: "message", data: { role: "user", text: "and bread" } }, created!.id);
   const second = await eventsUntil(isReply);
   expect(second.at(-1)).toMatchObject({ data: { role: "agent", text: "Added bread." } });
-  expect(storedThreads(dir)[1]!.title).toBe("Groceries for the week");
+  expect(storedThreads(dir)[0]!.title).toBe("Groceries for the week");
 });
 
 test("a thread the user renamed keeps that title through its first turn", async () => {
@@ -496,15 +495,14 @@ test("a thread the user renamed keeps that title through its first turn", async 
   const { dir, send, eventsUntil, isReply } = await pairedPhone([() => sse("Noted.")]);
 
   send({ kind: "thread_create", data: {} });
-  const [, created] = await threadsAfter(eventsUntil);
+  const [created] = await threadsAfter(eventsUntil);
 
   send({ kind: "thread_rename", data: { title: "  Weekend plans  " } }, created!.id);
   expect(await threadsAfter(eventsUntil)).toEqual([
-    expect.objectContaining({ id: "home" }),
     expect.objectContaining({ id: created!.id, title: "Weekend plans" }),
   ]);
 
   send({ kind: "message", data: { role: "user", text: "hi" } }, created!.id);
   await eventsUntil(isReply);
-  expect(storedThreads(dir)[1]!.title).toBe("Weekend plans");
+  expect(storedThreads(dir)[0]!.title).toBe("Weekend plans");
 });
