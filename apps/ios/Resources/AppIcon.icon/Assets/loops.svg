@@ -1,7 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <g fill="#FFFAEC">
-    <rect x="222" y="252" width="92" height="124" rx="18"/>
-    <rect x="466" y="252" width="92" height="124" rx="18"/>
-    <rect x="710" y="252" width="92" height="124" rx="18"/>
+  <defs>
+    <linearGradient id="loop" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FAF7DC"/><stop offset="0.12" stop-color="#FFFAEF"/><stop offset="0.35" stop-color="#FCEED6"/><stop offset="0.55" stop-color="#F5D5A8"/><stop offset="0.72" stop-color="#E9C489"/><stop offset="0.88" stop-color="#F3CE8C"/><stop offset="1" stop-color="#FFF0CC"/></linearGradient>
+    <linearGradient id="loopside" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#C08838" stop-opacity="0.26"/><stop offset="0.2" stop-color="#C08838" stop-opacity="0"/><stop offset="0.8" stop-color="#C08838" stop-opacity="0"/><stop offset="1" stop-color="#C08838" stop-opacity="0.3"/></linearGradient>
+    <filter id="loopblur" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="7"/></filter>
+  </defs>
+  <g>
+    <g filter="url(#loopblur)" fill="rgba(150,95,10,0.28)">
+      <rect x="238.5" y="330" width="88" height="30" rx="14"/>
+      <rect x="467.5" y="330" width="88" height="30" rx="14"/>
+      <rect x="696.5" y="330" width="88" height="30" rx="14"/>
+    </g>
+    <rect x="240.5" y="246" width="84" height="106" rx="20" fill="url(#loop)"/>
+    <rect x="469.5" y="246" width="84" height="106" rx="20" fill="url(#loop)"/>
+    <rect x="698.5" y="246" width="84" height="106" rx="20" fill="url(#loop)"/>
+    <rect x="240.5" y="246" width="84" height="106" rx="20" fill="url(#loopside)"/>
+    <rect x="469.5" y="246" width="84" height="106" rx="20" fill="url(#loopside)"/>
+    <rect x="698.5" y="246" width="84" height="106" rx="20" fill="url(#loopside)"/>
   </g>
 </svg>
