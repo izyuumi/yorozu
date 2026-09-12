@@ -44,6 +44,9 @@ public final class ChatModel {
     public private(set) var generating: Set<String> = []
     /// Every device the runtime answers, newest list wins. Only the Mac's Settings draws these.
     public private(set) var devices: [DeviceInfo] = []
+    /// Messages typed with nowhere to send them, oldest first. Persisted, so a phone closed on
+    /// the underground still has them when it comes back up. See ``OutboxItem``.
+    public private(set) var outbox: [OutboxItem] = []
     /// Threads an agent reply landed in while they were not the one open. What the list's dots
     /// draw, and kept in the cache so closing the app does not mark everything read.
     public private(set) var unread: Set<String> = []
@@ -68,6 +71,8 @@ public final class ChatModel {
     /// What this client tags the events it emits with.
     private let device: String
     private var started = false
+    /// One flush at a time: the queue is sent in order, and two loops draining it would not be.
+    private var flushing = false
 
     public init(transport: any ChatTransport, cache: ThreadCache? = nil, device: String = "phone") {
         self.transport = transport
@@ -76,6 +81,7 @@ public final class ChatModel {
         guard let cache else { return }
         synced = cache.threads()
         unread = cache.unread()
+        outbox = Outbox.pruned(cache.outbox())
         for thread in synced { events[thread.id] = cache.events(threadId: thread.id) }
     }
 
@@ -111,10 +117,17 @@ public final class ChatModel {
     }
 
     public func send(_ text: String, in threadId: String, attachment: MessageAttachment? = nil) {
+        // Decided once for the whole send: a thread created here and the message that creates it
+        // must not take different routes, or the runtime is told about a message in a thread it
+        // has never heard of.
+        let queue = !canDeliver
         if let draft, draft.id == threadId {
             // A draft becomes real with its first message. The id is ours, so the message below
             // lands in the thread this `thread_create` is about to mint on the other end.
-            emit(.threadCreate(ThreadCreateData(title: nil)), in: threadId)
+            deliver(
+                event(.threadCreate(ThreadCreateData(title: nil)), in: threadId),
+                queue: queue
+            )
             self.draft = nil
             synced.insert(draft, at: 0)
         }
@@ -125,9 +138,71 @@ public final class ChatModel {
             agentId: device,
             payload: .message(MessageData(role: .user, text: text, attachment: attachment))
         )
-        generating.insert(threadId)
+        // A queued message has started no turn: the composer stays a composer until the message
+        // is actually on its way.
+        if !queue { generating.insert(threadId) }
         upsert(event)
-        emit(event)
+        deliver(event, queue: queue)
+    }
+
+    /// Whether an event sent now would actually reach the runtime. Anything else — still
+    /// dialling, joined at the relay but not paired, or paired with the Mac asleep — is what
+    /// the outbox is for.
+    public var canDeliver: Bool { state == .paired && ownerOnline }
+
+    /// What a bubble says about a message, or nil for one that went out normally.
+    public func outboxStatus(of eventId: String) -> OutboxStatus? {
+        outbox.first { $0.id == eventId }?.status
+    }
+
+    /// Sends a message the queue gave up on again, from the top: pressing "Not sent" is a fresh
+    /// three tries, and one more wait if the Mac is still away.
+    public func retry(_ eventId: String) {
+        guard let index = outbox.firstIndex(where: { $0.id == eventId }) else { return }
+        outbox[index].tries = 0
+        saveOutbox()
+        flush()
+    }
+
+    private func deliver(_ event: YorozuEvent, queue: Bool) {
+        guard queue else { return emit(event) }
+        outbox = Outbox.pruned(outbox + [OutboxItem(event: event)])
+        saveOutbox()
+    }
+
+    /// Empties the queue, oldest first, and stops at the first message the transport refuses:
+    /// the rest are behind it, and a thread read out of order is worse than one that arrives
+    /// late. A refusal costs that message one of its three tries and the next reconnect tries
+    /// again; one that has spent all three is stepped over rather than left blocking the queue,
+    /// because it is waiting on the person now and not on the network.
+    public func flush() {
+        guard !flushing, canDeliver, !outbox.isEmpty else { return }
+        flushing = true
+        Task { [weak self] in
+            while let self, self.canDeliver,
+                let item = self.outbox.first(where: { $0.status == .queued })
+            {
+                do {
+                    try await self.transport.send(item.event)
+                    self.outbox.removeAll { $0.id == item.id }
+                } catch {
+                    self.bumpTries(of: item.id)
+                    break
+                }
+            }
+            self?.flushing = false
+            self?.saveOutbox()
+        }
+    }
+
+    private func bumpTries(of id: String) {
+        guard let index = outbox.firstIndex(where: { $0.id == id }) else { return }
+        outbox[index].tries += 1
+    }
+
+    private func saveOutbox() {
+        outbox = Outbox.pruned(outbox)
+        cache?.save(outbox: outbox)
     }
 
     /// Stops the turn running in a thread. The runtime cancels the agent and every agent it
@@ -237,14 +312,17 @@ public final class ChatModel {
     }
 
     private func emit(_ payload: YorozuEvent.Payload, in threadId: String) {
-        emit(
-            YorozuEvent(
-                id: UUID().uuidString,
-                threadId: threadId,
-                ts: Int(Date().timeIntervalSince1970 * 1000),
-                agentId: device,
-                payload: payload
-            )
+        emit(event(payload, in: threadId))
+    }
+
+    /// An event from this device, stamped now.
+    private func event(_ payload: YorozuEvent.Payload, in threadId: String) -> YorozuEvent {
+        YorozuEvent(
+            id: UUID().uuidString,
+            threadId: threadId,
+            ts: Int(Date().timeIntervalSince1970 * 1000),
+            agentId: device,
+            payload: payload
         )
     }
 
@@ -289,9 +367,12 @@ public final class ChatModel {
                 failure = nil
                 requestSync()
                 onPaired?()
+                flush()
             }
         case .ownerOnline(let online):
             ownerOnline = online
+            // The Mac waking up is the other half of "there is somewhere to send to".
+            if online { flush() }
         case .event(let event):
             switch event.payload {
             case .threadList(let data):
@@ -324,6 +405,70 @@ public final class ChatModel {
     /// far, so the newest wins in place instead of appending a duplicate bubble.
     /// Test-only: drops a user message, a pending approval card and a running turn into a
     /// thread on this device alone, so the card and the Stop state can be screenshotted.
+    /// Test-only: a thread list spread across every dated section, so the headings can be
+    /// screenshotted without two days of history on the device.
+    public func previewThreads() {
+        let now = Date().timeIntervalSince1970 * 1000
+        let day = 24.0 * 60 * 60 * 1000
+        func thread(_ title: String, _ last: String, _ agoDays: Double, pinned: Bool = false)
+            -> ThreadSummary
+        {
+            ThreadSummary(
+                id: title,
+                title: title,
+                archived: false,
+                lastActivity: now - agoDays * day,
+                lastMessage: last,
+                pinned: pinned
+            )
+        }
+        synced = [
+            thread("Weeknight dinners", "Roast chicken, then stock on Sunday.", 0.02, pinned: true),
+            thread("Invoices", "Found the July one in Downloads.", 0.05),
+            thread("Kyoto in April", "Booked the 9:05 to Kyoto.", 0.2),
+            thread("Standup notes", "Summarised yesterday's thread.", 1.1),
+            thread("Bike service", "Rescheduled for Thursday.", 3.2),
+            thread("Tax return", "Filed — the receipt is in Documents.", 40),
+        ]
+        listed = true
+    }
+
+    /// Test-only: one message waiting for the Mac and one the outbox gave up on, so the two
+    /// captions can be screenshotted with no relay in the picture.
+    public func previewQueued(in threadId: String) {
+        upsert(
+            YorozuEvent(
+                id: "showcase-reply", threadId: threadId, ts: Int(Date().timeIntervalSince1970 * 1000) - 90_000,
+                agentId: "main",
+                payload: .message(MessageData(role: .agent, text: "Roast chicken it is — I'll put the stock on the list for Sunday.", done: true))
+            )
+        )
+        for (id, text, tries) in [
+            ("showcase-queued", "Also add potatoes and a lemon", 0),
+            ("showcase-failed", "And check what time the butcher closes", Outbox.maxTries),
+        ] {
+            var event = self.event(.message(MessageData(role: .user, text: text)), in: threadId)
+            event.id = id
+            upsert(event)
+            outbox.append(OutboxItem(event: event, tries: tries))
+        }
+    }
+
+    /// Test-only: a reply with a bare link in it, for the preview row.
+    public func previewLink(in threadId: String) {
+        upsert(
+            YorozuEvent(
+                id: "showcase-link", threadId: threadId, ts: Int(Date().timeIntervalSince1970 * 1000),
+                agentId: "main",
+                payload: .message(MessageData(
+                    role: .agent,
+                    text: "The recipe you saved is here: https://cooking.example.com/roast-chicken — it wants a 20 minute rest.",
+                    done: true
+                ))
+            )
+        )
+    }
+
     public func previewApproval(in threadId: String) {
         let now = Int(Date().timeIntervalSince1970 * 1000)
         upsert(YorozuEvent(id: "showcase-user", threadId: threadId, ts: now, agentId: device,
@@ -358,6 +503,12 @@ public final class ChatModel {
             cache?.save(unread: unread)
         }
         onEvent?(event)
+    }
+
+    /// A thread as a Markdown transcript, from whatever this device holds of it. See
+    /// ``threadMarkdown(thread:events:now:locale:timeZone:)``.
+    public func markdown(of thread: ThreadSummary) -> String {
+        threadMarkdown(thread: thread, events: events[thread.id] ?? [])
     }
 
     /// The thread's title as a list would draw it, for anything that has only an id. Falls back

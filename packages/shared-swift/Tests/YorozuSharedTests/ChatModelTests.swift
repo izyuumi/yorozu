@@ -59,6 +59,18 @@ private func sent(by transport: FakeTransport, atLeast count: Int) async -> [Yor
     return await transport.sent
 }
 
+/// A model with a live link behind it: paired and the Mac awake. Anything less and a send goes
+/// to the outbox instead of to the transport, which is what ``OutboxTests`` is about.
+@MainActor
+private func connected(_ transport: FakeTransport, device: String = "phone") async -> ChatModel {
+    let model = ChatModel(transport: transport, device: device)
+    await transport.yield(.state(.paired))
+    await transport.yield(.ownerOnline(true))
+    model.start()
+    _ = await eventually { model.canDeliver }
+    return model
+}
+
 @MainActor
 @Test func theModelAppliesWhatTheTransportYieldsWhateverTransportItIs() async throws {
     let transport = FakeTransport()
@@ -113,9 +125,7 @@ private func sent(by transport: FakeTransport, atLeast count: Int) async -> [Yor
 @MainActor
 @Test func whatTheUserTypesReachesTheTransportTaggedWithThisDevice() async throws {
     let transport = FakeTransport()
-    let model = ChatModel(transport: transport, device: "mac")
-    await transport.yield(.state(.paired))
-    model.start()
+    let model = await connected(transport, device: "mac")
 
     let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
     model.drafts[thread.id] = "  hi  "
@@ -153,9 +163,7 @@ private func sent(by transport: FakeTransport, atLeast count: Int) async -> [Yor
 @MainActor
 @Test func aDraftThreadIsNowhereButHereUntilItsFirstMessage() async throws {
     let transport = FakeTransport()
-    let model = ChatModel(transport: transport, device: "phone")
-    await transport.yield(.state(.paired))
-    model.start()
+    let model = await connected(transport)
 
     // It is in the list, at the top, and the runtime has heard nothing about it.
     let draft = model.newDraft()
@@ -264,8 +272,7 @@ private func summary(
 @MainActor
 @Test func aTurnIsInFlightFromTheSendUntilTheReplySaysItIsDone() async throws {
     let transport = FakeTransport()
-    let model = ChatModel(transport: transport, device: "phone")
-    model.start()
+    let model = await connected(transport)
 
     #expect(!model.generating.contains("home"))
     model.send("hi", in: "home")
@@ -285,8 +292,7 @@ private func summary(
 @MainActor
 @Test func stoppingATurnReleasesTheComposerRatherThanWaitingForAReplyThatIsNotComing() async throws {
     let transport = FakeTransport()
-    let model = ChatModel(transport: transport, device: "phone")
-    model.start()
+    let model = await connected(transport)
 
     model.send("hi", in: "home")
     model.interrupt(in: "home")
@@ -297,8 +303,7 @@ private func summary(
 @MainActor
 @Test func aDelegatedAgentsLastMessageEndsItsCardAndNotTheWholeTurn() async throws {
     let transport = FakeTransport()
-    let model = ChatModel(transport: transport, device: "phone")
-    model.start()
+    let model = await connected(transport)
     model.send("hi", in: "home")
 
     var delegated = event("d1", .message(MessageData(role: .agent, text: "booked", done: true)))
@@ -314,8 +319,7 @@ private func summary(
 @MainActor
 @Test func theComposerSendsItsAttachmentAndEmptiesItself() async throws {
     let transport = FakeTransport()
-    let model = ChatModel(transport: transport, device: "phone")
-    model.start()
+    let model = await connected(transport)
     let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
 
     // A photo with no words is still a message worth sending.
@@ -324,8 +328,9 @@ private func summary(
 
     #expect(model.attachments["home"] == nil)
     #expect(model.drafts["home"] == "")
+    // Two: pairing's own `sync_request` went first, and the message is behind it.
     let message = try #require(
-        await sent(by: transport, atLeast: 1).first { $0.payload.kind == .message }
+        await sent(by: transport, atLeast: 2).first { $0.payload.kind == .message }
     )
     guard case .message(let data) = message.payload else {
         Issue.record("not a message")

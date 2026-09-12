@@ -6,8 +6,9 @@ import SwiftUI
 public struct ChatView: View {
     public let model: ChatModel
     public let thread: ThreadSummary
-    /// Shown while the runtime is unreachable. The two apps lose it differently: the phone's
-    /// frames are buffered by the relay, the Mac's sidecar is simply not running yet.
+    /// Shown while the runtime is unreachable. The two apps lose it differently: the phone
+    /// queues what is typed and sends it when the Mac is back, the Mac's sidecar is simply not
+    /// running yet.
     public let offlineNotice: String
 
     /// Whether the reader is already at the newest message. Only then does a new one scroll the
@@ -26,7 +27,7 @@ public struct ChatView: View {
     public init(
         model: ChatModel,
         thread: ThreadSummary,
-        offlineNotice: String = "Mac offline — messages are held by the relay until it returns."
+        offlineNotice: String = "Mac offline — what you send waits on this phone until it's back."
     ) {
         self.model = model
         self.thread = thread
@@ -81,6 +82,15 @@ public struct ChatView: View {
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu("More", systemImage: "ellipsis") {
+                    ExportThreadButton(title: thread.displayTitle) {
+                        threadMarkdown(thread: thread, events: events)
+                    }
+                }
+            }
+        }
         // Sending, and the first token of the answer: the two moments the thread changes hands.
         .sensoryFeedback(.impact(weight: .light), trigger: sends)
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: replyStarted) { _, id in
@@ -107,8 +117,12 @@ public struct ChatView: View {
                                 MessageBubble(
                                     data: data,
                                     streaming: event.id == streamingId,
+                                    // Set only while the message is still in the outbox, which
+                                    // is what earns it a "Queued" or "Not sent" caption.
+                                    status: model.outboxStatus(of: event.id),
                                     onRetry: data.role == .user ? { retry(data) } : nil,
-                                    onDelete: { model.delete(event.id, in: thread.id) }
+                                    onDelete: { model.delete(event.id, in: thread.id) },
+                                    onResend: { model.retry(event.id) }
                                 )
                                 .id(event.id)
                             }

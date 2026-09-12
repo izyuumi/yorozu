@@ -39,22 +39,34 @@ public struct MessageBubble: View {
     private let data: MessageData
     /// Whether this is the reply still being written, which is what earns the caret.
     private let streaming: Bool
+    /// Set while the message is waiting in the outbox, which is what puts a caption under it.
+    private let status: OutboxStatus?
     private let onRetry: (() -> Void)?
     private let onDelete: (() -> Void)?
+    /// Sends the queued message again, for a message the outbox has given up on.
+    private let onResend: (() -> Void)?
 
     public init(
         data: MessageData,
         streaming: Bool = false,
+        status: OutboxStatus? = nil,
         onRetry: (() -> Void)? = nil,
-        onDelete: (() -> Void)? = nil
+        onDelete: (() -> Void)? = nil,
+        onResend: (() -> Void)? = nil
     ) {
         self.data = data
         self.streaming = streaming
+        self.status = status
         self.onRetry = onRetry
         self.onDelete = onDelete
+        self.onResend = onResend
     }
 
     private var isUser: Bool { data.role == .user }
+
+    /// The one link worth previewing, and only under a reply: what the user typed is their own
+    /// text and is not decorated back at them.
+    private var link: URL? { isUser ? nil : firstLink(in: data.text) }
 
     public var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
@@ -63,6 +75,14 @@ public struct MessageBubble: View {
             }
             if !data.text.isEmpty || streaming {
                 bubble
+            }
+            // Only once the reply has finished arriving: previewing a URL that is still being
+            // typed would fetch whatever prefix of it happened to be on screen.
+            if let link, !streaming {
+                LinkPreviewRow(url: link)
+            }
+            if let status {
+                caption(status)
             }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
@@ -76,6 +96,28 @@ public struct MessageBubble: View {
                 // would promise something this button cannot do.
                 Button("Remove from this device", systemImage: "trash", role: .destructive, action: onDelete)
             }
+        }
+    }
+
+    /// What the outbox has to say about this message, under it and in the quiet of a caption:
+    /// waiting for the Mac is normal and says so once, and a message that will not go says that
+    /// outright and offers the retry rather than hiding it in a long press.
+    @ViewBuilder private func caption(_ status: OutboxStatus) -> some View {
+        let label = Label {
+            Text(status == .failed ? "Not sent — tap to retry" : status.label)
+        } icon: {
+            Image(systemName: status.symbol)
+        }
+        .font(.caption)
+        .foregroundStyle(status == .failed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+        .padding(.horizontal, 4)
+
+        if status == .failed, let onResend {
+            Button(action: onResend) { label.frame(minHeight: 44) }
+                .buttonStyle(.plain)
+                .accessibilityHint("Sends this message again")
+        } else {
+            label.accessibilityLabel(status.label)
         }
     }
 
