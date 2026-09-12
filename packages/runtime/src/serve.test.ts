@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startRelay, type Relay } from "@yorozu/relay";
@@ -618,4 +618,86 @@ test("a relay that answers the heartbeat is left connected", async () => {
   await new Promise((r) => setTimeout(r, 300));
   expect(states).not.toContain("STATE heartbeat-timeout");
   expect(states.filter((line) => line === "STATE registered")).toHaveLength(1);
+});
+
+test("announces the paired list to the relay as soon as it has registered", async () => {
+  // The relay's known-device set is rebuilt from `devices.json`, so a relay that lost its
+  // storage stops refusing every rejoin with a 4001 the moment the Mac comes back.
+  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-announce-"));
+  const signingPubs = ["kBxLN8wYlBCk9nTYMhHsO6D5Hhw4EJOa2OBCnmHRLkA", "Zm9vYmFyZm9vYmFy"];
+  const devices = signingPubs.map((signingPub, i) => ({
+    pub: toBase64Url(generateKeypair().publicKey),
+    signingPub,
+    lastSeen: i,
+  }));
+  writeFileSync(join(stateDir, "devices.json"), JSON.stringify(devices));
+
+  const seen: Record<string, unknown>[] = [];
+  const fake = new WebSocketServer({ port: 0 });
+  fake.on("connection", (ws) => {
+    ws.send(JSON.stringify({ type: "nonce", nonce: "n" }));
+    ws.on("message", (data) => {
+      const msg = JSON.parse(data.toString()) as Record<string, unknown>;
+      seen.push(msg);
+      if (msg.type === "register") ws.send(JSON.stringify({ type: "registered", roomId: "r" }));
+    });
+  });
+
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${(fake.address() as AddressInfo).port}`,
+    stateDir,
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: vi.fn() }),
+    log: () => {},
+  });
+
+  await vi.waitFor(() => expect(seen.map((msg) => msg.type)).toContain("devices"));
+  expect(seen.find((msg) => msg.type === "devices")).toEqual({
+    type: "devices",
+    devices: signingPubs,
+  });
+  // After the registration, not before it: the relay refuses the frame on a socket that has
+  // not registered yet.
+  expect(seen.findIndex((msg) => msg.type === "devices")).toBeGreaterThan(
+    seen.findIndex((msg) => msg.type === "register"),
+  );
+
+  // `close()` waits on the open sockets, and this sidecar's is one of them.
+  await sidecar.close();
+  await new Promise<void>((done) => fake.close(() => done()));
+});
+
+test("a paired device the relay knows no name for holds the announce back", async () => {
+  // The list replaces the relay's whole set, so an incomplete one would unpair the device it
+  // cannot name — a record kept from before the signing key was. Nothing is sent instead.
+  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-announce-partial-"));
+  writeFileSync(
+    join(stateDir, "devices.json"),
+    JSON.stringify([{ pub: toBase64Url(generateKeypair().publicKey), lastSeen: 0 }]),
+  );
+
+  const seen: string[] = [];
+  const fake = new WebSocketServer({ port: 0 });
+  fake.on("connection", (ws) => {
+    ws.send(JSON.stringify({ type: "nonce", nonce: "n" }));
+    ws.on("message", (data) => {
+      const msg = JSON.parse(data.toString()) as { type: string };
+      seen.push(msg.type);
+      if (msg.type === "register") ws.send(JSON.stringify({ type: "registered", roomId: "r" }));
+    });
+  });
+
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${(fake.address() as AddressInfo).port}`,
+    stateDir,
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: vi.fn() }),
+    log: () => {},
+  });
+
+  // `mint` is the message that follows the announce, so waiting for it is waiting past it.
+  await vi.waitFor(() => expect(seen).toContain("mint"));
+  expect(seen).not.toContain("devices");
+
+  // `close()` waits on the open sockets, and this sidecar's is one of them.
+  await sidecar.close();
+  await new Promise<void>((done) => fake.close(() => done()));
 });

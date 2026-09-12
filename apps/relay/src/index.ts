@@ -9,6 +9,7 @@ import {
   dropCount,
   evictions,
   newBucket,
+  parseDevices,
   parseFrame,
   parseJoin,
   parseRegister,
@@ -117,6 +118,19 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
   const phoneKeys = new WeakMap<WebSocket, string>();
   const wss = new WebSocketServer({ port });
 
+  /**
+   * Drops devices the Mac no longer considers paired: forgotten, so they cannot rejoin
+   * against the nonce, and their sockets go now rather than at their next reconnect.
+   */
+  const forget = (room: Room, pubkeys: readonly string[]): void => {
+    const gone = new Set(pubkeys);
+    for (const pubkey of gone) room.devices.delete(pubkey);
+    for (const phone of room.phones) {
+      const key = phoneKeys.get(phone);
+      if (key && gone.has(key)) phone.close(CLOSE_PROTOCOL, "revoked");
+    }
+  };
+
   const dropRoomIfIdle = (id: string, room: Room): void => {
     // A room with known devices is kept: forgetting it would strand every paired phone on its
     // next rejoin. Only a room nobody ever paired to is dropped.
@@ -210,10 +224,29 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           if (conn.role !== "mac" || !conn.room) return ws.close(CLOSE_PROTOCOL, "not registered");
           const revoke = parseRevoke(msg);
           if (!revoke) return ws.close(CLOSE_PROTOCOL, "bad revoke");
-          conn.room.devices.delete(revoke.pubkey);
-          for (const phone of conn.room.phones) {
-            if (phoneKeys.get(phone) === revoke.pubkey) phone.close(CLOSE_PROTOCOL, "revoked");
+          forget(conn.room, [revoke.pubkey]);
+          return;
+        }
+
+        // The Mac's whole paired list, sent right after `register` and again whenever it
+        // changes. It replaces what this room knows rather than adding to it, so the Mac's
+        // `devices.json` is the source of truth and state this relay lost comes back.
+        //
+        // A device holding a live socket is kept whatever the list says: it has just proved
+        // itself, and the Mac's file may not have caught up with a token join it is still
+        // being told about. Unpairing a connected phone is what `revoke` is for.
+        case "devices": {
+          if (conn.role !== "mac" || !conn.room) return ws.close(CLOSE_PROTOCOL, "not registered");
+          const announced = parseDevices(msg);
+          if (!announced) return ws.close(CLOSE_PROTOCOL, "bad devices");
+          const keep = new Set(announced.devices);
+          const room = conn.room;
+          for (const phone of room.phones) {
+            const key = phoneKeys.get(phone);
+            if (key) keep.add(key);
           }
+          for (const pubkey of keep) if (!room.devices.has(pubkey)) room.devices.set(pubkey, now);
+          forget(room, [...room.devices.keys()].filter((pubkey) => !keep.has(pubkey)));
           return;
         }
 
