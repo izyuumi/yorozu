@@ -15,6 +15,7 @@ import { chainFromEnv } from "./chain.js";
 import { eventPayload, runAgent, type Tool } from "./index.js";
 import { memoryDir, memoryFor } from "./memory.js";
 import type { Provider } from "./provider.js";
+import { currentThread } from "./threads.js";
 
 export const DELEGATE_TOOL = "delegate";
 
@@ -130,7 +131,7 @@ export function delegateTool(options: DelegateOptions): Tool {
       const config = inherit(found, options.main);
       // Resolved from the file's own field: inheriting means reusing the provider we hold.
       const provider = found.model ? chainFromEnv(found.model) : options.provider;
-      const threadId = context?.threadId ?? "home";
+      const threadId = context?.threadId ?? currentThread();
       const text = String(task ?? "");
 
       if (!background) {

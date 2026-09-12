@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { YorozuEvent } from "@yorozu/shared";
@@ -8,7 +8,6 @@ import {
   archiveThread,
   createThread,
   eventsAfter,
-  HOME_THREAD,
   HISTORY_LIMIT,
   listThreads,
   readThreadEvents,
@@ -24,7 +23,9 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "yorozu-threads-"));
 });
 
-const message = (id: string, text: string, threadId = HOME_THREAD): YorozuEvent => ({
+const HOME = "home";
+
+const message = (id: string, text: string, threadId = HOME): YorozuEvent => ({
   id,
   threadId,
   ts: Number(id.slice(1)),
@@ -33,31 +34,75 @@ const message = (id: string, text: string, threadId = HOME_THREAD): YorozuEvent 
   data: { role: "user", text },
 });
 
-test("Home exists from the first read and cannot be archived", () => {
+/** An index as an older Yorozu wrote it, with its pinned `home` thread in front. */
+const writeLegacyIndex = (...rest: { id: string; title: string }[]): void =>
+  writeFileSync(
+    join(dir, "threads.json"),
+    JSON.stringify([
+      { id: HOME, title: "Home", createdAt: "2026-01-01T00:00:00.000Z", archived: false },
+      ...rest.map((t) => ({ ...t, createdAt: "2026-01-02T00:00:00.000Z", archived: false })),
+    ]),
+  );
+
+test("there are no threads at all until one is made", () => {
+  expect(listThreads(dir)).toEqual([]);
+  expect(threadSummaries(dir)).toEqual([]);
+});
+
+test("a legacy Home thread that was talked in becomes an ordinary thread", () => {
+  writeLegacyIndex();
+  appendThreadEvent(message("e1", "hi"), dir);
+
   expect(listThreads(dir)).toEqual([
-    { id: HOME_THREAD, title: "Home", createdAt: expect.any(String), archived: false },
+    { id: HOME, title: "Home", createdAt: "2026-01-01T00:00:00.000Z", archived: false },
   ]);
-  expect(archiveThread(HOME_THREAD, dir)).toBe(false);
-  // Even if the index is edited by hand to claim otherwise.
-  const file = join(dir, "threads.json");
-  const stored = JSON.parse(readFileSync(file, "utf8")) as { archived: boolean }[];
-  stored[0]!.archived = true;
-  writeFileSync(file, JSON.stringify(stored));
-  expect(listThreads(dir)[0]!.archived).toBe(false);
+  // Ordinary means archivable, which the pinned Home never was.
+  expect(archiveThread(HOME, dir)).toBe(true);
+  expect(listThreads(dir)[0]!.archived).toBe(true);
+});
+
+test("a legacy Home thread nothing was ever said in is dropped, for good", () => {
+  writeLegacyIndex({ id: "t2", title: "Groceries" });
+
+  expect(listThreads(dir).map((t) => t.id)).toEqual(["t2"]);
+  // Migrated once: the rewritten index no longer mentions it.
+  expect(readFileSync(join(dir, "threads.json"), "utf8")).not.toContain(`"${HOME}"`);
+});
+
+test("threads are listed and summarised most recently active first", () => {
+  const older = createThread("Older", dir);
+  const newer = createThread("Newer", dir);
+  appendThreadEvent(message("e1", "hi", older.id), dir);
+  appendThreadEvent(message("e2", "hi", newer.id), dir);
+  // The two appends land in the same millisecond: age the older log by hand.
+  const hourAgo = Date.now() / 1000 - 3600;
+  utimesSync(join(threadsDir(dir), `${older.id}.jsonl`), hourAgo, hourAgo);
+
+  expect(listThreads(dir).map((t) => t.title)).toEqual(["Newer", "Older"]);
+  expect(threadSummaries(dir).map((t) => t.title)).toEqual(["Newer", "Older"]);
+  // A thread with no log yet is only as recent as its own creation.
+  expect(threadSummaries(dir)[1]!.lastActivity).toBeCloseTo(hourAgo * 1000, -4);
 });
 
 test("creating and archiving threads survives a reload", () => {
   const created = createThread("  Groceries  ", dir);
   expect(created.title).toBe("Groceries");
-  expect(listThreads(dir).map((t) => t.id)).toEqual([HOME_THREAD, created.id]);
+  expect(listThreads(dir).map((t) => t.id)).toEqual([created.id]);
 
   expect(archiveThread(created.id, dir)).toBe(true);
   expect(archiveThread(created.id, dir)).toBe(false);
   expect(archiveThread("nope", dir)).toBe(false);
   expect(threadSummaries(dir)).toEqual([
-    { id: HOME_THREAD, title: "Home", archived: false, pinned: true },
-    { id: created.id, title: "Groceries", archived: true, pinned: false },
+    { id: created.id, title: "Groceries", archived: true, lastActivity: expect.any(Number) },
   ]);
+});
+
+test("a thread is created under the id the device minted, once", () => {
+  const created = createThread("Groceries", dir, "draft-1");
+  expect(created.id).toBe("draft-1");
+  // A repeated frame — a reconnect, a second device — is not a second thread.
+  expect(createThread("Groceries", dir, "draft-1").title).toBe("Groceries");
+  expect(listThreads(dir)).toHaveLength(1);
 });
 
 test("a thread is created unnamed and renamed in place", () => {
@@ -69,22 +114,22 @@ test("a thread is created unnamed and renamed in place", () => {
   // Nothing to rename, and nothing to rename it to, are both refusals rather than writes.
   expect(renameThread(created.id, "   ", dir)).toBe(false);
   expect(renameThread("nope", "Anything", dir)).toBe(false);
-  expect(listThreads(dir)[1]!.title).toBe("Weekend plans");
+  expect(listThreads(dir)[0]!.title).toBe("Weekend plans");
 });
 
 test("events append per thread and only history kinds are logged", () => {
   appendThreadEvent(message("e1", "hi"), dir);
   appendThreadEvent(
-    { id: "e2", threadId: HOME_THREAD, ts: 2, agentId: "main", kind: "thought", data: { text: "hm" } },
+    { id: "e2", threadId: HOME, ts: 2, agentId: "main", kind: "thought", data: { text: "hm" } },
     dir,
   );
   appendThreadEvent(
-    { id: "e3", threadId: HOME_THREAD, ts: 3, agentId: "main", kind: "sync_request", data: { lastSeen: {} } },
+    { id: "e3", threadId: HOME, ts: 3, agentId: "main", kind: "sync_request", data: { lastSeen: {} } },
     dir,
   );
   appendThreadEvent(message("e4", "other", "t2"), dir);
 
-  expect(readThreadEvents(HOME_THREAD, dir).map((e) => e.id)).toEqual(["e1", "e2"]);
+  expect(readThreadEvents(HOME, dir).map((e) => e.id)).toEqual(["e1", "e2"]);
   expect(readThreadEvents("t2", dir).map((e) => e.id)).toEqual(["e4"]);
   expect(readThreadEvents("never-written", dir)).toEqual([]);
   expect(readFileSync(join(threadsDir(dir), "home.jsonl"), "utf8").split("\n")).toHaveLength(3);
@@ -93,21 +138,21 @@ test("events append per thread and only history kinds are logged", () => {
 test("a delta is everything after the last-seen id, the tail when it is unknown", () => {
   for (const id of ["e1", "e2", "e3"]) appendThreadEvent(message(id, id), dir);
 
-  expect(eventsAfter(HOME_THREAD, "e1", dir).map((e) => e.id)).toEqual(["e2", "e3"]);
-  expect(eventsAfter(HOME_THREAD, "e3", dir)).toEqual([]);
-  expect(eventsAfter(HOME_THREAD, undefined, dir).map((e) => e.id)).toEqual(["e1", "e2", "e3"]);
-  expect(eventsAfter(HOME_THREAD, "gone", dir).map((e) => e.id)).toEqual(["e1", "e2", "e3"]);
+  expect(eventsAfter(HOME, "e1", dir).map((e) => e.id)).toEqual(["e2", "e3"]);
+  expect(eventsAfter(HOME, "e3", dir)).toEqual([]);
+  expect(eventsAfter(HOME, undefined, dir).map((e) => e.id)).toEqual(["e1", "e2", "e3"]);
+  expect(eventsAfter(HOME, "gone", dir).map((e) => e.id)).toEqual(["e1", "e2", "e3"]);
   expect(eventsAfter("t2", "e1", dir)).toEqual([]);
 });
 
 test("history is the thread's messages, compacted to the last HISTORY_LIMIT", () => {
   for (let n = 1; n <= HISTORY_LIMIT + 5; n++) appendThreadEvent(message(`e${n}`, `m${n}`), dir);
   appendThreadEvent(
-    { id: "reply", threadId: HOME_THREAD, ts: 99, agentId: "main", kind: "message", data: { role: "agent", text: "ok" } },
+    { id: "reply", threadId: HOME, ts: 99, agentId: "main", kind: "message", data: { role: "agent", text: "ok" } },
     dir,
   );
 
-  const history = threadHistory(HOME_THREAD, dir);
+  const history = threadHistory(HOME, dir);
   expect(history).toHaveLength(HISTORY_LIMIT);
   // 45 user messages plus the reply, compacted to the last 40.
   expect(history[0]).toEqual({ role: "user", content: "m7" });

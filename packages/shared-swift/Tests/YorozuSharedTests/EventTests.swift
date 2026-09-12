@@ -21,7 +21,7 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         case .threadCreate: .threadCreate(ThreadCreateData(title: "Groceries"))
         case .threadList:
             .threadList(ThreadListData(threads: [
-                ThreadSummary(id: "home", title: "Home", archived: false, pinned: true)
+                ThreadSummary(id: "t1", title: "Groceries", archived: false, lastActivity: 1_757_640_000_000)
             ]))
         case .threadArchive: .threadArchive(ThreadArchiveData())
         case .threadRename: .threadRename(ThreadRenameData(title: "Weekend plans"))
