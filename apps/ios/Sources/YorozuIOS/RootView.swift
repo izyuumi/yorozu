@@ -4,7 +4,16 @@ import YorozuShared
 @main
 struct YorozuApp: App {
     var body: some Scene {
-        WindowGroup { RootView() }
+        WindowGroup {
+            // Screenshot only: the Live Activity's lock screen, which has no other way onto a
+            // simulator's screen. It replaces the app rather than covering it — there is nothing
+            // behind it worth seeing.
+            if launchArgument("yorozuShowcase") == "activity" {
+                TurnActivityShowcase()
+            } else {
+                RootView()
+            }
+        }
     }
 }
 
@@ -22,6 +31,9 @@ final class Session {
     /// ``ChatModel``'s initialiser, so the answer is already known here — and knowing it here is
     /// what keeps the chat from appearing a frame after the list it was pushed onto.
     private(set) var openPath: [String] = []
+    /// Raises and retires the Live Activities for whatever is running. One per session, because
+    /// it is one per model.
+    private(set) var activity: TurnActivityController?
 
     /// One per app, not one per `RootView` value. SwiftUI re-runs a `@State` initializer every
     /// time it rebuilds the view struct and keeps only the first result, so `Session()` inline
@@ -51,8 +63,47 @@ final class Session {
     func unpair() {
         model?.close()
         model = nil
+        activity = nil
         PairingStore.clear()
         CacheStore.clear()
+        // The thread titles the picker offers, and anything half-shared, belong to the pairing
+        // just as much as the cache does.
+        if let directory = ShareBox.directory() { ShareBox.clear(in: directory) }
+    }
+
+    /// Sends everything the share extension has left in the App Group container, oldest first.
+    ///
+    /// Called on the `yorozu://share` open and again every time the app comes to the foreground:
+    /// an extension's `open` is not guaranteed to arrive, and a share that is on disk has been
+    /// confirmed by the person who made it. Nothing is drained before there is a model to send
+    /// it with — the files simply wait for the next foreground.
+    func drainShares() {
+        guard let model, let directory = ShareBox.directory() else { return }
+        for payload in ShareBox.takeAll(in: directory) {
+            let thread = payload.threadId.flatMap { id in model.threads.first { $0.id == id } }
+                ?? model.newDraft()
+            model.send(payload.text, in: thread.id, attachment: payload.attachment)
+            openPath = [thread.id]
+        }
+    }
+
+    /// Opens a thread by id, for a `yorozu://thread/<id>` tapped on a Live Activity. An id this
+    /// device has never heard of is ignored rather than pushed: an empty chat with no way back
+    /// to it is worse than the tap doing nothing.
+    func open(threadId: String) {
+        guard model?.threads.contains(where: { $0.id == threadId }) == true else { return }
+        openPath = [threadId]
+    }
+
+    /// The few threads the share sheet's picker offers, newest first. Archived threads and the
+    /// unsent draft are left out: neither is somewhere to put a link.
+    private func publishThreads(_ model: ChatModel? = nil) {
+        guard let model = model ?? self.model, let directory = ShareBox.directory() else { return }
+        let threads = model.threads
+            .filter { !$0.archived && $0.id != model.draft?.id }
+            .sorted { $0.lastActivity > $1.lastActivity }
+            .prefix(5)
+        ShareBox.save(threads: Array(threads), in: directory)
     }
 
     private func connect(_ stored: PairingStore.Stored) {
@@ -67,8 +118,31 @@ final class Session {
                 cache: CacheStore.open()
             )
             E2EHarness.attach(to: model)
+            // The harness owns `onEvent` when it is running at all, so these are added to
+            // whatever is already there rather than written over it.
+            let activity = TurnActivityController(model: model)
+            let onEvent = model.onEvent
+            model.onEvent = { [weak activity] event in
+                onEvent?(event)
+                activity?.handle(event)
+            }
+            let onPaired = model.onPaired
+            model.onPaired = { [weak self] in
+                onPaired?()
+                self?.drainShares()
+            }
+            // The share extension cannot read the encrypted thread cache, so the picker's
+            // titles are put where it can: here at startup from the cache, and again whenever
+            // the runtime sends a fresh list.
+            let onThreads = model.onThreads
+            model.onThreads = { [weak self] in
+                onThreads?()
+                self?.publishThreads()
+            }
+            self.activity = activity
             model.start()
             self.model = model
+            publishThreads(model)
             // Land on the thread list; Yumi prefers choosing over being dropped into the latest.
             // The screenshot harness is the one exception: it opens the thread it seeded,
             // unless what it seeded is the list itself.
@@ -92,17 +166,44 @@ struct RootView: View {
     /// it before this view was ever built, so the first frame is already the chat.
     @State private var path: [String] = Session.shared.openPath
     @State private var settings = false
+    /// Screenshot only: `-yorozuShowcase share` draws the share extension's composer here,
+    /// because a simulator cannot be made to open a real share sheet.
+    @State private var shareShowcase = ChatShowcase.share
 
     var body: some View {
         content
-            // The pairing string is a `yorozu://` link: tapped in Messages, it pairs the phone.
+            // Three things arrive as a `yorozu://` link and they are told apart by the host, not
+            // by trying each parser in turn: `pair` is the pairing string tapped in Messages,
+            // `thread` is a Live Activity being tapped, `share` is the share extension handing
+            // over. Anything else is not ours.
             .onOpenURL { url in
-                do { try session.pair(with: url.absoluteString) } catch { pairing = true }
+                switch url.host() {
+                case "thread":
+                    // `yorozu://thread/<id>`, so the id is the path with its leading slash off.
+                    // Decoded once, by `path`: decoding again would eat a literal `%` in an id.
+                    session.open(threadId: String(url.path(percentEncoded: false).dropFirst()))
+                case "share":
+                    // The token names the file, but everything waiting is drained either way —
+                    // see ``Session/drainShares()``.
+                    session.drainShares()
+                default:
+                    do { try session.pair(with: url.absoluteString) } catch { pairing = true }
+                }
             }
             // iOS suspends the app and its socket with it. Coming back is the moment to re-dial,
-            // rather than waiting out a backoff that ran down while nothing was executing.
+            // rather than waiting out a backoff that ran down while nothing was executing — and
+            // the moment to pick up anything shared while it was away.
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active { session.model?.reconnect() }
+                switch phase {
+                case .active:
+                    session.model?.reconnect()
+                    session.drainShares()
+                    session.activity?.foregrounded()
+                case .background:
+                    session.activity?.backgrounded()
+                default:
+                    break
+                }
             }
     }
 
@@ -144,6 +245,14 @@ struct RootView: View {
                     relayUrl: stored?.pairing.relayUrl ?? "—",
                     pairedAt: stored?.pairedAt,
                     onUnpair: session.unpair
+                )
+            }
+            .sheet(isPresented: $shareShowcase) {
+                ShareComposeView(
+                    threads: model.threads.prefix(5).map(ShareThread.init),
+                    load: { .link(URL(string: "https://cooking.example.com/roast-chicken")!) },
+                    send: { _ in },
+                    cancel: { shareShowcase = false }
                 )
             }
             // Pairing mid-session is the other way a model appears, and it decides an opening

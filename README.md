@@ -346,6 +346,40 @@ under `Caches/Yorozu/link-previews`, keyed by the SHA-256 of the URL so a direct
 a reading list. Nothing about it blocks the thread: the row appears if and when the metadata lands,
 and a site that never answers leaves no gap.
 
+### Share sheet
+
+`YorozuShare` puts Yorozu in the share sheet for selected text, a web link or one picture
+(`NSExtensionActivationRule`, so it stays out of the sheets it has nothing to offer). The composer
+shows what was shared as itself — a link as a link, a selection as a quotation, a photo as a
+thumbnail — takes an optional note, and offers the five most recent threads plus **New chat**,
+with New chat selected: a link is rarely meant for whatever was last talked about.
+
+The extension never touches the relay. It writes a `SharePayload` into the App Group container
+(`group.to.yumi.yorozu`) and opens `yorozu://share?token=…`; the app, which owns the socket and the
+outbox, is what sends it. That keeps the pairing's private keys out of a second process and the
+room down to one device per phone — and because the payload is already on disk, an `open` that iOS
+declines to deliver costs nothing: the app drains the container on every foreground, so the share
+goes out the next time Yorozu is opened. The token is a file name, checked to be a UUID before it
+is joined onto a path, and a share is removed as it is read so it is never sent twice.
+
+The picker's titles are the one thing that has to cross over: the extension cannot read the
+encrypted `ThreadCache`, having no Keychain access group on purpose, so the app writes the five
+ids and titles into the container and nothing else. Unpairing empties it along with the cache.
+
+### Live Activity
+
+`YorozuActivity` is an ActivityKit widget for a turn you walked away from. Nothing appears while
+the chat is on screen — the chat is already saying it. Leaving the app with a turn still running
+is what raises it, one per thread, and it moves between **Working**, **Needs you**, **Done** and
+**Stopped** as the events arrive (`TurnProgress`, pure and tested). The lock screen draws the
+thread's title, the status and a clock counting up from when the turn began, plus *Tap to open*;
+the Dynamic Island carries the status glyph compact and title, status and elapsed expanded. Tapping
+any of it opens `yorozu://thread/<id>`. A finished activity stays for 30 seconds and then ends.
+
+Every update is local: no push token is requested and APNs is v1.5. That is an honest limit rather
+than an oversight — a turn that finishes after iOS has suspended the app is settled the next time
+the app runs, not the moment it happens.
+
 ## Browser
 
 `packages/runtime/src/tools/browser.ts` drives a Chromium-family browser over CDP — the protocol
