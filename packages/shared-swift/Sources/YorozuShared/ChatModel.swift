@@ -27,6 +27,8 @@ public final class ChatModel {
     public private(set) var failure: String?
     /// Action IDs already answered from this device, so the card stops offering buttons.
     public private(set) var answered: Set<String> = []
+    /// The same for question cards, which are answered with a choice rather than a decision.
+    public private(set) var answeredQuestions: Set<String> = []
     /// One composer draft per thread, so switching threads does not lose what was typed.
     public var drafts: [String: String] = [:]
     /// The file staged in a thread's composer but not yet sent, alongside its draft text.
@@ -222,6 +224,13 @@ public final class ChatModel {
     public func answer(_ actionId: String, in threadId: String, _ answer: ApprovalAnswerData.Answer) {
         answered.insert(actionId)
         emit(.approvalAnswer(ApprovalAnswerData(actionId: actionId, answer: answer)), in: threadId)
+    }
+
+    /// Answers a question the agent asked, in the thread it asked it in. The agent's `ask_user`
+    /// call is suspended on this: until it arrives, or expires, the turn is parked.
+    public func answerQuestion(_ questionId: String, in threadId: String, _ answer: String) {
+        answeredQuestions.insert(questionId)
+        emit(.questionAnswer(QuestionAnswerData(questionId: questionId, answer: answer)), in: threadId)
     }
 
     private func emit(_ payload: YorozuEvent.Payload, in threadId: String) {

@@ -97,8 +97,9 @@ public struct ChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
-                    // A delegation collapses to one card where it started; what the specialist
-                    // did is behind it, and the main agent's own tool use is behind the row.
+                    // A delegation collapses to one card where it started and what the
+                    // specialist did is behind it; the main agent's own tool use is shown
+                    // here, grouped, where it happened.
                     ForEach(rows) { row in
                         switch row {
                         case .message(let event):
@@ -111,6 +112,10 @@ public struct ChatView: View {
                                 )
                                 .id(event.id)
                             }
+                        case .tools(let activities):
+                            // No `.id` of its own: nothing scrolls to a tool row, and the row
+                            // is already keyed by `ChatRow.id` in the `ForEach` above.
+                            ToolGroupView(activities: activities)
                         case .delegation(let card):
                             DelegationCardView(card: card).id(card.id)
                         case .approval(let event):
@@ -121,9 +126,20 @@ public struct ChatView: View {
                                 ) { model.answer(card.actionId, in: thread.id, $0) }
                                 .id(event.id)
                             }
+                        case .question(let event):
+                            if case .questionCard(let card) = event.payload {
+                                QuestionCardView(
+                                    card: card,
+                                    answered: model.answeredQuestions.contains(card.questionId)
+                                ) { model.answerQuestion(card.questionId, in: thread.id, $0) }
+                                .id(event.id)
+                            }
+                        case .progress(let event):
+                            if case .progressCard(let card) = event.payload {
+                                ProgressCardView(card: card).id(event.id)
+                            }
                         }
                     }
-                    MainActivityRow(events: events)
                     // Waiting with nothing drawn yet: the turn has started but the first token
                     // has not landed, so there is no bubble to put a caret on.
                     if generating, streamingId == nil {

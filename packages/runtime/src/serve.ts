@@ -26,6 +26,7 @@ import {
   type DeviceInfo,
   type EventPayload,
   type Keypair,
+  type ProgressCardData,
   type YorozuEvent,
 } from "@yorozu/shared";
 import WebSocket from "ws";
@@ -34,7 +35,7 @@ import type { Action, AskResult } from "./approval.js";
 import { autoAssign, revertAssign, setAssignCron, type AssignMode } from "./assign.js";
 import { chainFromEnv } from "./chain.js";
 import { delegateTool } from "./delegate.js";
-import { defaultTools, eventPayload, runAgent } from "./index.js";
+import { defaultTools, eventPayload, runAgent, type TurnContext } from "./index.js";
 import { localSocketPath, startLocalChannel, type Send } from "./local.js";
 import type { Provider } from "./provider.js";
 import { probe } from "./probe.js";
@@ -56,6 +57,7 @@ import {
   threadSummaries,
 } from "./threads.js";
 import { closeBrowser } from "./tools/browser.js";
+import { askUserTool, questionDesk, reportProgressTool } from "./tools/cards.js";
 import { useProviderSearch } from "./tools/search.js";
 import { appendTranscript, transcriptDir } from "./transcripts.js";
 
@@ -366,6 +368,37 @@ export function serve(options: ServeOptions = {}): Sidecar {
     });
   }
 
+  /**
+   * Questions the agent has put to the user. Raising one puts a card in front of every paired
+   * device and suspends the `ask_user` call until an answer comes back — so, like an approval,
+   * an interrupt and the desk's own timeout both have to be able to settle it.
+   */
+  const questions = questionDesk((card, context) =>
+    emit({
+      id: randomUUID(),
+      threadId: context?.threadId ?? currentThread(dir),
+      ts: Date.now(),
+      agentId: context?.agentId ?? MAIN_AGENT,
+      kind: "question_card",
+      data: card,
+    }),
+  );
+
+  /**
+   * A progress card, first shown or moved along. The event id is the card id, which is the
+   * whole of the update-in-place: a client upserts by event id, so re-reporting replaces the
+   * card it already drew instead of stacking another one under it.
+   */
+  const reportProgress = (card: ProgressCardData, context?: TurnContext): void =>
+    emit({
+      id: card.cardId,
+      threadId: context?.threadId ?? currentThread(dir),
+      ts: Date.now(),
+      agentId: context?.agentId ?? MAIN_AGENT,
+      kind: "progress_card",
+      data: card,
+    });
+
   /** A frame that is about the threads rather than in one: `threadId` is not read for these. */
   const control = (payload: EventPayload): YorozuEvent => ({
     id: randomUUID(),
@@ -465,13 +498,25 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const turn = new AbortController();
     running.add(turn);
     let reply = "";
+    /**
+     * What the deltas have already put on the wire. Streaming runs one delta behind on
+     * purpose: the frame carrying the whole reply is the finished one, which is sent below
+     * whatever happens, so sending a delta identical to it first would put the same reply on
+     * the socket twice — which is exactly what a non-streaming provider did, one text event
+     * and then the final, two identical agent messages for one turn.
+     */
+    let sent = "";
     try {
       // Built per turn: `delegate` carries this turn's abort signal down to its children.
       const tools = [
         ...defaultTools,
+        // Both draw on the paired devices, so they only exist where there is somebody to draw
+        // for: a turn, rather than the tool list the CLI shares.
+        askUserTool(questions.ask),
+        reportProgressTool(reportProgress),
         delegateTool({
           provider,
-          tools: defaultTools,
+          tools: [...defaultTools, reportProgressTool(reportProgress)],
           main,
           emit,
           turn: runTurn,
@@ -491,8 +536,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
         signal: turn.signal,
       })) {
         if (event.type === "text") {
+          if (reply !== sent) {
+            broadcast(message(reply));
+            sent = reply;
+          }
           reply += event.text;
-          broadcast(message(reply));
         } else if (event.type === "final") {
           reply = event.text;
         } else {
@@ -581,9 +629,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
         running.clear();
         // A turn parked on a card would never notice the abort otherwise.
         for (const { settle } of [...pending.values()]) settle({ answer: "no" });
+        questions.cancelAll();
         return;
       case "approval_answer":
         pending.get(event.data.actionId)?.settle({ answer: event.data.answer });
+        return;
+      case "question_answer":
+        questions.answer(event.data.questionId, event.data.answer);
         return;
       // Thread admin is answered to every device, so a second phone sees the same list.
       case "thread_create":

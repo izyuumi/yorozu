@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// The drill-down: an inline card per delegation, a collapsed row for the main agent's own
-/// tool use, and the trace page both push. Shared so the Mac's local chat draws the same ones.
+/// The drill-down: an inline card per delegation and the trace page it pushes. Shared so the
+/// Mac's local chat draws the same ones. The main agent's own tool use is not down here — it
+/// is drawn in the thread itself, as grouped rows; see ``ToolGroupView``.
 
 /// What a trace page shows. Pushed by value, so the page re-reads the live event list rather
 /// than the snapshot the link was built from.
@@ -79,59 +80,6 @@ public struct DelegationCardView: View {
     }
 }
 
-/// The main agent's own tool use, collapsed to one line under the latest message and
-/// expanding into the same trace page. Renders nothing until it has actually done something.
-public struct MainActivityRow: View {
-    private let events: [YorozuEvent]
-
-    /// Takes the whole thread; it picks its own rows out of it.
-    public init(events: [YorozuEvent]) {
-        self.events = events
-    }
-
-    public var body: some View {
-        let trace = mainTrace(from: events)
-        if let last = trace.last {
-            NavigationLink(value: TraceTarget.main) {
-                HStack(spacing: 8) {
-                    if case .toolCall = last.payload {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Image(systemName: "wrench.and.screwdriver").font(.caption)
-                    }
-                    Text(working(last))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Image(systemName: "chevron.right")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    Spacer(minLength: 0)
-                }
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    /// A tool call is still in flight; anything else is the last thing that happened.
-    private func working(_ event: YorozuEvent) -> String {
-        switch event.payload {
-        case .toolCall(let data): "working… \(data.name)"
-        case .toolResult(let data): "\(data.name(in: events)) \(data.ok ? "done" : "failed")"
-        default: "working…"
-        }
-    }
-}
-
-extension ToolResultData {
-    /// A result carries only its call id, so the name comes from the call it answers.
-    fileprivate func name(in events: [YorozuEvent]) -> String {
-        for event in events {
-            if case .toolCall(let call) = event.payload, call.callId == callId { return call.name }
-        }
-        return "tool"
-    }
-}
-
 /// One agent's thoughts, tool calls and results in order. Live: the list is handed in afresh
 /// every time the thread's events change.
 public struct AgentTraceView: View {
@@ -144,16 +92,29 @@ public struct AgentTraceView: View {
     }
 
     public var body: some View {
-        List {
-            if events.isEmpty {
-                Text("Nothing yet.").foregroundStyle(.secondary)
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 8) {
+                if events.isEmpty {
+                    Text("Nothing yet.").foregroundStyle(.secondary)
+                }
+                // Tool use arrives already grouped, so an unbroken run of it is one row that
+                // opens rather than one row per call and per result.
+                ForEach(traceEntries(from: events)) { entry in
+                    switch entry {
+                    case .tools(let activities):
+                        ToolGroupView(activities: activities)
+                    case .other(let event):
+                        TraceRow(event: event)
+                    }
+                }
             }
-            ForEach(events, id: \.id) { TraceRow(event: $0) }
+            .padding()
         }
         .navigationTitle(target.title)
     }
 }
 
+/// Everything in a trace that is not tool use: what the agent thought, and what it said.
 private struct TraceRow: View {
     let event: YorozuEvent
 
@@ -161,14 +122,11 @@ private struct TraceRow: View {
         switch event.payload {
         case .thought(let data):
             row("brain", "thinking", data.text)
-        case .toolCall(let data):
-            row("wrench.and.screwdriver", data.name, data.argsSummary)
-        case .toolResult(let data):
-            row(data.ok ? "checkmark.circle" : "exclamationmark.triangle", data.ok ? "result" : "failed", data.output)
         case .message(let data):
             row("text.bubble", "reply", data.text)
         default:
-            // Nothing else belongs in a trace; approvals and thread events have their own UI.
+            // Nothing else belongs in a trace; approvals, questions and progress have their
+            // own cards in the thread itself.
             EmptyView()
         }
     }
@@ -187,5 +145,6 @@ private struct TraceRow: View {
         } icon: {
             Image(systemName: symbol).foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

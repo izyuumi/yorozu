@@ -8,7 +8,7 @@
 
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { EventPayload, YorozuEvent } from "@yorozu/shared";
+import type { EventPayload, ProgressStep, YorozuEvent } from "@yorozu/shared";
 import { agentsDir, inherit, listAgents, MAIN_AGENT, type AgentConfig } from "./agents.js";
 import type { AskFn } from "./approval.js";
 import { chainFromEnv } from "./chain.js";
@@ -140,19 +140,39 @@ export function delegateTool(options: DelegateOptions): Tool {
       }
 
       const id = randomUUID();
+      // Nobody is watching a background delegation finish, so it says where it has got to by
+      // itself. The event id is the card id, so the state below replaces this card rather
+      // than adding a second one — see `reportProgress` in serve.ts.
+      const progress = (state: ProgressStep["state"]): void =>
+        options.emit({
+          id,
+          threadId,
+          ts: Date.now(),
+          agentId: MAIN_AGENT,
+          kind: "progress_card",
+          data: {
+            cardId: id,
+            title: text,
+            steps: [{ label: name, state }],
+            ...(state === "running" ? {} : { percent: 100 }),
+          },
+        });
+      progress("running");
       void runSpecialist(options, config, provider, text, threadId)
-        .then((result) =>
-          options.signal?.aborted
+        .then((result) => {
+          progress("done");
+          return options.signal?.aborted
             ? undefined
-            : options.turn(threadId, `delegation ${id} finished: ${result}`),
-        )
-        .catch((e: unknown) =>
-          options
+            : options.turn(threadId, `delegation ${id} finished: ${result}`);
+        })
+        .catch((e: unknown) => {
+          progress("failed");
+          return options
             .turn(threadId, `delegation ${id} failed: ${e instanceof Error ? e.message : String(e)}`)
             .catch(() => {
               // Nothing left to report it to.
-            }),
-        );
+            });
+        });
       return `delegation ${id} started: ${name} is working in the background`;
     },
   };

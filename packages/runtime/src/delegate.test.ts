@@ -189,3 +189,35 @@ test("an unknown agent is reported, not guessed at", async () => {
   expect(await tool.run({ agent: "main", task: "x" }, CONTEXT)).toBe("no such agent: main");
   expect(offered).toEqual([]);
 });
+
+test("a background delegation shows a progress card and moves it to done", async () => {
+  const { provider } = scripted([text("booked")]);
+  const events: YorozuEvent[] = [];
+  let reported!: () => void;
+  const finished = new Promise<void>((resolve) => (reported = resolve));
+
+  const started = await delegateTool(
+    options(provider, {
+      emit: (event) => events.push(event),
+      turn: async () => void reported(),
+    }),
+  ).run({ agent: "calendar", task: "book it", background: true }, CONTEXT);
+  const id = /delegation (\S+) started/.exec(started)?.[1];
+
+  // Nobody is watching a background job, so it says it has started before it returns.
+  expect(events.filter((event) => event.kind === "progress_card")).toMatchObject([
+    { id, data: { cardId: id, title: "book it", steps: [{ label: "calendar", state: "running" }] } },
+  ]);
+
+  await finished;
+  const cards = events.filter((event) => event.kind === "progress_card");
+  expect(cards).toHaveLength(2);
+  // One event id for both: the card moves rather than a second one appearing under it.
+  expect(cards[1]).toMatchObject({
+    id,
+    threadId: "home",
+    data: { steps: [{ label: "calendar", state: "done" }], percent: 100 },
+  });
+  // Top-level, not folded into the delegation's own card: the point of it is to be seen.
+  expect(cards[1]!.parentAgentId).toBeUndefined();
+});

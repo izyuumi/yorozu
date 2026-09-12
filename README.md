@@ -263,7 +263,8 @@ A thread is an append-only log: `<YOROZU_STATE_DIR>/threads/<id>.jsonl`, one eve
 with `threads.json` beside it as the index (`id`, `title`, `createdAt`, `archived`). `home` is
 seeded on first run, is pinned, and never archives — `archiveThread("home")` refuses, and a
 hand-edited index claiming otherwise is repaired on the next read. Only conversation events are
-logged (`message`, `thought`, `tool_call`, `tool_result`, `approval_card`, `approval_answer`);
+logged (`message`, `thought`, `tool_call`, `tool_result`, `approval_card`, `approval_answer`,
+`question_card`, `question_answer`, `progress_card`);
 sync and thread admin are control traffic and leave no trace.
 
 Every turn runs in its own thread and is given that thread's history as context: `threadHistory`
@@ -470,20 +471,33 @@ is drawn, as pure functions the Mac reuses:
 | Function | Result |
 | --- | --- |
 | `delegationCards(from:)` | one `DelegationCard` per delegation — name, running/done, its events |
-| `chatRows(from:)` | the thread in order: message bubbles, plus each card where its delegation started |
+| `chatRows(from:)` | the thread in order: bubbles, grouped tool activity, and each card where it was raised |
 | `mainTrace(from:)` | the main agent's own thoughts, tool calls and results |
+| `toolActivities(from:)` | each `tool_call` paired with the `tool_result` that answered it |
+| `traceEntries(from:)` | a trace page in order, with unbroken runs of tool use grouped |
+| `unifiedDiff(in:)` | a tool's output read as a diff, or nil when it is not one |
 
 Cards are grouped by agent *and* delegation, not by agent alone: a card closes on its `done`
 message, so the same specialist called twice is two cards. An event counts as delegated when it
 carries a `parentAgentId`, which is what the runtime tags with and which can never catch the
 phone's own events.
 
-`TraceViews.swift` holds the three views: `DelegationCardView` (the inline card),
-`MainActivityRow` (the collapsed `working… <tool>` line under the latest message, which draws
-nothing until the main agent has run something), and `AgentTraceView` (the page both push).
-Navigation is by value — `.agentTraceDestination { model.events }` on the stack resolves a
-`TraceTarget` against the *live* event list, so an open trace keeps streaming rather than
-showing the snapshot the link was built from.
+`TraceViews.swift` holds `DelegationCardView` (the inline card) and `AgentTraceView` (the page
+it pushes). Navigation is by value — `.agentTraceDestination { model.events }` on the stack
+resolves a `TraceTarget` against the *live* event list, so an open trace keeps streaming rather
+than showing the snapshot the link was built from.
+
+The main agent's own tool use is not behind that drill-down any more. It used to be one
+`working… <tool>` line under the latest message; it is now `ToolGroupView` in the thread
+itself — a row per call with the tool's family symbol, a one-line argument summary, how it went
+and how long it took, opening to the arguments in full and whatever the tool printed. An
+unbroken run of calls collapses to `N steps`, so a turn that ran eight commands is one line
+until it is asked to be eight. A result that is a unified diff is drawn as one, coloured, with
+its `+n −m` counts on the collapsed row; `unifiedDiff(in:)` decides that on the hunk header,
+because a `+` at the start of a line is ordinary enough in ordinary output. Long output is cut
+to twelve lines behind **Show all**, which is also the only thing that makes a scroll view
+inside the thread, capped so one `cat` cannot become the whole screen. A specialist's tool use
+stays behind its delegation card: showing it twice would be showing it twice.
 
 The e2e harness proves the wire path: `e2e/fake-provider.mjs` calls `echo` on its first turn,
 and `run.sh` waits for the phone to log `YOROZU-E2E-TOOL echo` beside the streamed reply.
@@ -529,6 +543,34 @@ wizard, which read-modify-writes `approval.json` so the rules the runtime learne
 
 No new event kind was needed: `approval_card` and `approval_answer` were already mirrored in
 both `events.ts` and `Events.swift`.
+
+## Questions and progress
+
+Two things the agent could only do in prose before, and now does with a card. Both tools are
+built per turn in `serve.ts`, the way `delegate` is, rather than living in `defaultTools`: they
+draw on the paired devices, so they only exist where there is somebody to draw for.
+
+`ask_user(question, options[], allowOther?)` emits a `question_card` and parks the call until a
+`question_answer` carrying that `questionId` comes back — the answer text *is* the tool's
+result, so the turn carries on with what the user chose. Unanswered after ten minutes it
+resolves as `no answer` rather than hanging the turn, and an interrupt settles every question
+still on screen. The waiting lives in `questionDesk` in `tools/cards.ts`, apart from the socket,
+so its expiry is testable without a sidecar and without waiting ten minutes. `main.md` tells the
+agent to reach for it whenever a choice is the user's to make.
+
+`report_progress(cardId, title, steps[], percent?)` emits a `progress_card`: a title, a thin bar
+and a step list, each step `pending`, `running`, `done` or `failed`. Calling it again with the
+same `cardId` moves that card rather than stacking another under it — the runtime re-emits it
+under the card id *as the event id*, and every client already upserts events by id, so
+update-in-place needed no protocol of its own. Every field is model output and is normalised
+before anyone draws it: a state this build has never heard of is a step not started yet, and a
+percent out of range is clamped. A background `delegate` raises one automatically — title the
+task, running until it is done or failed — because nobody is watching a background job finish.
+
+`QuestionCardView` and `ProgressCardView` sit in `packages/shared-swift` beside
+`ApprovalCardView` and are shaped like it, so the three read as one family. A card raised
+inside a delegation is never folded away behind that delegation's card: the agent is parked on
+it, and nothing happens until it is answered.
 
 ## Model catalog and auto-assign
 
@@ -673,8 +715,16 @@ gear at the foot of the sidebar, which also holds quit and the sidecar's relay s
 rather than from the window, because a menu bar window only exists while it is open and replies
 and approval cards have to keep arriving either way.
 
-Tests: `local.test.ts` round-trips a turn over the socket and checks that a broadcast reaches it,
-that the mode is `0600`, and that the socket is gone once the sidecar closes; `ChatModelTests`
+One reply is one frame. A reply used to reach the socket twice — once as the text delta and
+again as the finished message, identical but for `done` — because a model that answers in a
+single chunk yields one `text` event and then a `final` with the same words in it. Streaming now
+runs one delta behind: a delta broadcasts the reply *so far*, and the finished frame, which is
+sent whatever happens because it is the one carrying `done`, stands in for the last of them. A
+reply that streamed is still a frame per delta; a reply that did not is one frame.
+
+Tests: `local.test.ts` round-trips a turn over the socket, checks that one turn puts one agent
+message on it, that `ask_user` and `report_progress` reach it and come back, that a broadcast
+arrives, that the mode is `0600`, and that the socket is gone once the sidecar closes; `ChatModelTests`
 drives the model over a fake transport, which is the protocol's whole point. One thing the tests
 pinned down: the model sends each event in a task of its own, so the order they reach the
 transport in is not fixed — every event carries its own ids and the runtime matches on those.
