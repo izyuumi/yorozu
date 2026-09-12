@@ -124,7 +124,7 @@ private func sent(by transport: FakeTransport, atLeast count: Int) async -> [Yor
     #expect(model.drafts[thread.id] == "")
     #expect(model.events["home"]?.count == 1)
 
-    model.answer("a1", in: "home", .never)
+    model.answer("a1", in: "home", .always)
     #expect(model.answered.contains("a1"))
 
     var tries = 0

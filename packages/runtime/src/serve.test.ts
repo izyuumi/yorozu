@@ -18,11 +18,12 @@ import {
   type QrPayload,
   type YorozuEvent,
 } from "@yorozu/shared";
+import type { AskResult } from "./approval.js";
 import type { AddressInfo } from "node:net";
 import { afterEach, expect, test, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import { openaiCompat } from "./provider.js";
-import { loadDevices, serve, type Sidecar } from "./serve.js";
+import { loadDevices, serve, typedAnswer, type Sidecar } from "./serve.js";
 
 let relay: Relay;
 let sidecar: Sidecar;
@@ -262,14 +263,14 @@ async function pairedPhone(responses: (() => Response)[]) {
   return { dir, send, eventsUntil, isReply };
 }
 
-test("a never answer is permanent: the same action is refused again without a second card", async () => {
-  // The command is never run: both turns are refused before `shell` is reached.
-  const cmd = "rm -rf /tmp/yorozu-must-not-run";
+test("always runs the action and is permanent: the next one needs no second card", async () => {
+  // Harmless, and its output is proof the gate let the tool run rather than refusing it.
+  const cmd = "echo yorozu-always-ok";
   const { dir, send, eventsUntil, isReply } = await pairedPhone([
     () => shellTurn(cmd),
-    () => sse("I left it alone."),
+    () => sse("Done."),
     () => shellTurn(cmd),
-    () => sse("Still leaving it alone."),
+    () => sse("Done again."),
   ]);
 
   send({ kind: "message", data: { role: "user", text: "tidy up" } });
@@ -281,17 +282,51 @@ test("a never answer is permanent: the same action is refused again without a se
   });
   const { actionId } = cardOf(batch);
 
-  send({ kind: "approval_answer", data: { actionId, answer: "never" } });
+  send({ kind: "approval_answer", data: { actionId, answer: "always" } });
+  // A result at all means the gate let the tool run: always is a yes as well as a rule.
+  const ran = (events: YorozuEvent[]) =>
+    events.at(-1)?.kind === "tool_result" && events.at(-1)?.data.output.includes("yorozu-always-ok");
+  expect(ran(await eventsUntil((event) => event.kind === "tool_result"))).toBe(true);
   await eventsUntil(isReply);
 
   // The rule is on disk, so the identical action must not reach the phone a second time.
   expect(JSON.parse(readFileSync(join(dir, "approval.json"), "utf8")).rules).toEqual([
-    { actionClass: "run-command", decision: "never" },
+    { actionClass: "run-command", decision: "always" },
   ]);
 
   send({ kind: "message", data: { role: "user", text: "tidy up again" } });
-  const second = await eventsUntil(isReply);
+  const second = await eventsUntil((event) => event.kind === "tool_result");
   expect(second.filter((event) => event.kind === "approval_card")).toEqual([]);
+  expect(ran(second)).toBe(true);
+});
+
+const card: ApprovalCardData = {
+  actionId: "a1",
+  actionClass: "purchase",
+  target: "the corner shop",
+};
+
+test.each<[string, AskResult | null]>([
+  ["yes", { answer: "yes" }],
+  ["sure", { answer: "yes" }],
+  ["no", { answer: "no" }],
+  ["nope", { answer: "no" }],
+  // A bare "never" sounds permanent but is the one-off refusal: only the explicit wordings persist.
+  ["never", { answer: "no" }],
+  ["never mind", { answer: "no" }],
+  ["always", { answer: "always" }],
+  ["yes always", { answer: "always" }],
+  ["yes, always", { answer: "always" }],
+  ["yes and never ask", { answer: "always" }],
+  ["yes, and never ask again", { answer: "always" }],
+  ["never ask again", { answer: "always" }],
+  ["don't ask again", { answer: "always" }],
+  ["dont ask again", { answer: "always" }],
+  // The rule only narrows to the target when the user actually named it.
+  ["always buy from the corner shop", { answer: "always", target: "the corner shop" }],
+  ["maybe later", null],
+])("typedAnswer: %s", (text, expected) => {
+  expect(typedAnswer(text, card)).toEqual(expected);
 });
 
 test("discuss leaves the action pending and the card comes back", async () => {

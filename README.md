@@ -502,11 +502,11 @@ The gate sits in the agent loop, before the tool runs, and returns one of three 
 
 1. **The floor**, set during onboarding and kept in `<state dir>/approval.json`: any action at
    or above `moneyThreshold`, and any `delete-file` outside the state directory when
-   `confirmIrreversibleDeletes` is on. The floor always asks. A `never` rule cannot reach it —
+   `confirmIrreversibleDeletes` is on. The floor always asks. An `always` rule cannot reach it —
    that is the whole point of having one, so "stop asking me" can never end up spending money
    or deleting files on its own.
 2. **The rules**, in the same file. A rule naming a target beats the class-level rule, because
-   it is the more specific promise. `never` denies, `always` allows.
+   it is the more specific promise. `always` allows; a hand-written `never` denies.
 3. **Precedent**, from `<state dir>/approvals.jsonl` — one append-only row per answer. Three
    consistent yeses for a class and the agent stops asking about it. Mixed answers, fewer than
    three, or none: ask.
@@ -514,11 +514,13 @@ The gate sits in the agent loop, before the tool runs, and returns one of three 
 Asking means the sidecar emits an `approval_card` to every paired device and parks the tool
 call until an `approval_answer` carrying that `actionId` comes back. Unanswered after ten
 minutes it resolves as a refusal rather than hanging the turn, and an interrupt settles any
-card still on screen. **Yes** runs the tool, **No** refuses it, and **Never** writes a
-permanent rule — class-level, narrowed to the target only when the user actually named one.
+card still on screen. **Yes** runs the tool once, **No** refuses it once, and **Yes, and never
+ask again** runs it *and* writes a permanent `always` rule — class-level, narrowed to the target
+only when the user actually named one.
 **Discuss** decides nothing: it logs nothing, hands the agent a note asking it to explain
 itself, and the card comes back with a fresh `actionId` when the agent tries again. A typed
-`yes`, `no` or `never` in the thread answers the card the buttons would have.
+`yes`, `no`, or `always` / `never ask again` / `don't ask again` in the thread answers the card
+the buttons would have; a bare `never` is the one-off refusal it sounds like.
 
 `ApprovalCardView` lives in `packages/shared-swift` and renders the four buttons for both
 platforms; the phone wires it into the thread today, and the Mac chat picks it up unchanged

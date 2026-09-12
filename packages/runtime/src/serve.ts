@@ -96,18 +96,19 @@ export function cleanTitle(raw: string): string {
 }
 
 /**
- * A yes / no / never typed in the thread instead of tapped on the card. A `never` only
- * narrows to the target when the user actually named it, so "never" alone stays class-level
- * and "never buy from that shop" does not silently cover every shop.
+ * A yes / always / no typed in the thread instead of tapped on the card. An `always` only
+ * narrows to the target when the user actually named it, so "always" alone stays class-level
+ * and "always buy from that shop" does not silently cover every shop. A bare "never" is the
+ * one-off no it sounds like — only the explicit "never ask again" wordings allow and persist.
  */
 export function typedAnswer(text: string, card: ApprovalCardData): AskResult | null {
   const typed = text.trim().toLowerCase();
-  if (/^(yes|y|ok|okay|sure)\b/.test(typed)) return { answer: "yes" };
-  if (/^(no|n|nope|stop)\b/.test(typed)) return { answer: "no" };
-  if (/^never\b/.test(typed)) {
+  if (/^(always|yes,? +always|yes,? +and +never +ask|never +ask +again|don'?t +ask +again)\b/.test(typed)) {
     const target = card.target.toLowerCase();
-    return { answer: "never", ...(target && typed.includes(target) ? { target: card.target } : {}) };
+    return { answer: "always", ...(target && typed.includes(target) ? { target: card.target } : {}) };
   }
+  if (/^(yes|y|ok|okay|sure)\b/.test(typed)) return { answer: "yes" };
+  if (/^(no|n|nope|stop|never)\b/.test(typed)) return { answer: "no" };
   return null;
 }
 /** Only reached if the user deleted agents/main.md: the bundled one is installed on startup. */
