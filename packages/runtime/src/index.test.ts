@@ -143,6 +143,7 @@ test("loop dispatches a streamed tool call and returns final text", async () => 
     "mail_unread",
     "mail_read",
     "mail_send",
+    "request_permission",
     "fetch",
     "web_search",
   ]);

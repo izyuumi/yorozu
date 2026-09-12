@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The native helper's own Info.plist, linked into the binary as a __TEXT,__info_plist
+  section by Package.swift rather than sitting beside it: yorozu-native is a bare Mach-O in
+  Contents/MacOS, not a bundle, so there is nowhere on disk for macOS to look.
+
+  It has to exist. TCC reads the NS…UsageDescription out of the *calling* binary, and when
+  the key is missing it denies the request outright — no prompt, an immediate `false`. That
+  is what made `requestFullAccessToEvents` fail under Yorozu.app while the same code worked
+  from a terminal, where Terminal.app supplied both the string and an existing grant.
+
+  Every string here is also copied into the app's own Info.plist by scripts/build-mac.sh,
+  which reads them out of this file so the two cannot drift.
+-->
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>to.yumi.yorozu.native</string>
+  <key>CFBundleName</key><string>Yorozu</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Yorozu drives Finder, Safari, Mail, Calendar, Messages and other apps on your behalf.</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>Yorozu reads and writes your calendar when you ask it to.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Yorozu reads and writes your calendar when you ask it to.</string>
+  <key>NSRemindersUsageDescription</key>
+  <string>Yorozu reads and writes your reminders when you ask it to.</string>
+  <key>NSRemindersFullAccessUsageDescription</key>
+  <string>Yorozu reads and writes your reminders when you ask it to.</string>
+  <key>NSContactsUsageDescription</key>
+  <string>Yorozu looks up the people you write to, so you can say a name instead of an address.</string>
+  <key>NSPhotoLibraryUsageDescription</key>
+  <string>Yorozu finds and attaches pictures from your library when you ask it to.</string>
+  <key>NSPhotoLibraryAddUsageDescription</key>
+  <string>Yorozu saves pictures to your library when you ask it to.</string>
+  <key>NSAppleMusicUsageDescription</key>
+  <string>Yorozu reads your music library so it can play what you ask for.</string>
+  <key>NSLocationUsageDescription</key>
+  <string>Yorozu uses where you are to answer questions about travel time, weather and what is nearby.</string>
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>Yorozu uses where you are to answer questions about travel time, weather and what is nearby.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>Yorozu takes a picture only when you ask it to.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Yorozu listens only when you ask it to.</string>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>Yorozu reads and writes files on your Desktop when you ask it to.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>Yorozu reads and writes files in your Documents folder when you ask it to.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>Yorozu reads and writes files in your Downloads folder when you ask it to.</string>
+  <key>NSNetworkVolumesUsageDescription</key>
+  <string>Yorozu reads and writes files on network volumes when you ask it to.</string>
+  <key>NSRemovableVolumesUsageDescription</key>
+  <string>Yorozu reads and writes files on external drives when you ask it to.</string>
+  <key>NSFileProviderDomainUsageDescription</key>
+  <string>Yorozu reads and writes files in iCloud Drive, Proton Drive and your other cloud drives when you ask it to.</string>
+  <key>NSSystemAdministrationUsageDescription</key>
+  <string>Yorozu needs Full Disk Access to read and write files anywhere you can.</string>
+</dict>
+</plist>

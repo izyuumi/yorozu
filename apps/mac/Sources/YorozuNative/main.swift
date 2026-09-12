@@ -8,11 +8,20 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 import ScreenCaptureKit
+import YorozuPermissions
 
 /// A failure the runtime should see as `{"ok":false,"error":…}` rather than a crash.
+///
+/// `permission` names the grant that is missing, when that is what went wrong. It travels as
+/// its own field rather than being read back out of the message, so the runtime can turn it
+/// into a `request_permission` call without matching on English. See tools/permissions.ts.
 struct Failure: Error {
     let message: String
-    init(_ message: String) { self.message = message }
+    let permission: Permission?
+    init(_ message: String, permission: Permission? = nil) {
+        self.message = message
+        self.permission = permission
+    }
 }
 
 @MainActor
@@ -112,7 +121,9 @@ enum Native {
     }
 
     static func axRead(_ request: [String: Any]) throws -> [String: Any] {
-        guard AXIsProcessTrusted() else { throw Failure("Accessibility is not granted") }
+        guard AXIsProcessTrusted() else {
+            throw Failure("Accessibility is not granted", permission: .accessibility)
+        }
         // IDs are only valid until the next read: the tree they pointed into is gone.
         elements = [:]
         guard let root = rootWindow(request["windowRef"] as? String) else {
@@ -129,6 +140,9 @@ enum Native {
     // MARK: - Screenshot
 
     static func screenCapture() async throws -> [String: Any] {
+        guard CGPreflightScreenCaptureAccess() else {
+            throw Failure("Screen Recording is not granted", permission: .screenRecording)
+        }
         let content = try await SCShareableContent.excludingDesktopWindows(
             false,
             onScreenWindowsOnly: true
@@ -167,7 +181,16 @@ enum Native {
         return CGPoint(x: x, y: y)
     }
 
+    /// Posting a CGEvent without Input Monitoring does not fail — it is simply dropped, and
+    /// the agent sees a click that did nothing. Checked up front so it is an error instead.
+    static func requireInput() throws {
+        guard IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted else {
+            throw Failure("Input Monitoring is not granted", permission: .inputMonitoring)
+        }
+    }
+
     static func click(_ request: [String: Any]) throws -> [String: Any] {
+        try requireInput()
         let at = try point(request)
         for phase in [CGEventType.leftMouseDown, .leftMouseUp] {
             CGEvent(
@@ -181,7 +204,8 @@ enum Native {
     }
 
     /// Typed as Unicode rather than as key codes, so the text is layout-independent.
-    static func typeText(_ text: String) -> [String: Any] {
+    static func typeText(_ text: String) throws -> [String: Any] {
+        try requireInput()
         for character in text {
             var units = Array(String(character).utf16)
             for down in [true, false] {
@@ -217,6 +241,7 @@ enum Native {
     ]
 
     static func key(_ request: [String: Any]) throws -> [String: Any] {
+        try requireInput()
         let name = (request["key"] as? String ?? "").lowercased()
         guard let code = keyCodes[name] else { throw Failure("unknown key: \(name)") }
         let names = request["modifiers"] as? [String] ?? []
@@ -236,6 +261,24 @@ enum Native {
         return ["key": name, "modifiers": names]
     }
 
+    // MARK: - Permissions
+
+    /// `permission.status` reads one grant, `permission.request` makes macOS show its prompt
+    /// for it and answers with the state afterwards. Both are what the runtime's
+    /// request_permission tool is built on, so the agent can ask for a grant mid-conversation
+    /// instead of telling the user to go hunting in System Settings.
+    static func permission(_ cmd: String, _ request: [String: Any]) async throws -> [String: Any] {
+        let raw = request["kind"] as? String ?? ""
+        guard let kind = Permission(rawValue: raw), Permission.requestable.contains(kind) else {
+            throw Failure(
+                "unknown permission: \(raw). One of: "
+                    + Permission.requestable.map(\.rawValue).joined(separator: ", ")
+            )
+        }
+        let granted = cmd == "permission.request" ? await kind.request() : await kind.isGranted()
+        return ["kind": kind.rawValue, "title": kind.title, "granted": granted, "canPrompt": kind.canPrompt]
+    }
+
     // MARK: - Protocol
 
     static func handle(_ request: [String: Any]) async -> [String: Any] {
@@ -247,13 +290,18 @@ enum Native {
             case "ax.read": return try axRead(request)
             case "screen.capture": return try await screenCapture()
             case "input.click": return try click(request)
-            case "input.type": return typeText(request["text"] as? String ?? "")
+            case "input.type": return try typeText(request["text"] as? String ?? "")
             case "input.key": return try key(request)
+            case "permission.status", "permission.request": return try await permission(cmd, request)
+            case "permission.list":
+                return ["kinds": Permission.requestable.map(\.rawValue)]
             case "ping": return ["pong": true]
             case let other: throw Failure("unknown command: \(other)")
             }
         } catch let failure as Failure {
-            return ["error": failure.message]
+            var response: [String: Any] = ["error": failure.message]
+            if let permission = failure.permission { response["permission"] = permission.rawValue }
+            return response
         } catch {
             return ["error": error.localizedDescription]
         }

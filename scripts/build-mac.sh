@@ -82,6 +82,11 @@ pnpm --filter @yorozu/runtime --prod --legacy --config.node-linker=hoisted \
 # breaks the next `pnpm -r build` (no typescript). Put the dev dependencies back.
 pnpm install --frozen-lockfile
 
+# The NS…UsageDescription strings, taken from the helper's own Info.plist rather than
+# written out again here: TCC reads them from whichever binary is asking, so the app and
+# the helper both need the same set, and two copies would drift. See that file.
+USAGE=$(sed -n '/<key>NS/,/<\/string>/p' apps/mac/Sources/YorozuNative/Info.plist)
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -98,18 +103,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSUIElement</key><true/>
   <key>SUFeedURL</key><string>$FEED_URL</string>
   <key>SUPublicEDKey</key><string>$SU_PUBLIC_KEY</string>
-  <key>NSAppleEventsUsageDescription</key>
-  <string>Yorozu drives Calendar, Mail, Reminders and System Events on your behalf.</string>
-  <key>NSCalendarsUsageDescription</key>
-  <string>Yorozu reads and writes your calendar when you ask it to.</string>
-  <key>NSCalendarsFullAccessUsageDescription</key>
-  <string>Yorozu reads and writes your calendar when you ask it to.</string>
-  <key>NSRemindersUsageDescription</key>
-  <string>Yorozu reads and writes your reminders when you ask it to.</string>
-  <key>NSRemindersFullAccessUsageDescription</key>
-  <string>Yorozu reads and writes your reminders when you ask it to.</string>
-  <key>NSSystemAdministrationUsageDescription</key>
-  <string>Yorozu needs Full Disk Access to read and write files anywhere you can.</string>
+$USAGE
 </dict>
 </plist>
 PLIST

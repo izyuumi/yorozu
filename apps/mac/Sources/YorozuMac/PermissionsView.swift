@@ -1,24 +1,35 @@
 import AppKit
 import SwiftUI
+import YorozuPermissions
 
 /// Whether one grant is in place. The onboarding wizard and the Permissions tab draw the same
 /// one, so "granted" never looks like two different things.
 struct PermissionBadge: View {
     let granted: Bool
+    var asking = false
 
     var body: some View {
-        Label(granted ? "Granted" : "Waiting…", systemImage: granted ? "checkmark.circle.fill" : "circle.dotted")
-            .foregroundStyle(granted ? .green : .secondary)
+        if asking && !granted {
+            Label("Asking macOS…", systemImage: "hourglass")
+                .foregroundStyle(.secondary)
+        } else {
+            Label(granted ? "Granted" : "Waiting…", systemImage: granted ? "checkmark.circle.fill" : "circle.dotted")
+                .foregroundStyle(granted ? .green : .secondary)
+        }
     }
 }
 
-/// One grant as a live row: what it is for, whether it is in place, and the pane that grants it.
-/// Re-checked every two seconds while the row is on screen — there is no notification for a TCC
-/// grant, and the user is flipping it in another window as they look at this.
+/// One grant as a live row: what it is for, whether it is in place, a button that makes macOS
+/// ask again, and the pane that grants it as a last resort.
+///
+/// Re-checked every two seconds while the row is on screen — there is no notification for a
+/// TCC grant, and the user may be answering a prompt or flipping a switch in another window
+/// as they look at this.
 struct PermissionStatusRow: View {
     let permission: Permission
 
     @State private var granted = false
+    @State private var asking = false
     @ObservedObject private var neverSleep = NeverSleep.shared
 
     var body: some View {
@@ -33,10 +44,14 @@ struct PermissionStatusRow: View {
                     ))
                     .labelsHidden()
                 } else {
-                    PermissionBadge(granted: granted)
+                    PermissionBadge(granted: granted, asking: asking)
                 }
-                if permission.settingsURL != nil {
-                    Button("Open System Settings", action: open)
+                if permission.canPrompt {
+                    Button("Request") { Task { await ask() } }
+                        .disabled(asking)
+                }
+                if let url = permission.settingsURL {
+                    Button("Open System Settings") { NSWorkspace.shared.open(url) }
                 }
             }
             Text(permission.detail)
@@ -48,16 +63,16 @@ struct PermissionStatusRow: View {
         .padding(.vertical, 2)
         .task {
             while !Task.isCancelled {
-                granted = permission.isGranted()
+                granted = await permission.isGranted()
                 try? await Task.sleep(for: .seconds(2))
             }
         }
     }
 
-    private func open() {
-        // Ask first: several grants show a system prompt that also registers the app in the pane.
-        permission.request()
-        if let url = permission.settingsURL { NSWorkspace.shared.open(url) }
+    private func ask() async {
+        asking = true
+        granted = await permission.request()
+        asking = false
     }
 }
 

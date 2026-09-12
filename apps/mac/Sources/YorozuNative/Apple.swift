@@ -2,13 +2,16 @@
 /// reach. Calendar and reminders go through EventKit, mail through AppleScript, because Mail
 /// has no framework and its scripting dictionary is the only way in.
 ///
-/// Every failure comes back as `{"ok":false,"error":…}` like the rest of the protocol. The
-/// one worth naming is `-1743`: TCC refusing to deliver an Apple event because Automation was
-/// never granted for Mail. That is a setting the user can fix, so it is reported as such
-/// rather than as a generic AppleScript error. See docs/spec-v1.html section 3.
+/// Every failure comes back as `{"ok":false,"error":…}` like the rest of the protocol. A
+/// failure that is really a missing grant also carries `permission`, naming it, so the
+/// runtime can ask for it rather than making the user go and find it. The two that matter
+/// here are EventKit refusing full access, and `-1743`: TCC refusing to deliver an Apple
+/// event because Automation was never granted for the target app.
+/// See docs/spec-v1.html section 3.
 
 import EventKit
 import Foundation
+import YorozuPermissions
 
 /// A reminder flattened to values. `EKReminder` is a non-Sendable class, so it cannot leave
 /// the queue EventKit hands it to us on; this can. At file scope rather than nested inside
@@ -97,16 +100,20 @@ enum Apple {
 
     /// The macOS 14+ full-access APIs: write needs them, and asking for less would make
     /// every create and update fail later instead of here.
+    ///
+    /// A `false` here is not always the user saying no — until this helper carried its own
+    /// Info.plist, TCC denied the request outright because it could not find
+    /// `NSCalendarsFullAccessUsageDescription` in the calling binary, and nothing was ever
+    /// shown to the user. Either way the answer is the same: name the grant and let the
+    /// runtime ask for it again through request_permission.
     static func requireAccess(_ entity: EKEntityType) async throws {
+        let permission: Permission = entity == .event ? .calendars : .reminders
         let granted =
             entity == .event
             ? try await store.requestFullAccessToEvents()
             : try await store.requestFullAccessToReminders()
         guard granted else {
-            let what = entity == .event ? "Calendars" : "Reminders"
-            throw Failure(
-                "\(what) access is not granted. Grant it in System Settings ▸ Privacy & Security ▸ \(what)."
-            )
+            throw Failure("\(permission.title) access is not granted", permission: permission)
         }
     }
 
@@ -299,7 +306,7 @@ enum Apple {
 
     /// `errAEEventNotPermitted`: TCC refused to deliver the Apple event. The same code the
     /// onboarding wizard's Automation probe looks for.
-    static let automationDenied = -1743
+    static let automationDenied = Permission.automationDeniedCode
 
     static func quote(_ text: String) -> String {
         let escaped = text
@@ -318,8 +325,8 @@ enum Apple {
             let message = error[NSAppleScript.errorMessage] as? String ?? "AppleScript failed"
             if code == automationDenied {
                 throw Failure(
-                    "Automation is not granted for Mail (-1743). Grant it in System Settings ▸ "
-                        + "Privacy & Security ▸ Automation, under Yorozu."
+                    "Automation is not granted for Mail (-1743)",
+                    permission: .automation
                 )
             }
             throw Failure("Mail: \(message) (\(code))")

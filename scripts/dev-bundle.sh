@@ -25,7 +25,12 @@ cp "$(dirname "$BIN")/yorozu-native" "$APP/Contents/MacOS/yorozu-native"
 # that scripts/icon-render.sh renders from the same artwork.
 cp apps/mac/Resources/Yorozu.icns "$APP/Contents/Resources/Yorozu.icns"
 
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+# The NS…UsageDescription strings, taken from the helper's own Info.plist rather than
+# written out again here: TCC reads them from whichever binary is asking, so the app and
+# the helper both need the same set, and two copies would drift. See that file.
+USAGE=$(sed -n '/<key>NS/,/<\/string>/p' apps/mac/Sources/YorozuNative/Info.plist)
+
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -39,18 +44,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>LSUIElement</key><true/>
-  <key>NSAppleEventsUsageDescription</key>
-  <string>Yorozu drives Calendar, Mail, Reminders and System Events on your behalf.</string>
-  <key>NSCalendarsUsageDescription</key>
-  <string>Yorozu reads and writes your calendar when you ask it to.</string>
-  <key>NSCalendarsFullAccessUsageDescription</key>
-  <string>Yorozu reads and writes your calendar when you ask it to.</string>
-  <key>NSRemindersUsageDescription</key>
-  <string>Yorozu reads and writes your reminders when you ask it to.</string>
-  <key>NSRemindersFullAccessUsageDescription</key>
-  <string>Yorozu reads and writes your reminders when you ask it to.</string>
-  <key>NSSystemAdministrationUsageDescription</key>
-  <string>Yorozu needs Full Disk Access to read and write files anywhere you can.</string>
+$USAGE
 </dict>
 </plist>
 PLIST

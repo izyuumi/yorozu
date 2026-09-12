@@ -1,6 +1,7 @@
 import AppKit
 import CoreImage.CIFilterBuiltins
 import SwiftUI
+import YorozuPermissions
 import YorozuShared
 
 /// The Node runtime sidecar, spawned by the app and killed with it. Its stdout is the
@@ -100,7 +101,7 @@ private extension String {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
-            Permission.logAll()
+            Task { await Permission.logAll() }
             NeverSleep.shared.restoreFromDefaults()
             Sidecar.shared.start()
             // Connects to the sidecar's local socket once it is listening. Not tied to the
