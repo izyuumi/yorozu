@@ -92,9 +92,11 @@ Both CLI adapters use the vendor SDK for auth and streaming only — the runtime
 loop. The Claude adapter hands our `ToolDef`s to the SDK as an in-process MCP server and then
 *denies* every call from `canUseTool`: the attempted call is the `tool_call` event the loop
 wants, and the loop, not the CLI, runs the tool. (A tool named in `allowedTools` would be
-auto-approved and executed in-process, which is why none are listed.) The Codex SDK has no
-custom-tool mechanism, so that adapter streams text and ignores `tools`; keep a tool-capable
-provider behind it in the chain.
+auto-approved and executed in-process, which is why none are listed.) Codex takes tools only
+from an MCP server, so the same `ToolDef`s go in as a local stdio bridge (`yorozu-mcp`,
+`mcp-bridge.ts`) that executes nothing: it forwards each `tools/call` over a Unix socket to the
+adapter, which emits it as a `tool_call` event and leaves the Codex turn waiting until the loop
+comes back with the result. Same catalog, same approval gate, no Codex-specific permissions.
 
 `YOROZU_MODEL_CHAIN` overrides the file. It is a comma list, primary first, and accepts both
 entry ids and the three built-in kind names, so a chain written before `providers.json` existed
@@ -519,8 +521,8 @@ as the spec asks, so the model gets something to work with rather than a dead en
 notice. `screen_capture` saves the PNG under `<YOROZU_STATE_DIR>/screenshots` and returns its
 path rather than image content: none of the three adapters can carry an image back into a turn
 today — the OpenAI-compatible one sends tool results as plain strings, the Claude one denies
-every call and never sees a result, and Codex takes no tools at all — so an image-bearing tool
-result would be plumbing with nothing on the other end.
+every call and never sees a result, and the Codex bridge returns them as MCP text content — so
+an image-bearing tool result would be plumbing with nothing on the other end.
 
 `YOROZU_NATIVE_CMD` is the helper command, run through `/bin/sh`, defaulting to the
 `swift build` product (`apps/mac/.build/debug/yorozu-native`) resolved from the runtime's
