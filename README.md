@@ -724,7 +724,7 @@ tag and uploads the DMG and the appcast to the release.
 
 ## TestFlight
 
-Public TestFlight link: https://testflight.apple.com/join/1TY8J4Vr (usable once Beta App Review approves the first build; internal testers can install immediately).
+Internal testing only: team members are added to the "Internal" beta group in App Store Connect and install through the TestFlight app. No public link.
 
 `scripts/build-ios.sh` is the phone's counterpart to `build-mac.sh`, and it is much the
 shorter of the two because Xcode does by hand what that one assembles: signing, packaging
