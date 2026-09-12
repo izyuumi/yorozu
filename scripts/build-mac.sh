@@ -37,6 +37,11 @@ cp "$BIN/YorozuMac" "$APP/Contents/MacOS/Yorozu"
 # Accessibility and Screen Recording on that, and the helper is what needs them.
 cp "$BIN/yorozu-native" "$APP/Contents/MacOS/yorozu-native"
 cp -R "$BIN/Sparkle.framework" "$APP/Contents/Frameworks/"
+
+# The icon. Xcode compiles apps/ios/Resources/AppIcon.icon straight into an asset catalog
+# for iOS, but this bundle is assembled by hand and has no catalog, so it takes the .icns
+# that scripts/icon-render.sh renders from the same artwork.
+cp apps/mac/Resources/Yorozu.icns "$APP/Contents/Resources/Yorozu.icns"
 # SwiftPM links Sparkle as @rpath but only gives the binary @loader_path, which in a bundle
 # is Contents/MacOS. Point it at Contents/Frameworks, where the framework actually is, or
 # the app dies at launch with "Library not loaded". Before signing: this rewrites the binary.
@@ -85,6 +90,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>Yorozu</string>
   <key>CFBundleIdentifier</key><string>to.yumi.yorozu</string>
   <key>CFBundleName</key><string>Yorozu</string>
+  <key>CFBundleIconFile</key><string>Yorozu</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
