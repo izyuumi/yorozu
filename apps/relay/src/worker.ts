@@ -25,6 +25,8 @@ import {
   parseJoin,
   parseRegister,
   parseRevoke,
+  PING,
+  PONG,
   TOKEN_TTL_MS,
   type Bucket,
 } from "./protocol.js";
@@ -91,7 +93,12 @@ export class Room implements DurableObject {
   constructor(
     private readonly state: DurableObjectState,
     _env: Env,
-  ) {}
+  ) {
+    // Answered at the edge, so a heartbeat keeps the socket warm without ever waking this
+    // object. Set per isolate rather than per socket: it is room-wide state and applies to
+    // every hibernated socket the room holds.
+    this.state.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
+  }
 
   async fetch(request: Request): Promise<Response> {
     const room = new URL(request.url).searchParams.get("room")!;
@@ -133,6 +140,15 @@ export class Room implements DurableObject {
 
   private mac(): WebSocket | null {
     return this.sockets("mac")[0] ?? null;
+  }
+
+  /**
+   * Whether the room's Mac is reachable *now*, read off the live socket set rather than any
+   * stored flag: presence is exactly "a socket with the mac role is open on this object", so
+   * there is nothing to cache and nothing to go stale.
+   */
+  private ownerOnline(): boolean {
+    return this.mac() !== null;
   }
 
   private key(pubkey: string): Promise<CryptoKey> {
@@ -267,6 +283,19 @@ export class Room implements DurableObject {
         return await this.drain(ws, now);
       }
 
+      // The heartbeat the edge normally answers for us. Handled here too so a socket that
+      // somehow reaches the object still gets a pong instead of a "unknown type" close, and so
+      // the Node relay and this one behave identically.
+      case "ping":
+        return void ws.send(PONG);
+
+      // "Is my Mac there?", asked by a phone after every join. The `joined` reply already
+      // carries it, but a phone that has been asleep has no way to trust what it last heard.
+      case "owner": {
+        if (conn.role !== "phone") return ws.close(CLOSE_PROTOCOL, "not joined");
+        return void ws.send(JSON.stringify({ type: "owner", online: this.ownerOnline() }));
+      }
+
       case "mint": {
         if (conn.role !== "mac") return ws.close(CLOSE_PROTOCOL, "not registered");
         const token = randomToken();
@@ -321,7 +350,7 @@ export class Room implements DurableObject {
           await this.remember(phonePubkey, now);
         }
         ws.serializeAttachment({ ...conn, role: "phone", key: phonePubkey } satisfies Conn);
-        ws.send(JSON.stringify({ type: "joined", roomId: id, ownerOnline: this.mac() !== null }));
+        ws.send(JSON.stringify({ type: "joined", roomId: id, ownerOnline: this.ownerOnline() }));
         return;
       }
 

@@ -18,7 +18,9 @@ import {
   type QrPayload,
   type YorozuEvent,
 } from "@yorozu/shared";
+import type { AddressInfo } from "node:net";
 import { afterEach, expect, test, vi } from "vitest";
+import { WebSocketServer } from "ws";
 import { openaiCompat } from "./provider.js";
 import { loadDevices, serve, type Sidecar } from "./serve.js";
 
@@ -561,4 +563,59 @@ test("a revoked device is forgotten here and at the relay", async () => {
   // And the relay has forgotten it too: the nonce rejoin a known device may make is refused.
   const again = await rejoinPhone(relay.port, qr.roomId!, keys);
   expect(await again.closed).toBe(4001);
+});
+
+test("a relay that stops answering the heartbeat is treated as gone, and re-registered with", async () => {
+  // The live bug this exists for: something between the Mac and the relay drops a quiet socket,
+  // the relay tells every phone the Mac is offline, and this process keeps a socket that still
+  // looks open and never learns otherwise — so the phone stays wrong until the app is restarted.
+  // A deaf relay stands in for that: it accepts and registers, then ignores every ping.
+  const deaf = new WebSocketServer({ port: 0 });
+  const registrations: number[] = [];
+  deaf.on("connection", (ws) => {
+    ws.send(JSON.stringify({ type: "nonce", nonce: "n" }));
+    ws.on("message", (data) => {
+      const msg = JSON.parse(data.toString()) as { type: string };
+      // Everything answered as usual except the heartbeat, which falls into a hole.
+      if (msg.type === "register") {
+        registrations.push(Date.now());
+        ws.send(JSON.stringify({ type: "registered", roomId: "r" }));
+      }
+    });
+  });
+  const port = (deaf.address() as AddressInfo).port;
+
+  const states: string[] = [];
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${port}`,
+    stateDir: mkdtempSync(join(tmpdir(), "yorozu-heartbeat-")),
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: vi.fn() }),
+    heartbeat: { pingMs: 30, pongMs: 30 },
+    log: (line) => void states.push(line),
+  });
+
+  // Two registrations means the first socket was given up on and redialled, which is the whole
+  // point: a re-register is what puts the room's presence right again.
+  await vi.waitFor(() => expect(registrations.length).toBeGreaterThanOrEqual(2), { timeout: 5_000 });
+  expect(states).toContain("STATE heartbeat-timeout");
+
+  await new Promise<void>((done) => deaf.close(() => done()));
+});
+
+test("a relay that answers the heartbeat is left connected", async () => {
+  relay = await startRelay(0);
+  const states: string[] = [];
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${relay.port}`,
+    stateDir: mkdtempSync(join(tmpdir(), "yorozu-heartbeat-ok-")),
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: vi.fn() }),
+    heartbeat: { pingMs: 20, pongMs: 200 },
+    log: (line) => void states.push(line),
+  });
+
+  await vi.waitFor(() => expect(states).toContain("STATE registered"));
+  // Long enough for a good few ping/pong rounds: the socket must survive all of them.
+  await new Promise((r) => setTimeout(r, 300));
+  expect(states).not.toContain("STATE heartbeat-timeout");
+  expect(states.filter((line) => line === "STATE registered")).toHaveLength(1);
 });

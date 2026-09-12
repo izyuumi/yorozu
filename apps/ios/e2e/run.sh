@@ -71,6 +71,13 @@ PORT=$PROVIDER_PORT REPLY="$REPLY" node "$IOS/e2e/fake-provider.mjs" >"$WORK/pro
 PIDS+=($!)
 wait_for "$WORK/relay.log" "relay listening" "the relay"
 
+# Only the fake provider, written before the sidecar starts: left to seed itself it would pick up
+# whatever `claude` and `codex` CLIs this machine has, and the reply would not be the fixed one.
+mkdir -p "$WORK/state"
+cat >"$WORK/state/providers.json" <<JSON
+[{ "id": "openai", "kind": "openai-compat", "label": "Fake", "baseUrl": "http://127.0.0.1:$PROVIDER_PORT", "models": ["fake"], "enabled": true }]
+JSON
+
 YOROZU_RELAY_URL="ws://127.0.0.1:$RELAY_PORT" \
   YOROZU_STATE_DIR="$WORK/state" \
   YOROZU_BASE_URL="http://127.0.0.1:$PROVIDER_PORT" \
@@ -123,7 +130,9 @@ xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" \
   -yorozuSend "hi again" >"$WORK/app2.log" 2>&1 &
 PIDS+=($!)
 wait_for "$WORK/app2.log" "YOROZU-E2E paired" "the phone to rejoin without a token" 45
-wait_for "$WORK/app2.log" "YOROZU-E2E-REPLY \[Home\] $REPLY" "a reply after the relaunch" 45
+# Any title: the relaunch sends in a fresh draft, which the runtime auto-titles from the reply
+# it is still streaming, so which of the two names the line carries is a race and not the point.
+wait_for "$WORK/app2.log" "YOROZU-E2E-REPLY \[.*\] $REPLY" "a reply after the relaunch" 45
 
 say "PASS — the phone received:"
 grep -m2 'YOROZU-E2E-REPLY' "$WORK/app.log"
