@@ -148,18 +148,57 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
     }
 }
 
+/// A file sent along with a message: a photo, a screenshot, a PDF. The bytes travel inline
+/// rather than as a reference, because the relay stores nothing — a link to it would have
+/// nowhere to point. One per message, which is all the composer offers.
+public struct MessageAttachment: Codable, Equatable, Sendable {
+    /// Largest attachment this device will send, decoded. A message is sealed, framed and held
+    /// whole in memory at both ends and at the relay, so the cap is about what that costs.
+    /// Mirrors `ATTACHMENT_MAX_BYTES` in packages/shared/src/events.ts.
+    public static let maxBytes = 5 * 1024 * 1024
+
+    /// Original file name. What a text-only model is told was attached.
+    public var name: String
+    /// IANA media type, e.g. "image/jpeg". `image/*` is what a vision model is handed.
+    public var mime: String
+    /// The file itself, standard base64 with padding.
+    public var data: String
+
+    public init(name: String, mime: String, data: String) {
+        self.name = name
+        self.mime = mime
+        self.data = data
+    }
+
+    /// Wraps raw bytes, refusing anything over ``maxBytes`` rather than sending a frame the
+    /// other end would have to reject: the cap is the sender's job, and the user is standing
+    /// right here to be told.
+    public init?(name: String, mime: String, bytes: Data) {
+        guard bytes.count <= Self.maxBytes else { return nil }
+        self.init(name: name, mime: mime, data: bytes.base64EncodedString())
+    }
+
+    /// The bytes back, or nil if what arrived was not base64 after all.
+    public var bytes: Data? { Data(base64Encoded: data) }
+
+    public var isImage: Bool { mime.hasPrefix("image/") }
+}
+
 public struct MessageData: Codable, Equatable, Sendable {
     public enum Role: String, Codable, Sendable { case user, agent }
     public var role: Role
     public var text: String
-    /// Set on the last message a delegated agent emits, so the phone's inline card for that
-    /// delegation stops spinning. A flag rather than a kind of its own: the final message is
-    /// already the thing that ends a delegation.
+    /// Set on the last message of a turn — a delegated agent's, so the phone's inline card for
+    /// that delegation stops spinning, and the main agent's, so the composer stops offering
+    /// Stop. A flag rather than a kind of its own: the final message already ends the turn.
     public var done: Bool?
-    public init(role: Role, text: String, done: Bool? = nil) {
+    /// A photo or file the user sent with this message. Only ever set on a `user` message.
+    public var attachment: MessageAttachment?
+    public init(role: Role, text: String, done: Bool? = nil, attachment: MessageAttachment? = nil) {
         self.role = role
         self.text = text
         self.done = done
+        self.attachment = attachment
     }
 }
 

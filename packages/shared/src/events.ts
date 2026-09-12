@@ -17,15 +17,38 @@ export interface EventBase {
   parentAgentId?: string;
 }
 
+/**
+ * A file sent along with a message: a photo, a screenshot, a PDF. The bytes travel inline
+ * rather than as a reference, because the relay stores nothing — a link to it would have
+ * nowhere to point. One per message, which is all a phone composer offers.
+ */
+export interface MessageAttachment {
+  /** Original file name. What a text-only model is told was attached. */
+  name: string;
+  /** IANA media type, e.g. "image/jpeg". `image/*` is what a vision model is handed. */
+  mime: string;
+  /** The file itself, standard base64 with padding. */
+  data: string;
+}
+
+/**
+ * Largest attachment a client may send, decoded. A message is sealed, framed and held whole in
+ * memory at both ends and at the relay, so the cap is about what that costs rather than a limit
+ * any provider imposes.
+ */
+export const ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
+
 export interface MessageData {
   role: "user" | "agent";
   text: string;
   /**
-   * Set on the last message a delegated agent emits, so the phone's inline card for that
-   * delegation stops spinning. A flag rather than a kind of its own: the final message is
-   * already the thing that ends a delegation.
+   * Set on the last message of a turn — a delegated agent's, so the phone's inline card for
+   * that delegation stops spinning, and the main agent's, so the composer stops offering Stop.
+   * A flag rather than a kind of its own: the final message is already the thing that ends a turn.
    */
   done?: boolean;
+  /** A photo or file the user sent with this message. Only ever set on a `user` message. */
+  attachment?: MessageAttachment;
 }
 
 export interface ThoughtData {

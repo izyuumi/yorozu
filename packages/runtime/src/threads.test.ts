@@ -202,3 +202,46 @@ test("pinning is a flag on the thread, and idempotent", () => {
   expect(pinThread(thread.id, false, dir)).toBe(true);
   expect(listThreads(dir)[0]!.pinned).toBe(false);
 });
+
+test("an attachment reaches a vision model as bytes and a text-only one as its name", () => {
+  const attachment = { name: "receipt.png", mime: "image/png", data: "aGk=" };
+  appendThreadEvent(
+    {
+      id: "e1",
+      threadId: HOME,
+      ts: 1,
+      agentId: "phone",
+      kind: "message",
+      data: { role: "user", text: "what is this?", attachment },
+    },
+    dir,
+  );
+
+  expect(threadHistory(HOME, dir, true)).toEqual([
+    { role: "user", content: "what is this?", images: [{ mime: "image/png", data: "aGk=" }] },
+  ]);
+  expect(threadHistory(HOME, dir, false)).toEqual([
+    { role: "user", content: "what is this?\n\n[attached: receipt.png (image/png)]" },
+  ]);
+});
+
+test("a non-image attachment is named rather than sent, vision or not", () => {
+  appendThreadEvent(
+    {
+      id: "e1",
+      threadId: HOME,
+      ts: 1,
+      agentId: "phone",
+      kind: "message",
+      // No text at all: the note is then the whole message, so the turn is not empty.
+      data: { role: "user", text: "", attachment: { name: "q3.pdf", mime: "application/pdf", data: "aGk=" } },
+    },
+    dir,
+  );
+
+  for (const vision of [true, false]) {
+    expect(threadHistory(HOME, dir, vision)).toEqual([
+      { role: "user", content: "[attached: q3.pdf (application/pdf)]" },
+    ]);
+  }
+});

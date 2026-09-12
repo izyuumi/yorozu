@@ -450,20 +450,20 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // reply goes through `emit`, so the transcript keeps one line per turn rather than one
     // per delta.
     const id = randomUUID();
-    const message = (reply: string): YorozuEvent => ({
+    // `done` on the finished one only: it is what tells a phone the turn is over, so its
+    // composer can stop offering Stop. The deltas under the same id leave it unset.
+    const message = (reply: string, done = false): YorozuEvent => ({
       id,
       threadId,
       ts: Date.now(),
       agentId: MAIN_AGENT,
       kind: "message",
-      data: { role: "agent", text: reply },
+      data: { role: "agent", text: reply, ...(done ? { done: true } : {}) },
     });
 
     const turn = new AbortController();
     running.add(turn);
     let reply = "";
-    /** The last text already on the wire under `id`, so the final reply is not sent twice. */
-    let streamed: string | null = null;
     try {
       // Built per turn: `delegate` carries this turn's abort signal down to its children.
       const tools = [
@@ -483,7 +483,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         provider,
         system,
         // The thread's own history is the context, compacted by `threadHistory`.
-        messages: threadHistory(threadId, dir),
+        messages: threadHistory(threadId, dir, provider.vision === true),
         tools,
         context: { threadId, agentId: MAIN_AGENT },
         ask,
@@ -491,7 +491,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
       })) {
         if (event.type === "text") {
           reply += event.text;
-          streamed = reply;
           broadcast(message(reply));
         } else if (event.type === "final") {
           reply = event.text;
@@ -509,13 +508,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     // An interrupted turn says nothing: the user already knows they stopped it.
     if (turn.signal.aborted) return;
-    // The finished reply is always logged, but only sent when it differs from the last delta:
-    // the deltas carry the whole text so far under this same id, so re-sending an identical
-    // one is a second `message` event for one reply.
-    const final = message(reply);
+    // The finished reply is always logged, and always sent: unlike the deltas it carries
+    // `done`, so even a reply whose text matches the last delta exactly is still news.
+    const final = message(reply, true);
     appendTranscript(final, transcripts);
     appendThreadEvent(final, dir);
-    if (reply !== streamed) broadcast(final);
+    broadcast(final);
     // Deliberately not awaited: titling is a second completion and must never delay a reply.
     void autoTitle(threadId).catch((e: unknown) => state(`title-error ${String(e)}`));
   }

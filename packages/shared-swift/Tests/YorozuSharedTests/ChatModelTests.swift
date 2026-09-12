@@ -48,6 +48,17 @@ private func eventually(_ condition: @MainActor () -> Bool) async -> Bool {
     return condition()
 }
 
+/// The model emits from a task of its own onto the transport's actor, so a test waits for the
+/// sends to arrive rather than assuming that task has already run.
+private func sent(by transport: FakeTransport, atLeast count: Int) async -> [YorozuEvent] {
+    for _ in 0..<300 {
+        let sent = await transport.sent
+        if sent.count >= count { return sent }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    return await transport.sent
+}
+
 @MainActor
 @Test func theModelAppliesWhatTheTransportYieldsWhateverTransportItIs() async throws {
     let transport = FakeTransport()
@@ -248,4 +259,103 @@ private func summary(
     // An untitled thread is searchable by the placeholder it is actually drawn with.
     let untitled = ThreadSummary(id: "t2", title: "", archived: false, lastActivity: 0)
     #expect(threadMatches(untitled, query: "new chat"))
+}
+
+@MainActor
+@Test func aTurnIsInFlightFromTheSendUntilTheReplySaysItIsDone() async throws {
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, device: "phone")
+    model.start()
+
+    #expect(!model.generating.contains("home"))
+    model.send("hi", in: "home")
+    #expect(model.generating.contains("home"))
+
+    // Deltas arrive under one id and carry no `done`: the turn is not over yet.
+    await transport.yield(.event(event("r1", .message(MessageData(role: .agent, text: "he")))))
+    #expect(await eventually { model.events["home"]?.count == 2 })
+    #expect(model.generating.contains("home"))
+
+    await transport.yield(.event(event("r1", .message(MessageData(role: .agent, text: "hello", done: true)))))
+    #expect(await eventually { !model.generating.contains("home") })
+    // Same id, so the reply is still one bubble however many deltas drew it.
+    #expect(model.events["home"]?.count == 2)
+}
+
+@MainActor
+@Test func stoppingATurnReleasesTheComposerRatherThanWaitingForAReplyThatIsNotComing() async throws {
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, device: "phone")
+    model.start()
+
+    model.send("hi", in: "home")
+    model.interrupt(in: "home")
+    #expect(!model.generating.contains("home"))
+    #expect(await sent(by: transport, atLeast: 2).contains { $0.payload.kind == .interrupt })
+}
+
+@MainActor
+@Test func aDelegatedAgentsLastMessageEndsItsCardAndNotTheWholeTurn() async throws {
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, device: "phone")
+    model.start()
+    model.send("hi", in: "home")
+
+    var delegated = event("d1", .message(MessageData(role: .agent, text: "booked", done: true)))
+    delegated.agentId = "calendar"
+    delegated.parentAgentId = "main"
+    await transport.yield(.event(delegated))
+
+    #expect(await eventually { model.events["home"]?.count == 2 })
+    // The specialist finished; the main agent is still working, so the composer stays Stop.
+    #expect(model.generating.contains("home"))
+}
+
+@MainActor
+@Test func theComposerSendsItsAttachmentAndEmptiesItself() async throws {
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, device: "phone")
+    model.start()
+    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
+
+    // A photo with no words is still a message worth sending.
+    model.attachments["home"] = MessageAttachment(name: "p.png", mime: "image/png", data: "aGk=")
+    model.send(in: thread)
+
+    #expect(model.attachments["home"] == nil)
+    #expect(model.drafts["home"] == "")
+    let message = try #require(
+        await sent(by: transport, atLeast: 1).first { $0.payload.kind == .message }
+    )
+    guard case .message(let data) = message.payload else {
+        Issue.record("not a message")
+        return
+    }
+    #expect(data.attachment?.name == "p.png")
+    #expect(data.text == "")
+
+    // And an empty composer sends nothing at all.
+    let before = await transport.sent.count
+    model.send(in: thread)
+    #expect(await transport.sent.count == before)
+}
+
+@MainActor
+@Test func deletingAMessageForgetsItHereAndLeavesTheThreadAlone() async throws {
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, device: "phone")
+    model.start()
+
+    await transport.yield(.event(event("e1", .message(MessageData(role: .user, text: "one")))))
+    await transport.yield(.event(event("e2", .message(MessageData(role: .agent, text: "two")))))
+    #expect(await eventually { model.events["home"]?.count == 2 })
+
+    model.delete("e1", in: "home")
+    #expect(model.events["home"]?.map(\.id) == ["e2"])
+    // Local only: nothing about it goes out on the wire.
+    #expect(await transport.sent.isEmpty)
+    // Deleting something that is not there is not an error.
+    model.delete("gone", in: "home")
+    model.delete("e2", in: "nosuchthread")
+    #expect(model.events["home"]?.map(\.id) == ["e2"])
 }

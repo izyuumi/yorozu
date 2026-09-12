@@ -29,6 +29,15 @@ public final class ChatModel {
     public private(set) var answered: Set<String> = []
     /// One composer draft per thread, so switching threads does not lose what was typed.
     public var drafts: [String: String] = [:]
+    /// The file staged in a thread's composer but not yet sent, alongside its draft text.
+    /// At most one: the composer offers one attach button and replaces what it holds.
+    public var attachments: [String: MessageAttachment] = [:]
+    /// Threads with a turn in flight, so the composer offers Stop rather than Send.
+    ///
+    /// Set when this device sends, cleared by the agent message flagged `done` that ends the
+    /// turn — or by pressing Stop, because an interrupted turn deliberately says nothing back.
+    /// It is per-process and starts empty: a turn another device started is not ours to stop.
+    public private(set) var generating: Set<String> = []
     /// Every device the runtime answers, newest list wins. Only the Mac's Settings draws these.
     public private(set) var devices: [DeviceInfo] = []
     /// Threads an agent reply landed in while they were not the one open. What the list's dots
@@ -86,14 +95,18 @@ public final class ChatModel {
         Task { [transport] in await transport.reconnect() }
     }
 
+    /// Sends what the composer holds — the typed text and any staged file — and empties it.
     public func send(in thread: ThreadSummary) {
         let text = (drafts[thread.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        let attachment = attachments[thread.id]
+        // A photo on its own is a message: only an empty composer is nothing to send.
+        guard !text.isEmpty || attachment != nil else { return }
         drafts[thread.id] = ""
-        send(text, in: thread.id)
+        attachments[thread.id] = nil
+        send(text, in: thread.id, attachment: attachment)
     }
 
-    public func send(_ text: String, in threadId: String) {
+    public func send(_ text: String, in threadId: String, attachment: MessageAttachment? = nil) {
         if let draft, draft.id == threadId {
             // A draft becomes real with its first message. The id is ours, so the message below
             // lands in the thread this `thread_create` is about to mint on the other end.
@@ -106,10 +119,28 @@ public final class ChatModel {
             threadId: threadId,
             ts: Int(Date().timeIntervalSince1970 * 1000),
             agentId: device,
-            payload: .message(MessageData(role: .user, text: text))
+            payload: .message(MessageData(role: .user, text: text, attachment: attachment))
         )
+        generating.insert(threadId)
         upsert(event)
         emit(event)
+    }
+
+    /// Stops the turn running in a thread. The runtime cancels the agent and every agent it
+    /// delegated to, and deliberately sends no reply back — so the composer is released here
+    /// rather than waiting for a `done` that is never coming.
+    public func interrupt(in threadId: String) {
+        generating.remove(threadId)
+        emit(.interrupt(InterruptData()), in: threadId)
+    }
+
+    /// Forgets one event on this device only: it stays in the runtime's thread log, and a
+    /// device that syncs from scratch will see it again. Tidying a transcript, not deleting.
+    public func delete(_ eventId: String, in threadId: String) {
+        guard var thread = events[threadId] else { return }
+        thread.removeAll { $0.id == eventId }
+        events[threadId] = thread
+        cache?.save(events: thread, threadId: threadId)
     }
 
     /// A thread that exists only on this device until its first message: nothing is sent until
@@ -287,6 +318,12 @@ public final class ChatModel {
             thread.append(event)
         }
         events[event.threadId] = thread
+        // The agent's last message ends the turn, whether it streamed or arrived whole.
+        if case .message(let data) = event.payload, data.role == .agent, data.done == true,
+            event.parentAgentId == nil
+        {
+            generating.remove(event.threadId)
+        }
         cache?.save(events: thread, threadId: event.threadId)
         // A reply that lands in a thread nobody is looking at is what a dot is for. Streaming
         // replaces one event in place, so a reply raises the dot once rather than per chunk.

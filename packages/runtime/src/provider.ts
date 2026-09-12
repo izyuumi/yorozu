@@ -15,11 +15,23 @@ export interface ToolCall {
   arguments: string;
 }
 
+/** An attached image, ready to hand to a provider that can see one. Standard base64. */
+export interface MessageImage {
+  mime: string;
+  data: string;
+}
+
 export interface Message {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
+  /**
+   * Images the user attached. Only ever set when the provider declares `vision`, because a
+   * provider that cannot see one is given the file's name in `content` instead — see
+   * `threadHistory` in threads.ts, which is where that choice is made.
+   */
+  images?: MessageImage[];
 }
 
 export interface ToolDef {
@@ -38,6 +50,12 @@ export interface Provider {
   stream(messages: Message[], tools: ToolDef[]): AsyncIterable<ProviderEvent>;
   auth(): Promise<{ ok: boolean; reason?: string }>;
   /**
+   * Whether `stream` can be handed `Message.images`. False or absent for the two CLI adapters:
+   * they flatten the transcript into one prompt string (see `renderTranscript`), so there is
+   * nowhere for the bytes to go, whatever the model behind the CLI could have done with them.
+   */
+  vision?: boolean;
+  /**
    * Provider-native web search, as already-read results rather than raw HTML. Optional:
    * a provider without one is why `web_search` keeps a browser fallback. See tools/search.ts.
    */
@@ -49,6 +67,12 @@ export interface OpenAICompatConfig {
   baseUrl: string;
   apiKey?: string;
   model: string;
+  /**
+   * Whether the configured model can be sent images. Defaults to true: the content-parts shape
+   * below is plain OpenAI chat-completions, which every endpoint worth calling accepts, and a
+   * text-only model behind one is the rarer case to have to turn off.
+   */
+  vision?: boolean;
   /** Injectable for tests. */
   fetch?: typeof fetch;
 }
@@ -162,8 +186,41 @@ export function openaiCompat(config: OpenAICompatConfig): Provider & {
     return (body.data ?? []).map((m) => m.id);
   }
 
+  /**
+   * One message as the endpoint wants it. `content` is a plain string unless images came with
+   * it, in which case it becomes the parts array — text first, then each image as a data URL,
+   * which is how an inline image is sent when there is no URL to point at.
+   */
+  function wireMessage(m: Message): Record<string, unknown> {
+    const { images, tool_calls, ...rest } = m;
+    return {
+      ...rest,
+      ...(images?.length
+        ? {
+            content: [
+              ...(m.content ? [{ type: "text", text: m.content }] : []),
+              ...images.map((image) => ({
+                type: "image_url",
+                image_url: { url: `data:${image.mime};base64,${image.data}` },
+              })),
+            ],
+          }
+        : {}),
+      ...(tool_calls
+        ? {
+            tool_calls: tool_calls.map((c) => ({
+              id: c.id,
+              type: "function",
+              function: { name: c.name, arguments: c.arguments },
+            })),
+          }
+        : {}),
+    };
+  }
+
   return {
     listModels,
+    vision: config.vision ?? true,
 
     async auth() {
       try {
@@ -180,18 +237,7 @@ export function openaiCompat(config: OpenAICompatConfig): Provider & {
         body: JSON.stringify({
           model: config.model,
           stream: true,
-          messages: messages.map((m) =>
-            m.tool_calls
-              ? {
-                  ...m,
-                  tool_calls: m.tool_calls.map((c) => ({
-                    id: c.id,
-                    type: "function",
-                    function: { name: c.name, arguments: c.arguments },
-                  })),
-                }
-              : m,
-          ),
+          messages: messages.map(wireMessage),
           ...(tools.length
             ? { tools: tools.map((t) => ({ type: "function", function: t })) }
             : {}),

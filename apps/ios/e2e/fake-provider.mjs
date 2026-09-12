@@ -9,12 +9,16 @@ import { createServer } from "node:http";
 
 const port = Number(process.env.PORT ?? 8799);
 const reply = process.env.REPLY ?? "hello from the fake model";
+/** Milliseconds between words. Zero for the e2e run; set it to watch a reply stream. */
+const delay = Number(process.env.DELAY_MS ?? 0);
+
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 const chunk = (delta) => `data: ${JSON.stringify({ choices: [delta] })}\n\n`;
 
 let turn = 0;
 
-createServer((req, res) => {
+createServer(async (req, res) => {
   req.resume(); // drain the request body; its contents do not matter here
   if (req.url === "/v1/models") {
     res.writeHead(200, { "content-type": "application/json" });
@@ -40,6 +44,7 @@ createServer((req, res) => {
   } else {
     for (const word of reply.split(" ")) {
       res.write(chunk({ delta: { content: `${word} ` } }));
+      if (delay) await sleep(delay);
     }
     res.write(chunk({ delta: {}, finish_reason: "stop" }));
   }
