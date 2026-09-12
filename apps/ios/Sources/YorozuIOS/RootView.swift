@@ -70,7 +70,8 @@ final class Session {
             model.start()
             self.model = model
             // Land on the thread list; Yumi prefers choosing over being dropped into the latest.
-            openPath = []
+            // The screenshot harness is the one exception: it opens the thread it seeded.
+            openPath = launchArgument("yorozuShowcase") != nil ? model.threads.map(\.id).prefix(1).map { $0 } : []
         } catch {
             failure = error.localizedDescription
         }
