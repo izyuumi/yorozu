@@ -12,6 +12,7 @@ import {
   HISTORY_LIMIT,
   listThreads,
   readThreadEvents,
+  renameThread,
   threadHistory,
   threadSummaries,
   threadsDir,
@@ -57,6 +58,18 @@ test("creating and archiving threads survives a reload", () => {
     { id: HOME_THREAD, title: "Home", archived: false, pinned: true },
     { id: created.id, title: "Groceries", archived: true, pinned: false },
   ]);
+});
+
+test("a thread is created unnamed and renamed in place", () => {
+  const created = createThread(undefined, dir);
+  expect(created.title).toBe("");
+
+  expect(renameThread(created.id, "  Weekend plans  ", dir)).toBe(true);
+  expect(renameThread(created.id, "Weekend plans", dir)).toBe(false);
+  // Nothing to rename, and nothing to rename it to, are both refusals rather than writes.
+  expect(renameThread(created.id, "   ", dir)).toBe(false);
+  expect(renameThread("nope", "Anything", dir)).toBe(false);
+  expect(listThreads(dir)[1]!.title).toBe("Weekend plans");
 });
 
 test("events append per thread and only history kinds are logged", () => {

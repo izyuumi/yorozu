@@ -250,8 +250,16 @@ summarising what falls off the front). A turn nobody typed — a due job, a back
 is recorded as the user message it stands in for, so the thread reads back whole.
 
 The phone drives it with the events the protocol already has: `thread_create` (optional title),
-`thread_archive` (the thread is the event's own `threadId`), and `thread_list`, which the sidecar
-also sends unprompted the moment a device pairs. `sync_request` carries `lastSeen`, a last-held
+`thread_rename`, `thread_archive` (the thread is the event's own `threadId`), and `thread_list`,
+which the sidecar also sends unprompted the moment a device pairs.
+
+Nobody is asked to name a thread. `+` creates one with an empty title, the lists draw it as
+"New chat", and after the first completed reply the sidecar spends one small extra completion on
+the same provider — "reply with a 3-5 word title", shown the opening exchange truncated to 500
+characters — then writes the answer into `threads.json` and broadcasts a fresh `thread_list`. It
+is never awaited and gives up after 5s, so a slow or broken titler costs the reply nothing and
+leaves the thread untitled. Only an empty title is filled in, which is also the whole of the rule
+that a title the user typed with Rename is never overwritten. `sync_request` carries `lastSeen`, a last-held
 event id per thread, and is answered with one `sync_delta` holding everything after those ids
 across *every* live thread — capped at 200 events each, and an id the log no longer has means the
 tail rather than nothing.

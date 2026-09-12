@@ -23,6 +23,7 @@ export const SYNC_LIMIT = 200;
 
 export interface ThreadRecord {
   id: string;
+  /** Empty until the runtime auto-titles the thread or the user renames it. */
   title: string;
   /** ISO 8601. */
   createdAt: string;
@@ -73,15 +74,34 @@ export function listThreads(dir = stateDir()): ThreadRecord[] {
   return threads;
 }
 
+/**
+ * A thread is created unnamed: nobody is asked for a title, the runtime writes one after the
+ * first reply, and the lists draw a placeholder until then.
+ */
 export function createThread(title?: string, dir = stateDir()): ThreadRecord {
   const thread: ThreadRecord = {
     id: randomUUID(),
-    title: title?.trim() || "New thread",
+    title: title?.trim() ?? "",
     createdAt: new Date().toISOString(),
     archived: false,
   };
   saveThreads([...listThreads(dir), thread], dir);
   return thread;
+}
+
+/**
+ * False when there is no such thread, or when the title is the one it already has. The same
+ * call serves the user's rename and the runtime's auto-title; what keeps auto-title off a
+ * title the user chose is that it only ever runs while the title is still empty.
+ */
+export function renameThread(id: string, title: string, dir = stateDir()): boolean {
+  const threads = listThreads(dir);
+  const thread = threads.find((candidate) => candidate.id === id);
+  const trimmed = title.trim();
+  if (!thread || !trimmed || thread.title === trimmed) return false;
+  thread.title = trimmed;
+  saveThreads(threads, dir);
+  return true;
 }
 
 /** False when there is no such thread, or when it is Home: Home never archives. */
