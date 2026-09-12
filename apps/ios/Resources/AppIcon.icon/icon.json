@@ -56,6 +56,21 @@
       "shadow" : { "kind" : "neutral", "opacity" : 0.25 },
       "specular" : true,
       "translucency" : { "enabled" : false, "value" : 0.5 }
+    },
+    {
+      "layers" : [
+        {
+          "image-name-specializations" : [
+            { "value" : "shadow.svg" },
+            { "appearance" : "dark", "value" : "shadow-dark.svg" },
+            { "appearance" : "tinted", "value" : "shadow-tinted.svg" }
+          ],
+          "name" : "Shadow"
+        }
+      ],
+      "name" : "Shadow",
+      "specular" : false,
+      "translucency" : { "enabled" : false, "value" : 0.5 }
     }
   ],
   "supported-platforms" : {
