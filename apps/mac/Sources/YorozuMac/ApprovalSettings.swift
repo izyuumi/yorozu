@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import YorozuShared
 
 /// The two floor settings from onboarding, in `<state dir>/approval.json` — the same file the
 /// runtime keeps its learned rules in. Read-modify-write, because those rules are not ours to
@@ -74,5 +75,53 @@ struct ApprovalFloorView: View {
             Toggle("Confirm deletes outside Yorozu's own folder", isOn: $floor.confirmIrreversibleDeletes)
         }
         .onChange(of: floor) { ApprovalSettings.save(floor) }
+    }
+}
+
+/// The stored rules, in the same `approval.json` the floor lives in. Read and written here
+/// rather than over the socket: the Mac and the runtime share a disk, the runtime re-reads the
+/// file on every decision, and Settings is not a chat window with a transport in it.
+///
+/// Read-modify-write throughout, because the floor and the runtime's own bookkeeping — a rule's
+/// `lastUsed` and `useCount` — are not ours to lose.
+extension ApprovalSettings {
+    static func loadRules() -> [ApprovalRule] {
+        guard let raw = stored()["rules"] as? [[String: Any]] else { return [] }
+        // Decoded one at a time: one rule someone broke by hand must not empty the list.
+        return raw.enumerated().compactMap { index, one in
+            var one = one
+            // A rule from before v1.5 has no id. The same synthesised one the runtime uses,
+            // so revoking it here revokes the rule the runtime is actually applying — see
+            // `normalizeRule` in packages/runtime/src/approval.ts.
+            if one["id"] == nil { one["id"] = "legacy-\(index)" }
+            // And its target was a bare string rather than a pattern.
+            if one["scope"] == nil, let target = one["target"] as? String, !target.isEmpty {
+                one["scope"] = ["target": ["mode": "exact", "value": target]]
+            }
+            guard let data = try? JSONSerialization.data(withJSONObject: one) else { return nil }
+            return try? JSONDecoder().decode(ApprovalRule.self, from: data)
+        }
+    }
+
+    static func saveRules(_ rules: [ApprovalRule]) {
+        var json = stored()
+        guard let encoded = try? JSONEncoder().encode(rules),
+              let array = try? JSONSerialization.jsonObject(with: encoded)
+        else { return }
+        json["rules"] = array
+        // A file the runtime has not written yet still needs the floor keys to be valid.
+        if json["moneyThreshold"] == nil { json["moneyThreshold"] = defaults.moneyThreshold }
+        if json["confirmIrreversibleDeletes"] == nil {
+            json["confirmIrreversibleDeletes"] = defaults.confirmIrreversibleDeletes
+        }
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: json,
+            options: [.prettyPrinted, .sortedKeys]
+        ) else { return }
+        try? FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? data.write(to: file)
     }
 }

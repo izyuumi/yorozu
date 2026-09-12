@@ -69,6 +69,16 @@ final class E2EHarness {
                 for: URL(string: "https://cooking.example.com/roast-chicken")!
             )
             model.previewLink(in: model.threads[0].id)
+        // The v1.5 approval scenes, named as the Mac's are so the two sets of pictures compare.
+        case "card":
+            model.previewStructuredApproval(in: model.newDraft().id)
+        case "rule-editor":
+            ChatShowcase.ruleEditor = true
+            model.previewStructuredApproval(in: model.newDraft().id)
+        case "batch":
+            model.previewBatchApproval(in: model.newDraft().id)
+        case "proposal":
+            model.previewRuleProposal(in: model.newDraft().id)
         default:
             model.previewApproval(in: model.newDraft().id)
         }

@@ -36,6 +36,10 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case toolResult = "tool_result"
         case approvalCard = "approval_card"
         case approvalAnswer = "approval_answer"
+        case ruleProposal = "rule_proposal"
+        case ruleList = "rule_list"
+        case ruleUpdate = "rule_update"
+        case ruleDelete = "rule_delete"
         case questionCard = "question_card"
         case questionAnswer = "question_answer"
         case progressCard = "progress_card"
@@ -60,6 +64,10 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case toolResult(ToolResultData)
         case approvalCard(ApprovalCardData)
         case approvalAnswer(ApprovalAnswerData)
+        case ruleProposal(RuleProposalData)
+        case ruleList(RuleListData)
+        case ruleUpdate(RuleUpdateData)
+        case ruleDelete(RuleDeleteData)
         case questionCard(QuestionCardData)
         case questionAnswer(QuestionAnswerData)
         case progressCard(ProgressCardData)
@@ -84,6 +92,10 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .toolResult: .toolResult
             case .approvalCard: .approvalCard
             case .approvalAnswer: .approvalAnswer
+            case .ruleProposal: .ruleProposal
+            case .ruleList: .ruleList
+            case .ruleUpdate: .ruleUpdate
+            case .ruleDelete: .ruleDelete
             case .questionCard: .questionCard
             case .questionAnswer: .questionAnswer
             case .progressCard: .progressCard
@@ -121,6 +133,10 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .toolResult: payload = .toolResult(try c.decode(ToolResultData.self, forKey: .data))
         case .approvalCard: payload = .approvalCard(try c.decode(ApprovalCardData.self, forKey: .data))
         case .approvalAnswer: payload = .approvalAnswer(try c.decode(ApprovalAnswerData.self, forKey: .data))
+        case .ruleProposal: payload = .ruleProposal(try c.decode(RuleProposalData.self, forKey: .data))
+        case .ruleList: payload = .ruleList(try c.decode(RuleListData.self, forKey: .data))
+        case .ruleUpdate: payload = .ruleUpdate(try c.decode(RuleUpdateData.self, forKey: .data))
+        case .ruleDelete: payload = .ruleDelete(try c.decode(RuleDeleteData.self, forKey: .data))
         case .questionCard: payload = .questionCard(try c.decode(QuestionCardData.self, forKey: .data))
         case .questionAnswer: payload = .questionAnswer(try c.decode(QuestionAnswerData.self, forKey: .data))
         case .progressCard: payload = .progressCard(try c.decode(ProgressCardData.self, forKey: .data))
@@ -154,6 +170,10 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .toolResult(let d): try c.encode(d, forKey: .data)
         case .approvalCard(let d): try c.encode(d, forKey: .data)
         case .approvalAnswer(let d): try c.encode(d, forKey: .data)
+        case .ruleProposal(let d): try c.encode(d, forKey: .data)
+        case .ruleList(let d): try c.encode(d, forKey: .data)
+        case .ruleUpdate(let d): try c.encode(d, forKey: .data)
+        case .ruleDelete(let d): try c.encode(d, forKey: .data)
         case .questionCard(let d): try c.encode(d, forKey: .data)
         case .questionAnswer(let d): try c.encode(d, forKey: .data)
         case .progressCard(let d): try c.encode(d, forKey: .data)
@@ -254,31 +274,209 @@ public struct ToolResultData: Codable, Equatable, Sendable {
     }
 }
 
-/// Pending external action awaiting a Yes / Yes-and-never-ask / No / Discuss answer.
+/// What an action commits, field by field: the concrete payload rather than the tool mechanics
+/// behind it. Every field is optional because no one action carries all of them — a message has
+/// a recipient and no merchant, a purchase the other way round.
+public struct ApprovalScope: Codable, Equatable, Sendable {
+    /// send, purchase, transfer, book, delete, edit, run, subscribe, trade.
+    public var operation: String?
+    public var recipient: String?
+    public var account: String?
+    public var merchant: String?
+    public var category: String?
+    public var quantity: Double?
+    /// The first 200 characters of what would be sent or written.
+    public var contentSummary: String?
+    /// One line the tool declares: what happens once this runs.
+    public var consequence: String?
+
+    public init(
+        operation: String? = nil,
+        recipient: String? = nil,
+        account: String? = nil,
+        merchant: String? = nil,
+        category: String? = nil,
+        quantity: Double? = nil,
+        contentSummary: String? = nil,
+        consequence: String? = nil
+    ) {
+        self.operation = operation
+        self.recipient = recipient
+        self.account = account
+        self.merchant = merchant
+        self.category = category
+        self.quantity = quantity
+        self.contentSummary = contentSummary
+        self.consequence = consequence
+    }
+
+    /// The fields worth drawing, in the order the card draws them, skipping the empty ones.
+    public var rows: [(label: String, value: String)] {
+        [
+            ("To", recipient),
+            ("Merchant", merchant),
+            ("Account", account),
+            ("Category", category),
+            ("Quantity", quantity.map { $0 == $0.rounded() ? String(Int($0)) : String($0) }),
+        ].compactMap { label, value in
+            guard let value, !value.isEmpty else { return nil }
+            return (label, value)
+        }
+    }
+}
+
+/// One item of a batch. A decision covers exactly the items the card listed.
+public struct BatchItem: Codable, Equatable, Sendable, Identifiable {
+    public var label: String
+    public var detail: String?
+    /// Local only: the list is drawn from a value type with no id of its own on the wire.
+    public var id: String { detail.map { "\(label)\u{1F}\($0)" } ?? label }
+
+    public init(label: String, detail: String? = nil) {
+        self.label = label
+        self.detail = detail
+    }
+
+    private enum CodingKeys: String, CodingKey { case label, detail }
+}
+
+/// How a rule matches one scope field.
+public struct ApprovalRuleField: Codable, Equatable, Sendable {
+    public enum Mode: String, Codable, Sendable, CaseIterable { case exact, prefix, glob }
+    public var mode: Mode
+    public var value: String
+    public init(mode: Mode, value: String) {
+        self.mode = mode
+        self.value = value
+    }
+}
+
+/// A standing decision. Global: it matches on what an action is, never on which agent takes it.
+public struct ApprovalRule: Codable, Equatable, Sendable, Identifiable {
+    public enum Decision: String, Codable, Sendable, CaseIterable { case never, always }
+    public var id: String
+    public var actionClass: String
+    public var decision: Decision
+    /// Per-field patterns, keyed by scope field. A field left out is not constrained — "any".
+    public var scope: [String: ApprovalRuleField]?
+    public var maxAmount: Double?
+    /// Absent means enabled.
+    public var enabled: Bool?
+    public var createdAt: Double?
+    public var lastUsed: Double?
+    public var useCount: Int?
+
+    public init(
+        id: String,
+        actionClass: String,
+        decision: Decision,
+        scope: [String: ApprovalRuleField]? = nil,
+        maxAmount: Double? = nil,
+        enabled: Bool? = nil,
+        createdAt: Double? = nil,
+        lastUsed: Double? = nil,
+        useCount: Int? = nil
+    ) {
+        self.id = id
+        self.actionClass = actionClass
+        self.decision = decision
+        self.scope = scope
+        self.maxAmount = maxAmount
+        self.enabled = enabled
+        self.createdAt = createdAt
+        self.lastUsed = lastUsed
+        self.useCount = useCount
+    }
+
+    /// The scope fields a rule can constrain, in the order an editor lists them. Kept in step
+    /// with `APPROVAL_SCOPE_FIELDS` in packages/shared/src/events.ts.
+    public static let scopeFields = ["target", "operation", "recipient", "account", "merchant", "category"]
+
+    public var isEnabled: Bool { enabled ?? true }
+}
+
+/// Pending external action awaiting an answer. See ``ApprovalAnswerData`` for the choices.
 public struct ApprovalCardData: Codable, Equatable, Sendable {
     public var actionId: String
     /// e.g. "send-message", "purchase", "delete-file".
     public var actionClass: String
     public var target: String
     public var amount: Double?
-    public init(actionId: String, actionClass: String, target: String, amount: Double? = nil) {
+    /// What the action commits, field by field.
+    public var scope: ApprovalScope?
+    /// The exact items one decision covers, when the tool declared a batch.
+    public var items: [BatchItem]?
+    /// Set when no stored rule may stand in for a fresh answer to this card.
+    public var mustConfirm: Bool?
+    /// The narrowest rule that would cover this action: what "Always allow" opens prefilled.
+    public var suggestedRule: ApprovalRule?
+
+    public init(
+        actionId: String,
+        actionClass: String,
+        target: String,
+        amount: Double? = nil,
+        scope: ApprovalScope? = nil,
+        items: [BatchItem]? = nil,
+        mustConfirm: Bool? = nil,
+        suggestedRule: ApprovalRule? = nil
+    ) {
         self.actionId = actionId
         self.actionClass = actionClass
         self.target = target
         self.amount = amount
+        self.scope = scope
+        self.items = items
+        self.mustConfirm = mustConfirm
+        self.suggestedRule = suggestedRule
     }
 }
 
 public struct ApprovalAnswerData: Codable, Equatable, Sendable {
-    /// Declaration order is the order the card shows the four buttons in. `always` allows the
-    /// action and writes a rule, so the class is not asked about again — it is not a refusal.
-    public enum Answer: String, Codable, Sendable, CaseIterable { case yes, always, no, discuss }
+    /// Declaration order is the order the card shows the choices in. `yes` runs this one
+    /// action; `task` also covers the same scope for the rest of the turn and expires with it;
+    /// `always` runs it and saves ``rule``, which persists until revoked. Neither is a refusal.
+    public enum Answer: String, Codable, Sendable, CaseIterable { case yes, task, always, no, discuss }
     public var actionId: String
     public var answer: Answer
-    public init(actionId: String, answer: Answer) {
+    /// The rule the editor produced, sent with `always`.
+    public var rule: ApprovalRule?
+    public init(actionId: String, answer: Answer, rule: ApprovalRule? = nil) {
         self.actionId = actionId
         self.answer = answer
+        self.rule = rule
     }
+}
+
+/// Repeated matching approvals, offered back as a rule. Never active until the user saves it.
+public struct RuleProposalData: Codable, Equatable, Sendable {
+    public var proposalId: String
+    public var rule: ApprovalRule
+    /// How many matching approvals prompted it.
+    public var approvals: Int
+    public init(proposalId: String, rule: ApprovalRule, approvals: Int) {
+        self.proposalId = proposalId
+        self.rule = rule
+        self.approvals = approvals
+    }
+}
+
+/// Every stored rule, as Settings lists them. Sent on request and after any change.
+public struct RuleListData: Codable, Equatable, Sendable {
+    public var rules: [ApprovalRule]
+    public init(rules: [ApprovalRule] = []) { self.rules = rules }
+}
+
+/// Saves a rule: a new one, or the edited form of the one with the same id.
+public struct RuleUpdateData: Codable, Equatable, Sendable {
+    public var rule: ApprovalRule
+    public init(rule: ApprovalRule) { self.rule = rule }
+}
+
+/// Revokes a rule outright. Answered with a fresh `rule_list`.
+public struct RuleDeleteData: Codable, Equatable, Sendable {
+    public var ruleId: String
+    public init(ruleId: String) { self.ruleId = ruleId }
 }
 
 /// A choice the agent needs made before it can carry on, raised by its `ask_user` tool. Unlike

@@ -26,20 +26,27 @@ RELAY=${YOROZU_RELAY_URL:-wss://relay.yumi.to}
 WIDTH=${WIDTH:-900}
 HEIGHT=${HEIGHT:-620}
 
-# One line per picture: <name> <launch arguments…>. The scene names are the phone's, so the two
-# sets of screenshots line up.
+# One line per picture: <file> <launch arguments…>, where <file> is the name in docs/screens
+# without its extension. The scene names inside the arguments are the phone's, so the two sets
+# of screenshots line up.
 SCENES=(
-  "threads      -yorozuShowcase threads"
-  "chat         -yorozuShowcase threads -yorozuScene plain"
-  "search       -yorozuShowcase threads -yorozuScene search"
-  "reply        -yorozuShowcase threads -yorozuScene reply"
-  "dictation    -yorozuShowcase threads -yorozuScene dictation"
-  "approval     -yorozuShowcase approval"
-  "model        -yorozuShowcase model"
-  "tools        -yorozuShowcase tools"
-  "link         -yorozuShowcase link"
-  "queued       -yorozuShowcase queued"
-  "light        -yorozuShowcase threads -yorozuScene plain -yorozuAppearance light"
+  "43-mac-threads      -yorozuShowcase threads"
+  "43-mac-chat         -yorozuShowcase threads -yorozuScene plain"
+  "43-mac-search       -yorozuShowcase threads -yorozuScene search"
+  "43-mac-reply        -yorozuShowcase threads -yorozuScene reply"
+  "43-mac-dictation    -yorozuShowcase threads -yorozuScene dictation"
+  "43-mac-approval     -yorozuShowcase approval"
+  "43-mac-model        -yorozuShowcase model"
+  "43-mac-tools        -yorozuShowcase tools"
+  "43-mac-link         -yorozuShowcase link"
+  "43-mac-queued       -yorozuShowcase queued"
+  "43-mac-light        -yorozuShowcase threads -yorozuScene plain -yorozuAppearance light"
+  # v1.5 approval hardening: the structured card and the three grants, the rule editor the
+  # third of them opens, the proposal after repeated approvals, and an exact batch.
+  "45-card             -yorozuShowcase card"
+  "45-rule-editor      -yorozuShowcase rule-editor"
+  "45-proposal         -yorozuShowcase proposal"
+  "45-batch            -yorozuShowcase batch"
 )
 
 say() { printf '\n==> %s\n' "$1"; }
@@ -59,12 +66,20 @@ say "building the runtime and the app bundle"
 CI=true pnpm -C "$ROOT" -r build >/dev/null
 env -u SDKROOT sh "$ROOT/scripts/dev-bundle.sh" >/dev/null
 
+taken=0
 mkdir -p "$OUT"
 rm -rf "$STATE"
 mkdir -p "$STATE"
 
 for scene in "${SCENES[@]}"; do
   read -r name args <<<"$scene"
+  # Named scenes only, when any were named. The header's usage line has always promised this.
+  if [ "$#" -gt 0 ]; then
+    wanted=""
+    for pick in "$@"; do [ "$pick" = "$name" ] && wanted=yes; done
+    [ -n "$wanted" ] || continue
+  fi
+  taken=$((taken + 1))
   say "$name"
   stop_app
   log="$STATE/$name.log"
@@ -74,7 +89,7 @@ for scene in "${SCENES[@]}"; do
   YOROZU_STATE_DIR="$STATE" \
     YOROZU_RELAY_URL="$RELAY" \
     YOROZU_RUNTIME_CMD="node '$ROOT/packages/runtime/dist/serve.js'" \
-    "$BIN" $args -onboardingCompleted YES >"$log" 2>&1 &
+    "$BIN" $args -yorozuWindowSize "${WIDTH}x${HEIGHT}" -onboardingCompleted YES >"$log" 2>&1 &
   # Off the job table, so quitting it at the end of the scene is not announced as a signal.
   disown
 
@@ -91,25 +106,17 @@ for scene in "${SCENES[@]}"; do
     tail -20 "$log" >&2
     exit 1
   fi
-  # A fixed size for every picture. The app remembers where its window was last put, which is
-  # right for a person and wrong for a set of screenshots meant to be compared with each other.
-  osascript - "$WIDTH" "$HEIGHT" >/dev/null 2>&1 <<'AS' || true
-on run argv
-  tell application "System Events" to tell (first process whose bundle identifier is "to.yumi.yorozu")
-    tell window 1
-      set its position to {140, 120}
-      set its size to {(item 1 of argv) as integer, (item 2 of argv) as integer}
-    end tell
-  end tell
-end run
-AS
+  # The fixed frame every picture shares is set by the app itself, from the
+  # `-yorozuWindowSize` argument above — see ``WindowNumberReporter``. It used to be done from
+  # here with System Events, which needs Accessibility for whatever runs this script and fails
+  # silently without it, so the set came out at whatever size the window happened to remember.
 
   # A moment for the first frame to settle — the window number is printed when the window
   # exists, which is a little before the sidebar and the transcript have drawn into it.
   sleep 2
-  screencapture -o -x -l "$window" "$OUT/43-mac-$name.png"
-  echo "$OUT/43-mac-$name.png"
+  screencapture -o -x -l "$window" "$OUT/$name.png"
+  echo "$OUT/$name.png"
 done
 
 stop_app
-say "done — $(find "$OUT" -name '43-mac-*.png' | wc -l | tr -d ' ') pictures in docs/screens"
+say "done — $taken pictures in docs/screens"

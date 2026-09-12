@@ -3,6 +3,19 @@ import Testing
 
 @testable import YorozuShared
 
+/// One saved rule, used wherever a kind carries one.
+private let sampleRule = ApprovalRule(
+    id: "r1",
+    actionClass: "purchase",
+    decision: .always,
+    scope: ["merchant": ApprovalRuleField(mode: .exact, value: "Kurasu")],
+    maxAmount: 48,
+    enabled: true,
+    createdAt: 1_700_000_000_000,
+    lastUsed: 1_700_000_100_000,
+    useCount: 4
+)
+
 private func roundTrip(_ event: YorozuEvent) throws -> YorozuEvent {
     try JSONDecoder().decode(YorozuEvent.self, from: JSONEncoder().encode(event))
 }
@@ -23,8 +36,33 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         case .toolCall: .toolCall(ToolCallData(callId: "c1", name: "shell", args: ["cmd": .string("ls")]))
         case .toolResult: .toolResult(ToolResultData(callId: "c1", ok: true, output: "README.md"))
         case .approvalCard:
-            .approvalCard(ApprovalCardData(actionId: "a1", actionClass: "purchase", target: "amazon", amount: 12))
-        case .approvalAnswer: .approvalAnswer(ApprovalAnswerData(actionId: "a1", answer: .always))
+            .approvalCard(
+                ApprovalCardData(
+                    actionId: "a1",
+                    actionClass: "purchase",
+                    target: "amazon",
+                    amount: 12,
+                    scope: ApprovalScope(
+                        operation: "purchase",
+                        merchant: "Kurasu",
+                        quantity: 2,
+                        contentSummary: "Ethiopia Guji, whole bean",
+                        consequence: "Charges the Visa."
+                    ),
+                    items: [BatchItem(label: "Ethiopia Guji", detail: "1kg")],
+                    mustConfirm: true,
+                    suggestedRule: sampleRule
+                )
+            )
+        case .approvalAnswer:
+            .approvalAnswer(
+                ApprovalAnswerData(actionId: "a1", answer: .always, rule: sampleRule)
+            )
+        case .ruleProposal:
+            .ruleProposal(RuleProposalData(proposalId: "p1", rule: sampleRule, approvals: 3))
+        case .ruleList: .ruleList(RuleListData(rules: [sampleRule]))
+        case .ruleUpdate: .ruleUpdate(RuleUpdateData(rule: sampleRule))
+        case .ruleDelete: .ruleDelete(RuleDeleteData(ruleId: "r1"))
         case .questionCard:
             .questionCard(
                 QuestionCardData(
@@ -276,10 +314,12 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     #expect((plainJson?["data"] as? [String: Any])?["attachment"] == nil)
 }
 
-/// The wire spells the always answer "always", and the declaration order is the card's button
-/// order: Yes, Yes-and-never-ask, No, Discuss.
+/// The wire spells the three grants out, and the declaration order is the card's button order:
+/// Allow once, Allow for this task, Always allow, Don't allow, Discuss.
 @Test func approvalAnswersRoundTripOnTheWire() throws {
-    #expect(ApprovalAnswerData.Answer.allCases.map(\.rawValue) == ["yes", "always", "no", "discuss"])
+    #expect(
+        ApprovalAnswerData.Answer.allCases.map(\.rawValue) == ["yes", "task", "always", "no", "discuss"]
+    )
 
     for answer in ApprovalAnswerData.Answer.allCases {
         let data = ApprovalAnswerData(actionId: "a1", answer: answer)
@@ -290,7 +330,99 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     }
 
     let wire = Data(#"{"actionId":"a1","answer":"always"}"#.utf8)
-    #expect(try JSONDecoder().decode(ApprovalAnswerData.self, from: wire).answer == .always)
+    let decoded = try JSONDecoder().decode(ApprovalAnswerData.self, from: wire)
+    #expect(decoded.answer == .always)
+    // An answer with no rule on it is one typed in prose rather than saved from the editor.
+    #expect(decoded.rule == nil)
+
+    // The editor's rule travels with the answer, so the runtime saves what was on screen.
+    let edited = ApprovalAnswerData(actionId: "a1", answer: .always, rule: sampleRule)
+    let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(edited)) as? [String: Any]
+    #expect(((json?["rule"] as? [String: Any])?["maxAmount"] as? Double) == 48)
+}
+
+/// A card older than the structured scope still decodes: every field beyond the first four is
+/// optional, so a runtime that has not been updated yet does not break the phone.
+@Test func anApprovalCardWithoutTheStructuredFieldsStillDecodes() throws {
+    let wire = Data(#"{"actionId":"a1","actionClass":"purchase","target":"amazon"}"#.utf8)
+    let card = try JSONDecoder().decode(ApprovalCardData.self, from: wire)
+    #expect(card.scope == nil)
+    #expect(card.items == nil)
+    #expect(card.mustConfirm == nil)
+    #expect(card.suggestedRule == nil)
+}
+
+/// What the card draws of a scope: the fields that were filled in, in a fixed order, and
+/// nothing for the ones that were not.
+@Test func aScopeOnlyOffersTheFieldsThatWereFilledIn() {
+    let scope = ApprovalScope(
+        operation: "purchase",
+        account: "Visa ••4242",
+        merchant: "Kurasu",
+        quantity: 2,
+        consequence: "Charges the Visa."
+    )
+    #expect(scope.rows.map(\.label) == ["Merchant", "Account", "Quantity"])
+    #expect(scope.rows.map(\.value) == ["Kurasu", "Visa ••4242", "2"])
+    #expect(ApprovalScope().rows.isEmpty)
+}
+
+/// A rule as one phrase: what the card's button and the Settings row both say it covers.
+@Test func aRuleDescribesTheScopeItActuallyCovers() {
+    #expect(sampleRule.summary.hasPrefix("purchase at Kurasu up to "))
+
+    let toADomain = ApprovalRule(
+        id: "r2",
+        actionClass: "send-message",
+        decision: .always,
+        scope: ["recipient": ApprovalRuleField(mode: .glob, value: "*@example.com")]
+    )
+    #expect(toADomain.summary == "message to *@example.com")
+
+    let underAPath = ApprovalRule(
+        id: "r3",
+        actionClass: "edit-file",
+        decision: .always,
+        scope: ["target": ApprovalRuleField(mode: .prefix, value: "/Users/yumi/Projects/")]
+    )
+    #expect(underAPath.summary == "file change on /Users/yumi/Projects/…")
+
+    // Absent means enabled: a rule from a runtime that never wrote the flag is not switched off.
+    #expect(toADomain.isEnabled)
+    #expect(!ApprovalRule(id: "r4", actionClass: "purchase", decision: .always, enabled: false).isEnabled)
+}
+
+/// The editor: it opens on exactly what the rule pins down, widening a field to Any drops it,
+/// and a rule that pins nothing down at all cannot be saved.
+@Test func theRuleEditorWidensOnlyWhereItIsToldTo() {
+    var draft = RuleEditorView.Draft(rule: sampleRule)
+    #expect(draft.fields.filter { !$0.isAny }.map(\.id) == ["merchant"])
+    #expect(draft.rule == sampleRule)
+
+    // Widened: any merchant, but still capped, and still a purchase.
+    let merchant = draft.fields.firstIndex { $0.id == "merchant" }!
+    draft.fields[merchant].isAny = true
+    #expect(draft.rule.scope == nil)
+    #expect(draft.rule.maxAmount == 48)
+    // Nothing pinned down and nothing but a cap is a blanket grant, which cannot be saved.
+    #expect(!draft.isNarrowEnough)
+
+    // Narrowed instead: a category the card never filled in.
+    draft.fields[merchant].isAny = false
+    let category = draft.fields.firstIndex { $0.id == "category" }!
+    draft.fields[category].isAny = false
+    draft.fields[category].value = " groceries "
+    #expect(draft.isNarrowEnough)
+    // Trimmed, because a pattern with a stray space in it silently matches nothing.
+    #expect(draft.rule.scope?["category"] == ApprovalRuleField(mode: .exact, value: "groceries"))
+    // And everything the rule carries that the editor is not about survives the round trip.
+    #expect(draft.rule.id == sampleRule.id)
+    #expect(draft.rule.useCount == 4)
+    #expect(draft.rule.createdAt == sampleRule.createdAt)
+
+    // The cap comes off on its own.
+    draft.hasCap = false
+    #expect(draft.rule.maxAmount == nil)
 }
 
 /// The wire shape of a question card, and what an absent `allowOther` means: a card offering

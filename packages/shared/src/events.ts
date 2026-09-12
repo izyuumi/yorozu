@@ -67,19 +67,148 @@ export interface ToolResultData {
   output: string;
 }
 
-/** Pending external action awaiting a Yes / Yes-and-never-ask / No / Discuss answer. */
+/**
+ * The fields of an action beyond its class, describing what it actually commits rather than the
+ * tool mechanics behind it. Every one is optional because no single action carries all of them:
+ * a message has a recipient and no merchant, a purchase the other way round. What a tool does
+ * fill in is what the card shows and what a rule matches on.
+ */
+export interface ApprovalScope {
+  /** What is being done, independent of which tool does it. */
+  operation?:
+    | "send"
+    | "purchase"
+    | "transfer"
+    | "book"
+    | "delete"
+    | "edit"
+    | "run"
+    | "subscribe"
+    | "trade";
+  /** Who it lands on: an email address, a phone number, a payee. */
+  recipient?: string;
+  /** Which account it moves money out of, or acts as. */
+  account?: string;
+  /** Who is being paid. */
+  merchant?: string;
+  /** What kind of spending it is, e.g. "groceries", "crypto". */
+  category?: string;
+  /** How many, when the action carries a count. Changing it invalidates the approval. */
+  quantity?: number;
+  /** The first `CONTENT_SUMMARY_MAX` characters of what would be sent or written. */
+  contentSummary?: string;
+  /** One line the tool declares: what happens once this runs, in the user's terms. */
+  consequence?: string;
+}
+
+/** How much of the content a card carries. Enough to recognise, not enough to be a transcript. */
+export const CONTENT_SUMMARY_MAX = 200;
+
+/**
+ * One item of a batch: a decision covers exactly the items the card listed. Adding or changing
+ * one after the fact needs a new card — see `ApprovalCardData.items`.
+ */
+export interface BatchItem {
+  /** The item as one line, e.g. a recipient. */
+  label: string;
+  /** The rest of what identifies it, e.g. a subject line. */
+  detail?: string;
+}
+
+/** How a rule matches one scope field. Absent field means the rule says nothing about it. */
+export interface ApprovalRuleField {
+  mode: "exact" | "prefix" | "glob";
+  value: string;
+}
+
+/** The scope fields a rule can constrain. `target` is the action's own subject line. */
+export const APPROVAL_SCOPE_FIELDS = [
+  "target",
+  "operation",
+  "recipient",
+  "account",
+  "merchant",
+  "category",
+] as const;
+
+export type ApprovalScopeField = (typeof APPROVAL_SCOPE_FIELDS)[number];
+
+/**
+ * A standing decision. Global: rules match on the structured scope of an action and never on
+ * which agent is taking it, so delegating does not change what is authorized.
+ */
+export interface ApprovalRule {
+  id: string;
+  actionClass: string;
+  decision: "never" | "always";
+  /** Per-field patterns. A field left out is not constrained — "any". */
+  scope?: Partial<Record<ApprovalScopeField, ApprovalRuleField>>;
+  /** The most this rule authorizes. Absent means the rule says nothing about money. */
+  maxAmount?: number;
+  /** Absent means enabled: a rule switched off in Settings stops matching without being lost. */
+  enabled?: boolean;
+  createdAt?: number;
+  /** Kept by the runtime so Settings can show what a rule is actually doing. */
+  lastUsed?: number;
+  useCount?: number;
+}
+
+/** Pending external action awaiting an answer. See `ApprovalAnswerData` for the choices. */
 export interface ApprovalCardData {
   actionId: string;
   /** e.g. "send-message", "purchase", "delete-file". */
   actionClass: string;
   target: string;
   amount?: number;
+  /** What the action commits, field by field. */
+  scope?: ApprovalScope;
+  /** The exact items one decision covers, when the tool declared a batch. */
+  items?: BatchItem[];
+  /**
+   * Set when no stored rule may stand in for an answer to this card — a subscription, a
+   * transfer, a securities trade or crypto. The card says so rather than implying it.
+   */
+  mustConfirm?: boolean;
+  /** The narrowest rule that would cover this action: what "Always allow" opens prefilled. */
+  suggestedRule?: ApprovalRule;
 }
 
 export interface ApprovalAnswerData {
   actionId: string;
-  /** `always` allows this action and writes a rule, so the class is not asked about again. */
-  answer: "yes" | "always" | "no" | "discuss";
+  /**
+   * `yes` runs this one action; `task` also covers the same class and scope for the rest of
+   * this turn and everything it delegates to, and expires with the turn; `always` runs it and
+   * saves `rule`, which persists until revoked.
+   */
+  answer: "yes" | "task" | "always" | "no" | "discuss";
+  /** The rule the editor produced, sent with `always`. */
+  rule?: ApprovalRule;
+}
+
+/**
+ * Repeated matching approvals, offered back as a rule. Never active: it is a card with a
+ * Review button on it, and only the editor's Save writes anything.
+ */
+export interface RuleProposalData {
+  proposalId: string;
+  rule: ApprovalRule;
+  /** How many matching approvals prompted it. */
+  approvals: number;
+}
+
+/** Every stored rule, as Settings lists them. Sent on request and after any change. */
+export interface RuleListData {
+  rules: ApprovalRule[];
+}
+
+/** Saves a rule: a new one, or the edited form of one with the same `id`. */
+export interface RuleUpdateData {
+  rule: ApprovalRule;
+}
+
+/** Revokes a rule outright. Answered with a fresh `rule_list`. */
+export interface RuleDeleteData {
+  ruleId: string;
 }
 
 /**
@@ -250,6 +379,10 @@ export type EventPayload =
   | { kind: "tool_result"; data: ToolResultData }
   | { kind: "approval_card"; data: ApprovalCardData }
   | { kind: "approval_answer"; data: ApprovalAnswerData }
+  | { kind: "rule_proposal"; data: RuleProposalData }
+  | { kind: "rule_list"; data: RuleListData }
+  | { kind: "rule_update"; data: RuleUpdateData }
+  | { kind: "rule_delete"; data: RuleDeleteData }
   | { kind: "question_card"; data: QuestionCardData }
   | { kind: "question_answer"; data: QuestionAnswerData }
   | { kind: "progress_card"; data: ProgressCardData }

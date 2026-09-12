@@ -244,7 +244,8 @@ struct RootView: View {
                     status: MacStatus(state: model.state, ownerOnline: model.ownerOnline),
                     relayUrl: stored?.pairing.relayUrl ?? "—",
                     pairedAt: stored?.pairedAt,
-                    onUnpair: session.unpair
+                    onUnpair: session.unpair,
+                    model: model
                 )
             }
             .sheet(isPresented: $shareShowcase) {

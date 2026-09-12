@@ -29,6 +29,10 @@ public final class ChatModel {
     public private(set) var answered: Set<String> = []
     /// The same for question cards, which are answered with a choice rather than a decision.
     public private(set) var answeredQuestions: Set<String> = []
+    /// Proposals this device has reviewed or waved away, so the card stops offering buttons.
+    public private(set) var handledProposals: Set<String> = []
+    /// The stored approval rules, as the runtime last listed them. What the Rules screens draw.
+    public private(set) var rules: [ApprovalRule] = []
     /// What this device chose for each answered action, so the card can say so afterwards.
     public private(set) var choices: [String: ApprovalAnswerData.Answer] = [:]
     /// One composer draft per thread, so switching threads does not lose what was typed.
@@ -66,6 +70,8 @@ public final class ChatModel {
     public var onThreads: (() -> Void)?
     /// Called whenever the runtime sends a new device list.
     public var onDevices: (() -> Void)?
+    /// Called whenever the runtime sends a new rule list.
+    public var onRules: (() -> Void)?
     /// Called for every event kept in a thread, after it has been applied.
     public var onEvent: ((YorozuEvent) -> Void)?
 
@@ -320,10 +326,40 @@ public final class ChatModel {
     /// Answers a pending approval card, in the thread the card was raised in. `Discuss` is
     /// answered too: the runtime keeps the action pending and sends a fresh card, with a new
     /// action ID, after it has explained itself.
-    public func answer(_ actionId: String, in threadId: String, _ answer: ApprovalAnswerData.Answer) {
+    public func answer(
+        _ actionId: String,
+        in threadId: String,
+        _ answer: ApprovalAnswerData.Answer,
+        rule: ApprovalRule? = nil
+    ) {
         answered.insert(actionId)
         choices[actionId] = answer
-        emit(.approvalAnswer(ApprovalAnswerData(actionId: actionId, answer: answer)), in: threadId)
+        emit(
+            .approvalAnswer(ApprovalAnswerData(actionId: actionId, answer: answer, rule: rule)),
+            in: threadId
+        )
+    }
+
+    /// Saves a rule: from the proposal card's editor, or from the Rules screen. The runtime
+    /// answers with a fresh `rule_list`, which is what keeps two devices in step.
+    public func saveRule(_ rule: ApprovalRule, proposalId: String? = nil) {
+        if let proposalId { handledProposals.insert(proposalId) }
+        emit(control(.ruleUpdate(RuleUpdateData(rule: rule))))
+    }
+
+    /// Revokes a rule outright.
+    public func deleteRule(_ ruleId: String) {
+        emit(control(.ruleDelete(RuleDeleteData(ruleId: ruleId))))
+    }
+
+    /// Asks for the stored rules. The Rules screens send this when they appear.
+    public func requestRules() {
+        emit(control(.ruleList(RuleListData())))
+    }
+
+    /// "Not now" on a proposal: nothing is stored either way, so this is view state only.
+    public func dismissProposal(_ proposalId: String) {
+        handledProposals.insert(proposalId)
     }
 
     /// Answers a question the agent asked, in the thread it asked it in. The agent's `ask_user`
@@ -335,6 +371,11 @@ public final class ChatModel {
 
     private func emit(_ payload: YorozuEvent.Payload, in threadId: String) {
         emit(event(payload, in: threadId))
+    }
+
+    /// A frame that is about the runtime rather than in a thread: `threadId` is not read for it.
+    private func control(_ payload: YorozuEvent.Payload) -> YorozuEvent {
+        event(payload, in: "")
     }
 
     /// An event from this device, stamped now.
@@ -413,6 +454,11 @@ public final class ChatModel {
             case .deviceList(let data):
                 devices = data.devices
                 onDevices?()
+            // The stored rules, in answer to `rule_list` and after any change to them. Also
+            // not a thread's event: rules are global, which is the whole point of them.
+            case .ruleList(let data):
+                rules = data.rules
+                onRules?()
             default:
                 upsert(event)
             }
@@ -550,6 +596,92 @@ public final class ChatModel {
                 actionId: "showcase", actionClass: "run-command",
                 target: "rm ~/Desktop/Screenshot\\ 2026-09-*.png"))))
         generating.insert(threadId)
+    }
+
+    /// Test-only: a card with the whole structured scope on it — merchant, account, quantity,
+    /// what it says and what happens afterwards — plus the rule its "Always allow" would open.
+    /// The picture story 17 is about, and what ``previewRuleEditor`` opens the editor over.
+    public func previewStructuredApproval(in threadId: String) {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        upsert(YorozuEvent(id: "showcase-user", threadId: threadId, ts: now, agentId: device,
+            payload: .message(MessageData(role: .user, text: "Reorder the Ethiopia Guji from Kurasu"))))
+        upsert(YorozuEvent(id: "showcase-card", threadId: threadId, ts: now + 1, agentId: "main",
+            payload: .approvalCard(Self.previewPurchaseCard)))
+        generating.insert(threadId)
+    }
+
+    /// The purchase both the card and the editor screenshots are about.
+    public static let previewPurchaseCard = ApprovalCardData(
+        actionId: "showcase-purchase",
+        actionClass: "purchase",
+        target: "Ethiopia Guji, whole bean · 1kg",
+        amount: 32,
+        scope: ApprovalScope(
+            operation: "purchase",
+            account: "Visa ••4242",
+            merchant: "Kurasu",
+            category: "groceries",
+            quantity: 1,
+            contentSummary: "Ethiopia Guji washed, 1kg whole bean, ground to order — delivered to the home address.",
+            consequence: "Charges the Visa now and ships within two days. Refundable for 14 days."
+        ),
+        suggestedRule: ApprovalRule(
+            id: "showcase-rule",
+            actionClass: "purchase",
+            decision: .always,
+            scope: [
+                "merchant": ApprovalRuleField(mode: .exact, value: "Kurasu"),
+                "account": ApprovalRuleField(mode: .exact, value: "Visa ••4242"),
+                "category": ApprovalRuleField(mode: .exact, value: "groceries"),
+                "operation": ApprovalRuleField(mode: .exact, value: "purchase"),
+            ],
+            maxAmount: 48
+        )
+    )
+
+    /// Test-only: one decision over an exact list of twelve emails, each with its recipient and
+    /// its subject. The picture story 25 is about.
+    public func previewBatchApproval(in threadId: String) {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        upsert(YorozuEvent(id: "showcase-user", threadId: threadId, ts: now, agentId: device,
+            payload: .message(MessageData(role: .user, text: "Send the April invoice reminder to everyone still open"))))
+        let recipients = [
+            "bob@kitanoya.example", "carol@marumi.example", "dave@sanwa.example",
+            "erin@tsuruya.example", "frank@yamato.example", "grace@hoshino.example",
+            "heidi@kawano.example", "ivan@morita.example", "judy@aoki.example",
+            "ken@shibata.example", "lena@ueda.example", "mia@nakano.example",
+        ]
+        upsert(YorozuEvent(id: "showcase-card", threadId: threadId, ts: now + 1, agentId: "main",
+            payload: .approvalCard(ApprovalCardData(
+                actionId: "showcase-batch",
+                actionClass: "send-message",
+                target: "12 recipients",
+                scope: ApprovalScope(
+                    operation: "send",
+                    contentSummary: "April invoice — the terms are thirty days and it falls due at the end of the month.",
+                    consequence: "Sends twelve separate emails from the user's own Mail account. They cannot be recalled."
+                ),
+                // No suggested rule: a batch decision is about exactly these twelve, and no
+                // standing rule can mean that. See `cardFor` in packages/runtime/src/approval.ts.
+                items: recipients.map { BatchItem(label: $0, detail: "April invoice reminder") }
+            ))))
+        generating.insert(threadId)
+    }
+
+    /// Test-only: the rule Yorozu offers after three matching approvals. The picture story 22
+    /// is about — a card with Review and Not now on it, and nothing saved either way.
+    public func previewRuleProposal(in threadId: String) {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        upsert(YorozuEvent(id: "showcase-user", threadId: threadId, ts: now, agentId: device,
+            payload: .message(MessageData(role: .user, text: "Reorder the Ethiopia Guji from Kurasu"))))
+        upsert(YorozuEvent(id: "showcase-reply", threadId: threadId, ts: now + 1, agentId: "main",
+            payload: .message(MessageData(role: .agent, text: "Ordered — ¥32 on the Visa, shipping in two days.", done: true))))
+        upsert(YorozuEvent(id: "showcase-proposal", threadId: threadId, ts: now + 2, agentId: "main",
+            payload: .ruleProposal(RuleProposalData(
+                proposalId: "showcase-proposal",
+                rule: Self.previewPurchaseCard.suggestedRule!,
+                approvals: 3
+            ))))
     }
 
     /// Test-only, alongside ``previewApproval``: a short finished conversation to search, quote

@@ -1,5 +1,13 @@
 import type { EventPayload, YorozuEvent } from "@yorozu/shared";
-import { checkApproval, type ActionClass, type AskFn } from "./approval.js";
+import {
+  checkApproval,
+  type ActionClass,
+  type ActionDetail,
+  type AskFn,
+  type BatchItem,
+  type Rule,
+  type TaskGrants,
+} from "./approval.js";
 import { autoAssignTool } from "./assign.js";
 import type { Memory } from "./memory.js";
 import { rememberTool } from "./memory.js";
@@ -58,6 +66,12 @@ export function describeEvent(event: YorozuEvent): string {
 export interface TurnContext {
   threadId: string;
   agentId: string;
+  /**
+   * Set for the duration of one approved tool call: the id the approval was recorded under.
+   * A tool that commits money or messages passes it to `verifyApproved` with the values it is
+   * actually about to use, so an approval cannot be spent on a different transaction.
+   */
+  actionId?: string;
 }
 
 export interface Tool extends ToolDef {
@@ -66,8 +80,17 @@ export interface Tool extends ToolDef {
    * through the approval engine; leaving it off means the tool only reads.
    */
   actionClass?: ActionClass;
-  /** Derives what the approval card names, from this call's arguments. */
-  action?(args: Record<string, unknown>): { target: string; amount?: number };
+  /**
+   * Derives what the approval card shows, from this call's arguments: the target, and as many
+   * of the structured scope fields as the tool can honestly fill in. The more it fills in, the
+   * narrower a rule the user can write about it.
+   */
+  action?(args: Record<string, unknown>): ActionDetail;
+  /**
+   * Set when one call acts on many things at once. The card lists exactly these items and the
+   * decision covers exactly these items: adding or changing one needs a new card.
+   */
+  batch?(args: Record<string, unknown>): BatchItem[];
   run(args: Record<string, unknown>, context?: TurnContext): string | Promise<string>;
 }
 
@@ -161,6 +184,14 @@ export interface RunOptions {
    * so tools carrying an `actionClass` run ungated — the CLI and the unit tests.
    */
   ask?: AskFn;
+  /**
+   * This turn's "Allow for this task" grants. One object for the whole turn tree, passed down
+   * to delegated agents, so a grant given to the main agent covers its specialists too — and
+   * expires with the turn, because nothing keeps it afterwards.
+   */
+  grants?: TaskGrants;
+  /** Raised when repeated approvals add up to a rule worth offering. Never applies it. */
+  onProposal?(rule: Rule, approvals: number, context?: TurnContext): void;
   /** Guard against a model that never stops calling tools. */
   maxTurns?: number;
   /**
@@ -216,24 +247,41 @@ export async function* runAgent(
     });
     if (!calls.length) break;
 
-    for (const call of calls) {
-      if (options.signal?.aborted) break;
+    /** One call, gate and all. Never throws: a thrown tool is a result the model can read. */
+    const dispatch = async (call: ToolCall): Promise<string> => {
       const tool = tools.find((t) => t.name === call.name);
-      let result: string;
+      if (!tool) return `unknown tool: ${call.name}`;
       try {
-        if (!tool) {
-          result = `unknown tool: ${call.name}`;
-        } else {
-          const args = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
-          // The gate runs before the tool does: a refusal is what the model gets back.
-          const refused = options.ask
-            ? await checkApproval(tool, args, options.ask, options.context)
-            : null;
-          result = refused ?? (await tool.run(args, options.context));
-        }
+        const args = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
+        // The gate runs before the tool does: a refusal is what the model gets back.
+        const gate = options.ask
+          ? await checkApproval(tool, args, {
+              ask: options.ask,
+              ...(options.context ? { context: options.context } : {}),
+              ...(options.grants ? { grants: options.grants } : {}),
+              ...(options.onProposal ? { onProposal: options.onProposal } : {}),
+            })
+          : { refusal: null as string | null };
+        if (gate.refusal !== null) return gate.refusal;
+        const context =
+          gate.actionId && options.context
+            ? { ...options.context, actionId: gate.actionId }
+            : options.context;
+        return await tool.run(args, context);
       } catch (e) {
-        result = `error: ${e instanceof Error ? e.message : String(e)}`;
+        return `error: ${e instanceof Error ? e.message : String(e)}`;
       }
+    };
+
+    // Started together rather than one after another: a call parked on an approval card must
+    // not hold up the independent calls beside it, which is the whole of story 30. Only the
+    // gated branch waits. Results are yielded in call order so the model reads them in the
+    // order it asked for them, and an interrupt still stops the lot at the next boundary.
+    const running = options.signal?.aborted ? [] : calls.map(dispatch);
+    for (const [index, pending] of running.entries()) {
+      const result = await pending;
+      if (options.signal?.aborted) break;
+      const call = calls[index];
       yield { type: "tool_result", id: call.id, name: call.name, result };
       history.push({ role: "tool", tool_call_id: call.id, content: result });
     }
