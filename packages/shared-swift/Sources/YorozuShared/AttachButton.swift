@@ -25,10 +25,10 @@ struct AttachButton: View {
             }
             Button("Files", systemImage: "folder") { browsingFiles = true }
         } label: {
-            Image(systemName: "paperclip")
-                .font(.title3)
+            Image(systemName: "plus")
+                .font(.body.weight(.semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: 32, height: 32)
+                .frame(width: 44, height: 44)
                 .contentShape(.rect)
         }
         .menuStyle(.button)
@@ -104,7 +104,7 @@ struct StagedAttachment: View {
                 .foregroundStyle(.secondary)
         }
         .padding(8)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
