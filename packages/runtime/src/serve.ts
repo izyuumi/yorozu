@@ -6,7 +6,7 @@
  * Stdout is the Mac app's only channel: one `STATE <state>` line per relay transition and
  * one `QR <json>` line carrying the pairing payload.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -130,7 +130,7 @@ export interface Sidecar {
 }
 
 export function serve(options: ServeOptions = {}): Sidecar {
-  const relayUrl = options.relayUrl ?? env.YOROZU_RELAY_URL ?? "ws://127.0.0.1:8787";
+  const relayUrl = options.relayUrl ?? env.YOROZU_RELAY_URL ?? "wss://relay.yumi.to";
   const dir = options.stateDir ?? env.YOROZU_STATE_DIR ?? DEFAULT_STATE_DIR;
   // Memory and the schedule tools resolve their own paths from the environment:
   // publish the choice so an explicit `stateDir` moves the whole runtime, not just the keys.
@@ -405,7 +405,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   function connect(): void {
     state("connecting");
-    const ws = new WebSocket(relayUrl);
+    // The room ID is only carried in `register`, which is too late for a relay that has to
+    // route the socket before reading it, so it also goes in the URL. It is the hash of our
+    // own signing key, so we know it before we dial; the QR keeps the bare URL.
+    const dial = new URL(relayUrl);
+    dial.searchParams.set(
+      "room",
+      toBase64Url(createHash("sha256").update(keys.signing.publicKey).digest()),
+    );
+    const ws = new WebSocket(dial);
     socket = ws;
     let room: string | null = null;
 

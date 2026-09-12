@@ -19,9 +19,20 @@ export function keypair(): Keys {
 
 export type Client = ReturnType<typeof client>;
 
-/** Minimal client: queue inbound JSON so callers can await messages in order. */
-export function client(port: number) {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+/**
+ * Where a test client dials: a port on localhost, or a full URL so the same helpers can be
+ * pointed at a deployed relay.
+ */
+export type Target = number | string;
+
+/**
+ * Minimal client: queue inbound JSON so callers can await messages in order. `room` becomes
+ * the `?room=` the Worker relay routes on; the Node relay ignores it.
+ */
+export function client(target: Target, room?: string) {
+  const url = new URL(typeof target === "number" ? `ws://127.0.0.1:${target}` : target);
+  if (room) url.searchParams.set("room", room);
+  const ws = new WebSocket(url);
   const queue: any[] = [];
   const waiters: ((v: any) => void)[] = [];
   ws.on("message", (d) => {
@@ -43,8 +54,8 @@ export function client(port: number) {
   };
 }
 
-export async function connectMac(port: number, keys: Keys): Promise<Client> {
-  const mac = client(port);
+export async function connectMac(target: Target, keys: Keys): Promise<Client> {
+  const mac = client(target, roomId(keys.pub));
   await mac.open;
   const { nonce } = await mac.next();
   mac.send({ type: "register", pubkey: keys.pub, nonceSig: signChallenge(nonce, keys.priv) });
@@ -63,12 +74,12 @@ export async function mintToken(mac: Client): Promise<string> {
 
 /** Joins a room with a fresh phone identity. Does not await the `joined` reply. */
 export async function connectPhone(
-  port: number,
+  target: Target,
   room: string,
   token: string,
 ): Promise<{ phone: Client; keys: Keys }> {
   const keys = keypair();
-  const phone = client(port);
+  const phone = client(target, room);
   await phone.open;
   await phone.next(); // nonce
   phone.send({

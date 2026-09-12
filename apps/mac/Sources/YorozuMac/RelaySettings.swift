@@ -3,12 +3,12 @@ import SwiftUI
 /// Which relay the sidecar talks to. One environment variable (`YOROZU_RELAY_URL`) the
 /// runtime already reads; the picker is a text field because a relay is just a URL.
 ///
-/// The default is Yumi's Mac mini over Tailscale, hosted by
-/// `scripts/install-relay-launchagent.sh`. It is replaced by the hosted relay later, at
-/// which point only this constant moves.
+/// The default is the hosted relay, a Cloudflare Worker at `relay.yumi.to`. A LAN or
+/// Tailscale relay — say `ws://100.100.1.1:8787` from
+/// `scripts/install-relay-launchagent.sh` — goes in the same field.
 enum RelaySettings {
     static let key = "YOROZU_RELAY_URL"
-    static let defaultUrl = "ws://100.100.1.1:8787"
+    static let defaultUrl = "wss://relay.yumi.to"
 
     /// The configured URL, or the default when nothing has been stored yet.
     static var url: String {

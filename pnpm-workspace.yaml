@@ -4,6 +4,9 @@ packages:
 
 allowBuilds:
   esbuild: true
+  # Only wrangler's image-asset path needs sharp, which the relay Worker has none of.
+  sharp: false
+  workerd: true
 
 minimumReleaseAgeExclude:
   - '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.269'

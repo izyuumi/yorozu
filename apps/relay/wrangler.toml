@@ -1,0 +1,17 @@
+name = "yorozu-relay"
+main = "src/worker.ts"
+compatibility_date = "2026-08-15"
+
+# relay.yumi.to is a custom domain on the yumi.to zone: Cloudflare terminates TLS and
+# `wss://relay.yumi.to` reaches the Worker directly, no route pattern needed.
+[[routes]]
+pattern = "relay.yumi.to"
+custom_domain = true
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
