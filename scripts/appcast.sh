@@ -17,5 +17,14 @@ TOOL="$(find apps/mac/.build/artifacts -name generate_appcast -type f -perm -u+x
   exit 1
 }
 
-"$TOOL" --download-url-prefix "$DOWNLOAD_PREFIX" "$DIST"
+# The key comes out of the keychain by default. On a machine where the keychain refuses
+# `generate_appcast` access without a click — which is a headless release hanging on an
+# invisible dialog — export it once into a file only this run can read:
+#
+#   KEY=$(mktemp -d)/ed && generate_keys -x "$KEY" && SPARKLE_ED_KEY_FILE=$KEY ./scripts/appcast.sh; rm -rf "$(dirname "$KEY")"
+if [ -n "${SPARKLE_ED_KEY_FILE:-}" ]; then
+  "$TOOL" --ed-key-file "$SPARKLE_ED_KEY_FILE" --download-url-prefix "$DOWNLOAD_PREFIX" "$DIST"
+else
+  "$TOOL" --download-url-prefix "$DOWNLOAD_PREFIX" "$DIST"
+fi
 echo "$DIST/appcast.xml"

@@ -12,7 +12,13 @@ cd "$(dirname "$0")/.."
 # directory without a TTY unless it believes it is in CI.
 export CI=true
 
+# The version is derived, never typed: the marketing version is the latest v* tag and the
+# build number is the commit count, which rises with every commit, never repeats, and is the
+# same number on any checkout of that commit. Sparkle compares CFBundleVersion, so this is
+# what makes an update an update. Same derivation as scripts/build-ios.sh.
+VERSION=${VERSION:-$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//' || true)}
 VERSION=${VERSION:-0.1.0}
+BUILD=${BUILD:-$(git rev-list --count HEAD)}
 DIST=${DIST:-dist}
 IDENTITY=${IDENTITY:-"Developer ID Application: Yumi Izumi (AN5KM8QGEF)"}
 NOTARY_PROFILE=${NOTARY_PROFILE:-yorozu-notary}
@@ -22,7 +28,9 @@ FEED_URL=${FEED_URL:-https://dl.yumi.to/appcast.xml}
 SU_PUBLIC_KEY=${SU_PUBLIC_KEY:-pD6gPv1CP/XDvIJXbztjQRTIkgR/kfMMYT/Mpp8aQvI=}
 
 APP="$DIST/Yorozu.app"
-DMG="$DIST/Yorozu-$VERSION.dmg"
+# The build number is in the name: two builds of the same tag are two different files, so
+# neither the appcast nor a CDN can serve one where the other was meant.
+DMG="$DIST/Yorozu-$VERSION-$BUILD.dmg"
 STAGE="$DIST/stage"
 
 pnpm -r build
@@ -98,11 +106,18 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIconFile</key><string>Yorozu</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$BUILD</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>LSUIElement</key><true/>
   <key>SUFeedURL</key><string>$FEED_URL</string>
   <key>SUPublicEDKey</key><string>$SU_PUBLIC_KEY</string>
+  <!-- Updates install themselves: check hourly, download in the background, install without
+       asking. Apps/mac Updater.swift forces the same three on once per machine, because these
+       keys are only the initial value for a Mac that has no Sparkle preferences yet. -->
+  <key>SUEnableAutomaticChecks</key><true/>
+  <key>SUAutomaticallyUpdate</key><true/>
+  <key>SUAllowsAutomaticUpdates</key><true/>
+  <key>SUScheduledCheckInterval</key><integer>3600</integer>
 $USAGE
 </dict>
 </plist>
@@ -135,3 +150,4 @@ fi
 
 spctl --assess --type open --context context:primary-signature -v "$DMG" || true
 echo "$DMG"
+echo "version $VERSION build $BUILD"
