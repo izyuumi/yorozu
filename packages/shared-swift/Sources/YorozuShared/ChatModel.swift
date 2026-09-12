@@ -27,6 +27,8 @@ public final class ChatModel {
     public private(set) var failure: String?
     /// Action IDs already answered from this device, so the card stops offering buttons.
     public private(set) var answered: Set<String> = []
+    /// What this device chose for each answered action, so the card can say so afterwards.
+    public private(set) var choices: [String: ApprovalAnswerData.Answer] = [:]
     /// One composer draft per thread, so switching threads does not lose what was typed.
     public var drafts: [String: String] = [:]
     /// The file staged in a thread's composer but not yet sent, alongside its draft text.
@@ -221,6 +223,7 @@ public final class ChatModel {
     /// action ID, after it has explained itself.
     public func answer(_ actionId: String, in threadId: String, _ answer: ApprovalAnswerData.Answer) {
         answered.insert(actionId)
+        choices[actionId] = answer
         emit(.approvalAnswer(ApprovalAnswerData(actionId: actionId, answer: answer)), in: threadId)
     }
 
@@ -310,6 +313,19 @@ public final class ChatModel {
     ///
     /// Agent replies stream as repeated events under one id, each carrying the whole text so
     /// far, so the newest wins in place instead of appending a duplicate bubble.
+    /// Test-only: drops a user message, a pending approval card and a running turn into a
+    /// thread on this device alone, so the card and the Stop state can be screenshotted.
+    public func previewApproval(in threadId: String) {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        upsert(YorozuEvent(id: "showcase-user", threadId: threadId, ts: now, agentId: device,
+            payload: .message(MessageData(role: .user, text: "Clean up the old screenshots on my Desktop"))))
+        upsert(YorozuEvent(id: "showcase-card", threadId: threadId, ts: now + 1, agentId: "main",
+            payload: .approvalCard(ApprovalCardData(
+                actionId: "showcase", actionClass: "run-command",
+                target: "rm ~/Desktop/Screenshot\\ 2026-09-*.png"))))
+        generating.insert(threadId)
+    }
+
     private func upsert(_ event: YorozuEvent) {
         var thread = events[event.threadId] ?? []
         if let index = thread.firstIndex(where: { $0.id == event.id }) {

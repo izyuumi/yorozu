@@ -25,6 +25,11 @@ final class E2EHarness {
     private weak var model: ChatModel?
 
     static func attach(to model: ChatModel) {
+        // `-yorozuShowcase`: a local draft seeded with an approval card and a running turn, so
+        // the composer and the card can be screenshotted with no relay and no model at all.
+        if launchArgument("yorozuShowcase") != nil {
+            model.previewApproval(in: model.newDraft().id)
+        }
         guard let autoSend = launchArgument("yorozuSend") else { return }
         E2EHarness(model: model, autoSend: autoSend).wire()
     }
@@ -38,6 +43,7 @@ final class E2EHarness {
     private func wire() {
         model?.onPaired = { [self] in
             print("YOROZU-E2E paired")
+
             // A draft, exactly as the `+` button makes one: the message below is what creates it.
             if let draft = model?.newDraft() { model?.send(autoSend, in: draft.id) }
             // And a second, named thread, to prove `thread_create` and its sync as well.
