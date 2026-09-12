@@ -14,6 +14,8 @@
 set -eu
 cd "$(dirname "$0")/.."
 
+# The latest v* tag, as in scripts/build-mac.sh; there is no version to type anywhere.
+VERSION=${VERSION:-$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//' || true)}
 VERSION=${VERSION:-0.1.0}
 # The build number has to rise with every upload and never repeat. The commit count does
 # both, needs no file to bump, and is the same number on any checkout of that commit.

@@ -7,7 +7,8 @@ jobs:
   ios:
     runs-on: macos-latest
     steps:
-      # fetch-depth: 0 because the build number is the commit count.
+      # fetch-depth: 0 because the build number is the commit count and the marketing
+      # version is the latest tag.
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - run: brew install --cask tuist
@@ -17,4 +18,4 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
-        run: VERSION="${GITHUB_REF_NAME#v}" ./scripts/build-ios.sh
+        run: ./scripts/build-ios.sh
