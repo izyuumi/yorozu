@@ -1,0 +1,20 @@
+name: TestFlight
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  ios:
+    runs-on: macos-latest
+    steps:
+      # fetch-depth: 0 because the build number is the commit count.
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - run: brew install --cask tuist
+      # No certificate secret: signing is automatic, and the same key that authenticates
+      # the upload is what lets xcodebuild issue the certificate and profile it needs.
+      - env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: VERSION="${GITHUB_REF_NAME#v}" ./scripts/build-ios.sh
