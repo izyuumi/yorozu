@@ -24,7 +24,7 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         case .toolResult: .toolResult(ToolResultData(callId: "c1", ok: true, output: "README.md"))
         case .approvalCard:
             .approvalCard(ApprovalCardData(actionId: "a1", actionClass: "purchase", target: "amazon", amount: 12))
-        case .approvalAnswer: .approvalAnswer(ApprovalAnswerData(actionId: "a1", answer: .never))
+        case .approvalAnswer: .approvalAnswer(ApprovalAnswerData(actionId: "a1", answer: .always))
         case .threadCreate: .threadCreate(ThreadCreateData(title: "Groceries"))
         case .threadList:
             .threadList(ThreadListData(threads: [
@@ -244,4 +244,21 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     )
     let plainJson = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plain)) as? [String: Any]
     #expect((plainJson?["data"] as? [String: Any])?["attachment"] == nil)
+}
+
+/// The wire spells the always answer "always", and the declaration order is the card's button
+/// order: Yes, Yes-and-never-ask, No, Discuss.
+@Test func approvalAnswersRoundTripOnTheWire() throws {
+    #expect(ApprovalAnswerData.Answer.allCases.map(\.rawValue) == ["yes", "always", "no", "discuss"])
+
+    for answer in ApprovalAnswerData.Answer.allCases {
+        let data = ApprovalAnswerData(actionId: "a1", answer: answer)
+        let encoded = try JSONEncoder().encode(data)
+        #expect(try JSONDecoder().decode(ApprovalAnswerData.self, from: encoded) == data)
+        let json = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        #expect(json?["answer"] as? String == answer.rawValue)
+    }
+
+    let wire = Data(#"{"actionId":"a1","answer":"always"}"#.utf8)
+    #expect(try JSONDecoder().decode(ApprovalAnswerData.self, from: wire).answer == .always)
 }

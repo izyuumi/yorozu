@@ -67,7 +67,7 @@ export interface ToolResultData {
   output: string;
 }
 
-/** Pending external action awaiting a Yes / No / Never / Discuss answer. */
+/** Pending external action awaiting a Yes / Yes-and-never-ask / No / Discuss answer. */
 export interface ApprovalCardData {
   actionId: string;
   /** e.g. "send-message", "purchase", "delete-file". */
@@ -78,7 +78,8 @@ export interface ApprovalCardData {
 
 export interface ApprovalAnswerData {
   actionId: string;
-  answer: "yes" | "no" | "never" | "discuss";
+  /** `always` allows this action and writes a rule, so the class is not asked about again. */
+  answer: "yes" | "always" | "no" | "discuss";
 }
 
 export interface ThreadCreateData {
