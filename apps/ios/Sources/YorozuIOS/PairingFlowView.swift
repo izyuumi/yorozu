@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// The splash an unpaired phone opens on: the icon, the name, what the app is for, one button.
-/// The icon is a copy of the 1024 app icon as its own image set — an `.appiconset` is not an
-/// image asset, so `Image("AppIcon")` is not something to rely on.
+/// The icon is a flat 1024 render of AppIcon.icon as its own image set — an app icon is not
+/// an image asset, so `Image("AppIcon")` is not something to rely on. scripts/icon-render.sh
+/// regenerates it from the same artwork.
 struct SplashView: View {
     let onStart: () -> Void
 

@@ -1,0 +1,67 @@
+{
+  "fill" : {
+    "automatic-gradient" : "extended-srgb:0.96078,0.72157,0.18039,1.00000"
+  },
+  "fill-specializations" : [
+    {
+      "appearance" : "dark",
+      "value" : {
+        "automatic-gradient" : "extended-srgb:0.09020,0.10588,0.20000,1.00000"
+      }
+    }
+  ],
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "image-name-specializations" : [
+            { "value" : "loops.svg" },
+            { "appearance" : "tinted", "value" : "loops-tinted.svg" }
+          ],
+          "name" : "Loops"
+        }
+      ],
+      "name" : "Loops",
+      "shadow" : { "kind" : "neutral", "opacity" : 0.3 },
+      "specular" : true,
+      "translucency" : { "enabled" : false, "value" : 0.5 }
+    },
+    {
+      "layers" : [
+        {
+          "image-name-specializations" : [
+            { "value" : "panels.svg" },
+            { "appearance" : "tinted", "value" : "panels-tinted.svg" }
+          ],
+          "name" : "Panels"
+        }
+      ],
+      "name" : "Panels",
+      "shadow" : { "kind" : "neutral", "opacity" : 0.35 },
+      "specular" : true,
+      "translucency" : { "enabled" : false, "value" : 0.5 }
+    },
+    {
+      "layers" : [
+        {
+          "image-name-specializations" : [
+            { "value" : "rod.svg" },
+            { "appearance" : "dark", "value" : "rod-dark.svg" },
+            { "appearance" : "tinted", "value" : "rod-tinted.svg" }
+          ],
+          "name" : "Rod"
+        }
+      ],
+      "name" : "Rod",
+      "shadow" : { "kind" : "neutral", "opacity" : 0.25 },
+      "specular" : true,
+      "translucency" : { "enabled" : false, "value" : 0.5 }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

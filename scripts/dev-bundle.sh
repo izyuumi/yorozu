@@ -14,11 +14,16 @@ swift build --package-path apps/mac -c "$CONFIG"
 BIN="$(swift build --package-path apps/mac -c "$CONFIG" --show-bin-path)/YorozuMac"
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Yorozu"
 # The native tool host ships inside the bundle so it shares the app's signature: TCC keys
 # Accessibility and Screen Recording on that, and the helper is what actually needs them.
 cp "$(dirname "$BIN")/yorozu-native" "$APP/Contents/MacOS/yorozu-native"
+
+# The icon. Xcode compiles apps/ios/Resources/AppIcon.icon straight into an asset catalog
+# for iOS, but this bundle is assembled by hand and has no catalog, so it takes the .icns
+# that scripts/icon-render.sh renders from the same artwork.
+cp apps/mac/Resources/Yorozu.icns "$APP/Contents/Resources/Yorozu.icns"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -28,6 +33,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleExecutable</key><string>Yorozu</string>
   <key>CFBundleIdentifier</key><string>to.yumi.yorozu</string>
   <key>CFBundleName</key><string>Yorozu</string>
+  <key>CFBundleIconFile</key><string>Yorozu</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>CFBundleVersion</key><string>1</string>
