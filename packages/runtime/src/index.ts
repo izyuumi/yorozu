@@ -47,6 +47,7 @@ export * from "./tools/native.js";
 export * from "./tools/apple.js";
 export * from "./tools/fetch.js";
 export * from "./tools/search.js";
+export * from "./tools/cards.js";
 
 /** One line per event, as the agent loop will emit them. */
 export function describeEvent(event: YorozuEvent): string {

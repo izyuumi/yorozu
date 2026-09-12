@@ -82,6 +82,45 @@ export interface ApprovalAnswerData {
   answer: "yes" | "always" | "no" | "discuss";
 }
 
+/**
+ * A choice the agent needs made before it can carry on, raised by the `ask_user` tool. Unlike
+ * an approval card this is not about permission: nothing is pending, the agent simply does not
+ * know which way to go. The tool call stays suspended until an answer comes back.
+ */
+export interface QuestionCardData {
+  questionId: string;
+  question: string;
+  /** The choices offered, in the order the card lists them. May be empty when only free text makes sense. */
+  options: string[];
+  /** Whether the card also offers a free-text field. Absent means it does not. */
+  allowOther?: boolean;
+}
+
+export interface QuestionAnswerData {
+  questionId: string;
+  /** One of the options, or whatever was typed when `allowOther` was set. */
+  answer: string;
+}
+
+/** One line of a progress card. */
+export interface ProgressStep {
+  label: string;
+  state: "pending" | "running" | "done" | "failed";
+}
+
+/**
+ * A long job reporting where it has got to, raised by the `report_progress` tool. Re-reporting
+ * the same `cardId` replaces the card rather than adding one, which is what makes it a card
+ * that moves instead of a log — so the runtime re-emits it under one event id.
+ */
+export interface ProgressCardData {
+  cardId: string;
+  title: string;
+  steps: ProgressStep[];
+  /** 0–100. Absent when the job cannot say, and the steps are the whole of the progress. */
+  percent?: number;
+}
+
 export interface ThreadCreateData {
   title?: string;
 }
@@ -178,6 +217,9 @@ export type EventPayload =
   | { kind: "tool_result"; data: ToolResultData }
   | { kind: "approval_card"; data: ApprovalCardData }
   | { kind: "approval_answer"; data: ApprovalAnswerData }
+  | { kind: "question_card"; data: QuestionCardData }
+  | { kind: "question_answer"; data: QuestionAnswerData }
+  | { kind: "progress_card"; data: ProgressCardData }
   | { kind: "thread_create"; data: ThreadCreateData }
   | { kind: "thread_list"; data: ThreadListData }
   | { kind: "thread_archive"; data: ThreadArchiveData }

@@ -36,6 +36,9 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case toolResult = "tool_result"
         case approvalCard = "approval_card"
         case approvalAnswer = "approval_answer"
+        case questionCard = "question_card"
+        case questionAnswer = "question_answer"
+        case progressCard = "progress_card"
         case threadCreate = "thread_create"
         case threadList = "thread_list"
         case threadArchive = "thread_archive"
@@ -55,6 +58,9 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case toolResult(ToolResultData)
         case approvalCard(ApprovalCardData)
         case approvalAnswer(ApprovalAnswerData)
+        case questionCard(QuestionCardData)
+        case questionAnswer(QuestionAnswerData)
+        case progressCard(ProgressCardData)
         case threadCreate(ThreadCreateData)
         case threadList(ThreadListData)
         case threadArchive(ThreadArchiveData)
@@ -74,6 +80,9 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .toolResult: .toolResult
             case .approvalCard: .approvalCard
             case .approvalAnswer: .approvalAnswer
+            case .questionCard: .questionCard
+            case .questionAnswer: .questionAnswer
+            case .progressCard: .progressCard
             case .threadCreate: .threadCreate
             case .threadList: .threadList
             case .threadArchive: .threadArchive
@@ -106,6 +115,9 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .toolResult: payload = .toolResult(try c.decode(ToolResultData.self, forKey: .data))
         case .approvalCard: payload = .approvalCard(try c.decode(ApprovalCardData.self, forKey: .data))
         case .approvalAnswer: payload = .approvalAnswer(try c.decode(ApprovalAnswerData.self, forKey: .data))
+        case .questionCard: payload = .questionCard(try c.decode(QuestionCardData.self, forKey: .data))
+        case .questionAnswer: payload = .questionAnswer(try c.decode(QuestionAnswerData.self, forKey: .data))
+        case .progressCard: payload = .progressCard(try c.decode(ProgressCardData.self, forKey: .data))
         case .threadCreate: payload = .threadCreate(try c.decode(ThreadCreateData.self, forKey: .data))
         case .threadList: payload = .threadList(try c.decode(ThreadListData.self, forKey: .data))
         case .threadArchive: payload = .threadArchive(try c.decode(ThreadArchiveData.self, forKey: .data))
@@ -134,6 +146,9 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .toolResult(let d): try c.encode(d, forKey: .data)
         case .approvalCard(let d): try c.encode(d, forKey: .data)
         case .approvalAnswer(let d): try c.encode(d, forKey: .data)
+        case .questionCard(let d): try c.encode(d, forKey: .data)
+        case .questionAnswer(let d): try c.encode(d, forKey: .data)
+        case .progressCard(let d): try c.encode(d, forKey: .data)
         case .threadCreate(let d): try c.encode(d, forKey: .data)
         case .threadList(let d): try c.encode(d, forKey: .data)
         case .threadArchive(let d): try c.encode(d, forKey: .data)
@@ -254,6 +269,87 @@ public struct ApprovalAnswerData: Codable, Equatable, Sendable {
         self.actionId = actionId
         self.answer = answer
     }
+}
+
+/// A choice the agent needs made before it can carry on, raised by its `ask_user` tool. Unlike
+/// an approval card this is not about permission: nothing is pending, the agent simply does not
+/// know which way to go, and its tool call stays suspended until an answer goes back.
+public struct QuestionCardData: Codable, Equatable, Sendable {
+    public var questionId: String
+    public var question: String
+    /// The choices, in the order the card lists them. May be empty when only free text fits.
+    public var options: [String]
+    /// Whether the card also offers a free-text field. Absent on the wire means it does not.
+    public var allowOther: Bool?
+    public init(questionId: String, question: String, options: [String], allowOther: Bool? = nil) {
+        self.questionId = questionId
+        self.question = question
+        self.options = options
+        self.allowOther = allowOther
+    }
+
+    /// What the card draws, rather than what the wire carries: an absent flag is a no.
+    public var offersFreeText: Bool { allowOther == true }
+}
+
+public struct QuestionAnswerData: Codable, Equatable, Sendable {
+    public var questionId: String
+    /// One of the options, or whatever was typed when the card offered free text.
+    public var answer: String
+    public init(questionId: String, answer: String) {
+        self.questionId = questionId
+        self.answer = answer
+    }
+}
+
+/// One line of a progress card.
+public struct ProgressStep: Codable, Equatable, Sendable, Identifiable {
+    /// Declaration order is the order a step moves through, which is also how the card reads.
+    public enum State: String, Codable, Sendable, CaseIterable { case pending, running, done, failed }
+    public var label: String
+    public var state: State
+    /// The label is what tells two steps of one card apart; a card is a handful of lines.
+    public var id: String { label }
+    public init(label: String, state: State) {
+        self.label = label
+        self.state = state
+    }
+
+    /// Hand-written so a state this build has never heard of is a step not started yet, rather
+    /// than a card that fails to decode: the runtime may be newer than the app.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        label = try c.decode(String.self, forKey: .label)
+        state = (try? c.decode(State.self, forKey: .state)) ?? .pending
+    }
+}
+
+/// A long job reporting where it has got to, raised by the agent's `report_progress` tool.
+/// The runtime re-emits an update under the event id it first used, so a client that upserts
+/// on the id moves this card along instead of stacking another one under it.
+public struct ProgressCardData: Codable, Equatable, Sendable {
+    public var cardId: String
+    public var title: String
+    public var steps: [ProgressStep]
+    /// 0–100. Nil when the job cannot say, and the steps are the whole of the progress.
+    public var percent: Double?
+    public init(cardId: String, title: String, steps: [ProgressStep], percent: Double? = nil) {
+        self.cardId = cardId
+        self.title = title
+        self.steps = steps
+        self.percent = percent
+    }
+
+    /// What the bar fills to, 0–1: the reported percentage, or the steps that are finished
+    /// when the job did not report one. A card with no steps at all has nothing to show.
+    public var fraction: Double? {
+        if let percent { return min(1, max(0, percent / 100)) }
+        guard !steps.isEmpty else { return nil }
+        return Double(steps.filter { $0.state == .done }.count) / Double(steps.count)
+    }
+
+    /// A job is still going until every step has settled one way or the other.
+    public var running: Bool { steps.contains { $0.state == .pending || $0.state == .running } }
 }
 
 public struct ThreadCreateData: Codable, Equatable, Sendable {

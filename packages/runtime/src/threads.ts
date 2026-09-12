@@ -37,6 +37,9 @@ const LOGGED: ReadonlySet<EventKind> = new Set<EventKind>([
   "tool_result",
   "approval_card",
   "approval_answer",
+  "question_card",
+  "question_answer",
+  "progress_card",
 ]);
 
 export const threadsDir = (dir = stateDir()): string => join(dir, "threads");

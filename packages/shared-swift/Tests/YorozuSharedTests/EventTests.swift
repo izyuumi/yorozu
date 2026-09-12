@@ -25,6 +25,28 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         case .approvalCard:
             .approvalCard(ApprovalCardData(actionId: "a1", actionClass: "purchase", target: "amazon", amount: 12))
         case .approvalAnswer: .approvalAnswer(ApprovalAnswerData(actionId: "a1", answer: .always))
+        case .questionCard:
+            .questionCard(
+                QuestionCardData(
+                    questionId: "q1",
+                    question: "Which flight?",
+                    options: ["the 09:15", "the 14:40"],
+                    allowOther: true
+                )
+            )
+        case .questionAnswer: .questionAnswer(QuestionAnswerData(questionId: "q1", answer: "the 09:15"))
+        case .progressCard:
+            .progressCard(
+                ProgressCardData(
+                    cardId: "job-1",
+                    title: "Booking the table",
+                    steps: [
+                        ProgressStep(label: "find a restaurant", state: .done),
+                        ProgressStep(label: "call them", state: .running),
+                    ],
+                    percent: 50
+                )
+            )
         case .threadCreate: .threadCreate(ThreadCreateData(title: "Groceries"))
         case .threadList:
             .threadList(ThreadListData(threads: [
@@ -261,4 +283,80 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
 
     let wire = Data(#"{"actionId":"a1","answer":"always"}"#.utf8)
     #expect(try JSONDecoder().decode(ApprovalAnswerData.self, from: wire).answer == .always)
+}
+
+/// The wire shape of a question card, and what an absent `allowOther` means: a card offering
+/// only its options, rather than one whose free-text field failed to decode.
+@Test func questionCardsRoundTripAndOnlyOfferFreeTextWhenTheySaySo() throws {
+    let card = QuestionCardData(
+        questionId: "q1",
+        question: "Which flight?",
+        options: ["the 09:15", "the 14:40"],
+        allowOther: true
+    )
+    #expect(try JSONDecoder().decode(QuestionCardData.self, from: JSONEncoder().encode(card)) == card)
+    #expect(card.offersFreeText)
+
+    let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(card)) as? [String: Any]
+    #expect(json?["questionId"] as? String == "q1")
+    #expect(json?["options"] as? [String] == ["the 09:15", "the 14:40"])
+    #expect(json?["allowOther"] as? Bool == true)
+
+    // What the runtime writes when the card is options-only: the key is absent, not false.
+    let wire = Data(#"{"questionId":"q2","question":"Tea or coffee?","options":["tea","coffee"]}"#.utf8)
+    let plain = try JSONDecoder().decode(QuestionCardData.self, from: wire)
+    #expect(plain.allowOther == nil)
+    #expect(!plain.offersFreeText)
+    // And re-encoding it leaves the key absent, rather than writing a false the runtime
+    // would then have to read back as "offers free text: no".
+    let reencoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plain)) as? [String: Any]
+    #expect(reencoded?["allowOther"] == nil)
+}
+
+@Test func progressCardsRoundTripAndKnowHowFarAlongTheyAre() throws {
+    let card = ProgressCardData(
+        cardId: "job-1",
+        title: "Booking the table",
+        steps: [
+            ProgressStep(label: "find a restaurant", state: .done),
+            ProgressStep(label: "call them", state: .running),
+        ],
+        percent: 50
+    )
+    #expect(try JSONDecoder().decode(ProgressCardData.self, from: JSONEncoder().encode(card)) == card)
+    #expect(card.fraction == 0.5)
+    #expect(card.running)
+
+    let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(card)) as? [String: Any]
+    #expect(json?["cardId"] as? String == "job-1")
+    #expect((json?["steps"] as? [[String: Any]])?.first?["state"] as? String == "done")
+
+    // No percentage reported: the steps that are finished are the progress there is.
+    let counted = ProgressCardData(
+        cardId: "job-2",
+        title: "Tidying",
+        steps: [
+            ProgressStep(label: "a", state: .done),
+            ProgressStep(label: "b", state: .done),
+            ProgressStep(label: "c", state: .pending),
+        ]
+    )
+    #expect(counted.fraction == 2.0 / 3.0)
+    // And a card with no steps at all has nothing to draw a bar from.
+    #expect(ProgressCardData(cardId: "job-3", title: "Thinking", steps: []).fraction == nil)
+
+    // Every step settled, one of them badly: the job is over, and the card says so.
+    let failed = ProgressCardData(
+        cardId: "job-4",
+        title: "Booking",
+        steps: [ProgressStep(label: "call them", state: .failed)]
+    )
+    #expect(!failed.running)
+
+    // A runtime newer than this app can name a state it has never heard of; that is a step
+    // not started yet, not a card that refuses to decode.
+    let wire = Data(#"{"cardId":"j","title":"t","steps":[{"label":"x","state":"skipped"}]}"#.utf8)
+    let tolerant = try JSONDecoder().decode(ProgressCardData.self, from: wire)
+    #expect(tolerant.steps.first?.state == .pending)
+    #expect(tolerant.percent == nil)
 }

@@ -26,17 +26,40 @@ const sse = (text: string) =>
     { headers: { "content-type": "text/event-stream" } },
   );
 
-/** A sidecar with a relay it can reach, so the local channel is the only thing under test. */
-async function localSidecar() {
+/** A turn in which the model calls one tool, so a test can drive the tools that draw cards. */
+const toolTurn = (name: string, args: Record<string, unknown>) =>
+  new Response(
+    `data: ${JSON.stringify({
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              { index: 0, id: `call_${name}`, function: { name, arguments: JSON.stringify(args) } },
+            ],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+    })}\n\n` + "data: [DONE]\n\n",
+    { headers: { "content-type": "text/event-stream" } },
+  );
+
+/**
+ * A sidecar with a relay it can reach, so the local channel is the only thing under test.
+ * `responses` is one per model call, in order; it falls back to a plain "pong" turn once the
+ * queue runs out, which is what ends a turn that called a tool.
+ */
+async function localSidecar(responses: (() => Response)[] = []) {
   relay = await startRelay(0);
   const dir = mkdtempSync(join(tmpdir(), "yorozu-local-"));
+  const queue = [...responses];
   sidecar = serve({
     relayUrl: `ws://127.0.0.1:${relay.port}`,
     stateDir: dir,
     provider: openaiCompat({
       baseUrl: "https://example.invalid",
       model: "m",
-      fetch: vi.fn<typeof fetch>().mockImplementation(async () => sse("pong")),
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => (queue.shift() ?? (() => sse("pong")))()),
     }),
     log: () => {},
   });
@@ -213,4 +236,85 @@ test("the device list names every device, and is pushed when one comes or goes",
   } finally {
     second.destroy();
   }
+});
+
+/**
+ * A reply the model gave in one chunk used to reach the socket twice: once as the text delta
+ * and again as the finished message, identical but for `done`. Streaming deliberately runs one
+ * delta behind so the finished frame is the only one carrying the whole reply.
+ */
+test("one turn puts one agent message on the socket when the reply did not stream", async () => {
+  const { path } = await localSidecar();
+  socket = await connectLocal(path);
+  const events = reader(socket);
+  await events.nextOf("thread_list");
+
+  send(socket, "t1", { kind: "thread_create", data: { title: "Chores" } });
+  await events.nextOf("thread_list");
+  send(socket, "t1", { kind: "message", data: { role: "user", text: "ping" } });
+  await events.nextOf("message");
+
+  await new Promise((done) => setTimeout(done, 150));
+  const replies = events.all.filter(
+    (event) => event.kind === "message" && event.data.role === "agent",
+  );
+  expect(replies).toHaveLength(1);
+  expect(replies[0]).toMatchObject({ data: { role: "agent", text: "pong", done: true } });
+});
+
+test("ask_user raises a question card and the answer is what the tool call returns", async () => {
+  const { path } = await localSidecar([
+    () => toolTurn("ask_user", { question: "Which one?", options: ["tea", "coffee"], allowOther: true }),
+  ]);
+  socket = await connectLocal(path);
+  const events = reader(socket);
+  await events.nextOf("thread_list");
+
+  send(socket, "t1", { kind: "thread_create", data: { title: "Chores" } });
+  await events.nextOf("thread_list");
+  send(socket, "t1", { kind: "message", data: { role: "user", text: "make me a drink" } });
+
+  const card = await events.nextOf("question_card");
+  expect(card).toMatchObject({
+    threadId: "t1",
+    kind: "question_card",
+    data: { question: "Which one?", options: ["tea", "coffee"], allowOther: true },
+  });
+  if (card.kind !== "question_card") throw new Error("expected a question card");
+
+  send(socket, "t1", {
+    kind: "question_answer",
+    data: { questionId: card.data.questionId, answer: "coffee" },
+  });
+
+  // The answer is the tool call's result: the turn carries on with what the user chose.
+  const result = await events.nextOf("tool_result");
+  expect(result).toMatchObject({ kind: "tool_result", data: { ok: true, output: "coffee" } });
+  await events.nextOf("message");
+});
+
+test("a progress card re-reported under the same id moves in place", async () => {
+  const steps = (state: string) => [{ label: "call them", state }];
+  const { path } = await localSidecar([
+    () => toolTurn("report_progress", { cardId: "job-1", title: "Booking a table", steps: steps("running") }),
+    () => toolTurn("report_progress", { cardId: "job-1", title: "Booking a table", steps: steps("done"), percent: 100 }),
+  ]);
+  socket = await connectLocal(path);
+  const events = reader(socket);
+  await events.nextOf("thread_list");
+
+  send(socket, "t1", { kind: "thread_create", data: { title: "Chores" } });
+  await events.nextOf("thread_list");
+  send(socket, "t1", { kind: "message", data: { role: "user", text: "book a table" } });
+  await events.nextOf("message");
+
+  const cards = events.all.filter((event) => event.kind === "progress_card");
+  expect(cards).toHaveLength(2);
+  // One event id for both, which is what makes the second replace the first rather than
+  // stacking a second card under it: a client upserts on the id.
+  expect(new Set(cards.map((event) => event.id)).size).toBe(1);
+  expect(cards[0]).toMatchObject({ data: { steps: [{ label: "call them", state: "running" }] } });
+  expect(cards[1]).toMatchObject({
+    data: { title: "Booking a table", steps: [{ state: "done" }], percent: 100 },
+  });
 });
