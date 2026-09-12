@@ -237,12 +237,25 @@ export function eventsAfter(
  * TODO: summarise what falls off the front instead of dropping it — the spec wants a rolling
  * summary plus the recent tail, which needs a provider call and a place to cache the summary.
  */
-export function threadHistory(threadId: string, dir = stateDir()): Message[] {
+export function threadHistory(threadId: string, dir = stateDir(), vision = false): Message[] {
   return readThreadEvents(threadId, dir)
     .filter((event) => event.kind === "message")
     .slice(-HISTORY_LIMIT)
-    .map((event) => ({
-      role: event.data.role === "user" ? ("user" as const) : ("assistant" as const),
-      content: event.data.text,
-    }));
+    .map((event) => {
+      const role = event.data.role === "user" ? ("user" as const) : ("assistant" as const);
+      const attachment = event.data.attachment;
+      if (!attachment) return { role, content: event.data.text };
+      // A model that can see gets the bytes. One that cannot is told what came with the
+      // message, because the text alone often does not stand up on its own — "what is wrong
+      // with this?" needs at least the file's name to be answerable.
+      if (vision && attachment.mime.startsWith("image/")) {
+        return {
+          role,
+          content: event.data.text,
+          images: [{ mime: attachment.mime, data: attachment.data }],
+        };
+      }
+      const note = `[attached: ${attachment.name} (${attachment.mime})]`;
+      return { role, content: event.data.text ? `${event.data.text}\n\n${note}` : note };
+    });
 }

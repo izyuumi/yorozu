@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import {
+  ATTACHMENT_MAX_BYTES,
   decodeQrPayload,
   decodePairingString,
   encodePairingString,
@@ -166,4 +167,22 @@ test("the JSON QR form older codes carried still decodes", () => {
   expect(() => decodeQrPayload('{"v":2}')).toThrow();
   expect(() => decodeQrPayload("null")).toThrow();
   expect(() => decodeQrPayload("not json")).toThrow();
+});
+
+test("a message can carry one attachment, and the cap is the same 5 MB Swift enforces", () => {
+  const event: YorozuEvent = {
+    ...base,
+    agentId: "phone",
+    kind: "message",
+    data: {
+      role: "user",
+      text: "what is this?",
+      attachment: { name: "receipt.png", mime: "image/png", data: "aGk=" },
+    },
+  };
+  if (event.kind !== "message") throw new Error("unreachable");
+  expect(event.data.attachment?.name).toBe("receipt.png");
+  // The wire shape is the JSON both languages write, so it round-trips unchanged.
+  expect(JSON.parse(JSON.stringify(event))).toEqual(event);
+  expect(ATTACHMENT_MAX_BYTES).toBe(5 * 1024 * 1024);
 });

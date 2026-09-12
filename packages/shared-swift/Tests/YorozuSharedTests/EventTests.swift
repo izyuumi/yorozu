@@ -11,7 +11,14 @@ private func roundTrip(_ event: YorozuEvent) throws -> YorozuEvent {
 func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     let payload: YorozuEvent.Payload =
         switch kind {
-        case .message: .message(MessageData(role: .user, text: "hi"))
+        case .message:
+            .message(
+                MessageData(
+                    role: .user,
+                    text: "hi",
+                    attachment: MessageAttachment(name: "receipt.png", mime: "image/png", data: "aGk=")
+                )
+            )
         case .thought: .thought(ThoughtData(text: "checking the catalog"))
         case .toolCall: .toolCall(ToolCallData(callId: "c1", name: "shell", args: ["cmd": .string("ls")]))
         case .toolResult: .toolResult(ToolResultData(callId: "c1", ok: true, output: "README.md"))
@@ -192,4 +199,49 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
 
     let back = ThreadArchiveData(archived: false)
     #expect(try JSONDecoder().decode(ThreadArchiveData.self, from: JSONEncoder().encode(back)) == back)
+}
+
+@Test func anAttachmentIsBytesAndACapBothSidesAgreeOn() throws {
+    let bytes = Data("hi".utf8)
+    let attachment = try #require(MessageAttachment(name: "note.txt", mime: "text/plain", bytes: bytes))
+    #expect(attachment.data == "aGk=")
+    #expect(attachment.bytes == bytes)
+    #expect(!attachment.isImage)
+    #expect(MessageAttachment(name: "p.png", mime: "image/png", data: "aGk=").isImage)
+
+    // The cap is the sender's job: over it, there is no attachment to send at all.
+    #expect(MessageAttachment(name: "big", mime: "application/pdf", bytes: Data(count: 5 * 1024 * 1024)) != nil)
+    #expect(MessageAttachment(name: "big", mime: "application/pdf", bytes: Data(count: 5 * 1024 * 1024 + 1)) == nil)
+    // Mirrors ATTACHMENT_MAX_BYTES in packages/shared/src/events.ts.
+    #expect(MessageAttachment.maxBytes == 5 * 1024 * 1024)
+}
+
+@Test func anAttachmentTravelsInTheMessagesOwnJson() throws {
+    let event = YorozuEvent(
+        id: "e1",
+        threadId: "home",
+        ts: 1,
+        agentId: "phone",
+        payload: .message(
+            MessageData(
+                role: .user,
+                text: "what is this?",
+                attachment: MessageAttachment(name: "receipt.png", mime: "image/png", data: "aGk=")
+            )
+        )
+    )
+    let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(event)) as? [String: Any]
+    let data = try #require(json?["data"] as? [String: Any])
+    let attachment = try #require(data["attachment"] as? [String: Any])
+    #expect(attachment["name"] as? String == "receipt.png")
+    #expect(attachment["mime"] as? String == "image/png")
+    #expect(attachment["data"] as? String == "aGk=")
+
+    // A message without one says nothing about attachments, so the key stays absent on the wire.
+    let plain = YorozuEvent(
+        id: "e2", threadId: "home", ts: 1, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "hi"))
+    )
+    let plainJson = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plain)) as? [String: Any]
+    #expect((plainJson?["data"] as? [String: Any])?["attachment"] == nil)
 }

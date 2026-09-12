@@ -162,7 +162,7 @@ test("the socket is readable only by its owner and goes away with the sidecar", 
   expect(existsSync(path)).toBe(false);
 });
 
-test("one reply is one message event, however many deltas streamed it", async () => {
+test("one reply is one message id, however many deltas streamed it, and the last says done", async () => {
   const { path } = await localSidecar();
   socket = await connectLocal(path);
   const events = reader(socket);
@@ -173,13 +173,17 @@ test("one reply is one message event, however many deltas streamed it", async ()
   send(socket, "t1", { kind: "message", data: { role: "user", text: "ping" } });
   expect(await events.nextOf("message")).toMatchObject({ data: { role: "agent", text: "pong" } });
 
-  // The deltas and the finished reply share one id and one text, so the finished one used to
-  // arrive as a second, identical event. Logged, yes; sent twice, no.
+  // Every delta and the finished reply share one id, so a client replaces in place rather
+  // than growing a bubble per delta — one reply is one bubble however it was streamed.
   await new Promise((done) => setTimeout(done, 150));
   const replies = events.all.filter(
     (event) => event.kind === "message" && event.data.role === "agent",
   );
-  expect(replies).toHaveLength(1);
+  expect(new Set(replies.map((event) => event.id)).size).toBe(1);
+  // And the last one carries `done`, which is what stops the composer offering Stop. None of
+  // the deltas do: an unfinished turn must never look finished.
+  expect(replies.at(-1)).toMatchObject({ data: { done: true } });
+  expect(replies.slice(0, -1).every((event) => event.data.done === undefined)).toBe(true);
 });
 
 test("the device list names every device, and is pushed when one comes or goes", async () => {

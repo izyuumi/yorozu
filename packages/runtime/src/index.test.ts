@@ -195,3 +195,42 @@ test("auth reports why it failed", async () => {
   expect(result.ok).toBe(false);
   expect(result.reason).toContain("401");
 });
+
+test("images go out as content parts, and only when there are any", async () => {
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(sse(finalTurn));
+  const provider = openaiCompat({
+    baseUrl: "https://example.invalid",
+    model: "m",
+    fetch: fetchMock,
+  });
+  expect(provider.vision).toBe(true);
+
+  await Array.fromAsync(
+    provider.stream(
+      [
+        { role: "user", content: "what is this?", images: [{ mime: "image/png", data: "aGk=" }] },
+        { role: "user", content: "plain" },
+      ],
+      [],
+    ),
+  );
+
+  const sent = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body)) as {
+    messages: unknown[];
+  };
+  expect(sent.messages[0]).toEqual({
+    role: "user",
+    content: [
+      { type: "text", text: "what is this?" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,aGk=" } },
+    ],
+  });
+  // `images` is ours, not the wire's, and a message without any keeps its plain string content.
+  expect(sent.messages[1]).toEqual({ role: "user", content: "plain" });
+});
+
+test("a provider told its model cannot see says so, and is then never handed images", () => {
+  expect(
+    openaiCompat({ baseUrl: "https://example.invalid", model: "m", vision: false }).vision,
+  ).toBe(false);
+});
