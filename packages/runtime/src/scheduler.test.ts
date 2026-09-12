@@ -15,6 +15,7 @@ import {
   unscheduleTool,
   type Job,
 } from "./scheduler.js";
+import { createThread, listThreads } from "./threads.js";
 
 let dir: string;
 let previousStateDir: string | undefined;
@@ -160,7 +161,14 @@ test("the schedule tool files the job in the calling thread", () => {
   expect(listJobs(dir).map((j) => j.id)).toEqual([CONSOLIDATION_JOB.id]);
 });
 
-test("without a turn context the job lands in the home thread", () => {
+test("without a turn context the job lands in the newest thread there is", () => {
+  const thread = createThread("Chores", dir);
   scheduleTool.run({ instruction: "later", at: "2026-09-12T10:00:00Z" });
-  expect(listJobs(dir).at(-1)).toMatchObject({ threadId: "home", createdBy: "main" });
+  expect(listJobs(dir).at(-1)).toMatchObject({ threadId: thread.id, createdBy: "main" });
+});
+
+test("with no threads at all, a job without a context gets one made for it", () => {
+  scheduleTool.run({ instruction: "later", at: "2026-09-12T10:00:00Z" });
+  const job = listJobs(dir).at(-1)!;
+  expect(listThreads(dir).map((t) => t.id)).toEqual([job.threadId]);
 });

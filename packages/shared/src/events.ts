@@ -71,7 +71,8 @@ export interface ThreadSummary {
   id: string;
   title: string;
   archived: boolean;
-  pinned: boolean;
+  /** When the thread was last written to, epoch milliseconds. What the lists order on. */
+  lastActivity: number;
 }
 
 export interface ThreadListData {

@@ -39,7 +39,7 @@ public struct ChatView: View {
         }
         // Inside the stack: a trace pushed from here keeps streaming this thread.
         .agentTraceDestination { events }
-        .navigationTitle(thread.title)
+        .navigationTitle(thread.displayTitle)
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
         #endif
