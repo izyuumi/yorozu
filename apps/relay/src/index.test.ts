@@ -257,3 +257,36 @@ test("tells phones whether the room's mac is online", async () => {
   await connectMac(relay.port, macKeys);
   expect(await phone.next()).toMatchObject({ type: "owner", online: true });
 });
+
+test("answers the heartbeat, and a phone can ask about presence again", async () => {
+  relay = await startRelay(0);
+  const macKeys = keypair();
+  const room = roomId(macKeys.pub);
+  const mac = await connectMac(relay.port, macKeys);
+  const { phone } = await connectPhone(relay.port, room, await mintToken(mac));
+  await phone.next(); // joined
+
+  // The heartbeat neither closes the socket nor reaches the other end.
+  mac.send({ type: "ping" });
+  expect(await mac.next()).toMatchObject({ type: "pong" });
+  phone.send({ type: "ping" });
+  expect(await phone.next()).toMatchObject({ type: "pong" });
+
+  phone.send({ type: "owner" });
+  expect(await phone.next()).toMatchObject({ type: "owner", online: true });
+
+  mac.ws.close();
+  await mac.closed;
+  expect(await phone.next()).toMatchObject({ type: "owner", online: false });
+  phone.send({ type: "owner" });
+  expect(await phone.next()).toMatchObject({ type: "owner", online: false });
+});
+
+test("only a joined phone may ask about presence", async () => {
+  relay = await startRelay(0);
+  const stranger = client(relay.port);
+  await stranger.open;
+  await stranger.next(); // nonce
+  stranger.send({ type: "owner" });
+  expect(await stranger.closed).toBe(4001);
+});

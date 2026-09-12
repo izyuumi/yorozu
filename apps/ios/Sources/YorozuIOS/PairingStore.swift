@@ -54,6 +54,10 @@ enum PairingStore {
         /// key, and absent is what a pairing stored before this existed looks like — which is
         /// exactly a pairing whose token has not been redeemed yet.
         var paired: Bool?
+        /// When the relay first accepted this device, which is what Settings calls "paired
+        /// since". Optional for the same reason `paired` is: a pairing stored before this
+        /// existed has no date, and there is none to invent for it.
+        var pairedAt: Date?
     }
 
     private static let account = "pairing"
@@ -75,6 +79,7 @@ enum PairingStore {
     static func markPaired() {
         guard var stored = load(), stored.paired != true else { return }
         stored.paired = true
+        stored.pairedAt = Date()
         stored.pairing.token = ""
         try? save(stored)
     }
