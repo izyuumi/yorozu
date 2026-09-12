@@ -25,7 +25,7 @@ pairing payload.
 | Variable | Default |
 | --- | --- |
 | `YOROZU_STATE_DIR` | `~/Library/Application Support/Yorozu` (holds `keys.json`, mode 600) |
-| `YOROZU_RELAY_URL` | `ws://127.0.0.1:8787` |
+| `YOROZU_RELAY_URL` | `wss://relay.yumi.to` (the hosted relay) |
 | `YOROZU_BASE_URL` / `YOROZU_API_KEY` / `YOROZU_MODEL` | `https://api.openai.com/v1`, unset, `gpt-4o-mini` |
 
 Pairing: the QR carries the Mac's X25519 key, the room ID and a one-time token. The phone joins the
@@ -37,8 +37,7 @@ session key.
 
 ```sh
 pnpm --filter @yorozu/runtime build            # sidecar must be built first
-docker run -p 8787:8787 yorozu-relay &         # or any relay
-swift run --package-path apps/mac
+swift run --package-path apps/mac              # dials wss://relay.yumi.to by default
 ```
 
 The menu bar window shows the relay state and the pairing QR. The sidecar command is
@@ -104,13 +103,31 @@ The relay forwards ciphertext between Mac and phone and can read none of it. Roo
 Ed25519 key, then mints one-time join tokens (10 minute TTL) that the phone redeems with a
 signature over the token. Every frame carries a signature from the sender's registered key;
 unsigned or mis-signed frames close the connection. While the Mac is offline, frames are buffered
-in memory per room (24h TTL, 5 MB cap, oldest dropped first) and drained in order on reconnect.
-Each room is rate limited to 60 frames per second.
+per room (24h TTL, 5 MB cap, oldest dropped first) and drained in order on reconnect. Each room
+is rate limited to 60 frames per second.
 
-Run it with one command (`PORT` defaults to 8787):
+Clients pass the room as `?room=<roomId>` on the websocket URL. The room only appears on the wire
+inside `register`/`join`, which is too late for a relay that must route the socket before reading
+it; both clients know the ID before they dial. The Node relay ignores the query.
+
+There are two implementations of that one protocol, sharing its pure policy (limits, close codes,
+envelope shapes, rate limit, buffer trim) in `apps/relay/src/protocol.ts`:
+
+- **Hosted** — `src/worker.ts`, a Cloudflare Worker with one Durable Object per room, which is what
+  `wss://relay.yumi.to` runs. Sockets use the Hibernation API, tokens and the offline buffer live in
+  DO storage, and the buffer's TTL is swept by a DO alarm.
+- **Self-hosted** — `src/index.ts`, a plain `ws` server with everything in memory (`PORT`, default
+  8787).
 
 ```sh
 docker build -t yorozu-relay -f apps/relay/Dockerfile . && docker run -p 8787:8787 yorozu-relay
+```
+
+To run the hosted one on your own Cloudflare account, edit the `routes` block in
+`apps/relay/wrangler.toml` to your own hostname and deploy:
+
+```sh
+pnpm --filter @yorozu/relay exec wrangler deploy
 ```
 
 ## Permissions and never-sleep
@@ -642,8 +659,9 @@ the appcast published beside each release.
 ### The relay
 
 The Mac and the phone only ever meet through a relay, so one has to be reachable from both. The
-app's Settings → **Relay** field is the URL the sidecar dials; it defaults to
-`ws://100.100.1.1:8787`, the Mac mini above over Tailscale, and moves to the hosted relay later.
+app's Settings → **Relay** field is the URL the sidecar dials; it defaults to the hosted relay,
+`wss://relay.yumi.to`. It is blind either way, so the only reason to move is to keep the traffic on
+your own network: `ws://100.100.1.1:8787` is the Mac mini above over Tailscale.
 
 Self-host it either way:
 

@@ -1,16 +1,19 @@
 import { createHash, createPublicKey, randomBytes, sign, verify, type KeyObject } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { WebSocketServer, type WebSocket } from "ws";
-
-const TOKEN_TTL_MS = 10 * 60_000;
-const BUFFER_TTL_MS = 24 * 60 * 60_000;
-const BUFFER_CAP_BYTES = 5 * 1024 * 1024;
-const FRAMES_PER_SEC = 60;
-
-/** Close codes. The relay closes rather than silently ignoring a bad frame. */
-const CLOSE_PROTOCOL = 4001;
-const CLOSE_BAD_SIGNATURE = 4003;
-const CLOSE_RATE_LIMIT = 4029;
+import {
+  allowFrame,
+  CLOSE_BAD_SIGNATURE,
+  CLOSE_PROTOCOL,
+  CLOSE_RATE_LIMIT,
+  dropCount,
+  newBucket,
+  parseFrame,
+  parseJoin,
+  parseRegister,
+  TOKEN_TTL_MS,
+  type Bucket,
+} from "./protocol.js";
 
 /** Room ID is derived from the Mac public key; the relay never reads payloads. */
 export function roomId(macPublicKey: string): string {
@@ -43,9 +46,7 @@ type Room = {
   /** token -> expiry epoch ms. Deleted on use: one-time. */
   tokens: Map<string, number>;
   buffer: Buffered[];
-  bufferBytes: number;
-  bucket: number;
-  refilledAt: number;
+  bucket: Bucket;
 };
 
 type Conn = {
@@ -58,42 +59,16 @@ type Conn = {
 };
 
 function newRoom(now: number): Room {
-  return {
-    mac: null,
-    phones: new Set(),
-    tokens: new Map(),
-    buffer: [],
-    bufferBytes: 0,
-    bucket: FRAMES_PER_SEC,
-    refilledAt: now,
-  };
+  return { mac: null, phones: new Set(), tokens: new Map(), buffer: [], bucket: newBucket(now) };
 }
 
-/** Token bucket, per room: sustained FRAMES_PER_SEC with a one-second burst. */
-function allowFrame(room: Room, now: number): boolean {
-  const refill = ((now - room.refilledAt) / 1000) * FRAMES_PER_SEC;
-  room.bucket = Math.min(FRAMES_PER_SEC, room.bucket + refill);
-  room.refilledAt = now;
-  if (room.bucket < 1) return false;
-  room.bucket -= 1;
-  return true;
-}
-
-/** TTLs are enforced lazily on access, so an idle relay holds no timers. */
-function pruneBuffer(room: Room, now: number): void {
-  while (room.buffer.length > 0 && now - room.buffer[0]!.at > BUFFER_TTL_MS) {
-    room.bufferBytes -= room.buffer.shift()!.bytes;
-  }
+function trimBuffer(room: Room, now: number): void {
+  room.buffer.splice(0, dropCount(room.buffer, now));
 }
 
 function bufferFrame(room: Room, raw: string, now: number): void {
-  pruneBuffer(room, now);
-  const bytes = Buffer.byteLength(raw);
-  room.buffer.push({ raw, bytes, at: now });
-  room.bufferBytes += bytes;
-  while (room.bufferBytes > BUFFER_CAP_BYTES && room.buffer.length > 0) {
-    room.bufferBytes -= room.buffer.shift()!.bytes;
-  }
+  room.buffer.push({ raw, bytes: Buffer.byteLength(raw), at: now });
+  trimBuffer(room, now);
 }
 
 /**
@@ -107,10 +82,9 @@ function notifyOwner(room: Room, online: boolean): void {
 }
 
 function drainBuffer(room: Room, mac: WebSocket, now: number): void {
-  pruneBuffer(room, now);
+  trimBuffer(room, now);
   for (const entry of room.buffer) mac.send(entry.raw);
   room.buffer = [];
-  room.bufferBytes = 0;
 }
 
 export type Relay = { port: number; close: () => Promise<void> };
@@ -149,10 +123,9 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
 
       switch (msg.type) {
         case "register": {
-          const { pubkey, nonceSig } = msg;
-          if (typeof pubkey !== "string" || typeof nonceSig !== "string") {
-            return ws.close(CLOSE_PROTOCOL, "bad register");
-          }
+          const reg = parseRegister(msg);
+          if (!reg) return ws.close(CLOSE_PROTOCOL, "bad register");
+          const { pubkey, nonceSig } = reg;
           let key: KeyObject;
           try {
             key = publicKeyFrom(pubkey);
@@ -188,15 +161,9 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
         }
 
         case "join": {
-          const { roomId: id, token, phonePubkey, sig } = msg;
-          if (
-            typeof id !== "string" ||
-            typeof token !== "string" ||
-            typeof phonePubkey !== "string" ||
-            typeof sig !== "string"
-          ) {
-            return ws.close(CLOSE_PROTOCOL, "bad join");
-          }
+          const join = parseJoin(msg);
+          if (!join) return ws.close(CLOSE_PROTOCOL, "bad join");
+          const { roomId: id, token, phonePubkey, sig } = join;
           const room = rooms.get(id);
           const expiresAt = room?.tokens.get(token);
           if (!room || expiresAt === undefined) return ws.close(CLOSE_PROTOCOL, "unknown token");
@@ -225,15 +192,14 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
         }
 
         case "frame": {
-          const { payload, sig } = msg;
           if (!conn.role || !conn.room || !conn.key) return ws.close(CLOSE_PROTOCOL, "not joined");
-          if (typeof payload !== "string" || typeof sig !== "string") {
-            return ws.close(CLOSE_BAD_SIGNATURE, "unsigned frame");
-          }
+          const frame = parseFrame(msg);
+          if (!frame) return ws.close(CLOSE_BAD_SIGNATURE, "unsigned frame");
+          const { payload, sig } = frame;
           if (!verifySignature(payload, sig, conn.key)) {
             return ws.close(CLOSE_BAD_SIGNATURE, "bad frame signature");
           }
-          if (!allowFrame(conn.room, now)) return ws.close(CLOSE_RATE_LIMIT, "rate limit");
+          if (!allowFrame(conn.room.bucket, now)) return ws.close(CLOSE_RATE_LIMIT, "rate limit");
 
           if (conn.role === "phone") {
             if (conn.room.mac) conn.room.mac.send(raw);

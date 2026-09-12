@@ -83,15 +83,26 @@ public actor RelayClient: ChatTransport {
         guard let url = URL(string: pairing.relayUrl), url.scheme?.hasPrefix("ws") == true else {
             throw YorozuCrypto.CryptoError.malformed("relay URL is not a websocket URL")
         }
-        guard pairing.roomId != nil else {
+        guard let room = pairing.roomId else {
             throw YorozuCrypto.CryptoError.malformed("QR payload carries no room ID")
+        }
+        // The room ID is only carried in `join`, which is too late for a relay that has to
+        // route the socket before reading it, so it also goes in the URL. Relays that route
+        // on the message instead simply ignore the query.
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            throw YorozuCrypto.CryptoError.malformed("relay URL is not a websocket URL")
+        }
+        components.queryItems =
+            (components.queryItems ?? []) + [URLQueryItem(name: "room", value: room)]
+        guard let dial = components.url else {
+            throw YorozuCrypto.CryptoError.malformed("relay URL is not a websocket URL")
         }
         guard let macPub = Data(base64URLEncoded: pairing.macPubkey) else {
             throw YorozuCrypto.CryptoError.malformed("Mac public key is not base64url")
         }
         self.pairing = pairing
         self.identity = identity
-        self.socket = session.webSocketTask(with: url)
+        self.socket = session.webSocketTask(with: dial)
         self.sessionKey = try YorozuCrypto.deriveSessionKey(
             myPriv: identity.sessionPrivateKey,
             theirPub: macPub
