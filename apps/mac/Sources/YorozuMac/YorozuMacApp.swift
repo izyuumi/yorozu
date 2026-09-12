@@ -102,6 +102,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
             Task { await Permission.logAll() }
+            // Starts Sparkle here rather than when Settings is first opened: the whole point of
+            // an automatic update is that nobody had to go looking for it.
+            Updates.start()
             NeverSleep.shared.restoreFromDefaults()
             Sidecar.shared.start()
             // Connects to the sidecar's local socket once it is listening. Not tied to the
