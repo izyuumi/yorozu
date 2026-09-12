@@ -25,6 +25,8 @@ export interface ThreadRecord {
   /** ISO 8601. */
   createdAt: string;
   archived: boolean;
+  /** Pinned threads lead the phone's list. Absent on every thread written before the flag. */
+  pinned?: boolean;
 }
 
 /** Kinds that belong to a thread's history. Control traffic is not logged. */
@@ -125,24 +127,58 @@ export function renameThread(id: string, title: string, dir = stateDir()): boole
   return true;
 }
 
-/** False when there is no such thread, or when it is archived already. */
-export function archiveThread(id: string, dir = stateDir()): boolean {
+/**
+ * Archives a thread, or brings it back with `archived` false. Returns false when there is no
+ * such thread, or when it is in the state asked for already.
+ */
+export const archiveThread = (id: string, dir = stateDir(), archived = true): boolean =>
+  setFlag(id, dir, "archived", archived);
+
+/** Pins a thread to the top of the list, or unpins it. False when nothing changed. */
+export const pinThread = (id: string, pinned: boolean, dir = stateDir()): boolean =>
+  setFlag(id, dir, "pinned", pinned);
+
+/**
+ * Sets one boolean on one thread and writes the index back, but only when the value is new:
+ * both flags are toggles a second device may already have set, and an idempotent frame should
+ * not rewrite the file or claim it changed anything.
+ */
+function setFlag(id: string, dir: string, flag: "archived" | "pinned", value: boolean): boolean {
   const threads = listThreads(dir);
   const thread = threads.find((candidate) => candidate.id === id);
-  if (!thread || thread.archived) return false;
-  thread.archived = true;
+  if (!thread || (thread[flag] ?? false) === value) return false;
+  thread[flag] = value;
   saveThreads(threads, dir);
   return true;
 }
 
+/** How much of the newest message the list's one-line preview is given. */
+const PREVIEW_LIMIT = 140;
+
+/**
+ * The newest thing said in the thread, agent's or user's, flattened to one line for the list.
+ * Undefined in a thread nothing has been said in yet, so the row draws nothing rather than "".
+ */
+function lastMessage(threadId: string, dir: string): string | undefined {
+  const last = readThreadEvents(threadId, dir).findLast((event) => event.kind === "message");
+  if (!last || last.kind !== "message") return undefined;
+  const line = last.data.text.replace(/\s+/gu, " ").trim();
+  return line ? line.slice(0, PREVIEW_LIMIT) : undefined;
+}
+
 /** What the phone's thread list renders. */
 export const threadSummaries = (dir = stateDir()): ThreadSummary[] =>
-  listThreads(dir).map((thread) => ({
-    id: thread.id,
-    title: thread.title,
-    archived: thread.archived,
-    lastActivity: lastActivity(thread, dir),
-  }));
+  listThreads(dir).map((thread) => {
+    const preview = lastMessage(thread.id, dir);
+    return {
+      id: thread.id,
+      title: thread.title,
+      archived: thread.archived,
+      lastActivity: lastActivity(thread, dir),
+      ...(preview === undefined ? {} : { lastMessage: preview }),
+      pinned: thread.pinned ?? false,
+    };
+  });
 
 const logFile = (threadId: string, dir: string): string =>
   // The id is a UUID, but it arrives from the phone: keep it a file name regardless.

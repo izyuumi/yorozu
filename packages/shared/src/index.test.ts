@@ -62,12 +62,60 @@ test("every spec'd kind exists", () => {
     "thread_list",
     "thread_archive",
     "thread_rename",
+    "thread_pin",
     "sync_request",
     "sync_delta",
     "device_list",
     "device_remove",
   ];
-  expect(kinds).toHaveLength(14);
+  expect(kinds).toHaveLength(15);
+});
+
+test("a thread summary carries what a list row draws", () => {
+  const event: YorozuEvent = {
+    ...base,
+    threadId: "",
+    kind: "thread_list",
+    data: {
+      threads: [
+        {
+          id: "t1",
+          title: "Groceries",
+          archived: false,
+          lastActivity: 1_757_640_000_000,
+          lastMessage: "and eggs",
+          pinned: true,
+        },
+      ],
+    },
+  };
+  if (event.kind !== "thread_list") throw new Error("unreachable");
+  expect(JSON.parse(JSON.stringify(event.data.threads[0]))).toEqual(event.data.threads[0]);
+  expect(event.data.threads[0]?.lastMessage).toBe("and eggs");
+
+  // Both are optional: a v1 summary, with neither, is still a summary.
+  const v1: YorozuEvent = {
+    ...base,
+    kind: "thread_list",
+    data: { threads: [{ id: "t1", title: "", archived: false, lastActivity: 1 }] },
+  };
+  if (v1.kind !== "thread_list") throw new Error("unreachable");
+  expect(v1.data.threads[0]?.pinned).toBeUndefined();
+});
+
+test("archiving carries an optional flag, and pinning a required one", () => {
+  // `{}` is what a phone older than unarchiving sends, and it still means archive.
+  const legacy: YorozuEvent = { ...base, kind: "thread_archive", data: {} };
+  if (legacy.kind !== "thread_archive") throw new Error("unreachable");
+  expect(legacy.data.archived).toBeUndefined();
+
+  const back: YorozuEvent = { ...base, kind: "thread_archive", data: { archived: false } };
+  if (back.kind !== "thread_archive") throw new Error("unreachable");
+  expect(back.data.archived).toBe(false);
+
+  const pin: YorozuEvent = { ...base, kind: "thread_pin", data: { pinned: true } };
+  if (pin.kind !== "thread_pin") throw new Error("unreachable");
+  expect(pin.data.pinned).toBe(true);
 });
 
 test("a device list carries what the Settings window draws", () => {

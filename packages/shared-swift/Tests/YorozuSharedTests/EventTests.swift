@@ -21,10 +21,18 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         case .threadCreate: .threadCreate(ThreadCreateData(title: "Groceries"))
         case .threadList:
             .threadList(ThreadListData(threads: [
-                ThreadSummary(id: "t1", title: "Groceries", archived: false, lastActivity: 1_757_640_000_000)
+                ThreadSummary(
+                    id: "t1",
+                    title: "Groceries",
+                    archived: false,
+                    lastActivity: 1_757_640_000_000,
+                    lastMessage: "and eggs",
+                    pinned: true
+                )
             ]))
-        case .threadArchive: .threadArchive(ThreadArchiveData())
+        case .threadArchive: .threadArchive(ThreadArchiveData(archived: false))
         case .threadRename: .threadRename(ThreadRenameData(title: "Weekend plans"))
+        case .threadPin: .threadPin(ThreadPinData(pinned: true))
         case .interrupt: .interrupt(InterruptData())
         case .syncRequest: .syncRequest(SyncRequestData(lastSeen: ["home": "e9"]))
         case .syncDelta:
@@ -147,4 +155,41 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     guard case .deviceList(let data) = decoded.payload else { return #expect(Bool(false)) }
     #expect(data.devices.first?.signingPub == nil)
     #expect(data.devices.first?.shortId == "local-1")
+}
+
+
+/// The two fields a row draws beyond the title were added after v1: a summary from a runtime
+/// that predates them has to read back as an unpinned thread with no preview, not fail to decode.
+@Test func aThreadSummaryRoundTripsAndToleratesAnOlderRuntime() throws {
+    let summary = ThreadSummary(
+        id: "t1",
+        title: "Groceries",
+        archived: false,
+        lastActivity: 1_757_640_000_000,
+        lastMessage: "and eggs",
+        pinned: true
+    )
+    let encoded = try JSONEncoder().encode(summary)
+    #expect(try JSONDecoder().decode(ThreadSummary.self, from: encoded) == summary)
+
+    let json = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+    #expect(json?["lastMessage"] as? String == "and eggs")
+    #expect(json?["pinned"] as? Bool == true)
+
+    let v1 = Data(#"{"id":"t1","title":"","archived":false,"lastActivity":1}"#.utf8)
+    let old = try JSONDecoder().decode(ThreadSummary.self, from: v1)
+    #expect(old.lastMessage == nil)
+    #expect(old.pinned == false)
+    #expect(old.displayTitle == "New chat")
+    #expect(old.lastActivityDate == Date(timeIntervalSince1970: 0.001))
+}
+
+/// `{}` is what a phone older than unarchiving sends, and it still means archive.
+@Test func archivingCarriesAnOptionalFlag() throws {
+    let legacy = try JSONDecoder().decode(ThreadArchiveData.self, from: Data("{}".utf8))
+    #expect(legacy.archived == nil)
+    #expect(try JSONEncoder().encode(ThreadArchiveData()) == Data("{}".utf8))
+
+    let back = ThreadArchiveData(archived: false)
+    #expect(try JSONDecoder().decode(ThreadArchiveData.self, from: JSONEncoder().encode(back)) == back)
 }

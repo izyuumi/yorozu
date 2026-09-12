@@ -10,6 +10,7 @@ import {
   eventsAfter,
   HISTORY_LIMIT,
   listThreads,
+  pinThread,
   readThreadEvents,
   renameThread,
   threadHistory,
@@ -93,8 +94,19 @@ test("creating and archiving threads survives a reload", () => {
   expect(archiveThread(created.id, dir)).toBe(false);
   expect(archiveThread("nope", dir)).toBe(false);
   expect(threadSummaries(dir)).toEqual([
-    { id: created.id, title: "Groceries", archived: true, lastActivity: expect.any(Number) },
+    {
+      id: created.id,
+      title: "Groceries",
+      archived: true,
+      pinned: false,
+      lastActivity: expect.any(Number),
+    },
   ]);
+
+  // And back out again: the same frame with the flag off is what unarchives.
+  expect(archiveThread(created.id, dir, false)).toBe(true);
+  expect(archiveThread(created.id, dir, false)).toBe(false);
+  expect(listThreads(dir)[0]!.archived).toBe(false);
 });
 
 test("a thread is created under the id the device minted, once", () => {
@@ -158,4 +170,35 @@ test("history is the thread's messages, compacted to the last HISTORY_LIMIT", ()
   expect(history[0]).toEqual({ role: "user", content: "m7" });
   expect(history.at(-1)).toEqual({ role: "assistant", content: "ok" });
   expect(threadHistory("t2", dir)).toEqual([]);
+});
+
+test("a summary carries the newest message, on one line, for the list's preview", () => {
+  const thread = createThread("Groceries", dir);
+  appendThreadEvent(message("e1", "milk", thread.id), dir);
+  appendThreadEvent(message("e2", "  and\n  eggs  ", thread.id), dir);
+
+  expect(threadSummaries(dir)[0]!.lastMessage).toBe("and eggs");
+
+  // Long ones are cut to something a row can draw rather than shipped whole.
+  appendThreadEvent(message("e3", "x".repeat(500), thread.id), dir);
+  expect(threadSummaries(dir)[0]!.lastMessage).toHaveLength(140);
+
+  // A thread nothing was said in has no preview at all, rather than an empty one.
+  const empty = createThread("Empty", dir);
+  const summary = threadSummaries(dir).find((t) => t.id === empty.id);
+  expect(summary!.lastMessage).toBeUndefined();
+});
+
+test("pinning is a flag on the thread, and idempotent", () => {
+  const thread = createThread("Groceries", dir);
+  expect(threadSummaries(dir)[0]!.pinned).toBe(false);
+
+  expect(pinThread(thread.id, true, dir)).toBe(true);
+  // A second device sending the same frame changes nothing and says so.
+  expect(pinThread(thread.id, true, dir)).toBe(false);
+  expect(pinThread("nope", true, dir)).toBe(false);
+  expect(threadSummaries(dir)[0]!.pinned).toBe(true);
+
+  expect(pinThread(thread.id, false, dir)).toBe(true);
+  expect(listThreads(dir)[0]!.pinned).toBe(false);
 });

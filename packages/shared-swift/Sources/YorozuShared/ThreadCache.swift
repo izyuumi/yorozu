@@ -25,6 +25,16 @@ public struct ThreadCache: Sendable {
         write(threads, to: "threads")
     }
 
+    /// The threads holding a reply that arrived while they were closed. Sealed like the rest:
+    /// which threads are unread is as much of a leak as what is in them.
+    public func unread() -> Set<String> {
+        read(Set<String>.self, from: "unread") ?? []
+    }
+
+    public func save(unread: Set<String>) {
+        write(unread, to: "unread")
+    }
+
     public func events(threadId: String) -> [YorozuEvent] {
         read([YorozuEvent].self, from: name(threadId)) ?? []
     }

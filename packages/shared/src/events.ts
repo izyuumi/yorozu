@@ -73,14 +73,32 @@ export interface ThreadSummary {
   archived: boolean;
   /** When the thread was last written to, epoch milliseconds. What the lists order on. */
   lastActivity: number;
+  /**
+   * One line of the newest message in the thread, whoever said it, for the list's preview.
+   * Absent in a thread nothing has been said in yet.
+   */
+  lastMessage?: string;
+  /** Pinned threads lead the list. Absent from a runtime older than the flag, meaning not pinned. */
+  pinned?: boolean;
 }
 
 export interface ThreadListData {
   threads: ThreadSummary[];
 }
 
-/** Archives `threadId` from the base fields; carries nothing of its own. */
-export type ThreadArchiveData = Record<string, never>;
+/**
+ * Archives `threadId` from the base fields, or brings it back when `archived` is false.
+ * The flag is optional because the frame meant "archive" before unarchiving existed, and a
+ * phone from then still sends `{}`.
+ */
+export interface ThreadArchiveData {
+  archived?: boolean;
+}
+
+/** Pins or unpins `threadId` from the base fields. */
+export interface ThreadPinData {
+  pinned: boolean;
+}
 
 /**
  * The user pressed stop: cancel the turn running in `threadId` and every agent it
@@ -140,6 +158,7 @@ export type EventPayload =
   | { kind: "thread_list"; data: ThreadListData }
   | { kind: "thread_archive"; data: ThreadArchiveData }
   | { kind: "thread_rename"; data: ThreadRenameData }
+  | { kind: "thread_pin"; data: ThreadPinData }
   | { kind: "interrupt"; data: InterruptData }
   | { kind: "sync_request"; data: SyncRequestData }
   | { kind: "sync_delta"; data: SyncDeltaData }

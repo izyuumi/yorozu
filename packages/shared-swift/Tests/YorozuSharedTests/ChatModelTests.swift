@@ -79,8 +79,16 @@ private func eventually(_ condition: @MainActor () -> Bool) async -> Bool {
     #expect(await eventually { model.state == .paired && !model.threads.isEmpty })
     #expect(model.ownerOnline)
     #expect(paired)
-    // The archived thread is not in the list.
-    #expect(model.threads.map(\.title) == ["Home", "Groceries"])
+    // Archived threads are kept now — the phone's list draws them in a section of their own —
+    // so what leaves them out is the ordering the lists ask for rather than the model.
+    #expect(model.threads.map(\.title) == ["Home", "Groceries", "Gone"])
+    #expect(visibleThreads(model.threads).map(\.title) == ["Groceries", "Home"])
+    #expect(ThreadGroups(model.threads).archived.map(\.title) == ["Gone"])
+
+    // An agent reply that landed in a thread nobody had open is what a dot is for.
+    #expect(await eventually { model.unread == ["home"] })
+    model.openThread = "home"
+    #expect(model.unread.isEmpty)
 
     #expect(await eventually { model.events["home"]?.count == 1 })
     let last = try #require(model.events["home"]?.last)
@@ -187,4 +195,57 @@ private func eventually(_ condition: @MainActor () -> Bool) async -> Bool {
     #expect(threadToOpen([thread("cold", 121)], now: now) == nil)
     // An archived thread is not somewhere to be opened, however recent.
     #expect(threadToOpen([thread("gone", 1, archived: true), thread("warm", 30)], now: now) == "warm")
+}
+
+private func summary(
+    _ id: String,
+    minutesAgo: Double,
+    archived: Bool = false,
+    pinned: Bool = false,
+    lastMessage: String? = nil
+) -> ThreadSummary {
+    ThreadSummary(
+        id: id,
+        title: id,
+        archived: archived,
+        lastActivity: (100_000 - minutesAgo * 60) * 1000,
+        lastMessage: lastMessage,
+        pinned: pinned
+    )
+}
+
+@Test func theListPartitionsIntoPinnedRecentAndArchived() {
+    let groups = ThreadGroups([
+        summary("recent-old", minutesAgo: 90),
+        summary("pinned-old", minutesAgo: 200, pinned: true),
+        summary("recent-new", minutesAgo: 5),
+        summary("pinned-new", minutesAgo: 10, pinned: true),
+        summary("filed", minutesAgo: 1, archived: true),
+        // Archived wins over pinned: a thread that was put away is put away.
+        summary("filed-pin", minutesAgo: 2, archived: true, pinned: true),
+    ])
+
+    #expect(groups.pinned.map(\.id) == ["pinned-new", "pinned-old"])
+    #expect(groups.recent.map(\.id) == ["recent-new", "recent-old"])
+    #expect(groups.archived.map(\.id) == ["filed", "filed-pin"])
+    #expect(!groups.isEmpty)
+    #expect(ThreadGroups([]).isEmpty)
+}
+
+@Test func searchLooksAtTheTitleThePreviewAndTheThreadItself() {
+    let thread = summary("t1", minutesAgo: 1, lastMessage: "and eggs")
+
+    // An empty or blank query is not a filter: the unsearched list is the whole list.
+    #expect(threadMatches(thread, query: ""))
+    #expect(threadMatches(thread, query: "   "))
+    // Title and preview, either case.
+    #expect(threadMatches(thread, query: "T1"))
+    #expect(threadMatches(thread, query: "EGGS"))
+    // And what the device has cached of the thread, which is how a word said once is found.
+    #expect(threadMatches(thread, query: "sourdough", body: "we settled on sourdough"))
+    #expect(!threadMatches(thread, query: "sourdough"))
+
+    // An untitled thread is searchable by the placeholder it is actually drawn with.
+    let untitled = ThreadSummary(id: "t2", title: "", archived: false, lastActivity: 0)
+    #expect(threadMatches(untitled, query: "new chat"))
 }
