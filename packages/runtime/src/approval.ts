@@ -38,6 +38,7 @@ export interface Action {
 export interface Rule {
   actionClass: string;
   target?: string;
+  /** The card only ever writes `always`; a `never` is honoured but has to be hand-written. */
   decision: "never" | "always";
 }
 
@@ -62,7 +63,7 @@ export type Answer = ApprovalAnswerData["answer"];
 /** What the user said, plus the target they named if they typed one. */
 export interface AskResult {
   answer: Answer;
-  /** Set only when the user named a target, which narrows a `never` to that target. */
+  /** Set only when the user named a target, which narrows an `always` to that target. */
   target?: string;
 }
 
@@ -227,7 +228,7 @@ export async function checkApproval(
 
   const verdict = decideFromDisk(action, dir);
   if (verdict === "allow") return null;
-  // A rule already said no: asking again would break the promise `never` made.
+  // A `never` rule left on disk by hand: asking again would break the promise it made.
   if (verdict === "deny") return refusal(action);
 
   const { answer, target } = await ask(action, context);
@@ -238,12 +239,13 @@ export async function checkApproval(
     { ts: Date.now(), actionClass: action.actionClass, target: action.target, decision: answer },
     dir,
   );
-  if (answer === "yes") return null;
-  if (answer === "never") {
+  // `always` is a yes that also settles the question: the action runs and the class stops asking.
+  if (answer === "always") {
     addRule(
-      { actionClass: action.actionClass, decision: "never", ...(target ? { target } : {}) },
+      { actionClass: action.actionClass, decision: "always", ...(target ? { target } : {}) },
       dir,
     );
   }
+  if (answer === "yes" || answer === "always") return null;
   return refusal(action);
 }
