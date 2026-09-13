@@ -81,8 +81,11 @@ export interface ApnsRequest {
   /** The device token, or a Live Activity's own push token. */
   token: string;
   payload: unknown;
-  /** `alert` for a notification, `liveactivity` for an activity update. */
-  pushType: "alert" | "liveactivity";
+  /**
+   * `alert` for a notification, `liveactivity` for an activity update, `background` for the
+   * silent wake-up that has nothing to show and only sends the app to ask for itself.
+   */
+  pushType: "alert" | "liveactivity" | "background";
   /** 10 for something a person should see now, 5 for a background nudge. */
   priority?: number;
 }

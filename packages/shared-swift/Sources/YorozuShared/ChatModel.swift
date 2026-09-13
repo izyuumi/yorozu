@@ -80,6 +80,8 @@ public final class ChatModel {
     /// What this client tags the events it emits with.
     private let device: String
     private var started = false
+    /// How many `sync_delta`s have been applied, which is what a background drain waits on.
+    private var deltas = 0
     /// One flush at a time: the queue is sent in order, and two loops draining it would not be.
     private var flushing = false
 
@@ -112,6 +114,34 @@ public final class ChatModel {
     /// suspended is re-dialled now instead of after the transport's backoff.
     public func reconnect() {
         Task { [transport] in await transport.reconnect() }
+    }
+
+    /// Woken by a silent push with the app suspended: dial, wait for the runtime's answer to
+    /// land, and hang up again. Returns whether anything actually arrived.
+    ///
+    /// Nothing is read out of the push — it carries nothing to read. The catching up is the
+    /// ordinary one: connecting asks for a sync, the delta comes back as the events it always
+    /// does, and the thread cache and any Live Activity are moved by those rather than by
+    /// anything the relay claimed. The relay could not have told us more if it wanted to.
+    ///
+    /// The socket is closed before returning. iOS gives a woken app seconds, and an app still
+    /// holding one when its time runs out is suspended mid-connection rather than gracefully;
+    /// the next foreground calls ``start()`` again, which dials afresh.
+    @discardableResult
+    public func drain(timeout: Duration = .seconds(20)) async -> Bool {
+        let before = deltas
+        // Either a first dial or a nudge past the backoff, depending on what the suspension
+        // left behind.
+        if started { reconnect() } else { start() }
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while deltas == before, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        close()
+        // The stream is finished, so the next foreground has to start a new one rather than
+        // reconnect a transport that has already hung up.
+        started = false
+        return deltas > before
     }
 
     /// Sends what the composer holds — the typed text and any staged file — and empties it.
@@ -447,6 +477,9 @@ public final class ChatModel {
                 onThreads?()
             case .syncDelta(let data):
                 for event in data.events { upsert(event) }
+                // Counted, not just applied: a background drain is waiting for exactly this to
+                // know it has caught up and may hang up. See ``drain(timeout:)``.
+                deltas += 1
             // What the model picker offers, sent with every thread list. Not a thread's event.
             case .modelList(let data):
                 models = data.models

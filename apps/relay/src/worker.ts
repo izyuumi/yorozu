@@ -16,6 +16,9 @@ import {
   activityPayload,
   alertPayload,
   allowFrame,
+  BACKGROUND_CLASSES,
+  BACKGROUND_INTERVAL_MS,
+  backgroundPayload,
   BUFFER_TTL_MS,
   CLOSE_BAD_SIGNATURE,
   CLOSE_PROTOCOL,
@@ -114,6 +117,11 @@ type PushRecord = {
    * and Apple's budget for these is not large enough to spend on saying the same thing twice.
    */
   activities?: Record<string, { token?: string; status?: string }>;
+  /**
+   * When this device was last sent a silent background push, so the next one can be held back
+   * until the budget allows it. Per device, because the throttling Apple does is per app install.
+   */
+  backgroundAt?: number;
 };
 
 export class Room implements DurableObject {
@@ -314,6 +322,7 @@ export class Room implements DurableObject {
     for (const [key, record] of await storage.list<PushRecord>({ prefix: pushPrefix })) {
       if (watching.has(key.slice(pushPrefix.length))) continue;
       const activities = { ...record.activities };
+      let backgroundAt = record.backgroundAt;
       let changed = false;
 
       if (notify.class !== "activity") {
@@ -331,6 +340,37 @@ export class Room implements DurableObject {
         if (apns.gone(code)) {
           await storage.delete(key);
           continue;
+        }
+
+        // And, for news the phone is now behind on, a silent one behind the visible one: it
+        // wakes the app for a few seconds so it can drain the sync over its own socket and
+        // leave the thread cache and the lock screen true, rather than waiting for a tap.
+        //
+        // Rate limited because iOS is: an app woken more often than the budget allows is
+        // simply woken less often afterwards, which would cost the wake-ups worth having. The
+        // alert above has already gone out regardless.
+        if (
+          BACKGROUND_CLASSES.includes(notify.class) &&
+          now - (backgroundAt ?? 0) >= BACKGROUND_INTERVAL_MS
+        ) {
+          const silent = await apns.send(
+            this.env,
+            {
+              token: record.deviceToken,
+              payload: backgroundPayload(),
+              pushType: "background",
+              // A background push is explicitly not urgent, and Apple rejects one that claims
+              // to be: 5 is what "deliver when it suits you" is spelled as.
+              priority: 5,
+            },
+            now,
+          );
+          if (apns.gone(silent)) {
+            await storage.delete(key);
+            continue;
+          }
+          backgroundAt = now;
+          changed = true;
         }
       }
 
@@ -374,7 +414,13 @@ export class Room implements DurableObject {
         }
       }
 
-      if (changed) await storage.put(key, { ...record, activities } satisfies PushRecord);
+      if (changed) {
+        await storage.put(key, {
+          ...record,
+          activities,
+          ...(backgroundAt !== undefined ? { backgroundAt } : {}),
+        } satisfies PushRecord);
+      }
     }
   }
 

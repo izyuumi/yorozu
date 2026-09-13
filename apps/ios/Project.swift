@@ -52,6 +52,10 @@ let project = Project(
                 "NSSpeechRecognitionUsageDescription": "Yorozu turns what you dictate into the message you send, on this device where your language supports it.",
                 // The lock screen activity for a turn running while the phone is in a pocket.
                 "NSSupportsLiveActivities": true,
+                // The relay's silent push, which wakes the app for a few seconds so it can
+                // drain its sync over its own socket while suspended. Nothing is read out of
+                // the push itself — see `PushDelegate` and ``ChatModel/drain(timeout:)``.
+                "UIBackgroundModes": ["remote-notification"],
                 // Still no `…Frequent Updates`: the relay sends an activity push only when the
                 // status actually changes, which is a handful per turn, so the unbudgeted rate
                 // would be asking for something this does not use.

@@ -255,6 +255,10 @@ struct RootView: View {
             .onChange(of: scenePhase) { _, phase in
                 switch phase {
                 case .active:
+                    // A background drain hangs up so the OS can suspend the app cleanly, so
+                    // coming back may be a fresh dial rather than a reconnect. `start()` does
+                    // nothing when a stream is already running.
+                    session.model?.start()
                     session.model?.reconnect()
                     session.drainShares()
                     session.activity?.foregrounded()

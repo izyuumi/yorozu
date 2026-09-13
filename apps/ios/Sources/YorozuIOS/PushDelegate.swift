@@ -34,6 +34,20 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         Task { @MainActor in Session.shared.pushFailure = error.localizedDescription }
     }
 
+    /// The relay's silent push: something landed that this phone is behind on, and the app is
+    /// suspended. It carries nothing to read — the catching up is done over the socket, where
+    /// the events are sealed — so this only sends the model to ask, and hangs up after.
+    ///
+    /// See ``ChatModel/drain(timeout:)``, which is where the waiting and the hanging up live.
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any]
+    ) async -> UIBackgroundFetchResult {
+        // Nothing paired: woken for a room this phone no longer belongs to.
+        guard let model = await MainActor.run(body: { Session.shared.model }) else { return .noData }
+        return await model.drain() ? .newData : .noData
+    }
+
     /// A notification that arrives while the app is open has nothing to say: the socket is live,
     /// so the event itself is already in the chat. Shown as nothing rather than as a duplicate.
     func userNotificationCenter(
@@ -49,6 +63,12 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
     ) async {
         let info = response.notification.request.content.userInfo
         guard let ref = info["ref"] as? String else { return }
-        await MainActor.run { Session.shared.open(threadRef: ref) }
+        let model = await MainActor.run { () -> ChatModel? in
+            Session.shared.open(threadRef: ref)
+            return Session.shared.model
+        }
+        // Opened from a lock screen, so what this phone holds of that thread is whatever it had
+        // before the push. Ask for the rest now rather than leaving the chat to be pulled down.
+        await model?.refresh()
     }
 }

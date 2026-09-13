@@ -630,11 +630,13 @@ test("a phone holding a live socket is never pushed to", async () => {
   await macSettled(mac);
   expect(calls).toHaveLength(0);
 
-  // With the socket gone there is nobody watching, and the same notify does wake it.
+  // With the socket gone there is nobody watching, and the same notify does wake it: the alert
+  // for the person, and the silent push that sends the app to catch up behind it.
   phone.ws.close();
   mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z", status: "done" });
   await macSettled(mac);
-  expect(calls).toHaveLength(1);
+  expect(calls).toHaveLength(2);
+  expect(calls.map((call) => call.headers.get("apns-push-type"))).toEqual(["alert", "background"]);
 });
 
 test("a wake-up carries a class and an opaque reference, and nothing of the conversation", async () => {
@@ -764,4 +766,58 @@ test("a device token Apple no longer knows is forgotten rather than retried", as
   mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
   await macSettled(mac);
   expect(calls).toHaveLength(1);
+});
+
+test("a wake-up also nudges the app awake, at most once a minute", async () => {
+  const calls = fakeApns();
+  const { mac, phone, keys, room } = await paired();
+  phone.ws.close();
+
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
+  await macSettled(mac);
+
+  expect(calls).toHaveLength(2);
+  const silent = calls[1]!;
+  expect(silent.url).toBe("https://apns.test/3/device/device-token");
+  // The app's own topic, not the activity's, and explicitly not urgent — Apple rejects a
+  // background push that claims to be.
+  expect(silent.headers.get("apns-topic")).toBe("to.yumi.yorozu.ios");
+  expect(silent.headers.get("apns-push-type")).toBe("background");
+  expect(silent.headers.get("apns-priority")).toBe("5");
+  // `content-available` and nothing else. There is no reference and no class in here: the app
+  // is being sent to ask over its own socket, not being told what happened. Anything the
+  // runtime could have leaked would have to appear here, and there is nowhere for it to.
+  expect(silent.body).toEqual({ aps: { "content-available": 1 } });
+  expect(JSON.stringify(silent.body)).toBe(JSON.stringify({ aps: { "content-available": 1 } }));
+
+  // The budget is per phone per minute, so the next turn still buzzes and does not wake it.
+  mac.send({ type: "notify", class: "done", threadRef: "Ab3-_x9Z" });
+  await macSettled(mac);
+  expect(calls).toHaveLength(3);
+  expect(calls[2]!.headers.get("apns-push-type")).toBe("alert");
+
+  // A minute later it is allowed again. Rewinding the recorded timestamp is the same thing as
+  // waiting out the minute, without asking the clock to move under a running Durable Object.
+  const rooms = (env as unknown as Env).ROOM;
+  await runInDurableObject(rooms.get(rooms.idFromName(room)), async (_room, state) => {
+    const stored = (await state.storage.get(`push:${keys.pub}`)) as Record<string, unknown>;
+    await state.storage.put(`push:${keys.pub}`, { ...stored, backgroundAt: Date.now() - 61_000 });
+  });
+
+  mac.send({ type: "notify", class: "failed", threadRef: "Ab3-_x9Z" });
+  await macSettled(mac);
+  expect(calls).toHaveLength(5);
+  expect(calls[4]!.headers.get("apns-push-type")).toBe("background");
+});
+
+test("an approval buzzes without waking the app: it is a question, not history", async () => {
+  const calls = fakeApns();
+  const { mac, phone } = await paired();
+  phone.ws.close();
+
+  // Nothing to catch up on — the answer is given in the app, by a person who has come to it.
+  mac.send({ type: "notify", class: "approval", threadRef: "Ab3-_x9Z" });
+  await macSettled(mac);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.headers.get("apns-push-type")).toBe("alert");
 });
