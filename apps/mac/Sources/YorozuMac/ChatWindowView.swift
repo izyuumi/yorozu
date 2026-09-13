@@ -14,6 +14,10 @@ import YorozuShared
 /// place the chat lives.
 struct ChatWindowView: View {
     @State private var selection: String?
+    /// `.key` is this window being the key window of the active app, which is exactly the Mac's
+    /// half of "somebody is looking at this": `.active` is a window in the active app that is
+    /// not key, and `.inactive` is the whole app sitting behind something else.
+    @Environment(\.controlActiveState) private var controlActiveState
     @Environment(\.openSettings) private var openSettings
     @ObservedObject private var sidecar = Sidecar.shared
 
@@ -35,12 +39,14 @@ struct ChatWindowView: View {
         NavigationSplitView {
             ThreadSidebar(
                 threads: model.threads,
-                unread: model.unread,
                 selection: $selection,
                 onCreate: { selection = model.newDraft().id },
                 onRename: { model.rename($0, to: $1) },
                 onArchive: model.setArchived,
                 onPin: model.setPinned,
+                onRead: { thread, read in
+                    read ? model.markRead(thread.id) : model.markUnread(thread)
+                },
                 // Search reaches into this Mac's own thread logs, which is every word of them.
                 messageText: { id in
                     (model.events[id] ?? []).compactMap {
@@ -77,6 +83,11 @@ struct ChatWindowView: View {
         .onChange(of: selection, initial: true) { old, new in
             if let old, old != new { model.discardDraft(old) }
             model.openThread = new
+        }
+        // A window sitting on a thread behind everything else is nobody reading it, so the
+        // thread is only reported read while this window is the key one of the active app.
+        .onChange(of: controlActiveState, initial: true) { _, state in
+            model.foreground = state == .key
         }
         .onAppear { if model.listed { open() } }
         .onChange(of: model.listed) { _, listed in if listed { open() } }
