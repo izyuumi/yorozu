@@ -597,7 +597,7 @@ public final class ChatModel {
             pendingStreamEvents[key] = event
             guard streamFrame == nil else { return }
             streamFrame = Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(50))
+                try? await Task.sleep(for: .milliseconds(16))
                 guard !Task.isCancelled else { return }
                 self?.flushStreamEvents()
             }

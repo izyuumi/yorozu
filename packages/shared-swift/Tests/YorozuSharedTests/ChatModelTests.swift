@@ -160,6 +160,84 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
 }
 
 @MainActor
+@Test func pacedStreamingUpdatesOftenEnoughToLookSmooth() async throws {
+    for (historyCount, chunkWidth) in [(0, 1), (50, 32), (500, 256)] {
+        let transport = FakeTransport()
+        let model = await connected(transport)
+        for index in 0..<historyCount {
+            await transport.yield(.event(event(
+                "paced-history-\(index)",
+                .message(MessageData(role: .user, text: "history \(index)", done: true))
+            )))
+        }
+        #expect(await eventually { (model.events["home"]?.count ?? 0) == historyCount })
+
+        var rendered = 0
+        model.onEvent = { event in
+            if event.id == "paced-stream" { rendered += 1 }
+        }
+        let unit = String(repeating: "x", count: chunkWidth)
+        for index in 0..<24 {
+            await transport.yield(.event(event(
+                "paced-stream",
+                .message(MessageData(role: .agent, text: String(repeating: unit, count: index + 1)))
+            )))
+            try await Task.sleep(for: .milliseconds(8))
+        }
+
+        #expect(await eventually {
+            guard case .message(let data) = model.events["home"]?.last?.payload else { return false }
+            return data.text.count == 24 * chunkWidth
+        })
+        // 50 ms batching visibly updates at only 20 Hz. One display-frame slice keeps a streamed
+        // reply fluid without returning to one whole-tree invalidation per provider token.
+        #expect(rendered >= 8)
+        #expect(rendered <= 16)
+    }
+}
+
+@MainActor
+@Test func streamingCoalescingScalesAcrossMessageCountsAndLengths() async throws {
+    for (historyCount, chunks, chunkWidth) in [
+        (0, 12, 1),
+        (10, 30, 8),
+        (20, 60, 16),
+        (200, 120, 64),
+        (1_000, 240, 128),
+    ] {
+        let transport = FakeTransport()
+        let model = await connected(transport)
+
+        for index in 0..<historyCount {
+            await transport.yield(.event(event(
+                "history-\(index)",
+                .message(MessageData(role: index.isMultiple(of: 2) ? .user : .agent, text: "history \(index)", done: true))
+            )))
+        }
+        #expect(await eventually { (model.events["home"]?.count ?? 0) == historyCount })
+
+        var rendered = 0
+        model.onEvent = { event in
+            if event.id == "matrix-stream" { rendered += 1 }
+        }
+        let unit = String(repeating: "x", count: chunkWidth)
+        for index in 0..<chunks {
+            await transport.yield(.event(event(
+                "matrix-stream",
+                .message(MessageData(role: .agent, text: String(repeating: unit, count: index + 1)))
+            )))
+        }
+
+        let finalCount = chunks * chunkWidth
+        #expect(await eventually {
+            guard case .message(let data) = model.events["home"]?.last?.payload else { return false }
+            return data.text.count == finalCount
+        })
+        #expect(rendered <= 3)
+    }
+}
+
+@MainActor
 @Test func anEventAfterStreamedTextKeepsItsWireOrder() async throws {
     let transport = FakeTransport()
     let model = await connected(transport)
