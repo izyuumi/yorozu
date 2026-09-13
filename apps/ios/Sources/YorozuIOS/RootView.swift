@@ -78,6 +78,9 @@ final class Session {
     /// Asks for notifications, once, at the moment they start to make sense: something is paired,
     /// so there is now something that could need to wake you.
     func requestNotifications() {
+        // Never during a screenshot run: the permission alert is modal, so it — and not the
+        // thread underneath it — would be the picture.
+        guard launchArgument("yorozuShowcase") == nil, launchArgument("yorozuScene") == nil else { return }
         Task {
             let granted = try? await UNUserNotificationCenter.current()
                 .requestAuthorization(options: [.alert, .sound, .badge])
