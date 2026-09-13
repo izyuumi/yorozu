@@ -86,7 +86,11 @@ final class E2EHarness {
         // one piece of view state each of these screenshots is about. A simulator has no
         // microphone and nothing here can tap a magnifier, so both are seeded rather than done.
         if let scene = launchArgument("yorozuScene") {
-            model.previewChat(in: model.newDraft().id)
+            // One thread for the whole scene: seeding the conversation into a fresh draft and
+            // then the scene's own messages into whichever thread happened to be first put the
+            // two halves of a picture in two different chats.
+            let seeded = model.newDraft().id
+            model.previewChat(in: seeded)
             switch scene {
             case "dictation":
                 ChatShowcase.dictation = [0.2, 0.5, 0.8, 0.6, 0.9, 0.4, 0.7, 1.0, 0.5, 0.3, 0.6, 0.85]
@@ -94,6 +98,13 @@ final class E2EHarness {
                 ChatShowcase.search = "invoice"
             case "reply":
                 ChatShowcase.quote = "The April invoice is still open: it was issued on the second and the terms on it are thirty days."
+            // The two Signal gestures, each held at the moment worth a picture: the same reply
+            // the `plain` scene folds up, unfolded — and the bubbles pulled to the point where
+            // letting go replies. Neither gesture can be performed on a simulator.
+            case "expanded":
+                ChatShowcase.expanded = true
+            case "swipe":
+                ChatShowcase.swipe = true
             default:
                 break
             }

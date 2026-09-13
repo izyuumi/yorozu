@@ -35,8 +35,9 @@ extension Image {
 /// tinted — and the agent's is rendered Markdown, because that is what models reply in.
 ///
 /// Long-pressing one offers Copy, Reply, Listen, Retry and Delete; on the Mac the same menu is
-/// the right-click. A message too long to read in passing is shown as its opening, with the
-/// whole of it a tap away in a reader.
+/// the right-click, and on the phone a bubble swiped towards the middle of the screen is
+/// replied to. A message too long to read in passing is shown as its opening, with "Read more"
+/// unfolding the rest in place.
 public struct MessageBubble: View {
     /// The event id, which is what says whether this is the bubble being read aloud.
     private let id: String
@@ -52,7 +53,9 @@ public struct MessageBubble: View {
     /// Sends the queued message again, for a message the outbox has given up on.
     private let onResend: (() -> Void)?
 
-    @State private var reading = false
+    /// Set by "Read more", which unfolds a long message where it stands. One way: Signal has no
+    /// collapse either, and a message you asked to see is not something to take away again.
+    @State private var expanded = ChatShowcase.expanded
     /// Mac only: whether the pointer is over this message, which is what shows its actions.
     @State private var hovering = false
     /// Set by the thread's search field; every hit inside this bubble is drawn highlighted.
@@ -86,9 +89,9 @@ public struct MessageBubble: View {
         isUser ? splitQuote(data.text) : (nil, data.text)
     }
 
-    /// Long messages are cut here and read in full in the sheet — but never while they are
-    /// still arriving, since truncating a streaming reply hides the part that is moving.
-    private var truncated: Bool { !streaming && needsReader(parts.body) }
+    /// Long messages are cut until "Read more" unfolds them — but never while they are still
+    /// arriving, since truncating a streaming reply hides the part that is moving.
+    private var truncated: Bool { !streaming && !expanded && needsReader(parts.body) }
 
     private var speaking: Bool { Speaker.shared.speakingId == id && !id.isEmpty }
 
@@ -119,15 +122,15 @@ public struct MessageBubble: View {
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .animation(.easeOut(duration: 0.18), value: speaking)
         .contextMenu { actions }
+        // The phone's second way to the same Reply the menu offers. The menu stays: a gesture
+        // is not something VoiceOver or a trackpad-less Mac can be asked to perform.
+        .swipeToReply(fromRight: isUser, action: onReply.map { reply in { reply(parts.body) } })
         #if os(macOS)
             // An explicit shape, so the whole row tracks the pointer and not only the parts
             // of it something is drawn in.
             .contentShape(.rect)
             .onHover { hovering = $0 }
         #endif
-        .sheet(isPresented: $reading) {
-            MessageReaderView(text: parts.body, title: isUser ? "Message" : "Reply")
-        }
     }
 
     /// Everything that can be done to one message. Shared by the context menu and, on the Mac,
@@ -148,7 +151,7 @@ public struct MessageBubble: View {
             }
         }
         if truncated {
-            Button("Read full message", systemImage: "text.alignleft") { reading = true }
+            Button("Read full message", systemImage: "text.alignleft") { expand() }
         }
         if let onRetry {
             Button("Retry", systemImage: "arrow.clockwise", action: onRetry)
@@ -213,12 +216,14 @@ public struct MessageBubble: View {
             }
             text
             if truncated {
-                Button("Read more") { reading = true }
+                // A button, not a tap target on the text: "Read more" is the one thing in a
+                // bubble VoiceOver has to be able to find and activate.
+                Button("Read more") { expand() }
                     .font(.footnote.weight(.medium))
                     .buttonStyle(.plain)
                     .foregroundStyle(.tint)
                     .frame(minHeight: 28)
-                    .accessibilityHint("Opens the whole message")
+                    .accessibilityHint("Shows the rest of this message")
             }
         }
         .padding(.horizontal, 12)
@@ -241,6 +246,13 @@ public struct MessageBubble: View {
         // A bubble stops short of the far edge, so which side it is on stays readable as
         // who said it even when the message is long.
         .frame(maxWidth: 560, alignment: isUser ? .trailing : .leading)
+    }
+
+    /// Unfolds the rest of the message where it stands. The bubble grows downwards from its own
+    /// top edge, so what is being read stays where it was and the thread does not jump — which
+    /// is the whole reason this is not a sheet any more.
+    private func expand() {
+        withAnimation(.easeOut(duration: 0.2)) { expanded = true }
     }
 
     @ViewBuilder private var text: some View {
