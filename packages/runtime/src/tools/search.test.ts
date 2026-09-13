@@ -1,9 +1,11 @@
 import { createServer, type Server } from "node:http";
 import { WebSocketServer } from "ws";
 import { afterEach, expect, test } from "vitest";
+import { defaultTools } from "../index.js";
 import type { Provider } from "../provider.js";
 import { Browser } from "./browser.js";
 import {
+  DUCKDUCKGO,
   parseDuckDuckGo,
   resolveResultUrl,
   searchWeb,
@@ -192,6 +194,50 @@ test("an empty query is refused before anything is opened", async () => {
 
   await expect(Promise.resolve(webSearchTool.run({ query: "  " }))).rejects.toThrow("empty");
   expect(cdp!.opened).toHaveLength(0);
+});
+
+test("a query is percent-encoded into the endpoint URL, unicode and all", async () => {
+  await attach();
+
+  await searchWeb("日本 ラーメン", 8, browser!);
+
+  expect(cdp!.opened[0]).toBe(`${DUCKDUCKGO}${encodeURIComponent("日本 ラーメン")}`);
+});
+
+test("a browser that cannot open the tab is an error, not an empty result list", async () => {
+  useSearchBrowser({
+    open: async () => {
+      throw new Error("browser: connection closed");
+    },
+  } as unknown as Browser);
+
+  await expect(Promise.resolve(webSearchTool.run({ query: "yorozu" }))).rejects.toThrow(
+    "browser: connection closed",
+  );
+});
+
+test("the schema is the one argument the model must supply, and a call without it fails", async () => {
+  expect(webSearchTool.name).toBe("web_search");
+  const { properties, required } = webSearchTool.parameters as {
+    properties: Record<string, unknown>;
+    required: string[];
+  };
+  expect(required).toEqual(["query"]);
+  expect(Object.keys(properties)).toEqual(["query"]);
+  // Searching has no effect outside the runtime, so there is no approval card.
+  expect(webSearchTool.actionClass).toBeUndefined();
+
+  await expect(Promise.resolve(webSearchTool.run({}))).rejects.toThrow(
+    "web_search: query is empty",
+  );
+});
+
+test("the registry dispatches `web_search` to this implementation", async () => {
+  await attach();
+  const registered = defaultTools.find((tool) => tool.name === "web_search");
+
+  expect(registered).toBe(webSearchTool);
+  expect(await registered!.run({ query: "yorozu" })).toContain("https://example.com/page1");
 });
 
 test("DuckDuckGo's redirector is unwrapped to the real target", () => {

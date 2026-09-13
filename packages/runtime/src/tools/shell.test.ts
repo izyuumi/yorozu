@@ -2,6 +2,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
+import { defaultTools } from "../index.js";
 import { MAX_OUTPUT, expandHome, runShell, shellTool, truncate } from "./shell.js";
 
 test("returns combined stdout and stderr", async () => {
@@ -57,4 +58,36 @@ test("the tool passes cwd and the timeout through", async () => {
     "killed after 100ms",
   );
   expect(String(await shellTool.run({ cmd: "pwd -P", cwd: "/tmp" }))).toBe(realpathSync("/tmp"));
+});
+
+test("the schema names the tool and the one argument the model must supply", () => {
+  expect(shellTool.name).toBe("shell");
+  const { properties, required } = shellTool.parameters as {
+    properties: Record<string, unknown>;
+    required: string[];
+  };
+  expect(required).toEqual(["cmd"]);
+  expect(Object.keys(properties)).toEqual(["cmd", "cwd", "timeoutMs"]);
+  // Running a command has an effect outside the runtime, so it carries what the card shows.
+  expect(shellTool.actionClass).toBe("run-command");
+  expect(shellTool.action!({ cmd: "rm -rf /" })).toMatchObject({
+    target: "rm -rf /",
+    operation: "run",
+  });
+});
+
+test("a call with no cmd at all never reaches a shell", () => {
+  expect(() => shellTool.run({})).toThrow("shell: cmd is empty");
+});
+
+test("unicode survives the round trip through the shell", async () => {
+  expect(await runShell({ cmd: "printf '%s' '日本語 🎌 ünïcode'" })).toBe("日本語 🎌 ünïcode");
+});
+
+test("the registry dispatches `shell` to this implementation", async () => {
+  const registered = defaultTools.find((tool) => tool.name === "shell");
+
+  expect(registered).toBe(shellTool);
+  // What the loop does with a call: find the name, then run it.
+  expect(await registered!.run({ cmd: "echo registry" })).toBe("registry");
 });
