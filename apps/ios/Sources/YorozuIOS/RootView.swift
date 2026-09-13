@@ -268,19 +268,32 @@ struct RootView: View {
                     break
                 }
             }
+            // Half of "genuinely reading": a thread on screen in an app nobody is looking at is
+            // not being read, and must not report that it was. Kept apart from the switch above
+            // so the reconnect only happens on an actual transition into `.active`.
+            .onChange(of: scenePhase, initial: true) { _, phase in
+                session.model?.foreground = phase == .active
+            }
+            // The badge counts threads, not messages: it is the same number the list's dots add
+            // up to. Zero clears it rather than drawing a nought.
+            .onChange(of: session.model?.unreadCount ?? 0, initial: true) { _, count in
+                Task { try? await UNUserNotificationCenter.current().setBadgeCount(count) }
+            }
     }
 
     @ViewBuilder private var content: some View {
         if let model = session.model {
             ThreadListView(
                 threads: model.threads,
-                unread: model.unread,
                 connection: ConnectionState(state: model.state, ownerOnline: model.ownerOnline),
                 path: $path,
                 onCreate: { path = [model.newDraft().id] },
                 onRename: { model.rename($0, to: $1) },
                 onArchive: model.setArchived,
                 onPin: model.setPinned,
+                onRead: { thread, read in
+                    read ? model.markRead(thread.id) : model.markUnread(thread)
+                },
                 onRefresh: model.refresh,
                 // Search reaches into what this phone has cached of each thread, which is the
                 // only text it can search offline and is usually the whole thread anyway.

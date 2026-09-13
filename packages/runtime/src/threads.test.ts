@@ -10,6 +10,7 @@ import {
   eventsAfter,
   HISTORY_LIMIT,
   listThreads,
+  markThreadRead,
   pinThread,
   readThreadEvents,
   renameThread,
@@ -35,6 +36,15 @@ const message = (id: string, text: string, threadId = HOME): YorozuEvent => ({
   agentId: "main",
   kind: "message",
   data: { role: "user", text },
+});
+
+const agentMessage = (id: string, text: string, threadId = HOME): YorozuEvent => ({
+  id,
+  threadId,
+  ts: Number(id.slice(1)),
+  agentId: "main",
+  kind: "message",
+  data: { role: "agent", text },
 });
 
 /** An index as an older Yorozu wrote it, with its pinned `home` thread in front. */
@@ -269,4 +279,33 @@ test("a non-image attachment is named rather than sent, vision or not", () => {
       { role: "user", content: "[attached: q3.pdf (application/pdf)]" },
     ]);
   }
+});
+
+test("read state is the runtime's, and only moves forward unless it is reset", () => {
+  const thread = createThread("Groceries", dir);
+  // Absent rather than 0 on both counts, so a thread nobody has been answered in is not
+  // permanently unread.
+  expect(threadSummaries(dir)[0]!.lastReadAt).toBeUndefined();
+  expect(threadSummaries(dir)[0]!.lastAgentAt).toBeUndefined();
+
+  // The agent speaking is what makes a thread unread. The user's own message is not.
+  appendThreadEvent(message("e1", "buy milk", thread.id), dir);
+  expect(threadSummaries(dir)[0]!.lastAgentAt).toBeUndefined();
+  appendThreadEvent(agentMessage("e2", "Added.", thread.id), dir);
+  expect(threadSummaries(dir)[0]!.lastAgentAt).toBe(2);
+
+  expect(markThreadRead(thread.id, 100, dir)).toBe(true);
+  expect(threadSummaries(dir)[0]!.lastReadAt).toBe(100);
+
+  // A second device reporting an older read, or the same one twice, moves nothing and says so —
+  // so neither is worth a fresh list to every device.
+  expect(markThreadRead(thread.id, 50, dir)).toBe(false);
+  expect(markThreadRead(thread.id, 100, dir)).toBe(false);
+  expect(threadSummaries(dir)[0]!.lastReadAt).toBe(100);
+  expect(markThreadRead(thread.id, 200, dir)).toBe(true);
+  expect(markThreadRead("nope", 200, dir)).toBe(false);
+
+  // "Mark as unread" is the one thing allowed to walk the mark backwards.
+  expect(markThreadRead(thread.id, 1, dir, true)).toBe(true);
+  expect(threadSummaries(dir)[0]!.lastReadAt).toBe(1);
 });

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import YorozuShared
 
@@ -17,6 +18,9 @@ enum LocalChat {
 
     static func start() {
         model.onThreads = {
+            // The Dock badge is set here rather than in the window, because it has to be right
+            // while the window is shut: replies keep arriving either way. Zero clears it.
+            NSApp.dockTile.badgeLabel = model.unreadCount == 0 ? nil : String(model.unreadCount)
             // The line a `swift run` smoke test looks for: the list arrived over the socket.
             // Flushed like `Permission.logAll`, because stdout is block-buffered whenever it is
             // not a terminal and the app is killed rather than asked to exit.

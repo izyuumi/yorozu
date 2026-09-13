@@ -660,6 +660,27 @@ test("two phones pair at once and see the same threads, events and deltas", asyn
   expect(await second.next("thread_list")).toMatchObject({
     data: { threads: [{ id: groceries, archived: false }, { id: chat, archived: true }] },
   });
+
+  // Read state is the runtime's: the phone that read the thread says so, and the *other* phone
+  // is told — which is the whole point, because that is the device with a dot on it.
+  const nextGroceries = async () => {
+    const listed = await second.next("thread_list");
+    return listed.kind === "thread_list"
+      ? listed.data.threads.find((thread) => thread.id === groceries)
+      : undefined;
+  };
+
+  first.send(groceries, { kind: "thread_read", data: { at: 5_000_000_000_000 } });
+  expect((await nextGroceries())?.lastReadAt).toBe(5_000_000_000_000);
+
+  // A report that would walk the mark backwards changes nothing and is not worth a list, so
+  // the next one either phone sees is the rename below rather than an echo of this.
+  first.send(groceries, { kind: "thread_read", data: { at: 1 } });
+  first.send(groceries, { kind: "thread_rename", data: { title: "Food" } });
+  expect(await nextGroceries()).toMatchObject({
+    title: "Food",
+    lastReadAt: 5_000_000_000_000,
+  });
 });
 
 

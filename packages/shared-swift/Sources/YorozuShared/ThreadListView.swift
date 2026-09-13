@@ -164,23 +164,24 @@ extension View {
 /// font and the two lines of text wrap by truncating, never by clipping.
 struct ThreadRow: View {
     let thread: ThreadSummary
-    var unread = false
 
     @ScaledMetric(relativeTo: .body) private var dot = 9
 
     var body: some View {
+        // Drawn from the thread's own two timestamps, which the runtime owns: reading on the
+        // phone puts this dot out on the Mac too. See ``ThreadSummary/isUnread``.
         HStack(alignment: .top, spacing: 10) {
             Circle()
-                .fill(unread ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear))
+                .fill(thread.isUnread ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear))
                 .frame(width: dot, height: dot)
                 // Nudged down to sit on the title's line rather than above it.
                 .padding(.top, dot * 0.6)
-                .accessibilityHidden(!unread)
+                .accessibilityHidden(!thread.isUnread)
                 .accessibilityLabel("Unread")
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(thread.displayTitle)
-                        .font(.body.weight(unread ? .semibold : .regular))
+                        .font(.body.weight(thread.isUnread ? .semibold : .regular))
                         // An untitled thread is one the runtime has not named yet, so its
                         // placeholder is drawn as the aside it is.
                         .foregroundStyle(
@@ -287,13 +288,14 @@ struct ConnectionPill: View {
 /// the list rather than on top of it.
 public struct ThreadListView<Destination: View>: View {
     private let threads: [ThreadSummary]
-    private let unread: Set<String>
     private let connection: ConnectionState?
     @Binding private var path: [String]
     private let onCreate: () -> Void
     private let onRename: (ThreadSummary, String) -> Void
     private let onArchive: (ThreadSummary, Bool) -> Void
     private let onPin: (ThreadSummary, Bool) -> Void
+    /// Marks a thread read, or back to unread. The runtime is the one that decides either way.
+    private let onRead: (ThreadSummary, Bool) -> Void
     private let onRefresh: (() async -> Void)?
     private let messageText: (String) -> String
     private let exportMarkdown: ((ThreadSummary) -> String)?
@@ -307,13 +309,13 @@ public struct ThreadListView<Destination: View>: View {
 
     public init(
         threads: [ThreadSummary],
-        unread: Set<String> = [],
         connection: ConnectionState? = nil,
         path: Binding<[String]>,
         onCreate: @escaping () -> Void,
         onRename: @escaping (ThreadSummary, String) -> Void,
         onArchive: @escaping (ThreadSummary, Bool) -> Void,
         onPin: @escaping (ThreadSummary, Bool) -> Void = { _, _ in },
+        onRead: @escaping (ThreadSummary, Bool) -> Void = { _, _ in },
         onRefresh: (() async -> Void)? = nil,
         messageText: @escaping (String) -> String = { _ in "" },
         exportMarkdown: ((ThreadSummary) -> String)? = nil,
@@ -321,13 +323,13 @@ public struct ThreadListView<Destination: View>: View {
         @ViewBuilder destination: @escaping (ThreadSummary) -> Destination
     ) {
         self.threads = threads
-        self.unread = unread
         self.connection = connection
         self._path = path
         self.onCreate = onCreate
         self.onRename = onRename
         self.onArchive = onArchive
         self.onPin = onPin
+        self.onRead = onRead
         self.onRefresh = onRefresh
         self.messageText = messageText
         self.exportMarkdown = exportMarkdown
@@ -398,7 +400,7 @@ public struct ThreadListView<Destination: View>: View {
     @ViewBuilder private func rows(_ threads: [ThreadSummary]) -> some View {
         ForEach(threads) { thread in
             NavigationLink(value: thread.id) {
-                ThreadRow(thread: thread, unread: unread.contains(thread.id))
+                ThreadRow(thread: thread)
             }
             .swipeActions(edge: .leading) {
                 if thread.archived {
@@ -425,6 +427,7 @@ public struct ThreadListView<Destination: View>: View {
             }
             .contextMenu {
                 Button("Rename", systemImage: "pencil") { renaming = thread }
+                readButton(thread)
                 if !thread.archived {
                     Button(
                         thread.pinned ? "Unpin" : "Pin",
@@ -441,6 +444,16 @@ public struct ThreadListView<Destination: View>: View {
                     ExportThreadButton(title: thread.displayTitle) { exportMarkdown(thread) }
                 }
             }
+        }
+    }
+
+    /// Marking read by hand, both ways round. A thread the agent has never spoken in cannot be
+    /// made unread — there is nothing in it to be unread about — so it is offered neither.
+    @ViewBuilder private func readButton(_ thread: ThreadSummary) -> some View {
+        if thread.isUnread {
+            Button("Mark as read", systemImage: "envelope.open") { onRead(thread, true) }
+        } else if thread.lastAgentAt != nil {
+            Button("Mark as unread", systemImage: "envelope.badge") { onRead(thread, false) }
         }
     }
 
@@ -472,12 +485,13 @@ public struct ThreadListView<Destination: View>: View {
 /// thread's cached messages say, exactly as on the phone.
 public struct ThreadSidebar: View {
     private let threads: [ThreadSummary]
-    private let unread: Set<String>
     @Binding private var selection: String?
     private let onCreate: () -> Void
     private let onRename: (ThreadSummary, String) -> Void
     private let onArchive: (ThreadSummary, Bool) -> Void
     private let onPin: (ThreadSummary, Bool) -> Void
+    /// Marks a thread read, or back to unread. The runtime is the one that decides either way.
+    private let onRead: (ThreadSummary, Bool) -> Void
     private let messageText: (String) -> String
     private let exportMarkdown: ((ThreadSummary) -> String)?
 
@@ -488,22 +502,22 @@ public struct ThreadSidebar: View {
 
     public init(
         threads: [ThreadSummary],
-        unread: Set<String> = [],
         selection: Binding<String?>,
         onCreate: @escaping () -> Void,
         onRename: @escaping (ThreadSummary, String) -> Void,
         onArchive: @escaping (ThreadSummary, Bool) -> Void,
         onPin: @escaping (ThreadSummary, Bool) -> Void = { _, _ in },
+        onRead: @escaping (ThreadSummary, Bool) -> Void = { _, _ in },
         messageText: @escaping (String) -> String = { _ in "" },
         exportMarkdown: ((ThreadSummary) -> String)? = nil
     ) {
         self.threads = threads
-        self.unread = unread
         self._selection = selection
         self.onCreate = onCreate
         self.onRename = onRename
         self.onArchive = onArchive
         self.onPin = onPin
+        self.onRead = onRead
         self.messageText = messageText
         self.exportMarkdown = exportMarkdown
     }
@@ -552,7 +566,7 @@ public struct ThreadSidebar: View {
 
     @ViewBuilder private func rows(_ threads: [ThreadSummary]) -> some View {
         ForEach(threads) { thread in
-            ThreadRow(thread: thread, unread: unread.contains(thread.id))
+            ThreadRow(thread: thread)
                 .tag(thread.id)
                 .contextMenu { menu(thread) }
         }
@@ -562,6 +576,12 @@ public struct ThreadSidebar: View {
     /// between two swipes and a long press, and the Mac has one menu to put them all in.
     @ViewBuilder private func menu(_ thread: ThreadSummary) -> some View {
         Button("Rename", systemImage: "pencil") { renaming = thread }
+        // A thread the agent has never spoken in cannot be made unread: nothing in it is news.
+        if thread.isUnread {
+            Button("Mark as read", systemImage: "envelope.open") { onRead(thread, true) }
+        } else if thread.lastAgentAt != nil {
+            Button("Mark as unread", systemImage: "envelope.badge") { onRead(thread, false) }
+        }
         if !thread.archived {
             Button(
                 thread.pinned ? "Unpin" : "Pin",

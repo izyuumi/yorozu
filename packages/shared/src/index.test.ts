@@ -64,6 +64,7 @@ test("every spec'd kind exists", () => {
     "thread_archive",
     "thread_rename",
     "thread_pin",
+    "thread_read",
     "thread_set_model",
     "model_list",
     "sync_request",
@@ -71,7 +72,7 @@ test("every spec'd kind exists", () => {
     "device_list",
     "device_remove",
   ];
-  expect(kinds).toHaveLength(17);
+  expect(kinds).toHaveLength(18);
 });
 
 test("a thread summary carries what a list row draws", () => {
