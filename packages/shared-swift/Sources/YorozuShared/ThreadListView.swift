@@ -376,8 +376,12 @@ public struct ThreadListView<Destination: View>: View {
                 }
                 // Beside the search field at the bottom on 26, where the system draws it as
                 // its own glass circle; a floating overlay would sit on top of that field.
-                ToolbarItem(placement: .bottomBar) { Spacer() }
-                ToolbarItem(placement: .bottomBar) { newThreadButton }
+                #if os(iOS)
+                    ToolbarItem(placement: .bottomBar) { Spacer() }
+                    ToolbarItem(placement: .bottomBar) { newThreadButton }
+                #else
+                    ToolbarItem(placement: .primaryAction) { newThreadButton }
+                #endif
             }
             .navigationDestination(for: String.self) { id in
                 if let thread = threads.first(where: { $0.id == id }) {
