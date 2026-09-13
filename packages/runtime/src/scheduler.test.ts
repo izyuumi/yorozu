@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "node:process";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { defaultTools } from "./index.js";
 import {
   addJob,
   CONSOLIDATION_JOB,
@@ -171,4 +172,69 @@ test("with no threads at all, a job without a context gets one made for it", () 
   scheduleTool.run({ instruction: "later", at: "2026-09-12T10:00:00Z" });
   const job = listJobs(dir).at(-1)!;
   expect(listThreads(dir).map((t) => t.id)).toEqual([job.threadId]);
+});
+
+test("list_schedule says so plainly when there is nothing left", () => {
+  removeJob(CONSOLIDATION_JOB.id, dir);
+  expect(listScheduleTool.run({})).toBe("nothing scheduled");
+});
+
+test("the schedule tool refuses a job it could never fire, and writes nothing", () => {
+  const context = { threadId: "work", agentId: "main" };
+
+  expect(() => scheduleTool.run({ instruction: "do it" }, context)).toThrow("exactly one");
+  expect(() =>
+    scheduleTool.run({ instruction: "do it", at: "whenever" }, context),
+  ).toThrow("not a time");
+  expect(() =>
+    scheduleTool.run({ instruction: "do it", cron: "every tuesday" }, context),
+  ).toThrow("5 fields");
+  expect(() => scheduleTool.run({ instruction: "   ", cron: "* * * * *" }, context)).toThrow("empty");
+
+  expect(listJobs(dir)).toEqual([CONSOLIDATION_JOB]);
+});
+
+test("an instruction is stored and listed exactly as it was written", () => {
+  const instruction = 'ゴミ出し 🗑 — "tuesdays", not mondays';
+  scheduleTool.run({ instruction, cron: "0 7 * * 2" }, { threadId: "home", agentId: "main" });
+
+  expect(listJobs(dir).at(-1)!.instruction).toBe(instruction);
+  expect(listScheduleTool.run({})).toContain(instruction);
+});
+
+test("unschedule reports an id it has never seen rather than pretending", () => {
+  expect(unscheduleTool.run({ id: "not-a-job" })).toBe("no such job: not-a-job");
+  // Nothing at all is not a wildcard: it must not take the schedule down with it.
+  expect(unscheduleTool.run({})).toBe("no such job: undefined");
+  expect(listJobs(dir)).toEqual([CONSOLIDATION_JOB]);
+});
+
+test("the three schedule tools name themselves and what they cannot work without", () => {
+  expect([scheduleTool.name, unscheduleTool.name, listScheduleTool.name]).toEqual([
+    "schedule",
+    "unschedule",
+    "list_schedule",
+  ]);
+  expect(scheduleTool.parameters).toMatchObject({ type: "object", required: ["instruction"] });
+  expect(unscheduleTool.parameters).toMatchObject({ type: "object", required: ["id"] });
+  expect(listScheduleTool.parameters).toEqual({ type: "object", properties: {}, required: [] });
+});
+
+test("all three are registered in the shared tool list, and a call by name reaches them", () => {
+  for (const tool of [scheduleTool, unscheduleTool, listScheduleTool]) {
+    expect(defaultTools.find((t) => t.name === tool.name)).toBe(tool);
+  }
+
+  // Routed by name, all the way to the schedule on disk and back.
+  const schedule = defaultTools.find((t) => t.name === "schedule")!;
+  expect(schedule.run({ instruction: "stand up", cron: "0 9 * * 1-5" }, {
+    threadId: "work",
+    agentId: "main",
+  })).toMatch(/^scheduled: /);
+
+  const job = listJobs(dir).at(-1)!;
+  expect(defaultTools.find((t) => t.name === "list_schedule")!.run({})).toContain(job.id);
+  expect(defaultTools.find((t) => t.name === "unschedule")!.run({ id: job.id })).toBe(
+    `unscheduled: ${job.id}`,
+  );
 });

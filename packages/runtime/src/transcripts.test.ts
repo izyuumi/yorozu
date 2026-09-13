@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { env } from "node:process";
 import type { YorozuEvent } from "@yorozu/shared";
 import { afterEach, beforeEach, expect, test } from "vitest";
+import { defaultTools } from "./index.js";
 import {
   appendTranscript,
   readTranscripts,
@@ -85,4 +86,55 @@ test("the read_transcripts tool reads a window of the state dir's log", () => {
   // Nonsense from the model falls back to the 24h default rather than reading nothing.
   expect(readTranscriptsTool.run({ hours: "lots" })).toContain("user: recent");
   expect(readTranscriptsTool.run({ hours: 0.0001 })).toBe("no transcripts in that window");
+});
+
+/** A day's log can be far longer than one tool result may be: the model gets the recent end. */
+test("read_transcripts hands over at most the last 200 events", () => {
+  const logs = transcriptDir(dir);
+  const now = Date.now();
+  for (let i = 0; i < 250; i++) {
+    appendTranscript(
+      { ...message("2026-09-12T09:00:00Z", `line ${i}`), id: `e${i}`, ts: now - (250 - i) * 1_000 },
+      logs,
+    );
+  }
+
+  const lines = readTranscriptsTool.run({}).split("\n");
+  expect(lines).toHaveLength(200);
+  // The window is the newest 200, so the oldest 50 are the ones dropped.
+  expect(lines[0]).toContain("user: line 50");
+  expect(lines.at(-1)).toContain("user: line 249");
+});
+
+test("message text survives the log byte for byte", () => {
+  const logs = transcriptDir(dir);
+  const text = '予定を入れて 🎌 "quoted" \\ backslash\nand a newline';
+  appendTranscript({ ...message("2026-09-12T09:00:00Z", text), ts: Date.now() - 60_000 }, logs);
+
+  // The newline is inside one JSON string, so it is part of the event rather than a record break.
+  expect(readTranscripts(new Date(0), logs)).toHaveLength(1);
+  expect(readTranscripts(new Date(0), logs)[0]).toMatchObject({ kind: "message", data: { text } });
+  expect(readTranscriptsTool.run({})).toContain(text);
+});
+
+test("read_transcripts takes an optional hours number and nothing else", () => {
+  expect(readTranscriptsTool.name).toBe("read_transcripts");
+  expect(readTranscriptsTool.parameters).toEqual({
+    type: "object",
+    properties: { hours: { type: "number", description: "How far back to read. Defaults to 24." } },
+    required: [],
+  });
+});
+
+test("read_transcripts is registered in the shared tool list, and a call by name reaches it", () => {
+  const registered = defaultTools.find((tool) => tool.name === "read_transcripts");
+  expect(registered).toBe(readTranscriptsTool);
+
+  // Nothing logged yet in this state dir, so the implementation's empty answer is the proof.
+  expect(registered!.run({})).toBe("no transcripts in that window");
+  appendTranscript(
+    { ...message("2026-09-12T09:00:00Z", "logged"), ts: Date.now() - 60_000 },
+    transcriptDir(dir),
+  );
+  expect(registered!.run({})).toContain("user: logged");
 });

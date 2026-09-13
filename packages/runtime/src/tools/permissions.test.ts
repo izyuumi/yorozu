@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "node:process";
 import { afterEach, beforeEach, expect, test } from "vitest";
+import { defaultTools } from "../index.js";
 import { calendarListTool, mailUnreadTool } from "./apple.js";
 import { defaultNativeHost } from "./native.js";
 import {
@@ -147,4 +148,29 @@ test("request_permission refuses a kind that is not a grant, before asking the h
   await expect(Promise.resolve(requestPermissionTool.run({ kind: "telepathy" }))).rejects.toThrow(
     "unknown permission: telepathy",
   );
+  // A kind the model left out entirely is the same refusal, and names what it could have said.
+  await expect(Promise.resolve(requestPermissionTool.run({}))).rejects.toThrow(
+    `unknown permission: . One of: ${PERMISSION_KINDS.join(", ")}`,
+  );
+});
+
+test("request_permission offers exactly the grants the helper knows, and names them", () => {
+  expect(requestPermissionTool.name).toBe("request_permission");
+  expect(requestPermissionTool.parameters).toMatchObject({
+    type: "object",
+    required: ["kind"],
+    properties: { kind: { type: "string", enum: [...PERMISSION_KINDS] } },
+  });
+  // The description lists them too: the model picks the kind out of the failing tool's error.
+  for (const kind of PERMISSION_KINDS) {
+    expect(requestPermissionTool.description).toContain(kind);
+  }
+});
+
+test("request_permission is registered in the shared tool list, and a call by name reaches it", async () => {
+  const registered = defaultTools.find((tool) => tool.name === "request_permission");
+  expect(registered).toBe(requestPermissionTool);
+
+  // Routed by name, over the pipe, to the helper's verdict.
+  expect(await registered!.run({ kind: "calendars" })).toBe("calendars is granted");
 });
