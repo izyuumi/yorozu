@@ -95,6 +95,11 @@ public final class ChatModel {
     private var deltas = 0
     /// One flush at a time: the queue is sent in order, and two loops draining it would not be.
     private var flushing = false
+    /// Latest unfinished agent event per message. Providers can emit faster than SwiftUI can
+    /// lay out growing text; one model mutation per display slice keeps the UI responsive while
+    /// the final event still lands immediately and losslessly.
+    private var pendingStreamEvents: [String: YorozuEvent] = [:]
+    private var streamFrame: Task<Void, Never>?
 
     public init(transport: any ChatTransport, cache: ThreadCache? = nil, device: String = "phone") {
         self.transport = transport
@@ -395,6 +400,10 @@ public final class ChatModel {
         send(read: threadId, at: Date().timeIntervalSince1970 * 1000)
     }
 
+    public func markAllRead() {
+        for thread in threads where thread.isUnread { markRead(thread.id) }
+    }
+
     /// "Mark as unread": puts the mark just behind the newest reply, which is the one place it
     /// can sit and still leave the thread unread. A thread the agent has never spoken in has
     /// nothing to be unread about. ``ThreadReadData/reset`` is what lets it move backwards.
@@ -574,11 +583,45 @@ public final class ChatModel {
             case .approvalSettings(let data):
                 if let yolo = data.yolo { yoloMode = yolo }
             default:
-                upsert(event)
+                applyEvent(event)
             }
         case .failed(let reason):
+            flushStreamEvents()
             failure = reason
         }
+    }
+
+    private func applyEvent(_ event: YorozuEvent) {
+        let key = "\(event.threadId)\u{0}\(event.id)"
+        if case .message(let data) = event.payload, data.role == .agent, data.done != true {
+            pendingStreamEvents[key] = event
+            guard streamFrame == nil else { return }
+            streamFrame = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(50))
+                guard !Task.isCancelled else { return }
+                self?.flushStreamEvents()
+            }
+            return
+        }
+
+        // A terminal event supersedes any partial text still waiting for its frame. Cancelling
+        // it prevents stale partial text from overwriting the finished reply 50 ms later.
+        pendingStreamEvents.removeValue(forKey: key)
+        // Preserve wire order for a tool/card/event arriving after streamed prose. A terminal
+        // event for this same message removed its stale partial above, so only other messages
+        // are flushed before it.
+        flushStreamEvents()
+        upsert(event)
+    }
+
+    private func flushStreamEvents() {
+        streamFrame?.cancel()
+        streamFrame = nil
+        let events = pendingStreamEvents.values.sorted {
+            ($0.ts, $0.id) < ($1.ts, $1.id)
+        }
+        pendingStreamEvents.removeAll(keepingCapacity: true)
+        for event in events { upsert(event) }
     }
 
     /// Every kind is kept, per thread, in arrival order: the thread draws the messages and the
