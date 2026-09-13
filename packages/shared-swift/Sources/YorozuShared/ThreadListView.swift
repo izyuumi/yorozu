@@ -374,19 +374,10 @@ public struct ThreadListView<Destination: View>: View {
                         Button("Settings", systemImage: "gear", action: onSettings)
                     }
                 }
-            }
-            // The one thing this screen is for, where a thumb already is.
-            .overlay(alignment: .bottomTrailing) {
-                Button(action: onCreate) {
-                    Image(systemName: "square.and.pencil")
-                        .font(.title2.weight(.semibold))
-                        .frame(width: 56, height: 56)
-                }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.circle)
-                .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
-                .padding(20)
-                .accessibilityLabel("New thread")
+                // Beside the search field at the bottom on 26, where the system draws it as
+                // its own glass circle; a floating overlay would sit on top of that field.
+                ToolbarItem(placement: .bottomBar) { Spacer() }
+                ToolbarItem(placement: .bottomBar) { newThreadButton }
             }
             .navigationDestination(for: String.self) { id in
                 if let thread = threads.first(where: { $0.id == id }) {
@@ -395,6 +386,16 @@ public struct ThreadListView<Destination: View>: View {
             }
         }
         .renameAlert($renaming, onRename: onRename)
+    }
+
+    /// The system's own bar button: a bare symbol the toolbar sizes and centres itself.
+    @ViewBuilder private var newThreadButton: some View {
+        let button = Button("New thread", systemImage: "square.and.pencil", action: onCreate)
+        if #available(iOS 26, macOS 26, *) {
+            button.buttonStyle(.glassProminent)
+        } else {
+            button.buttonStyle(.borderedProminent)
+        }
     }
 
     /// The archive: shut by default, and the only place a thread comes back from.
