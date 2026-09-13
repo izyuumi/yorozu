@@ -374,9 +374,19 @@ public struct ThreadListView<Destination: View>: View {
                         Button("Settings", systemImage: "gear", action: onSettings)
                     }
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    Button("New thread", systemImage: "square.and.pencil", action: onCreate)
+            }
+            // The one thing this screen is for, where a thumb already is.
+            .overlay(alignment: .bottomTrailing) {
+                Button(action: onCreate) {
+                    Image(systemName: "square.and.pencil")
+                        .font(.title2.weight(.semibold))
+                        .frame(width: 56, height: 56)
                 }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.circle)
+                .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
+                .padding(20)
+                .accessibilityLabel("New thread")
             }
             .navigationDestination(for: String.self) { id in
                 if let thread = threads.first(where: { $0.id == id }) {
