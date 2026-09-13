@@ -40,7 +40,7 @@ struct TurnLiveActivity: Widget {
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(context.attributes.title)
+                        Text(TurnTitle.resolve(context.attributes.threadRef))
                             .font(.headline)
                             .lineLimit(1)
                         Text(context.state.status.label)
@@ -70,12 +70,12 @@ struct TurnLiveActivity: Widget {
 #Preview(
     "Lock screen",
     as: .content,
-    using: TurnAttributes(threadId: "preview", title: "Kitanoya invoice")
+    using: TurnAttributes(threadId: "preview")
 ) {
     TurnLiveActivity()
 } contentStates: {
-    TurnAttributes.ContentState(status: .working, startedAt: .now.addingTimeInterval(-64))
-    TurnAttributes.ContentState(status: .needsApproval, startedAt: .now.addingTimeInterval(-64))
-    TurnAttributes.ContentState(status: .done, startedAt: .now.addingTimeInterval(-64))
-    TurnAttributes.ContentState(status: .failed, startedAt: .now.addingTimeInterval(-64))
+    TurnAttributes.ContentState(status: .working, started: .now.addingTimeInterval(-64))
+    TurnAttributes.ContentState(status: .needsApproval, started: .now.addingTimeInterval(-64))
+    TurnAttributes.ContentState(status: .done, started: .now.addingTimeInterval(-64))
+    TurnAttributes.ContentState(status: .failed, started: .now.addingTimeInterval(-64))
 }

@@ -35,8 +35,9 @@ struct TurnActivityShowcase: View {
 
                 ForEach([TurnStatus.working, .needsApproval, .done, .failed], id: \.self) { status in
                     TurnLockScreenView(
-                        attributes: TurnAttributes(threadId: "showcase", title: "Weeknight dinners"),
-                        state: TurnAttributes.ContentState(status: status, startedAt: Self.started)
+                        attributes: TurnAttributes(threadId: "showcase"),
+                        state: TurnAttributes.ContentState(status: status, started: Self.started),
+                        title: "Weeknight dinners"
                     )
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
                 }

@@ -13,6 +13,8 @@
  * rate-limit bucket is in memory, which is the point of it — it is per isolate lifetime.
  */
 import {
+  activityPayload,
+  alertPayload,
   allowFrame,
   BUFFER_TTL_MS,
   CLOSE_BAD_SIGNATURE,
@@ -22,17 +24,22 @@ import {
   evictions,
   newBucket,
   parseDevices,
+  parseActivityToken,
   parseFrame,
   parseJoin,
+  parseNotify,
+  parsePush,
   parseRegister,
   parseRevoke,
   PING,
   PONG,
   TOKEN_TTL_MS,
   type Bucket,
+  type Notify,
 } from "./protocol.js";
+import * as apns from "./apns.js";
 
-export interface Env {
+export interface Env extends apns.ApnsEnv {
   ROOM: DurableObjectNamespace;
 }
 
@@ -85,6 +92,30 @@ const bufferKey = (seq: number): string => `b:${String(seq).padStart(16, "0")}`;
 /** Known device keys: `p:<base64url phone signing pubkey>` -> when it last paired or rejoined. */
 const devicePrefix = "p:";
 
+/**
+ * What a phone registered so it can be woken: `push:<base64url phone signing pubkey>`.
+ *
+ * One record per device rather than a key per token, so revoking a device is one delete and
+ * cannot leave a Live Activity token behind pointing at a phone that is no longer paired.
+ */
+const pushPrefix = "push:";
+
+type PushRecord = {
+  /** The app's own APNs device token, which alerts go to. */
+  deviceToken: string;
+  /** ActivityKit's push-to-start token, when the phone has one to give. */
+  startToken?: string;
+  /**
+   * The live activities this device is showing, by opaque thread reference: the activity's own
+   * push token, and the status last pushed to it.
+   *
+   * The status is kept so a turn's every tool call does not become a push. A Live Activity only
+   * ever shows one of four words, so a repeat of the word already on screen is nothing to send,
+   * and Apple's budget for these is not large enough to spend on saying the same thing twice.
+   */
+  activities?: Record<string, { token?: string; status?: string }>;
+};
+
 export class Room implements DurableObject {
   private bucket: Bucket = newBucket(Date.now());
   /** Verification is async, so messages are chained to keep frames strictly in order. */
@@ -93,7 +124,7 @@ export class Room implements DurableObject {
 
   constructor(
     private readonly state: DurableObjectState,
-    _env: Env,
+    private readonly env: Env,
   ) {
     // Answered at the edge, so a heartbeat keeps the socket warm without ever waking this
     // object. Set per isolate rather than per socket: it is room-wide state and applies to
@@ -245,10 +276,105 @@ export class Room implements DurableObject {
   private async forget(pubkeys: readonly string[]): Promise<void> {
     if (pubkeys.length === 0) return;
     await this.state.storage.delete(pubkeys.map((key) => devicePrefix + key));
+    // The whole point of revoking: a device that is no longer paired stops being woken. Its
+    // tokens go with it rather than lingering as something the room could still push to.
+    await this.state.storage.delete(pubkeys.map((key) => pushPrefix + key));
     const gone = new Set(pubkeys);
     for (const phone of this.sockets("phone")) {
       const key = (phone.deserializeAttachment() as Conn | null)?.key;
       if (key && gone.has(key)) phone.close(CLOSE_PROTOCOL, "revoked");
+    }
+  }
+
+  /**
+   * Wakes every paired device that is not already watching.
+   *
+   * A phone holding a live socket has just been sent the sealed event itself, so a push to it
+   * would be a second copy of news it already has — and the app being up is the case Live
+   * Activities are updated locally anyway. Everyone else gets whichever of the two pushes
+   * applies: an alert for something a person should see, a Live Activity update for the
+   * running commentary, and both when the turn ends while an activity is on the lock screen.
+   *
+   * Awaited rather than left to run behind the socket: frames are handled in order on this
+   * object, and a turn produces a handful of these at most because a repeat of the status
+   * already showing is not sent at all.
+   */
+  private async wake(notify: Notify, now: number): Promise<void> {
+    // No Apple key configured — a self-hosted room, or one deployed before the secrets were
+    // set. The frame has still been forwarded; there is simply nobody to wake.
+    if (!apns.configured(this.env)) return;
+
+    const watching = new Set(
+      this.sockets("phone")
+        .map((ws) => (ws.deserializeAttachment() as Conn | null)?.key)
+        .filter((key): key is string => key !== null && key !== undefined),
+    );
+    const storage = this.state.storage;
+
+    for (const [key, record] of await storage.list<PushRecord>({ prefix: pushPrefix })) {
+      if (watching.has(key.slice(pushPrefix.length))) continue;
+      const activities = { ...record.activities };
+      let changed = false;
+
+      if (notify.class !== "activity") {
+        const code = await apns.send(
+          this.env,
+          {
+            token: record.deviceToken,
+            payload: alertPayload(notify.class, notify.threadRef),
+            pushType: "alert",
+          },
+          now,
+        );
+        // Apple no longer knows this token: the app was deleted or reinstalled. Keeping the
+        // registration would only fail again on the next turn, so the device is forgotten.
+        if (apns.gone(code)) {
+          await storage.delete(key);
+          continue;
+        }
+      }
+
+      const status = notify.status;
+      if (status) {
+        const showing = activities[notify.threadRef];
+        const live = status === "working" || status === "needsApproval";
+        if (showing?.token && showing.status !== status) {
+          const code = await apns.send(
+            this.env,
+            {
+              token: showing.token,
+              payload: activityPayload({ ...notify, status }, now),
+              pushType: "liveactivity",
+            },
+            now,
+          );
+          // An activity token dies when its activity ends, which the phone usually tells us
+          // about first; either way there is nothing left to update.
+          if (apns.gone(code)) delete activities[notify.threadRef];
+          else activities[notify.threadRef] = { token: showing.token, status };
+          changed = true;
+        } else if (!showing && live && record.startToken) {
+          // Nothing on screen for this thread and the turn is still going: ActivityKit can
+          // raise one from a push, which is what puts a status on the lock screen of a phone
+          // that was already in a pocket when the turn began. Recorded without a token —
+          // the activity sends its own along once it exists — so this happens once.
+          const code = await apns.send(
+            this.env,
+            {
+              token: record.startToken,
+              payload: activityPayload({ ...notify, status }, now, "start"),
+              pushType: "liveactivity",
+            },
+            now,
+          );
+          if (!apns.gone(code)) {
+            activities[notify.threadRef] = { status };
+            changed = true;
+          }
+        }
+      }
+
+      if (changed) await storage.put(key, { ...record, activities } satisfies PushRecord);
     }
   }
 
@@ -388,6 +514,51 @@ export class Room implements DurableObject {
         ws.serializeAttachment({ ...conn, role: "phone", key: phonePubkey } satisfies Conn);
         ws.send(JSON.stringify({ type: "joined", roomId: id, ownerOnline: this.ownerOnline() }));
         return;
+      }
+
+      // A phone saying where it can be woken. Filed against the key the relay already knows
+      // the device by, so revoking it takes the tokens with it and nothing has to remember to.
+      case "push": {
+        if (conn.role !== "phone" || !conn.key) return ws.close(CLOSE_PROTOCOL, "not joined");
+        const push = parsePush(msg);
+        if (!push) return ws.close(CLOSE_PROTOCOL, "bad push");
+        const key = pushPrefix + conn.key;
+        const record = await storage.get<PushRecord>(key);
+        // The activities are kept: re-registering a device token is something a phone does on
+        // every launch, and it must not take down the activities it is already showing.
+        await storage.put(key, {
+          ...record,
+          deviceToken: push.deviceToken,
+          ...(push.startToken ? { startToken: push.startToken } : {}),
+        } satisfies PushRecord);
+        return;
+      }
+
+      // One Live Activity's own push token, by the thread it is about. No token means the
+      // activity has ended and there is nothing to push to any more.
+      case "activity_token": {
+        if (conn.role !== "phone" || !conn.key) return ws.close(CLOSE_PROTOCOL, "not joined");
+        const activity = parseActivityToken(msg);
+        if (!activity) return ws.close(CLOSE_PROTOCOL, "bad activity token");
+        const key = pushPrefix + conn.key;
+        const record = await storage.get<PushRecord>(key);
+        // Nothing to hang it on: a device registers for alerts when it joins, long before it
+        // has an activity of its own, and a phone that never did that is not one to push to.
+        if (!record) return;
+        const activities = { ...record.activities };
+        if (activity.token) activities[activity.threadRef] = { token: activity.token };
+        else delete activities[activity.threadRef];
+        await storage.put(key, { ...record, activities } satisfies PushRecord);
+        return;
+      }
+
+      // The Mac, beside a sealed frame: something of this class happened over there. The frame
+      // itself has already gone out; this is only the wake-up for whoever did not catch it.
+      case "notify": {
+        if (conn.role !== "mac") return ws.close(CLOSE_PROTOCOL, "not registered");
+        const notify = parseNotify(msg);
+        if (!notify) return ws.close(CLOSE_PROTOCOL, "bad notify");
+        return await this.wake(notify, now);
       }
 
       case "frame": {

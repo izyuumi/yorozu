@@ -4,7 +4,16 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "noEmit": true,
-    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers"]
+    "types": [
+      "@cloudflare/workers-types",
+      "@cloudflare/vitest-pool-workers"
+    ]
   },
-  "include": ["src/worker.ts", "src/protocol.ts", "src/worker.test.ts"]
+  "include": [
+    "src/worker.ts",
+    "src/protocol.ts",
+    "src/apns.ts",
+    "src/worker.test.ts",
+    "src/apns.test.ts"
+  ]
 }

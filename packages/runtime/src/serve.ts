@@ -20,7 +20,9 @@ import {
   generateSigningKeypair,
   open,
   seal,
+  notifyFor,
   signFrame,
+  threadRef,
   toBase64Url,
   type ApprovalCardData,
   type DeviceInfo,
@@ -338,10 +340,27 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const broadcast = (event: YorozuEvent): void => {
     for (const device of devices.keys()) sendTo(device, event);
     for (const send of locals.values()) send(event);
+    // Beside the sealed frame, never instead of it: a phone that is listening gets the event
+    // and never sees a push, and a phone that is not gets a wake-up carrying none of it.
+    notifyRelay(event);
   };
 
   /** Asks the relay to forget a device, so a revoked phone cannot rejoin against the nonce. */
   let revokeAtRelay: (signingPub: string) => void = () => {};
+
+  /**
+   * Tells the relay, in the clear, that something of a given class happened — so it can wake a
+   * phone whose socket is gone. Replaced per connection, a no-op while there is none.
+   */
+  let notifyRelay: (event: YorozuEvent) => void = () => {};
+
+  /**
+   * When the turn in each thread began, so a pushed Live Activity can go on counting from the
+   * right moment. Kept here rather than threaded through `runTurn` because it is derived from
+   * exactly what the notify path already sees: the first event of a turn starts the clock and
+   * the one that ends the turn stops it.
+   */
+  const turnStarted = new Map<string, number>();
 
   /** Everything the runtime sees is logged first: the nightly job reads the log back. */
   function emit(event: YorozuEvent): void {
@@ -824,6 +843,28 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const records = [...devices.values()].map(({ record }) => record);
       if (records.some(({ signingPub }) => signingPub === undefined)) return;
       ws.send(JSON.stringify({ type: "devices", devices: records.map((r) => r.signingPub) }));
+    };
+
+    notifyRelay = (event: YorozuEvent): void => {
+      // Nothing to wake: no device has ever paired through the relay, or the socket is down —
+      // in which case the frame did not go out either and there is nothing to announce.
+      if (ws.readyState !== WebSocket.OPEN || devices.size === 0) return;
+      const notify = notifyFor(event);
+      if (!notify || !event.threadId) return;
+      const started = turnStarted.get(event.threadId) ?? event.ts;
+      if (notify.status === "working") turnStarted.set(event.threadId, started);
+      else turnStarted.delete(event.threadId);
+      // The thread travels as an opaque reference and the class as one of five words. There is
+      // nothing else on this message, which is the whole of what the relay is allowed to learn.
+      ws.send(
+        JSON.stringify({
+          type: "notify",
+          class: notify.class,
+          threadRef: threadRef(event.threadId),
+          status: notify.status,
+          startedAt: started,
+        }),
+      );
     };
 
     revokeAtRelay = (signingPub: string): void => {

@@ -4,6 +4,12 @@
     "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/worker.ts"]
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/worker.ts",
+    "src/apns.ts"
+  ]
 }

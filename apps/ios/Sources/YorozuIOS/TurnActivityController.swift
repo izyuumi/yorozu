@@ -8,9 +8,13 @@ import YorozuShared
 /// chat, because the chat is already saying it. Only when the app leaves the foreground with a
 /// turn still running does an activity go up — and only for the threads that actually have one.
 ///
-/// Every update is local. ActivityKit will hand out a push token; this asks for none, so the
-/// activity moves exactly as far as the app is awake to move it. A turn that finishes while iOS
-/// has the app suspended is settled the next time the app runs, in ``foregrounded()``.
+/// Updates come from two places. While the app is running this moves the activity itself. Once
+/// iOS has suspended it, the relay pushes the same content state over APNs, which is what keeps
+/// a lock screen honest about a turn nobody is watching. The activity's own push token is
+/// registered with the relay as soon as ActivityKit issues one, and taken back when it ends.
+///
+/// Every activity is marked stale ahead of the next expected update, so a push that never lands
+/// shows "Updating…" instead of a status that quietly stopped being true.
 @MainActor
 final class TurnActivityController {
     /// The live turns, by thread, and when each began. Kept whether or not an activity is
@@ -19,14 +23,34 @@ final class TurnActivityController {
     private var status: [String: TurnStatus] = [:]
     /// The activities on screen, by thread.
     private var activities: [String: Activity<TurnAttributes>] = [:]
+    /// The tasks following each activity's push token, cancelled with the activity.
+    private var tokenWatchers: [String: Task<Void, Never>] = [:]
     /// The timers holding a finished activity on screen for its last thirty seconds, so a second
     /// `done` does not schedule a second dismissal.
     private var endings: [String: Task<Void, Never>] = [:]
     private weak var model: ChatModel?
+    /// Where push tokens go. Nil on a build with no relay behind it — the Mac app's chat, and
+    /// the screenshot harness — which is simply an activity that only ever updates locally.
+    private let relay: (any PushRegistering)?
     private var foreground = true
+    private var startTokens: Task<Void, Never>?
 
-    init(model: ChatModel) {
+    init(model: ChatModel, relay: (any PushRegistering)? = nil) {
         self.model = model
+        self.relay = relay
+        guard let relay else { return }
+        // Push-to-start, which is what lets a turn that begins while the phone is already in a
+        // pocket put something on the lock screen at all. One token per install, reissued by
+        // iOS whenever it feels like it, so this follows the stream for the app's lifetime.
+        startTokens = Task {
+            for await token in Activity<TurnAttributes>.pushToStartTokenUpdates {
+                await relay.registerPushToStart(token: hex(token))
+            }
+        }
+    }
+
+    deinit {
+        startTokens?.cancel()
     }
 
     /// Folds one event in. Called for every event the model keeps, after it has applied it.
@@ -81,10 +105,13 @@ final class TurnActivityController {
     private func update(_ thread: String) {
         guard let status = status[thread], let startedAt = started[thread] else { return }
         let content = ActivityContent(
-            state: TurnAttributes.ContentState(status: status, startedAt: startedAt),
-            // A live turn has no end to predict; a finished one is stale as soon as it is drawn,
-            // so iOS may retire it on its own if the app never wakes to do it.
-            staleDate: status.isLive ? nil : Date().addingTimeInterval(TurnStatus.lingerAfterDone)
+            state: TurnAttributes.ContentState(status: status, started: startedAt),
+            // A running turn is believed only until the next update is due, so a push that goes
+            // missing leaves the lock screen saying "Updating…" rather than something untrue. A
+            // finished one is stale as soon as it is drawn, so iOS may retire it on its own.
+            staleDate: Date().addingTimeInterval(
+                status.isLive ? TurnStatus.staleAfter : TurnStatus.lingerAfterDone
+            )
         )
         if let activity = activities[thread] {
             Task { await activity.update(content) }
@@ -93,12 +120,40 @@ final class TurnActivityController {
             // already finished would appear and vanish in the same second.
             guard !foreground, status.isLive, ActivityAuthorizationInfo().areActivitiesEnabled
             else { return }
-            let attributes = TurnAttributes(
-                threadId: thread,
-                title: model?.title(of: thread) ?? "Yorozu"
-            )
-            activities[thread] = try? Activity.request(attributes: attributes, content: content)
+            let attributes = TurnAttributes(threadId: thread)
+            guard
+                let activity = try? Activity.request(
+                    attributes: attributes,
+                    content: content,
+                    // Asking for a push token is what lets the relay move this activity once
+                    // iOS has suspended us. It is issued asynchronously, hence the stream below.
+                    pushType: .token
+                )
+            else { return }
+            activities[thread] = activity
+            watchToken(of: activity, thread: thread)
         }
+    }
+
+    /// Follows one activity's push token to the relay. ActivityKit reissues these, so it is a
+    /// stream rather than a value, and it ends when the activity does.
+    private func watchToken(of activity: Activity<TurnAttributes>, thread: String) {
+        guard let relay else { return }
+        let ref = YorozuCrypto.threadRef(thread)
+        tokenWatchers[thread]?.cancel()
+        tokenWatchers[thread] = Task {
+            for await token in activity.pushTokenUpdates {
+                await relay.registerActivity(threadRef: ref, token: hex(token))
+            }
+        }
+    }
+
+    /// Tells the relay there is nothing to push to for this thread any more, and stops watching.
+    private func releaseToken(_ thread: String) {
+        tokenWatchers.removeValue(forKey: thread)?.cancel()
+        guard let relay else { return }
+        let ref = YorozuCrypto.threadRef(thread)
+        Task { await relay.registerActivity(threadRef: ref, token: nil) }
     }
 
     /// A finished turn: no longer running, but left on the lock screen for half a minute so it
@@ -118,6 +173,7 @@ final class TurnActivityController {
         endings[thread] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(TurnStatus.lingerAfterDone))
             guard !Task.isCancelled, let self else { return }
+            self.releaseToken(thread)
             await self.activities.removeValue(forKey: thread)?.end(nil, dismissalPolicy: .immediate)
             self.endings[thread] = nil
             self.status[thread] = nil
@@ -132,8 +188,14 @@ final class TurnActivityController {
         for (thread, activity) in activities {
             // A turn still running keeps its status, so backgrounding again raises it afresh.
             status[thread] = status[thread]?.isLive == true ? status[thread] : nil
+            releaseToken(thread)
             Task { await activity.end(nil, dismissalPolicy: .immediate) }
         }
         activities.removeAll()
     }
+}
+
+/// APNs tokens are bytes; every API that takes one takes the hex of it.
+private func hex(_ token: Data) -> String {
+    token.map { String(format: "%02x", $0) }.joined()
 }

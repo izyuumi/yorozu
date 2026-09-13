@@ -8,6 +8,7 @@ import {
   createCipheriv,
   createDecipheriv,
   createPrivateKey,
+  createHash,
   createPublicKey,
   diffieHellman,
   generateKeyPairSync,
@@ -120,3 +121,14 @@ export const toBase64Url = (bytes: Uint8Array): string => Buffer.from(bytes).toS
 
 export const fromBase64Url = (text: string): Uint8Array =>
   new Uint8Array(Buffer.from(text, "base64url"));
+
+/**
+ * The opaque id a push payload names a thread by. The relay routes on it and stores it, so it
+ * must say nothing about the thread: a truncated hash of an id that is itself a random UUID,
+ * which leaves the relay with a handle it can match but not invert.
+ *
+ * Eight characters of base64url is 48 bits — far more than the handful of threads one phone
+ * has open at once needs to stay distinct, and short enough to read in a log.
+ */
+export const threadRef = (threadId: string): string =>
+  createHash("sha256").update(threadId).digest("base64url").slice(0, 8);

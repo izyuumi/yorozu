@@ -1,8 +1,14 @@
 import SwiftUI
+import UIKit
+import UserNotifications
 import YorozuShared
 
 @main
 struct YorozuApp: App {
+    /// APNs has to be answered by an app delegate — there is no SwiftUI form of the device
+    /// token callback — so the one this app has exists for that and nothing else.
+    @UIApplicationDelegateAdaptor(PushDelegate.self) private var push
+
     var body: some Scene {
         WindowGroup {
             // Screenshot only: the Live Activity's lock screen, which has no other way onto a
@@ -34,6 +40,15 @@ final class Session {
     /// Raises and retires the Live Activities for whatever is running. One per session, because
     /// it is one per model.
     private(set) var activity: TurnActivityController?
+    /// The transport, kept apart from the model so push tokens have somewhere to be registered:
+    /// the relay is the thing that holds them, because it is the thing that calls APNs.
+    private(set) var relay: RelayClient?
+    /// Why this phone cannot be woken, when it cannot. Nothing shows it yet; it is here so the
+    /// failure is recorded rather than swallowed.
+    var pushFailure: String?
+    /// The device token, kept so a re-pairing can register it with the new relay without
+    /// waiting for iOS to hand out another one — it only does that when it changes.
+    private var deviceToken: String?
 
     /// One per app, not one per `RootView` value. SwiftUI re-runs a `@State` initializer every
     /// time it rebuilds the view struct and keeps only the first result, so `Session()` inline
@@ -60,10 +75,32 @@ final class Session {
         connect(stored)
     }
 
+    /// Asks for notifications, once, at the moment they start to make sense: something is paired,
+    /// so there is now something that could need to wake you.
+    func requestNotifications() {
+        Task {
+            let granted = try? await UNUserNotificationCenter.current()
+                .requestAuthorization(options: [.alert, .sound, .badge])
+            // Registering regardless of the answer would be dishonest, and pointless: without
+            // authorization there is nothing APNs would deliver.
+            guard granted == true else { return }
+            UIApplication.shared.registerForRemoteNotifications()
+        }
+    }
+
+    /// The device token, on its way to the relay. Held too, so a later pairing can register it
+    /// without waiting on iOS to reissue one — it only does that when the token changes.
+    func registerPush(deviceToken: String) {
+        self.deviceToken = deviceToken
+        guard let relay else { return }
+        Task { await relay.registerPush(deviceToken: deviceToken) }
+    }
+
     func unpair() {
         model?.close()
         model = nil
         activity = nil
+        relay = nil
         PairingStore.clear()
         CacheStore.clear()
         // The thread titles the picker offers, and anything half-shared, belong to the pairing
@@ -87,12 +124,23 @@ final class Session {
         }
     }
 
-    /// Opens a thread by id, for a `yorozu://thread/<id>` tapped on a Live Activity. An id this
-    /// device has never heard of is ignored rather than pushed: an empty chat with no way back
-    /// to it is worse than the tap doing nothing.
+    /// Opens a thread by id, for a `yorozu://thread/<id>`. An id this device has never heard of
+    /// is ignored rather than pushed: an empty chat with no way back to it is worse than the tap
+    /// doing nothing.
     func open(threadId: String) {
         guard model?.threads.contains(where: { $0.id == threadId }) == true else { return }
         openPath = [threadId]
+    }
+
+    /// Opens a thread by the opaque reference a push carries — a tapped notification, or a Live
+    /// Activity that was started by one and so knows nothing else about its thread.
+    ///
+    /// The mapping only exists here. The relay sent a reference precisely so that it could not
+    /// do this itself, and the phone resolves it by hashing the thread ids it already holds.
+    func open(threadRef: String) {
+        let match = model?.threads.first { YorozuCrypto.threadRef($0.id) == threadRef }
+        guard let match else { return }
+        openPath = [match.id]
     }
 
     /// The few threads the share sheet's picker offers, newest first. Archived threads and the
@@ -108,19 +156,18 @@ final class Session {
 
     private func connect(_ stored: PairingStore.Stored) {
         do {
-            let model = ChatModel(
-                transport: try RelayClient(
-                    pairing: stored.pairing,
-                    identity: stored.identity,
-                    paired: stored.paired == true,
-                    onPaired: PairingStore.markPaired
-                ),
-                cache: CacheStore.open()
+            let relay = try RelayClient(
+                pairing: stored.pairing,
+                identity: stored.identity,
+                paired: stored.paired == true,
+                onPaired: PairingStore.markPaired
             )
+            self.relay = relay
+            let model = ChatModel(transport: relay, cache: CacheStore.open())
             E2EHarness.attach(to: model)
             // The harness owns `onEvent` when it is running at all, so these are added to
             // whatever is already there rather than written over it.
-            let activity = TurnActivityController(model: model)
+            let activity = TurnActivityController(model: model, relay: relay)
             let onEvent = model.onEvent
             model.onEvent = { [weak activity] event in
                 onEvent?(event)
@@ -143,6 +190,14 @@ final class Session {
             model.start()
             self.model = model
             publishThreads(model)
+            // Something is paired now, so being woken by it starts to make sense. A token this
+            // phone was already given is handed straight to the new relay; otherwise the ask is
+            // what eventually produces one.
+            if let deviceToken {
+                Task { await relay.registerPush(deviceToken: deviceToken) }
+            } else {
+                requestNotifications()
+            }
             // Land on the thread list; Yumi prefers choosing over being dropped into the latest.
             // The screenshot harness is the one exception: it opens the thread it seeded,
             // unless what it seeded is the list itself.
@@ -182,6 +237,10 @@ struct RootView: View {
                     // `yorozu://thread/<id>`, so the id is the path with its leading slash off.
                     // Decoded once, by `path`: decoding again would eat a literal `%` in an id.
                     session.open(threadId: String(url.path(percentEncoded: false).dropFirst()))
+                case "ref":
+                    // `yorozu://ref/<threadRef>` — a Live Activity or a notification being
+                    // tapped, which knows the thread only by the reference a push carried.
+                    session.open(threadRef: String(url.path(percentEncoded: false).dropFirst()))
                 case "share":
                     // The token names the file, but everything waiting is drained either way —
                     // see ``Session/drainShares()``.

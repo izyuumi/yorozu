@@ -58,6 +58,21 @@ private struct Inbound: Decodable {
     var online: Bool?
 }
 
+/// Where a phone's APNs registrations go. Relay control messages rather than sealed frames:
+/// the relay is the thing that has to hold these, because it is the thing that calls APNs.
+///
+/// A protocol so the Live Activity controller can be handed something to register with, and a
+/// test can hand it something that only records.
+public protocol PushRegistering: Sendable {
+    /// The app's own APNs device token, which alerts are addressed to.
+    func registerPush(deviceToken: String) async
+    /// ActivityKit's push-to-start token, which lets the relay raise a Live Activity on a phone
+    /// that was already in a pocket when the turn began.
+    func registerPushToStart(token: String) async
+    /// One Live Activity's own push token, by the thread it is about. Nil takes it back.
+    func registerActivity(threadRef: String, token: String?) async
+}
+
 /// Phone side of the blind relay: join a room with the one-time token from the pairing QR,
 /// announce our X25519 key in one cleartext `hello` frame, then exchange sealed
 /// ``YorozuEvent``s under the derived session key.
@@ -69,7 +84,7 @@ private struct Inbound: Decodable {
 ///
 /// Transport only — it owns no UI state, so the Mac app can reuse it for its own client half.
 /// Mirrors the sidecar in packages/runtime/src/serve.ts.
-public actor RelayClient: ChatTransport {
+public actor RelayClient: ChatTransport, PushRegistering {
     /// Spelled as nested names because this client predates ``ChatTransport`` and its callers
     /// already say `RelayClient.State`. `ownerOnline` is the relay's view of whether the room's
     /// Mac holds a live socket: frames sent while it is false are buffered and drained later.
@@ -87,6 +102,13 @@ public actor RelayClient: ChatTransport {
     private let dial: URL
     private let sessionKey: SymmetricKey
     private var updates: AsyncStream<Update>.Continuation?
+
+    /// What this device has registered for pushes, kept so every join can say it again. The
+    /// relay files these against our signing key, so repeating one replaces it rather than
+    /// adding a second — and a room that lost its storage heals on the next rejoin.
+    private var deviceToken: String?
+    private var startToken: String?
+    private var activityTokens: [String: String] = [:]
 
     private var socket: URLSessionWebSocketTask?
     /// The challenge the relay issued on this socket; a rejoin signs it.
@@ -275,6 +297,9 @@ public actor RelayClient: ChatTransport {
             // UI shows is the relay's live answer rather than anything either end remembered.
             Task { await requestOwner() }
             Task { await sayHello() }
+            // Where to wake this device, said again: this may be a room that has never heard
+            // of us — a redeployed relay, an evicted object — and there is no way to tell.
+            Task { await self.sendPush() }
         case "owner":
             updates?.yield(.ownerOnline(message.online ?? false))
         case "frame":
@@ -304,6 +329,38 @@ public actor RelayClient: ChatTransport {
             try await send(message)
         } catch {
             updates?.yield(.failed(error.localizedDescription))
+        }
+    }
+
+    public func registerPush(deviceToken: String) async {
+        self.deviceToken = deviceToken
+        await sendPush()
+    }
+
+    public func registerPushToStart(token: String) async {
+        startToken = token
+        await sendPush()
+    }
+
+    public func registerActivity(threadRef: String, token: String?) async {
+        activityTokens[threadRef] = token
+        guard joined else { return }
+        var message = ["type": "activity_token", "threadRef": threadRef]
+        if let token { message["token"] = token }
+        try? await send(message)
+    }
+
+    /// Everything this device has registered, said again.
+    ///
+    /// Held back until there is a device token: the relay files a registration under one, and
+    /// the push-to-start token can arrive from ActivityKit before APNs has answered at all.
+    private func sendPush() async {
+        guard joined, let deviceToken else { return }
+        var message = ["type": "push", "deviceToken": deviceToken]
+        if let startToken { message["startToken"] = startToken }
+        try? await send(message)
+        for (ref, token) in activityTokens {
+            try? await send(["type": "activity_token", "threadRef": ref, "token": token])
         }
     }
 

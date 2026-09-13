@@ -11,6 +11,7 @@ import {
   generateKeypair,
   open,
   seal,
+  threadRef,
   toBase64Url,
   type ApprovalCardData,
   type EventKind,
@@ -943,4 +944,98 @@ test("a second sidecar on the same state dir is the same Mac: same keys, same ro
   expect(second.qr.macPubkey).toBe(first.qr.macPubkey);
   // And the phones it had paired with are still there — the install touched no file of ours.
   expect(loadDevices(join(stateDir, "devices.json"))).toEqual([paired]);
+});
+
+test("the Mac tells the relay what class of thing happened, and nothing about it", async () => {
+  // A relay that plays enough of the protocol to pair a phone and to record the cleartext
+  // side-channel beside the sealed frames. The real relays take `notify` and say nothing back,
+  // so a double is the only place the message itself can be read.
+  const seen: Record<string, unknown>[] = [];
+  const sockets: { mac?: any; phone?: any } = {};
+  const fake = new WebSocketServer({ port: 0 });
+  fake.on("connection", (ws) => {
+    ws.send(JSON.stringify({ type: "nonce", nonce: "n" }));
+    ws.on("message", (data) => {
+      const msg = JSON.parse(data.toString()) as Record<string, unknown>;
+      switch (msg.type) {
+        case "register":
+          sockets.mac = ws;
+          return ws.send(JSON.stringify({ type: "registered", roomId: "r" }));
+        case "mint":
+          return ws.send(
+            JSON.stringify({ type: "token", token: "tok", expiresAt: Date.now() + 60_000 }),
+          );
+        case "join":
+          sockets.phone = ws;
+          return ws.send(JSON.stringify({ type: "joined", roomId: "r", ownerOnline: true }));
+        case "notify":
+          return void seen.push(msg);
+        case "frame": {
+          const other = ws === sockets.mac ? sockets.phone : sockets.mac;
+          return void other?.send(JSON.stringify(msg));
+        }
+      }
+    });
+  });
+  const port = (fake.address() as AddressInfo).port;
+
+  let qrLine!: (line: string) => void;
+  const qrPrinted = new Promise<string>((resolve) => (qrLine = resolve));
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${port}`,
+    stateDir: mkdtempSync(join(tmpdir(), "yorozu-notify-")),
+    provider: openaiCompat({
+      baseUrl: "https://example.invalid",
+      model: "m",
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => sse("the secret reply")),
+    }),
+    log: (line) => {
+      if (line.startsWith("QR ")) qrLine(line.slice(3));
+    },
+  });
+
+  const qr = decodeQrPayload(await qrPrinted);
+  const { phone, keys } = await connectPhone(port, qr.roomId!, qr.token);
+  expect(await phone.next()).toMatchObject({ type: "joined" });
+
+  const phoneKeys = generateKeypair();
+  const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
+  phone.frame(encodeBody({ t: "hello", pub: toBase64Url(phoneKeys.publicKey) }), keys);
+
+  const sent: YorozuEvent = {
+    id: "e1",
+    threadId: "thread-one",
+    ts: 1,
+    agentId: "phone",
+    kind: "message",
+    data: { role: "user", text: "the secret question" },
+  };
+  const box = seal(sessionKey, Buffer.from(JSON.stringify(sent)));
+  phone.frame(
+    encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }),
+    keys,
+  );
+
+  // The turn ends with the agent's reply, which is the one thing worth waking a phone for.
+  await vi.waitFor(() => expect(seen.map((msg) => msg.class)).toContain("reply"));
+
+  const notify = seen.find((msg) => msg.class === "reply")!;
+  expect(notify).toEqual({
+    type: "notify",
+    class: "reply",
+    threadRef: threadRef("thread-one"),
+    status: "done",
+    startedAt: expect.any(Number),
+  });
+
+  // The whole side-channel, everything the relay was ever told in the clear. Neither side of
+  // the conversation is in it, and neither is the thread it happened in.
+  const wire = JSON.stringify(seen);
+  expect(wire).not.toContain("secret");
+  expect(wire).not.toContain("thread-one");
+
+  // `close()` waits on the open sockets, and this test attached a phone to them as well.
+  phone.ws.close();
+  await sidecar.close();
+  await new Promise<void>((done) => fake.close(() => done()));
 });

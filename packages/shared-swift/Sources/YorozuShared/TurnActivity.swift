@@ -13,6 +13,13 @@ public enum TurnStatus: String, Codable, Hashable, Sendable {
     /// who felt the phone buzz, short enough not to be litter.
     public static let lingerAfterDone: TimeInterval = 30
 
+    /// How long a running turn's state is worth believing without another update.
+    ///
+    /// Past it iOS draws the activity as stale rather than as fact, which is the honest thing
+    /// to do about a push that never arrived: "Updating…" rather than a status that stopped
+    /// being true minutes ago. Mirrors `ACTIVITY_STALE_MS` in apps/relay/src/protocol.ts.
+    public static let staleAfter: TimeInterval = 120
+
     public var label: String {
         switch self {
         case .working: "Working"
@@ -66,40 +73,81 @@ public enum TurnProgress {
     }
 }
 
+/// The thread's name, for a Live Activity that was only ever told an opaque reference.
+///
+/// The app publishes the handful of thread titles the share sheet needs into the App Group
+/// container already; this reads the same file and matches on the reference, so a widget
+/// extension — which cannot open the encrypted thread cache — still has a name to draw.
+///
+/// A thread that is not in that list falls back to the app's own name. That is the honest
+/// answer: better a Live Activity that says "Yorozu" than one that has to be told its title
+/// by a relay that is not allowed to know it.
+public enum TurnTitle {
+    public static let fallback = "Yorozu"
+
+    public static func resolve(_ threadRef: String, in directory: URL?) -> String {
+        guard let directory else { return fallback }
+        let match = ShareBox.threads(in: directory)
+            .first { YorozuCrypto.threadRef($0.id) == threadRef }
+        return match.map { $0.title.isEmpty ? fallback : $0.title } ?? fallback
+    }
+
+    public static func resolve(_ threadRef: String) -> String {
+        resolve(threadRef, in: ShareBox.directory())
+    }
+}
+
 #if os(iOS)
     import ActivityKit
 
     /// The Live Activity the phone raises when it goes into your pocket with a turn running.
     /// One per thread; the thread it is about is also where tapping it goes.
     ///
-    /// Local only: every update comes from the app while it is still running, and there is no
-    /// push token here to hand anyone. A turn that finishes after iOS has suspended the app is
-    /// caught the next time the app runs, which is the honest limit of not using APNs.
+    /// Updates arrive two ways. While the app is running it moves the activity itself; once iOS
+    /// has suspended it, the relay pushes the same content state over APNs, which is what keeps
+    /// a lock screen honest about a turn nobody is watching.
+    ///
+    /// What it carries is deliberately only the opaque reference. A push that started or moved
+    /// this activity travelled through a relay that must not learn the thread, so the title is
+    /// never in the payload — it is looked up on the phone, which is the only end that can.
     public struct TurnAttributes: ActivityAttributes {
         public struct ContentState: Codable, Hashable, Sendable {
             public var status: TurnStatus
-            /// When the turn began, which the views count up from rather than being told an
-            /// elapsed time that would be stale the second after it arrived.
-            public var startedAt: Date
+            /// When the turn began, epoch milliseconds — the same clock `YorozuEvent.ts` is on.
+            ///
+            /// A number rather than a `Date` because the relay writes this field too, into an
+            /// APNs `content-state`, and epoch milliseconds is a thing both ends spell the same
+            /// way. The views count up from it rather than being handed an elapsed time that
+            /// would be stale the second after it arrived.
+            public var startedAt: Double
 
-            public init(status: TurnStatus, startedAt: Date) {
+            public init(status: TurnStatus, startedAt: Double) {
                 self.status = status
                 self.startedAt = startedAt
             }
+
+            public init(status: TurnStatus, started: Date) {
+                self.init(status: status, startedAt: started.timeIntervalSince1970 * 1000)
+            }
+
+            public var started: Date { Date(timeIntervalSince1970: startedAt / 1000) }
         }
 
-        public var threadId: String
-        /// The thread's title as the list draws it, frozen when the activity started: a thread
-        /// auto-titled mid-turn is not worth restarting an activity over.
-        public var title: String
+        /// The opaque id the push side-channel names this thread by — see
+        /// ``YorozuCrypto/threadRef(_:)``. The relay routes on it and cannot invert it.
+        public var threadRef: String
 
-        public init(threadId: String, title: String) {
-            self.threadId = threadId
-            self.title = title
+        public init(threadRef: String) {
+            self.threadRef = threadRef
         }
 
-        /// Where tapping the activity goes, which is the same link the share extension and a
-        /// pasted URL use.
-        public var deepLink: URL? { URL(string: "yorozu://thread/\(threadId)") }
+        public init(threadId: String) {
+            self.init(threadRef: YorozuCrypto.threadRef(threadId))
+        }
+
+        /// Where tapping the activity goes. By reference rather than by thread id, because an
+        /// activity started by a push knows only the reference — the app resolves it against
+        /// the threads it holds, exactly as it does for a tapped notification.
+        public var deepLink: URL? { URL(string: "yorozu://ref/\(threadRef)") }
     }
 #endif
