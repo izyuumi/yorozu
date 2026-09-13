@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { env } from "node:process";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { defaultTools, runAgent } from "./index.js";
-import { openMemory, rememberTool, type Memory } from "./memory.js";
+import { MEMORY_KINDS, openMemory, rememberTool, type Memory } from "./memory.js";
 import type { Message, Provider } from "./provider.js";
 
 let dir: string;
@@ -133,6 +133,62 @@ test("the remember tool writes through YOROZU_MEMORY_DIR", () => {
     );
     // Unknown kinds from the model are filed as plain facts.
     expect(openMemory(dir).search("Kyoto").map((f) => f.kind)).toEqual(["fact"]);
+  } finally {
+    if (previous === undefined) delete env.YOROZU_MEMORY_DIR;
+    else env.YOROZU_MEMORY_DIR = previous;
+  }
+});
+
+test("remember refuses a fact with nothing in it", () => {
+  expect(() => memory.remember("   ", "fact")).toThrow("remember: fact is empty");
+
+  const previous = env.YOROZU_MEMORY_DIR;
+  env.YOROZU_MEMORY_DIR = dir;
+  try {
+    // The same refusal through the tool: the loop turns a throw into `error: …` for the model.
+    expect(() => rememberTool.run({ fact: "  ", kind: "fact" })).toThrow("remember: fact is empty");
+    expect(() => rememberTool.run({ kind: "fact" })).toThrow("remember: fact is empty");
+  } finally {
+    if (previous === undefined) delete env.YOROZU_MEMORY_DIR;
+    else env.YOROZU_MEMORY_DIR = previous;
+  }
+});
+
+test("a fact with no ascii in it still gets a file, and reads back intact", () => {
+  const now = new Date("2026-09-12T10:00:00.000Z");
+
+  // Nothing in the body can become a slug, so the name falls back rather than being empty.
+  const japanese = memory.remember("ユーザーは京都に住んでいる", "fact", { now });
+  expect(japanese.path).toBe("2026-09-12-fact.md");
+  expect(readFileSync(join(dir, japanese.path), "utf8")).toContain("ユーザーは京都に住んでいる");
+
+  // Mixed text tokenises on the spaces, so recall still reaches it.
+  const mixed = memory.remember("user lives in 京都", "preference", { now });
+  expect(mixed.path).toBe("2026-09-12-user-lives-in.md");
+  expect(memory.search("京都")).toEqual([mixed]);
+});
+
+test("remember's schema names the fact and the kinds it will accept", () => {
+  expect(rememberTool.name).toBe("remember");
+  expect(rememberTool.parameters).toMatchObject({
+    type: "object",
+    required: ["fact", "kind"],
+    properties: { kind: { enum: [...MEMORY_KINDS] } },
+  });
+});
+
+test("remember is registered in the shared tool list, and a call by name reaches it", () => {
+  const registered = defaultTools.find((tool) => tool.name === "remember");
+  expect(registered).toBe(rememberTool);
+
+  const previous = env.YOROZU_MEMORY_DIR;
+  env.YOROZU_MEMORY_DIR = dir;
+  try {
+    expect(registered!.run({ fact: "user rides a bicycle", kind: "fact" })).toMatch(
+      /^remembered: \d{4}-\d{2}-\d{2}-user-rides-a-bicycle\.md$/,
+    );
+    // The note is on disk, so the call went all the way through to the implementation.
+    expect(memory.search("bicycle").map((f) => f.body)).toEqual(["user rides a bicycle"]);
   } finally {
     if (previous === undefined) delete env.YOROZU_MEMORY_DIR;
     else env.YOROZU_MEMORY_DIR = previous;

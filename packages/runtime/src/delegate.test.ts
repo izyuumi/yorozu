@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { env } from "node:process";
 import type { YorozuEvent } from "@yorozu/shared";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { delegateTool, type DelegateOptions } from "./delegate.js";
-import { echoTool, type Tool, type TurnContext } from "./index.js";
+import { DELEGATE_TOOL, delegateTool, type DelegateOptions } from "./delegate.js";
+import { defaultTools, echoTool, type Tool, type TurnContext } from "./index.js";
 import type { Provider, ProviderEvent, ToolDef } from "./provider.js";
 
 let dir: string;
@@ -220,4 +220,86 @@ test("a background delegation shows a progress card and moves it to done", async
   });
   // Top-level, not folded into the delegation's own card: the point of it is to be seen.
   expect(cards[1]!.parentAgentId).toBeUndefined();
+});
+
+/** A provider that cannot be reached at all, which is what a specialist failing looks like. */
+const broken = (): Provider => ({
+  auth: async () => ({ ok: true }),
+  // eslint-disable-next-line require-yield
+  async *stream() {
+    throw new Error("provider is down");
+  },
+});
+
+test("a specialist that throws closes its card on the way out", async () => {
+  const events: YorozuEvent[] = [];
+  const tool = delegateTool(options(broken(), { emit: (event) => events.push(event) }));
+
+  await expect(tool.run({ agent: "calendar", task: "x" }, CONTEXT)).rejects.toThrow(
+    "provider is down",
+  );
+  // Otherwise the phone's inline card for this delegation spins for ever.
+  expect(events.at(-1)).toMatchObject({
+    agentId: "calendar",
+    kind: "message",
+    data: { role: "agent", done: true },
+  });
+});
+
+test("a background delegation that fails moves its card to failed and reports back", async () => {
+  const events: YorozuEvent[] = [];
+  const turns: string[] = [];
+  let reported!: () => void;
+  const finished = new Promise<void>((resolve) => (reported = resolve));
+
+  const started = await delegateTool(
+    options(broken(), {
+      emit: (event) => events.push(event),
+      turn: async (_threadId, text) => {
+        turns.push(text);
+        reported();
+      },
+    }),
+  ).run({ agent: "calendar", task: "book it", background: true }, CONTEXT);
+  const id = /delegation (\S+) started/.exec(started)?.[1];
+
+  await finished;
+  // Nobody is watching, so the failure has to arrive as both a card and a turn.
+  expect(events.filter((event) => event.kind === "progress_card").at(-1)).toMatchObject({
+    id,
+    data: { steps: [{ label: "calendar", state: "failed" }], percent: 100 },
+  });
+  expect(turns).toEqual([`delegation ${id} failed: provider is down`]);
+});
+
+test("an empty task is still a delegation, not one silently dropped", async () => {
+  const { provider, systems } = scripted([text("nothing to do")]);
+
+  expect(await delegateTool(options(provider)).run({ agent: "calendar" }, CONTEXT)).toBe(
+    "nothing to do",
+  );
+  expect(systems).toHaveLength(1);
+});
+
+test("delegate names itself and the specialists the model may pick from", () => {
+  const tool = delegateTool(options(scripted([]).provider));
+
+  expect(tool.name).toBe(DELEGATE_TOOL);
+  expect(tool.parameters).toMatchObject({
+    type: "object",
+    required: ["agent", "task"],
+    // The enum is built from the agents on disk, so the model cannot invent one.
+    properties: { agent: { enum: ["calendar"] } },
+  });
+});
+
+test("delegate is built per turn, not shared, and a call by name reaches it", async () => {
+  // The CLI has no specialists to hand work to, so the shared list must not carry delegate.
+  expect(defaultTools.map((tool) => tool.name)).not.toContain(DELEGATE_TOOL);
+
+  const { provider } = scripted([text("done")]);
+  const tools = [...defaultTools, delegateTool(options(provider))];
+  const registered = tools.find((tool) => tool.name === DELEGATE_TOOL)!;
+
+  expect(await registered.run({ agent: "calendar", task: "anything" }, CONTEXT)).toBe("done");
 });
