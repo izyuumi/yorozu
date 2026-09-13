@@ -121,10 +121,8 @@ public struct ChatView: View {
                     }
                 }
             #endif
-            // iOS only: there the search field is hidden until something asks for it, and this
-            // is the thing that asks. The Mac's toolbar shows the field itself, so a magnifier
-            // beside it would be a second control for the one already on screen — ⌘F focuses
-            // it instead, through the Edit menu. See ``ChatCommands``.
+            // iOS gets an explicit reveal button. On Mac, ⌘F reveals the otherwise hidden field
+            // through the Edit menu. See ``ChatCommands``.
             #if os(iOS)
                 ToolbarItem(placement: .primaryAction) {
                     Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
@@ -134,10 +132,6 @@ public struct ChatView: View {
                 Menu("More", systemImage: "ellipsis") {
                     ExportThreadButton(title: thread.displayTitle) {
                         threadMarkdown(thread: thread, events: events)
-                    }
-                    // Nothing to choose between until the runtime has said what it has.
-                    if !model.models.isEmpty {
-                        Menu("Model", systemImage: "cpu") { modelPicker }
                     }
                 }
             }
@@ -226,6 +220,20 @@ public struct ChatView: View {
 
     private var modelBinding: Binding<String?> {
         Binding(get: { thread.model }, set: { model.setModel(thread, $0) })
+    }
+
+    @ViewBuilder private var effortPicker: some View {
+        Picker("Effort", selection: effortBinding) {
+            Text("Default").tag(ReasoningEffort?.none)
+            ForEach(ReasoningEffort.allCases) { effort in
+                Text(effort.label).tag(ReasoningEffort?.some(effort))
+            }
+        }
+        .pickerStyle(.inline)
+    }
+
+    private var effortBinding: Binding<ReasoningEffort?> {
+        Binding(get: { thread.effort }, set: { model.setEffort(thread, $0) })
     }
 
     /// What the caption under the title says, or nil for a thread on the default chain. A spec
@@ -332,7 +340,10 @@ public struct ChatView: View {
             .onChange(of: ChangeStamp(events: events)) { _, _ in
                 noteReplyStart()
                 guard atBottom else { return }
-                withAnimation { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
+                // Streaming frames arrive faster than a scroll animation can finish. Starting
+                // another animation for each one makes the viewport repeatedly retarget and
+                // visibly hitch; following the growing edge needs no transition.
+                proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
             }
             .overlay(alignment: .bottom) {
                 // Not while searching: the arrows are already moving the thread about, and a
@@ -437,6 +448,25 @@ public struct ChatView: View {
                     .padding(.trailing, 6)
                     .frame(height: controlTarget)
             }
+            HStack(spacing: 12) {
+                Menu {
+                    modelPicker
+                } label: {
+                    Label(modelCaption ?? "Model", systemImage: "cpu")
+                        .lineLimit(1)
+                }
+                .disabled(model.models.isEmpty)
+                Menu {
+                    effortPicker
+                } label: {
+                    Label(thread.effort?.label ?? "Effort", systemImage: "gauge.with.dots.needle.33percent")
+                }
+                Spacer(minLength: 0)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 7)
         }
         .background(fieldBackground, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         // While a turn runs the outline itself breathes in the accent: the field is the one
@@ -451,7 +481,6 @@ public struct ChatView: View {
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 8)
-        .composerBackground()
     }
 
     private var fieldBackground: Color {
@@ -797,9 +826,8 @@ private struct Banner: View {
 }
 
 extension View {
-    /// Search over the transcript, in the navigation bar rather than wherever the platform
-    /// would otherwise put it. The Mac has no drawer to put it in and needs no `#available`
-    /// either: it takes the default placement, which is its own toolbar.
+    /// Search over the transcript, hidden until `presented` becomes true. iOS uses its navigation
+    /// drawer; Mac uses the default toolbar placement.
     @ViewBuilder fileprivate func threadSearch(text: Binding<String>, presented: Binding<Bool>) -> some View {
         #if os(iOS)
             searchable(
@@ -811,16 +839,6 @@ extension View {
         #else
             searchable(text: text, isPresented: presented, prompt: "Find in thread")
         #endif
-    }
-
-    /// The composer floats over the thread scrolling under it. Liquid Glass where the OS has
-    /// it, and the same material bar it has always been where it does not.
-    @ViewBuilder fileprivate func composerBackground() -> some View {
-        if #available(iOS 26.0, macOS 26.0, *) {
-            background(.bar).glassEffect(.regular, in: .rect(cornerRadius: 0))
-        } else {
-            background(.bar)
-        }
     }
 
     /// Same idea for the jump-to-latest pill, which floats over the messages themselves and so

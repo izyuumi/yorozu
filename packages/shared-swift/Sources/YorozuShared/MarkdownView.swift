@@ -59,7 +59,7 @@ public struct MarkdownText: View {
 extension View {
     /// A blinking caret at the end of a streaming reply. Trailing-aligned over the trailing
     /// space the caller appended, which is the gap it is meant to sit in.
-    @ViewBuilder fileprivate func overlayCursor(_ show: Bool) -> some View {
+    @ViewBuilder func overlayCursor(_ show: Bool) -> some View {
         if show { modifier(TypingCursor()) } else { self }
     }
 }

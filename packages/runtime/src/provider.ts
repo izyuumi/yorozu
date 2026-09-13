@@ -7,6 +7,9 @@ import { execFile } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { delimiter, join } from "node:path";
 import { env } from "node:process";
+import type { ReasoningEffort } from "@yorozu/shared";
+
+export type { ReasoningEffort } from "@yorozu/shared";
 
 export interface ToolCall {
   id: string;
@@ -46,8 +49,13 @@ export type ProviderEvent =
   | { type: "tool_call"; call: ToolCall }
   | { type: "done"; reason?: string };
 
+export interface ProviderOptions {
+  /** Portable reasoning depth. Providers without a compatible control ignore it. */
+  effort?: ReasoningEffort;
+}
+
 export interface Provider {
-  stream(messages: Message[], tools: ToolDef[]): AsyncIterable<ProviderEvent>;
+  stream(messages: Message[], tools: ToolDef[], options?: ProviderOptions): AsyncIterable<ProviderEvent>;
   auth(): Promise<{ ok: boolean; reason?: string }>;
   /**
    * Whether `stream` can be handed `Message.images`. False or absent for the two CLI adapters:
@@ -231,12 +239,13 @@ export function openaiCompat(config: OpenAICompatConfig): Provider & {
       }
     },
 
-    async *stream(messages, tools) {
+    async *stream(messages, tools, options) {
       const res = await request("/chat/completions", {
         method: "POST",
         body: JSON.stringify({
           model: config.model,
           stream: true,
+          ...(options?.effort ? { reasoning_effort: options.effort } : {}),
           messages: messages.map(wireMessage),
           ...(tools.length
             ? { tools: tools.map((t) => ({ type: "function", function: t })) }

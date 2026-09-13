@@ -14,7 +14,7 @@ import type { AskFn, Rule, TaskGrants } from "./approval.js";
 import { chainFromEnv } from "./chain.js";
 import { eventPayload, runAgent, type Tool } from "./index.js";
 import { memoryDir, memoryFor } from "./memory.js";
-import type { Provider } from "./provider.js";
+import type { Provider, ReasoningEffort } from "./provider.js";
 import { currentThread } from "./threads.js";
 
 export const DELEGATE_TOOL = "delegate";
@@ -43,6 +43,8 @@ export interface DelegateOptions {
   dir?: string;
   /** Cancels this delegation with the rest of the tree. */
   signal?: AbortSignal;
+  /** Thread-level reasoning depth inherited by specialists. */
+  effort?: ReasoningEffort;
 }
 
 /** One specialist turn, seeded with `task` as its only message. Returns its final text. */
@@ -87,6 +89,7 @@ async function runSpecialist(
       ...(options.grants ? { grants: options.grants } : {}),
       ...(options.onProposal ? { onProposal: options.onProposal } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.effort ? { effort: options.effort } : {}),
     })) {
       const payload = eventPayload(event);
       if (payload) emit(payload);

@@ -67,13 +67,27 @@ struct SettingsView: View {
                         LabeledContent("Paired since", value: pairedAt.formatted(date: .abbreviated, time: .shortened))
                     }
                 }
-                Section("Approvals") {
+                Section {
+                    Toggle(
+                        "YOLO mode",
+                        isOn: Binding(
+                            get: { model.yoloMode },
+                            set: { model.setYoloMode($0) }
+                        )
+                    )
                     NavigationLink {
                         RulesListView(model: model)
                     } label: {
                         LabeledContent("Rules") {
                             Text(model.rules.isEmpty ? "None" : "\(model.rules.count)")
                         }
+                    }
+                } header: {
+                    Text("Approvals")
+                } footer: {
+                    if model.yoloMode {
+                        Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
+                            .foregroundStyle(.red)
                     }
                 }
                 Section("App") {
@@ -85,6 +99,7 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .onAppear { model.requestApprovalSettings() }
             .toolbar {
                 Button("Done") { dismiss() }
             }

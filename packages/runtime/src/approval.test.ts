@@ -540,11 +540,39 @@ test("25: the gate records the batch the card showed, so the tool can prove it",
 // ------------------------------------------------------------------------- settings on disk
 
 test("settings round-trip, and a file broken by hand falls back to the safe floor", () => {
-  saveSettings(settings({ moneyThreshold: 25, confirmIrreversibleDeletes: false }), dir);
-  expect(loadSettings(dir)).toMatchObject({ moneyThreshold: 25, confirmIrreversibleDeletes: false });
+  saveSettings(settings({ yolo: true, moneyThreshold: 25, confirmIrreversibleDeletes: false }), dir);
+  expect(loadSettings(dir)).toMatchObject({ yolo: true, moneyThreshold: 25, confirmIrreversibleDeletes: false });
 
   writeFileSync(join(dir, "approval.json"), "{ not json");
   expect(loadSettings(dir)).toEqual(DEFAULT_SETTINGS);
+});
+
+test("YOLO mode bypasses every approval rule and floor while keeping an audit row", async () => {
+  saveSettings(
+    settings({
+      yolo: true,
+      moneyThreshold: 1,
+      rules: [rule({ actionClass: "purchase", decision: "never" })],
+    }),
+    dir,
+  );
+  const ask = vi.fn(async (): Promise<AskResult> => ({ answer: "no" }));
+  const gate = await checkApproval(
+    {
+      name: "buy",
+      description: "buy",
+      parameters: {},
+      actionClass: "purchase",
+      action: () => ({ target: "shop", amount: 100 }),
+      run: async () => "ok",
+    },
+    {},
+    { ask, dir },
+  );
+
+  expect(gate.refusal).toBeNull();
+  expect(ask).not.toHaveBeenCalled();
+  expect(readLog(dir).at(-1)?.decision).toBe("yolo");
 });
 
 test("a rule from before the structured scope is read forward, not lost", () => {

@@ -37,8 +37,10 @@ import {
   cardFor,
   deleteRule,
   addRule,
+  loadSettings,
   listRules,
   narrowestRule,
+  saveSettings,
   TaskGrants,
   type Action,
   type AskResult,
@@ -67,7 +69,9 @@ import {
   markThreadRead,
   pinThread,
   renameThread,
+  setThreadEffort,
   setThreadModel,
+  threadEffort,
   threadHistory,
   threadModel,
   threadSummaries,
@@ -558,6 +562,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // provider the user has since deleted cannot be built at all — that thread falls all the
     // way back to the default chain, because an answer from the wrong model beats none.
     const spec = threadModel(threadId, dir);
+    const effort = threadEffort(threadId, dir);
     let turnProvider = provider;
     if (spec) {
       try {
@@ -601,6 +606,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           onProposal: proposeRule,
           dir: agents,
           signal: turn.signal,
+          ...(effort ? { effort } : {}),
         }),
       ];
       for await (const event of runAgent({
@@ -614,6 +620,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         grants,
         onProposal: proposeRule,
         signal: turn.signal,
+        ...(effort ? { effort } : {}),
       })) {
         if (event.type === "text") {
           // Every delta carries the whole reply, so per token it is sealed, signed and
@@ -735,6 +742,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
       case "rule_delete":
         deleteRule(event.data.ruleId, dir);
         return broadcast(ruleList());
+      case "approval_settings": {
+        const settings = loadSettings(dir);
+        const changed = typeof event.data.yolo === "boolean";
+        if (changed) saveSettings({ ...settings, yolo: event.data.yolo! }, dir);
+        const current = control({
+          kind: "approval_settings",
+          data: { yolo: changed ? event.data.yolo! : settings.yolo },
+        });
+        return changed ? broadcast(current) : reply(current);
+      }
       case "rule_proposal":
         // Emitted by the runtime, never accepted from a device: a proposal is not a decision.
         return;
@@ -768,6 +785,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return reply(modelList());
       case "thread_set_model":
         setThreadModel(event.threadId, event.data.model ?? null, dir);
+        return broadcast(threadList());
+      case "thread_set_effort":
+        setThreadEffort(event.threadId, event.data.effort ?? null, dir);
         return broadcast(threadList());
       case "device_list":
         return reply(deviceList());

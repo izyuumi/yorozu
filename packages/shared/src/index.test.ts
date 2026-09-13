@@ -66,13 +66,15 @@ test("every spec'd kind exists", () => {
     "thread_pin",
     "thread_read",
     "thread_set_model",
+    "thread_set_effort",
     "model_list",
+    "approval_settings",
     "sync_request",
     "sync_delta",
     "device_list",
     "device_remove",
   ];
-  expect(kinds).toHaveLength(18);
+  expect(kinds).toHaveLength(20);
 });
 
 test("a thread summary carries what a list row draws", () => {
@@ -135,12 +137,14 @@ test("a thread carries the model it runs on, and setting it is a spec or null", 
           archived: false,
           lastActivity: 1,
           model: "claude/claude-opus-5",
+          effort: "high",
         },
       ],
     },
   };
   if (listed.kind !== "thread_list") throw new Error("unreachable");
   expect(listed.data.threads[0]?.model).toBe("claude/claude-opus-5");
+  expect(listed.data.threads[0]?.effort).toBe("high");
 
   const set: YorozuEvent = {
     ...base,
@@ -156,6 +160,16 @@ test("a thread carries the model it runs on, and setting it is a spec or null", 
     if (back.kind !== "thread_set_model") throw new Error("unreachable");
     expect(back.data.model ?? null).toBeNull();
   }
+});
+
+test("reasoning effort and YOLO settings cross the device wire", () => {
+  const effort: YorozuEvent = { ...base, kind: "thread_set_effort", data: { effort: "medium" } };
+  const settings: YorozuEvent = { ...base, kind: "approval_settings", data: { yolo: true } };
+  if (effort.kind !== "thread_set_effort" || settings.kind !== "approval_settings") {
+    throw new Error("unreachable");
+  }
+  expect(effort.data.effort).toBe("medium");
+  expect(settings.data.yolo).toBe(true);
 });
 
 test("the model list names every spec a thread can be put on", () => {

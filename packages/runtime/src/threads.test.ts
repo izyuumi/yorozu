@@ -14,7 +14,9 @@ import {
   pinThread,
   readThreadEvents,
   renameThread,
+  setThreadEffort,
   setThreadModel,
+  threadEffort,
   threadHistory,
   threadModel,
   threadSummaries,
@@ -236,6 +238,21 @@ test("a thread's model is a spec on the thread, and the default is its absence",
   setThreadModel(thread.id, "codex/gpt-5.6", dir);
   expect(setThreadModel(thread.id, "  ", dir)).toBe(true);
   expect(threadModel(thread.id, dir)).toBeUndefined();
+});
+
+test("a thread's reasoning effort persists and can return to provider default", () => {
+  const thread = createThread("Groceries", dir);
+  expect(threadEffort(thread.id, dir)).toBeUndefined();
+
+  expect(setThreadEffort(thread.id, "high", dir)).toBe(true);
+  expect(setThreadEffort(thread.id, "high", dir)).toBe(false);
+  expect(setThreadEffort("nope", "low", dir)).toBe(false);
+  expect(threadEffort(thread.id, dir)).toBe("high");
+  expect(threadSummaries(dir)[0]!.effort).toBe("high");
+
+  expect(setThreadEffort(thread.id, null, dir)).toBe(true);
+  expect(threadEffort(thread.id, dir)).toBeUndefined();
+  expect(listThreads(dir)[0]).not.toHaveProperty("effort");
 });
 
 test("an attachment reaches a vision model as bytes and a text-only one as its name", () => {

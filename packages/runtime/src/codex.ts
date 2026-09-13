@@ -116,7 +116,11 @@ export function codexCli(config: CodexCliConfig = {}): Provider {
   /** Set only between the turn's tool call and the loop coming back with its result. */
   let paused: Session | undefined;
 
-  async function start(messages: Message[], tools: ToolDef[]): Promise<Session> {
+  async function start(
+    messages: Message[],
+    tools: ToolDef[],
+    effort?: "low" | "medium" | "high",
+  ): Promise<Session> {
     const socket = await listen();
     const configFile = join(dirname(socket.path), "bridge.json");
     await writeFile(configFile, JSON.stringify({ socket: socket.path, tools }));
@@ -144,6 +148,7 @@ export function codexCli(config: CodexCliConfig = {}): Provider {
         : {}),
     }).startThread({
       ...(config.model ? { model: config.model } : {}),
+      ...(effort ? { modelReasoningEffort: effort } : {}),
       sandboxMode: "read-only",
       skipGitRepoCheck: true,
       // Ours is the only gate: Codex asking for its own approval would have nobody to ask.
@@ -182,7 +187,7 @@ export function codexCli(config: CodexCliConfig = {}): Provider {
       }
     },
 
-    async *stream(messages, tools) {
+    async *stream(messages, tools, options) {
       let resumed = paused;
       paused = undefined;
       if (resumed) {
@@ -200,7 +205,7 @@ export function codexCli(config: CodexCliConfig = {}): Provider {
           resumed = undefined;
         }
       }
-      const session = resumed ?? (await start(messages, tools));
+      const session = resumed ?? (await start(messages, tools, options?.effort));
 
       try {
         for (;;) {

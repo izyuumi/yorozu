@@ -512,3 +512,44 @@ private func summary(
     #expect(created.dropFirst(before).map(\.payload.kind) == [.threadCreate, .threadSetModel, .message])
     #expect(created.dropFirst(before).allSatisfy { $0.threadId == draft.id })
 }
+
+@MainActor
+@Test func effortIsOptimisticAndAChoiceOnADraftPrecedesItsFirstMessage() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    let thread = ThreadSummary(id: "t1", title: "Kyoto", archived: false, lastActivity: 1)
+    await transport.yield(.event(event("l1", .threadList(ThreadListData(threads: [thread])))))
+    #expect(await eventually { model.threads == [thread] })
+
+    model.setEffort(model.threads[0], .high)
+    #expect(model.threads[0].effort == .high)
+    let picked = await sent(by: transport, atLeast: 2)
+    #expect(picked.last?.payload == .threadSetEffort(ThreadSetEffortData(effort: .high)))
+
+    let draft = model.newDraft()
+    let before = await transport.sent.count
+    model.setEffort(draft, .low)
+    #expect(model.draft?.effort == .low)
+    #expect(await transport.sent.count == before)
+    model.send("hi", in: draft.id)
+    let created = await sent(by: transport, atLeast: before + 3)
+    #expect(created.dropFirst(before).map(\.payload.kind) == [.threadCreate, .threadSetEffort, .message])
+}
+
+@MainActor
+@Test func approvalSettingsAreRequestedAndUpdatedAcrossTheWire() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    let before = await transport.sent.count
+
+    model.requestApprovalSettings()
+    var events = await sent(by: transport, atLeast: before + 1)
+    #expect(events.last?.payload == .approvalSettings(ApprovalSettingsData()))
+    await transport.yield(.event(event("s1", .approvalSettings(ApprovalSettingsData(yolo: true)))))
+    #expect(await eventually { model.yoloMode })
+
+    model.setYoloMode(false)
+    events = await sent(by: transport, atLeast: before + 2)
+    #expect(events.last?.payload == .approvalSettings(ApprovalSettingsData(yolo: false)))
+    #expect(model.yoloMode == false)
+}

@@ -309,6 +309,23 @@ test("always runs the action and is permanent: the next one needs no second card
   expect(ran(second)).toBe(true);
 });
 
+test("approval settings persist and broadcast their current value", async () => {
+  const { dir, send, eventsUntil } = await pairedPhone([]);
+
+  send({ kind: "approval_settings", data: { yolo: true } });
+  expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({
+    kind: "approval_settings",
+    data: { yolo: true },
+  });
+  expect(JSON.parse(readFileSync(join(dir, "approval.json"), "utf8"))).toMatchObject({ yolo: true });
+
+  send({ kind: "approval_settings", data: {} });
+  expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({
+    kind: "approval_settings",
+    data: { yolo: true },
+  });
+});
+
 test("17: the card the phone gets carries the structured scope and a rule to widen", async () => {
   const cmd = "echo yorozu-scope-ok";
   const { send, eventsUntil } = await pairedPhone([() => shellTurn(cmd), () => sse("Done.")]);

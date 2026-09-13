@@ -71,6 +71,7 @@ test("maps assistant text and a tool call, leaving dispatch to the loop", async 
         { role: "user", content: "echo hi" },
       ],
       [echo],
+      { effort: "medium" },
     ),
   );
 
@@ -86,6 +87,7 @@ test("maps assistant text and a tool call, leaving dispatch to the loop", async 
 
   const options = (queryMock.mock.calls[0]![0] as { options: Record<string, any> }).options;
   expect(options.model).toBe("claude-sonnet-5");
+  expect(options.effort).toBe("medium");
   expect(options.systemPrompt).toBe("sys");
   expect(options.tools).toEqual([]);
   expect(options.settingSources).toEqual([]);

@@ -49,11 +49,11 @@ export function composeProviders(
       return { ok: false, reason };
     },
 
-    async *stream(messages, tools) {
+    async *stream(messages, tools, options) {
       for (const [index, provider] of all.entries()) {
         let started = false;
         try {
-          for await (const event of provider.stream(messages, tools)) {
+          for await (const event of provider.stream(messages, tools, options)) {
             started = true;
             yield event;
           }
@@ -158,8 +158,8 @@ export function autoChain(dir?: string): Provider {
         return { ok: false, reason: e instanceof Error ? e.message : String(e) };
       }
     },
-    async *stream(messages, tools) {
-      yield* (await chain()).stream(messages, tools);
+    async *stream(messages, tools, options) {
+      yield* (await chain()).stream(messages, tools, options);
     },
     /** A chain without native search throws here, which is `web_search`'s cue to drive a browser. */
     async search(query) {
