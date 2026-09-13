@@ -2,18 +2,20 @@ import Foundation
 import SwiftUI
 import YorozuShared
 
-/// The two floor settings from onboarding, in `<state dir>/approval.json` — the same file the
-/// runtime keeps its learned rules in. Read-modify-write, because those rules are not ours to
-/// lose. See docs/spec-v1.html section 6.
+/// Approval settings in `<state dir>/approval.json` — the same file the runtime keeps its learned
+/// rules in. Read-modify-write, because those rules are not ours to lose. The Mac owns the two
+/// onboarding floors; Mac and iOS can both edit the global YOLO bypass.
 enum ApprovalSettings {
     struct Floor: Equatable {
+        /// Skip every approval gate until the user switches it off.
+        var yolo: Bool
         /// Ask about any action at or above this amount.
         var moneyThreshold: Double
         /// Ask before deleting anything outside Yorozu's own directory.
         var confirmIrreversibleDeletes: Bool
     }
 
-    static let defaults = Floor(moneyThreshold: 0, confirmIrreversibleDeletes: true)
+    static let defaults = Floor(yolo: false, moneyThreshold: 0, confirmIrreversibleDeletes: true)
 
     /// Kept in step with `stateDir()` in packages/runtime/src/memory.ts.
     static var file: URL {
@@ -33,6 +35,7 @@ enum ApprovalSettings {
     static func load() -> Floor {
         let json = stored()
         return Floor(
+            yolo: json["yolo"] as? Bool ?? defaults.yolo,
             moneyThreshold: json["moneyThreshold"] as? Double ?? defaults.moneyThreshold,
             confirmIrreversibleDeletes: json["confirmIrreversibleDeletes"] as? Bool
                 ?? defaults.confirmIrreversibleDeletes
@@ -41,6 +44,7 @@ enum ApprovalSettings {
 
     static func save(_ floor: Floor) {
         var json = stored()
+        json["yolo"] = floor.yolo
         json["moneyThreshold"] = floor.moneyThreshold
         json["confirmIrreversibleDeletes"] = floor.confirmIrreversibleDeletes
         // A file the runtime has not written yet still needs the key to be valid on its side.
@@ -57,12 +61,18 @@ enum ApprovalSettings {
     }
 }
 
-/// The onboarding step, and the one place these two settings are edited.
+/// The onboarding step and Mac editor for the two floors and global YOLO bypass.
 struct ApprovalFloorView: View {
     @State private var floor = ApprovalSettings.load()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            Toggle("YOLO mode — skip all approvals", isOn: $floor.yolo)
+            if floor.yolo {
+                Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
             HStack {
                 Text("Always ask at or above")
                 TextField(

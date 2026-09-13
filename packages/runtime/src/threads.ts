@@ -8,7 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { EventKind, ThreadSummary, YorozuEvent } from "@yorozu/shared";
+import type { EventKind, ReasoningEffort, ThreadSummary, YorozuEvent } from "@yorozu/shared";
 import { stateDir } from "./memory.js";
 import type { Message } from "./provider.js";
 
@@ -32,6 +32,8 @@ export interface ThreadRecord {
    * means the configured chain and nothing thread-specific. See `setThreadModel`.
    */
   model?: string;
+  /** Requested reasoning depth. Absent leaves the provider default in charge. */
+  effort?: ReasoningEffort;
   /**
    * When the thread was last read, on any device, epoch milliseconds. Absent means never.
    *
@@ -173,6 +175,21 @@ export function setThreadModel(id: string, spec: string | null, dir = stateDir()
   return true;
 }
 
+/** Sets one thread's reasoning depth, or clears it when effort is null. */
+export function setThreadEffort(
+  id: string,
+  effort: ReasoningEffort | null,
+  dir = stateDir(),
+): boolean {
+  const threads = listThreads(dir);
+  const thread = threads.find((candidate) => candidate.id === id);
+  if (!thread || thread.effort === (effort ?? undefined)) return false;
+  if (effort) thread.effort = effort;
+  else delete thread.effort;
+  saveThreads(threads, dir);
+  return true;
+}
+
 /**
  * Records that `id` was read up to `at`. The later of the two marks wins, so two devices
  * reporting out of order cannot walk the mark backwards. `reset` assigns `at` outright
@@ -196,6 +213,10 @@ export function markThreadRead(id: string, at: number, dir = stateDir(), reset =
 /** The spec a thread's turns lead with, or undefined for the configured chain. */
 export const threadModel = (id: string, dir = stateDir()): string | undefined =>
   listThreads(dir).find((thread) => thread.id === id)?.model;
+
+/** The reasoning depth a thread requests, or undefined for the provider default. */
+export const threadEffort = (id: string, dir = stateDir()): ReasoningEffort | undefined =>
+  listThreads(dir).find((thread) => thread.id === id)?.effort;
 
 /**
  * Sets one boolean on one thread and writes the index back, but only when the value is new:
@@ -247,6 +268,7 @@ export const threadSummaries = (dir = stateDir()): ThreadSummary[] =>
       ...(preview === undefined ? {} : { lastMessage: preview }),
       pinned: thread.pinned ?? false,
       ...(thread.model ? { model: thread.model } : {}),
+      ...(thread.effort ? { effort: thread.effort } : {}),
       // The two the dot is drawn from. Absent rather than 0 when there is nothing to say, so a
       // thread nobody has read and nobody has been answered in is not permanently bold.
       ...(thread.lastReadAt === undefined ? {} : { lastReadAt: thread.lastReadAt }),

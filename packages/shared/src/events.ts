@@ -211,6 +211,11 @@ export interface RuleDeleteData {
   ruleId: string;
 }
 
+/** Global approval config. Empty requests current state; `yolo` updates it. */
+export interface ApprovalSettingsData {
+  yolo?: boolean;
+}
+
 /**
  * A choice the agent needs made before it can carry on, raised by the `ask_user` tool. Unlike
  * an approval card this is not about permission: nothing is pending, the agent simply does not
@@ -277,6 +282,8 @@ export interface ThreadSummary {
    * configured chain, which is what nearly every thread wants — see `thread_set_model`.
    */
   model?: string;
+  /** Requested reasoning depth. Absent means the provider's own default. */
+  effort?: ReasoningEffort;
   /**
    * When the thread was last read, on any device, epoch milliseconds. The runtime owns it — see
    * `thread_read` — so reading on the phone clears the dot on the Mac too. Absent means never.
@@ -335,6 +342,13 @@ export interface ThreadReadData {
  */
 export interface ThreadSetModelData {
   model?: string | null;
+}
+
+export type ReasoningEffort = "low" | "medium" | "high";
+
+/** Sets one thread's reasoning effort. Null or absent resets to the provider default. */
+export interface ThreadSetEffortData {
+  effort?: ReasoningEffort | null;
 }
 
 /** One model a thread can be set to, named the way a picker wants to draw it. */
@@ -414,6 +428,7 @@ export type EventPayload =
   | { kind: "rule_list"; data: RuleListData }
   | { kind: "rule_update"; data: RuleUpdateData }
   | { kind: "rule_delete"; data: RuleDeleteData }
+  | { kind: "approval_settings"; data: ApprovalSettingsData }
   | { kind: "question_card"; data: QuestionCardData }
   | { kind: "question_answer"; data: QuestionAnswerData }
   | { kind: "progress_card"; data: ProgressCardData }
@@ -424,6 +439,7 @@ export type EventPayload =
   | { kind: "thread_pin"; data: ThreadPinData }
   | { kind: "thread_read"; data: ThreadReadData }
   | { kind: "thread_set_model"; data: ThreadSetModelData }
+  | { kind: "thread_set_effort"; data: ThreadSetEffortData }
   | { kind: "model_list"; data: ModelListData }
   | { kind: "interrupt"; data: InterruptData }
   | { kind: "sync_request"; data: SyncRequestData }

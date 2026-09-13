@@ -33,6 +33,8 @@ public final class ChatModel {
     public private(set) var handledProposals: Set<String> = []
     /// The stored approval rules, as the runtime last listed them. What the Rules screens draw.
     public private(set) var rules: [ApprovalRule] = []
+    /// Global bypass reported by the Mac runtime. Off until explicitly reported otherwise.
+    public private(set) var yoloMode = false
     /// What this device chose for each answered action, so the card can say so afterwards.
     public private(set) var choices: [String: ApprovalAnswerData.Answer] = [:]
     /// One composer draft per thread, so switching threads does not lose what was typed.
@@ -180,6 +182,9 @@ public final class ChatModel {
             // before the message so the first turn already runs on it.
             if let model = draft.model {
                 deliver(event(.threadSetModel(ThreadSetModelData(model: model)), in: threadId), queue: queue)
+            }
+            if let effort = draft.effort {
+                deliver(event(.threadSetEffort(ThreadSetEffortData(effort: effort)), in: threadId), queue: queue)
             }
             self.draft = nil
             synced.insert(draft, at: 0)
@@ -347,6 +352,17 @@ public final class ChatModel {
         emit(.threadSetModel(ThreadSetModelData(model: model)), in: thread.id)
     }
 
+    /// Sets how much reasoning this thread requests, or returns it to the provider default.
+    /// Drafts keep the choice locally until their first message creates them on the runtime.
+    public func setEffort(_ thread: ThreadSummary, _ effort: ReasoningEffort?) {
+        guard draft?.id != thread.id else {
+            draft?.effort = effort
+            return
+        }
+        set(thread.id) { $0.effort = effort }
+        emit(.threadSetEffort(ThreadSetEffortData(effort: effort)), in: thread.id)
+    }
+
     /// Applies a flag to the thread here and now, so the row moves under the swipe rather than a
     /// round trip later. Optimistic: the runtime's next `thread_list` is what finally decides.
     private func set(_ threadId: String, _ change: (inout ThreadSummary) -> Void) {
@@ -438,6 +454,16 @@ public final class ChatModel {
     /// Asks for the stored rules. The Rules screens send this when they appear.
     public func requestRules() {
         emit(control(.ruleList(RuleListData())))
+    }
+
+    /// Reads or changes the Mac runtime's global approval bypass.
+    public func requestApprovalSettings() {
+        emit(control(.approvalSettings(ApprovalSettingsData())))
+    }
+
+    public func setYoloMode(_ enabled: Bool) {
+        yoloMode = enabled
+        emit(control(.approvalSettings(ApprovalSettingsData(yolo: enabled))))
     }
 
     /// "Not now" on a proposal: nothing is stored either way, so this is view state only.
@@ -545,6 +571,8 @@ public final class ChatModel {
             case .ruleList(let data):
                 rules = data.rules
                 onRules?()
+            case .approvalSettings(let data):
+                if let yolo = data.yolo { yoloMode = yolo }
             default:
                 upsert(event)
             }

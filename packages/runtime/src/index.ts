@@ -174,6 +174,8 @@ export interface RunOptions {
   provider: Provider;
   system: string;
   messages: Message[];
+  /** Reasoning depth requested for every model call in this turn. */
+  effort?: import("./provider.js").ReasoningEffort;
   tools?: Tool[];
   /** When set, facts recalled for the latest user message lead the system prompt. */
   memory?: Pick<Memory, "recallForPrompt">;
@@ -229,7 +231,7 @@ export async function* runAgent(
     if (options.signal?.aborted) break;
     text = "";
     const calls: ToolCall[] = [];
-    for await (const event of options.provider.stream(history, defs)) {
+    for await (const event of options.provider.stream(history, defs, { effort: options.effort })) {
       if (options.signal?.aborted) break;
       if (event.type === "text") {
         text += event.text;

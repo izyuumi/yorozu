@@ -40,6 +40,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case ruleList = "rule_list"
         case ruleUpdate = "rule_update"
         case ruleDelete = "rule_delete"
+        case approvalSettings = "approval_settings"
         case questionCard = "question_card"
         case questionAnswer = "question_answer"
         case progressCard = "progress_card"
@@ -50,6 +51,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadPin = "thread_pin"
         case threadRead = "thread_read"
         case threadSetModel = "thread_set_model"
+        case threadSetEffort = "thread_set_effort"
         case modelList = "model_list"
         case interrupt
         case syncRequest = "sync_request"
@@ -69,6 +71,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case ruleList(RuleListData)
         case ruleUpdate(RuleUpdateData)
         case ruleDelete(RuleDeleteData)
+        case approvalSettings(ApprovalSettingsData)
         case questionCard(QuestionCardData)
         case questionAnswer(QuestionAnswerData)
         case progressCard(ProgressCardData)
@@ -79,6 +82,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadPin(ThreadPinData)
         case threadRead(ThreadReadData)
         case threadSetModel(ThreadSetModelData)
+        case threadSetEffort(ThreadSetEffortData)
         case modelList(ModelListData)
         case interrupt(InterruptData)
         case syncRequest(SyncRequestData)
@@ -98,6 +102,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .ruleList: .ruleList
             case .ruleUpdate: .ruleUpdate
             case .ruleDelete: .ruleDelete
+            case .approvalSettings: .approvalSettings
             case .questionCard: .questionCard
             case .questionAnswer: .questionAnswer
             case .progressCard: .progressCard
@@ -108,6 +113,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadPin: .threadPin
             case .threadRead: .threadRead
             case .threadSetModel: .threadSetModel
+            case .threadSetEffort: .threadSetEffort
             case .modelList: .modelList
             case .interrupt: .interrupt
             case .syncRequest: .syncRequest
@@ -140,6 +146,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .ruleList: payload = .ruleList(try c.decode(RuleListData.self, forKey: .data))
         case .ruleUpdate: payload = .ruleUpdate(try c.decode(RuleUpdateData.self, forKey: .data))
         case .ruleDelete: payload = .ruleDelete(try c.decode(RuleDeleteData.self, forKey: .data))
+        case .approvalSettings: payload = .approvalSettings(try c.decode(ApprovalSettingsData.self, forKey: .data))
         case .questionCard: payload = .questionCard(try c.decode(QuestionCardData.self, forKey: .data))
         case .questionAnswer: payload = .questionAnswer(try c.decode(QuestionAnswerData.self, forKey: .data))
         case .progressCard: payload = .progressCard(try c.decode(ProgressCardData.self, forKey: .data))
@@ -150,6 +157,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadPin: payload = .threadPin(try c.decode(ThreadPinData.self, forKey: .data))
         case .threadRead: payload = .threadRead(try c.decode(ThreadReadData.self, forKey: .data))
         case .threadSetModel: payload = .threadSetModel(try c.decode(ThreadSetModelData.self, forKey: .data))
+        case .threadSetEffort: payload = .threadSetEffort(try c.decode(ThreadSetEffortData.self, forKey: .data))
         case .modelList: payload = .modelList(try c.decode(ModelListData.self, forKey: .data))
         case .interrupt: payload = .interrupt(try c.decode(InterruptData.self, forKey: .data))
         case .syncRequest: payload = .syncRequest(try c.decode(SyncRequestData.self, forKey: .data))
@@ -178,6 +186,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .ruleList(let d): try c.encode(d, forKey: .data)
         case .ruleUpdate(let d): try c.encode(d, forKey: .data)
         case .ruleDelete(let d): try c.encode(d, forKey: .data)
+        case .approvalSettings(let d): try c.encode(d, forKey: .data)
         case .questionCard(let d): try c.encode(d, forKey: .data)
         case .questionAnswer(let d): try c.encode(d, forKey: .data)
         case .progressCard(let d): try c.encode(d, forKey: .data)
@@ -188,6 +197,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadPin(let d): try c.encode(d, forKey: .data)
         case .threadRead(let d): try c.encode(d, forKey: .data)
         case .threadSetModel(let d): try c.encode(d, forKey: .data)
+        case .threadSetEffort(let d): try c.encode(d, forKey: .data)
         case .modelList(let d): try c.encode(d, forKey: .data)
         case .interrupt(let d): try c.encode(d, forKey: .data)
         case .syncRequest(let d): try c.encode(d, forKey: .data)
@@ -472,6 +482,12 @@ public struct RuleListData: Codable, Equatable, Sendable {
     public init(rules: [ApprovalRule] = []) { self.rules = rules }
 }
 
+/// Global approval configuration. An empty payload requests current state; `yolo` updates it.
+public struct ApprovalSettingsData: Codable, Equatable, Sendable {
+    public var yolo: Bool?
+    public init(yolo: Bool? = nil) { self.yolo = yolo }
+}
+
 /// Saves a rule: a new one, or the edited form of the one with the same id.
 public struct RuleUpdateData: Codable, Equatable, Sendable {
     public var rule: ApprovalRule
@@ -570,6 +586,15 @@ public struct ThreadCreateData: Codable, Equatable, Sendable {
     public init(title: String? = nil) { self.title = title }
 }
 
+/// Portable reasoning levels supported by both subscription CLI providers. Nil on a thread
+/// leaves the provider's own default in charge.
+public enum ReasoningEffort: String, Codable, Equatable, Sendable, CaseIterable, Identifiable {
+    case low, medium, high
+
+    public var id: Self { self }
+    public var label: String { rawValue.capitalized }
+}
+
 /// Renames `threadId` from the base fields. A title the user chose: auto-titling leaves it alone.
 public struct ThreadRenameData: Codable, Equatable, Sendable {
     public var title: String
@@ -591,6 +616,8 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     /// The `<providerId>/<model>` spec this thread's turns run on. Nil — nearly always — means
     /// the Mac's configured chain, which is what the picker draws as "Default".
     public var model: String?
+    /// How much reasoning each turn requests. Nil means the provider's default.
+    public var effort: ReasoningEffort?
     /// When the thread was last read, on any device, epoch milliseconds. The runtime owns it,
     /// so reading on the phone clears the dot on the Mac too. Nil means never.
     public var lastReadAt: Double?
@@ -605,6 +632,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         lastMessage: String? = nil,
         pinned: Bool = false,
         model: String? = nil,
+        effort: ReasoningEffort? = nil,
         lastReadAt: Double? = nil,
         lastAgentAt: Double? = nil
     ) {
@@ -615,6 +643,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         self.lastMessage = lastMessage
         self.pinned = pinned
         self.model = model
+        self.effort = effort
         self.lastReadAt = lastReadAt
         self.lastAgentAt = lastAgentAt
     }
@@ -630,6 +659,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         lastMessage = try c.decodeIfPresent(String.self, forKey: .lastMessage)
         pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
         model = try c.decodeIfPresent(String.self, forKey: .model)
+        effort = try c.decodeIfPresent(ReasoningEffort.self, forKey: .effort)
         lastReadAt = try c.decodeIfPresent(Double.self, forKey: .lastReadAt)
         lastAgentAt = try c.decodeIfPresent(Double.self, forKey: .lastAgentAt)
     }
@@ -691,6 +721,12 @@ public struct ThreadReadData: Codable, Equatable, Sendable {
 public struct ThreadSetModelData: Codable, Equatable, Sendable {
     public var model: String?
     public init(model: String?) { self.model = model }
+}
+
+/// Sets one thread's reasoning effort. Nil resets it to the provider default.
+public struct ThreadSetEffortData: Codable, Equatable, Sendable {
+    public var effort: ReasoningEffort?
+    public init(effort: ReasoningEffort?) { self.effort = effort }
 }
 
 /// One model a thread can be put on, named the way a picker draws it.

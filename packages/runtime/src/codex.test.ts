@@ -48,6 +48,7 @@ test("maps an agent message and a completed turn", async () => {
         { role: "user", content: "ping" },
       ],
       [],
+      { effort: "high" },
     ),
   );
 
@@ -57,7 +58,10 @@ test("maps an agent message and a completed turn", async () => {
   ]);
   // The user's own logged-in binary, not the one the SDK bundles.
   expect(codexMock.mock.calls[0]![0]).toEqual({ codexPathOverride: "/bin/codex" });
-  expect(startThreadMock.mock.calls[0]![0]).toMatchObject({ model: "gpt-5.6" });
+  expect(startThreadMock.mock.calls[0]![0]).toMatchObject({
+    model: "gpt-5.6",
+    modelReasoningEffort: "high",
+  });
   // System prompt and transcript arrive as the one prompt the CLI takes.
   expect(runStreamedMock.mock.calls[0]![0]).toBe("sys\n\nUser: ping");
 });

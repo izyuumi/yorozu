@@ -199,6 +199,21 @@ test("auth reports why it failed", async () => {
   expect(result.reason).toContain("401");
 });
 
+test("OpenAI-compatible requests carry selected reasoning effort", async () => {
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(sse(finalTurn));
+  const provider = openaiCompat({
+    baseUrl: "https://example.invalid",
+    model: "m",
+    fetch: fetchMock,
+  });
+
+  await Array.fromAsync(provider.stream([{ role: "user", content: "think" }], [], { effort: "high" }));
+
+  expect(JSON.parse(String(fetchMock.mock.calls[0]![1]!.body))).toMatchObject({
+    reasoning_effort: "high",
+  });
+});
+
 test("images go out as content parts, and only when there are any", async () => {
   const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(sse(finalTurn));
   const provider = openaiCompat({

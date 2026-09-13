@@ -1,9 +1,10 @@
 /**
  * The approval engine. Technically unrestricted: the model decides whether it wants to act,
- * and this file decides whether it may. Three things stand in the way — the floor the user set
- * at onboarding, which no rule can override; the classes of action that always need a fresh
- * answer whatever is stored; and the rules themselves, which are the user's own standing
- * decisions rather than anything inferred. See docs/spec-v1.html section 6 and docs/spec-v1.5.md.
+ * and this file decides whether it may. When the user explicitly enables YOLO mode, it bypasses
+ * every approval gate. Otherwise three things stand in the way — the floor set at onboarding;
+ * the classes of action that always need a fresh answer; and the rules themselves, which are the
+ * user's own standing decisions rather than anything inferred. See docs/spec-v1.html section 6
+ * and docs/spec-v1.5.md.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -80,6 +81,8 @@ export type Rule = ApprovalRule;
 export type RuleField = ApprovalRuleField;
 
 export interface Settings {
+  /** Skip every approval gate while explicitly enabled by the user. */
+  yolo: boolean;
   /** Ask about any action at or above this amount. */
   moneyThreshold: number;
   /** Ask before deleting anything outside the state directory. */
@@ -148,6 +151,7 @@ export const ALWAYS_CONFIRM_OPERATIONS: readonly Operation[] = ["subscribe", "tr
 export const ALWAYS_CONFIRM_CATEGORIES = ["crypto"];
 
 export const DEFAULT_SETTINGS: Settings = {
+  yolo: false,
   moneyThreshold: 0,
   confirmIrreversibleDeletes: true,
   rules: [],
@@ -196,6 +200,7 @@ export function loadSettings(dir = stateDir()): Settings {
   try {
     const stored = JSON.parse(readFileSync(settingsFile(dir), "utf8")) as Partial<Settings>;
     return {
+      yolo: stored.yolo === true,
       moneyThreshold:
         typeof stored.moneyThreshold === "number"
           ? stored.moneyThreshold
@@ -638,6 +643,10 @@ export async function checkApproval(
   };
 
   const settings = loadSettings(dir);
+  if (settings.yolo) {
+    log("yolo");
+    return allow();
+  }
   const floored = hitsFloor(action, settings, dir);
 
   // A bounded grant is this turn's own answer to this exact scope, so it stands in for the

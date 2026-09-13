@@ -63,6 +63,7 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         case .ruleList: .ruleList(RuleListData(rules: [sampleRule]))
         case .ruleUpdate: .ruleUpdate(RuleUpdateData(rule: sampleRule))
         case .ruleDelete: .ruleDelete(RuleDeleteData(ruleId: "r1"))
+        case .approvalSettings: .approvalSettings(ApprovalSettingsData(yolo: true))
         case .questionCard:
             .questionCard(
                 QuestionCardData(
@@ -102,6 +103,7 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         case .threadPin: .threadPin(ThreadPinData(pinned: true))
         case .threadRead: .threadRead(ThreadReadData(at: 1_757_640_000_000, reset: true))
         case .threadSetModel: .threadSetModel(ThreadSetModelData(model: "claude/claude-opus-5"))
+        case .threadSetEffort: .threadSetEffort(ThreadSetEffortData(effort: .high))
         case .modelList:
             .modelList(ModelListData(models: [
                 ModelOption(id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude"),

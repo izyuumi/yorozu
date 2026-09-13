@@ -123,7 +123,7 @@ export function claudeCli(config: ClaudeCliConfig = {}): Provider {
       return trimmed;
     },
 
-    async *stream(messages, tools) {
+    async *stream(messages, tools, providerOptions) {
       const server = createSdkMcpServer({
         name: SERVER,
         tools: tools.map((tool) => ({
@@ -140,6 +140,7 @@ export function claudeCli(config: ClaudeCliConfig = {}): Provider {
         prompt: renderTranscript(messages),
         options: {
           ...(config.model ? { model: config.model } : {}),
+          ...(providerOptions?.effort ? { effort: providerOptions.effort } : {}),
           ...(system ? { systemPrompt: system } : {}),
           // None of Claude Code's own tools and none of the user's settings files:
           // this is Yorozu's loop, not a coding session.
