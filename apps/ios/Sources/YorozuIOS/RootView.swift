@@ -272,6 +272,7 @@ struct RootView: View {
                 onRead: { thread, read in
                     read ? model.markRead(thread.id) : model.markUnread(thread)
                 },
+                onReadAll: model.markAllRead,
                 onRefresh: model.refresh,
                 // Search reaches into what this phone has cached of each thread, which is the
                 // only text it can search offline and is usually the whole thread anyway.

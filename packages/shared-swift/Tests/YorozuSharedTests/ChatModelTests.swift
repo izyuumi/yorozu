@@ -121,6 +121,62 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     #expect(data.text == "pong")
 }
 
+@MainActor
+@Test func rapidStreamingDeltasAreCoalescedBeforeTheyInvalidateTheChat() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    var rendered = 0
+    model.onEvent = { event in
+        if case .message(let data) = event.payload, data.role == .agent { rendered += 1 }
+    }
+
+    for index in 0..<120 {
+        await transport.yield(.event(event(
+            "stream",
+            .message(MessageData(role: .agent, text: String(repeating: "word ", count: index + 1)))
+        )))
+    }
+
+    #expect(await eventually {
+        guard case .message(let data) = model.events["home"]?.last?.payload else { return false }
+        return data.text == String(repeating: "word ", count: 120)
+    })
+    #expect(rendered <= 3)
+
+    await transport.yield(.event(event(
+        "stream",
+        .message(MessageData(role: .agent, text: "finished", done: true))
+    )))
+    #expect(await eventually {
+        guard case .message(let data) = model.events["home"]?.last?.payload else { return false }
+        return data.text == "finished" && data.done == true
+    })
+    try? await Task.sleep(for: .milliseconds(80))
+    guard case .message(let final) = model.events["home"]?.last?.payload else {
+        Issue.record("missing final streamed message")
+        return
+    }
+    #expect(final.text == "finished")
+}
+
+@MainActor
+@Test func anEventAfterStreamedTextKeepsItsWireOrder() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+
+    await transport.yield(.event(event(
+        "stream",
+        .message(MessageData(role: .agent, text: "I checked"))
+    )))
+    await transport.yield(.event(event(
+        "call",
+        .toolCall(ToolCallData(callId: "call", name: "echo", args: [:]))
+    )))
+
+    #expect(await eventually { model.events["home"]?.count == 2 })
+    #expect(model.events["home"]?.map(\.id) == ["stream", "call"])
+}
+
 /// The dot comes from the runtime's two timestamps and nothing else. In particular a reply that
 /// arrived while this device was suspended, and was read on the other one, is not unread here —
 /// which is what the per-device set got wrong.
@@ -166,6 +222,11 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     #expect(await eventually { model.events["read"]?.count == 1 })
     #expect(model.unreadCount == 1)
     #expect(model.threads.first { $0.id == "read" }?.isUnread == false)
+
+    model.markAllRead()
+    #expect(model.unreadCount == 0)
+    let reads = await sent(by: transport, atLeast: 2).filter { $0.payload.kind == .threadRead }
+    #expect(reads.map(\.threadId) == ["unread"])
 }
 
 /// "Genuinely reading" is both halves at once: the thread is on screen *and* the app is in

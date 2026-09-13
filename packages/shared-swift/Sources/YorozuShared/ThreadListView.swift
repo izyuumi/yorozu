@@ -296,6 +296,7 @@ public struct ThreadListView<Destination: View>: View {
     private let onPin: (ThreadSummary, Bool) -> Void
     /// Marks a thread read, or back to unread. The runtime is the one that decides either way.
     private let onRead: (ThreadSummary, Bool) -> Void
+    private let onReadAll: (() -> Void)?
     private let onRefresh: (() async -> Void)?
     private let messageText: (String) -> String
     private let exportMarkdown: ((ThreadSummary) -> String)?
@@ -304,6 +305,7 @@ public struct ThreadListView<Destination: View>: View {
 
     @State private var renaming: ThreadSummary?
     @State private var query = ""
+    @State private var searching = false
     /// The archive opens closed: it is where threads go to stop being in the way.
     @State private var showArchived = false
 
@@ -316,6 +318,7 @@ public struct ThreadListView<Destination: View>: View {
         onArchive: @escaping (ThreadSummary, Bool) -> Void,
         onPin: @escaping (ThreadSummary, Bool) -> Void = { _, _ in },
         onRead: @escaping (ThreadSummary, Bool) -> Void = { _, _ in },
+        onReadAll: (() -> Void)? = nil,
         onRefresh: (() async -> Void)? = nil,
         messageText: @escaping (String) -> String = { _ in "" },
         exportMarkdown: ((ThreadSummary) -> String)? = nil,
@@ -330,6 +333,7 @@ public struct ThreadListView<Destination: View>: View {
         self.onArchive = onArchive
         self.onPin = onPin
         self.onRead = onRead
+        self.onReadAll = onReadAll
         self.onRefresh = onRefresh
         self.messageText = messageText
         self.exportMarkdown = exportMarkdown
@@ -360,7 +364,7 @@ public struct ThreadListView<Destination: View>: View {
             }
             .animation(.default, value: threads)
             .overlay { empty(groups) }
-            .searchable(text: $query, prompt: "Search threads")
+            .searchable(text: $query, isPresented: $searching, prompt: "Search threads")
             .refreshable { await onRefresh?() }
             .navigationTitle("Threads")
             .toolbar {
@@ -374,6 +378,16 @@ public struct ThreadListView<Destination: View>: View {
                         Button("Settings", systemImage: "gear", action: onSettings)
                     }
                 }
+                #if os(iOS)
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("Search threads", systemImage: "magnifyingglass") { searching = true }
+                    }
+                    if threads.contains(where: \.isUnread), let onReadAll {
+                        ToolbarItem(placement: .primaryAction) {
+                            Button("Mark all as read", systemImage: "envelope.open", action: onReadAll)
+                        }
+                    }
+                #endif
                 // Beside the search field at the bottom on 26, where the system draws it as
                 // its own glass circle; a floating overlay would sit on top of that field.
                 #if os(iOS)
@@ -422,6 +436,10 @@ public struct ThreadListView<Destination: View>: View {
                     Button("Unarchive", systemImage: "tray.and.arrow.up") { onArchive(thread, false) }
                         .tint(.blue)
                 } else {
+                    if thread.isUnread {
+                        Button("Mark as read", systemImage: "envelope.open") { onRead(thread, true) }
+                            .tint(.blue)
+                    }
                     Button(
                         thread.pinned ? "Unpin" : "Pin",
                         systemImage: thread.pinned ? "pin.slash" : "pin"
