@@ -547,17 +547,13 @@ async function macSettled(mac: Client): Promise<void> {
 }
 
 /** A mac, a phone that has registered for pushes, and the room they share. */
-async function paired(startToken?: string) {
+async function paired() {
   const macKeys = await keypair();
   const room = await roomId(macKeys.pub);
   const mac = await connectMac(macKeys);
   const { phone, keys } = await connectPhone(room, await mintToken(mac));
   await phone.next(); // joined
-  phone.send({
-    type: "push",
-    deviceToken: "device-token",
-    ...(startToken ? { startToken } : {}),
-  });
+  phone.send({ type: "push", deviceToken: "device-token" });
   await settled(phone);
   return { mac, macKeys, phone, keys, room };
 }
@@ -569,30 +565,15 @@ const record = async (room: string, pubkey: string): Promise<any> => {
   );
 };
 
-test("a phone registers where it can be woken, and revoking it takes the tokens with it", async () => {
-  const { mac, phone, keys, room } = await paired("start-token");
-  phone.send({ type: "activity_token", threadRef: "Ab3-_x9Z", token: "activity-token" });
-  await settled(phone);
+test("a phone registers where it can be woken, and revoking it takes the token with it", async () => {
+  const { mac, phone, keys, room } = await paired();
 
-  expect(await record(room, keys.pub)).toMatchObject({
-    deviceToken: "device-token",
-    startToken: "start-token",
-    activities: { "Ab3-_x9Z": { token: "activity-token" } },
-  });
+  expect(await record(room, keys.pub)).toEqual({ deviceToken: "device-token" });
 
-  // Re-registering the device token is what a phone does on every launch; it must not take
-  // down the activity registrations it already made.
+  // Re-registering is what a phone does on every launch, and the newest token wins.
   phone.send({ type: "push", deviceToken: "device-token-2" });
   await settled(phone);
-  expect(await record(room, keys.pub)).toMatchObject({
-    deviceToken: "device-token-2",
-    activities: { "Ab3-_x9Z": { token: "activity-token" } },
-  });
-
-  // A phone takes an activity's registration back by sending no token with it.
-  phone.send({ type: "activity_token", threadRef: "Ab3-_x9Z" });
-  await settled(phone);
-  expect((await record(room, keys.pub)).activities).toEqual({});
+  expect(await record(room, keys.pub)).toEqual({ deviceToken: "device-token-2" });
 
   // And the whole registration goes when the Mac unpairs the device: a revoked phone is not
   // woken again, which is the entire point of revoking it.
@@ -626,14 +607,14 @@ test("a phone holding a live socket is never pushed to", async () => {
   const { mac, phone } = await paired();
 
   // It has the sealed frame already: it is joined, and the app is running to have joined.
-  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z", status: "done" });
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
   await macSettled(mac);
   expect(calls).toHaveLength(0);
 
   // With the socket gone there is nobody watching, and the same notify does wake it: the alert
   // for the person, and the silent push that sends the app to catch up behind it.
   phone.ws.close();
-  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z", status: "done" });
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
   await macSettled(mac);
   expect(calls).toHaveLength(2);
   expect(calls.map((call) => call.headers.get("apns-push-type"))).toEqual(["alert", "background"]);
@@ -682,74 +663,6 @@ test("a wake-up carries a class and an opaque reference, and nothing of the conv
   mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
   await macSettled(mac);
   expect(calls[1]!.headers.get("authorization")).toBe(auth);
-});
-
-test("a live activity is pushed on a change of status and not on a repeat of it", async () => {
-  const calls = fakeApns();
-  const { mac, phone, keys, room } = await paired();
-  phone.send({ type: "activity_token", threadRef: "Ab3-_x9Z", token: "activity-token" });
-  await settled(phone);
-  phone.ws.close();
-
-  // A turn's every tool call is the same word on the lock screen; the first one sends it.
-  for (let i = 0; i < 3; i++) {
-    mac.send({
-      type: "notify",
-      class: "activity",
-      threadRef: "Ab3-_x9Z",
-      status: "working",
-      startedAt: 1000,
-    });
-    await macSettled(mac);
-  }
-  expect(calls).toHaveLength(1);
-  expect(calls[0]!.url).toBe("https://apns.test/3/device/activity-token");
-  expect(calls[0]!.headers.get("apns-topic")).toBe("to.yumi.yorozu.ios.push-type.liveactivity");
-  expect(calls[0]!.headers.get("apns-push-type")).toBe("liveactivity");
-  expect(calls[0]!.body.aps["content-state"]).toEqual({ status: "working", startedAt: 1000 });
-  // An activity update is not an alert: there is no `alert` in it to show anybody.
-  expect(calls[0]!.body.aps.alert).toBeUndefined();
-  expect(await record(room, keys.pub)).toMatchObject({
-    activities: { "Ab3-_x9Z": { status: "working" } },
-  });
-
-  // A real change does go out.
-  mac.send({ type: "notify", class: "approval", threadRef: "Ab3-_x9Z", status: "needsApproval" });
-  await macSettled(mac);
-  // The alert for a person, and the activity update for the lock screen it is already on.
-  expect(calls).toHaveLength(3);
-  expect(calls[1]!.headers.get("apns-push-type")).toBe("alert");
-  expect(calls[2]!.body.aps["content-state"].status).toBe("needsApproval");
-});
-
-test("a turn that begins while the phone is away starts an activity from a push", async () => {
-  const calls = fakeApns();
-  const { mac, phone, keys, room } = await paired("start-token");
-  phone.ws.close();
-
-  mac.send({
-    type: "notify",
-    class: "activity",
-    threadRef: "Ab3-_x9Z",
-    status: "working",
-    startedAt: 1000,
-  });
-  await macSettled(mac);
-
-  expect(calls).toHaveLength(1);
-  expect(calls[0]!.url).toBe("https://apns.test/3/device/start-token");
-  expect(calls[0]!.body.aps.event).toBe("start");
-  // The attributes are the reference and nothing else: the phone finds the title itself.
-  expect(calls[0]!.body.aps.attributes).toEqual({ threadRef: "Ab3-_x9Z" });
-  expect(calls[0]!.body.aps["attributes-type"]).toBe("TurnAttributes");
-
-  // Recorded, so a second working event does not raise a second activity.
-  expect(await record(room, keys.pub)).toMatchObject({
-    activities: { "Ab3-_x9Z": { status: "working" } },
-  });
-  mac.send({ type: "notify", class: "activity", threadRef: "Ab3-_x9Z", status: "working" });
-  await macSettled(mac);
-  expect(calls).toHaveLength(1);
 });
 
 test("a device token Apple no longer knows is forgotten rather than retried", async () => {

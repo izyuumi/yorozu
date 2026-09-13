@@ -318,7 +318,6 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
         // and a self-hosted room simply has no notifications. The roles are still enforced, so
         // the two relays refuse the same things.
         case "push":
-        case "activity_token":
           if (conn.role !== "phone") return ws.close(CLOSE_PROTOCOL, "not joined");
           return;
 

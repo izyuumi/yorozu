@@ -78,21 +78,21 @@ export async function authToken(env: ApnsEnv, now: number = Date.now()): Promise
 }
 
 export interface ApnsRequest {
-  /** The device token, or a Live Activity's own push token. */
+  /** The device token every alert for that phone is addressed to. */
   token: string;
   payload: unknown;
   /**
-   * `alert` for a notification, `liveactivity` for an activity update, `background` for the
-   * silent wake-up that has nothing to show and only sends the app to ask for itself.
+   * `alert` for a notification, `background` for the silent wake-up that has nothing to show
+   * and only sends the app to ask for itself.
    */
-  pushType: "alert" | "liveactivity" | "background";
+  pushType: "alert" | "background";
   /** 10 for something a person should see now, 5 for a background nudge. */
   priority?: number;
 }
 
 /**
- * Sends one push and reports the status. A token Apple no longer knows — the app was deleted,
- * or the activity has ended — comes back 410 or 400, which is the caller's cue to forget it.
+ * Sends one push and reports the status. A token Apple no longer knows — the app was deleted
+ * or reinstalled — comes back 410 or 400, which is the caller's cue to forget it.
  */
 export async function send(
   env: ApnsEnv,
@@ -100,13 +100,11 @@ export async function send(
   now: number = Date.now(),
 ): Promise<number> {
   const host = env.APNS_HOST ?? DEFAULT_HOST;
-  const topic = env.APNS_TOPIC ?? DEFAULT_TOPIC;
   const response = await fetch(`https://${host}/3/device/${request.token}`, {
     method: "POST",
     headers: {
       authorization: `bearer ${await authToken(env, now)}`,
-      // A Live Activity is addressed to a topic of its own; the app's own topic is the alert's.
-      "apns-topic": request.pushType === "liveactivity" ? `${topic}.push-type.liveactivity` : topic,
+      "apns-topic": env.APNS_TOPIC ?? DEFAULT_TOPIC,
       "apns-push-type": request.pushType,
       "apns-priority": String(request.priority ?? 10),
       "content-type": "application/json",
