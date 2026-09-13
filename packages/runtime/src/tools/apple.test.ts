@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "node:process";
 import { afterEach, beforeEach, expect, test } from "vitest";
+import { forgetApprovals, recordApproval } from "../approval.js";
+import { defaultTools, type Tool } from "../index.js";
 import {
+  appleTools,
   calendarCreateTool,
   calendarDeleteTool,
   calendarEventsTool,
@@ -12,6 +15,7 @@ import {
   mailReadTool,
   mailSendTool,
   mailUnreadTool,
+  recipientList,
   remindersCompleteTool,
   remindersCreateTool,
   remindersListTool,
@@ -55,6 +59,12 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   if (cmd.startsWith("mail.") && process.env.FAKE_MODE === "denied") {
     return send({ error: DENIED }, request);
   }
+  if (process.env.FAKE_MODE === "empty") {
+    return send(
+      { calendars: [], reminders: [], messages: [], events: [], from: "now", to: "later" },
+      request,
+    );
+  }
   switch (cmd) {
     case "calendar.list":
       return send(
@@ -80,6 +90,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         request,
       );
     case "calendar.update":
+      if (request.id === "gone") return send({ error: "no event with id gone" }, request);
       return send(
         { event: { id: request.id, allDay: false, calendar: "Work",
                    title: request.title ?? "Standup",
@@ -113,6 +124,13 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       );
     }
     case "mail.read":
+      if (request.id === "big") {
+        return send(
+          { message: { id: "big", sender: "a@example.com", subject: "Log",
+                       date: "Saturday 12 September 2026 at 09:00", body: "x".repeat(30000) } },
+          request,
+        );
+      }
       if (request.id !== "42") {
         return send({ error: "no message with id " + request.id + " in the inbox" }, request);
       }
@@ -270,4 +288,134 @@ test("a required argument the model omitted fails before the helper is asked", a
   await expect(Promise.resolve(mailSendTool.run({ subject: "s", body: "b" }))).rejects.toThrow(
     "to is required",
   );
+});
+
+test("each list says plainly when there is nothing in it", async () => {
+  env.YOROZU_NATIVE_CMD = `FAKE_MODE=empty node ${helper}`;
+
+  expect(await calendarListTool.run({})).toBe("no calendars");
+  expect(await remindersListTool.run({})).toBe("no open reminders");
+  expect(await mailUnreadTool.run({})).toBe("no unread mail");
+  expect(await calendarEventsTool.run({})).toBe("no events between now and later");
+});
+
+/** One tool result has a ceiling; a long mail has to lose its tail rather than the whole call. */
+test("a message too big for one tool result is cut, and says by how much", async () => {
+  const out = await mailReadTool.run({ id: "big" });
+
+  expect(out.startsWith("Saturday 12 September 2026 at 09:00 | a@example.com | Log | id=big")).toBe(
+    true,
+  );
+  expect(out).toMatch(/\n… truncated, \d+ more characters$/);
+  expect(out.length).toBeLessThan(30_000);
+});
+
+test("an event the helper cannot find is an error the model can act on", async () => {
+  await expect(Promise.resolve(calendarUpdateTool.run({ id: "gone", title: "x" }))).rejects.toThrow(
+    "no event with id gone",
+  );
+});
+
+test("a title with no ascii in it crosses the pipe unchanged", async () => {
+  expect(await remindersCreateTool.run({ title: "ゴミ出し 🗑", list: "家" })).toBe(
+    "created no due date ゴミ出し 🗑 [家] id=r9",
+  );
+  expect(
+    await calendarCreateTool.run({
+      title: "花見 🌸",
+      start: "2026-04-01T12:00:00Z",
+      end: "2026-04-01T14:00:00Z",
+      calendar: "予定",
+    }),
+  ).toBe("created 2026-04-01T12:00:00Z → 2026-04-01T14:00:00Z 花見 🌸 [予定] id=ev9");
+});
+
+// MARK: the one tool that leaves the Mac
+
+test("mail_send fills in the card the approval engine will show", () => {
+  expect(mailSendTool.actionClass).toBe("send-message");
+  expect(
+    mailSendTool.action!({ to: "a@example.com", subject: "Lunch", body: "Are you free?" }),
+  ).toMatchObject({
+    target: "a@example.com",
+    operation: "send",
+    recipient: "a@example.com",
+    contentSummary: "Lunch\n\nAre you free?",
+  });
+
+  // One recipient is already named on the card; two or more is the list the decision covers.
+  expect(mailSendTool.batch!({ to: "a@example.com", subject: "Lunch" })).toEqual([]);
+  expect(mailSendTool.batch!({ to: "a@example.com, b@example.com", subject: "Lunch" })).toEqual([
+    { label: "a@example.com", detail: "Lunch" },
+    { label: "b@example.com", detail: "Lunch" },
+  ]);
+  expect(recipientList("a@example.com, , b@example.com ,")).toEqual([
+    "a@example.com",
+    "b@example.com",
+  ]);
+});
+
+test("mail_send will not spend an approval on a different recipient", async () => {
+  forgetApprovals();
+  recordApproval("act-1", {
+    actionClass: "send-message",
+    target: "a@example.com",
+    recipient: "a@example.com",
+    items: mailSendTool.batch!({ to: "a@example.com", subject: "Lunch" }),
+  });
+  const context = { threadId: "home", agentId: "main", actionId: "act-1" };
+
+  // Exactly the mail the card was answered for goes out.
+  expect(
+    await mailSendTool.run({ to: "a@example.com", subject: "Lunch", body: "?" }, context),
+  ).toBe("sent to a@example.com");
+
+  // Recipient swapped underneath it: the approval does not cover this, so nothing is sent.
+  const refused = await mailSendTool.run(
+    { to: "mallory@example.com", subject: "Lunch", body: "?" },
+    context,
+  );
+  expect(refused).toMatch(/^not allowed: /);
+  expect(refused).toContain("recipient is now mallory@example.com");
+
+  forgetApprovals();
+});
+
+// MARK: schema and registry
+
+/** Every apple tool, the name the model calls it by, and what it cannot work without. */
+const APPLE_SCHEMAS: [Tool, string, string[]][] = [
+  [calendarListTool, "calendar_list", []],
+  [calendarEventsTool, "calendar_events", []],
+  [calendarCreateTool, "calendar_create", ["title", "start", "end"]],
+  [calendarUpdateTool, "calendar_update", ["id"]],
+  [calendarDeleteTool, "calendar_delete", ["id"]],
+  [remindersListTool, "reminders_list", []],
+  [remindersCreateTool, "reminders_create", ["title"]],
+  [remindersCompleteTool, "reminders_complete", ["id"]],
+  [mailUnreadTool, "mail_unread", []],
+  [mailReadTool, "mail_read", ["id"]],
+  [mailSendTool, "mail_send", ["to", "subject", "body"]],
+];
+
+test("every apple tool declares its own name and the fields it cannot work without", () => {
+  for (const [tool, name, required] of APPLE_SCHEMAS) {
+    expect(tool.name).toBe(name);
+    expect(tool.parameters).toMatchObject({ type: "object", required });
+
+    // Every required field is one the schema actually describes to the model.
+    const { properties } = tool.parameters as { properties: Record<string, unknown> };
+    for (const field of required) expect(properties[field]).toBeDefined();
+  }
+});
+
+test("every apple tool is registered in the shared tool list, and a call by name reaches it", async () => {
+  expect(appleTools).toEqual(APPLE_SCHEMAS.map(([tool]) => tool));
+  for (const [tool, name] of APPLE_SCHEMAS) {
+    expect(defaultTools.find((candidate) => candidate.name === name)).toBe(tool);
+  }
+
+  // Routed by name, over the pipe, to the answer the helper gave.
+  const registered = defaultTools.find((tool) => tool.name === "calendar_list")!;
+  expect(await registered.run({})).toContain("Work id=c1");
 });

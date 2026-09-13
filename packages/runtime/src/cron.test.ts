@@ -68,6 +68,22 @@ test.each([
   expect(() => parseCron(expression)).toThrow(reason);
 });
 
+test("surrounding and repeated whitespace is not part of the expression", () => {
+  expect(matchesCron("  0   3 * * *  ", at("2026-09-12T03:00:00"))).toBe(true);
+  expect(matchesCron("0\t3 * * *", at("2026-09-12T03:00:00"))).toBe(true);
+});
+
+test("both ends of every field are inside the bounds", () => {
+  expect(matchesCron("0 0 1 1 *", at("2026-01-01T00:00:00"))).toBe(true);
+  expect(matchesCron("59 23 31 12 *", at("2026-12-31T23:59:00"))).toBe(true);
+});
+
+/** 29 February parses in any year; it simply never matches in one that does not have it. */
+test("a date that only exists in leap years still parses and matches", () => {
+  expect(matchesCron("0 0 29 2 *", at("2028-02-29T00:00:00"))).toBe(true);
+  expect(matchesCron("0 0 29 2 *", at("2026-03-01T00:00:00"))).toBe(false);
+});
+
 test("parsing once and reusing the result matches the same instants", () => {
   const cron = parseCron("*/30 9-17 * * 1-5");
   expect(matchesCron(cron, at("2026-09-14T09:30:00"))).toBe(true);

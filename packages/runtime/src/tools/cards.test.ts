@@ -1,10 +1,13 @@
 import type { QuestionCardData } from "@yorozu/shared";
 import { expect, test } from "vitest";
+import { defaultTools } from "../index.js";
 import {
+  ASK_USER_TOOL,
   askUserTool,
   NO_ANSWER,
   progressCard,
   questionDesk,
+  REPORT_PROGRESS_TOOL,
   reportProgressTool,
 } from "./cards.js";
 
@@ -113,4 +116,86 @@ test("a progress card from the model is normalised before anyone tries to draw i
   // A job that cannot say how far along it is says nothing, rather than claiming zero.
   expect(progressCard({ cardId: "job-2", title: "Thinking", steps: [] }).percent).toBeUndefined();
   expect(progressCard({ cardId: "job-2", title: "Thinking", steps: [], percent: -5 }).percent).toBe(0);
+});
+
+test("options the model got wrong are cleaned up before the card is drawn", () => {
+  const { raised, tool } = desk();
+
+  void tool.run({ question: "Which?", options: ["keep", "", 7, null, "also keep"] });
+  // A blank is not a button anyone could read; anything else becomes its own text.
+  expect(raised[0].options).toEqual(["keep", "7", "null", "also keep"]);
+
+  // Options that are not a list at all are no options: `allowOther` is what makes it answerable.
+  void tool.run({ question: "Say anything", options: "surprise me", allowOther: true });
+  expect(raised[1]).toMatchObject({ question: "Say anything", options: [], allowOther: true });
+});
+
+test("an answer arriving after the question expired is dropped, not thrown", async () => {
+  const { raised, questions, tool } = desk(10);
+  expect(await tool.run({ question: "Which?", options: ["a"] })).toBe(NO_ANSWER);
+
+  // The card is still on the user's screen: tapping it now must not throw or resolve twice.
+  questions.answer(raised[0].questionId, "a");
+  questions.cancelAll();
+});
+
+test("report_progress counts only the steps actually finished", () => {
+  const shown: ReturnType<typeof progressCard>[] = [];
+  const tool = reportProgressTool((card) => shown.push(card));
+
+  expect(
+    tool.run({
+      cardId: "job-1",
+      title: "Tidying 🧹",
+      steps: [
+        { label: "one", state: "done" },
+        { label: "two", state: "failed" },
+        { label: "three", state: "running" },
+      ],
+    }),
+  ).toBe('showed "Tidying 🧹" (1/3 steps done)');
+
+  // Steps that are not a list are no steps, rather than a card nobody can draw.
+  expect(tool.run({ cardId: "job-1", title: "Empty", steps: "soon" })).toBe(
+    'showed "Empty" (0/0 steps done)',
+  );
+  expect(shown[1]!.steps).toEqual([]);
+});
+
+test("both card tools name themselves and what they cannot work without", () => {
+  const ask = askUserTool(async () => "x");
+  const report = reportProgressTool(() => {});
+
+  expect(ask.name).toBe(ASK_USER_TOOL);
+  expect(report.name).toBe(REPORT_PROGRESS_TOOL);
+  expect(ask.parameters).toMatchObject({ type: "object", required: ["question", "options"] });
+  expect(report.parameters).toMatchObject({
+    type: "object",
+    required: ["cardId", "title", "steps"],
+  });
+});
+
+test("the card tools are built per turn, not shared, and a call by name reaches them", async () => {
+  // Both draw on a paired device, so the list the CLI shares must not carry them.
+  const shared = defaultTools.map((tool) => tool.name);
+  expect(shared).not.toContain(ASK_USER_TOOL);
+  expect(shared).not.toContain(REPORT_PROGRESS_TOOL);
+
+  // A turn's registry is that shared list plus these two, as serve.ts builds it.
+  const { raised, questions } = desk();
+  const shown: ReturnType<typeof progressCard>[] = [];
+  const tools = [
+    ...defaultTools,
+    askUserTool(questions.ask),
+    reportProgressTool((card) => shown.push(card)),
+  ];
+
+  const progress = tools.find((tool) => tool.name === REPORT_PROGRESS_TOOL)!;
+  expect(progress.run({ cardId: "job-1", title: "Going", steps: [] })).toMatch(/^showed "Going"/);
+  expect(shown).toHaveLength(1);
+
+  const question = tools.find((tool) => tool.name === ASK_USER_TOOL)!;
+  const call = question.run({ question: "Which?", options: ["a"] });
+  questions.answer(raised[0].questionId, "a");
+  expect(await call).toBe("a");
 });

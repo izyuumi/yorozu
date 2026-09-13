@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
-import { describeEvent, eventPayload, runAgent, type Tool } from "./index.js";
+import { defaultTools, describeEvent, echoTool, eventPayload, runAgent, type Tool } from "./index.js";
 import { openaiCompat } from "./provider.js";
 
 test("describes an event", () => {
@@ -317,4 +317,122 @@ test("30: a call waiting on approval does not hold up the independent call besid
   ).toEqual(["gated", "free"]);
 
   vi.unstubAllEnvs();
+});
+
+// MARK: echo
+
+test("echo hands back the text it was given, unchanged", () => {
+  expect(echoTool.run({ text: "hi" })).toBe("hi");
+  // Unicode and line breaks cross the tool boundary character for character.
+  expect(echoTool.run({ text: "こんにちは 🐈\nsecond line" })).toBe("こんにちは 🐈\nsecond line");
+});
+
+test("echo has nothing to say when the model gave it nothing", () => {
+  for (const args of [{}, { text: "" }, { text: null }, { text: undefined }]) {
+    expect(echoTool.run(args)).toBe("");
+  }
+});
+
+/** Arguments are model output: a number where a string was asked for is text, not a crash. */
+test("echo coerces a non-string rather than throwing at the model", () => {
+  expect(echoTool.run({ text: 42 })).toBe("42");
+  expect(echoTool.run({ text: false })).toBe("false");
+});
+
+test("echo's schema names one required string parameter", () => {
+  expect(echoTool.name).toBe("echo");
+  expect(echoTool.parameters).toEqual({
+    type: "object",
+    properties: { text: { type: "string" } },
+    required: ["text"],
+  });
+});
+
+test("echo is registered in the shared tool list, and a call by name reaches it", () => {
+  // The list above pins the whole registry; this pins that the name resolves to this object.
+  const registered = defaultTools.find((tool) => tool.name === "echo");
+  expect(registered).toBe(echoTool);
+  expect(registered!.run({ text: "through the registry" })).toBe("through the registry");
+});
+
+/** One tool call whose arguments are not JSON at all. */
+const brokenCallTurn = [
+  {
+    choices: [
+      {
+        delta: {
+          tool_calls: [{ index: 0, id: "bad", function: { name: "echo", arguments: "{not json" } }],
+        },
+        finish_reason: "tool_calls",
+      },
+    ],
+  },
+];
+
+const unknownCallTurn = [
+  {
+    choices: [
+      {
+        delta: {
+          tool_calls: [{ index: 0, id: "who", function: { name: "telepathy", arguments: "{}" } }],
+        },
+        finish_reason: "tool_calls",
+      },
+    ],
+  },
+];
+
+/** The registry parses the arguments before it dispatches, so a broken call never executes. */
+test("a malformed tool call is refused before the tool runs, as a result the model can read", async () => {
+  const ran = vi.fn(() => "should not have run");
+  const spy: Tool = { name: "echo", description: "", parameters: {}, run: ran };
+  const provider = openaiCompat({
+    baseUrl: "https://example.invalid",
+    apiKey: "k",
+    model: "m",
+    fetch: vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(sse(brokenCallTurn))
+      .mockResolvedValueOnce(sse(finalTurn)),
+  });
+
+  const events = await Array.fromAsync(
+    runAgent({
+      provider,
+      system: "sys",
+      messages: [{ role: "user", content: "echo hi" }],
+      tools: [spy],
+    }),
+  );
+
+  expect(events.find((event) => event.type === "tool_result")).toMatchObject({
+    id: "bad",
+    result: expect.stringMatching(/^error: /),
+  });
+  expect(ran).not.toHaveBeenCalled();
+});
+
+test("a call naming a tool the registry does not have is reported, not guessed at", async () => {
+  const provider = openaiCompat({
+    baseUrl: "https://example.invalid",
+    apiKey: "k",
+    model: "m",
+    fetch: vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(sse(unknownCallTurn))
+      .mockResolvedValueOnce(sse(finalTurn)),
+  });
+
+  const events = await Array.fromAsync(
+    runAgent({
+      provider,
+      system: "sys",
+      messages: [{ role: "user", content: "read my mind" }],
+      tools: [echoTool],
+    }),
+  );
+
+  expect(events.find((event) => event.type === "tool_result")).toMatchObject({
+    result: "unknown tool: telepathy",
+  });
 });
