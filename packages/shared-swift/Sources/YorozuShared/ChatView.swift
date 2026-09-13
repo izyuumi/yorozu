@@ -14,6 +14,7 @@ public struct ChatView: View {
     /// Whether the reader is already at the newest message. Only then does a new one scroll the
     /// thread — pulling someone away from what they were reading is the thing to avoid.
     @State private var atBottom = true
+    @State private var scrollPhase = ScrollPhase.idle
     /// Bumped on every send, so the haptic fires per send rather than per keystroke.
     @State private var sends = 0
     /// Id of the reply whose first token just landed, which is the moment worth a tap.
@@ -339,12 +340,13 @@ public struct ChatView: View {
             // the last event grows in place, so its id alone would never change.
             .onChange(of: ChangeStamp(events: events)) { _, _ in
                 noteReplyStart()
-                guard atBottom else { return }
+                guard followsNewest(atBottom: atBottom, phase: scrollPhase) else { return }
                 // Streaming frames arrive faster than a scroll animation can finish. Starting
                 // another animation for each one makes the viewport repeatedly retarget and
                 // visibly hitch; following the growing edge needs no transition.
                 proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
             }
+            .onScrollPhaseChange { _, phase in scrollPhase = phase }
             .overlay(alignment: .bottom) {
                 // Not while searching: the arrows are already moving the thread about, and a
                 // pill offering to jump somewhere else would be arguing with them.
@@ -563,6 +565,14 @@ public struct ChatView: View {
     private func noteReplyStart() {
         guard let streamingId else { return }
         if replyStarted != streamingId { replyStarted = streamingId }
+    }
+}
+
+func followsNewest(atBottom: Bool, phase: ScrollPhase) -> Bool {
+    guard atBottom else { return false }
+    return switch phase {
+    case .tracking, .interacting, .decelerating: false
+    case .idle, .animating: true
     }
 }
 
