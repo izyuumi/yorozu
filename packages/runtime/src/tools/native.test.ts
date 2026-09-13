@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "node:process";
 import { afterEach, beforeEach, expect, test } from "vitest";
+import { defaultTools } from "../index.js";
 import {
   defaultNativeHost,
   inputClickTool,
@@ -41,9 +42,19 @@ const send = (body, request, delay = 0) =>
     process.stdout.write(JSON.stringify({ ok: !body.error, ...body, rid: request.rid }) + "\\n");
   }, delay);
 
+let previous = null;
+
 createInterface({ input: process.stdin }).on("line", (line) => {
   const request = JSON.parse(line);
+  // The request before this one, verbatim: how a test asserts what actually crossed the pipe.
+  if (request.cmd === "last") return send({ last: previous }, request);
+  previous = request;
+  if (process.env.FAKE_MODE === "denied") {
+    return send({ error: "the window is not readable", permission: "accessibility" }, request);
+  }
   switch (request.cmd) {
+    case "slow":
+      return; // Never answers, so the client's own timeout is what has to fire.
     case "ax.read":
       return send(
         process.env.FAKE_MODE === "empty"
@@ -156,4 +167,103 @@ test("closing the host rejects whatever was in flight", async () => {
 test("a helper that will not start is an error, not a hang", async () => {
   env.YOROZU_NATIVE_CMD = "exit 1";
   await expect(Promise.resolve(screenReadTool.run({}))).rejects.toThrow(/exited/);
+});
+
+test("input_click sends the element ID alone, and coordinates only without one", async () => {
+  expect(await inputClickTool.run({ id: "e2" })).toBe("clicked 40,32");
+  await expect(defaultNativeHost().request("last")).resolves.toMatchObject({
+    last: { cmd: "input.click", id: "e2" },
+  });
+
+  expect(await inputClickTool.run({ x: 5, y: 7 })).toBe("clicked 5,7");
+  const { last } = await defaultNativeHost().request("last");
+  // No stray `id`: the two forms are exclusive, and an undefined one must never be sent.
+  expect(last).toEqual({ cmd: "input.click", x: 5, y: 7, rid: expect.any(String) });
+});
+
+test("input_type sends the text verbatim and counts characters, unicode and all", async () => {
+  const text = "日本語 🎌";
+
+  expect(await inputTypeTool.run({ text })).toBe(`typed ${text.length} characters`);
+  const { last } = await defaultNativeHost().request("last");
+  expect(last).toEqual({ cmd: "input.type", text, rid: expect.any(String) });
+
+  // Nothing to type is a call the helper still answers, not an error.
+  expect(await inputTypeTool.run({ text: "" })).toBe("typed 0 characters");
+});
+
+test("input_key sends an array of modifiers, empty when the model gave none", async () => {
+  expect(await inputKeyTool.run({ key: "tab" })).toBe("pressed tab");
+  const { last } = await defaultNativeHost().request("last");
+  expect(last).toEqual({ cmd: "input.key", key: "tab", modifiers: [], rid: expect.any(String) });
+
+  expect(await inputKeyTool.run({ key: "a", modifiers: ["cmd", "shift"] })).toBe(
+    "pressed cmd+shift+a",
+  );
+});
+
+test("the screen tools take no arguments and add none of their own", async () => {
+  expect(await screenCaptureTool.run({ nonsense: true })).toMatch(/^screenshot 1x1 saved to /);
+
+  const { last } = await defaultNativeHost().request("last");
+  expect(last).toEqual({ cmd: "screen.capture", rid: expect.any(String) });
+});
+
+test("a failure that is really a missing macOS grant tells the model to ask for it", async () => {
+  env.YOROZU_NATIVE_CMD = `FAKE_MODE=denied node ${helper}`;
+
+  await expect(Promise.resolve(screenReadTool.run({}))).rejects.toThrow(
+    'macOS permission "accessibility" is missing',
+  );
+  // The instruction matters as much as the name: the user is never sent to System Settings.
+  await expect(Promise.resolve(screenCaptureTool.run({}))).rejects.toThrow("request_permission");
+});
+
+test("a helper that never answers is a timeout, not a hang", async () => {
+  const host = openNativeHost(`node ${helper}`);
+
+  await expect(host.request("slow", {}, 50)).rejects.toThrow("slow timed out after 50ms");
+
+  host.close();
+});
+
+test("the native tools declare the arguments the model must supply", () => {
+  const tools = [
+    screenReadTool,
+    screenCaptureTool,
+    inputClickTool,
+    inputTypeTool,
+    inputKeyTool,
+  ];
+
+  expect(tools.map((tool) => tool.name)).toEqual([
+    "screen_read",
+    "screen_capture",
+    "input_click",
+    "input_type",
+    "input_key",
+  ]);
+  // input_click requires neither: an element ID and a point are both whole calls.
+  expect(tools.map((tool) => (tool.parameters as { required: string[] }).required)).toEqual([
+    [],
+    [],
+    [],
+    ["text"],
+    ["key"],
+  ]);
+});
+
+test("the registry dispatches every native tool to this implementation", async () => {
+  for (const tool of [
+    screenReadTool,
+    screenCaptureTool,
+    inputClickTool,
+    inputTypeTool,
+    inputKeyTool,
+  ]) {
+    expect(defaultTools.find((t) => t.name === tool.name)).toBe(tool);
+  }
+
+  const registered = defaultTools.find((t) => t.name === "input_key")!;
+  expect(await registered.run({ key: "escape" })).toBe("pressed escape");
 });

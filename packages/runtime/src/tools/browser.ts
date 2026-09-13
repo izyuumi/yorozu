@@ -399,6 +399,11 @@ let shared: Browser | null = null;
 
 export const browser = (): Browser => (shared ??= new Browser());
 
+/** Test seam, like `useSearchBrowser`: hand the tools a browser instead of launching one. */
+export const useBrowser = (driver?: Browser): void => {
+  shared = driver ?? null;
+};
+
 /** Called on runtime shutdown: the agent leaves nothing open behind it. */
 export async function closeBrowser(): Promise<void> {
   await shared?.closeAll();

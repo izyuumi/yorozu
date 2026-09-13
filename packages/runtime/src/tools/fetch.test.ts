@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { afterAll, beforeAll, expect, test } from "vitest";
+import { defaultTools } from "../index.js";
 import { decodeEntities, fetchReadable, fetchTool } from "./fetch.js";
 
 /** Everything a real page puts between the model and the article. */
@@ -27,6 +28,13 @@ const PAGE = `<!DOCTYPE html>
 
 const LONG = `<html><head><title>Long</title></head><body><p>${"x".repeat(5_000)}</p></body></html>`;
 
+/** A page whose every element is the kind we drop: there is a title, and no article at all. */
+const EMPTY = `<html><head><title>All chrome</title><script>var x = 1;</script></head>
+<body><script>var y = 2;</script><style>p { color: red }</style></body></html>`;
+
+const UNICODE = `<html><head><title>日本語のページ</title></head>
+<body><main><p>ラーメンは美味しい &#8212; 🍜</p></main></body></html>`;
+
 let server: Server;
 let base: string;
 
@@ -45,6 +53,12 @@ beforeAll(async () => {
       case "/long":
         res.writeHead(200, { "content-type": "text/html" });
         return res.end(LONG);
+      case "/empty":
+        res.writeHead(200, { "content-type": "text/html" });
+        return res.end(EMPTY);
+      case "/unicode":
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        return res.end(UNICODE);
       default:
         res.writeHead(404, { "content-type": "text/html" });
         return res.end("<html><body>nope</body></html>");
@@ -122,6 +136,42 @@ test("the tool refuses anything that is not http", async () => {
   await expect(Promise.resolve(fetchTool.run({ url: "file:///etc/passwd" }))).rejects.toThrow(
     "http or https",
   );
+});
+
+test("a page that is nothing but chrome says so rather than returning a blank", async () => {
+  const out = await fetchTool.run({ url: `${base}/empty` });
+
+  expect(out.split("\n")).toEqual(["# All chrome", `${base}/empty`, "", "(no readable text)"]);
+});
+
+test("unicode comes back as the page wrote it", async () => {
+  const page = await fetchReadable(`${base}/unicode`);
+
+  expect(page.title).toBe("日本語のページ");
+  expect(page.text).toBe("ラーメンは美味しい — 🍜");
+});
+
+test("the schema is the one argument the model must supply, and a call without it fails", async () => {
+  expect(fetchTool.name).toBe("fetch");
+  const { properties, required } = fetchTool.parameters as {
+    properties: Record<string, unknown>;
+    required: string[];
+  };
+  expect(required).toEqual(["url"]);
+  expect(Object.keys(properties)).toEqual(["url"]);
+  // Reading a page has no effect outside the runtime, so there is no approval card.
+  expect(fetchTool.actionClass).toBeUndefined();
+
+  await expect(Promise.resolve(fetchTool.run({}))).rejects.toThrow(
+    "fetch: url must be http or https",
+  );
+});
+
+test("the registry dispatches `fetch` to this implementation", async () => {
+  const registered = defaultTools.find((tool) => tool.name === "fetch");
+
+  expect(registered).toBe(fetchTool);
+  expect(await registered!.run({ url: `${base}/plain` })).toContain("just text, no markup");
 });
 
 test("entities decode by name and by code point", () => {

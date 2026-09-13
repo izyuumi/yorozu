@@ -3,12 +3,19 @@ import { existsSync } from "node:fs";
 import { env } from "node:process";
 import { WebSocketServer } from "ws";
 import { afterEach, expect, test } from "vitest";
+import { defaultTools } from "../index.js";
 import {
   Browser,
+  browserClickTool,
+  browserCloseTool,
   browserEvalTool,
+  browserOpenTool,
+  browserSnapshotTool,
   browserTools,
+  browserTypeTool,
   detectBrowsers,
   resolveBinary,
+  useBrowser,
 } from "./browser.js";
 
 /**
@@ -83,7 +90,19 @@ function fakeCdp(): Promise<FakeCdp> {
 let cdp: FakeCdp | undefined;
 let browser: Browser | undefined;
 
+/**
+ * Attaches a fake browser, points the shared tools at it as the sidecar points them at the
+ * real one, and opens the tab the tool-level tests all work on.
+ */
+async function attach(): Promise<string> {
+  cdp = await fakeCdp();
+  browser = Browser.attached(cdp.url);
+  useBrowser(browser);
+  return browser.open("https://example.com");
+}
+
 afterEach(async () => {
+  useBrowser(undefined);
   await browser?.closeAll();
   browser = undefined;
   await cdp?.close();
@@ -169,7 +188,7 @@ test("close drops a single tab and leaves it unusable", async () => {
   await expect(browser.snapshot(tabId)).rejects.toThrow("unknown tab");
 });
 
-test("every browser tool is exposed with a tabId-shaped schema", () => {
+test("every browser tool is exposed with a tabId-shaped schema", async () => {
   expect(browserTools.map((t) => t.name)).toEqual([
     "browser.open",
     "browser.snapshot",
@@ -178,7 +197,77 @@ test("every browser tool is exposed with a tabId-shaped schema", () => {
     "browser.eval",
     "browser.close",
   ]);
-  expect(browserEvalTool.parameters.required).toContain("tabId");
+  expect(browserTools.map((t) => (t.parameters as { required: string[] }).required)).toEqual([
+    ["url"],
+    ["tabId"],
+    ["tabId", "ref"],
+    ["tabId", "ref", "text"],
+    ["tabId", "js"],
+    ["tabId"],
+  ]);
+  // Driving a tab the agent opened is not an effect on anything of the user's, so no card.
+  expect(browserTools.map((t) => t.actionClass)).toEqual(Array(6).fill(undefined));
+
+  // A call naming no tab cannot be dispatched to one the agent opened.
+  await attach();
+  await expect(Promise.resolve(browserSnapshotTool.run({}))).rejects.toThrow(
+    "browser: unknown tab",
+  );
+});
+
+test("the open tool hands back a tab ID the other tools take", async () => {
+  const tabId = await attach();
+
+  expect(tabId).toBe("tab-1");
+  expect(await browserOpenTool.run({ url: "https://example.org" })).toBe("tab-2");
+  expect(cdp!.open).toEqual(new Set(["tab-1", "tab-2"]));
+});
+
+test("the snapshot tool reads the tab it was given, and refuses one it never opened", async () => {
+  const tabId = await attach();
+
+  // The fake echoes the expression, so this asserts the script we send, not a rendering.
+  expect(await browserSnapshotTool.run({ tabId })).toContain("window.__yorozu = refs");
+  await expect(Promise.resolve(browserSnapshotTool.run({ tabId: "tab-99" }))).rejects.toThrow(
+    "browser: unknown tab: tab-99",
+  );
+});
+
+test("the click and type tools address an element by its snapshot number", async () => {
+  const tabId = await attach();
+
+  expect(await browserClickTool.run({ tabId, ref: 2 })).toContain("clicked 2");
+  expect(await browserTypeTool.run({ tabId, ref: 3, text: "日本語 🎌" })).toContain(
+    'el.value = "日本語 🎌"',
+  );
+});
+
+test("the eval tool returns JSON, and a page exception as an error", async () => {
+  const tabId = await attach();
+
+  expect(await browserEvalTool.run({ tabId, js: "1 + 1" })).toBe('"1 + 1"');
+  await expect(Promise.resolve(browserEvalTool.run({ tabId, js: "boom()" }))).rejects.toThrow(
+    "ReferenceError: boom",
+  );
+});
+
+test("the close tool closes the tab and names it", async () => {
+  const tabId = await attach();
+
+  expect(await browserCloseTool.run({ tabId })).toBe(`closed ${tabId}`);
+  expect(cdp!.open.size).toBe(0);
+});
+
+test("the registry dispatches every browser tool to this implementation", async () => {
+  for (const tool of browserTools) {
+    expect(defaultTools.find((t) => t.name === tool.name)).toBe(tool);
+  }
+
+  const tabId = await attach();
+  const registered = defaultTools.find((t) => t.name === "browser.close")!;
+
+  expect(await registered.run({ tabId })).toBe(`closed ${tabId}`);
+  expect(cdp!.open.size).toBe(0);
 });
 
 test("detection only reports browsers that are actually installed", () => {

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "node:process";
 import { afterEach, beforeEach, expect, test } from "vitest";
+import { defaultTools } from "./index.js";
 import { listSkills, skillsDir, skillsPrompt, skillTool } from "./skills.js";
 
 let dir: string;
@@ -61,4 +62,42 @@ test("the skill tool returns the body, and only for a listed skill", async () =>
 test("a state directory without skills is not an error", () => {
   expect(listSkills(skillsDir(dir))).toEqual([]);
   expect(skillsPrompt(listSkills(skillsDir(dir)))).toBe("");
+});
+
+test("the schema is the one argument the model must supply", async () => {
+  expect(skillTool.name).toBe("skill");
+  const { properties, required } = skillTool.parameters as {
+    properties: Record<string, unknown>;
+    required: string[];
+  };
+  expect(required).toEqual(["name"]);
+  expect(Object.keys(properties)).toEqual(["name"]);
+  // Loading instructions has no effect outside the runtime, so there is no approval card.
+  expect(skillTool.actionClass).toBeUndefined();
+
+  // A call with no name is answered rather than thrown: the model can read this and retry.
+  expect(await skillTool.run({})).toBe("no such skill: ");
+});
+
+test("a SKILL.md with no frontmatter is still a skill, named after its directory", () => {
+  skill("plain", "Just instructions, no frontmatter.");
+
+  expect(listSkills(skillsDir(dir))).toEqual([
+    { name: "plain", description: "", body: "Just instructions, no frontmatter." },
+  ]);
+});
+
+test("a skill's unicode name and body come back unchanged", async () => {
+  skill("ramen", "---\nname: ラーメン\ndescription: 美味しい 🍜\n---\n\n出汁から始める。");
+
+  expect(skillsPrompt(listSkills(skillsDir(dir)))).toContain("- ラーメン: 美味しい 🍜");
+  expect(await skillTool.run({ name: "ラーメン" })).toBe("出汁から始める。");
+});
+
+test("the registry dispatches `skill` to this implementation", async () => {
+  skill("recipes", "---\nname: recipes\ndescription: Cook\n---\n\nStart with the pantry.");
+  const registered = defaultTools.find((tool) => tool.name === "skill");
+
+  expect(registered).toBe(skillTool);
+  expect(await registered!.run({ name: "recipes" })).toBe("Start with the pantry.");
 });
