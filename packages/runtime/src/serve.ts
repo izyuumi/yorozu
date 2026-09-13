@@ -578,6 +578,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
      * and then the final, two identical agent messages for one turn.
      */
     let sent = "";
+    let sentAt = 0;
     try {
       // Built per turn: `delegate` carries this turn's abort signal down to its children.
       // One per turn, shared with everything this turn delegates to, and dropped with the
@@ -615,9 +616,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
         signal: turn.signal,
       })) {
         if (event.type === "text") {
-          if (reply !== sent) {
+          // Every delta carries the whole reply, so per token it is sealed, signed and
+          // redrawn in full; a long reply stutters. A frame every ~80ms reads the same.
+          if (reply !== sent && Date.now() - sentAt >= 80) {
             broadcast(message(reply));
             sent = reply;
+            sentAt = Date.now();
           }
           reply += event.text;
         } else if (event.type === "final") {

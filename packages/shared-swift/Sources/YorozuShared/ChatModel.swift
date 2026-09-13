@@ -823,7 +823,12 @@ public final class ChatModel {
         {
             generating.remove(event.threadId)
         }
-        cache?.save(events: thread, threadId: event.threadId)
+        // Not per streaming delta: sealing and writing the whole thread for every frame of a
+        // long reply is a stutter, and the finished message lands here with `done` anyway.
+        if case .message(let data) = event.payload, data.role == .agent, data.done != true {
+        } else {
+            cache?.save(events: thread, threadId: event.threadId)
+        }
         // Nothing is raised here: the dot is the runtime's answer, not this device's guess.
         // What a reply landing in the thread somebody is actually reading does is report it
         // read, which is what keeps the dot from appearing on the other device a moment later.
