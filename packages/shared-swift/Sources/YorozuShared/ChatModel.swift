@@ -54,14 +54,23 @@ public final class ChatModel {
     /// Messages typed with nowhere to send them, oldest first. Persisted, so a phone closed on
     /// the underground still has them when it comes back up. See ``OutboxItem``.
     public private(set) var outbox: [OutboxItem] = []
-    /// Threads an agent reply landed in while they were not the one open. What the list's dots
-    /// draw, and kept in the cache so closing the app does not mark everything read.
-    public private(set) var unread: Set<String> = []
-    /// The thread the user is looking at, set by whatever owns the navigation. A reply arriving
-    /// here is read on arrival; a reply anywhere else raises a dot. Nil means none is open.
+    /// The thread the user is looking at, set by whatever owns the navigation: the top of the
+    /// phone's path, or the Mac's sidebar selection. Nil means none is open.
     public var openThread: String? {
-        didSet { if let openThread { markRead(openThread) } }
+        didSet { if openThread != oldValue { reportRead() } }
     }
+    /// Whether this device is actually in front of somebody: the app is active, and on the Mac
+    /// the chat window is the key window as well. Set by whichever app owns the scene.
+    ///
+    /// The other half of "genuinely reading". A thread left open on a phone in a pocket, or in
+    /// a Mac window sitting behind everything else, is not being read by anyone — and used to
+    /// mark every reply that landed in it read regardless, which is the bug this replaced.
+    public var foreground = false {
+        didSet { if foreground != oldValue { reportRead() } }
+    }
+    /// Pending debounced read report. A reply streams as many events under one id, so the
+    /// report waits for it to settle rather than going out per chunk.
+    private var readReport: Task<Void, Never>?
 
     /// Called once the transport can carry events. The iOS end-to-end harness drives its first
     /// message from here; the Mac app has no use for it.
@@ -89,7 +98,6 @@ public final class ChatModel {
         self.device = device
         guard let cache else { return }
         synced = cache.threads()
-        unread = cache.unread()
         outbox = Outbox.pruned(cache.outbox())
         for thread in synced { events[thread.id] = cache.events(threadId: thread.id) }
     }
@@ -316,11 +324,56 @@ public final class ChatModel {
         change(&synced[index])
     }
 
-    /// Clears a thread's unread dot. Called for whichever thread is open, so reading is what
-    /// marks it read.
+    /// Threads with something in them nobody has read yet, on any device. What the app icon's
+    /// badge counts, and drawn from the runtime's two timestamps rather than from anything this
+    /// device happened to witness — see ``ThreadSummary/isUnread``.
+    public var unreadCount: Int { threads.filter(\.isUnread).count }
+
+    /// Whether `threadId` is genuinely being read here, right now: it is the thread on screen
+    /// *and* the app is in the foreground. Both halves matter, and nothing is ever reported
+    /// read without both — see ``foreground``.
+    public func isReading(_ threadId: String) -> Bool {
+        foreground && openThread == threadId
+    }
+
+    /// Reports the open thread read, if it is in fact being read. Called on entering a thread,
+    /// on the app becoming active with one open, and — debounced — when a reply lands in it.
+    private func reportRead() {
+        // A draft exists on this device alone: there is no thread on the runtime to mark.
+        guard let openThread, openThread != draft?.id, isReading(openThread) else { return }
+        markRead(openThread)
+    }
+
+    /// Tells the runtime `threadId` has been read, up to now.
     public func markRead(_ threadId: String) {
-        guard unread.remove(threadId) != nil else { return }
-        cache?.save(unread: unread)
+        send(read: threadId, at: Date().timeIntervalSince1970 * 1000)
+    }
+
+    /// "Mark as unread": puts the mark just behind the newest reply, which is the one place it
+    /// can sit and still leave the thread unread. A thread the agent has never spoken in has
+    /// nothing to be unread about. ``ThreadReadData/reset`` is what lets it move backwards.
+    public func markUnread(_ thread: ThreadSummary) {
+        guard let lastAgentAt = thread.lastAgentAt else { return }
+        send(read: thread.id, at: lastAgentAt - 1, reset: true)
+    }
+
+    /// The dot is dropped here as well as on the runtime's answering `thread_list`, so it goes
+    /// the moment the thread opens rather than a round trip later.
+    private func send(read threadId: String, at: Double, reset: Bool? = nil) {
+        readReport?.cancel()
+        set(threadId) { $0.lastReadAt = at }
+        emit(.threadRead(ThreadReadData(at: at, reset: reset)), in: threadId)
+    }
+
+    /// A reply that lands in the thread being read is read as it lands — after a moment, so a
+    /// streaming reply reports once when it settles rather than on every chunk.
+    private func reportReadSoon() {
+        readReport?.cancel()
+        readReport = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            self?.reportRead()
+        }
     }
 
     /// Answers a pending approval card, in the thread the card was raised in. `Discuss` is
@@ -738,12 +791,11 @@ public final class ChatModel {
             generating.remove(event.threadId)
         }
         cache?.save(events: thread, threadId: event.threadId)
-        // A reply that lands in a thread nobody is looking at is what a dot is for. Streaming
-        // replaces one event in place, so a reply raises the dot once rather than per chunk.
-        if case .message(let data) = event.payload, data.role == .agent,
-            event.threadId != openThread, unread.insert(event.threadId).inserted
-        {
-            cache?.save(unread: unread)
+        // Nothing is raised here: the dot is the runtime's answer, not this device's guess.
+        // What a reply landing in the thread somebody is actually reading does is report it
+        // read, which is what keeps the dot from appearing on the other device a moment later.
+        if case .message(let data) = event.payload, data.role == .agent, isReading(event.threadId) {
+            reportReadSoon()
         }
         onEvent?(event)
     }

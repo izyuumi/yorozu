@@ -108,10 +108,9 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     #expect(visibleThreads(model.threads).map(\.title) == ["Groceries", "Home"])
     #expect(ThreadGroups(model.threads).archived.map(\.title) == ["Gone"])
 
-    // An agent reply that landed in a thread nobody had open is what a dot is for.
-    #expect(await eventually { model.unread == ["home"] })
-    model.openThread = "home"
-    #expect(model.unread.isEmpty)
+    // The dot is the runtime's answer now rather than a guess from what this device happened
+    // to witness, so the reply above raises nothing on its own.
+    #expect(model.unreadCount == 0)
 
     #expect(await eventually { model.events["home"]?.count == 1 })
     let last = try #require(model.events["home"]?.last)
@@ -120,6 +119,99 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
         return
     }
     #expect(data.text == "pong")
+}
+
+/// The dot comes from the runtime's two timestamps and nothing else. In particular a reply that
+/// arrived while this device was suspended, and was read on the other one, is not unread here —
+/// which is what the per-device set got wrong.
+@MainActor
+@Test func aThreadIsUnreadOnlyWhenTheAgentHasSpokenSinceAnyoneReadIt() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    await transport.yield(
+        .event(
+            event(
+                "l1",
+                .threadList(
+                    ThreadListData(threads: [
+                        ThreadSummary(
+                            id: "unread", title: "Unread", archived: false, lastActivity: 3,
+                            lastReadAt: 10, lastAgentAt: 20
+                        ),
+                        ThreadSummary(
+                            id: "read", title: "Read", archived: false, lastActivity: 2,
+                            lastReadAt: 30, lastAgentAt: 20
+                        ),
+                        // Nothing has ever been said here, so it is not unread since the epoch.
+                        ThreadSummary(id: "quiet", title: "Quiet", archived: false, lastActivity: 1),
+                    ])
+                )
+            )
+        )
+    )
+    #expect(await eventually { model.threads.count == 3 })
+    #expect(model.threads.filter(\.isUnread).map(\.id) == ["unread"])
+    #expect(model.unreadCount == 1)
+
+    // A `sync_delta` carrying a reply older than that thread's mark — read on the other device
+    // while this one was asleep — draws no dot.
+    await transport.yield(
+        .event(
+            YorozuEvent(
+                id: "r1", threadId: "read", ts: 20, agentId: "main",
+                payload: .message(MessageData(role: .agent, text: "pong", done: true))
+            )
+        )
+    )
+    #expect(await eventually { model.events["read"]?.count == 1 })
+    #expect(model.unreadCount == 1)
+    #expect(model.threads.first { $0.id == "read" }?.isUnread == false)
+}
+
+/// "Genuinely reading" is both halves at once: the thread is on screen *and* the app is in
+/// front. An app left open on a thread while it is backgrounded reports nothing — which is
+/// exactly what used to mark replies read with nobody looking.
+@MainActor
+@Test func onlyAThreadOnScreenInAForegroundAppIsReportedRead() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    await transport.yield(
+        .event(
+            event(
+                "l1",
+                .threadList(
+                    ThreadListData(threads: [
+                        ThreadSummary(
+                            id: "home", title: "Home", archived: false, lastActivity: 1,
+                            lastReadAt: 1, lastAgentAt: 2
+                        )
+                    ])
+                )
+            )
+        )
+    )
+    #expect(await eventually { !model.threads.isEmpty })
+    #expect(model.unreadCount == 1)
+
+    // Open, but the app is in the background: not reading, and nothing goes out.
+    model.openThread = "home"
+    #expect(!model.isReading("home"))
+    let quiet = await transport.sent
+    #expect(!quiet.contains { $0.payload.kind == .threadRead })
+
+    // Brought to the front with it still open: now it is being read, and the runtime is told.
+    model.foreground = true
+    #expect(model.isReading("home"))
+    #expect(!model.isReading("somewhere-else"))
+    var reported: YorozuEvent?
+    for _ in 0..<300 {
+        reported = await transport.sent.last { $0.payload.kind == .threadRead }
+        if reported != nil { break }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(try #require(reported).threadId == "home")
+    // And the dot goes here and now rather than a round trip later.
+    #expect(model.unreadCount == 0)
 }
 
 @MainActor

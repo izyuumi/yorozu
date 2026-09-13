@@ -36,8 +36,6 @@ private func message(_ id: String, _ text: String, thread: String = "home") -> Y
     #expect(cache.threads() == threads)
     #expect(cache.events(threadId: "home").map(\.id) == ["e1", "e2"])
     #expect(cache.lastSeen() == ["home": "e2", "t2": "e3"])
-    cache.save(unread: ["t2"])
-    #expect(cache.unread() == ["t2"])
     // A reader built fresh over the same files sees the same thing: nothing is held in memory.
     #expect(ThreadCache(directory: cache.directory, key: key).events(threadId: "t2").count == 1)
 }
@@ -57,7 +55,6 @@ private func message(_ id: String, _ text: String, thread: String = "home") -> Y
     let other = ThreadCache(directory: cache.directory, key: SymmetricKey(size: .bits256))
     #expect(other.events(threadId: "home").isEmpty)
     #expect(other.threads().isEmpty)
-    #expect(other.unread().isEmpty)
 }
 
 @Test func missingFilesReadAsEmpty() {
@@ -65,5 +62,4 @@ private func message(_ id: String, _ text: String, thread: String = "home") -> Y
     #expect(cache.threads().isEmpty)
     #expect(cache.events(threadId: "never-written").isEmpty)
     #expect(cache.lastSeen().isEmpty)
-    #expect(cache.unread().isEmpty)
 }

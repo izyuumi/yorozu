@@ -277,6 +277,21 @@ export interface ThreadSummary {
    * configured chain, which is what nearly every thread wants — see `thread_set_model`.
    */
   model?: string;
+  /**
+   * When the thread was last read, on any device, epoch milliseconds. The runtime owns it — see
+   * `thread_read` — so reading on the phone clears the dot on the Mac too. Absent means never.
+   */
+  lastReadAt?: number;
+  /**
+   * `ts` of the newest agent message in the thread, epoch milliseconds. Absent in a thread the
+   * agent has not spoken in yet.
+   *
+   * Every client draws the same dot from these two and nothing else: unread is
+   * `lastAgentAt > lastReadAt`. It is deliberately not "a reply arrived while this device had
+   * the thread closed" — that answer differs per device, and was wrong on every device that
+   * had been asleep for the reply.
+   */
+  lastAgentAt?: number;
 }
 
 export interface ThreadListData {
@@ -295,6 +310,22 @@ export interface ThreadArchiveData {
 /** Pins or unpins `threadId` from the base fields. */
 export interface ThreadPinData {
   pinned: boolean;
+}
+
+/**
+ * `threadId` from the base fields was read, up to `at`. Sent by whichever device is actually
+ * looking at the thread, and answered with a fresh `thread_list` so every other device drops
+ * its dot too.
+ *
+ * The runtime keeps the later of what it holds and `at`, so two devices reporting out of order
+ * cannot walk the mark backwards. `reset` is the one exception: "Mark as unread" is a
+ * deliberate act, and it sets `lastReadAt` to `at` outright.
+ */
+export interface ThreadReadData {
+  /** Epoch milliseconds read up to. Normally now; `lastAgentAt - 1` to mark unread. */
+  at: number;
+  /** Set only by "Mark as unread": assign `at` rather than taking the later of the two. */
+  reset?: boolean;
 }
 
 /**
@@ -391,6 +422,7 @@ export type EventPayload =
   | { kind: "thread_archive"; data: ThreadArchiveData }
   | { kind: "thread_rename"; data: ThreadRenameData }
   | { kind: "thread_pin"; data: ThreadPinData }
+  | { kind: "thread_read"; data: ThreadReadData }
   | { kind: "thread_set_model"; data: ThreadSetModelData }
   | { kind: "model_list"; data: ModelListData }
   | { kind: "interrupt"; data: InterruptData }
