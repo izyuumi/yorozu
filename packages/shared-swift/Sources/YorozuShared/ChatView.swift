@@ -601,6 +601,13 @@ public enum ChatShowcase {
     /// nothing on a simulator can open a real share sheet on demand, and the composer is the
     /// part worth showing anyway.
     public static var share = false
+    /// Draws every long message already unfolded, as tapping "Read more" leaves it. Nothing on
+    /// a simulator taps a button on demand, and the two states are the picture worth having.
+    public static var expanded = false
+    /// Draws every bubble already pulled to its reply threshold, arrow filled. Same reason as
+    /// ``modelMenu``: nothing on a simulator performs a swipe on demand, and the half-way point
+    /// of the gesture is the part worth a picture. See ``View/swipeToReply(fromRight:action:)``.
+    public static var swipe = false
     /// Opens the approval card's rule editor over the card. Same reason as ``modelMenu``:
     /// nothing on a simulator taps a button on demand, and the sheet is the part worth showing.
     public static var ruleEditor = false
