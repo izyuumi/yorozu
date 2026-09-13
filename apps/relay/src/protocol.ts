@@ -239,6 +239,30 @@ export function alertPayload(cls: Exclude<NotifyClass, "activity">, ref: string)
 }
 
 /**
+ * The classes that are worth waking the app for as well as the person: something landed in a
+ * thread that this phone's cache is now behind on. An approval is deliberately not one of them —
+ * it is a question to answer in the app, not history to catch up on.
+ */
+export const BACKGROUND_CLASSES: readonly NotifyClass[] = ["reply", "done", "failed"];
+
+/**
+ * At most one silent push per phone per minute. iOS budgets background wake-ups and throttles an
+ * app that is woken more often than it does anything useful with, so spending them at the rate a
+ * chatty turn produces events would cost the wake-ups that matter. The alert is never held back
+ * for this: a person is told every time, only the app is not.
+ */
+export const BACKGROUND_INTERVAL_MS = 60_000;
+
+/**
+ * The silent push that wakes the app to drain its sync. `content-available` and nothing else:
+ * there is no reference and no class in here, because the app is not being told what happened —
+ * it is being told to go and ask, over the socket, where the answer is sealed.
+ */
+export function backgroundPayload(): unknown {
+  return { aps: { "content-available": 1 } };
+}
+
+/**
  * A Live Activity update. `content-state` mirrors `TurnAttributes.ContentState` on the phone:
  * the status and when the turn began, so the clock on the lock screen keeps counting without
  * the app being awake to move it.

@@ -178,6 +178,10 @@ public actor RelayClient: ChatTransport, PushRegistering {
     public func connect() -> AsyncStream<Update> {
         let (stream, continuation) = AsyncStream<Update>.makeStream()
         updates = continuation
+        // A client that was closed can be dialled again. The phone does exactly this: a
+        // background drain hangs up so the OS can suspend it, and the next foreground connects
+        // afresh rather than being left with a client that will never redial.
+        stopped = false
         loop?.cancel()
         loop = Task { await self.reconnectLoop() }
         return stream
