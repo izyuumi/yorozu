@@ -25,7 +25,9 @@ on its stdin mints the next join token, which is what the Mac's **New code** but
 
 | Variable | Default |
 | --- | --- |
-| `YOROZU_STATE_DIR` | `~/Library/Application Support/Yorozu` (holds `keys.json`, mode 600) |
+| `YOROZU_STATE_DIR` | `~/Library/Application Support/Yorozu` (holds runtime state and derived indexes) |
+| `YOROZU_PAIOS_DIR` | `PAIOS` in an existing Obsidian vault, otherwise `~/Documents/PAIOS` |
+| `YOROZU_MEMORY_DIR` | Optional legacy override for memory-only storage |
 | `YOROZU_RELAY_URL` | `wss://relay.yumi.to` (the hosted relay) |
 | `YOROZU_BASE_URL` / `YOROZU_API_KEY` / `YOROZU_MODEL` | `https://api.openai.com/v1`, unset, `gpt-4o-mini` |
 
@@ -55,12 +57,13 @@ the shipped app will point it at the bundled runtime. The sidecar is killed when
 
 ## Memory
 
-Facts live as one markdown file per fact in `YOROZU_MEMORY_DIR` (default
-`<YOROZU_STATE_DIR>/memory`, itself defaulting to `~/Library/Application Support/Yorozu`).
-Frontmatter carries `kind` (`preference`, `decision`, `correction`, `fact`, `approval`),
-`created`, `threadId` and `agentId`. The files are the truth: edit them by hand or in Obsidian.
+PAIOS Markdown is memory's source of truth. Yorozu recursively indexes `YOROZU_PAIOS_DIR`, using an
+existing PAIOS folder from Obsidian or creating `~/Documents/PAIOS` by default. New facts go to
+`Workspace/Yorozu Memory`, visible in Finder and editable in any text editor. Frontmatter carries
+`kind` (`preference`, `decision`, `correction`, `fact`, `approval`), `created`, `threadId` and
+`agentId`. `YOROZU_MEMORY_DIR` remains available as a legacy storage override.
 
-The SQLite FTS5 index next to them (`.index.sqlite`) is derived, and is rebuilt from the files
+The SQLite FTS5 index stays in `YOROZU_STATE_DIR`; it is derived and rebuilt from the files
 whenever it is missing or their mtimes have moved. The agent writes facts with the `remember`
 tool; `recallForPrompt` returns a compact block that `runAgent` prepends to the system prompt
 when given a `memory`. Vector recall is not implemented yet: `searchByEmbedding` returns nothing
