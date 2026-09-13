@@ -1,9 +1,42 @@
+import CoreTransferable
+import ImageIO
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The composer's paperclip: one photo from the library, or one file from the document picker.
-/// Both platforms have both pickers, so this lives beside the rest of the composer rather than
+struct PastedImage: Transferable {
+    let bytes: Data
+
+    static var transferRepresentation: some TransferRepresentation {
+        DataRepresentation(importedContentType: .image) { PastedImage(bytes: $0) }
+    }
+}
+
+func pastedImageAttachment(bytes: Data) -> MessageAttachment? {
+    guard
+        let source = CGImageSourceCreateWithData(bytes as CFData, nil),
+        let identifier = CGImageSourceGetType(source) as String?,
+        let type = UTType(identifier), type.conforms(to: .image)
+    else { return nil }
+    return MessageAttachment(
+        name: "pasted-image.\(type.preferredFilenameExtension ?? "png")",
+        mime: type.preferredMIMEType ?? "image/png",
+        bytes: bytes
+    )
+}
+
+func stagePastedImage(
+    _ image: PastedImage,
+    onPick: (MessageAttachment) -> Void,
+    onTooLarge: () -> Void
+) {
+    guard image.bytes.count <= MessageAttachment.maxBytes else { return onTooLarge() }
+    guard let attachment = pastedImageAttachment(bytes: image.bytes) else { return }
+    onPick(attachment)
+}
+
+/// The composer's paperclip: paste an image, pick media from the library, or choose one file.
+/// Both platforms offer every route, so this lives beside the rest of the composer rather than
 /// in the iOS app.
 ///
 /// Whatever is picked is read into memory whole, because that is what the wire carries — so the
@@ -23,6 +56,11 @@ struct AttachButton: View {
             PhotosPicker(selection: $photo, matching: .any(of: [.images, .videos])) {
                 Label("Photo Library", systemImage: "photo.on.rectangle")
             }
+            PasteButton(payloadType: PastedImage.self) { images in
+                guard let image = images.first else { return }
+                stagePastedImage(image, onPick: onPick, onTooLarge: onTooLarge)
+            }
+            .keyboardShortcut("v", modifiers: .command)
             Button("Files", systemImage: "folder") { browsingFiles = true }
         } label: {
             Image(systemName: "plus")
@@ -33,7 +71,7 @@ struct AttachButton: View {
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
-        .accessibilityLabel("Attach a photo or file")
+        .accessibilityLabel("Attach or paste a photo or file")
         .task(id: photo) { await loadPhoto() }
         .fileImporter(isPresented: $browsingFiles, allowedContentTypes: [.item]) { result in
             guard case .success(let url) = result else { return }
