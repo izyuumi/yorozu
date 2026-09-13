@@ -1045,8 +1045,6 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
     type: "notify",
     class: "reply",
     threadRef: threadRef("thread-one"),
-    status: "done",
-    startedAt: expect.any(Number),
   });
 
   // The whole side-channel, everything the relay was ever told in the clear. Neither side of

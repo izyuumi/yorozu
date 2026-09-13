@@ -355,14 +355,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
    */
   let notifyRelay: (event: YorozuEvent) => void = () => {};
 
-  /**
-   * When the turn in each thread began, so a pushed Live Activity can go on counting from the
-   * right moment. Kept here rather than threaded through `runTurn` because it is derived from
-   * exactly what the notify path already sees: the first event of a turn starts the clock and
-   * the one that ends the turn stops it.
-   */
-  const turnStarted = new Map<string, number>();
-
   /** Everything the runtime sees is logged first: the nightly job reads the log back. */
   function emit(event: YorozuEvent): void {
     appendTranscript(event, transcripts);
@@ -858,21 +850,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
       // Nothing to wake: no device has ever paired through the relay, or the socket is down —
       // in which case the frame did not go out either and there is nothing to announce.
       if (ws.readyState !== WebSocket.OPEN || devices.size === 0) return;
-      const notify = notifyFor(event);
-      if (!notify || !event.threadId) return;
-      const started = turnStarted.get(event.threadId) ?? event.ts;
-      if (notify.status === "working") turnStarted.set(event.threadId, started);
-      else turnStarted.delete(event.threadId);
-      // The thread travels as an opaque reference and the class as one of five words. There is
+      const cls = notifyFor(event);
+      if (!cls || !event.threadId) return;
+      // The thread travels as an opaque reference and the class as one of four words. There is
       // nothing else on this message, which is the whole of what the relay is allowed to learn.
       ws.send(
-        JSON.stringify({
-          type: "notify",
-          class: notify.class,
-          threadRef: threadRef(event.threadId),
-          status: notify.status,
-          startedAt: started,
-        }),
+        JSON.stringify({ type: "notify", class: cls, threadRef: threadRef(event.threadId) }),
       );
     };
 

@@ -129,7 +129,7 @@ public final class ChatModel {
     ///
     /// Nothing is read out of the push — it carries nothing to read. The catching up is the
     /// ordinary one: connecting asks for a sync, the delta comes back as the events it always
-    /// does, and the thread cache and any Live Activity are moved by those rather than by
+    /// does, and the thread cache is moved by those rather than by
     /// anything the relay claimed. The relay could not have told us more if it wanted to.
     ///
     /// The socket is closed before returning. iOS gives a woken app seconds, and an app still
