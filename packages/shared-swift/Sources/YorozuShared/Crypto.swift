@@ -73,8 +73,8 @@ public enum YorozuCrypto {
     /// packages/shared/src/crypto.ts, which is what the Mac stamps on a `notify`.
     ///
     /// The relay and APNs see this and never the thread id, so resolving it back to a thread —
-    /// to title a Live Activity, or to route a tapped notification — is something only a paired
-    /// phone can do, by hashing the ids it already holds.
+    /// to route a tapped notification — is something only a paired phone can do, by hashing the
+    /// ids it already holds.
     public static func threadRef(_ threadId: String) -> String {
         String(Data(SHA256.hash(data: Data(threadId.utf8))).base64URLEncodedString().prefix(8))
     }

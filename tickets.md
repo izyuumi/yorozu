@@ -219,3 +219,15 @@ Work the **frontier**: any ticket whose blockers are all done. Tracer-bullet ord
 - [ ] Runtime and Chromium download on first run, not in DMG
 - [ ] Public TestFlight link in README
 - [ ] Fresh-Mac walkthrough timed under ten minutes
+
+## t50: drop the iOS Live Activity — done
+
+**What to build:** Nothing. The removal of a feature that was built and did not earn its keep: APNs alert notifications (reply, approval, done, failed, tapping opens the thread) already cover the need, so the lock-screen activity, its push-token plumbing and the widget extension go.
+
+**Blocked by:** None
+
+- [x] `ActivityWidget`/`YorozuActivity` target, sources and `NSSupportsLiveActivities` gone from apps/ios
+- [x] `TurnActivityController`, its showcase and every ActivityKit import gone; ShareExtension, App Group, push entitlement kept
+- [x] Activity push-token registration gone from `RelayClient`; the ordinary APNs device token path kept
+- [x] `activity_token` and the `activity` notify class gone from shared, runtime and both relays
+- [x] `liveactivity` APNs push gone from the worker; alert push kept

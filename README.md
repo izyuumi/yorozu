@@ -167,14 +167,13 @@ APNs wakes a phone whose socket is gone. What that costs in privacy is the point
 it is worth being exact about it.
 
 Beside every sealed frame the Mac sends the relay one cleartext `notify`: a class — `reply`,
-`approval`, `done`, `failed` or `activity` — an opaque `threadRef`, the turn's status and when it
-began. The reference is the first eight characters of `base64url(sha256(threadId))`, and a thread
-id is a random UUID, so it is a handle the relay can match and cannot invert. Phones register their
-APNs tokens the same way (`push`, `activity_token`), filed against the Ed25519 key the relay already
-knows each device by — so `revoke` drops the tokens with the device, and a revoked phone stops being
-woken.
+`approval`, `done` or `failed` — and an opaque `threadRef`. The reference is the first eight
+characters of `base64url(sha256(threadId))`, and a thread id is a random UUID, so it is a handle the
+relay can match and cannot invert. Phones register their APNs token the same way (`push`), filed
+against the Ed25519 key the relay already knows each device by — so `revoke` drops the token with
+the device, and a revoked phone stops being woken.
 
-So the relay learns: that a device exists and how to wake it, that something of one of five classes
+So the relay learns: that a device exists and how to wake it, that something of one of four classes
 happened, which opaque reference it happened under, and roughly when. It never sees message text,
 tool names or arguments, approval details, rule scopes, summaries or thread titles — those travel
 sealed, in the frame beside the notify, under a key the relay does not hold. The alert body is
@@ -183,9 +182,10 @@ assembled from anything the Mac sent, so there is no path by which content could
 screen. Tapping routes on the reference, which the phone resolves against the thread ids it already
 holds — the one end that can.
 
-A phone holding a live socket is never pushed to: it has the sealed event already. A Live Activity
-update only goes out when the status actually changes, which keeps a turn's every tool call from
-becoming a push.
+A phone holding a live socket is never pushed to: it has the sealed event already. Nor is the
+running commentary — deltas, tool traffic, a delegated agent finishing — ever notified at all, so a
+turn's every tool call does not become a push: only a turn arriving somewhere a person has to be
+told about is worth a wake-up.
 
 The hosted relay needs an Apple auth key for this, as three Wrangler secrets — `APNS_KEY_ID`,
 `APNS_TEAM_ID` and `APNS_KEY_P8` (the .p8 itself). Without them the relay forwards frames exactly as
@@ -466,26 +466,6 @@ is joined onto a path, and a share is removed as it is read so it is never sent 
 The picker's titles are the one thing that has to cross over: the extension cannot read the
 encrypted `ThreadCache`, having no Keychain access group on purpose, so the app writes the five
 ids and titles into the container and nothing else. Unpairing empties it along with the cache.
-
-### Live Activity
-
-`YorozuActivity` is an ActivityKit widget for a turn you walked away from. Nothing appears while
-the chat is on screen — the chat is already saying it. Leaving the app with a turn still running
-is what raises it, one per thread, and it moves between **Working**, **Needs you**, **Done** and
-**Stopped** as the events arrive (`TurnProgress`, pure and tested). The lock screen draws the
-thread's title, the status and a clock counting up from when the turn began, plus *Tap to open*;
-the Dynamic Island carries the status glyph compact and title, status and elapsed expanded. Tapping
-any of it opens `yorozu://thread/<id>`. A finished activity stays for 30 seconds and then ends.
-
-While the app is running it moves the activity itself. Once iOS has suspended it, the relay pushes
-the same content state over APNs, so a turn that finishes in your pocket says so on the lock screen
-at the moment it happens. Each activity is marked stale ahead of its next expected update, so a push
-that never lands shows *Updating…* rather than a status that quietly stopped being true. A turn that
-*begins* while the phone is already away is raised from a push-to-start token.
-
-The activity is told only `threadRef` — the opaque reference below — so the thread's title is
-resolved on the phone, out of the same App Group file the share sheet's picker reads. A thread
-outside that short list simply shows "Yorozu".
 
 ## Browser
 

@@ -93,6 +93,7 @@ Version 1.5 makes remote work dependable without changing Yorozu's local-first, 
 - Changing the blind relay into a trusted application server.
 - Automatically activating inferred approval rules.
 - Replacing the existing transcript, provider chain, or tool implementations.
+- iOS Live Activities — built, then dropped in t50: the four APNs alert classes already deliver every moment worth surfacing, so the lock-screen activity, its push-token plumbing, and the widget extension were not worth their weight.
 
 ## Further Notes
 

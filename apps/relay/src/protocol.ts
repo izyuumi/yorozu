@@ -149,11 +149,8 @@ export function evictions(
  * relay does not depend on the event model and must not learn it — it handles a class and an
  * opaque reference, which is the whole of what it is allowed to know.
  */
-export const NOTIFY_CLASSES = ["reply", "approval", "done", "failed", "activity"] as const;
+export const NOTIFY_CLASSES = ["reply", "approval", "done", "failed"] as const;
 export type NotifyClass = (typeof NOTIFY_CLASSES)[number];
-
-export const NOTIFY_STATUSES = ["working", "needsApproval", "done", "failed"] as const;
-export type NotifyStatus = (typeof NOTIFY_STATUSES)[number];
 
 export const NOTIFY_TITLE = "Yorozu";
 
@@ -163,61 +160,28 @@ export const NOTIFY_TITLE = "Yorozu";
  * the words on a lock screen: the relay could not write one if it wanted to, because it holds
  * nothing to write it from.
  */
-export const NOTIFY_BODY: Record<Exclude<NotifyClass, "activity">, string> = {
+export const NOTIFY_BODY: Record<NotifyClass, string> = {
   reply: "Yorozu replied.",
   approval: "Yorozu needs your approval.",
   done: "Yorozu finished.",
   failed: "Yorozu stopped.",
 };
 
-/** How long a Live Activity trusts what it is showing before it says "Updating…" instead. */
-export const ACTIVITY_STALE_MS = 2 * 60_000;
-/** How long a finished activity stays up. Matches `TurnStatus.lingerAfterDone` on the phone. */
-export const ACTIVITY_LINGER_MS = 30_000;
-
-/** A phone's APNs registrations. `startToken` is ActivityKit's push-to-start token, if it has one. */
-export type Push = { deviceToken: string; startToken?: string };
-/**
- * The push token of one Live Activity, by the thread it is about. Sent with no `token` when the
- * activity ends, which is how a phone takes it back.
- */
-export type ActivityToken = { threadRef: string; token?: string };
+/** A phone's APNs registration: the one token every alert for it is addressed to. */
+export type Push = { deviceToken: string };
 /**
  * The Mac, alongside a sealed frame: something of this class happened in this thread. The
  * thread is named by an opaque reference the phone can map and the relay cannot.
  */
-export type Notify = {
-  class: NotifyClass;
-  threadRef: string;
-  status?: NotifyStatus;
-  /** When the turn began, epoch ms, so a pushed Live Activity can keep counting. */
-  startedAt?: number;
-};
+export type Notify = { class: NotifyClass; threadRef: string };
 
-export const parsePush = (msg: Record<string, unknown>): Push | null => {
-  if (typeof msg.deviceToken !== "string") return null;
-  const start = msg.startToken;
-  if (start !== undefined && typeof start !== "string") return null;
-  return { deviceToken: msg.deviceToken, ...(start ? { startToken: start } : {}) };
-};
-
-export const parseActivityToken = (msg: Record<string, unknown>): ActivityToken | null => {
-  if (typeof msg.threadRef !== "string" || msg.threadRef === "") return null;
-  if (msg.token !== undefined && typeof msg.token !== "string") return null;
-  return { threadRef: msg.threadRef, ...(msg.token ? { token: msg.token } : {}) };
-};
+export const parsePush = (msg: Record<string, unknown>): Push | null =>
+  strings(msg, "deviceToken");
 
 export const parseNotify = (msg: Record<string, unknown>): Notify | null => {
   if (typeof msg.threadRef !== "string" || msg.threadRef === "") return null;
   if (!NOTIFY_CLASSES.includes(msg.class as NotifyClass)) return null;
-  if (msg.status !== undefined && !NOTIFY_STATUSES.includes(msg.status as NotifyStatus)) return null;
-  if (msg.startedAt !== undefined && typeof msg.startedAt !== "number") return null;
-  return {
-    class: msg.class as NotifyClass,
-    threadRef: msg.threadRef,
-    ...(msg.status ? { status: msg.status as NotifyStatus } : {}),
-    ...(typeof msg.startedAt === "number" ? { startedAt: msg.startedAt } : {}),
-  };
+  return { class: msg.class as NotifyClass, threadRef: msg.threadRef };
 };
 
 /**
@@ -225,7 +189,7 @@ export const parseNotify = (msg: Record<string, unknown>): Notify | null => {
  * else — `ref` is what the tap routes on, resolved to a thread by the phone, which is the only
  * end that can.
  */
-export function alertPayload(cls: Exclude<NotifyClass, "activity">, ref: string): unknown {
+export function alertPayload(cls: NotifyClass, ref: string): unknown {
   return {
     aps: {
       alert: { title: NOTIFY_TITLE, body: NOTIFY_BODY[cls] },
@@ -235,33 +199,5 @@ export function alertPayload(cls: Exclude<NotifyClass, "activity">, ref: string)
     },
     ref,
     cls,
-  };
-}
-
-/**
- * A Live Activity update. `content-state` mirrors `TurnAttributes.ContentState` on the phone:
- * the status and when the turn began, so the clock on the lock screen keeps counting without
- * the app being awake to move it.
- *
- * The stale date is the honest part. A push that never arrives leaves the activity showing
- * something that stopped being true, so it is told when to stop believing itself: past it, iOS
- * draws the state as stale rather than as fact.
- */
-export function activityPayload(
-  notify: Notify & { status: NotifyStatus },
-  now: number,
-  event: "start" | "update" | "end" = "update",
-): unknown {
-  const live = notify.status === "working" || notify.status === "needsApproval";
-  const state = { status: notify.status, startedAt: notify.startedAt ?? now };
-  return {
-    aps: {
-      timestamp: Math.floor(now / 1000),
-      event,
-      "content-state": state,
-      "stale-date": Math.floor((now + (live ? ACTIVITY_STALE_MS : ACTIVITY_LINGER_MS)) / 1000),
-      ...(event === "start" ? { "attributes-type": "TurnAttributes", attributes: { threadRef: notify.threadRef } } : {}),
-      ...(live ? {} : { "dismissal-date": Math.floor((now + ACTIVITY_LINGER_MS) / 1000) }),
-    },
   };
 }
