@@ -64,6 +64,7 @@ import {
   currentThread,
   eventsAfter,
   listThreads,
+  markThreadRead,
   pinThread,
   renameThread,
   setThreadModel,
@@ -758,6 +759,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
       case "thread_pin":
         pinThread(event.threadId, event.data.pinned, dir);
         return broadcast(threadList());
+      // Read state is the runtime's, not each device's: the device that is actually looking at
+      // the thread says so, and everyone is told, so the dot clears on the Mac when the phone
+      // reads it. A frame that moves nothing is not worth a list.
+      case "thread_read":
+        if (markThreadRead(event.threadId, event.data.at, dir, event.data.reset)) {
+          broadcast(threadList());
+        }
+        return;
       case "thread_list":
         reply(threadList());
         return reply(modelList());

@@ -48,6 +48,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadArchive = "thread_archive"
         case threadRename = "thread_rename"
         case threadPin = "thread_pin"
+        case threadRead = "thread_read"
         case threadSetModel = "thread_set_model"
         case modelList = "model_list"
         case interrupt
@@ -76,6 +77,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadArchive(ThreadArchiveData)
         case threadRename(ThreadRenameData)
         case threadPin(ThreadPinData)
+        case threadRead(ThreadReadData)
         case threadSetModel(ThreadSetModelData)
         case modelList(ModelListData)
         case interrupt(InterruptData)
@@ -104,6 +106,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadArchive: .threadArchive
             case .threadRename: .threadRename
             case .threadPin: .threadPin
+            case .threadRead: .threadRead
             case .threadSetModel: .threadSetModel
             case .modelList: .modelList
             case .interrupt: .interrupt
@@ -145,6 +148,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadArchive: payload = .threadArchive(try c.decode(ThreadArchiveData.self, forKey: .data))
         case .threadRename: payload = .threadRename(try c.decode(ThreadRenameData.self, forKey: .data))
         case .threadPin: payload = .threadPin(try c.decode(ThreadPinData.self, forKey: .data))
+        case .threadRead: payload = .threadRead(try c.decode(ThreadReadData.self, forKey: .data))
         case .threadSetModel: payload = .threadSetModel(try c.decode(ThreadSetModelData.self, forKey: .data))
         case .modelList: payload = .modelList(try c.decode(ModelListData.self, forKey: .data))
         case .interrupt: payload = .interrupt(try c.decode(InterruptData.self, forKey: .data))
@@ -182,6 +186,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadArchive(let d): try c.encode(d, forKey: .data)
         case .threadRename(let d): try c.encode(d, forKey: .data)
         case .threadPin(let d): try c.encode(d, forKey: .data)
+        case .threadRead(let d): try c.encode(d, forKey: .data)
         case .threadSetModel(let d): try c.encode(d, forKey: .data)
         case .modelList(let d): try c.encode(d, forKey: .data)
         case .interrupt(let d): try c.encode(d, forKey: .data)
@@ -586,6 +591,11 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     /// The `<providerId>/<model>` spec this thread's turns run on. Nil — nearly always — means
     /// the Mac's configured chain, which is what the picker draws as "Default".
     public var model: String?
+    /// When the thread was last read, on any device, epoch milliseconds. The runtime owns it,
+    /// so reading on the phone clears the dot on the Mac too. Nil means never.
+    public var lastReadAt: Double?
+    /// `ts` of the newest agent message in the thread. Nil where the agent has not spoken yet.
+    public var lastAgentAt: Double?
 
     public init(
         id: String,
@@ -594,7 +604,9 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         lastActivity: Double,
         lastMessage: String? = nil,
         pinned: Bool = false,
-        model: String? = nil
+        model: String? = nil,
+        lastReadAt: Double? = nil,
+        lastAgentAt: Double? = nil
     ) {
         self.id = id
         self.title = title
@@ -603,6 +615,8 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         self.lastMessage = lastMessage
         self.pinned = pinned
         self.model = model
+        self.lastReadAt = lastReadAt
+        self.lastAgentAt = lastAgentAt
     }
 
     /// Hand-written only to tolerate a runtime older than the last two fields: both were added
@@ -616,10 +630,19 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         lastMessage = try c.decodeIfPresent(String.self, forKey: .lastMessage)
         pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
         model = try c.decodeIfPresent(String.self, forKey: .model)
+        lastReadAt = try c.decodeIfPresent(Double.self, forKey: .lastReadAt)
+        lastAgentAt = try c.decodeIfPresent(Double.self, forKey: .lastAgentAt)
     }
 
     /// What a list draws: an untitled thread is one the runtime has not named yet.
     public var displayTitle: String { title.isEmpty ? "New chat" : title }
+
+    /// Whether the agent has said something here since anyone last read it. The one definition
+    /// of unread — what every dot, bold title and app badge on both platforms is drawn from.
+    ///
+    /// Deliberately not "a reply arrived while this device had the thread closed": that answer
+    /// differs per device, and was wrong on any device that happened to be asleep for it.
+    public var isUnread: Bool { (lastAgentAt ?? 0) > (lastReadAt ?? 0) }
 
     /// ``lastActivity`` as a date, which is what a row formats relative to now.
     public var lastActivityDate: Date { Date(timeIntervalSince1970: lastActivity / 1000) }
@@ -642,6 +665,24 @@ public struct ThreadArchiveData: Codable, Equatable, Sendable {
 public struct ThreadPinData: Codable, Equatable, Sendable {
     public var pinned: Bool
     public init(pinned: Bool) { self.pinned = pinned }
+}
+
+/// The thread named in the event's base fields was read, up to ``at``. Sent only by a device
+/// that is genuinely looking at it — see ``ChatModel/isReading(_:)`` — and answered with a
+/// fresh `thread_list`, which is what drops the dot on every other device too.
+///
+/// The runtime keeps the later of what it holds and ``at``, so two devices reporting out of
+/// order cannot walk the mark backwards. ``reset`` is the exception "Mark as unread" needs.
+public struct ThreadReadData: Codable, Equatable, Sendable {
+    /// Epoch milliseconds read up to. Normally now; `lastAgentAt - 1` to mark unread.
+    public var at: Double
+    /// Set only by "Mark as unread": assign ``at`` rather than taking the later of the two.
+    public var reset: Bool?
+
+    public init(at: Double, reset: Bool? = nil) {
+        self.at = at
+        self.reset = reset
+    }
 }
 
 /// Sets the thread named in the event's base fields to one model, as a spec from

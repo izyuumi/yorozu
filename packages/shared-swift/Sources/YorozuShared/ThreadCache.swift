@@ -25,15 +25,10 @@ public struct ThreadCache: Sendable {
         write(threads, to: "threads")
     }
 
-    /// The threads holding a reply that arrived while they were closed. Sealed like the rest:
-    /// which threads are unread is as much of a leak as what is in them.
-    public func unread() -> Set<String> {
-        read(Set<String>.self, from: "unread") ?? []
-    }
-
-    public func save(unread: Set<String>) {
-        write(unread, to: "unread")
-    }
+    // Unread was once kept here, as the set of threads a reply had arrived in while this device
+    // had them closed. It is the runtime's now — see `thread_read` — so that reading on one
+    // device clears the dot on the other. An `unread.bin` left by an older build is simply
+    // never read again.
 
     /// Messages typed while there was nowhere to send them, oldest first. Sealed like the rest:
     /// a message waiting to go out is as much of a secret as one that went.

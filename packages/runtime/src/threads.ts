@@ -32,6 +32,14 @@ export interface ThreadRecord {
    * means the configured chain and nothing thread-specific. See `setThreadModel`.
    */
   model?: string;
+  /**
+   * When the thread was last read, on any device, epoch milliseconds. Absent means never.
+   *
+   * Read state lives here rather than on each device: a phone could only ever answer "did a
+   * reply arrive while I had this open", which is a different question on every device and the
+   * wrong one on any device that was asleep. See `markThreadRead`.
+   */
+  lastReadAt?: number;
 }
 
 /** Kinds that belong to a thread's history. Control traffic is not logged. */
@@ -165,6 +173,26 @@ export function setThreadModel(id: string, spec: string | null, dir = stateDir()
   return true;
 }
 
+/**
+ * Records that `id` was read up to `at`. The later of the two marks wins, so two devices
+ * reporting out of order cannot walk the mark backwards. `reset` assigns `at` outright
+ * instead, which is what makes "Mark as unread" — an `at` deliberately behind the newest
+ * reply — actually stick.
+ *
+ * False when there is no such thread, or when the mark did not move: an idempotent frame from
+ * a second device should not rewrite the index or claim it changed anything.
+ */
+export function markThreadRead(id: string, at: number, dir = stateDir(), reset = false): boolean {
+  const threads = listThreads(dir);
+  const thread = threads.find((candidate) => candidate.id === id);
+  if (!thread) return false;
+  const next = reset ? at : Math.max(thread.lastReadAt ?? 0, at);
+  if (thread.lastReadAt === next) return false;
+  thread.lastReadAt = next;
+  saveThreads(threads, dir);
+  return true;
+}
+
 /** The spec a thread's turns lead with, or undefined for the configured chain. */
 export const threadModel = (id: string, dir = stateDir()): string | undefined =>
   listThreads(dir).find((thread) => thread.id === id)?.model;
@@ -187,20 +215,30 @@ function setFlag(id: string, dir: string, flag: "archived" | "pinned", value: bo
 const PREVIEW_LIMIT = 140;
 
 /**
- * The newest thing said in the thread, agent's or user's, flattened to one line for the list.
- * Undefined in a thread nothing has been said in yet, so the row draws nothing rather than "".
+ * What a list row needs from the thread's log, in one pass over it: the newest thing said in
+ * it — agent's or user's — flattened to one line for the preview, and when the agent last
+ * spoke, which is half of whether the thread is unread.
+ *
+ * Both are undefined in a thread nothing has been said in yet, so the row draws nothing rather
+ * than "" and the thread reads as read rather than as unread-since-the-epoch.
  */
-function lastMessage(threadId: string, dir: string): string | undefined {
-  const last = readThreadEvents(threadId, dir).findLast((event) => event.kind === "message");
-  if (!last || last.kind !== "message") return undefined;
-  const line = last.data.text.replace(/\s+/gu, " ").trim();
-  return line ? line.slice(0, PREVIEW_LIMIT) : undefined;
+function logSummary(threadId: string, dir: string): { preview?: string; lastAgentAt?: number } {
+  const events = readThreadEvents(threadId, dir);
+  const last = events.findLast((event) => event.kind === "message");
+  const lastAgent = events.findLast(
+    (event) => event.kind === "message" && event.data.role === "agent",
+  );
+  const line = last?.kind === "message" ? last.data.text.replace(/\s+/gu, " ").trim() : "";
+  return {
+    ...(line ? { preview: line.slice(0, PREVIEW_LIMIT) } : {}),
+    ...(lastAgent ? { lastAgentAt: lastAgent.ts } : {}),
+  };
 }
 
 /** What the phone's thread list renders. */
 export const threadSummaries = (dir = stateDir()): ThreadSummary[] =>
   listThreads(dir).map((thread) => {
-    const preview = lastMessage(thread.id, dir);
+    const { preview, lastAgentAt } = logSummary(thread.id, dir);
     return {
       id: thread.id,
       title: thread.title,
@@ -209,6 +247,10 @@ export const threadSummaries = (dir = stateDir()): ThreadSummary[] =>
       ...(preview === undefined ? {} : { lastMessage: preview }),
       pinned: thread.pinned ?? false,
       ...(thread.model ? { model: thread.model } : {}),
+      // The two the dot is drawn from. Absent rather than 0 when there is nothing to say, so a
+      // thread nobody has read and nobody has been answered in is not permanently bold.
+      ...(thread.lastReadAt === undefined ? {} : { lastReadAt: thread.lastReadAt }),
+      ...(lastAgentAt === undefined ? {} : { lastAgentAt }),
     };
   });
 
