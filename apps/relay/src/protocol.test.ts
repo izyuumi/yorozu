@@ -1,5 +1,9 @@
 import { expect, test } from "vitest";
 import {
+  ACTIVITY_LINGER_MS,
+  ACTIVITY_STALE_MS,
+  activityPayload,
+  alertPayload,
   allowFrame,
   BUFFER_CAP_BYTES,
   BUFFER_TTL_MS,
@@ -8,8 +12,13 @@ import {
   FRAMES_PER_SEC,
   MAX_DEVICES,
   newBucket,
+  NOTIFY_BODY,
+  NOTIFY_CLASSES,
+  parseActivityToken,
   parseFrame,
   parseJoin,
+  parseNotify,
+  parsePush,
   parseRegister,
 } from "./protocol.js";
 
@@ -96,4 +105,95 @@ test("known devices are capped, and a device already known evicts nobody", () =>
   // Shrinking the cap sheds every device over it in one go, oldest first.
   expect(evictions(known, "new", 3)).toEqual(["k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8",
     "k9", "k10", "k11", "k12", "k13"]);
+});
+
+test("push registrations are accepted only in the shape the relay stores", () => {
+  expect(parsePush({ deviceToken: "abc" })).toEqual({ deviceToken: "abc" });
+  expect(parsePush({ deviceToken: "abc", startToken: "s" })).toEqual({
+    deviceToken: "abc",
+    startToken: "s",
+  });
+  expect(parsePush({})).toBeNull();
+  expect(parsePush({ deviceToken: 1 })).toBeNull();
+  expect(parsePush({ deviceToken: "abc", startToken: 1 })).toBeNull();
+
+  // No token is how a phone takes an activity's registration back when the activity ends.
+  expect(parseActivityToken({ threadRef: "r" })).toEqual({ threadRef: "r" });
+  expect(parseActivityToken({ threadRef: "r", token: "t" })).toEqual({ threadRef: "r", token: "t" });
+  expect(parseActivityToken({ threadRef: "" })).toBeNull();
+  expect(parseActivityToken({ token: "t" })).toBeNull();
+});
+
+test("a notify is a known class and an opaque reference, or it is nothing", () => {
+  expect(parseNotify({ class: "reply", threadRef: "r" })).toEqual({ class: "reply", threadRef: "r" });
+  expect(parseNotify({ class: "activity", threadRef: "r", status: "working", startedAt: 5 })).toEqual({
+    class: "activity",
+    threadRef: "r",
+    status: "working",
+    startedAt: 5,
+  });
+  expect(parseNotify({ class: "gossip", threadRef: "r" })).toBeNull();
+  expect(parseNotify({ class: "reply" })).toBeNull();
+  expect(parseNotify({ class: "reply", threadRef: "r", status: "pondering" })).toBeNull();
+  expect(parseNotify({ class: "reply", threadRef: "r", startedAt: "now" })).toBeNull();
+  // Nothing else on the message survives into what the relay acts on.
+  expect(parseNotify({ class: "reply", threadRef: "r", text: "the secret" })).toEqual({
+    class: "reply",
+    threadRef: "r",
+  });
+});
+
+test("an alert carries a fixed phrase and an opaque reference, and nothing else", () => {
+  const payload = alertPayload("approval", "Ab3-_x9Z") as any;
+  expect(payload.aps.alert).toEqual({ title: "Yorozu", body: NOTIFY_BODY.approval });
+  expect(payload.ref).toBe("Ab3-_x9Z");
+  expect(payload.cls).toBe("approval");
+  // Every string anywhere in it is either the fixed vocabulary or the opaque reference.
+  const strings = JSON.stringify(payload).match(/"[^"]*"/g) ?? [];
+  const allowed = new Set([
+    ...Object.values(NOTIFY_BODY),
+    ...NOTIFY_CLASSES,
+    "Yorozu",
+    "Ab3-_x9Z",
+    "aps",
+    "alert",
+    "title",
+    "body",
+    "sound",
+    "default",
+    "thread-id",
+    "ref",
+    "cls",
+  ]);
+  for (const quoted of strings) expect(allowed).toContain(quoted.slice(1, -1));
+});
+
+test("a live activity update says the status, the clock and when to stop believing it", () => {
+  const now = 1_000_000;
+  const payload = activityPayload(
+    { class: "activity", threadRef: "r", status: "working", startedAt: 940_000 },
+    now,
+  ) as any;
+  expect(payload.aps.event).toBe("update");
+  expect(payload.aps["content-state"]).toEqual({ status: "working", startedAt: 940_000 });
+  expect(payload.aps.timestamp).toBe(1000);
+  // A running turn goes stale rather than lying if the next push never lands, and is not
+  // scheduled to be dismissed.
+  expect(payload.aps["stale-date"]).toBe((now + ACTIVITY_STALE_MS) / 1000);
+  expect(payload.aps["dismissal-date"]).toBeUndefined();
+
+  // A finished one is left up for its last half minute and then goes.
+  const done = activityPayload({ class: "done", threadRef: "r", status: "done" }, now) as any;
+  expect(done.aps["dismissal-date"]).toBe((now + ACTIVITY_LINGER_MS) / 1000);
+  // With nothing else to go on, the clock starts now rather than at the epoch.
+  expect(done.aps["content-state"].startedAt).toBe(now);
+
+  // Starting one from a push carries the attributes, which are the reference and nothing more.
+  const start = activityPayload(
+    { class: "activity", threadRef: "r", status: "working" },
+    now,
+    "start",
+  ) as any;
+  expect(start.aps["attributes-type"]).toBe("TurnAttributes");
+  expect(start.aps.attributes).toEqual({ threadRef: "r" });
 });

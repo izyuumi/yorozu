@@ -52,12 +52,13 @@ let project = Project(
                 "NSSpeechRecognitionUsageDescription": "Yorozu turns what you dictate into the message you send, on this device where your language supports it.",
                 // The lock screen activity for a turn running while the phone is in a pocket.
                 "NSSupportsLiveActivities": true,
-                // No `…Frequent Updates`: every update here is local and there are only ever a
-                // handful of them in a turn, so asking for the unbudgeted rate would be asking
-                // for something this does not use.
+                // Still no `…Frequent Updates`: the relay sends an activity push only when the
+                // status actually changes, which is a handful per turn, so the unbudgeted rate
+                // would be asking for something this does not use.
                 // `yorozu://pair?…` is the pairing string itself: tapping one opens the app.
-                // `yorozu://thread/<id>` is a Live Activity being tapped, and
-                // `yorozu://share?token=…` is the share extension handing over.
+                // `yorozu://thread/<id>` opens a thread by id, `yorozu://ref/<threadRef>` opens
+                // one by the opaque reference a push carries, and `yorozu://share?token=…` is
+                // the share extension handing over.
                 "CFBundleURLTypes": [
                     [
                         "CFBundleURLName": "to.yumi.yorozu.pair",
@@ -67,7 +68,13 @@ let project = Project(
             ]) { a, _ in a }),
             sources: ["Sources/YorozuIOS/**"],
             resources: ["Resources/**"],
-            entitlements: .dictionary(["com.apple.security.application-groups": [.string(appGroup)]]),
+            entitlements: .dictionary([
+                "com.apple.security.application-groups": [.string(appGroup)],
+                // TestFlight and the App Store are both production APNs, and the relay only
+                // ever talks to api.push.apple.com — so there is one environment here rather
+                // than a debug build quietly registering for tokens the relay cannot use.
+                "aps-environment": "production",
+            ]),
             dependencies: [
                 .package(product: "YorozuShared"),
                 // Embedded in the app's PlugIns, which is how an extension ships at all.

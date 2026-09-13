@@ -69,6 +69,16 @@ public enum YorozuCrypto {
         return try ChaChaPoly.open(box, using: key)
     }
 
+    /// The opaque id a push payload names a thread by. Mirrors `threadRef` in
+    /// packages/shared/src/crypto.ts, which is what the Mac stamps on a `notify`.
+    ///
+    /// The relay and APNs see this and never the thread id, so resolving it back to a thread —
+    /// to title a Live Activity, or to route a tapped notification — is something only a paired
+    /// phone can do, by hashing the ids it already holds.
+    public static func threadRef(_ threadId: String) -> String {
+        String(Data(SHA256.hash(data: Data(threadId.utf8))).base64URLEncodedString().prefix(8))
+    }
+
     public static func signFrame(priv: Data, data: Data) throws -> Data {
         try Curve25519.Signing.PrivateKey(rawRepresentation: priv).signature(for: data)
     }

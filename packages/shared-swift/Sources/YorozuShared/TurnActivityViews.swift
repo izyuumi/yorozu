@@ -52,12 +52,12 @@
 
         public var body: some View {
             if state.status.isLive {
-                Text(state.startedAt, style: .timer)
+                Text(state.started, style: .timer)
             } else {
                 // A finished turn's length, rounded to the second: "1:04", the same shape the
                 // timer had a moment ago, so the number does not change format as it settles.
                 Text(
-                    Duration.seconds(Date().timeIntervalSince(state.startedAt))
+                    Duration.seconds(Date().timeIntervalSince(state.started))
                         .formatted(.time(pattern: .minuteSecond))
                 )
             }
@@ -73,10 +73,18 @@
     public struct TurnLockScreenView: View {
         let attributes: TurnAttributes
         let state: TurnAttributes.ContentState
+        /// Resolved from the reference unless a caller has one to hand — which only the
+        /// screenshot showcase does, having no App Group to look anything up in.
+        let title: String
 
-        public init(attributes: TurnAttributes, state: TurnAttributes.ContentState) {
+        public init(
+            attributes: TurnAttributes,
+            state: TurnAttributes.ContentState,
+            title: String? = nil
+        ) {
             self.attributes = attributes
             self.state = state
+            self.title = title ?? TurnTitle.resolve(attributes.threadRef)
         }
 
         public var body: some View {
@@ -85,7 +93,7 @@
                     .frame(width: 28)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(attributes.title)
+                    Text(title)
                         .font(.headline)
                         .lineLimit(1)
                     Text(state.status.label)

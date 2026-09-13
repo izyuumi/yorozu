@@ -161,6 +161,37 @@ To run the hosted one on your own Cloudflare account, edit the `routes` block in
 pnpm --filter @yorozu/relay exec wrangler deploy
 ```
 
+### Notifications
+
+APNs wakes a phone whose socket is gone. What that costs in privacy is the point of the design, so
+it is worth being exact about it.
+
+Beside every sealed frame the Mac sends the relay one cleartext `notify`: a class — `reply`,
+`approval`, `done`, `failed` or `activity` — an opaque `threadRef`, the turn's status and when it
+began. The reference is the first eight characters of `base64url(sha256(threadId))`, and a thread
+id is a random UUID, so it is a handle the relay can match and cannot invert. Phones register their
+APNs tokens the same way (`push`, `activity_token`), filed against the Ed25519 key the relay already
+knows each device by — so `revoke` drops the tokens with the device, and a revoked phone stops being
+woken.
+
+So the relay learns: that a device exists and how to wake it, that something of one of five classes
+happened, which opaque reference it happened under, and roughly when. It never sees message text,
+tool names or arguments, approval details, rule scopes, summaries or thread titles — those travel
+sealed, in the frame beside the notify, under a key the relay does not hold. The alert body is
+chosen from four fixed strings (`NOTIFY_BODY` in `apps/relay/src/protocol.ts`) and is never
+assembled from anything the Mac sent, so there is no path by which content could reach a lock
+screen. Tapping routes on the reference, which the phone resolves against the thread ids it already
+holds — the one end that can.
+
+A phone holding a live socket is never pushed to: it has the sealed event already. A Live Activity
+update only goes out when the status actually changes, which keeps a turn's every tool call from
+becoming a push.
+
+The hosted relay needs an Apple auth key for this, as three Wrangler secrets — `APNS_KEY_ID`,
+`APNS_TEAM_ID` and `APNS_KEY_P8` (the .p8 itself). Without them the relay forwards frames exactly as
+before and wakes nobody, which is what the self-hosted `src/index.ts` does always: it accepts the
+same messages and holds no key.
+
 ## Permissions and never-sleep
 
 `apps/mac/Sources/YorozuMac/Permissions.swift` holds every grant check as a plain function, and
@@ -446,9 +477,15 @@ thread's title, the status and a clock counting up from when the turn began, plu
 the Dynamic Island carries the status glyph compact and title, status and elapsed expanded. Tapping
 any of it opens `yorozu://thread/<id>`. A finished activity stays for 30 seconds and then ends.
 
-Every update is local: no push token is requested and APNs is v1.5. That is an honest limit rather
-than an oversight — a turn that finishes after iOS has suspended the app is settled the next time
-the app runs, not the moment it happens.
+While the app is running it moves the activity itself. Once iOS has suspended it, the relay pushes
+the same content state over APNs, so a turn that finishes in your pocket says so on the lock screen
+at the moment it happens. Each activity is marked stale ahead of its next expected update, so a push
+that never lands shows *Updating…* rather than a status that quietly stopped being true. A turn that
+*begins* while the phone is already away is raised from a push-to-start token.
+
+The activity is told only `threadRef` — the opaque reference below — so the thread's title is
+resolved on the phone, out of the same App Group file the share sheet's picker reads. A thread
+outside that short list simply shows "Yorozu".
 
 ## Browser
 

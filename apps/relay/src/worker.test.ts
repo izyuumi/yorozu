@@ -1,6 +1,7 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
-import { expect, test } from "vitest";
-import { MAX_DEVICES } from "./protocol.js";
+import { afterEach, expect, test, vi } from "vitest";
+import { MAX_DEVICES, NOTIFY_BODY } from "./protocol.js";
+import * as apns from "./apns.js";
 import type { Env } from "./worker.js";
 
 /**
@@ -490,4 +491,277 @@ test("only the room's mac may announce devices, and a malformed list closes the 
 
   mac.send({ type: "devices", devices: [1] });
   expect(await mac.closed()).toBe(4001);
+});
+
+/**
+ * The push side. Everything below stands a fake APNs in front of the room and reads what it was
+ * sent — which is the only way to check the promise that matters: that a wake-up carries a class
+ * and an opaque reference and nothing whatsoever from the conversation.
+ */
+
+type Call = { url: string; headers: Headers; body: any };
+
+/**
+ * Stands a fake APNs in front of the room and records every push it makes. The Apple key and
+ * the host are real bindings — see vitest.config.ts — because a Durable Object is handed its
+ * env by the runtime and never sees one a test assigned to.
+ *
+ * `status` is what Apple answers with, which is how the dead-token path is exercised.
+ */
+function fakeApns(status: () => number = () => 200): Call[] {
+  // Another test's cached JWT would be signed by the same key, but the cache is per isolate
+  // and a test that asserts on minting must start from nothing.
+  apns.resetToken();
+  const calls: Call[] = [];
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({
+      url: String(input),
+      headers: new Headers(init?.headers),
+      body: JSON.parse(String(init?.body)),
+    });
+    return new Response(null, { status: status() });
+  });
+  return calls;
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  apns.resetToken();
+});
+
+/**
+ * Waits for everything already sent to have been handled. Messages are handled in order on the
+ * room, so an answer to a later question means the earlier ones are done with.
+ *
+ * Two of them, because the question has to be one the asker is allowed to ask: a phone asks
+ * about presence, and a mac asks for a token.
+ */
+async function settled(phone: Client): Promise<void> {
+  phone.send({ type: "owner" });
+  await phone.next();
+}
+
+async function macSettled(mac: Client): Promise<void> {
+  mac.send({ type: "mint" });
+  await mac.next();
+}
+
+/** A mac, a phone that has registered for pushes, and the room they share. */
+async function paired(startToken?: string) {
+  const macKeys = await keypair();
+  const room = await roomId(macKeys.pub);
+  const mac = await connectMac(macKeys);
+  const { phone, keys } = await connectPhone(room, await mintToken(mac));
+  await phone.next(); // joined
+  phone.send({
+    type: "push",
+    deviceToken: "device-token",
+    ...(startToken ? { startToken } : {}),
+  });
+  await settled(phone);
+  return { mac, macKeys, phone, keys, room };
+}
+
+const record = async (room: string, pubkey: string): Promise<any> => {
+  const rooms = (env as unknown as Env).ROOM;
+  return await runInDurableObject(rooms.get(rooms.idFromName(room)), async (_room, state) =>
+    state.storage.get(`push:${pubkey}`),
+  );
+};
+
+test("a phone registers where it can be woken, and revoking it takes the tokens with it", async () => {
+  const { mac, phone, keys, room } = await paired("start-token");
+  phone.send({ type: "activity_token", threadRef: "Ab3-_x9Z", token: "activity-token" });
+  await settled(phone);
+
+  expect(await record(room, keys.pub)).toMatchObject({
+    deviceToken: "device-token",
+    startToken: "start-token",
+    activities: { "Ab3-_x9Z": { token: "activity-token" } },
+  });
+
+  // Re-registering the device token is what a phone does on every launch; it must not take
+  // down the activity registrations it already made.
+  phone.send({ type: "push", deviceToken: "device-token-2" });
+  await settled(phone);
+  expect(await record(room, keys.pub)).toMatchObject({
+    deviceToken: "device-token-2",
+    activities: { "Ab3-_x9Z": { token: "activity-token" } },
+  });
+
+  // A phone takes an activity's registration back by sending no token with it.
+  phone.send({ type: "activity_token", threadRef: "Ab3-_x9Z" });
+  await settled(phone);
+  expect((await record(room, keys.pub)).activities).toEqual({});
+
+  // And the whole registration goes when the Mac unpairs the device: a revoked phone is not
+  // woken again, which is the entire point of revoking it.
+  mac.send({ type: "revoke", pubkey: keys.pub });
+  expect(await phone.closed()).toBe(4001);
+  expect(await record(room, keys.pub)).toBeUndefined();
+});
+
+test("only a joined phone may register, and only the mac may notify", async () => {
+  const macKeys = await keypair();
+  const room = await roomId(macKeys.pub);
+  const mac = await connectMac(macKeys);
+
+  const stranger = await connect(room);
+  await stranger.next(); // nonce
+  stranger.send({ type: "push", deviceToken: "d" });
+  expect(await stranger.closed()).toBe(4001);
+
+  const second = await connect(room);
+  await second.next(); // nonce
+  second.send({ type: "notify", class: "reply", threadRef: "r" });
+  expect(await second.closed()).toBe(4001);
+
+  // And a malformed one closes the socket rather than being quietly ignored.
+  mac.send({ type: "notify", class: "gossip", threadRef: "r" });
+  expect(await mac.closed()).toBe(4001);
+});
+
+test("a phone holding a live socket is never pushed to", async () => {
+  const calls = fakeApns();
+  const { mac, phone } = await paired();
+
+  // It has the sealed frame already: it is joined, and the app is running to have joined.
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z", status: "done" });
+  await macSettled(mac);
+  expect(calls).toHaveLength(0);
+
+  // With the socket gone there is nobody watching, and the same notify does wake it.
+  phone.ws.close();
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z", status: "done" });
+  await macSettled(mac);
+  expect(calls).toHaveLength(1);
+});
+
+test("a wake-up carries a class and an opaque reference, and nothing of the conversation", async () => {
+  const calls = fakeApns();
+  const { mac, phone } = await paired();
+  phone.ws.close();
+
+  mac.send({ type: "notify", class: "approval", threadRef: "Ab3-_x9Z" });
+  await macSettled(mac);
+
+  const call = calls[0]!;
+  expect(call.url).toBe("https://apns.test/3/device/device-token");
+  expect(call.headers.get("apns-topic")).toBe("to.yumi.yorozu.ios");
+  expect(call.headers.get("apns-push-type")).toBe("alert");
+  expect(call.body.aps.alert).toEqual({ title: "Yorozu", body: NOTIFY_BODY.approval });
+  expect(call.body.ref).toBe("Ab3-_x9Z");
+
+  // The payload's whole vocabulary, spelled out. Anything the runtime could have leaked would
+  // have to appear here, and there is nowhere for it to appear.
+  expect(Object.keys(call.body)).toEqual(["aps", "ref", "cls"]);
+  expect(JSON.stringify(call.body)).toBe(
+    JSON.stringify({
+      aps: {
+        alert: { title: "Yorozu", body: NOTIFY_BODY.approval },
+        sound: "default",
+        "thread-id": "Ab3-_x9Z",
+      },
+      ref: "Ab3-_x9Z",
+      cls: "approval",
+    }),
+  );
+
+  // The auth token is a signed ES256 JWT naming the key, and it is minted once and reused.
+  const auth = call.headers.get("authorization")!;
+  expect(auth.startsWith("bearer ")).toBe(true);
+  const [head, body, sig] = auth.slice("bearer ".length).split(".");
+  expect(JSON.parse(atob(head!))).toEqual({ alg: "ES256", kid: "KEY123456" });
+  expect(JSON.parse(atob(body!)).iss).toBe("TEAM12345");
+  expect(sig).toBeTruthy();
+  // Never the key itself, anywhere.
+  expect(auth).not.toContain("PRIVATE KEY");
+
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
+  await macSettled(mac);
+  expect(calls[1]!.headers.get("authorization")).toBe(auth);
+});
+
+test("a live activity is pushed on a change of status and not on a repeat of it", async () => {
+  const calls = fakeApns();
+  const { mac, phone, keys, room } = await paired();
+  phone.send({ type: "activity_token", threadRef: "Ab3-_x9Z", token: "activity-token" });
+  await settled(phone);
+  phone.ws.close();
+
+  // A turn's every tool call is the same word on the lock screen; the first one sends it.
+  for (let i = 0; i < 3; i++) {
+    mac.send({
+      type: "notify",
+      class: "activity",
+      threadRef: "Ab3-_x9Z",
+      status: "working",
+      startedAt: 1000,
+    });
+    await macSettled(mac);
+  }
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.url).toBe("https://apns.test/3/device/activity-token");
+  expect(calls[0]!.headers.get("apns-topic")).toBe("to.yumi.yorozu.ios.push-type.liveactivity");
+  expect(calls[0]!.headers.get("apns-push-type")).toBe("liveactivity");
+  expect(calls[0]!.body.aps["content-state"]).toEqual({ status: "working", startedAt: 1000 });
+  // An activity update is not an alert: there is no `alert` in it to show anybody.
+  expect(calls[0]!.body.aps.alert).toBeUndefined();
+  expect(await record(room, keys.pub)).toMatchObject({
+    activities: { "Ab3-_x9Z": { status: "working" } },
+  });
+
+  // A real change does go out.
+  mac.send({ type: "notify", class: "approval", threadRef: "Ab3-_x9Z", status: "needsApproval" });
+  await macSettled(mac);
+  // The alert for a person, and the activity update for the lock screen it is already on.
+  expect(calls).toHaveLength(3);
+  expect(calls[1]!.headers.get("apns-push-type")).toBe("alert");
+  expect(calls[2]!.body.aps["content-state"].status).toBe("needsApproval");
+});
+
+test("a turn that begins while the phone is away starts an activity from a push", async () => {
+  const calls = fakeApns();
+  const { mac, phone, keys, room } = await paired("start-token");
+  phone.ws.close();
+
+  mac.send({
+    type: "notify",
+    class: "activity",
+    threadRef: "Ab3-_x9Z",
+    status: "working",
+    startedAt: 1000,
+  });
+  await macSettled(mac);
+
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.url).toBe("https://apns.test/3/device/start-token");
+  expect(calls[0]!.body.aps.event).toBe("start");
+  // The attributes are the reference and nothing else: the phone finds the title itself.
+  expect(calls[0]!.body.aps.attributes).toEqual({ threadRef: "Ab3-_x9Z" });
+  expect(calls[0]!.body.aps["attributes-type"]).toBe("TurnAttributes");
+
+  // Recorded, so a second working event does not raise a second activity.
+  expect(await record(room, keys.pub)).toMatchObject({
+    activities: { "Ab3-_x9Z": { status: "working" } },
+  });
+  mac.send({ type: "notify", class: "activity", threadRef: "Ab3-_x9Z", status: "working" });
+  await macSettled(mac);
+  expect(calls).toHaveLength(1);
+});
+
+test("a device token Apple no longer knows is forgotten rather than retried", async () => {
+  const calls = fakeApns(() => 410);
+  const { mac, phone, keys, room } = await paired();
+  phone.ws.close();
+
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
+  await macSettled(mac);
+  expect(calls).toHaveLength(1);
+  expect(await record(room, keys.pub)).toBeUndefined();
+
+  // Nothing left to push to, so the next turn does not try.
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
+  await macSettled(mac);
+  expect(calls).toHaveLength(1);
 });

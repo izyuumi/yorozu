@@ -313,6 +313,19 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           return;
         }
 
+        // The push side-channel. This relay holds no Apple auth key and wakes nobody, so it
+        // takes these and does nothing with them: one client speaks to either relay unchanged,
+        // and a self-hosted room simply has no notifications. The roles are still enforced, so
+        // the two relays refuse the same things.
+        case "push":
+        case "activity_token":
+          if (conn.role !== "phone") return ws.close(CLOSE_PROTOCOL, "not joined");
+          return;
+
+        case "notify":
+          if (conn.role !== "mac") return ws.close(CLOSE_PROTOCOL, "not registered");
+          return;
+
         default:
           return ws.close(CLOSE_PROTOCOL, "unknown type");
       }
