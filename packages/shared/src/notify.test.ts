@@ -8,14 +8,13 @@ const event = (payload: Partial<YorozuEvent> & Pick<YorozuEvent, "kind" | "data"
 
 test("a finished main-agent reply is a reply, and a silent one is a completion", () => {
   expect(notifyFor(event({ kind: "message", data: { role: "agent", text: "hi", done: true } })))
-    .toEqual({ class: "reply", status: "done" });
+    .toBe("reply");
   expect(notifyFor(event({ kind: "message", data: { role: "agent", text: "  ", done: true } })))
-    .toEqual({ class: "done", status: "done" });
+    .toBe("done");
 });
 
-test("deltas, delegated finals and tool traffic only move the activity", () => {
-  expect(notifyFor(event({ kind: "message", data: { role: "agent", text: "par" } })))
-    .toEqual({ class: "activity", status: "working" });
+test("deltas, delegated finals and tool traffic wake nobody", () => {
+  expect(notifyFor(event({ kind: "message", data: { role: "agent", text: "par" } }))).toBeNull();
   // A specialist finishing is one step of the turn, not the end of it.
   expect(
     notifyFor(
@@ -25,20 +24,18 @@ test("deltas, delegated finals and tool traffic only move the activity", () => {
         parentAgentId: "main",
       }),
     ),
-  ).toEqual({ class: "activity", status: "working" });
+  ).toBeNull();
   expect(notifyFor(event({ kind: "tool_call", data: { callId: "c", name: "n", args: {} } })))
-    .toEqual({ class: "activity", status: "working" });
+    .toBeNull();
+  expect(notifyFor(event({ kind: "thought", data: { text: "hm" } }))).toBeNull();
 });
 
 test("cards are the class worth interrupting someone for, and a stop is a failure", () => {
   expect(notifyFor(event({ kind: "approval_card", data: { actionId: "a", actionClass: "send", target: "x" } })))
-    .toEqual({ class: "approval", status: "needsApproval" });
+    .toBe("approval");
   expect(notifyFor(event({ kind: "question_card", data: { questionId: "q", question: "?", options: [] } })))
-    .toEqual({ class: "approval", status: "needsApproval" });
-  expect(notifyFor(event({ kind: "interrupt", data: {} }))).toEqual({
-    class: "failed",
-    status: "failed",
-  });
+    .toBe("approval");
+  expect(notifyFor(event({ kind: "interrupt", data: {} }))).toBe("failed");
 });
 
 test("a phone's own message and the control frames are not news", () => {

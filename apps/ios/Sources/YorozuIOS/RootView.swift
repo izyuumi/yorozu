@@ -11,14 +11,7 @@ struct YorozuApp: App {
 
     var body: some Scene {
         WindowGroup {
-            // Screenshot only: the Live Activity's lock screen, which has no other way onto a
-            // simulator's screen. It replaces the app rather than covering it — there is nothing
-            // behind it worth seeing.
-            if launchArgument("yorozuShowcase") == "activity" {
-                TurnActivityShowcase()
-            } else {
-                RootView()
-            }
+            RootView()
         }
     }
 }
@@ -37,9 +30,6 @@ final class Session {
     /// ``ChatModel``'s initialiser, so the answer is already known here — and knowing it here is
     /// what keeps the chat from appearing a frame after the list it was pushed onto.
     private(set) var openPath: [String] = []
-    /// Raises and retires the Live Activities for whatever is running. One per session, because
-    /// it is one per model.
-    private(set) var activity: TurnActivityController?
     /// The transport, kept apart from the model so push tokens have somewhere to be registered:
     /// the relay is the thing that holds them, because it is the thing that calls APNs.
     private(set) var relay: RelayClient?
@@ -99,7 +89,6 @@ final class Session {
     func unpair() {
         model?.close()
         model = nil
-        activity = nil
         relay = nil
         PairingStore.clear()
         CacheStore.clear()
@@ -132,8 +121,8 @@ final class Session {
         openPath = [threadId]
     }
 
-    /// Opens a thread by the opaque reference a push carries — a tapped notification, or a Live
-    /// Activity that was started by one and so knows nothing else about its thread.
+    /// Opens a thread by the opaque reference a push carries — a tapped notification, which
+    /// knows nothing else about its thread.
     ///
     /// The mapping only exists here. The relay sent a reference precisely so that it could not
     /// do this itself, and the phone resolves it by hashing the thread ids it already holds.
@@ -165,14 +154,8 @@ final class Session {
             self.relay = relay
             let model = ChatModel(transport: relay, cache: CacheStore.open())
             E2EHarness.attach(to: model)
-            // The harness owns `onEvent` when it is running at all, so these are added to
+            // The harness owns `onPaired` when it is running at all, so this is added to
             // whatever is already there rather than written over it.
-            let activity = TurnActivityController(model: model, relay: relay)
-            let onEvent = model.onEvent
-            model.onEvent = { [weak activity] event in
-                onEvent?(event)
-                activity?.handle(event)
-            }
             let onPaired = model.onPaired
             model.onPaired = { [weak self] in
                 onPaired?()
@@ -186,7 +169,6 @@ final class Session {
                 onThreads?()
                 self?.publishThreads()
             }
-            self.activity = activity
             model.start()
             self.model = model
             publishThreads(model)
@@ -227,9 +209,9 @@ struct RootView: View {
 
     var body: some View {
         content
-            // Three things arrive as a `yorozu://` link and they are told apart by the host, not
+            // Four things arrive as a `yorozu://` link and they are told apart by the host, not
             // by trying each parser in turn: `pair` is the pairing string tapped in Messages,
-            // `thread` is a Live Activity being tapped, `share` is the share extension handing
+            // `thread` and `ref` name a thread to open, `share` is the share extension handing
             // over. Anything else is not ours.
             .onOpenURL { url in
                 switch url.host() {
@@ -238,8 +220,8 @@ struct RootView: View {
                     // Decoded once, by `path`: decoding again would eat a literal `%` in an id.
                     session.open(threadId: String(url.path(percentEncoded: false).dropFirst()))
                 case "ref":
-                    // `yorozu://ref/<threadRef>` — a Live Activity or a notification being
-                    // tapped, which knows the thread only by the reference a push carried.
+                    // `yorozu://ref/<threadRef>` — a notification being tapped, which knows the
+                    // thread only by the reference a push carried.
                     session.open(threadRef: String(url.path(percentEncoded: false).dropFirst()))
                 case "share":
                     // The token names the file, but everything waiting is drained either way —
@@ -253,16 +235,9 @@ struct RootView: View {
             // rather than waiting out a backoff that ran down while nothing was executing — and
             // the moment to pick up anything shared while it was away.
             .onChange(of: scenePhase) { _, phase in
-                switch phase {
-                case .active:
-                    session.model?.reconnect()
-                    session.drainShares()
-                    session.activity?.foregrounded()
-                case .background:
-                    session.activity?.backgrounded()
-                default:
-                    break
-                }
+                guard phase == .active else { return }
+                session.model?.reconnect()
+                session.drainShares()
             }
     }
 
