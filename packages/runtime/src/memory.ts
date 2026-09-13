@@ -4,9 +4,19 @@
  * them whenever it is missing or stale. See docs/spec-v1.html section 5.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  watch,
+  writeFileSync,
+} from "node:fs";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { env } from "node:process";
 import { DatabaseSync } from "node:sqlite";
 import { frontmatter } from "./frontmatter.js";
@@ -56,8 +66,51 @@ export function stateDir(): string {
   );
 }
 
-export function memoryDir(): string {
-  return env.YOROZU_MEMORY_DIR ?? join(stateDir(), "memory");
+const defaultStateDir = (): string =>
+  join(homedir(), "Library", "Application Support", "Yorozu");
+
+function usesPaiosMemory(): boolean {
+  return (
+    env.YOROZU_MEMORY_DIR === undefined &&
+    (env.YOROZU_PAIOS_DIR !== undefined || stateDir() === defaultStateDir())
+  );
+}
+
+export function paiosDir(home = homedir()): string {
+  if (env.YOROZU_PAIOS_DIR) return env.YOROZU_PAIOS_DIR;
+  const obsidian = join(home, "Library", "Application Support", "obsidian", "obsidian.json");
+  if (existsSync(obsidian)) {
+    try {
+      const config = JSON.parse(readFileSync(obsidian, "utf8")) as {
+        vaults?: Record<string, { path?: string; open?: boolean }>;
+      };
+      const vaults = Object.values(config.vaults ?? {}).sort(
+        (a, b) => Number(Boolean(b.open)) - Number(Boolean(a.open)),
+      );
+      for (const vault of vaults) {
+        if (vault.path && existsSync(join(vault.path, "PAIOS"))) return join(vault.path, "PAIOS");
+      }
+    } catch {
+      // A hand-edited or changing Obsidian config is not fatal; use normal fallbacks.
+    }
+  }
+  const existing = join(home, "My vault", "PAIOS");
+  return existsSync(existing) ? existing : join(home, "Documents", "PAIOS");
+}
+
+export const memoryDir = (): string =>
+  env.YOROZU_MEMORY_DIR ?? (usesPaiosMemory() ? paiosDir() : join(stateDir(), "memory"));
+
+/** New memories stay visible in Finder without mixing generated notes into PAIOS's own folders. */
+export const paiosWriteDir = (dir = memoryDir()): string => join(dir, "Workspace", "Yorozu Memory");
+
+/** Derived search data is runtime state, never part of the user's Markdown vault. */
+export const memoryIndexFile = (): string => join(stateDir(), "memory.index.sqlite");
+
+export function scopedMemoryIndexFile(dir: string): string {
+  const scope = relative(memoryDir(), dir);
+  const digest = createHash("sha256").update(scope).digest("hex").slice(0, 16);
+  return scope ? join(stateDir(), `memory.${digest}.index.sqlite`) : memoryIndexFile();
 }
 
 function serialize(fact: Fact): string {
@@ -77,7 +130,8 @@ function serialize(fact: Fact): string {
 /** Tolerant of hand-edited files: unknown keys are ignored, missing ones default. */
 function parse(path: string, text: string): Fact {
   const { fields, body } = frontmatter(text);
-  const kind = fields.get("kind") as MemoryKind;
+  const declared = fields.get("kind") ?? fields.get("type") ?? "fact";
+  const kind = (declared === "authorization" ? "approval" : declared) as MemoryKind;
   return {
     path,
     kind: MEMORY_KINDS.includes(kind) ? kind : "fact",
@@ -100,9 +154,21 @@ export interface Memory {
   close(): void;
 }
 
-export function openMemory(dir = memoryDir()): Memory {
+export interface OpenMemoryOptions {
+  indexFile?: string;
+  writeDir?: string;
+  /** Poll fallback for platforms without recursive file watching. */
+  refreshIntervalMs?: number;
+}
+
+export function openMemory(dir = memoryDir(), options: OpenMemoryOptions = {}): Memory {
   mkdirSync(dir, { recursive: true });
-  const db = new DatabaseSync(join(dir, INDEX_FILE));
+  const writeDir = options.writeDir ?? dir;
+  mkdirSync(writeDir, { recursive: true });
+  const indexFile = options.indexFile ?? join(dir, INDEX_FILE);
+  const refreshIntervalMs = options.refreshIntervalMs ?? 30_000;
+  mkdirSync(dirname(indexFile), { recursive: true });
+  const db = new DatabaseSync(indexFile);
   db.exec(`
     create table if not exists facts(
       path text primary key,
@@ -148,12 +214,20 @@ export function openMemory(dir = memoryDir()): Memory {
     insertFts.run(fact.path);
   }
 
-  /** File name -> mtime for every note in the directory. */
+  /** Relative path -> mtime for every visible note below the PAIOS root. */
   function notes(): Map<string, number> {
     const found = new Map<string, number>();
-    for (const name of readdirSync(dir)) {
-      if (name.endsWith(".md")) found.set(name, statSync(join(dir, name)).mtimeMs);
-    }
+    const visit = (folder: string): void => {
+      for (const entry of readdirSync(folder, { withFileTypes: true })) {
+        if (entry.name.startsWith(".")) continue;
+        const file = join(folder, entry.name);
+        if (entry.isDirectory()) visit(file);
+        else if (entry.isFile() && entry.name.endsWith(".md")) {
+          found.set(relative(dir, file), statSync(file).mtimeMs);
+        }
+      }
+    };
+    visit(dir);
     return found;
   }
 
@@ -175,6 +249,25 @@ export function openMemory(dir = memoryDir()): Memory {
     );
   }
 
+  let dirty = false;
+  let lastScan = Date.now();
+  const indexOutsideVault = relative(dir, indexFile).startsWith(`..${sep}`);
+  let watcher = indexOutsideVault
+    ? (() => {
+        try {
+      return watch(dir, { recursive: true }, () => {
+            dirty = true;
+          });
+        } catch {
+          return undefined;
+        }
+      })()
+    : undefined;
+  watcher?.on("error", () => {
+    watcher?.close();
+    watcher = undefined; // Poll fallback below takes over.
+  });
+
   function fileName(created: string, body: string): string {
     const slug =
       body
@@ -187,11 +280,17 @@ export function openMemory(dir = memoryDir()): Memory {
     const stem = `${created.slice(0, 10)}-${slug}`;
     for (let n = 1; ; n++) {
       const name = n === 1 ? `${stem}.md` : `${stem}-${n}.md`;
-      if (!existsSync(join(dir, name))) return name;
+      if (!existsSync(join(writeDir, name))) return name;
     }
   }
 
   function search(query: string, options: SearchOptions = {}): Fact[] {
+    const now = Date.now();
+    if (dirty || (!watcher && now - lastScan >= refreshIntervalMs) || refreshIntervalMs === 0) {
+      dirty = false;
+      lastScan = now;
+      if (stale()) rebuild();
+    }
     // Quote each term and OR them: recall should degrade to the best partial
     // match rather than to nothing, and quoting keeps FTS5 operators out of
     // whatever the model or user typed.
@@ -232,8 +331,9 @@ export function openMemory(dir = memoryDir()): Memory {
         threadId: provenance.threadId ?? "",
         agentId: provenance.agentId ?? "",
       };
-      const file = join(dir, record.path);
+      const file = join(writeDir, record.path);
       writeFileSync(file, serialize(record));
+      record.path = relative(dir, file);
       index(record, statSync(file).mtimeMs);
       return record;
     },
@@ -247,11 +347,32 @@ export function openMemory(dir = memoryDir()): Memory {
       return [];
     },
 
-    close: () => db.close(),
+    close: () => {
+      watcher?.close();
+      db.close();
+    },
   };
 }
 
 const instances = new Map<string, Memory>();
+
+/** Copy old hidden notes into PAIOS once. Originals remain as a rollback copy. */
+export function migrateLegacyMemory(
+  legacy = join(stateDir(), "memory"),
+  destination = paiosWriteDir(),
+): number {
+  if (!existsSync(legacy) || legacy === destination) return 0;
+  mkdirSync(destination, { recursive: true });
+  let copied = 0;
+  for (const entry of readdirSync(legacy, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const target = join(destination, entry.name);
+    if (existsSync(target)) continue;
+    copyFileSync(join(legacy, entry.name), target);
+    copied++;
+  }
+  return copied;
+}
 
 /**
  * Process-wide instance per directory: the `remember` tool uses the default one, an agent
@@ -259,7 +380,20 @@ const instances = new Map<string, Memory>();
  */
 export function memoryFor(dir = memoryDir()): Memory {
   let memory = instances.get(dir);
-  if (!memory) instances.set(dir, (memory = openMemory(dir)));
+  if (!memory) {
+    const root = memoryDir();
+    const paios = usesPaiosMemory() && (dir === root || dir.startsWith(`${root}${sep}`));
+    if (dir === root && paios) migrateLegacyMemory();
+    instances.set(
+      dir,
+      (memory = openMemory(
+        dir,
+        paios
+          ? { indexFile: scopedMemoryIndexFile(dir), writeDir: dir === root ? paiosWriteDir(dir) : dir }
+          : {},
+      )),
+    );
+  }
   return memory;
 }
 

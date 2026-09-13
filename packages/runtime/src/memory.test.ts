@@ -1,10 +1,27 @@
-import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { env } from "node:process";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { defaultTools, runAgent } from "./index.js";
-import { MEMORY_KINDS, openMemory, rememberTool, type Memory } from "./memory.js";
+import {
+  MEMORY_KINDS,
+  migrateLegacyMemory,
+  memoryDir,
+  openMemory,
+  paiosDir,
+  rememberTool,
+  scopedMemoryIndexFile,
+  type Memory,
+} from "./memory.js";
 import type { Message, Provider } from "./provider.js";
 
 let dir: string;
@@ -12,7 +29,7 @@ let memory: Memory;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "yorozu-memory-"));
-  memory = openMemory(dir);
+  memory = openMemory(dir, { refreshIntervalMs: 0 });
 });
 
 afterEach(() => {
@@ -91,21 +108,97 @@ test("index rebuilds from files alone and ranks by bm25", () => {
   }
 });
 
+test("PAIOS Markdown is indexed recursively and its type maps to memory kind", () => {
+  mkdirSync(join(dir, "Knowledge", "Preferences"), { recursive: true });
+  writeFileSync(
+    join(dir, "Knowledge", "Preferences", "Dark mode.md"),
+    "---\ntype: preference\ncreated: 2026-09-12T00:00:00.000Z\n---\n\nUser prefers dark mode.\n",
+  );
+
+  memory.rebuild();
+
+  expect(memory.search("dark mode")).toMatchObject([
+    { path: join("Knowledge", "Preferences", "Dark mode.md"), kind: "preference" },
+  ]);
+});
+
+test("PAIOS writes stay visible while the derived index stays outside the vault", () => {
+  const cache = join(mkdtempSync(join(tmpdir(), "yorozu-index-")), "memory.sqlite");
+  const writes = join(dir, "Workspace", "Yorozu Memory");
+  const paios = openMemory(dir, { indexFile: cache, writeDir: writes });
+  try {
+    const fact = paios.remember("user prefers short replies", "preference");
+    expect(fact.path).toBe(join("Workspace", "Yorozu Memory", fact.path.split("/").at(-1)!));
+    expect(existsSync(join(dir, fact.path))).toBe(true);
+    expect(existsSync(cache)).toBe(true);
+  } finally {
+    paios.close();
+    rmSync(dirname(cache), { recursive: true, force: true });
+  }
+});
+
+test("legacy hidden memories copy into PAIOS without overwriting", () => {
+  const legacy = mkdtempSync(join(tmpdir(), "yorozu-legacy-"));
+  const destination = join(dir, "Workspace", "Yorozu Memory");
+  writeFileSync(join(legacy, "fact.md"), "old");
+  mkdirSync(destination, { recursive: true });
+  writeFileSync(join(destination, "kept.md"), "new");
+
+  expect(migrateLegacyMemory(legacy, destination)).toBe(1);
+  expect(migrateLegacyMemory(legacy, destination)).toBe(0);
+  expect(readFileSync(join(destination, "fact.md"), "utf8")).toBe("old");
+  expect(readFileSync(join(destination, "kept.md"), "utf8")).toBe("new");
+  rmSync(legacy, { recursive: true, force: true });
+});
+
+test("PAIOS discovery prefers an existing Obsidian vault and custom state stays isolated", () => {
+  const home = mkdtempSync(join(tmpdir(), "yorozu-home-"));
+  const vault = join(home, "Notes");
+  const config = join(home, "Library", "Application Support", "obsidian");
+  mkdirSync(join(vault, "PAIOS"), { recursive: true });
+  mkdirSync(config, { recursive: true });
+  writeFileSync(
+    join(config, "obsidian.json"),
+    JSON.stringify({ vaults: { owner: { path: vault, open: true } } }),
+  );
+  expect(paiosDir(home)).toBe(join(vault, "PAIOS"));
+  expect(paiosDir(join(home, "fresh"))).toBe(join(home, "fresh", "Documents", "PAIOS"));
+
+  const previousState = env.YOROZU_STATE_DIR;
+  const previousPaios = env.YOROZU_PAIOS_DIR;
+  const previousMemory = env.YOROZU_MEMORY_DIR;
+  delete env.YOROZU_PAIOS_DIR;
+  delete env.YOROZU_MEMORY_DIR;
+  env.YOROZU_STATE_DIR = join(home, "test-state");
+  try {
+    expect(memoryDir()).toBe(join(home, "test-state", "memory"));
+    env.YOROZU_PAIOS_DIR = join(home, "chosen-paios");
+    expect(memoryDir()).toBe(join(home, "chosen-paios"));
+    expect(scopedMemoryIndexFile(join(home, "chosen-paios", "Knowledge", "Preferences"))).not.toBe(
+      scopedMemoryIndexFile(join(home, "chosen-paios", "Knowledge-Preferences")),
+    );
+  } finally {
+    if (previousState === undefined) delete env.YOROZU_STATE_DIR;
+    else env.YOROZU_STATE_DIR = previousState;
+    if (previousPaios === undefined) delete env.YOROZU_PAIOS_DIR;
+    else env.YOROZU_PAIOS_DIR = previousPaios;
+    if (previousMemory === undefined) delete env.YOROZU_MEMORY_DIR;
+    else env.YOROZU_MEMORY_DIR = previousMemory;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("a stale index is rebuilt: edits, additions and deletions on disk win", () => {
   const fact = memory.remember("user lives in Osaka", "fact");
-  memory.close();
 
   writeNote(fact.path, "correction", "user lives in Kyoto");
   writeNote("extra.md", "fact", "user rides a bicycle");
 
-  memory = openMemory(dir);
   expect(memory.search("Osaka")).toEqual([]);
   expect(memory.search("Kyoto").map((f) => f.kind)).toEqual(["correction"]);
   expect(memory.search("bicycle").map((f) => f.path)).toEqual(["extra.md"]);
 
-  memory.close();
   rmSync(join(dir, "extra.md"));
-  memory = openMemory(dir);
   expect(memory.search("bicycle")).toEqual([]);
 });
 
