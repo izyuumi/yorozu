@@ -100,6 +100,10 @@ public final class ChatModel {
     private var deltas = 0
     /// One flush at a time: the queue is sent in order, and two loops draining it would not be.
     private var flushing = false
+    /// Direct sends share one tail so events finish on the wire in emission order. Starting one
+    /// unstructured task per event let a message overtake its thread creation — or the relay's
+    /// pairing hello — when URLSession resumed concurrent sends out of order.
+    private var emitter: Task<Void, Never>?
     /// Latest unfinished agent event per message. Providers can emit faster than SwiftUI can
     /// lay out growing text; one model mutation per display slice keeps the UI responsive while
     /// the final event still lands immediately and losslessly.
@@ -529,7 +533,11 @@ public final class ChatModel {
     }
 
     private func emit(_ event: YorozuEvent) {
-        Task { [transport] in try? await transport.send(event) }
+        let previous = emitter
+        emitter = Task { [transport] in
+            await previous?.value
+            try? await transport.send(event)
+        }
     }
 
     /// Asks the runtime who is paired. It also pushes a fresh list whenever one comes or goes.

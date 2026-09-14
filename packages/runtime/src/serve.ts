@@ -1144,7 +1144,9 @@ if (import.meta.main) {
       stdout.write(`${setAssignCron(argument ?? "", mode(extra))}\n`);
       break;
     default: {
-      const sidecar = serve();
+      // Test rigs can pin a deterministic provider instead of talking to the live OpenClaw
+      // gateway. Ordinary launches have no argument and keep OpenClaw as their backend.
+      const sidecar = serve(command === "--direct-provider" ? { provider: chainFromEnv() } : {});
       // The Mac app's "New code" button, and the only thing stdin is for. Skipped on a
       // terminal: reading one from a backgrounded shell job earns a SIGTTIN, and a person
       // running the sidecar by hand has no button to press anyway.

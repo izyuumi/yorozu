@@ -52,6 +52,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   if (process.env.FAKE_MODE === "denied") {
     return send({ error: "the window is not readable", permission: "accessibility" }, request);
   }
+  if (process.env.FAKE_MODE === "nowindow" && request.cmd === "ax.read") {
+    return send({ error: "no frontmost window" }, request);
+  }
   switch (request.cmd) {
     case "slow":
       return; // Never answers, so the client's own timeout is what has to fire.
@@ -124,6 +127,12 @@ test("an empty tree falls back to a screenshot on its own", async () => {
   const file = /saved to (.+)$/.exec(out)?.[1];
   expect(file).toContain(join(dir, "screenshots"));
   expect(readFileSync(file!).subarray(0, 8)).toEqual(PNG_MAGIC);
+});
+
+test("no frontmost window falls back to a screenshot instead of dead-ending", async () => {
+  env.YOROZU_NATIVE_CMD = `FAKE_MODE=nowindow node ${helper}`;
+  const out = await screenReadTool.run({});
+  expect(out).toContain("there is no frontmost window; screenshot 1x1 saved to");
 });
 
 test("screen_capture writes a PNG and reports its size", async () => {
@@ -251,6 +260,13 @@ test("the native tools declare the arguments the model must supply", () => {
     ["text"],
     ["key"],
   ]);
+});
+
+test("native input is approval-gated because UI actions may commit external state", () => {
+  for (const tool of [inputClickTool, inputTypeTool, inputKeyTool]) {
+    expect(tool.actionClass).toBe("interact-app");
+    expect(tool.action).toBeTypeOf("function");
+  }
 });
 
 test("the registry dispatches every native tool to this implementation", async () => {

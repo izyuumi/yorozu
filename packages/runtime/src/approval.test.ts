@@ -824,6 +824,27 @@ test("generic browser interactions always ask and offer no reusable rule", async
   expect(cardFor("web", { actionClass: "interact-web", ...web.action!({}) }).suggestedRule).toBeUndefined();
 });
 
+test("generic native app interactions always ask and offer no reusable rule", async () => {
+  saveSettings(settings({ yolo: true, rules: [rule({
+    actionClass: "interact-app",
+    decision: "always",
+    scope: { target: exact("focused control") },
+  })] }), dir);
+  const input: Tool = {
+    name: "input_type",
+    description: "",
+    parameters: {},
+    actionClass: "interact-app",
+    action: () => ({ target: "focused control", operation: "run" }),
+    run: () => "typed",
+  };
+  const ask = vi.fn(async (): Promise<AskResult> => ({ answer: "yes" }));
+  const gate = await checkApproval(input, {}, { ask, dir });
+  expect(gate.refusal).toBeNull();
+  expect(ask).toHaveBeenCalledOnce();
+  expect(cardFor("app", { actionClass: "interact-app", ...input.action!({}) }).suggestedRule).toBeUndefined();
+});
+
 test("no refuses this one action only: nothing is written, and the next one asks again", async () => {
   const ask = vi.fn(async (): Promise<AskResult> => ({ answer: "no" }));
 

@@ -36,6 +36,7 @@ export const ACTION_CLASSES = [
   "run-command",
   "edit-file",
   "interact-web",
+  "interact-app",
   "edit-calendar",
   "edit-reminder",
 ] as const;
@@ -303,7 +304,7 @@ function insideDir(target: string, dir: string): boolean {
 export function needsFreshConfirmation(action: Pick<Action, "actionClass" | "operation" | "category">): boolean {
   // Generic browser mechanics cannot prove which real-world commit a page will perform. They
   // therefore never inherit standing authority or YOLO mode: each interaction is approved once.
-  if (action.actionClass === "interact-web") return true;
+  if (action.actionClass === "interact-web" || action.actionClass === "interact-app") return true;
   if (action.actionClass === "transfer-money") return true;
   if (action.operation && ALWAYS_CONFIRM_OPERATIONS.includes(action.operation)) return true;
   return ALWAYS_CONFIRM_CATEGORIES.includes((action.category ?? "").toLowerCase());

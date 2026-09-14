@@ -33,6 +33,21 @@ private actor FakeTransport: ChatTransport {
     }
 }
 
+/// Holds every send open until released, exposing whether the model starts a later wire send
+/// before the earlier one has finished.
+private actor BlockingTransport: ChatTransport {
+    private(set) var started: [YorozuEvent.Kind] = []
+    private var releases: [CheckedContinuation<Void, Never>] = []
+
+    func connect() -> AsyncStream<TransportUpdate> { AsyncStream { _ in } }
+    func send(_ event: YorozuEvent) async throws {
+        started.append(event.payload.kind)
+        await withCheckedContinuation { releases.append($0) }
+    }
+    func close() {}
+    func releaseFirst() { releases.removeFirst().resume() }
+}
+
 private func event(_ id: String, _ payload: YorozuEvent.Payload, thread: String = "home") -> YorozuEvent {
     YorozuEvent(id: id, threadId: thread, ts: 1, agentId: "main", payload: payload)
 }
@@ -57,6 +72,30 @@ private func sent(by transport: FakeTransport, atLeast count: Int) async -> [Yor
         try? await Task.sleep(for: .milliseconds(10))
     }
     return await transport.sent
+}
+
+private func started(by transport: BlockingTransport, atLeast count: Int) async -> [YorozuEvent.Kind] {
+    for _ in 0..<300 {
+        let started = await transport.started
+        if started.count >= count { return started }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    return await transport.started
+}
+
+@MainActor
+@Test func wireSendsFinishInEmissionOrder() async {
+    let transport = BlockingTransport()
+    let model = ChatModel(transport: transport)
+
+    model.requestSync()
+    model.requestDevices()
+
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(await transport.started == [.syncRequest])
+    await transport.releaseFirst()
+    #expect(await started(by: transport, atLeast: 2) == [.syncRequest, .deviceList])
+    await transport.releaseFirst()
 }
 
 /// A model with a live link behind it: paired and the Mac awake. Anything less and a send goes
