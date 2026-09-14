@@ -100,18 +100,20 @@ public struct ChatView: View {
             if let failure = model.failure {
                 Banner(text: failure, systemImage: "exclamationmark.triangle")
             }
-            if rows.isEmpty {
-                EmptyThreadView { prompt in
-                    draft.wrappedValue = prompt
-                    send()
+            Group {
+                if rows.isEmpty {
+                    EmptyThreadView { prompt in
+                        draft.wrappedValue = prompt
+                        send()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    messages
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                messages
             }
+            .overlay { WorkingBezel(active: generating) }
             composer
         }
-        .overlay { WorkingBezel(active: generating).ignoresSafeArea() }
         // Inside the stack: a trace pushed from here keeps streaming this thread.
         .agentTraceDestination { events }
         .navigationTitle(thread.displayTitle)
@@ -1121,15 +1123,16 @@ private struct EmptyThreadView: View {
     }
 }
 
-/// A running turn lights the screen edge itself, leaving every control's job unchanged. Reduce
-/// Motion keeps the same state cue as a steady bezel instead of pulsing it.
+/// A running turn lights the visible timeline edge itself. It belongs to the timeline rather
+/// than the screen, so the keyboard and composer remain outside it when they shrink that viewport.
+/// Reduce Motion keeps the same state cue as a steady bezel instead of pulsing it.
 private struct WorkingBezel: View {
     let active: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var bright = false
 
     var body: some View {
-        Rectangle()
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
             .strokeBorder(
                 Color.accentColor.opacity(active ? (bright || reduceMotion ? 0.9 : 0.3) : 0),
                 lineWidth: 2

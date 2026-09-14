@@ -82,7 +82,9 @@ Version 1.5 makes remote work dependable without changing Yorozu's local-first, 
 - Thread tests prove summary boundaries never omit or duplicate messages, old summaries rebuild, transcript truth survives failed generation, and recent messages remain verbatim.
 - Approval tests cover specificity, deny-on-tie, global use across delegated agents, persistent rules, proposal-without-auto-activation, financial floors, mutated transactions, batch binding, audit records, and revocation.
 - Relay tests prove a registered device receives an opaque wake event, revoked devices do not, and payloads expose no conversation or approval content.
-- Swift integration tests prove notification routing to the correct thread or approval and normal native dictation through the standard composer.
+- Swift integration tests prove notification routing to the correct thread or approval. Native
+  dictation remains Apple's system-keyboard behavior; Yorozu keeps a standard editable composer
+  and adds no app-owned dictation behavior to test.
 - End-to-end proof backgrounds an iPhone, completes a task, receives a push, opens the correct thread, and separately has Codex complete one real Yorozu tool call under the shared approval engine.
 
 ## Out of Scope
