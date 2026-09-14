@@ -370,7 +370,7 @@ public struct ThreadListView<Destination: View>: View {
                 #if os(iOS)
                     newThreadButton
                         .padding(.trailing, 16)
-                        .padding(.bottom, 72)
+                        .padding(.bottom, 16)
                 #endif
             }
             .toolbar {
