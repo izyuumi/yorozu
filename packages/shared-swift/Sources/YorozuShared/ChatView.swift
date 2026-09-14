@@ -13,6 +13,7 @@ public struct ChatView: View {
     private let onCreate: (() -> Void)?
     private let resumeRequest: UUID?
     private let lastReadAt: Double?
+    private let notificationSyncRevision: Int?
     /// Shown while the runtime is unreachable. The two apps lose it differently: the phone
     /// queues what is typed and sends it when the Mac is back, the Mac's sidecar is simply not
     /// running yet.
@@ -49,6 +50,7 @@ public struct ChatView: View {
         thread: ThreadSummary,
         resumeRequest: UUID? = nil,
         lastReadAt: Double? = nil,
+        notificationSyncRevision: Int? = nil,
         onCreate: (() -> Void)? = nil,
         offlineNotice: String = "Mac offline — what you send waits on this phone until it's back."
     ) {
@@ -56,6 +58,7 @@ public struct ChatView: View {
         self.thread = thread
         self.resumeRequest = resumeRequest
         self.lastReadAt = lastReadAt
+        self.notificationSyncRevision = notificationSyncRevision
         self.onCreate = onCreate
         self.offlineNotice = offlineNotice
     }
@@ -265,12 +268,20 @@ public struct ChatView: View {
 
     #if os(iOS)
         private var nativeMessages: some View {
-            let notificationRequest = resumeRequest.map {
-                TimelineRequest(
-                    id: $0,
-                    target: resumeRowId(rows: rows, lastReadAt: lastReadAt).map(TimelineRequest.Target.event)
-                        ?? .latest
-                )
+            let notificationRequest = resumeRequest.flatMap { id -> TimelineRequest? in
+                guard let lastReadAt else { return TimelineRequest(id: id, target: .latest) }
+                // A cold notification can resolve its thread before that thread's refreshed
+                // events arrive. Keep the request pending until the unread assistant bubble
+                // exists; turning a missing target into `.latest` here consumed the request
+                // against stale cached rows and never corrected the position afterwards.
+                if let target = resumeRowId(rows: rows, lastReadAt: lastReadAt) {
+                    return TimelineRequest(id: id, target: .event(target))
+                }
+                guard notificationRefreshFinished(
+                    initialRevision: notificationSyncRevision,
+                    currentRevision: model.syncRevision
+                ) else { return nil }
+                return TimelineRequest(id: id, target: .latest)
             }
             return IOSChatTimeline(
                 rows: rows,
@@ -597,6 +608,7 @@ public struct ChatView: View {
         }
         .buttonStyle(.plain)
         .frame(width: controlTarget, height: controlTarget)
+        .contentShape(Rectangle())
         .macKey(.escape)
         .accessibilityLabel("Stop")
         .transition(.scale(scale: 0.8).combined(with: .opacity))
@@ -846,21 +858,21 @@ public struct ChatView: View {
     }
 #endif
 
-/// First rendered row nobody had read when a notification was sent. Nil means the timeline was
-/// already current (or had never been read), so its normal latest-message anchor wins.
+/// First assistant message nobody had read when a notification was sent. Tool, progress and
+/// approval rows are execution state, not the reply the notification announced.
 func resumeRowId(rows: [ChatRow], lastReadAt: Double?) -> String? {
     guard let lastReadAt else { return nil }
     return rows.first { row in
-        switch row {
-        case .message(let event), .approval(let event), .proposal(let event),
-             .question(let event), .progress(let event):
-            Double(event.ts) > lastReadAt
-        case .tools(let activities):
-            activities.contains { Double(max($0.startedAt, $0.finishedAt ?? .min)) > lastReadAt }
-        case .delegation(let card):
-            card.events.contains { Double($0.ts) > lastReadAt }
-        }
+        guard case .message(let event) = row,
+              case .message(let message) = event.payload,
+              message.role == .agent else { return false }
+        return Double(event.ts) > lastReadAt
     }?.id
+}
+
+func notificationRefreshFinished(initialRevision: Int?, currentRevision: Int) -> Bool {
+    guard let initialRevision else { return true }
+    return currentRevision > initialRevision
 }
 
 func followsNewest(atBottom: Bool, phase: ScrollPhase) -> Bool {

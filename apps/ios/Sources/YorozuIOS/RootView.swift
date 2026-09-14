@@ -42,6 +42,7 @@ final class Session {
         let id = UUID()
         let threadId: String
         let lastReadAt: Double?
+        let syncRevision: Int
     }
 
     private(set) var model: ChatModel?
@@ -175,7 +176,11 @@ final class Session {
             return false
         }
         pendingThreadRef = nil
-        notificationOpen = NotificationOpen(threadId: match.id, lastReadAt: match.lastReadAt)
+        notificationOpen = NotificationOpen(
+            threadId: match.id,
+            lastReadAt: match.lastReadAt,
+            syncRevision: model?.syncRevision ?? 0
+        )
         openPath = [match.id]
         return true
     }
@@ -339,7 +344,8 @@ struct RootView: View {
                     model: model,
                     thread: thread,
                     resumeRequest: notification?.id,
-                    lastReadAt: notification?.lastReadAt
+                    lastReadAt: notification?.lastReadAt,
+                    notificationSyncRevision: notification?.syncRevision
                 ) {
                     path = [model.newDraft().id]
                 }
