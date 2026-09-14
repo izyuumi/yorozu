@@ -12,6 +12,12 @@ import Testing
     #expect(!followsNewest(atBottom: false, phase: .idle))
 }
 
+@Test func jumpToLatestNeedsMoreThanOneViewportOfDistance() {
+    #expect(!showsJumpToLatest(contentHeight: 2_000, visibleBottom: 1_500, viewportHeight: 500))
+    #expect(showsJumpToLatest(contentHeight: 2_001, visibleBottom: 1_500, viewportHeight: 500))
+    #expect(!showsJumpToLatest(contentHeight: 2_000, visibleBottom: 500, viewportHeight: 0))
+}
+
 @Test func notificationResumeStartsAtFirstUnreadRowOrLatest() {
     func message(_ id: String, _ timestamp: Int) -> ChatRow {
         .message(YorozuEvent(
