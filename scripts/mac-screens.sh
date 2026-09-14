@@ -34,7 +34,6 @@ SCENES=(
   "43-mac-chat         -yorozuShowcase threads -yorozuScene plain"
   "43-mac-search       -yorozuShowcase threads -yorozuScene search"
   "43-mac-reply        -yorozuShowcase threads -yorozuScene reply"
-  "43-mac-dictation    -yorozuShowcase threads -yorozuScene dictation"
   "43-mac-approval     -yorozuShowcase approval"
   "43-mac-model        -yorozuShowcase model"
   "43-mac-tools        -yorozuShowcase tools"

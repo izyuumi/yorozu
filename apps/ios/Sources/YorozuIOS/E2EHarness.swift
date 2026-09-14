@@ -83,8 +83,8 @@ final class E2EHarness {
             model.previewApproval(in: model.newDraft().id)
         }
         // `-yorozuScene`: the same idea one step further — a finished conversation, plus the
-        // one piece of view state each of these screenshots is about. A simulator has no
-        // microphone and nothing here can tap a magnifier, so both are seeded rather than done.
+        // one piece of view state each of these screenshots is about. Nothing here can tap a
+        // magnifier, so search is seeded rather than performed.
         if let scene = launchArgument("yorozuScene") {
             // One thread for the whole scene: seeding the conversation into a fresh draft and
             // then the scene's own messages into whichever thread happened to be first put the
