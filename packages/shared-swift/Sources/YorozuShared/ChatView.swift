@@ -71,6 +71,20 @@ public struct ChatView: View {
         Binding(get: { model.attachments[thread.id] ?? [] }, set: { model.attachments[thread.id] = $0 })
     }
 
+    #if os(iOS)
+        @ViewBuilder private var newSessionButton: some View {
+            let button = Button("New session", systemImage: "square.and.pencil") { onCreate?() }
+                .labelStyle(.iconOnly)
+                .controlSize(.large)
+                .buttonBorderShape(.circle)
+            if #available(iOS 26, *) {
+                button.buttonStyle(.glassProminent)
+            } else {
+                button.buttonStyle(.borderedProminent)
+            }
+        }
+    #endif
+
     /// The last agent message, which is the only one that can still be streaming.
     private var streamingId: String? {
         guard generating else { return nil }
@@ -88,14 +102,21 @@ public struct ChatView: View {
             if let failure = model.failure {
                 Banner(text: failure, systemImage: "exclamationmark.triangle")
             }
-            if rows.isEmpty {
-                EmptyThreadView { prompt in
-                    draft.wrappedValue = prompt
-                    send()
+            Group {
+                if rows.isEmpty {
+                    EmptyThreadView { prompt in
+                        draft.wrappedValue = prompt
+                        send()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    messages
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                messages
+            }
+            .overlay(alignment: .bottomTrailing) {
+                #if os(iOS)
+                    if onCreate != nil { newSessionButton.padding(16) }
+                #endif
             }
             composer
         }
@@ -130,21 +151,10 @@ public struct ChatView: View {
                     }
                 }
             #endif
-            // iOS gets an explicit reveal button. On Mac, ⌘F reveals the otherwise hidden field
-            // through the Edit menu. See ``ChatCommands``.
-            #if os(iOS)
-                if let onCreate {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button("New session", systemImage: "square.and.pencil", action: onCreate)
-                    }
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
-                }
-            #endif
             ToolbarItem(placement: .primaryAction) {
                 Menu("More", systemImage: "ellipsis") {
                     #if os(iOS)
+                        Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
                         modelPicker
                         effortPicker
                         Divider()
