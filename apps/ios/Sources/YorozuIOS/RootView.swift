@@ -312,7 +312,9 @@ struct RootView: View {
                 exportMarkdown: model.markdown(of:),
                 onSettings: { settings = true }
             ) { thread in
-                ChatView(model: model, thread: thread)
+                ChatView(model: model, thread: thread) {
+                    path = [model.newDraft().id]
+                }
             }
             // Unpairing lives in Settings behind a confirmation now, which is the only place it
             // belongs: it is not something to do by mistyping a tap in a chat.

@@ -332,8 +332,7 @@ public struct MessageBubble: View {
         } else if streaming {
             // Reparsing and laying out the whole accumulated Markdown on every delta exceeds a
             // frame budget on long answers. The finished event renders the same text below.
-            (Text(AttributedString(body).highlighting(highlight)) + Text(" "))
-                .overlayCursor(true)
+            Text(AttributedString(body).highlighting(highlight))
                 .textSelection(.enabled)
         } else {
             MarkdownText(body).textSelection(.enabled)
