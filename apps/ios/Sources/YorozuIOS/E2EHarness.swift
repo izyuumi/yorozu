@@ -96,13 +96,9 @@ final class E2EHarness {
                 ChatShowcase.search = "invoice"
             case "reply":
                 ChatShowcase.quote = "The April invoice is still open: it was issued on the second and the terms on it are thirty days."
-            // The two Signal gestures, each held at the moment worth a picture: the same reply
-            // the `plain` scene folds up, unfolded — and the bubbles pulled to the point where
-            // letting go replies. Neither gesture can be performed on a simulator.
+            // The long reply held open, as the `plain` scene's "Read more" leaves it.
             case "expanded":
                 ChatShowcase.expanded = true
-            case "swipe":
-                ChatShowcase.swipe = true
             default:
                 break
             }
