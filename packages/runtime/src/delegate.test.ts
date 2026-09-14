@@ -4,7 +4,13 @@ import { join } from "node:path";
 import { env } from "node:process";
 import type { YorozuEvent } from "@yorozu/shared";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { DELEGATE_TOOL, delegateTool, type DelegateOptions } from "./delegate.js";
+import {
+  DELEGATE_TOOL,
+  DelegationCapacity,
+  MAX_CONCURRENT_DELEGATIONS,
+  delegateTool,
+  type DelegateOptions,
+} from "./delegate.js";
 import { defaultTools, echoTool, type Tool, type TurnContext } from "./index.js";
 import type { Provider, ProviderEvent, ToolDef } from "./provider.js";
 
@@ -291,6 +297,40 @@ test("delegate names itself and the specialists the model may pick from", () => 
     // The enum is built from the agents on disk, so the model cannot invent one.
     properties: { agent: { enum: ["calendar"] } },
   });
+});
+
+test("delegation capacity bounds concurrent workers and frees a slot on completion", async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const provider: Provider = {
+    auth: async () => ({ ok: true }),
+    async *stream() {
+      await held;
+      yield { type: "text", text: "done" };
+      yield { type: "done" };
+    },
+  };
+  const capacity = new DelegationCapacity();
+  // Separate tool instances model separate main-agent turns in the same sidecar.
+  const tool = delegateTool(options(provider, { capacity }));
+  const nextTurnTool = delegateTool(options(provider, { capacity }));
+  const running = Array.from({ length: MAX_CONCURRENT_DELEGATIONS }, (_, index) =>
+    (index % 2 ? tool : nextTurnTool).run(
+      { agent: "calendar", task: `slice ${index}` },
+      CONTEXT,
+    ),
+  );
+
+  expect(await nextTurnTool.run({ agent: "calendar", task: "overflow" }, CONTEXT)).toBe(
+    `delegation capacity reached (${MAX_CONCURRENT_DELEGATIONS}); retry when a worker finishes`,
+  );
+  release();
+  await expect(Promise.all(running)).resolves.toEqual(
+    Array(MAX_CONCURRENT_DELEGATIONS).fill("done"),
+  );
+  await expect(nextTurnTool.run({ agent: "calendar", task: "next" }, CONTEXT)).resolves.toBe(
+    "done",
+  );
 });
 
 test("delegate is built per turn, not shared, and a call by name reaches it", async () => {

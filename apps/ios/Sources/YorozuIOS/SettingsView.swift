@@ -1,36 +1,14 @@
 import SwiftUI
 import YorozuShared
 
-/// What the phone can say about its link to the Mac, which is two separate facts rolled into the
-/// one line a person actually wants: is this phone on the relay at all, and is the Mac on it too.
-///
-/// Pure, so a test can check the mapping without a socket.
-enum MacStatus {
-    case connected
-    case offline
-    case reconnecting
-
-    init(state: TransportState, ownerOnline: Bool) {
-        switch state {
-        // Joined or paired both mean the relay has us; the Mac's own presence is the other half.
-        case .joined, .paired: self = ownerOnline ? .connected : .offline
-        case .connecting, .closed: self = .reconnecting
-        }
-    }
-
+/// Settings keeps its warning tint while sharing the connection-state mapping and labels used by
+/// the thread list.
+private extension ConnectionState {
     var tint: Color {
         switch self {
         case .connected: .green
         case .offline: .orange
         case .reconnecting: .secondary
-        }
-    }
-
-    var label: String {
-        switch self {
-        case .connected: String(localized: "Connected")
-        case .offline: String(localized: "Mac offline")
-        case .reconnecting: String(localized: "Reconnecting")
         }
     }
 }
@@ -41,7 +19,7 @@ enum MacStatus {
 /// Everything here is read-only but the Unpair button, so it holds no state of its own beyond the
 /// confirmation alert's flag.
 struct SettingsView: View {
-    let status: MacStatus
+    let status: ConnectionState
     let relayUrl: String
     let pairedAt: Date?
     let onUnpair: () -> Void

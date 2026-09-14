@@ -282,7 +282,7 @@ export class Room implements DurableObject {
   }
 
   /**
-   * Wakes every paired device that is not already watching.
+   * Alerts every paired device; background catch-up only wakes devices not already watching.
    *
    * Every registered phone gets the alert. iOS can suspend an app while its WebSocket still
    * looks open from the server, so socket presence cannot prove somebody is watching. The app

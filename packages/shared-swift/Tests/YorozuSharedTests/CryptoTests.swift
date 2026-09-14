@@ -57,3 +57,13 @@ import Testing
     #expect(NotificationPreview.decrypt(nonce: nonce, ciphertext: ciphertext, key: other) == nil)
     #expect(NotificationPreview.decrypt(nonce: "bad", ciphertext: ciphertext, key: key) == nil)
 }
+
+@Test func notificationPreviewPayloadDecodesOnlyItsWireShape() {
+    let payload = NotificationPreviewPayload(userInfo: [
+        "preview": ["n": "nonce", "c": "ciphertext"],
+    ])
+    #expect(payload?.nonce == "nonce")
+    #expect(payload?.ciphertext == "ciphertext")
+    #expect(NotificationPreviewPayload(userInfo: ["preview": ["n": "nonce"]]) == nil)
+    #expect(NotificationPreviewPayload(userInfo: ["preview": "not-an-object"]) == nil)
+}

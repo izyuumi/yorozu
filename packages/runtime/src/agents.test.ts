@@ -90,8 +90,14 @@ test("absent fields inherit the main agent's, present ones win", () => {
 test("the bundled agents install once and never overwrite an edited file", () => {
   installAgents(dir);
   const names = listAgents(dir).map((agent) => agent.name);
-  expect(names).toEqual(["browser", "calendar", "email", "main", "reservation"]);
+  expect(names).toEqual(["browser", "calendar", "email", "general", "main", "reservation"]);
   expect(loadAgent("main", dir)?.prompt).toContain("Yorozu");
+  expect(loadAgent("main", dir)?.prompt).toContain("delegate execution by default");
+  expect(loadAgent("main", dir)?.prompt).toContain("Split independent work");
+  expect(loadAgent("main", dir)?.prompt).toContain("synthesize results");
+  expect(loadAgent("general", dir)?.description).toBe(
+    "executes general tasks that do not belong to a specialist",
+  );
   expect(loadAgent("calendar", dir)?.description).toBe("reads and edits the user's calendar");
 
   write("main", "Mine now.");

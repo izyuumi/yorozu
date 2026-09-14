@@ -14,11 +14,13 @@ final class NotificationService: UNNotificationServiceExtension {
             return contentHandler(request.content)
         }
         bestAttemptContent = content
-        if let preview = content.userInfo["preview"] as? [String: Any],
-           let nonce = preview["n"] as? String,
-           let ciphertext = preview["c"] as? String,
+        if let preview = NotificationPreviewPayload(userInfo: content.userInfo),
            let key = NotificationPreview.loadKey(),
-           let body = NotificationPreview.decrypt(nonce: nonce, ciphertext: ciphertext, key: key) {
+           let body = NotificationPreview.decrypt(
+               nonce: preview.nonce,
+               ciphertext: preview.ciphertext,
+               key: key
+           ) {
             content.body = body
         }
         contentHandler(content)

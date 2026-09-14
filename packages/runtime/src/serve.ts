@@ -50,7 +50,7 @@ import {
 } from "./approval.js";
 import { autoAssign, revertAssign, setAssignCron, type AssignMode } from "./assign.js";
 import { chainFromEnv, chainWithPrimary } from "./chain.js";
-import { delegateTool } from "./delegate.js";
+import { DelegationCapacity, delegateTool } from "./delegate.js";
 import { defaultTools, eventPayload, runAgent, type TurnContext } from "./index.js";
 import { localSocketPath, startLocalChannel, type Send } from "./local.js";
 import type { Provider } from "./provider.js";
@@ -280,6 +280,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     .join("\n\n");
   /** One controller per running turn, so an `interrupt` cancels every tree at once. */
   const running = new Map<string, AbortController>();
+  /** One ceiling across user turns and background-result turns. */
+  const delegationCapacity = new DelegationCapacity();
 
   /**
    * Session key per paired device, keyed by the X25519 public key it announced. Several
@@ -637,6 +639,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           dir: agents,
           signal: turn.signal,
           ...(effort ? { effort } : {}),
+          capacity: delegationCapacity,
         }),
       ];
       for await (const event of runAgent({

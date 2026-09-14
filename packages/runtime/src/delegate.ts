@@ -18,6 +18,23 @@ import type { Provider, ReasoningEffort } from "./provider.js";
 import { currentThread } from "./threads.js";
 
 export const DELEGATE_TOOL = "delegate";
+/** Keeps one runtime from exhausting the machine with unbounded worker processes. */
+export const MAX_CONCURRENT_DELEGATIONS = 4;
+
+/** Shared by every turn in one sidecar, including turns started by background results. */
+export class DelegationCapacity {
+  #active = 0;
+
+  acquire(): boolean {
+    if (this.#active >= MAX_CONCURRENT_DELEGATIONS) return false;
+    this.#active += 1;
+    return true;
+  }
+
+  release(): void {
+    this.#active -= 1;
+  }
+}
 
 export interface DelegateOptions {
   /** The main agent's provider; a specialist inherits it unless it names its own model. */
@@ -45,6 +62,8 @@ export interface DelegateOptions {
   signal?: AbortSignal;
   /** Thread-level reasoning depth inherited by specialists. */
   effort?: ReasoningEffort;
+  /** Process-local worker ceiling shared across turns. */
+  capacity?: DelegationCapacity;
 }
 
 /** One specialist turn, seeded with `task` as its only message. Returns its final text. */
@@ -113,11 +132,13 @@ export function delegateTool(options: DelegateOptions): Tool {
   const specialists = (): AgentConfig[] =>
     listAgents(dir).filter((agent) => agent.name !== MAIN_AGENT);
   const known = specialists();
+  const capacity = options.capacity ?? new DelegationCapacity();
 
   return {
     name: DELEGATE_TOOL,
     description:
-      "Hand a task to a specialist agent and get its answer. Specialists cannot delegate " +
+      "Hand execution to a worker agent and get its answer. Up to " +
+      `${MAX_CONCURRENT_DELEGATIONS} workers run concurrently. Workers cannot delegate ` +
       `further: one needing another returns what it needs, and you re-delegate. Agents: ${
         known.map(describe).join(", ") || "none"
       }.`,
@@ -139,16 +160,22 @@ export function delegateTool(options: DelegateOptions): Tool {
       const name = String(agent ?? "");
       const found = specialists().find((candidate) => candidate.name === name);
       if (!found) return `no such agent: ${name}`;
+      if (!capacity.acquire()) {
+        return `delegation capacity reached (${MAX_CONCURRENT_DELEGATIONS}); retry when a worker finishes`;
+      }
 
       const config = inherit(found, options.main);
       // Resolved from the file's own field: inheriting means reusing the provider we hold.
       const provider = found.model ? chainFromEnv(found.model) : options.provider;
       const threadId = context?.threadId ?? currentThread();
       const text = String(task ?? "");
-
       if (!background) {
-        const result = await runSpecialist(options, config, provider, text, threadId);
-        return options.signal?.aborted ? `delegation to ${name} was interrupted` : result;
+        try {
+          const result = await runSpecialist(options, config, provider, text, threadId);
+          return options.signal?.aborted ? `delegation to ${name} was interrupted` : result;
+        } finally {
+          capacity.release();
+        }
       }
 
       const id = randomUUID();
@@ -171,6 +198,8 @@ export function delegateTool(options: DelegateOptions): Tool {
         });
       progress("running");
       void runSpecialist(options, config, provider, text, threadId)
+        // The worker slot is free before its result starts a new main-agent turn.
+        .finally(() => capacity.release())
         .then((result) => {
           progress("done");
           return options.signal?.aborted

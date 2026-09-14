@@ -467,8 +467,8 @@ and a site that never answers leaves no gap.
 `YorozuShare` puts Yorozu in the share sheet for selected text, a web link or one picture
 (`NSExtensionActivationRule`, so it stays out of the sheets it has nothing to offer). The composer
 shows what was shared as itself — a link as a link, a selection as a quotation, a photo as a
-thumbnail — takes an optional note, and offers the five most recent threads plus **New chat**,
-with New chat selected: a link is rarely meant for whatever was last talked about.
+thumbnail — takes an optional note, and offers the five most recent threads plus **New session**,
+with New session selected: a link is rarely meant for whatever was last talked about.
 
 The extension never touches the relay. It writes a `SharePayload` into the App Group container
 (`group.to.yumi.yorozu`) and opens `yorozu://share?token=…`; the app, which owns the socket and the
@@ -537,15 +537,17 @@ subdirectory of the memory directory to recall from, and `description` is the on
 agent sees when choosing. An absent field inherits the main agent's, so the shortest useful
 specialist is a file with no frontmatter at all. `main.md` is the main agent's own prompt.
 
-The five bundled agents (`main`, `calendar`, `email`, `browser`, `reservation`) live in
+The six bundled agents (`main`, `general`, `calendar`, `email`, `browser`, `reservation`) live in
 `packages/runtime/agents/` and are copied into the state directory on first run; a file you
 edited is never written over, and one you delete comes back on the next start.
 
-The main agent has one handle on the rest: `delegate(agent, task, background?)`. It runs the
-specialist with its own message list seeded with `task` and returns its final text. Depth is
-hard-capped at 2 — the specialist's tool list never contains `delegate`, so a specialist that
-needs another specialist says what it needs and the main agent re-delegates. With
-`background: true` the call returns a `delegation <id> started` line immediately and the result
+The main agent stays user-facing and delegates execution by default: to the closest fixed
+specialist, or to `general` when none fits. Independent slices can start together, with one
+shared four-worker ceiling across foreground and background turns. Its one handle on workers is
+`delegate(agent, task, background?)`; each worker gets its own message list seeded with `task`
+and returns its final text. Depth is hard-capped at 2 — a worker's tool list never contains
+`delegate`, so one needing another specialist says what it needs and the main agent re-delegates.
+With `background: true` the call returns a `delegation <id> started` line immediately and the result
 arrives later as a new turn in the same thread (`delegation <id> finished: <result>`), through
 the same programmatic-turn path the scheduler uses. Every event a specialist emits carries
 `agentId: <specialist>` and `parentAgentId: "main"`, which is what the phone's drill-down will
