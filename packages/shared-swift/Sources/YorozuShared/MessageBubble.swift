@@ -276,8 +276,9 @@ public struct MessageBubble: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
+        .foregroundStyle(isUser ? AnyShapeStyle(Color.white) : AnyShapeStyle(Color.primary))
         .background(
-            isUser ? AnyShapeStyle(Color.accentColor.opacity(0.18)) : AnyShapeStyle(.quaternary),
+            bubbleBackground,
             in: RoundedRectangle(cornerRadius: 18, style: .continuous)
         )
         // The message's actions as a control of their own, because on the Mac the context
@@ -293,7 +294,25 @@ public struct MessageBubble: View {
         #endif
         // A bubble stops short of the far edge, so which side it is on stays readable as
         // who said it even when the message is long.
-        .frame(maxWidth: 560, alignment: isUser ? .trailing : .leading)
+        .frame(maxWidth: bubbleMaxWidth, alignment: isUser ? .trailing : .leading)
+    }
+
+    private var bubbleBackground: AnyShapeStyle {
+        #if os(iOS)
+            isUser
+                ? AnyShapeStyle(Color.accentColor)
+                : AnyShapeStyle(Color(uiColor: .secondarySystemBackground))
+        #else
+            isUser ? AnyShapeStyle(Color.accentColor.opacity(0.18)) : AnyShapeStyle(.quaternary)
+        #endif
+    }
+
+    private var bubbleMaxWidth: CGFloat {
+        #if os(iOS)
+            300
+        #else
+            560
+        #endif
     }
 
     /// Unfolds the rest of the message where it stands. The bubble grows downwards from its own

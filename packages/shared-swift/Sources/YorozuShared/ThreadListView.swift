@@ -170,14 +170,8 @@ struct ThreadRow: View {
     var body: some View {
         // Drawn from the thread's own two timestamps, which the runtime owns: reading on the
         // phone puts this dot out on the Mac too. See ``ThreadSummary/isUnread``.
-        HStack(alignment: .top, spacing: 10) {
-            Circle()
-                .fill(thread.isUnread ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear))
-                .frame(width: dot, height: dot)
-                // Nudged down to sit on the title's line rather than above it.
-                .padding(.top, dot * 0.6)
-                .accessibilityHidden(!thread.isUnread)
-                .accessibilityLabel("Unread")
+        HStack(alignment: .center, spacing: 12) {
+            ThreadAvatar(title: thread.displayTitle)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(thread.displayTitle)
@@ -206,8 +200,33 @@ struct ThreadRow: View {
                         .lineLimit(1)
                 }
             }
+            if thread.isUnread {
+                Circle()
+                    .fill(.tint)
+                    .frame(width: dot, height: dot)
+                    .accessibilityLabel("Unread")
+            }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 5)
+    }
+}
+
+private struct ThreadAvatar: View {
+    let title: String
+
+    private var initials: String {
+        title.split(separator: " ").prefix(2).compactMap(\.first).map(String.init).joined()
+    }
+
+    var body: some View {
+        ZStack {
+            Circle().fill(Color.accentColor.opacity(0.14))
+            Text(initials.uppercased())
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.tint)
+        }
+        .frame(width: 48, height: 48)
+        .accessibilityHidden(true)
     }
 }
 
@@ -362,20 +381,29 @@ public struct ThreadListView<Destination: View>: View {
                     Section { archive(groups.archived) }
                 }
             }
+            .listStyle(.plain)
             .animation(.default, value: threads)
             .overlay { empty(groups) }
             .searchable(text: $query, isPresented: $searching, prompt: "Search threads")
             .refreshable { await onRefresh?() }
-            .navigationTitle("Threads")
+            .navigationTitle("Yorozu")
             .toolbar {
-                // `.principal` is the bar's middle, which is where the pill wants to be: beside
-                // the title on the way in, and above the large one once it has settled.
-                if let connection {
-                    ToolbarItem(placement: .principal) { ConnectionPill(state: connection) }
-                }
                 if let onSettings {
                     ToolbarItem(placement: .navigation) {
-                        Button("Settings", systemImage: "gear", action: onSettings)
+                        Button(action: onSettings) {
+                            ZStack(alignment: .bottomTrailing) {
+                                Image(systemName: "person.crop.circle.fill")
+                                    .symbolRenderingMode(.hierarchical)
+                                if let connection {
+                                    Circle()
+                                        .fill(connection.tint)
+                                        .frame(width: 8, height: 8)
+                                        .overlay(Circle().stroke(.background, lineWidth: 1.5))
+                                }
+                            }
+                        }
+                        .accessibilityLabel("Settings")
+                        .accessibilityValue(connection.map { "Mac connection: \($0.label)" } ?? "")
                     }
                 }
                 #if os(iOS)
@@ -388,11 +416,8 @@ public struct ThreadListView<Destination: View>: View {
                         }
                     }
                 #endif
-                // Beside the search field at the bottom on 26, where the system draws it as
-                // its own glass circle; a floating overlay would sit on top of that field.
                 #if os(iOS)
-                    ToolbarItem(placement: .bottomBar) { Spacer() }
-                    ToolbarItem(placement: .bottomBar) { newThreadButton }
+                    ToolbarItem(placement: .primaryAction) { newThreadButton }
                 #else
                     ToolbarItem(placement: .primaryAction) { newThreadButton }
                 #endif
@@ -408,12 +433,7 @@ public struct ThreadListView<Destination: View>: View {
 
     /// The system's own bar button: a bare symbol the toolbar sizes and centres itself.
     @ViewBuilder private var newThreadButton: some View {
-        let button = Button("New thread", systemImage: "square.and.pencil", action: onCreate)
-        if #available(iOS 26, macOS 26, *) {
-            button.buttonStyle(.glassProminent)
-        } else {
-            button.buttonStyle(.borderedProminent)
-        }
+        Button("New thread", systemImage: "square.and.pencil", action: onCreate)
     }
 
     /// The archive: shut by default, and the only place a thread comes back from.
