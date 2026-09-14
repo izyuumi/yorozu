@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { env } from "node:process";
 import { createInterface } from "node:readline";
 import type { Tool } from "../index.js";
+import { hashContent, summarize, verifyApproved } from "../approval.js";
 import { stateDir } from "../memory.js";
 import { permissionErrorFor } from "./permissions.js";
 import { truncate } from "./shell.js";
@@ -216,7 +217,13 @@ export const screenReadTool: Tool = {
     "a screenshot when the window exposes no tree.",
   parameters: { type: "object", properties: {}, required: [] },
   run: async () => {
-    const response = await askNative("ax.read");
+    let response: NativeResponse;
+    try {
+      response = await askNative("ax.read");
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "no frontmost window") throw error;
+      return `there is no frontmost window; ${await captureScreen()}`;
+    }
     const tree = response.tree as AxNode | undefined;
     const lines = tree?.id ? formatTree(tree) : [];
     // Spec: the screenshot is the automatic fallback when the tree is empty, so the model
@@ -241,6 +248,12 @@ export const inputClickTool: Tool = {
   name: "input_click",
   description:
     "Click an element from the last screen_read by its ID, or a point in screen coordinates.",
+  actionClass: "interact-app",
+  action: ({ id, x, y }) => ({
+    target: id ? `element ${String(id)}` : `screen point ${String(x)},${String(y)}`,
+    operation: "run",
+    consequence: "Clicks a control in a Mac app, which may change external state.",
+  }),
   parameters: {
     type: "object",
     properties: {
@@ -250,7 +263,12 @@ export const inputClickTool: Tool = {
     },
     required: [],
   },
-  run: async ({ id, x, y }) => {
+  run: async (args, context) => {
+    const { id, x, y } = args;
+    if (context?.actionId) {
+      const stale = verifyApproved(context.actionId, inputClickTool.action!(args));
+      if (stale) return stale;
+    }
     const response = await askNative("input.click", {
       ...(id ? { id: String(id) } : { x: Number(x), y: Number(y) }),
     });
@@ -262,13 +280,26 @@ export const inputClickTool: Tool = {
 export const inputTypeTool: Tool = {
   name: "input_type",
   description: "Type text into whatever currently has keyboard focus.",
+  actionClass: "interact-app",
+  action: ({ text }) => ({
+    target: "focused control",
+    operation: "run",
+    contentSummary: summarize(String(text ?? "")),
+    contentHash: hashContent(String(text ?? "")),
+    consequence: "Types into a Mac app; the app may submit or change external state.",
+  }),
   parameters: {
     type: "object",
     properties: { text: { type: "string" } },
     required: ["text"],
   },
-  run: async ({ text }) => {
+  run: async (args, context) => {
+    const { text } = args;
     const body = String(text ?? "");
+    if (context?.actionId) {
+      const stale = verifyApproved(context.actionId, inputTypeTool.action!(args));
+      if (stale) return stale;
+    }
     await askNative("input.type", { text: body });
     return `typed ${body.length} characters`;
   },
@@ -279,6 +310,16 @@ export const inputKeyTool: Tool = {
   description:
     "Press one key, optionally with modifiers — for shortcuts and keys text cannot carry, " +
     "like return, tab, escape or the arrows.",
+  actionClass: "interact-app",
+  action: ({ key, modifiers }) => {
+    const names = Array.isArray(modifiers) ? modifiers.map(String) : [];
+    const chord = [...names, String(key ?? "")].join("+");
+    return {
+      target: chord,
+      operation: "run",
+      consequence: "Presses a key in a Mac app, which may change external state.",
+    };
+  },
   parameters: {
     type: "object",
     properties: {
@@ -291,8 +332,13 @@ export const inputKeyTool: Tool = {
     },
     required: ["key"],
   },
-  run: async ({ key, modifiers }) => {
+  run: async (args, context) => {
+    const { key, modifiers } = args;
     const names = Array.isArray(modifiers) ? modifiers.map(String) : [];
+    if (context?.actionId) {
+      const stale = verifyApproved(context.actionId, inputKeyTool.action!(args));
+      if (stale) return stale;
+    }
     await askNative("input.key", { key: String(key ?? ""), modifiers: names });
     return `pressed ${[...names, String(key ?? "")].join("+")}`;
   },

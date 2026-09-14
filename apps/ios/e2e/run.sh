@@ -73,8 +73,8 @@ PORT=$PROVIDER_PORT REPLY="$REPLY" node "$IOS/e2e/fake-provider.mjs" >"$WORK/pro
 PIDS+=($!)
 wait_for "$WORK/relay.log" "relay listening" "the relay"
 
-# Only the fake provider, written before the sidecar starts: left to seed itself it would pick up
-# whatever `claude` and `codex` CLIs this machine has, and the reply would not be the fixed one.
+# Only the fake provider, written before the sidecar starts. `--direct-provider` keeps this test
+# pinned to it instead of sending the turn to whichever live OpenClaw gateway is on the machine.
 mkdir -p "$WORK/state"
 cat >"$WORK/state/providers.json" <<JSON
 [{ "id": "openai", "kind": "openai-compat", "label": "Fake", "baseUrl": "http://127.0.0.1:$PROVIDER_PORT", "models": ["fake"], "enabled": true }]
@@ -84,7 +84,7 @@ YOROZU_RELAY_URL="ws://127.0.0.1:$RELAY_PORT" \
   YOROZU_STATE_DIR="$WORK/state" \
   YOROZU_BASE_URL="http://127.0.0.1:$PROVIDER_PORT" \
   YOROZU_API_KEY=fake \
-  node "$ROOT/packages/runtime/dist/serve.js" >"$WORK/sidecar.log" 2>&1 &
+  node "$ROOT/packages/runtime/dist/serve.js" --direct-provider >"$WORK/sidecar.log" 2>&1 &
 PIDS+=($!)
 wait_for "$WORK/sidecar.log" "^PAIR " "the pairing string"
 PAIR=$(grep -m1 '^PAIR ' "$WORK/sidecar.log" | cut -c6-)
