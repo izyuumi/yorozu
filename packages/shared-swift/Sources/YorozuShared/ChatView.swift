@@ -24,6 +24,8 @@ public struct ChatView: View {
     /// Whether the reader is already at the newest message. Only then does a new one scroll the
     /// thread — pulling someone away from what they were reading is the thing to avoid.
     @State private var atBottom = true
+    /// The shortcut stays out of the way until the reader is over one viewport from the end.
+    @State private var showJumpToLatest = false
     @State private var scrollPhase = ScrollPhase.idle
     /// Bumped on every send, so the haptic fires per send rather than per keystroke.
     @State private var sends = 0
@@ -311,11 +313,12 @@ public struct ChatView: View {
                     })
                 ),
                 atBottom: $atBottom,
+                showJumpToLatest: $showJumpToLatest,
                 content: { row in AnyView(rowView(row).environment(\.searchHighlight, search)) }
             )
             .onChange(of: ChangeStamp(events: events)) { _, _ in noteReplyStart() }
             .overlay(alignment: .bottom) {
-                if !atBottom, search.isEmpty {
+                if showJumpToLatest, search.isEmpty {
                     ScrollToBottomPill {
                         timelineRequest = TimelineRequest(target: .latest)
                     }
@@ -323,7 +326,7 @@ public struct ChatView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            .animation(.snappy, value: atBottom)
+            .animation(.snappy, value: showJumpToLatest)
             .safeAreaInset(edge: .top, spacing: 0) {
                 if !search.isEmpty {
                     SearchHitBar(index: hit, total: hits.count) { step in
@@ -380,6 +383,15 @@ public struct ChatView: View {
             } action: { _, isAtBottom in
                 atBottom = isAtBottom
             }
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                showsJumpToLatest(
+                    contentHeight: geometry.contentSize.height,
+                    visibleBottom: geometry.visibleRect.maxY,
+                    viewportHeight: geometry.visibleRect.height
+                )
+            } action: { _, show in
+                showJumpToLatest = show
+            }
             // Every frame of a streaming reply lands here, not just every message: the text of
             // the last event grows in place, so its id alone would never change.
             .onChange(of: ChangeStamp(events: events)) { _, _ in
@@ -394,7 +406,7 @@ public struct ChatView: View {
             .overlay(alignment: .bottom) {
                 // Not while searching: the arrows are already moving the thread about, and a
                 // pill offering to jump somewhere else would be arguing with them.
-                if !atBottom, search.isEmpty {
+                if showJumpToLatest, search.isEmpty {
                     ScrollToBottomPill {
                         withAnimation { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
                     }
@@ -402,7 +414,7 @@ public struct ChatView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            .animation(.snappy, value: atBottom)
+            .animation(.snappy, value: showJumpToLatest)
             .safeAreaInset(edge: .top, spacing: 0) {
                 if !search.isEmpty {
                     SearchHitBar(index: hit, total: hits.count) { step in
@@ -713,6 +725,7 @@ public struct ChatView: View {
         let notificationRequest: TimelineRequest?
         let presentation: TimelinePresentation
         @Binding var atBottom: Bool
+        @Binding var showJumpToLatest: Bool
         let content: (ChatRow) -> AnyView
 
         private enum Entry: Hashable {
@@ -856,6 +869,13 @@ public struct ChatView: View {
             private func reportBottom(_ scrollView: UIScrollView) {
                 let value = isAtBottom(scrollView)
                 if parent.atBottom != value { parent.atBottom = value }
+                let show = showsJumpToLatest(
+                    contentHeight: scrollView.contentSize.height,
+                    visibleBottom: scrollView.contentOffset.y + scrollView.bounds.height
+                        - scrollView.adjustedContentInset.bottom,
+                    viewportHeight: scrollView.bounds.height
+                )
+                if parent.showJumpToLatest != show { parent.showJumpToLatest = show }
             }
 
             func scrollViewDidScroll(_ scrollView: UIScrollView) { reportBottom(scrollView) }
@@ -867,6 +887,11 @@ public struct ChatView: View {
         }
     }
 #endif
+
+/// A return shortcut is useful only when reaching the end would take more than one full swipe.
+func showsJumpToLatest(contentHeight: CGFloat, visibleBottom: CGFloat, viewportHeight: CGFloat) -> Bool {
+    viewportHeight > 0 && contentHeight - visibleBottom > viewportHeight
+}
 
 /// First assistant message nobody had read when a notification was sent. Tool, progress and
 /// approval rows are execution state, not the reply the notification announced.
