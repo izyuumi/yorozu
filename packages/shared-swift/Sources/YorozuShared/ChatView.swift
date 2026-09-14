@@ -13,6 +13,7 @@ public struct ChatView: View {
     private let onCreate: (() -> Void)?
     private let resumeRequest: UUID?
     private let notificationClass: String?
+    private let notificationEventRef: String?
     private let lastReadAt: Double?
     private let notificationSyncRevision: Int?
     /// Shown while the runtime is unreachable. The two apps lose it differently: the phone
@@ -51,6 +52,7 @@ public struct ChatView: View {
         thread: ThreadSummary,
         resumeRequest: UUID? = nil,
         notificationClass: String? = nil,
+        notificationEventRef: String? = nil,
         lastReadAt: Double? = nil,
         notificationSyncRevision: Int? = nil,
         onCreate: (() -> Void)? = nil,
@@ -60,6 +62,7 @@ public struct ChatView: View {
         self.thread = thread
         self.resumeRequest = resumeRequest
         self.notificationClass = notificationClass
+        self.notificationEventRef = notificationEventRef
         self.lastReadAt = lastReadAt
         self.notificationSyncRevision = notificationSyncRevision
         self.onCreate = onCreate
@@ -282,7 +285,8 @@ public struct ChatView: View {
                 if let target = resumeRowId(
                     rows: rows,
                     lastReadAt: lastReadAt,
-                    notificationClass: notificationClass
+                    notificationClass: notificationClass,
+                    notificationEventRef: notificationEventRef
                 ) {
                     return TimelineRequest(id: id, target: .event(target))
                 }
@@ -872,9 +876,13 @@ public struct ChatView: View {
 func resumeRowId(
     rows: [ChatRow],
     lastReadAt: Double?,
-    notificationClass: String? = nil
+    notificationClass: String? = nil,
+    notificationEventRef: String? = nil
 ) -> String? {
     guard let lastReadAt else { return nil }
+    if let notificationEventRef {
+        return rows.first(where: { YorozuCrypto.threadRef($0.id) == notificationEventRef })?.id
+    }
     return rows.first { row in
         switch notificationClass {
         case "approval":

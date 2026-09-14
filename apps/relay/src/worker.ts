@@ -310,7 +310,7 @@ export class Room implements DurableObject {
         this.env,
         {
           token: record.deviceToken,
-          payload: alertPayload(notify.class, notify.threadRef),
+          payload: alertPayload(notify.class, notify.threadRef, notify.eventRef),
           pushType: "alert",
         },
         now,

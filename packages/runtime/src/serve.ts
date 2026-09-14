@@ -834,9 +834,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const [oldest] = pending.values();
     const typed = oldest && typedAnswer(event.data.text, oldest.card);
     if (typed) return oldest.settle(typed);
-    runTurn(event.threadId, event.data.text, true, messageAttachments(event.data)).catch((e: unknown) =>
-      state(`agent-error ${String(e)}`),
-    );
+    runTurn(event.threadId, event.data.text, true, messageAttachments(event.data)).catch((e: unknown) => {
+      state(`agent-error ${String(e)}`);
+      // A thrown turn has no final message event, so announce its terminal state explicitly.
+      notifyRelay({
+        id: randomUUID(),
+        threadId: event.threadId,
+        ts: Date.now(),
+        agentId: MAIN_AGENT,
+        kind: "interrupt",
+        data: {},
+      });
+    });
   }
 
   /**
@@ -908,10 +917,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (ws.readyState !== WebSocket.OPEN || devices.size === 0) return;
       const cls = notifyFor(event);
       if (!cls || !event.threadId) return;
-      // The thread travels as an opaque reference and the class as one of four words. There is
-      // nothing else on this message, which is the whole of what the relay is allowed to learn.
+      // Thread and event ids travel only as short one-way references. The latter lets a tap
+      // select the exact encrypted card after sync without teaching the relay what it contains.
       ws.send(
-        JSON.stringify({ type: "notify", class: cls, threadRef: threadRef(event.threadId) }),
+        JSON.stringify({
+          type: "notify",
+          class: cls,
+          threadRef: threadRef(event.threadId),
+          eventRef: threadRef(event.id),
+        }),
       );
     };
 

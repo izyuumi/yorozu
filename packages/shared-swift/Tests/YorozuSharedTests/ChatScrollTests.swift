@@ -72,3 +72,29 @@ import Testing
         notificationClass: "approval"
     ) == "approval")
 }
+
+@Test func approvalNotificationResumesAtItsExactCard() {
+    let rows = chatRows(from: [
+        YorozuEvent(id: "first", threadId: "home", ts: 200, agentId: "main",
+            payload: .approvalCard(ApprovalCardData(
+                actionId: "first-action", actionClass: "send-message", target: "first"
+            ))),
+        YorozuEvent(id: "second", threadId: "home", ts: 300, agentId: "main",
+            payload: .approvalCard(ApprovalCardData(
+                actionId: "second-action", actionClass: "send-message", target: "second"
+            ))),
+    ])
+
+    #expect(resumeRowId(
+        rows: rows,
+        lastReadAt: 100,
+        notificationClass: "approval",
+        notificationEventRef: YorozuCrypto.threadRef("second")
+    ) == "second")
+    #expect(resumeRowId(
+        rows: rows,
+        lastReadAt: 100,
+        notificationClass: "approval",
+        notificationEventRef: YorozuCrypto.threadRef("not-loaded")
+    ) == nil)
+}
