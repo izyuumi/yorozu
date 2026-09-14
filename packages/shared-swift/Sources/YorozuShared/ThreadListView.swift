@@ -171,7 +171,6 @@ struct ThreadRow: View {
         // Drawn from the thread's own two timestamps, which the runtime owns: reading on the
         // phone puts this dot out on the Mac too. See ``ThreadSummary/isUnread``.
         HStack(alignment: .center, spacing: 12) {
-            ThreadAvatar(title: thread.displayTitle)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(thread.displayTitle)
@@ -208,25 +207,6 @@ struct ThreadRow: View {
             }
         }
         .padding(.vertical, 5)
-    }
-}
-
-private struct ThreadAvatar: View {
-    let title: String
-
-    private var initials: String {
-        title.split(separator: " ").prefix(2).compactMap(\.first).map(String.init).joined()
-    }
-
-    var body: some View {
-        ZStack {
-            Circle().fill(Color.accentColor.opacity(0.14))
-            Text(initials.uppercased())
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.tint)
-        }
-        .frame(width: 48, height: 48)
-        .accessibilityHidden(true)
     }
 }
 
