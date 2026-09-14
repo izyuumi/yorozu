@@ -425,7 +425,7 @@ public struct ThreadListView<Destination: View>: View {
         #if os(iOS)
             let button = Button("New thread", systemImage: "square.and.pencil", action: onCreate)
                 .labelStyle(.iconOnly)
-                .controlSize(.large)
+                .controlSize(.extraLarge)
                 .buttonBorderShape(.circle)
             if #available(iOS 26, *) {
                 button.buttonStyle(.glassProminent)
