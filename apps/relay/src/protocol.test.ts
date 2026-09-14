@@ -114,6 +114,12 @@ test("a notify is a known class and an opaque reference, or it is nothing", () =
   expect(parseNotify({ class: "gossip", threadRef: "r" })).toBeNull();
   expect(parseNotify({ class: "reply" })).toBeNull();
   expect(parseNotify({ class: "reply", threadRef: "" })).toBeNull();
+  expect(parseNotify({ class: "approval", threadRef: "r", eventRef: "e" })).toEqual({
+    class: "approval",
+    threadRef: "r",
+    eventRef: "e",
+  });
+  expect(parseNotify({ class: "approval", threadRef: "r", eventRef: "" })).toBeNull();
   // Nothing else on the message survives into what the relay acts on.
   expect(parseNotify({ class: "reply", threadRef: "r", text: "the secret" })).toEqual({
     class: "reply",
@@ -122,10 +128,11 @@ test("a notify is a known class and an opaque reference, or it is nothing", () =
 });
 
 test("an alert carries a fixed phrase and an opaque reference, and nothing else", () => {
-  const payload = alertPayload("approval", "Ab3-_x9Z") as any;
+  const payload = alertPayload("approval", "Ab3-_x9Z", "Ev3-_x9Z") as any;
   expect(payload.aps.alert).toEqual({ title: "Yorozu", body: NOTIFY_BODY.approval });
   expect(payload.ref).toBe("Ab3-_x9Z");
   expect(payload.cls).toBe("approval");
+  expect(payload.event).toBe("Ev3-_x9Z");
   // Every string anywhere in it is either the fixed vocabulary or the opaque reference.
   const strings = JSON.stringify(payload).match(/"[^"]*"/g) ?? [];
   const allowed = new Set([
@@ -133,6 +140,7 @@ test("an alert carries a fixed phrase and an opaque reference, and nothing else"
     ...NOTIFY_CLASSES,
     "Yorozu",
     "Ab3-_x9Z",
+    "Ev3-_x9Z",
     "aps",
     "alert",
     "title",
@@ -142,6 +150,7 @@ test("an alert carries a fixed phrase and an opaque reference, and nothing else"
     "thread-id",
     "ref",
     "cls",
+    "event",
   ]);
   for (const quoted of strings) expect(allowed).toContain(quoted.slice(1, -1));
 });

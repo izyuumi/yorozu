@@ -1031,13 +1031,17 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
 
   let qrLine!: (line: string) => void;
   const qrPrinted = new Promise<string>((resolve) => (qrLine = resolve));
+  let turn = 0;
   sidecar = serve({
     relayUrl: `ws://127.0.0.1:${port}`,
     stateDir: mkdtempSync(join(tmpdir(), "yorozu-notify-")),
     provider: openaiCompat({
       baseUrl: "https://example.invalid",
       model: "m",
-      fetch: vi.fn<typeof fetch>().mockImplementation(async () => sse("the secret reply")),
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => {
+        if (turn++ === 0) return sse("the secret reply");
+        throw new Error("provider unavailable");
+      }),
     }),
     log: (line) => {
       if (line.startsWith("QR ")) qrLine(line.slice(3));
@@ -1070,11 +1074,25 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   await vi.waitFor(() => expect(seen.map((msg) => msg.class)).toContain("reply"));
 
   const notify = seen.find((msg) => msg.class === "reply")!;
-  expect(notify).toEqual({
+  expect(notify).toMatchObject({
     type: "notify",
     class: "reply",
     threadRef: threadRef("thread-one"),
   });
+  expect(notify.eventRef).toMatch(/^[A-Za-z0-9_-]{8}$/);
+
+  const failed: YorozuEvent = {
+    ...sent,
+    id: "e2",
+    ts: 2,
+    data: { role: "user", text: "another secret question" },
+  };
+  const failedBox = seal(sessionKey, Buffer.from(JSON.stringify(failed)));
+  phone.frame(
+    encodeBody({ t: "box", n: toBase64Url(failedBox.nonce), c: toBase64Url(failedBox.ciphertext) }),
+    keys,
+  );
+  await vi.waitFor(() => expect(seen.map((msg) => msg.class)).toContain("failed"));
 
   // The whole side-channel, everything the relay was ever told in the clear. Neither side of
   // the conversation is in it, and neither is the thread it happened in.

@@ -173,7 +173,7 @@ export type Push = { deviceToken: string };
  * The Mac, alongside a sealed frame: something of this class happened in this thread. The
  * thread is named by an opaque reference the phone can map and the relay cannot.
  */
-export type Notify = { class: NotifyClass; threadRef: string };
+export type Notify = { class: NotifyClass; threadRef: string; eventRef?: string };
 
 export const parsePush = (msg: Record<string, unknown>): Push | null =>
   strings(msg, "deviceToken");
@@ -181,7 +181,12 @@ export const parsePush = (msg: Record<string, unknown>): Push | null =>
 export const parseNotify = (msg: Record<string, unknown>): Notify | null => {
   if (typeof msg.threadRef !== "string" || msg.threadRef === "") return null;
   if (!NOTIFY_CLASSES.includes(msg.class as NotifyClass)) return null;
-  return { class: msg.class as NotifyClass, threadRef: msg.threadRef };
+  if (msg.eventRef !== undefined && (typeof msg.eventRef !== "string" || msg.eventRef === "")) return null;
+  return {
+    class: msg.class as NotifyClass,
+    threadRef: msg.threadRef,
+    ...(typeof msg.eventRef === "string" ? { eventRef: msg.eventRef } : {}),
+  };
 };
 
 /**
@@ -189,7 +194,7 @@ export const parseNotify = (msg: Record<string, unknown>): Notify | null => {
  * else — `ref` is what the tap routes on, resolved to a thread by the phone, which is the only
  * end that can.
  */
-export function alertPayload(cls: NotifyClass, ref: string): unknown {
+export function alertPayload(cls: NotifyClass, ref: string, eventRef?: string): unknown {
   return {
     aps: {
       alert: { title: NOTIFY_TITLE, body: NOTIFY_BODY[cls] },
@@ -199,6 +204,7 @@ export function alertPayload(cls: NotifyClass, ref: string): unknown {
     },
     ref,
     cls,
+    ...(eventRef ? { event: eventRef } : {}),
   };
 }
 
