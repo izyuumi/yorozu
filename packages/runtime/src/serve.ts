@@ -121,22 +121,14 @@ export function cleanTitle(raw: string): string {
 }
 
 /**
- * A yes / always / no typed in the thread instead of tapped on the card. An `always` only
- * narrows to the target when the user actually named it, so "always" alone stays class-level
- * and "always buy from that shop" does not silently cover every shop. A bare "never" is the
- * one-off no it sounds like — only the explicit "never ask again" wordings allow and persist.
+ * A one-off or task-bounded answer typed in the thread instead of tapped on the card. Permanent
+ * authority is deliberately absent: prose cannot explicitly choose rule dimensions, so Always
+ * allow only completes through the rule editor. A bare `never` remains a one-off refusal.
  */
 export function typedAnswer(text: string, card: ApprovalCardData): AskResult | null {
   const typed = text.trim().toLowerCase();
   if (/^(always|yes,? +always|yes,? +and +never +ask|never +ask +again|don'?t +ask +again)\b/.test(typed)) {
-    const target = card.target.toLowerCase();
-    // Typed rather than tapped, so there is no editor and no edited rule: the card's own
-    // suggestion is the narrowest thing that covers what was just approved.
-    return {
-      answer: "always",
-      ...(card.suggestedRule ? { rule: card.suggestedRule } : {}),
-      ...(target && typed.includes(target) ? { target: card.target } : {}),
-    };
+    return null;
   }
   // The bounded grant, which only exists in prose as "for this task" and its neighbours.
   if (/^(yes,? +)?(just )?(for|during) +(this|the) +(task|turn|one)\b/.test(typed)) {

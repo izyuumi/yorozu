@@ -431,6 +431,7 @@ test.each<[string, Partial<Action>]>([
   expect(needsFreshConfirmation(action)).toBe(true);
   expect(decide(action, stored, dir).verdict).toBe("ask");
   expect(cardFor("a1", action).mustConfirm).toBe(true);
+  expect(cardFor("a1", action).suggestedRule).toBeUndefined();
 });
 
 test("an ordinary purchase is not one of those, and says so on the card", () => {
@@ -547,11 +548,11 @@ test("settings round-trip, and a file broken by hand falls back to the safe floo
   expect(loadSettings(dir)).toEqual(DEFAULT_SETTINGS);
 });
 
-test("YOLO mode bypasses every approval rule and floor while keeping an audit row", async () => {
+test("YOLO mode bypasses rules below the floor while keeping an audit row", async () => {
   saveSettings(
     settings({
       yolo: true,
-      moneyThreshold: 1,
+      moneyThreshold: 1_000,
       rules: [rule({ actionClass: "purchase", decision: "never" })],
     }),
     dir,
@@ -732,24 +733,32 @@ test("19, 21: always allow saves the rule the editor produced, and the next one 
   await checkApproval(mailer, { to: "dave@other.com" }, { ask, dir });
 
   expect(ask).toHaveBeenCalledTimes(2);
-  expect(listRules(dir)).toEqual([edited]);
+  expect(listRules(dir)).toMatchObject([edited]);
 });
 
-test("19: always allow without an editor falls back to the narrowest covering rule", async () => {
-  await checkApproval(mailer, { to: "bob@example.com" }, {
+test("19, 23: always without an explicitly edited scoped rule grants nothing", async () => {
+  const result = await checkApproval(mailer, { to: "bob@example.com" }, {
     ask: async () => ({ answer: "always" }),
     dir,
   });
 
-  expect(listRules(dir)[0]).toMatchObject({
-    actionClass: "send-message",
-    decision: "always",
-    scope: { recipient: exact("bob@example.com"), operation: exact("send") },
-  });
-  // Narrow means narrow: another recipient is not covered.
-  expect(decideFromDisk({ actionClass: "send-message", target: "carol", recipient: "carol" }, dir).verdict).toBe(
-    "ask",
-  );
+  expect(result.refusal).toMatch(/review and save a scoped rule/);
+  expect(listRules(dir)).toEqual([]);
+});
+
+test("19: an always answer cannot inject an unrelated or unscoped rule", async () => {
+  for (const edited of [
+    rule({ actionClass: "purchase", decision: "always", scope: { merchant: exact("Shop") } }),
+    rule({ actionClass: "send-message", decision: "always" }),
+    rule({ actionClass: "send-message", decision: "always", maxAmount: 10 }),
+  ]) {
+    const result = await checkApproval(mailer, { to: "bob@example.com" }, {
+      ask: async () => ({ answer: "always", rule: edited }),
+      dir,
+    });
+    expect(result.refusal).toMatch(/review and save a scoped rule/);
+  }
+  expect(listRules(dir)).toEqual([]);
 });
 
 test("no refuses this one action only: nothing is written, and the next one asks again", async () => {
@@ -807,6 +816,47 @@ test("the floor asks again even once an always rule is on disk", async () => {
     /not allowed/,
   );
   expect(ask).toHaveBeenCalledTimes(1);
+});
+
+test("YOLO cannot bypass a hard financial confirmation floor", async () => {
+  saveSettings(settings({ yolo: true, moneyThreshold: 10_000 }), dir);
+  const transfer: Tool = {
+    name: "transfer",
+    description: "",
+    parameters: {},
+    actionClass: "transfer-money",
+    action: () => ({ target: "Savings", operation: "transfer", amount: 10 }),
+    run: () => "transferred",
+  };
+  const ask = vi.fn(async (): Promise<AskResult> => ({ answer: "yes" }));
+
+  expect((await checkApproval(transfer, {}, { ask, dir })).refusal).toBeNull();
+  expect(ask).toHaveBeenCalledTimes(1);
+});
+
+test("a hard financial floor cannot create permanent authority", async () => {
+  const action: Action = {
+    actionClass: "transfer-money",
+    target: "Savings",
+    operation: "transfer",
+    account: "Checking",
+  };
+  const transfer: Tool = {
+    name: "transfer",
+    description: "",
+    parameters: {},
+    actionClass: "transfer-money",
+    action: () => ({ target: "Savings", operation: "transfer", account: "Checking" }),
+    run: () => "transferred",
+  };
+  const permanent = narrowestRule(action);
+  const result = await checkApproval(transfer, {}, {
+    ask: async () => ({ answer: "always", rule: permanent }),
+    dir,
+  });
+
+  expect(result.refusal).toMatch(/permanent authority requires/);
+  expect(listRules(dir)).toEqual([]);
 });
 
 test("a tool that only reads is never gated", async () => {

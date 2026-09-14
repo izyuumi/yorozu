@@ -355,12 +355,65 @@ test("mail_send fills in the card the approval engine will show", () => {
   ]);
 });
 
+test("calendar and reminder mutations declare exact approval scopes", () => {
+  expect([
+    calendarCreateTool,
+    calendarUpdateTool,
+    calendarDeleteTool,
+    remindersCreateTool,
+    remindersCompleteTool,
+  ].map((tool) => tool.actionClass)).toEqual([
+    "edit-calendar",
+    "edit-calendar",
+    "edit-calendar",
+    "edit-reminder",
+    "edit-reminder",
+  ]);
+
+  expect(calendarCreateTool.action!({ title: "Lunch", start: "noon", end: "one" })).toMatchObject({
+    target: "Lunch",
+    operation: "edit",
+    contentSummary: '{"title":"Lunch","start":"noon","end":"one"}',
+  });
+  expect(remindersCompleteTool.action!({ id: "r1" })).toMatchObject({
+    target: "r1",
+    operation: "edit",
+  });
+});
+
+test("calendar mutation refuses changed details at commit", async () => {
+  forgetApprovals();
+  const approvedArgs = { title: "Lunch", start: "noon", end: "one" };
+  recordApproval("calendar-1", {
+    actionClass: "edit-calendar",
+    ...calendarCreateTool.action!(approvedArgs),
+  });
+
+  const result = await calendarCreateTool.run(
+    { ...approvedArgs, end: "two" },
+    { threadId: "home", agentId: "main", actionId: "calendar-1" },
+  );
+  expect(result).toMatch(/^not allowed: what was approved has changed/);
+
+  recordApproval("calendar-2", {
+    actionClass: "edit-calendar",
+    ...calendarDeleteTool.action!({ id: "event-1" }),
+  });
+  const changedTarget = await calendarDeleteTool.run(
+    { id: "event-2" },
+    { threadId: "home", agentId: "main", actionId: "calendar-2" },
+  );
+  expect(changedTarget).toContain("target is now event-2");
+  forgetApprovals();
+});
+
 test("mail_send will not spend an approval on a different recipient", async () => {
   forgetApprovals();
   recordApproval("act-1", {
     actionClass: "send-message",
     target: "a@example.com",
     recipient: "a@example.com",
+    contentSummary: "Lunch\n\n?",
     items: mailSendTool.batch!({ to: "a@example.com", subject: "Lunch" }),
   });
   const context = { threadId: "home", agentId: "main", actionId: "act-1" };
@@ -377,6 +430,19 @@ test("mail_send will not spend an approval on a different recipient", async () =
   );
   expect(refused).toMatch(/^not allowed: /);
   expect(refused).toContain("recipient is now mallory@example.com");
+
+  recordApproval("act-2", {
+    actionClass: "send-message",
+    target: "a@example.com",
+    recipient: "a@example.com",
+    contentSummary: "Lunch\n\nOriginal",
+    items: [],
+  });
+  const changedContent = await mailSendTool.run(
+    { to: "a@example.com", subject: "Lunch", body: "Changed" },
+    { ...context, actionId: "act-2" },
+  );
+  expect(changedContent).toContain("contentSummary is now Lunch");
 
   forgetApprovals();
 });

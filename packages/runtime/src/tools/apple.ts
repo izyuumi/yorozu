@@ -96,6 +96,15 @@ export const calendarEventsTool: Tool = {
 export const calendarCreateTool: Tool = {
   name: "calendar_create",
   description: "Create a calendar event and return it, including the id it was given.",
+  actionClass: "edit-calendar",
+  action: (args) => ({
+    target: String(args.title ?? ""),
+    operation: "edit",
+    contentSummary: summarize(
+      JSON.stringify(given(args, ["title", "start", "end", "calendar", "notes", "location"])),
+    ),
+    consequence: "Creates an event in the user's calendar.",
+  }),
   parameters: {
     type: "object",
     properties: {
@@ -108,8 +117,12 @@ export const calendarCreateTool: Tool = {
     },
     required: ["title", "start", "end"],
   },
-  run: async (args) => {
+  run: async (args, context) => {
     required(args, "title");
+    if (context?.actionId) {
+      const stale = verifyApproved(context.actionId, calendarCreateTool.action!(args));
+      if (stale) return stale;
+    }
     const response = await askNative(
       "calendar.create",
       given(args, ["title", "start", "end", "calendar", "notes", "location"]),
@@ -123,6 +136,15 @@ export const calendarUpdateTool: Tool = {
   description:
     "Change an existing event. Only the fields given are touched; the id comes from " +
     "calendar_events.",
+  actionClass: "edit-calendar",
+  action: (args) => ({
+    target: String(args.id ?? ""),
+    operation: "edit",
+    contentSummary: summarize(
+      JSON.stringify(given(args, ["title", "start", "end", "calendar", "notes", "location"])),
+    ),
+    consequence: "Changes an existing event in the user's calendar.",
+  }),
   parameters: {
     type: "object",
     properties: {
@@ -136,8 +158,12 @@ export const calendarUpdateTool: Tool = {
     },
     required: ["id"],
   },
-  run: async (args) => {
+  run: async (args, context) => {
     required(args, "id");
+    if (context?.actionId) {
+      const stale = verifyApproved(context.actionId, calendarUpdateTool.action!(args));
+      if (stale) return stale;
+    }
     const response = await askNative(
       "calendar.update",
       given(args, ["id", "title", "start", "end", "calendar", "notes", "location"]),
@@ -151,12 +177,22 @@ export const calendarDeleteTool: Tool = {
   description:
     "Delete a calendar event by id. For a repeating event this removes the one occurrence, " +
     "not the series.",
+  actionClass: "edit-calendar",
+  action: (args) => ({
+    target: String(args.id ?? ""),
+    operation: "delete",
+    consequence: "Deletes one calendar event occurrence.",
+  }),
   parameters: {
     type: "object",
     properties: { id: { type: "string", description: "Event id from calendar_events." } },
     required: ["id"],
   },
-  run: async (args) => {
+  run: async (args, context) => {
+    if (context?.actionId) {
+      const stale = verifyApproved(context.actionId, calendarDeleteTool.action!(args));
+      if (stale) return stale;
+    }
     const response = await askNative("calendar.delete", { id: required(args, "id") });
     return `deleted ${str(response, "deleted") || "the event"}`;
   },
@@ -190,6 +226,13 @@ export const remindersListTool: Tool = {
 export const remindersCreateTool: Tool = {
   name: "reminders_create",
   description: "Create a reminder and return it, including the id it was given.",
+  actionClass: "edit-reminder",
+  action: (args) => ({
+    target: String(args.title ?? ""),
+    operation: "edit",
+    contentSummary: summarize(JSON.stringify(given(args, ["title", "due", "list", "notes"]))),
+    consequence: "Creates a reminder in the user's Reminders account.",
+  }),
   parameters: {
     type: "object",
     properties: {
@@ -200,8 +243,12 @@ export const remindersCreateTool: Tool = {
     },
     required: ["title"],
   },
-  run: async (args) => {
+  run: async (args, context) => {
     required(args, "title");
+    if (context?.actionId) {
+      const stale = verifyApproved(context.actionId, remindersCreateTool.action!(args));
+      if (stale) return stale;
+    }
     const response = await askNative(
       "reminders.create",
       given(args, ["title", "due", "list", "notes"]),
@@ -213,12 +260,22 @@ export const remindersCreateTool: Tool = {
 export const remindersCompleteTool: Tool = {
   name: "reminders_complete",
   description: "Mark a reminder done, by the id reminders_list gave.",
+  actionClass: "edit-reminder",
+  action: (args) => ({
+    target: String(args.id ?? ""),
+    operation: "edit",
+    consequence: "Marks an existing reminder complete.",
+  }),
   parameters: {
     type: "object",
     properties: { id: { type: "string", description: "Reminder id from reminders_list." } },
     required: ["id"],
   },
-  run: async (args) => {
+  run: async (args, context) => {
+    if (context?.actionId) {
+      const stale = verifyApproved(context.actionId, remindersCompleteTool.action!(args));
+      if (stale) return stale;
+    }
     const response = await askNative("reminders.complete", { id: required(args, "id") });
     return `completed ${str(response.reminder as Row, "title")}`;
   },
@@ -314,6 +371,7 @@ export const mailSendTool: Tool = {
     if (context?.actionId) {
       const stale = verifyApproved(context.actionId, {
         recipient: to,
+        contentSummary: mailSendTool.action!(args).contentSummary,
         items: mailSendTool.batch?.(args) ?? [],
       });
       if (stale) return stale;

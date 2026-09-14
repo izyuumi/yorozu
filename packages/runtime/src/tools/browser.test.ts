@@ -4,6 +4,7 @@ import { env } from "node:process";
 import { WebSocketServer } from "ws";
 import { afterEach, expect, test } from "vitest";
 import { defaultTools } from "../index.js";
+import { forgetApprovals, recordApproval } from "../approval.js";
 import {
   Browser,
   browserClickTool,
@@ -205,8 +206,15 @@ test("every browser tool is exposed with a tabId-shaped schema", async () => {
     ["tabId", "js"],
     ["tabId"],
   ]);
-  // Driving a tab the agent opened is not an effect on anything of the user's, so no card.
-  expect(browserTools.map((t) => t.actionClass)).toEqual(Array(6).fill(undefined));
+  // Reads and tab lifecycle stay local. Page interaction can submit external state, so it gates.
+  expect(browserTools.map((t) => t.actionClass)).toEqual([
+    undefined,
+    undefined,
+    "interact-web",
+    "interact-web",
+    "interact-web",
+    undefined,
+  ]);
 
   // A call naming no tab cannot be dispatched to one the agent opened.
   await attach();
@@ -249,6 +257,22 @@ test("the eval tool returns JSON, and a page exception as an error", async () =>
   await expect(Promise.resolve(browserEvalTool.run({ tabId, js: "boom()" }))).rejects.toThrow(
     "ReferenceError: boom",
   );
+});
+
+test("browser mutation refuses changed details at commit", async () => {
+  forgetApprovals();
+  const approvedArgs = { tabId: "tab-1", js: "submit()" };
+  recordApproval("browser-1", {
+    actionClass: "interact-web",
+    ...browserEvalTool.action!(approvedArgs),
+  });
+
+  const result = await browserEvalTool.run(
+    { ...approvedArgs, js: "buy()" },
+    { threadId: "home", agentId: "main", actionId: "browser-1" },
+  );
+  expect(result).toMatch(/^not allowed: what was approved has changed/);
+  forgetApprovals();
 });
 
 test("the close tool closes the tab and names it", async () => {

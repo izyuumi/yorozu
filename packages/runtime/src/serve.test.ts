@@ -286,7 +286,10 @@ test("always runs the action and is permanent: the next one needs no second card
   });
   const { actionId } = cardOf(batch);
 
-  send({ kind: "approval_answer", data: { actionId, answer: "always" } });
+  send({
+    kind: "approval_answer",
+    data: { actionId, answer: "always", rule: cardOf(batch).suggestedRule },
+  });
   // A result at all means the gate let the tool run: always is a yes as well as a rule.
   const ran = (events: YorozuEvent[]) =>
     events.at(-1)?.kind === "tool_result" && events.at(-1)?.data.output.includes("yorozu-always-ok");
@@ -503,14 +506,15 @@ test.each<[string, AskResult | null]>([
   // A bare "never" sounds permanent but is the one-off refusal: only the explicit wordings persist.
   ["never", { answer: "no" }],
   ["never mind", { answer: "no" }],
-  ["always", { answer: "always", rule: suggestion }],
-  ["yes always", { answer: "always", rule: suggestion }],
-  ["yes, always", { answer: "always", rule: suggestion }],
-  ["yes and never ask", { answer: "always", rule: suggestion }],
-  ["yes, and never ask again", { answer: "always", rule: suggestion }],
-  ["never ask again", { answer: "always", rule: suggestion }],
-  ["don't ask again", { answer: "always", rule: suggestion }],
-  ["dont ask again", { answer: "always", rule: suggestion }],
+  // Permanent authority needs the rule editor; prose cannot choose scope dimensions safely.
+  ["always", null],
+  ["yes always", null],
+  ["yes, always", null],
+  ["yes and never ask", null],
+  ["yes, and never ask again", null],
+  ["never ask again", null],
+  ["don't ask again", null],
+  ["dont ask again", null],
   // The bounded grant, which in prose is only ever "for this task" and its neighbours.
   ["for this task", { answer: "task" }],
   ["yes, for this task", { answer: "task" }],
