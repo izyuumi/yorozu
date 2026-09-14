@@ -6,6 +6,7 @@ import ProjectDescription
 /// The App Group is the only thing the two targets share at runtime: the share extension
 /// writes into it and the app reads out of it. Nothing secret goes in there — see `ShareBox`.
 let appGroup = "group.to.yumi.yorozu"
+let notificationKeychainGroup = "$(AppIdentifierPrefix)to.yumi.yorozu.notifications"
 
 /// Automatic signing plus `xcodebuild -allowProvisioningUpdates` and an App Store Connect key:
 /// Xcode issues the distribution certificate and the App Store profiles itself, so there is no
@@ -47,6 +48,7 @@ let project = Project(
                 "CFBundleDisplayName": "Yorozu",
                 "LSApplicationCategoryType": "public.app-category.productivity",
                 "NSCameraUsageDescription": "Yorozu scans the pairing QR code shown by your Mac.",
+                "YorozuNotificationKeychainAccessGroup": .string(notificationKeychainGroup),
                 // The relay's silent push, which wakes the app for a few seconds so it can
                 // drain its sync over its own socket while suspended. Nothing is read out of
                 // the push itself — see `PushDelegate` and ``ChatModel/drain(timeout:)``.
@@ -66,6 +68,7 @@ let project = Project(
             resources: ["Resources/**"],
             entitlements: .dictionary([
                 "com.apple.security.application-groups": [.string(appGroup)],
+                "keychain-access-groups": [.string(notificationKeychainGroup)],
                 // TestFlight and the App Store are both production APNs, and the relay only
                 // ever talks to api.push.apple.com — so there is one environment here rather
                 // than a debug build quietly registering for tokens the relay cannot use.
@@ -75,8 +78,29 @@ let project = Project(
                 .package(product: "YorozuShared"),
                 // Embedded in the app's PlugIns, which is how an extension ships at all.
                 .target(name: "YorozuShare"),
+                .target(name: "YorozuNotificationService"),
             ],
             settings: signing(["ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon"])
+        ),
+        .target(
+            name: "YorozuNotificationService",
+            destinations: .iOS,
+            product: .appExtension,
+            bundleId: "to.yumi.yorozu.ios.notification-service",
+            deploymentTargets: .iOS("18.0"),
+            infoPlist: .extendingDefault(with: version.merging([
+                "CFBundleDisplayName": "Yorozu Notification Service",
+                "YorozuNotificationKeychainAccessGroup": .string(notificationKeychainGroup),
+                "NSExtension": [
+                    "NSExtensionPointIdentifier": "com.apple.usernotifications.service",
+                    "NSExtensionPrincipalClass": "$(PRODUCT_MODULE_NAME).NotificationService",
+                ],
+            ]) { a, _ in a }),
+            sources: ["Sources/YorozuNotificationService/**"],
+            resources: ["Resources/Localizable.xcstrings"],
+            entitlements: .dictionary(["keychain-access-groups": [.string(notificationKeychainGroup)]]),
+            dependencies: [.package(product: "YorozuShared")],
+            settings: signing()
         ),
         .target(
             name: "YorozuShare",
@@ -102,6 +126,7 @@ let project = Project(
                 ],
             ]) { a, _ in a }),
             sources: ["Sources/YorozuShare/**"],
+            resources: ["Resources/Localizable.xcstrings"],
             entitlements: .dictionary(["com.apple.security.application-groups": [.string(appGroup)]]),
             dependencies: [.package(product: "YorozuShared")],
             settings: signing()

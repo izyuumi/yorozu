@@ -146,8 +146,8 @@ export function evictions(
  * phone whose socket is gone, and what a phone tells the relay so there is somewhere to push.
  *
  * These names are spelled out here rather than imported from `@yorozu/shared` on purpose. The
- * relay does not depend on the event model and must not learn it — it handles a class and an
- * opaque reference, which is the whole of what it is allowed to know.
+ * relay does not depend on the event model and must not learn it — it handles a class, an
+ * opaque reference, and optional per-device ciphertext it cannot open.
  */
 export const NOTIFY_CLASSES = ["reply", "approval", "done", "failed"] as const;
 export type NotifyClass = (typeof NOTIFY_CLASSES)[number];
@@ -155,10 +155,8 @@ export type NotifyClass = (typeof NOTIFY_CLASSES)[number];
 export const NOTIFY_TITLE = "Yorozu";
 
 /**
- * The entire text a notification can carry, chosen here and never assembled from anything the
- * Mac sent. There is deliberately no path from a message, a tool call or an approval card to
- * the words on a lock screen: the relay could not write one if it wanted to, because it holds
- * nothing to write it from.
+ * Fixed fallback text. A notification extension may replace the reply phrase after opening a
+ * per-device ciphertext, but the relay can neither read nor assemble that body.
  */
 export const NOTIFY_BODY: Record<NotifyClass, string> = {
   reply: "Yorozu replied.",
@@ -171,9 +169,34 @@ export const NOTIFY_BODY: Record<NotifyClass, string> = {
 export type Push = { deviceToken: string };
 /**
  * The Mac, alongside a sealed frame: something of this class happened in this thread. The
- * thread is named by an opaque reference the phone can map and the relay cannot.
+ * thread is named by an opaque reference the phone can map and the relay cannot. Reply previews
+ * are individually sealed for each signing key so the relay can select one without opening it.
  */
-export type Notify = { class: NotifyClass; threadRef: string; eventRef?: string };
+export type EncryptedPreview = { n: string; c: string };
+export type Notify = {
+  class: NotifyClass;
+  threadRef: string;
+  eventRef?: string;
+  previews?: Record<string, EncryptedPreview>;
+};
+
+const base64url = /^[A-Za-z0-9_-]+$/;
+const parsePreviews = (value: unknown): Record<string, EncryptedPreview> | null | undefined => {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const entries = Object.entries(value);
+  if (entries.length > MAX_DEVICES) return null;
+  const previews: Record<string, EncryptedPreview> = {};
+  for (const [device, box] of entries) {
+    if (device.length !== 43 || !base64url.test(device) || typeof box !== "object" || box === null) return null;
+    const { n, c } = box as Record<string, unknown>;
+    // 12-byte nonce; 16-byte tag plus at most 256 bytes of UTF-8 plaintext.
+    if (typeof n !== "string" || n.length !== 16 || !base64url.test(n)) return null;
+    if (typeof c !== "string" || c.length < 22 || c.length > 363 || !base64url.test(c)) return null;
+    previews[device] = { n, c };
+  }
+  return previews;
+};
 
 export const parsePush = (msg: Record<string, unknown>): Push | null =>
   strings(msg, "deviceToken");
@@ -182,29 +205,40 @@ export const parseNotify = (msg: Record<string, unknown>): Notify | null => {
   if (typeof msg.threadRef !== "string" || msg.threadRef === "") return null;
   if (!NOTIFY_CLASSES.includes(msg.class as NotifyClass)) return null;
   if (msg.eventRef !== undefined && (typeof msg.eventRef !== "string" || msg.eventRef === "")) return null;
+  const previews = parsePreviews(msg.previews);
+  if (previews === null) return null;
   return {
     class: msg.class as NotifyClass,
     threadRef: msg.threadRef,
     ...(typeof msg.eventRef === "string" ? { eventRef: msg.eventRef } : {}),
+    ...(previews ? { previews } : {}),
   };
 };
 
 /**
- * The alert a phone is woken with. Built from the class and the opaque reference and nothing
- * else — `ref` is what the tap routes on, resolved to a thread by the phone, which is the only
- * end that can.
+ * The alert a phone is woken with. `ref` is what the tap routes on, resolved to a thread by the
+ * phone. `preview`, when present, is an opaque box only that phone's extension can open.
  */
-export function alertPayload(cls: NotifyClass, ref: string, eventRef?: string): unknown {
+export function alertPayload(
+  cls: NotifyClass,
+  ref: string,
+  eventRef?: string,
+  preview?: EncryptedPreview,
+): unknown {
   return {
     aps: {
-      alert: { title: NOTIFY_TITLE, body: NOTIFY_BODY[cls] },
+      // APNs resolves this against the app's String Catalog on the device. The relay still
+      // learns only the fixed key, while fallback text follows the user's app language.
+      alert: { title: NOTIFY_TITLE, "loc-key": NOTIFY_BODY[cls] },
       sound: "default",
       // Groups every notification about one thread together, without naming it.
       "thread-id": ref,
+      ...(preview ? { "mutable-content": 1 } : {}),
     },
     ref,
     cls,
     ...(eventRef ? { event: eventRef } : {}),
+    ...(preview ? { preview } : {}),
   };
 }
 

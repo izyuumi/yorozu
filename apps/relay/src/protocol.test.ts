@@ -125,11 +125,19 @@ test("a notify is a known class and an opaque reference, or it is nothing", () =
     class: "reply",
     threadRef: "r",
   });
+  const device = "A".repeat(43);
+  const preview = { n: "B".repeat(16), c: "C".repeat(22) };
+  expect(parseNotify({ class: "reply", threadRef: "r", previews: { [device]: preview } }))
+    .toEqual({ class: "reply", threadRef: "r", previews: { [device]: preview } });
+  expect(parseNotify({ class: "reply", threadRef: "r", previews: { [device]: { ...preview, n: "short" } } }))
+    .toBeNull();
+  expect(parseNotify({ class: "reply", threadRef: "r", previews: { [device]: { ...preview, c: "C".repeat(364) } } }))
+    .toBeNull();
 });
 
 test("an alert carries a fixed phrase and an opaque reference, and nothing else", () => {
   const payload = alertPayload("approval", "Ab3-_x9Z", "Ev3-_x9Z") as any;
-  expect(payload.aps.alert).toEqual({ title: "Yorozu", body: NOTIFY_BODY.approval });
+  expect(payload.aps.alert).toEqual({ title: "Yorozu", "loc-key": NOTIFY_BODY.approval });
   expect(payload.ref).toBe("Ab3-_x9Z");
   expect(payload.cls).toBe("approval");
   expect(payload.event).toBe("Ev3-_x9Z");
@@ -144,7 +152,7 @@ test("an alert carries a fixed phrase and an opaque reference, and nothing else"
     "aps",
     "alert",
     "title",
-    "body",
+    "loc-key",
     "sound",
     "default",
     "thread-id",
@@ -153,4 +161,12 @@ test("an alert carries a fixed phrase and an opaque reference, and nothing else"
     "event",
   ]);
   for (const quoted of strings) expect(allowed).toContain(quoted.slice(1, -1));
+});
+
+test("an encrypted preview asks the notification service to replace the fallback", () => {
+  const preview = { n: "B".repeat(16), c: "C".repeat(22) };
+  const payload = alertPayload("reply", "Ab3-_x9Z", undefined, preview) as any;
+  expect(payload.aps["mutable-content"]).toBe(1);
+  expect(payload.preview).toEqual(preview);
+  expect(payload.aps.alert["loc-key"]).toBe(NOTIFY_BODY.reply);
 });

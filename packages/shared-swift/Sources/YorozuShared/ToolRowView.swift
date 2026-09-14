@@ -49,7 +49,7 @@ public struct ToolGroupView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(summary)
-                .accessibilityHint(expanded ? "Hides the steps" : "Shows the steps")
+                .accessibilityHint(expanded ? String(localized: "Hides the steps") : String(localized: "Shows the steps"))
 
                 if expanded {
                     VStack(alignment: .leading, spacing: 6) {
@@ -96,7 +96,7 @@ public struct ToolRowView: View {
             }
             .buttonStyle(.plain)
             .accessibilityElement(children: .combine)
-            .accessibilityHint(expanded ? "Hides the details" : "Shows the arguments and output")
+            .accessibilityHint(expanded ? String(localized: "Hides the details") : String(localized: "Shows the arguments and output"))
 
             if expanded { details }
         }
@@ -145,7 +145,7 @@ public struct ToolRowView: View {
             Image(systemName: activity.ok ? "checkmark.circle" : "exclamationmark.triangle")
                 .font(.caption)
                 .foregroundStyle(activity.ok ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
-                .accessibilityLabel(activity.ok ? "done" : "failed")
+                .accessibilityLabel(activity.ok ? String(localized: "Done") : String(localized: "Failed"))
         }
     }
 

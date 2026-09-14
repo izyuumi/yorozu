@@ -10,17 +10,26 @@ public func visibleThreads(_ threads: [ThreadSummary]) -> [ThreadSummary] {
 /// reorders its own headings is a list you have to read rather than scan.
 public struct ThreadSection: Equatable, Sendable, Identifiable {
     public enum Group: String, CaseIterable, Sendable {
-        case today = "Today"
-        case yesterday = "Yesterday"
-        case thisWeek = "This week"
-        case earlier = "Earlier"
+        case today
+        case yesterday
+        case thisWeek
+        case earlier
+
+        var title: String {
+            switch self {
+            case .today: String(localized: "Today")
+            case .yesterday: String(localized: "Yesterday")
+            case .thisWeek: String(localized: "This week")
+            case .earlier: String(localized: "Earlier")
+            }
+        }
     }
 
     public var group: Group
     public var threads: [ThreadSummary]
 
     public var id: String { group.rawValue }
-    public var title: String { group.rawValue }
+    public var title: String { group.title }
 
     public init(group: Group, threads: [ThreadSummary]) {
         self.group = group
@@ -225,9 +234,9 @@ public enum ConnectionState: Sendable {
 
     var label: String {
         switch self {
-        case .connected: "Connected"
-        case .reconnecting: "Reconnecting"
-        case .offline: "Mac offline"
+        case .connected: String(localized: "Connected")
+        case .reconnecting: String(localized: "Reconnecting")
+        case .offline: String(localized: "Mac offline")
         }
     }
 
@@ -453,7 +462,7 @@ public struct ThreadListView<Destination: View>: View {
                             .tint(.blue)
                     }
                     Button(
-                        thread.pinned ? "Unpin" : "Pin",
+                        thread.pinned ? String(localized: "Unpin") : String(localized: "Pin"),
                         systemImage: thread.pinned ? "pin.slash" : "pin"
                     ) { onPin(thread, !thread.pinned) }
                         .tint(.orange)
@@ -475,12 +484,12 @@ public struct ThreadListView<Destination: View>: View {
                 readButton(thread)
                 if !thread.archived {
                     Button(
-                        thread.pinned ? "Unpin" : "Pin",
+                        thread.pinned ? String(localized: "Unpin") : String(localized: "Pin"),
                         systemImage: thread.pinned ? "pin.slash" : "pin"
                     ) { onPin(thread, !thread.pinned) }
                 }
                 Button(
-                    thread.archived ? "Unarchive" : "Archive",
+                    thread.archived ? String(localized: "Unarchive") : String(localized: "Archive"),
                     systemImage: thread.archived ? "tray.and.arrow.up" : "archivebox"
                 ) { onArchive(thread, !thread.archived) }
                 // Built here rather than up front: rendering a whole thread as Markdown is
@@ -629,12 +638,12 @@ public struct ThreadSidebar: View {
         }
         if !thread.archived {
             Button(
-                thread.pinned ? "Unpin" : "Pin",
+                thread.pinned ? String(localized: "Unpin") : String(localized: "Pin"),
                 systemImage: thread.pinned ? "pin.slash" : "pin"
             ) { onPin(thread, !thread.pinned) }
         }
         Button(
-            thread.archived ? "Unarchive" : "Archive",
+            thread.archived ? String(localized: "Unarchive") : String(localized: "Archive"),
             systemImage: thread.archived ? "tray.and.arrow.up" : "archivebox"
         ) { onArchive(thread, !thread.archived) }
         // Built here rather than up front: rendering a whole thread as Markdown is work, and

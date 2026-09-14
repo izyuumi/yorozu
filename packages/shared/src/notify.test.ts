@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { notifyFor, NOTIFY_BODY } from "./notify.js";
+import { notificationPreview, notifyFor, NOTIFY_BODY, NOTIFY_PREVIEW_BYTES } from "./notify.js";
 import { threadRef } from "./crypto.js";
 import type { YorozuEvent } from "./events.js";
 
@@ -63,4 +63,17 @@ test("a thread reference is short, stable, and says nothing about the thread", (
   expect(threadRef(id)).not.toContain(id.slice(0, 4));
   expect(threadRef(id)).not.toBe(threadRef("other"));
   expect(threadRef(id)).toMatch(/^[A-Za-z0-9_-]{8}$/);
+});
+
+test("only a completed reply gets a byte-bounded preview", () => {
+  expect(notificationPreview(event({ kind: "message", data: { role: "agent", text: "  hello  ", done: true } })))
+    .toBe("hello");
+  expect(notificationPreview(event({ kind: "message", data: { role: "agent", text: "partial" } })))
+    .toBeNull();
+  const preview = notificationPreview(event({
+    kind: "message",
+    data: { role: "agent", text: "界".repeat(200), done: true },
+  }))!;
+  expect(Buffer.byteLength(preview)).toBeLessThanOrEqual(NOTIFY_PREVIEW_BYTES);
+  expect(preview.endsWith("�")).toBe(false);
 });

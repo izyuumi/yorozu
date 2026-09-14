@@ -137,6 +137,7 @@ final class Session {
         model = nil
         relay = nil
         PairingStore.clear()
+        NotificationPreview.clearKey()
         CacheStore.clear()
         // The thread titles the picker offers, and anything half-shared, belong to the pairing
         // just as much as the cache does.
@@ -210,6 +211,11 @@ final class Session {
 
     private func connect(_ stored: PairingStore.Stored) {
         do {
+            let notificationKey = try YorozuCrypto.deriveSessionKey(
+                myPriv: stored.identity.sessionPrivateKey,
+                theirPub: Data(base64URLEncoded: stored.pairing.macPubkey) ?? Data()
+            )
+            NotificationPreview.save(key: notificationKey)
             let relay = try RelayClient(
                 pairing: stored.pairing,
                 identity: stored.identity,
@@ -414,7 +420,7 @@ struct RootView: View {
             try session.pair(with: text)
             return nil
         } catch {
-            return "Not a Yorozu pairing code."
+            return String(localized: "Not a Yorozu pairing code.")
         }
     }
 }

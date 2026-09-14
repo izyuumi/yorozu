@@ -175,27 +175,30 @@ pnpm --filter @yorozu/relay exec wrangler deploy
 
 ### Notifications
 
-APNs wakes a phone whose socket is gone. What that costs in privacy is the point of the design, so
-it is worth being exact about it.
+APNs alerts every registered phone. What that costs in privacy is the point of the design, so it is
+worth being exact about it. A server-open socket is not proof the iOS app is visible: suspended apps
+can leave one behind. The app suppresses presentation while foregrounded instead.
 
-Beside every sealed frame the Mac sends the relay one cleartext `notify`: a class — `reply`,
-`approval`, `done` or `failed` — and an opaque `threadRef`. The reference is the first eight
+Beside every sealed frame the Mac sends the relay one `notify`: a cleartext class — `reply`,
+`approval`, `done` or `failed` — and an opaque `threadRef`. A reply also includes one ChaChaPoly
+preview box per paired phone, addressed by the Ed25519 key the relay already knows; each is sealed
+under that phone's existing session key. The reference is the first eight
 characters of `base64url(sha256(threadId))`, and a thread id is a random UUID, so it is a handle the
 relay can match and cannot invert. Phones register their APNs token the same way (`push`), filed
 against the Ed25519 key the relay already knows each device by — so `revoke` drops the token with
 the device, and a revoked phone stops being woken.
 
 So the relay learns: that a device exists and how to wake it, that something of one of four classes
-happened, which opaque reference it happened under, and roughly when. It never sees message text,
+happened, which opaque reference it happened under, ciphertext length, and roughly when. It never sees message text,
 tool names or arguments, approval details, rule scopes, summaries or thread titles — those travel
-sealed, in the frame beside the notify, under a key the relay does not hold. The alert body is
-chosen from four fixed strings (`NOTIFY_BODY` in `apps/relay/src/protocol.ts`) and is never
-assembled from anything the Mac sent, so there is no path by which content could reach a lock
-screen. Tapping routes on the reference, which the phone resolves against the thread ids it already
-holds — the one end that can.
+sealed, in the frame beside the notify, under a key the relay does not hold. APNs receives a fixed
+fallback body plus that opaque box. The iOS Notification Service Extension opens a valid reply box
+locally and replaces the fallback; missing keys, malformed boxes and failed authentication leave
+the fallback unchanged. Tapping routes on the reference, which the phone resolves against the
+thread ids it already holds — the one end that can.
 
-A phone holding a live socket is never pushed to: it has the sealed event already. Nor is the
-running commentary — deltas, tool traffic, a delegated agent finishing — ever notified at all, so a
+A phone holding a live socket still receives the alert because iOS may have suspended it; a visible
+app suppresses that alert locally. Nor is the running commentary — deltas, tool traffic, a delegated agent finishing — ever notified at all, so a
 turn's every tool call does not become a push: only a turn arriving somewhere a person has to be
 told about is worth a wake-up.
 

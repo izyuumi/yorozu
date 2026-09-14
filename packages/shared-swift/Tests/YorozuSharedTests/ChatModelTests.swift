@@ -368,6 +368,31 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     #expect(model.unreadCount == 0)
 }
 
+/// Opening a thread updates read state optimistically. A thread-list response already in flight
+/// must not resurrect its unread dot while the runtime is still applying that read event.
+@MainActor
+@Test func staleThreadListCannotUndoAnOptimisticRead() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    var lists = 0
+    model.onThreads = { lists += 1 }
+    let stale = ThreadSummary(
+        id: "home", title: "Home", archived: false, lastActivity: 2,
+        lastReadAt: 1, lastAgentAt: 2
+    )
+    await transport.yield(.event(event("l1", .threadList(ThreadListData(threads: [stale])))))
+    #expect(await eventually { lists == 1 })
+    #expect(model.unreadCount == 1)
+
+    model.foreground = true
+    model.openThread = "home"
+    #expect(model.unreadCount == 0)
+
+    await transport.yield(.event(event("l2", .threadList(ThreadListData(threads: [stale])))))
+    #expect(await eventually { lists == 2 })
+    #expect(model.unreadCount == 0)
+}
+
 @MainActor
 @Test func whatTheUserTypesReachesTheTransportTaggedWithThisDevice() async throws {
     let transport = FakeTransport()

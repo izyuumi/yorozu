@@ -98,3 +98,21 @@ import Testing
         notificationEventRef: YorozuCrypto.threadRef("not-loaded")
     ) == nil)
 }
+
+@Test func exactNotificationEventWinsEvenWhenThreadHasNeverBeenRead() {
+    let rows = chatRows(from: [
+        YorozuEvent(id: "first", threadId: "home", ts: 200, agentId: "main",
+            payload: .message(MessageData(role: .agent, text: "First"))),
+        YorozuEvent(id: "notified", threadId: "home", ts: 300, agentId: "main",
+            payload: .message(MessageData(role: .agent, text: "Notified", done: true))),
+        YorozuEvent(id: "later", threadId: "home", ts: 400, agentId: "main",
+            payload: .message(MessageData(role: .agent, text: "Later", done: true))),
+    ])
+
+    #expect(resumeRowId(
+        rows: rows,
+        lastReadAt: nil,
+        notificationClass: "reply",
+        notificationEventRef: YorozuCrypto.threadRef("notified")
+    ) == "notified")
+}

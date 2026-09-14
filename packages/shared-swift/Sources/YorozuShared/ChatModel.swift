@@ -75,6 +75,9 @@ public final class ChatModel {
     /// Pending debounced read report. A reply streams as many events under one id, so the
     /// report waits for it to settle rather than going out per chunk.
     private var readReport: Task<Void, Never>?
+    /// Optimistic read marks not yet reflected by a runtime thread list. Without this merge, a
+    /// list already in flight can briefly resurrect an unread dot after its thread opens.
+    private var pendingReads: [String: Double] = [:]
 
     /// Called once the transport can carry events. The iOS end-to-end harness drives its first
     /// message from here; the Mac app has no use for it.
@@ -433,6 +436,7 @@ public final class ChatModel {
     /// the moment the thread opens rather than a round trip later.
     private func send(read threadId: String, at: Double, reset: Bool? = nil) {
         readReport?.cancel()
+        if reset == true { pendingReads[threadId] = nil } else { pendingReads[threadId] = at }
         set(threadId) { $0.lastReadAt = at }
         emit(.threadRead(ThreadReadData(at: at, reset: reset)), in: threadId)
     }
@@ -576,7 +580,16 @@ public final class ChatModel {
             case .threadList(let data):
                 // Archived threads are kept: the phone's list draws them in a section of their
                 // own, which is also the only place they can be brought back from.
-                synced = data.threads
+                synced = data.threads.map { remote in
+                    guard let pending = pendingReads[remote.id] else { return remote }
+                    if (remote.lastReadAt ?? 0) >= pending {
+                        pendingReads[remote.id] = nil
+                        return remote
+                    }
+                    var merged = remote
+                    merged.lastReadAt = pending
+                    return merged
+                }
                 listed = true
                 cache?.save(threads: synced)
                 onThreads?()

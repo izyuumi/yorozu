@@ -34,8 +34,8 @@ public enum OutboxStatus: String, Sendable, Equatable {
     /// The caption under the bubble.
     public var label: String {
         switch self {
-        case .queued: "Queued"
-        case .failed: "Not sent"
+        case .queued: String(localized: "Queued")
+        case .failed: String(localized: "Not sent")
         }
     }
 
