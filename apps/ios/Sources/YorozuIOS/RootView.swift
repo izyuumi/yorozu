@@ -41,6 +41,7 @@ final class Session {
     struct NotificationOpen: Equatable {
         let id = UUID()
         let threadId: String
+        let notificationClass: String?
         let lastReadAt: Double?
         let syncRevision: Int
     }
@@ -58,6 +59,7 @@ final class Session {
     /// A notification can name a thread missing from the cold cache. Hold only its opaque ref;
     /// the next authoritative thread list resolves it without trusting push content.
     private var pendingThreadRef: String?
+    private var pendingNotificationClass: String?
     /// The transport, kept apart from the model so push tokens have somewhere to be registered:
     /// the relay is the thing that holds them, because it is the thing that calls APNs.
     private(set) var relay: RelayClient?
@@ -169,15 +171,18 @@ final class Session {
     /// The mapping only exists here. The relay sent a reference precisely so that it could not
     /// do this itself, and the phone resolves it by hashing the thread ids it already holds.
     @discardableResult
-    func open(threadRef: String) -> Bool {
+    func open(threadRef: String, notificationClass: String? = nil) -> Bool {
         let match = model?.threads.first { YorozuCrypto.threadRef($0.id) == threadRef }
         guard let match else {
             pendingThreadRef = threadRef
+            pendingNotificationClass = notificationClass
             return false
         }
         pendingThreadRef = nil
+        pendingNotificationClass = nil
         notificationOpen = NotificationOpen(
             threadId: match.id,
+            notificationClass: notificationClass,
             lastReadAt: match.lastReadAt,
             syncRevision: model?.syncRevision ?? 0
         )
@@ -223,7 +228,9 @@ final class Session {
             model.onThreads = { [weak self] in
                 onThreads?()
                 self?.publishThreads()
-                if let ref = self?.pendingThreadRef { self?.open(threadRef: ref) }
+                if let ref = self?.pendingThreadRef {
+                    self?.open(threadRef: ref, notificationClass: self?.pendingNotificationClass)
+                }
             }
             model.start()
             self.model = model
@@ -344,6 +351,7 @@ struct RootView: View {
                     model: model,
                     thread: thread,
                     resumeRequest: notification?.id,
+                    notificationClass: notification?.notificationClass,
                     lastReadAt: notification?.lastReadAt,
                     notificationSyncRevision: notification?.syncRevision
                 ) {

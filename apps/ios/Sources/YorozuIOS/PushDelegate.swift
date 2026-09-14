@@ -63,9 +63,10 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
     ) async {
         let info = response.notification.request.content.userInfo
         guard let ref = info["ref"] as? String else { return }
+        let notificationClass = info["cls"] as? String
         let model = await MainActor.run { () -> ChatModel? in
             let session = Session.shared
-            session.open(threadRef: ref)
+            session.open(threadRef: ref, notificationClass: notificationClass)
             return session.model
         }
         // Opened from a lock screen, so what this phone holds of that thread is whatever it had

@@ -12,6 +12,7 @@ public struct ChatView: View {
     public let thread: ThreadSummary
     private let onCreate: (() -> Void)?
     private let resumeRequest: UUID?
+    private let notificationClass: String?
     private let lastReadAt: Double?
     private let notificationSyncRevision: Int?
     /// Shown while the runtime is unreachable. The two apps lose it differently: the phone
@@ -49,6 +50,7 @@ public struct ChatView: View {
         model: ChatModel,
         thread: ThreadSummary,
         resumeRequest: UUID? = nil,
+        notificationClass: String? = nil,
         lastReadAt: Double? = nil,
         notificationSyncRevision: Int? = nil,
         onCreate: (() -> Void)? = nil,
@@ -57,6 +59,7 @@ public struct ChatView: View {
         self.model = model
         self.thread = thread
         self.resumeRequest = resumeRequest
+        self.notificationClass = notificationClass
         self.lastReadAt = lastReadAt
         self.notificationSyncRevision = notificationSyncRevision
         self.onCreate = onCreate
@@ -274,7 +277,11 @@ public struct ChatView: View {
                 // events arrive. Keep the request pending until the unread assistant bubble
                 // exists; turning a missing target into `.latest` here consumed the request
                 // against stale cached rows and never corrected the position afterwards.
-                if let target = resumeRowId(rows: rows, lastReadAt: lastReadAt) {
+                if let target = resumeRowId(
+                    rows: rows,
+                    lastReadAt: lastReadAt,
+                    notificationClass: notificationClass
+                ) {
                     return TimelineRequest(id: id, target: .event(target))
                 }
                 guard notificationRefreshFinished(
@@ -860,13 +867,26 @@ public struct ChatView: View {
 
 /// First assistant message nobody had read when a notification was sent. Tool, progress and
 /// approval rows are execution state, not the reply the notification announced.
-func resumeRowId(rows: [ChatRow], lastReadAt: Double?) -> String? {
+func resumeRowId(
+    rows: [ChatRow],
+    lastReadAt: Double?,
+    notificationClass: String? = nil
+) -> String? {
     guard let lastReadAt else { return nil }
     return rows.first { row in
-        guard case .message(let event) = row,
-              case .message(let message) = event.payload,
-              message.role == .agent else { return false }
-        return Double(event.ts) > lastReadAt
+        switch notificationClass {
+        case "approval":
+            switch row {
+            case .approval(let event), .question(let event):
+                return Double(event.ts) > lastReadAt
+            default:
+                return false
+            }
+        default:
+            guard case .message(let event) = row, Double(event.ts) > lastReadAt else { return false }
+            if case .message(let message) = event.payload { return message.role == .agent }
+            return false
+        }
     }?.id
 }
 

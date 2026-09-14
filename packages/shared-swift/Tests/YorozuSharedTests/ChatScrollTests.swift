@@ -55,3 +55,20 @@ import Testing
     #expect(!notificationRefreshFinished(initialRevision: 4, currentRevision: 4))
     #expect(notificationRefreshFinished(initialRevision: 4, currentRevision: 5))
 }
+
+@Test func approvalNotificationResumesAtApprovalCard() {
+    let rows = chatRows(from: [
+        YorozuEvent(id: "reply", threadId: "home", ts: 200, agentId: "main",
+            payload: .message(MessageData(role: .agent, text: "Before approval"))),
+        YorozuEvent(id: "approval", threadId: "home", ts: 300, agentId: "main",
+            payload: .approvalCard(ApprovalCardData(
+                actionId: "card", actionClass: "send-message", target: "recipient"
+            ))),
+    ])
+
+    #expect(resumeRowId(
+        rows: rows,
+        lastReadAt: 100,
+        notificationClass: "approval"
+    ) == "approval")
+}
