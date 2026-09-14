@@ -382,7 +382,7 @@ struct RootView: View {
                 // read to be worth caching.
                 let stored = PairingStore.load()
                 SettingsView(
-                    status: MacStatus(state: model.state, ownerOnline: model.ownerOnline),
+                    status: ConnectionState(state: model.state, ownerOnline: model.ownerOnline),
                     relayUrl: stored?.pairing.relayUrl ?? "—",
                     pairedAt: stored?.pairedAt,
                     onUnpair: session.unpair,

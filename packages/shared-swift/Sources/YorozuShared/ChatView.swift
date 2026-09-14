@@ -116,9 +116,9 @@ public struct ChatView: View {
             }
             composer
         }
-        // `ignoresSafeArea` carries the running cue through the navigation header instead of
-        // framing only the message viewport. It remains an overlay, so title/menu taps still land.
-        .overlay { WorkingBezel(active: generating).ignoresSafeArea() }
+        // Reach through navigation chrome, but keep keyboard as a real boundary: when it opens,
+        // the bezel contracts to the visible chat instead of glowing behind it.
+        .overlay { WorkingBezel(active: generating).ignoresSafeArea(.container) }
         .navigationTitle(thread.displayTitle)
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -1190,7 +1190,7 @@ private struct WorkingBezel: View {
     @State private var bright = false
 
     var body: some View {
-        Rectangle()
+        RoundedRectangle(cornerRadius: 28, style: .continuous)
             .strokeBorder(
                 Color.blue.opacity(active ? (bright || reduceMotion ? 0.9 : 0.3) : 0),
                 lineWidth: 2

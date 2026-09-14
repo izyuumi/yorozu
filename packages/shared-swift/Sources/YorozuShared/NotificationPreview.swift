@@ -2,6 +2,20 @@ import CryptoKit
 import Foundation
 import Security
 
+/// Typed boundary for the compact encrypted-preview object carried in APNs `userInfo`.
+public struct NotificationPreviewPayload: Equatable, Sendable {
+    public let nonce: String
+    public let ciphertext: String
+
+    public init?(userInfo: [AnyHashable: Any]) {
+        guard let preview = userInfo["preview"] as? [String: Any],
+              let nonce = preview["n"] as? String,
+              let ciphertext = preview["c"] as? String else { return nil }
+        self.nonce = nonce
+        self.ciphertext = ciphertext
+    }
+}
+
 /// Local-only opening of the reply text APNs carries as an opaque ChaChaPoly box.
 public enum NotificationPreview {
     private static let service = "to.yumi.yorozu.notification-preview"

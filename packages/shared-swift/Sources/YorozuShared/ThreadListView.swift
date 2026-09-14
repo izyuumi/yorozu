@@ -232,7 +232,7 @@ public enum ConnectionState: Sendable {
         }
     }
 
-    var label: String {
+    public var label: String {
         switch self {
         case .connected: String(localized: "Connected")
         case .reconnecting: String(localized: "Reconnecting")
