@@ -1,7 +1,8 @@
 /**
  * The approval engine. Technically unrestricted: the model decides whether it wants to act,
  * and this file decides whether it may. When the user explicitly enables YOLO mode, it bypasses
- * every approval gate. Otherwise three things stand in the way — the floor set at onboarding;
+ * ordinary approval policy but never the hard financial floor. Otherwise three things stand in
+ * the way — the floor set at onboarding;
  * the classes of action that always need a fresh answer; and the rules themselves, which are the
  * user's own standing decisions rather than anything inferred. See docs/spec-v1.html section 6
  * and docs/spec-v1.5.md.
@@ -25,7 +26,7 @@ import type { Tool, TurnContext } from "./index.js";
 import { stateDir } from "./memory.js";
 import { expandHome } from "./tools/shell.js";
 
-/** Every external effect a tool can have. The spec's list, verbatim. */
+/** Every external effect a tool can have, split so unrelated standing rules cannot overlap. */
 export const ACTION_CLASSES = [
   "send-message",
   "purchase",
@@ -34,6 +35,9 @@ export const ACTION_CLASSES = [
   "transfer-money",
   "run-command",
   "edit-file",
+  "interact-web",
+  "edit-calendar",
+  "edit-reminder",
 ] as const;
 
 export type ActionClass = (typeof ACTION_CLASSES)[number];
@@ -81,7 +85,7 @@ export type Rule = ApprovalRule;
 export type RuleField = ApprovalRuleField;
 
 export interface Settings {
-  /** Skip every approval gate while explicitly enabled by the user. */
+  /** Skip ordinary approval policy, but not hard financial confirmation floors. */
   yolo: boolean;
   /** Ask about any action at or above this amount. */
   moneyThreshold: number;
@@ -489,7 +493,15 @@ export const batchHash = (items: BatchItem[]): string =>
  * The fields that describe the transaction rather than the intent. A change to any of them
  * between the card and the moment of execution means the user approved something else.
  */
-const COMMITTED_FIELDS = ["amount", "quantity", "recipient", "account"] as const;
+const COMMITTED_FIELDS = [
+  "target",
+  "operation",
+  "amount",
+  "quantity",
+  "recipient",
+  "account",
+  "contentSummary",
+] as const;
 
 interface Approved {
   action: Action;
@@ -581,7 +593,7 @@ export function cardFor(actionId: string, action: Action): ApprovalCardData {
     // items, and no standing rule can mean that — the narrowest one that would cover it either
     // pins the list, and so fires once and never again, or drops it and quietly authorises
     // every future batch. The card offers the two grants that can honestly be scoped instead.
-    ...(items?.length ? {} : { suggestedRule: narrowestRule(action) }),
+    ...(items?.length || needsFreshConfirmation(action) ? {} : { suggestedRule: narrowestRule(action) }),
   };
 }
 
@@ -643,11 +655,11 @@ export async function checkApproval(
   };
 
   const settings = loadSettings(dir);
-  if (settings.yolo) {
+  const floored = hitsFloor(action, settings, dir);
+  if (settings.yolo && !floored) {
     log("yolo");
     return allow();
   }
-  const floored = hitsFloor(action, settings, dir);
 
   // A bounded grant is this turn's own answer to this exact scope, so it stands in for the
   // card — but not for the floor, which is the one thing no grant and no rule reaches past.
@@ -669,7 +681,7 @@ export async function checkApproval(
     return { refusal: refusal(action) };
   }
 
-  const { answer, rule, target } = await options.ask(action, options.context);
+  const { answer, rule } = await options.ask(action, options.context);
   // Discuss decides nothing, so nothing is logged: the card comes back after the explanation.
   if (answer === "discuss") return { refusal: discussNote(action) };
 
@@ -677,9 +689,22 @@ export async function checkApproval(
 
   if (answer === "task") options.grants?.grant(action);
   if (answer === "always") {
-    // The editor's rule, or — for a client too old to send one, or a rule typed in prose — the
-    // narrowest rule that covers what was just approved.
-    addRule(rule ?? narrowestRule({ ...action, ...(target ? { target } : {}) }), dir);
+    const scoped = rule && Object.keys(rule.scope ?? {}).length > 0;
+    if (
+      floored ||
+      action.items?.length ||
+      !scoped ||
+      rule.actionClass !== action.actionClass ||
+      rule.decision !== "always" ||
+      !matchesRule(rule, action)
+    ) {
+      return {
+        refusal:
+          "not allowed: permanent authority requires you to review and save a scoped rule. " +
+          "This action has not run; use Allow once or open Always allow and choose its scope.",
+      };
+    }
+    addRule(rule, dir);
   }
   if (answer !== "yes" && answer !== "task" && answer !== "always") return { refusal: refusal(action) };
 

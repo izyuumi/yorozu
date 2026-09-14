@@ -16,6 +16,7 @@ import { env } from "node:process";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import WebSocket from "ws";
+import { summarize, verifyApproved } from "../approval.js";
 import type { Tool } from "../index.js";
 import { stateDir } from "../memory.js";
 
@@ -437,36 +438,71 @@ export const browserSnapshotTool: Tool = {
 export const browserClickTool: Tool = {
   name: "browser.click",
   description: "Click the element with the given number from the latest snapshot of the tab.",
+  actionClass: "interact-web",
+  action: ({ tabId, ref }) => ({
+    target: `${String(tabId ?? "")} element ${String(ref ?? "")}`,
+    operation: "run",
+    consequence: "Clicks a web-page control, which may change external state.",
+  }),
   parameters: {
     type: "object",
     properties: { ...tabArg, ref: { type: "number", description: "Number from the snapshot." } },
     required: ["tabId", "ref"],
   },
-  run: async ({ tabId, ref }) => browser().click(String(tabId ?? ""), Number(ref)),
+  run: async (args, context) => {
+    if (context?.actionId) {
+      const stale = verifyApproved(context.actionId, browserClickTool.action!(args));
+      if (stale) return stale;
+    }
+    return browser().click(String(args.tabId ?? ""), Number(args.ref));
+  },
 };
 
 export const browserTypeTool: Tool = {
   name: "browser.type",
   description: "Type text into the element with the given number from the latest snapshot.",
+  actionClass: "interact-web",
+  action: ({ tabId, ref, text }) => ({
+    target: `${String(tabId ?? "")} element ${String(ref ?? "")}`,
+    operation: "run",
+    contentSummary: summarize(String(text ?? "")),
+    consequence: "Enters this text into a web page.",
+  }),
   parameters: {
     type: "object",
     properties: { ...tabArg, ref: { type: "number" }, text: { type: "string" } },
     required: ["tabId", "ref", "text"],
   },
-  run: async ({ tabId, ref, text }) =>
-    browser().type(String(tabId ?? ""), Number(ref), String(text ?? "")),
+  run: async (args, context) => {
+    if (context?.actionId) {
+      const stale = verifyApproved(context.actionId, browserTypeTool.action!(args));
+      if (stale) return stale;
+    }
+    return browser().type(String(args.tabId ?? ""), Number(args.ref), String(args.text ?? ""));
+  },
 };
 
 export const browserEvalTool: Tool = {
   name: "browser.eval",
   description: "Evaluate JavaScript in the tab and return the result as JSON.",
+  actionClass: "interact-web",
+  action: ({ tabId, js }) => ({
+    target: String(tabId ?? ""),
+    operation: "run",
+    contentSummary: summarize(String(js ?? "")),
+    consequence: "Runs JavaScript in a web page, which may change external state.",
+  }),
   parameters: {
     type: "object",
     properties: { ...tabArg, js: { type: "string" } },
     required: ["tabId", "js"],
   },
-  run: async ({ tabId, js }) => {
-    const value = await browser().evaluate(String(tabId ?? ""), String(js ?? ""));
+  run: async (args, context) => {
+    if (context?.actionId) {
+      const stale = verifyApproved(context.actionId, browserEvalTool.action!(args));
+      if (stale) return stale;
+    }
+    const value = await browser().evaluate(String(args.tabId ?? ""), String(args.js ?? ""));
     return value === undefined ? "undefined" : JSON.stringify(value);
   },
 };

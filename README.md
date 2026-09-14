@@ -664,9 +664,9 @@ and `run.sh` waits for the phone to log `YOROZU-E2E-TOOL echo` beside the stream
 
 Every tool with an effect outside the runtime declares an `actionClass` — the spec's list:
 `send-message`, `purchase`, `delete-file`, `book`, `transfer-money`, `run-command`,
-`edit-file`. Today that is `shell` (`run-command`), `fs_write` (`edit-file`) and `mail_send`
-(`send-message`); the browser tools stay undeclared until a later ticket decides which of their
-verbs actually reach the world. A tool with no `actionClass` only reads, and is never gated.
+`edit-file`, `interact-web`, `edit-calendar`, `edit-reminder`. Browser click/type/eval and the
+Calendar/Reminders mutations use their distinct classes so an older broad shell/file rule cannot
+authorize them. Their read-only siblings stay undeclared and ungated.
 
 Alongside it each tool carries an extractor that turns the call's arguments into the
 **structured scope** of the action: the `target` and whichever of `operation`, `recipient`,
