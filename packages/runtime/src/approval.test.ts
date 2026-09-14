@@ -14,6 +14,7 @@ import {
   DEFAULT_SETTINGS,
   forgetApprovals,
   hitsFloor,
+  hashContent,
   listRules,
   loadSettings,
   markRuleUsed,
@@ -205,7 +206,7 @@ test.each<[string, Action, Settings, Verdict]>([
   expect(decide(action, stored, dir).verdict).toBe(expected);
 });
 
-test("24: a deny wins over an allow however much narrower the allow is", () => {
+test("24: a more-specific allow wins; deny wins only at equal specificity", () => {
   const stored = settings({
     rules: [
       // As broad as a deny gets: the whole class.
@@ -218,6 +219,13 @@ test("24: a deny wins over an allow however much narrower the allow is", () => {
       }),
     ],
   });
+  expect(decide(send, stored, dir).verdict).toBe("allow");
+
+  stored.rules.push(rule({
+    actionClass: "send-message",
+    decision: "never",
+    scope: { recipient: exact("bob@example.com"), operation: exact("send") },
+  }));
   expect(decide(send, stored, dir).verdict).toBe("deny");
 });
 
@@ -481,6 +489,21 @@ test("29: a price, quantity, recipient or account that moved invalidates the app
 
 test("29: an action with no approval at all cannot be committed", () => {
   expect(verifyApproved("never-asked", { amount: 1 })).toMatch(/no live approval/);
+});
+
+test("29: changes beyond the displayed content summary invalidate approval", () => {
+  const prefix = "x".repeat(200);
+  recordApproval("a1", {
+    actionClass: "edit-file",
+    target: "/tmp/file",
+    operation: "edit",
+    contentSummary: prefix,
+    contentHash: hashContent(`${prefix}A`),
+  });
+  expect(verifyApproved("a1", {
+    contentSummary: prefix,
+    contentHash: hashContent(`${prefix}B`),
+  })).toMatch(/contentHash/);
 });
 
 // -------------------------------------------------------------------------- 25, 26: batches
@@ -751,6 +774,11 @@ test("19: an always answer cannot inject an unrelated or unscoped rule", async (
     rule({ actionClass: "purchase", decision: "always", scope: { merchant: exact("Shop") } }),
     rule({ actionClass: "send-message", decision: "always" }),
     rule({ actionClass: "send-message", decision: "always", maxAmount: 10 }),
+    rule({
+      actionClass: "send-message",
+      decision: "always",
+      scope: { bogus: exact("anything") } as never,
+    }),
   ]) {
     const result = await checkApproval(mailer, { to: "bob@example.com" }, {
       ask: async () => ({ answer: "always", rule: edited }),
@@ -759,6 +787,41 @@ test("19: an always answer cannot inject an unrelated or unscoped rule", async (
     expect(result.refusal).toMatch(/review and save a scoped rule/);
   }
   expect(listRules(dir)).toEqual([]);
+});
+
+test("19: the scoped editor can persist a deny and the pending action does not run", async () => {
+  const edited = rule({
+    actionClass: "send-message",
+    decision: "never",
+    scope: { recipient: exact("bob@example.com") },
+  });
+  const result = await checkApproval(mailer, { to: "bob@example.com" }, {
+    ask: async () => ({ answer: "always", rule: edited }),
+    dir,
+  });
+  expect(result.refusal).toMatch(/not allowed/);
+  expect(listRules(dir)).toMatchObject([edited]);
+});
+
+test("generic browser interactions always ask and offer no reusable rule", async () => {
+  saveSettings(settings({ yolo: true, rules: [rule({
+    actionClass: "interact-web",
+    decision: "always",
+    scope: { target: exact("tab-1 element 4") },
+  })] }), dir);
+  const web: Tool = {
+    name: "browser.click",
+    description: "",
+    parameters: {},
+    actionClass: "interact-web",
+    action: () => ({ target: "tab-1 element 4", operation: "run" }),
+    run: () => "clicked",
+  };
+  const ask = vi.fn(async (): Promise<AskResult> => ({ answer: "yes" }));
+  const gate = await checkApproval(web, {}, { ask, dir });
+  expect(gate.refusal).toBeNull();
+  expect(ask).toHaveBeenCalledOnce();
+  expect(cardFor("web", { actionClass: "interact-web", ...web.action!({}) }).suggestedRule).toBeUndefined();
 });
 
 test("no refuses this one action only: nothing is written, and the next one asks again", async () => {

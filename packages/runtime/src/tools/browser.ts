@@ -16,7 +16,7 @@ import { env } from "node:process";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import WebSocket from "ws";
-import { summarize, verifyApproved } from "../approval.js";
+import { hashContent, summarize, verifyApproved } from "../approval.js";
 import type { Tool } from "../index.js";
 import { stateDir } from "../memory.js";
 
@@ -466,7 +466,8 @@ export const browserTypeTool: Tool = {
     target: `${String(tabId ?? "")} element ${String(ref ?? "")}`,
     operation: "run",
     contentSummary: summarize(String(text ?? "")),
-    consequence: "Enters this text into a web page.",
+    contentHash: hashContent(String(text ?? "")),
+    consequence: "Enters this text into a web page; the page may submit or change external state.",
   }),
   parameters: {
     type: "object",
@@ -490,6 +491,7 @@ export const browserEvalTool: Tool = {
     target: String(tabId ?? ""),
     operation: "run",
     contentSummary: summarize(String(js ?? "")),
+    contentHash: hashContent(String(js ?? "")),
     consequence: "Runs JavaScript in a web page, which may change external state.",
   }),
   parameters: {

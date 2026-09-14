@@ -75,6 +75,8 @@ export interface Action extends ApprovalScope {
   amount?: number;
   /** The exact items one decision covers, when the tool declared a batch. */
   items?: BatchItem[];
+  /** Full-content commitment kept inside the runtime; cards show only `contentSummary`. */
+  contentHash?: string;
 }
 
 /** What a tool's extractor returns: everything about an action but its class. */
@@ -172,10 +174,13 @@ const logFile = (dir: string): string => join(dir, "approvals.jsonl");
 export function normalizeRule(stored: Partial<Rule> & { target?: string }, index = 0): Rule | null {
   if (typeof stored.actionClass !== "string") return null;
   if (stored.decision !== "never" && stored.decision !== "always") return null;
+  if (stored.scope && Object.keys(stored.scope).some(
+    (field) => !(APPROVAL_SCOPE_FIELDS as readonly string[]).includes(field),
+  )) return null;
   const scope: Partial<Record<ScopeField, RuleField>> = {};
   for (const field of APPROVAL_SCOPE_FIELDS) {
     const pattern = stored.scope?.[field];
-    if (pattern && typeof pattern.value === "string") {
+    if (pattern && typeof pattern.value === "string" && pattern.value.trim() !== "") {
       scope[field] = {
         mode: pattern.mode === "prefix" || pattern.mode === "glob" ? pattern.mode : "exact",
         value: pattern.value,
@@ -191,7 +196,9 @@ export function normalizeRule(stored: Partial<Rule> & { target?: string }, index
     actionClass: stored.actionClass,
     decision: stored.decision,
     ...(Object.keys(scope).length ? { scope } : {}),
-    ...(typeof stored.maxAmount === "number" ? { maxAmount: stored.maxAmount } : {}),
+    ...(typeof stored.maxAmount === "number" && Number.isFinite(stored.maxAmount) && stored.maxAmount >= 0
+      ? { maxAmount: stored.maxAmount }
+      : {}),
     ...(stored.enabled === false ? { enabled: false } : {}),
     ...(typeof stored.createdAt === "number" ? { createdAt: stored.createdAt } : {}),
     ...(typeof stored.lastUsed === "number" ? { lastUsed: stored.lastUsed } : {}),
@@ -294,6 +301,9 @@ function insideDir(target: string, dir: string): boolean {
  * scope is expensive on and the ones the user would want to have seen.
  */
 export function needsFreshConfirmation(action: Pick<Action, "actionClass" | "operation" | "category">): boolean {
+  // Generic browser mechanics cannot prove which real-world commit a page will perform. They
+  // therefore never inherit standing authority or YOLO mode: each interaction is approved once.
+  if (action.actionClass === "interact-web") return true;
   if (action.actionClass === "transfer-money") return true;
   if (action.operation && ALWAYS_CONFIRM_OPERATIONS.includes(action.operation)) return true;
   return ALWAYS_CONFIRM_CATEGORIES.includes((action.category ?? "").toLowerCase());
@@ -358,27 +368,24 @@ export function matchesRule(rule: Rule, action: Action): boolean {
   return true;
 }
 
-/** How many things a rule pins down. The most specific allow wins among the allows. */
+/** How many things a rule pins down. */
 export const specificity = (rule: Rule): number =>
   Object.keys(rule.scope ?? {}).length + (rule.maxAmount === undefined ? 0 : 1);
 
 /**
- * Floor first, then the rules. A deny wins over any allow it overlaps with, however much more
- * specific that allow is: an overlap is exactly the ambiguity the user would want resolved the
- * safe way, and a narrow allow inside a broad deny is far more likely a mistake than an
- * intention. Nothing is inferred from history here — repeated approvals produce a *proposal*
- * (see `proposalFor`), never an automatic allow.
+ * Floor first, then the most-specific matching rules. A deny wins only when tied with an allow
+ * at that specificity. Nothing is inferred from history here — repeated approvals produce a
+ * *proposal* (see `proposalFor`), never an automatic allow.
  */
 export function decide(action: Action, settings: Settings, dir = stateDir()): Decision {
   if (hitsFloor(action, settings, dir)) return { verdict: "ask" };
 
   const matching = settings.rules.filter((rule) => matchesRule(rule, action));
-  const denied = matching.filter((rule) => rule.decision === "never");
-  if (denied.length) return { verdict: "deny", ruleId: denied[0].id };
-
-  const [allowed] = matching
-    .filter((rule) => rule.decision === "always")
-    .sort((a, b) => specificity(b) - specificity(a));
+  const top = Math.max(...matching.map(specificity), -1);
+  const mostSpecific = matching.filter((rule) => specificity(rule) === top);
+  const denied = mostSpecific.find((rule) => rule.decision === "never");
+  if (denied) return { verdict: "deny", ruleId: denied.id };
+  const allowed = mostSpecific.find((rule) => rule.decision === "always");
   return allowed ? { verdict: "allow", ruleId: allowed.id } : { verdict: "ask" };
 }
 
@@ -501,6 +508,7 @@ const COMMITTED_FIELDS = [
   "recipient",
   "account",
   "contentSummary",
+  "contentHash",
 ] as const;
 
 interface Approved {
@@ -565,8 +573,12 @@ export const defaultAction = (args: Record<string, unknown>): ActionDetail => ({
   target: String(args.target ?? args.path ?? args.cmd ?? args.to ?? ""),
 });
 
-/** Truncated where the card truncates it, so what a rule is written against is what was shown. */
+/** Truncated display value. Exact commit verification uses `hashContent`. */
 export const summarize = (text: string): string => text.slice(0, CONTENT_SUMMARY_MAX);
+
+/** Opaque full-content commitment: detects changes beyond the card's display limit. */
+export const hashContent = (text: string): string =>
+  createHash("sha256").update(text).digest("hex");
 
 const refusal = (action: Action): string =>
   `not allowed: the user declined this ${action.actionClass} on ${action.target}. ` +
@@ -579,7 +591,7 @@ const discussNote = (action: Action): string =>
 
 /** Builds the card for an action, prefilled editor and all. Shared with the sidecar's `ask`. */
 export function cardFor(actionId: string, action: Action): ApprovalCardData {
-  const { actionClass, target, amount, items, ...scope } = action;
+  const { actionClass, target, amount, items, contentHash: _contentHash, ...scope } = action;
   const hasScope = Object.values(scope).some((value) => value !== undefined && value !== "");
   return {
     actionId,
@@ -635,7 +647,7 @@ export async function checkApproval(
   };
   const actionId = randomUUID();
   const log = (decision: string, ruleId?: string): void => {
-    const { actionClass, target, items, ...scope } = action;
+    const { actionClass, target, items, contentHash: _contentHash, ...scope } = action;
     appendLog(
       {
         ts: Date.now(),
@@ -689,13 +701,23 @@ export async function checkApproval(
 
   if (answer === "task") options.grants?.grant(action);
   if (answer === "always") {
-    const scoped = rule && Object.keys(rule.scope ?? {}).length > 0;
+    const keys = Object.keys(rule?.scope ?? {});
+    const recognized = keys.filter((key): key is ScopeField =>
+      (APPROVAL_SCOPE_FIELDS as readonly string[]).includes(key),
+    );
+    const scoped =
+      rule &&
+      keys.length === recognized.length &&
+      recognized.some((key) => {
+        const field = rule.scope?.[key];
+        return field && field.value.trim() !== "";
+      });
     if (
       floored ||
       action.items?.length ||
       !scoped ||
       rule.actionClass !== action.actionClass ||
-      rule.decision !== "always" ||
+      (rule.decision !== "always" && rule.decision !== "never") ||
       !matchesRule(rule, action)
     ) {
       return {
@@ -705,6 +727,7 @@ export async function checkApproval(
       };
     }
     addRule(rule, dir);
+    if (rule.decision === "never") return { refusal: refusal(action) };
   }
   if (answer !== "yes" && answer !== "task" && answer !== "always") return { refusal: refusal(action) };
 
