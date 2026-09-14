@@ -118,7 +118,9 @@ public struct ChatView: View {
         }
         // Reach through navigation chrome, but keep keyboard as a real boundary: when it opens,
         // the bezel contracts to the visible chat instead of glowing behind it.
-        .overlay { WorkingBezel(active: generating).ignoresSafeArea(.container) }
+        #if os(macOS)
+            .overlay { WorkingBezel(active: generating) }
+        #endif
         .navigationTitle(thread.displayTitle)
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
