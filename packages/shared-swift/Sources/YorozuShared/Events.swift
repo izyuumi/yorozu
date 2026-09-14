@@ -31,7 +31,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
     }
 
     public enum Kind: String, Codable, Sendable, CaseIterable {
-        case message, thought
+        case message, reaction, thought
         case toolCall = "tool_call"
         case toolResult = "tool_result"
         case approvalCard = "approval_card"
@@ -62,6 +62,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
 
     public enum Payload: Equatable, Sendable {
         case message(MessageData)
+        case reaction(ReactionData)
         case thought(ThoughtData)
         case toolCall(ToolCallData)
         case toolResult(ToolResultData)
@@ -93,6 +94,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         public var kind: Kind {
             switch self {
             case .message: .message
+            case .reaction: .reaction
             case .thought: .thought
             case .toolCall: .toolCall
             case .toolResult: .toolResult
@@ -137,6 +139,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         parentAgentId = try c.decodeIfPresent(String.self, forKey: .parentAgentId)
         switch try c.decode(Kind.self, forKey: .kind) {
         case .message: payload = .message(try c.decode(MessageData.self, forKey: .data))
+        case .reaction: payload = .reaction(try c.decode(ReactionData.self, forKey: .data))
         case .thought: payload = .thought(try c.decode(ThoughtData.self, forKey: .data))
         case .toolCall: payload = .toolCall(try c.decode(ToolCallData.self, forKey: .data))
         case .toolResult: payload = .toolResult(try c.decode(ToolResultData.self, forKey: .data))
@@ -177,6 +180,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         try c.encode(payload.kind, forKey: .kind)
         switch payload {
         case .message(let d): try c.encode(d, forKey: .data)
+        case .reaction(let d): try c.encode(d, forKey: .data)
         case .thought(let d): try c.encode(d, forKey: .data)
         case .toolCall(let d): try c.encode(d, forKey: .data)
         case .toolResult(let d): try c.encode(d, forKey: .data)
@@ -210,12 +214,14 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
 
 /// A file sent along with a message: a photo, a screenshot, a PDF. The bytes travel inline
 /// rather than as a reference, because the relay stores nothing — a link to it would have
-/// nowhere to point. One per message, which is all the composer offers.
+/// nowhere to point.
 public struct MessageAttachment: Codable, Equatable, Sendable {
     /// Largest attachment this device will send, decoded. A message is sealed, framed and held
     /// whole in memory at both ends and at the relay, so the cap is about what that costs.
     /// Mirrors `ATTACHMENT_MAX_BYTES` in packages/shared/src/events.ts.
     public static let maxBytes = 5 * 1024 * 1024
+    public static let maxCount = 10
+    public static let maxTotalBytes = 20 * 1024 * 1024
 
     /// Original file name. What a text-only model is told was attached.
     public var name: String
@@ -252,13 +258,59 @@ public struct MessageData: Codable, Equatable, Sendable {
     /// that delegation stops spinning, and the main agent's, so the composer stops offering
     /// Stop. A flag rather than a kind of its own: the final message already ends the turn.
     public var done: Bool?
-    /// A photo or file the user sent with this message. Only ever set on a `user` message.
-    public var attachment: MessageAttachment?
-    public init(role: Role, text: String, done: Bool? = nil, attachment: MessageAttachment? = nil) {
+    /// Photos and files the user sent with this message. Only set on a `user` message.
+    public var attachments: [MessageAttachment]
+    /// Source compatibility for callers that still handle one attachment.
+    public var attachment: MessageAttachment? { attachments.first }
+
+    public init(
+        role: Role,
+        text: String,
+        done: Bool? = nil,
+        attachment: MessageAttachment? = nil,
+        attachments: [MessageAttachment] = []
+    ) {
         self.role = role
         self.text = text
         self.done = done
-        self.attachment = attachment
+        self.attachments = attachments.isEmpty ? attachment.map { [$0] } ?? [] : attachments
+    }
+
+    private enum CodingKeys: String, CodingKey { case role, text, done, attachment, attachments }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        role = try c.decode(Role.self, forKey: .role)
+        text = try c.decode(String.self, forKey: .text)
+        done = try c.decodeIfPresent(Bool.self, forKey: .done)
+        attachments = try c.decodeIfPresent([MessageAttachment].self, forKey: .attachments)
+            ?? c.decodeIfPresent(MessageAttachment.self, forKey: .attachment).map { [$0] }
+            ?? []
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(role, forKey: .role)
+        try c.encode(text, forKey: .text)
+        try c.encodeIfPresent(done, forKey: .done)
+        guard !attachments.isEmpty else { return }
+        // The first item keeps older Yorozu clients useful; current clients prefer the array.
+        try c.encode(attachments[0], forKey: .attachment)
+        try c.encode(attachments, forKey: .attachments)
+    }
+}
+
+/// A reaction targets an immutable message. Latest event from one device wins; `remove` clears
+/// that device's matching emoji while preserving reactions from other devices.
+public struct ReactionData: Codable, Equatable, Sendable {
+    public var messageId: String
+    public var emoji: String
+    public var remove: Bool?
+
+    public init(messageId: String, emoji: String, remove: Bool? = nil) {
+        self.messageId = messageId
+        self.emoji = emoji
+        self.remove = remove
     }
 }
 
@@ -770,7 +822,11 @@ public struct SyncRequestData: Codable, Equatable, Sendable {
 
 public struct SyncDeltaData: Codable, Equatable, Sendable {
     public var events: [YorozuEvent]
-    public init(events: [YorozuEvent]) { self.events = events }
+    public var more: Bool?
+    public init(events: [YorozuEvent], more: Bool? = nil) {
+        self.events = events
+        self.more = more
+    }
 }
 
 /// One device this Mac is paired with, as the Devices tab lists them. Public keys only: they

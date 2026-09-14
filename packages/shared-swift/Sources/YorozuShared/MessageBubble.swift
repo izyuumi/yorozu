@@ -52,6 +52,8 @@ public struct MessageBubble: View {
     private let onReply: ((String) -> Void)?
     /// Sends the queued message again, for a message the outbox has given up on.
     private let onResend: (() -> Void)?
+    private let reactions: [MessageReaction]
+    private let onReact: ((String) -> Void)?
 
     /// Set by "Read more", which unfolds a long message where it stands. One way: Signal has no
     /// collapse either, and a message you asked to see is not something to take away again.
@@ -69,7 +71,9 @@ public struct MessageBubble: View {
         onRetry: (() -> Void)? = nil,
         onDelete: (() -> Void)? = nil,
         onReply: ((String) -> Void)? = nil,
-        onResend: (() -> Void)? = nil
+        onResend: (() -> Void)? = nil,
+        reactions: [MessageReaction] = [],
+        onReact: ((String) -> Void)? = nil
     ) {
         self.id = id
         self.data = data
@@ -79,6 +83,8 @@ public struct MessageBubble: View {
         self.onDelete = onDelete
         self.onReply = onReply
         self.onResend = onResend
+        self.reactions = reactions
+        self.onReact = onReact
     }
 
     private var isUser: Bool { data.role == .user }
@@ -101,8 +107,13 @@ public struct MessageBubble: View {
 
     public var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
-            if let attachment = data.attachment {
-                AttachmentView(attachment: attachment)
+            if !data.attachments.isEmpty {
+                LazyVGrid(columns: attachmentColumns, spacing: 4) {
+                    ForEach(Array(data.attachments.enumerated()), id: \.offset) { _, attachment in
+                        AttachmentView(attachment: attachment)
+                    }
+                }
+                .frame(maxWidth: 360, alignment: isUser ? .trailing : .leading)
             }
             if !data.text.isEmpty || streaming {
                 bubble
@@ -115,6 +126,7 @@ public struct MessageBubble: View {
             if speaking {
                 SpeakingChip().transition(.scale(scale: 0.9).combined(with: .opacity))
             }
+            if !reactions.isEmpty { reactionChips }
             if let status {
                 caption(status)
             }
@@ -133,9 +145,22 @@ public struct MessageBubble: View {
         #endif
     }
 
+    private var attachmentColumns: [GridItem] {
+        data.attachments.count == 1
+            ? [GridItem(.flexible())]
+            : [GridItem(.flexible(), spacing: 4), GridItem(.flexible())]
+    }
+
     /// Everything that can be done to one message. Shared by the context menu and, on the Mac,
     /// by the hover control — the two are the same list, not two lists that have to agree.
     @ViewBuilder private var actions: some View {
+        if let onReact {
+            Menu("React", systemImage: "face.smiling") {
+                ForEach(["👍", "❤️", "😂", "😮", "😢", "🙏"], id: \.self) { emoji in
+                    Button(emoji) { onReact(emoji) }
+                }
+            }
+        }
         Button("Copy", systemImage: "doc.on.doc") { copyToPasteboard(data.text) }
         if let onReply {
             Button("Reply", systemImage: "arrowshape.turn.up.left") { onReply(parts.body) }
@@ -160,6 +185,29 @@ public struct MessageBubble: View {
             // Local only, which the menu says outright: the word "Delete" on its own
             // would promise something this button cannot do.
             Button("Remove from this device", systemImage: "trash", role: .destructive, action: onDelete)
+        }
+    }
+
+    private var reactionChips: some View {
+        HStack(spacing: 4) {
+            ForEach(reactions) { reaction in
+                Button {
+                    onReact?(reaction.emoji)
+                } label: {
+                    Text(reaction.count > 1 ? "\(reaction.emoji) \(reaction.count)" : reaction.emoji)
+                        .font(.caption)
+                        .padding(.horizontal, 7)
+                        .frame(minHeight: 28)
+                        .background(
+                            reaction.selected ? AnyShapeStyle(.tint.opacity(0.2)) : AnyShapeStyle(.quaternary),
+                            in: .capsule
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(onReact == nil)
+                .accessibilityLabel("\(reaction.emoji), \(reaction.count) reaction\(reaction.count == 1 ? "" : "s")")
+                .accessibilityHint(reaction.selected ? "Removes your reaction" : "Adds this reaction")
+            }
         }
     }
 

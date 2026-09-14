@@ -137,17 +137,8 @@ struct SettingsView: View {
             Tab("General", systemImage: "gearshape") {
                 pane { GeneralView() }
             }
-            Tab("Providers", systemImage: "cpu") {
-                pane { ProvidersView() }
-            }
-            Tab("Models", systemImage: "square.stack.3d.up") {
-                pane { ModelsView() }
-            }
             Tab("Devices", systemImage: "iphone.and.arrow.forward") {
                 pane { DevicesView(sidecar: sidecar) }
-            }
-            Tab("Rules", systemImage: "checkmark.seal") {
-                pane { RulesView() }
             }
             Tab("Permissions", systemImage: "lock.shield") {
                 pane { PermissionsView() }

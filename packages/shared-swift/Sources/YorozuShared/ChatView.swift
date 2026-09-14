@@ -1,5 +1,9 @@
 import SwiftUI
 
+#if os(iOS)
+    import UIKit
+#endif
+
 /// One thread's messages, shared by both apps: the phone pushes it from ``ThreadListView``, the
 /// Mac shows it as the detail half of its split view. Either way it has to sit inside a
 /// navigation stack, which is what the trace drill-down pushes onto.
@@ -20,8 +24,6 @@ public struct ChatView: View {
     /// Id of the reply whose first token just landed, which is the moment worth a tap.
     @State private var replyStarted: String?
     @State private var attachmentTooLarge = false
-    /// Dictation is per-open-thread: leaving the thread tears the audio down with the view.
-    @State private var dictation = Dictation()
     /// The message being replied to, quoted above the field until it is sent or dismissed.
     @State private var replyQuote: String?
     @State private var searching = false
@@ -31,6 +33,9 @@ public struct ChatView: View {
     @State private var search = ""
     /// Which hit the arrows are on. Reset whenever the term changes.
     @State private var hit = 0
+    #if os(iOS)
+        @State private var timelineRequest: TimelineRequest?
+    #endif
 
     /// Anchor for "scroll to the end". A zero-height view after the last row rather than the
     /// row itself: scrolling to the last row leaves its bottom edge under the composer.
@@ -59,8 +64,8 @@ public struct ChatView: View {
         Binding(get: { model.drafts[thread.id] ?? "" }, set: { model.drafts[thread.id] = $0 })
     }
 
-    private var attachment: Binding<MessageAttachment?> {
-        Binding(get: { model.attachments[thread.id] }, set: { model.attachments[thread.id] = $0 })
+    private var attachments: Binding<[MessageAttachment]> {
+        Binding(get: { model.attachments[thread.id] ?? [] }, set: { model.attachments[thread.id] = $0 })
     }
 
     /// The last agent message, which is the only one that can still be streaming.
@@ -151,23 +156,21 @@ public struct ChatView: View {
         // both platforms; the view going away is only the phone's, where it means the chat was
         // popped off the stack. On the Mac the chat is a pane in a window that SwiftUI tears
         // down and builds again for reasons of its own, and stopping on that cut a reply off
-        // mid-sentence and ended dictation mid-word, with nothing on screen having changed.
+        // mid-sentence, with nothing on screen having changed.
         // Closing the window is handled where the window is — see ``ChatWindowView``.
         .onChange(of: thread.id) { _, _ in
             Speaker.shared.stop()
-            dictation.stop()
         }
         #if os(iOS)
             .onDisappear {
                 Speaker.shared.stop()
-                dictation.stop()
             }
         #endif
         // Keyed on the thread: the Mac's split view builds its detail more than once while the
         // window and the thread list settle, and a plain `.task` left the seeded state on
         // whichever copy ran first rather than on the one on screen.
         .task(id: thread.id) {
-            ChatShowcase.apply(dictation: dictation, search: $search, searching: $searching, quote: $replyQuote)
+            ChatShowcase.apply(search: $search, searching: $searching, quote: $replyQuote)
         }
         // What the Mac's Edit, Thread and Chat menus act on. The same four things the toolbar
         // and the composer offer, published where a menu built by the scene can reach them.
@@ -190,19 +193,10 @@ public struct ChatView: View {
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: replyStarted) { _, id in
             id != nil
         }
-        .alert("That file is too large", isPresented: $attachmentTooLarge) {
+        .alert("Attachments are too large", isPresented: $attachmentTooLarge) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Attachments are limited to 5 MB.")
-        }
-        .alert("Dictation needs permission", isPresented: $dictation.denied) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            #if os(macOS)
-                Text("Allow microphone access and speech recognition in System Settings to dictate.")
-            #else
-                Text("Allow microphone access and speech recognition in Settings to dictate.")
-            #endif
+            Text("Choose up to 10 files, no larger than 5 MB each or 20 MB together.")
         }
     }
 
@@ -245,72 +239,77 @@ public struct ChatView: View {
         return model.models.first { $0.id == spec }?.menuLabel ?? spec
     }
 
-    private var messages: some View {
+    @ViewBuilder private var messages: some View {
+        #if os(iOS)
+            nativeMessages
+        #else
+            swiftUIMessages
+        #endif
+    }
+
+    #if os(iOS)
+        private var nativeMessages: some View {
+            IOSChatTimeline(
+                rows: rows,
+                generating: generating,
+                streamingId: streamingId,
+                request: timelineRequest,
+                presentation: TimelinePresentation(
+                    search: search,
+                    outbox: model.outbox,
+                    answered: model.answered,
+                    answeredQuestions: model.answeredQuestions,
+                    handledProposals: model.handledProposals,
+                    choices: model.choices,
+                    reactions: Dictionary(uniqueKeysWithValues: rows.map {
+                        ($0.id, model.reactions(to: $0.id, in: thread.id))
+                    })
+                ),
+                atBottom: $atBottom,
+                content: { row in AnyView(rowView(row).environment(\.searchHighlight, search)) }
+            )
+            .onChange(of: ChangeStamp(events: events)) { _, _ in noteReplyStart() }
+            .overlay(alignment: .bottom) {
+                if !atBottom, search.isEmpty {
+                    ScrollToBottomPill {
+                        timelineRequest = TimelineRequest(target: .latest)
+                    }
+                    .padding(.bottom, 8)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.snappy, value: atBottom)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if !search.isEmpty {
+                    SearchHitBar(index: hit, total: hits.count) { step in
+                        guard !hits.isEmpty else { return }
+                        hit = (hit + step + hits.count) % hits.count
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .onChange(of: search) { _, _ in
+                hit = 0
+                requestCurrentHit()
+            }
+            .onChange(of: hit) { _, _ in requestCurrentHit() }
+            .animation(.snappy, value: search.isEmpty)
+        }
+
+        private func requestCurrentHit() {
+            guard hits.indices.contains(hit) else { return }
+            timelineRequest = TimelineRequest(target: .event(hits[hit].eventId))
+        }
+    #endif
+
+    private var swiftUIMessages: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     // A delegation collapses to one card where it started and what the
                     // specialist did is behind it; the main agent's own tool use is shown
                     // here, grouped, where it happened.
-                    ForEach(rows) { row in
-                        switch row {
-                        case .message(let event):
-                            if case .message(let data) = event.payload {
-                                MessageBubble(
-                                    id: event.id,
-                                    data: data,
-                                    streaming: event.id == streamingId,
-                                    // Set only while the message is still in the outbox, which
-                                    // is what earns it a "Queued" or "Not sent" caption.
-                                    status: model.outboxStatus(of: event.id),
-                                    onRetry: data.role == .user ? { retry(data) } : nil,
-                                    onDelete: { model.delete(event.id, in: thread.id) },
-                                    onReply: { replyQuote = $0 },
-                                    onResend: { model.retry(event.id) }
-                                )
-                                .id(event.id)
-                            }
-                        case .tools(let activities):
-                            // No `.id` of its own: nothing scrolls to a tool row, and the row
-                            // is already keyed by `ChatRow.id` in the `ForEach` above.
-                            ToolGroupView(activities: activities)
-                        case .delegation(let card):
-                            DelegationCardView(card: card).id(card.id)
-                        case .approval(let event):
-                            if case .approvalCard(let card) = event.payload {
-                                ApprovalCardView(
-                                    card: card,
-                                    answered: model.answered.contains(card.actionId),
-                                    chosen: model.choices[card.actionId]
-                                ) { choice, rule in
-                                    model.answer(card.actionId, in: thread.id, choice, rule: rule)
-                                }
-                                .id(event.id)
-                            }
-                        case .proposal(let event):
-                            if case .ruleProposal(let proposal) = event.payload {
-                                RuleProposalCardView(
-                                    proposal: proposal,
-                                    handled: model.handledProposals.contains(proposal.proposalId),
-                                    onSave: { model.saveRule($0, proposalId: proposal.proposalId) },
-                                    onDismiss: { model.dismissProposal(proposal.proposalId) }
-                                )
-                                .id(event.id)
-                            }
-                        case .question(let event):
-                            if case .questionCard(let card) = event.payload {
-                                QuestionCardView(
-                                    card: card,
-                                    answered: model.answeredQuestions.contains(card.questionId)
-                                ) { model.answerQuestion(card.questionId, in: thread.id, $0) }
-                                .id(event.id)
-                            }
-                        case .progress(let event):
-                            if case .progressCard(let card) = event.payload {
-                                ProgressCardView(card: card).id(event.id)
-                            }
-                        }
-                    }
+                    ForEach(rows) { row in rowView(row) }
                     // Waiting with nothing drawn yet: the turn has started but the first token
                     // has not landed, so there is no bubble to put a caret on.
                     if generating, streamingId == nil {
@@ -378,6 +377,64 @@ public struct ChatView: View {
         }
     }
 
+    @ViewBuilder private func rowView(_ row: ChatRow) -> some View {
+        switch row {
+        case .message(let event):
+            if case .message(let data) = event.payload {
+                MessageBubble(
+                    id: event.id,
+                    data: data,
+                    streaming: event.id == streamingId,
+                    status: model.outboxStatus(of: event.id),
+                    onRetry: data.role == .user ? { retry(data) } : nil,
+                    onDelete: { model.delete(event.id, in: thread.id) },
+                    onReply: { replyQuote = $0 },
+                    onResend: { model.retry(event.id) },
+                    reactions: model.reactions(to: event.id, in: thread.id),
+                    onReact: { model.react(to: event.id, with: $0, in: thread.id) }
+                )
+                .id(event.id)
+            }
+        case .tools(let activities):
+            ToolGroupView(activities: activities)
+        case .delegation(let card):
+            DelegationCardView(card: card).id(card.id)
+        case .approval(let event):
+            if case .approvalCard(let card) = event.payload {
+                ApprovalCardView(
+                    card: card,
+                    answered: model.answered.contains(card.actionId),
+                    chosen: model.choices[card.actionId]
+                ) { choice, rule in
+                    model.answer(card.actionId, in: thread.id, choice, rule: rule)
+                }
+                .id(event.id)
+            }
+        case .proposal(let event):
+            if case .ruleProposal(let proposal) = event.payload {
+                RuleProposalCardView(
+                    proposal: proposal,
+                    handled: model.handledProposals.contains(proposal.proposalId),
+                    onSave: { model.saveRule($0, proposalId: proposal.proposalId) },
+                    onDismiss: { model.dismissProposal(proposal.proposalId) }
+                )
+                .id(event.id)
+            }
+        case .question(let event):
+            if case .questionCard(let card) = event.payload {
+                QuestionCardView(
+                    card: card,
+                    answered: model.answeredQuestions.contains(card.questionId)
+                ) { model.answerQuestion(card.questionId, in: thread.id, $0) }
+                .id(event.id)
+            }
+        case .progress(let event):
+            if case .progressCard(let card) = event.payload {
+                ProgressCardView(card: card).id(event.id)
+            }
+        }
+    }
+
     /// Puts the current hit in the middle of the screen, where a hit being read wants to be.
     private func scrollToHit(_ proxy: ScrollViewProxy) {
         guard hits.indices.contains(hit) else { return }
@@ -389,8 +446,18 @@ public struct ChatView: View {
         // send control all live inside the same rounded container, so the eye reads one thing
         // to type into rather than three controls in a row.
         VStack(alignment: .leading, spacing: 0) {
-            if let staged = attachment.wrappedValue {
-                StagedAttachment(attachment: staged) { attachment.wrappedValue = nil }
+            if !attachments.wrappedValue.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        ForEach(Array(attachments.wrappedValue.enumerated()), id: \.offset) { index, staged in
+                            StagedAttachment(attachment: staged) {
+                                attachments.wrappedValue.remove(at: index)
+                            }
+                            .frame(width: 240)
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
                     .padding(.horizontal, 8)
                     .padding(.top, 8)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -403,11 +470,18 @@ public struct ChatView: View {
             }
             HStack(alignment: .bottom, spacing: 4) {
                 AttachButton(
-                    onPick: { attachment.wrappedValue = $0 },
+                    onPick: { picked in
+                        let combined = attachments.wrappedValue + picked
+                        guard combined.count <= MessageAttachment.maxCount,
+                            combined.compactMap(\.bytes).reduce(0, { $0 + $1.count })
+                                <= MessageAttachment.maxTotalBytes
+                        else { return attachmentTooLarge = true }
+                        attachments.wrappedValue = combined
+                    },
                     onTooLarge: { attachmentTooLarge = true }
                 )
                 .disabled(generating)
-                TextField(dictation.listening ? "" : "Message Yorozu", text: draft, axis: .vertical)
+                TextField("Message Yorozu", text: draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.body)
                     .lineLimit(1...6)
@@ -433,19 +507,6 @@ public struct ChatView: View {
                     #if os(macOS)
                         .onSubmit { draft.wrappedValue += "\n" }
                     #endif
-                    // While listening, the level takes the placeholder's place: the field is
-                    // already saying "type here", and what it needs to say now is "I can hear
-                    // you". Gone the moment there are words to show instead.
-                    .overlay(alignment: .leading) {
-                        if dictation.listening, draft.wrappedValue.isEmpty {
-                            LevelMeter(levels: dictation.levels).allowsHitTesting(false)
-                        }
-                    }
-                // Hidden mid-turn: there is nothing to dictate into until the turn is over.
-                if !generating, dictation.available {
-                    MicButton(dictation: dictation, draft: draft)
-                        .transition(.scale(scale: 0.8).combined(with: .opacity))
-                }
                 sendOrStop
                     .padding(.trailing, 6)
                     .frame(height: controlTarget)
@@ -473,13 +534,10 @@ public struct ChatView: View {
         .background(fieldBackground, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         // While a turn runs the outline itself breathes in the accent: the field is the one
         // thing on screen that changes job, so it is the one thing that says "working".
-        // Listening earns the same breathing outline a running turn does: in both, the field
-        // is doing something rather than waiting.
-        .overlay(WorkingOutline(active: generating || dictation.listening))
-        .animation(.easeOut(duration: 0.18), value: attachment.wrappedValue != nil)
+        .overlay(WorkingOutline(active: generating))
+        .animation(.easeOut(duration: 0.18), value: attachments.wrappedValue.count)
         .animation(.easeOut(duration: 0.18), value: generating)
         .animation(.easeOut(duration: 0.18), value: replyQuote != nil)
-        .animation(.easeOut(duration: 0.18), value: dictation.listening)
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 8)
@@ -535,7 +593,7 @@ public struct ChatView: View {
 
     private var canSend: Bool {
         !draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || attachment.wrappedValue != nil
+            || !attachments.wrappedValue.isEmpty
     }
 
     private func send() {
@@ -546,7 +604,6 @@ public struct ChatView: View {
             draft.wrappedValue = quotedMessage(quoting: quote, body: draft.wrappedValue)
             replyQuote = nil
         }
-        dictation.stop()
         model.send(in: thread)
         sends += 1
         // Sending is always a jump to the end: it is your own message, and you meant it.
@@ -556,7 +613,7 @@ public struct ChatView: View {
     /// Sends the same thing again, as a new message. The original stays where it is — a
     /// transcript that quietly rewrote itself would not be one.
     private func retry(_ data: MessageData) {
-        model.send(data.text, in: thread.id, attachment: data.attachment)
+        model.send(data.text, in: thread.id, attachments: data.attachments)
         sends += 1
         atBottom = true
     }
@@ -567,6 +624,178 @@ public struct ChatView: View {
         if replyStarted != streamingId { replyStarted = streamingId }
     }
 }
+
+#if os(iOS)
+    private struct TimelineRequest: Equatable {
+        enum Target: Equatable { case latest, event(String) }
+        let id = UUID()
+        let target: Target
+    }
+
+    /// State that changes a row without changing its event. Keeping it separate lets streaming
+    /// reconfigure only the growing reply while search, queue and card actions refresh all
+    /// visible hosted rows when their presentation really changed.
+    private struct TimelinePresentation: Equatable {
+        let search: String
+        let outbox: [OutboxItem]
+        let answered: Set<String>
+        let answeredQuestions: Set<String>
+        let handledProposals: Set<String>
+        let choices: [String: ApprovalAnswerData.Answer]
+        let reactions: [String: [MessageReaction]]
+    }
+
+    /// Signal-style native timeline for iOS. Diffable updates touch only changed visible rows;
+    /// UIKit owns gesture arbitration and scroll continuity instead of rebuilding one SwiftUI
+    /// scroll tree as a reply grows.
+    private struct IOSChatTimeline: UIViewRepresentable {
+        let rows: [ChatRow]
+        let generating: Bool
+        let streamingId: String?
+        let request: TimelineRequest?
+        let presentation: TimelinePresentation
+        @Binding var atBottom: Bool
+        let content: (ChatRow) -> AnyView
+
+        private enum Entry: Hashable {
+            case row(String)
+            case thinking
+        }
+
+        func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+        func makeUIView(context: Context) -> UICollectionView {
+            var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
+            configuration.showsSeparators = false
+            configuration.backgroundColor = .clear
+            let collectionView = UICollectionView(
+                frame: .zero,
+                collectionViewLayout: UICollectionViewCompositionalLayout.list(using: configuration)
+            )
+            collectionView.backgroundColor = .clear
+            collectionView.alwaysBounceVertical = true
+            collectionView.keyboardDismissMode = .interactive
+            collectionView.delegate = context.coordinator
+            context.coordinator.install(on: collectionView)
+            return collectionView
+        }
+
+        func updateUIView(_ collectionView: UICollectionView, context: Context) {
+            context.coordinator.parent = self
+            context.coordinator.update(collectionView)
+        }
+
+        @MainActor final class Coordinator: NSObject, UICollectionViewDelegate {
+            var parent: IOSChatTimeline
+            private var dataSource: UICollectionViewDiffableDataSource<Int, Entry>?
+            private var rowsById: [String: ChatRow] = [:]
+            private var previousRows: [String: ChatRow] = [:]
+            private var previousPresentation: TimelinePresentation?
+            private var lastRequest: UUID?
+            private var didInitialScroll = false
+
+            init(_ parent: IOSChatTimeline) { self.parent = parent }
+
+            func install(on collectionView: UICollectionView) {
+                let registration = UICollectionView.CellRegistration<UICollectionViewListCell, Entry> {
+                    [weak self] cell, _, entry in
+                    guard let self else { return }
+                    cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+                    cell.contentConfiguration = UIHostingConfiguration {
+                        switch entry {
+                        case .row(let id):
+                            if let row = self.rowsById[id] { self.parent.content(row) }
+                        case .thinking:
+                            ThinkingRow()
+                        }
+                    }
+                    .margins(.horizontal, 16)
+                    .margins(.vertical, 6)
+                }
+                dataSource = UICollectionViewDiffableDataSource<Int, Entry>(collectionView: collectionView) {
+                    collectionView, indexPath, entry in
+                    collectionView.dequeueConfiguredReusableCell(
+                        using: registration,
+                        for: indexPath,
+                        item: entry
+                    )
+                }
+            }
+
+            func update(_ collectionView: UICollectionView) {
+                rowsById = Dictionary(parent.rows.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+                var entries = parent.rows.map { Entry.row($0.id) }
+                if parent.generating, parent.streamingId == nil { entries.append(.thinking) }
+
+                let shouldFollow = isAtBottom(collectionView) && !collectionView.isTracking
+                    && !collectionView.isDragging && !collectionView.isDecelerating
+                var changed = parent.rows.compactMap { previousRows[$0.id] == $0 ? nil : Entry.row($0.id) }
+                if previousPresentation != parent.presentation { changed = entries }
+                previousRows = rowsById
+                previousPresentation = parent.presentation
+
+                var snapshot = NSDiffableDataSourceSnapshot<Int, Entry>()
+                snapshot.appendSections([0])
+                snapshot.appendItems(entries)
+                let existing = Set(dataSource?.snapshot().itemIdentifiers ?? [])
+                snapshot.reconfigureItems(changed.filter { existing.contains($0) && entries.contains($0) })
+                dataSource?.apply(snapshot, animatingDifferences: false) { [weak self, weak collectionView] in
+                    guard let self, let collectionView else { return }
+                    collectionView.layoutIfNeeded()
+                    if !self.didInitialScroll || shouldFollow {
+                        self.scrollToLatest(collectionView, animated: false)
+                        self.didInitialScroll = true
+                    }
+                    self.applyRequest(collectionView)
+                    self.reportBottom(collectionView)
+                }
+            }
+
+            private func applyRequest(_ collectionView: UICollectionView) {
+                guard let request = parent.request, request.id != lastRequest else { return }
+                lastRequest = request.id
+                switch request.target {
+                case .latest:
+                    scrollToLatest(collectionView, animated: true)
+                case .event(let id):
+                    guard let index = dataSource?.snapshot().indexOfItem(.row(id)) else { return }
+                    collectionView.scrollToItem(
+                        at: IndexPath(item: index, section: 0),
+                        at: .centeredVertically,
+                        animated: true
+                    )
+                }
+            }
+
+            private func scrollToLatest(_ collectionView: UICollectionView, animated: Bool) {
+                let count = collectionView.numberOfItems(inSection: 0)
+                guard count > 0 else { return }
+                collectionView.scrollToItem(
+                    at: IndexPath(item: count - 1, section: 0),
+                    at: .bottom,
+                    animated: animated
+                )
+            }
+
+            private func isAtBottom(_ scrollView: UIScrollView) -> Bool {
+                scrollView.contentOffset.y + scrollView.adjustedContentInset.top
+                    + scrollView.bounds.height >= scrollView.contentSize.height - 40
+            }
+
+            private func reportBottom(_ scrollView: UIScrollView) {
+                let value = isAtBottom(scrollView)
+                if parent.atBottom != value { parent.atBottom = value }
+            }
+
+            func scrollViewDidScroll(_ scrollView: UIScrollView) { reportBottom(scrollView) }
+            func scrollViewWillBeginDragging(_ scrollView: UIScrollView) { reportBottom(scrollView) }
+            func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
+                reportBottom(scrollView)
+            }
+            func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { reportBottom(scrollView) }
+        }
+    }
+#endif
 
 func followsNewest(atBottom: Bool, phase: ScrollPhase) -> Bool {
     guard atBottom else { return false }
@@ -626,8 +855,6 @@ private struct ChangeStamp: Equatable {
 /// live in the view rather than in the model, and so cannot be seeded through ``ChatModel``.
 @MainActor
 public enum ChatShowcase {
-    /// A level trace, which puts the composer into its listening state.
-    public static var dictation: [Double]?
     /// A term, which opens the search field over the transcript with it already typed.
     public static var search: String?
     /// A message, which puts its quote chip above the field.
@@ -652,12 +879,10 @@ public enum ChatShowcase {
     public static var ruleEditor = false
 
     static func apply(
-        dictation engine: Dictation,
         search term: Binding<String>,
         searching: Binding<Bool>,
         quote chip: Binding<String?>
     ) {
-        if let levels = dictation { engine.preview(levels: levels) }
         if let search {
             term.wrappedValue = search
             searching.wrappedValue = true

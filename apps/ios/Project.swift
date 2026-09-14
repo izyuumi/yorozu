@@ -46,10 +46,6 @@ let project = Project(
                 "ITSAppUsesNonExemptEncryption": false,
                 "CFBundleDisplayName": "Yorozu",
                 "NSCameraUsageDescription": "Yorozu scans the pairing QR code shown by your Mac.",
-                // Dictation in the composer: the mic to hear it and recognition to write it
-                // down. On-device wherever the language supports it.
-                "NSMicrophoneUsageDescription": "Yorozu listens while you dictate a message, and only then.",
-                "NSSpeechRecognitionUsageDescription": "Yorozu turns what you dictate into the message you send, on this device where your language supports it.",
                 // The relay's silent push, which wakes the app for a few seconds so it can
                 // drain its sync over its own socket while suspended. Nothing is read out of
                 // the push itself — see `PushDelegate` and ``ChatModel/drain(timeout:)``.

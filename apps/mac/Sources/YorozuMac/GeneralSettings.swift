@@ -1,16 +1,20 @@
 import SwiftUI
 import YorozuKeepalive
 
-/// Everything that is one setting on its own: the relay, the browser, staying alive, staying
-/// awake, updates.  The relay and the browser each used to be a tab; neither is more than a
-/// field.
+/// Yorozu transport and app lifecycle. Agent, model, tool, browser, and credential settings
+/// belong to OpenClaw and intentionally do not appear here.
 struct GeneralView: View {
     @ObservedObject private var neverSleep = NeverSleep.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             RelayView()
-            BrowserView()
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Agent runtime").font(.headline)
+                Text("OpenClaw owns models, tools, browser access, credentials, and approvals.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             KeepaliveView()
             VStack(alignment: .leading, spacing: 4) {
                 Toggle("Never sleep", isOn: Binding(

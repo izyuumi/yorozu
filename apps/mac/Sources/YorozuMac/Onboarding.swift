@@ -32,9 +32,7 @@ struct OnboardingView: View {
             Text(step.detail)
                 .fixedSize(horizontal: false, vertical: true)
                 .foregroundStyle(.secondary)
-            if step == .approvals {
-                ApprovalFloorView()
-            } else if step == .startAtLogin {
+            if step == .startAtLogin {
                 // Already turned on by the time this is drawn — see `.task` below. The toggle
                 // is here to say so, and to let the one user in a hundred who does not want it
                 // say no without hunting through System Settings.

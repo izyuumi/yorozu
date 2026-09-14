@@ -9,6 +9,7 @@ import {
   createThread,
   eventsAfter,
   HISTORY_LIMIT,
+  SYNC_LIMIT,
   listThreads,
   markThreadRead,
   pinThread,
@@ -150,18 +151,22 @@ test("events append per thread and only history kinds are logged", () => {
     dir,
   );
   appendThreadEvent(
+    { id: "r1", threadId: HOME, ts: 2, agentId: "phone", kind: "reaction", data: { messageId: "e1", emoji: "👍" } },
+    dir,
+  );
+  appendThreadEvent(
     { id: "e3", threadId: HOME, ts: 3, agentId: "main", kind: "sync_request", data: { lastSeen: {} } },
     dir,
   );
   appendThreadEvent(message("e4", "other", "t2"), dir);
 
-  expect(readThreadEvents(HOME, dir).map((e) => e.id)).toEqual(["e1", "e2"]);
+  expect(readThreadEvents(HOME, dir).map((e) => e.id)).toEqual(["e1", "e2", "r1"]);
   expect(readThreadEvents("t2", dir).map((e) => e.id)).toEqual(["e4"]);
   expect(readThreadEvents("never-written", dir)).toEqual([]);
-  expect(readFileSync(join(threadsDir(dir), "home.jsonl"), "utf8").split("\n")).toHaveLength(3);
+  expect(readFileSync(join(threadsDir(dir), "home.jsonl"), "utf8").split("\n")).toHaveLength(4);
 });
 
-test("a delta is everything after the last-seen id, the tail when it is unknown", () => {
+test("a delta is everything after the last-seen id, from the start when it is unknown", () => {
   for (const id of ["e1", "e2", "e3"]) appendThreadEvent(message(id, id), dir);
 
   expect(eventsAfter(HOME, "e1", dir).map((e) => e.id)).toEqual(["e2", "e3"]);
@@ -169,6 +174,14 @@ test("a delta is everything after the last-seen id, the tail when it is unknown"
   expect(eventsAfter(HOME, undefined, dir).map((e) => e.id)).toEqual(["e1", "e2", "e3"]);
   expect(eventsAfter(HOME, "gone", dir).map((e) => e.id)).toEqual(["e1", "e2", "e3"]);
   expect(eventsAfter("t2", "e1", dir)).toEqual([]);
+});
+
+test("sync pages advance through a long thread without dropping searchable history", () => {
+  for (let n = 0; n <= SYNC_LIMIT; n++) appendThreadEvent(message(`e${n}`, `m${n}`), dir);
+  const first = eventsAfter(HOME, undefined, dir);
+  expect(first).toHaveLength(SYNC_LIMIT);
+  expect(first[0]!.id).toBe("e0");
+  expect(eventsAfter(HOME, first.at(-1)!.id, dir).map((event) => event.id)).toEqual([`e${SYNC_LIMIT}`]);
 });
 
 test("history is the thread's messages, compacted to the last HISTORY_LIMIT", () => {
@@ -296,6 +309,39 @@ test("a non-image attachment is named rather than sent, vision or not", () => {
       { role: "user", content: "[attached: q3.pdf (application/pdf)]" },
     ]);
   }
+});
+
+test("mixed attachments send every image and name every remaining file", () => {
+  appendThreadEvent(
+    {
+      id: "e1",
+      threadId: HOME,
+      ts: 1,
+      agentId: "phone",
+      kind: "message",
+      data: {
+        role: "user",
+        text: "compare these",
+        attachments: [
+          { name: "a.png", mime: "image/png", data: "MQ==" },
+          { name: "b.jpg", mime: "image/jpeg", data: "Mg==" },
+          { name: "notes.pdf", mime: "application/pdf", data: "Mw==" },
+        ],
+      },
+    },
+    dir,
+  );
+
+  expect(threadHistory(HOME, dir, true)).toEqual([
+    {
+      role: "user",
+      content: "compare these\n\n[attached: notes.pdf (application/pdf)]",
+      images: [
+        { mime: "image/png", data: "MQ==" },
+        { mime: "image/jpeg", data: "Mg==" },
+      ],
+    },
+  ]);
 });
 
 test("read state is the runtime's, and only moves forward unless it is reset", () => {

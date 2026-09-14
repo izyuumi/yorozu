@@ -92,8 +92,6 @@ final class E2EHarness {
             let seeded = model.newDraft().id
             model.previewChat(in: seeded)
             switch scene {
-            case "dictation":
-                ChatShowcase.dictation = [0.2, 0.5, 0.8, 0.6, 0.9, 0.4, 0.7, 1.0, 0.5, 0.3, 0.6, 0.85]
             case "search":
                 ChatShowcase.search = "invoice"
             case "reply":

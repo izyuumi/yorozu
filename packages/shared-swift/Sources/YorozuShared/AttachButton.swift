@@ -43,22 +43,22 @@ func stagePastedImage(
 /// 5 MB cap is checked here, in front of the person who chose the file, rather than at the
 /// other end where there is nobody to tell.
 struct AttachButton: View {
-    let onPick: (MessageAttachment) -> Void
+    let onPick: ([MessageAttachment]) -> Void
     let onTooLarge: () -> Void
 
-    @State private var photo: PhotosPickerItem?
+    @State private var photos: [PhotosPickerItem] = []
     @State private var browsingFiles = false
 
     var body: some View {
         Menu {
             // A picker inside the menu, so choosing "Photos" opens it directly instead of
             // dismissing the menu and waiting for a second tap.
-            PhotosPicker(selection: $photo, matching: .any(of: [.images, .videos])) {
+            PhotosPicker(selection: $photos, maxSelectionCount: MessageAttachment.maxCount, matching: .any(of: [.images, .videos])) {
                 Label("Photo Library", systemImage: "photo.on.rectangle")
             }
             PasteButton(payloadType: PastedImage.self) { images in
                 guard let image = images.first else { return }
-                stagePastedImage(image, onPick: onPick, onTooLarge: onTooLarge)
+                stagePastedImage(image, onPick: { onPick([$0]) }, onTooLarge: onTooLarge)
             }
             .keyboardShortcut("v", modifiers: .command)
             Button("Files", systemImage: "folder") { browsingFiles = true }
@@ -72,42 +72,53 @@ struct AttachButton: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .accessibilityLabel("Attach or paste a photo or file")
-        .task(id: photo) { await loadPhoto() }
-        .fileImporter(isPresented: $browsingFiles, allowedContentTypes: [.item]) { result in
-            guard case .success(let url) = result else { return }
-            loadFile(url)
+        .task(id: photos) { await loadPhotos() }
+        .fileImporter(
+            isPresented: $browsingFiles,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: true
+        ) { result in
+            guard case .success(let urls) = result else { return }
+            let picked = urls.prefix(MessageAttachment.maxCount).compactMap(loadFile)
+            if !picked.isEmpty { onPick(picked) }
         }
     }
 
-    private func loadPhoto() async {
-        guard let photo else { return }
-        defer { self.photo = nil }
-        guard let data = try? await photo.loadTransferable(type: Data.self) else { return }
-        // PhotosPickerItem carries a type but not always a name, so one is made from the type:
-        // what the user sees, and what a text-only model is told was attached.
-        let type = photo.supportedContentTypes.first ?? .image
-        let name = "photo.\(type.preferredFilenameExtension ?? "jpg")"
-        stage(name: name, mime: type.preferredMIMEType ?? "image/jpeg", bytes: data)
+    private func loadPhotos() async {
+        let selected = photos
+        guard !selected.isEmpty else { return }
+        defer { photos = [] }
+        var picked: [MessageAttachment] = []
+        for photo in selected {
+            guard let data = try? await photo.loadTransferable(type: Data.self) else { continue }
+            let type = photo.supportedContentTypes.first ?? .image
+            let name = "photo.\(type.preferredFilenameExtension ?? "jpg")"
+            if let attachment = makeAttachment(name: name, mime: type.preferredMIMEType ?? "image/jpeg", bytes: data) {
+                picked.append(attachment)
+            }
+        }
+        if !picked.isEmpty { onPick(picked) }
     }
 
-    private func loadFile(_ url: URL) {
+    private func loadFile(_ url: URL) -> MessageAttachment? {
         // A document picked outside the app's container is only readable inside this pair.
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url) else { return }
+        guard let data = try? Data(contentsOf: url) else { return nil }
         let type = UTType(filenameExtension: url.pathExtension)
-        stage(
+        return makeAttachment(
             name: url.lastPathComponent,
             mime: type?.preferredMIMEType ?? "application/octet-stream",
             bytes: data
         )
     }
 
-    private func stage(name: String, mime: String, bytes: Data) {
+    private func makeAttachment(name: String, mime: String, bytes: Data) -> MessageAttachment? {
         guard let attachment = MessageAttachment(name: name, mime: mime, bytes: bytes) else {
-            return onTooLarge()
+            onTooLarge()
+            return nil
         }
-        onPick(attachment)
+        return attachment
     }
 }
 
