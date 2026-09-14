@@ -32,6 +32,7 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
                     attachment: MessageAttachment(name: "receipt.png", mime: "image/png", data: "aGk=")
                 )
             )
+        case .reaction: .reaction(ReactionData(messageId: "m1", emoji: "👍"))
         case .thought: .thought(ThoughtData(text: "checking the catalog"))
         case .toolCall: .toolCall(ToolCallData(callId: "c1", name: "shell", args: ["cmd": .string("ls")]))
         case .toolResult: .toolResult(ToolResultData(callId: "c1", ok: true, output: "README.md"))
@@ -304,9 +305,11 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(event)) as? [String: Any]
     let data = try #require(json?["data"] as? [String: Any])
     let attachment = try #require(data["attachment"] as? [String: Any])
+    let attachments = try #require(data["attachments"] as? [[String: Any]])
     #expect(attachment["name"] as? String == "receipt.png")
     #expect(attachment["mime"] as? String == "image/png")
     #expect(attachment["data"] as? String == "aGk=")
+    #expect(attachments.count == 1)
 
     // A message without one says nothing about attachments, so the key stays absent on the wire.
     let plain = YorozuEvent(
@@ -315,6 +318,10 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     )
     let plainJson = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plain)) as? [String: Any]
     #expect((plainJson?["data"] as? [String: Any])?["attachment"] == nil)
+    #expect((plainJson?["data"] as? [String: Any])?["attachments"] == nil)
+
+    let legacy = Data(#"{"role":"user","text":"","attachment":{"name":"old.pdf","mime":"application/pdf","data":"aGk="}}"#.utf8)
+    #expect(try JSONDecoder().decode(MessageData.self, from: legacy).attachments.map(\.name) == ["old.pdf"])
 }
 
 /// The wire spells the three grants out, and the declaration order is the card's button order:

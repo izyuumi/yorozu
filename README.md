@@ -10,7 +10,8 @@ Out-of-box personal AI assistant for macOS, remote-controlled from iOS through a
 - `apps/mac` — SwiftUI menu bar app, native tool host (SwiftPM executable, macOS 15+).
 - `apps/ios` — SwiftUI iOS app (Tuist-generated Xcode project, iOS 18+).
 - `apps/relay` — blind websocket relay that forwards ciphertext between Mac and phone.
-- `packages/runtime` — Node agent loop, provider adapters, tools, memory, scheduler.
+- `packages/runtime` — encrypted device relay bridge and thin OpenClaw Gateway client. Legacy
+  provider-loop modules remain only for explicit injected test/development backends.
 - `packages/shared` — protocol event types shared by the TypeScript workspaces.
 - `packages/shared-swift` — SwiftUI views shared by the Mac and iOS apps.
 
@@ -18,7 +19,8 @@ Out-of-box personal AI assistant for macOS, remote-controlled from iOS through a
 
 `pnpm --filter @yorozu/runtime serve` (installed as the `yorozu-serve` bin) is what the Mac app
 spawns. It loads or creates the Mac's X25519 and Ed25519 keypairs, registers its relay room, mints
-a join token, prints the pairing payload, then answers each sealed message with the agent loop.
+a join token, prints the pairing payload, then forwards each sealed message to its own OpenClaw
+Gateway session. OpenClaw owns agent execution, providers, tools, permissions, and PAIOS.
 Stdout is the protocol the Mac app reads: `STATE <state>` per relay transition and, per pairing
 payload, `QR <string>` to draw plus `PAIR <string>` to copy — the same string both times. `MINT`
 on its stdin mints the next join token, which is what the Mac's **New code** button sends.
@@ -26,10 +28,11 @@ on its stdin mints the next join token, which is what the Mac's **New code** but
 | Variable | Default |
 | --- | --- |
 | `YOROZU_STATE_DIR` | `~/Library/Application Support/Yorozu` (holds runtime state and derived indexes) |
-| `YOROZU_PAIOS_DIR` | `PAIOS` in an existing Obsidian vault, otherwise `~/Documents/PAIOS` |
-| `YOROZU_MEMORY_DIR` | Optional legacy override for memory-only storage |
 | `YOROZU_RELAY_URL` | `wss://relay.yumi.to` (the hosted relay) |
-| `YOROZU_BASE_URL` / `YOROZU_API_KEY` / `YOROZU_MODEL` | `https://api.openai.com/v1`, unset, `gpt-4o-mini` |
+
+On first launch, Yorozu pairs a private Ed25519 client identity with the loopback OpenClaw
+Gateway and stores its device token at mode `0600` under `YOROZU_STATE_DIR`. This is client
+authentication only; provider credentials never enter Yorozu.
 
 Pairing: the code carries the Mac's X25519 key, the room ID and a one-time token, as one compact
 string — `yorozu://pair?v=1&relay=<urlencoded>&key=<base64url>&token=<base64url>&room=<base64url>`.
@@ -55,7 +58,13 @@ text with a **Copy** button, and **New code** to mint a fresh token. The sidecar
 `node ../../packages/runtime/dist/serve.js` (relative to `apps/mac`, i.e. the dev checkout layout);
 the shipped app will point it at the bundled runtime. The sidecar is killed when the app quits.
 
-## Memory
+## Legacy injected backend
+
+The sections below document modules retained for tests and explicit callers that pass
+`ServeOptions.provider`. Shipped Yorozu does not activate them. OpenClaw owns memory, provider
+credentials, model availability, skills, scheduling, approval policy, and browser/tool settings.
+
+### Legacy memory
 
 PAIOS Markdown is memory's source of truth. Yorozu recursively indexes `YOROZU_PAIOS_DIR`, using an
 existing PAIOS folder from Obsidian or creating `~/Documents/PAIOS` by default. New facts go to
@@ -69,7 +78,7 @@ tool; `recallForPrompt` returns a compact block that `runAgent` prepends to the 
 when given a `memory`. Vector recall is not implemented yet: `searchByEmbedding` returns nothing
 until sqlite-vec or provider embeddings land.
 
-## Providers
+### Legacy providers
 
 Three adapters, as in the spec: Claude, Codex, OpenAI-compatible. Any one signed in is enough.
 Which of them are configured, in what order, and with which models is a list the user owns —
@@ -909,10 +918,10 @@ list view — selection instead of a push, context menu instead of a swipe — s
 The menu bar window is now a `NavigationSplitView`: threads left, chat right, the detail half in
 its own `NavigationStack` so the subagent drill-down and trace pages have somewhere to push.
 Everything that is not chat moved into a standard `Settings` scene, reachable with ⌘, or from the
-gear at the foot of the sidebar, which also holds quit and the sidecar's relay state. Five tabs:
-**General** (relay URL, browser, never sleep, updates), **Providers** (the list above),
-**Models** (auto-assign and its cron), **Devices** (who is paired, with pairing and revoking),
-**Permissions** (the onboarding checks, live). The model is built and connected from `applicationDidFinishLaunching`
+gear at the foot of the sidebar, which also holds quit and the sidecar's relay state. Current
+tabs are **General**, **Devices**, and **Permissions**. Provider, model, tool, approval, browser,
+schedule, and PAIOS controls belong to OpenClaw. The model is built and connected from
+`applicationDidFinishLaunching`
 rather than from the window, because a menu bar window only exists while it is open and replies
 and approval cards have to keep arriving either way.
 
@@ -944,17 +953,11 @@ The fresh-Mac walkthrough, in the order spec section 10 asks for:
    its System Settings pane and re-checks every two seconds, so Continue unlocks on its own
    once the grant is green. Any step can be skipped and redone later from
    **Set Up Permissions…**.
-4. Settings → **Providers**: one signed-in provider is enough. Claude and Codex log in through
-   their own CLIs in Terminal; an OpenAI-compatible entry takes a base URL and an API key, which
-   is stored in the Keychain. The list is the chain, top to bottom, and the first model of the
-   first entry is the default.
-5. Set the two approval floor settings — what the agent may do unasked, and what always needs a
-   yes.
-6. Pick the browser the agent drives: the bundled Chromium (downloaded on first use) or one of
-   your installed browsers. Either way it runs in a profile of its own.
-7. Consent to never-sleep if you want the Mac reachable while it is idle. It is a `caffeinate`
+4. Ensure OpenClaw is running and configured. Yorozu connects to its loopback Gateway; provider
+   credentials, models, tools, permissions, browser, schedules, and PAIOS stay in OpenClaw.
+5. Consent to never-sleep if you want the Mac reachable while it is idle. It is a `caffeinate`
    process the app owns, and it dies with the app.
-8. Settings → **Devices** → **Pair Another Device…** shows a pairing code. Open the Yorozu iOS
+6. Settings → **Devices** → **Pair Another Device…** shows a pairing code. Open the Yorozu iOS
    app and scan the QR, or press **Copy** and paste the string into the app — or message it to yourself and tap it. Done.
    The menu bar window itself is the chat; ⌘, or the gear at the foot of the sidebar is the way
    to everything else.

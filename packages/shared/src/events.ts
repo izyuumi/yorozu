@@ -20,7 +20,7 @@ export interface EventBase {
 /**
  * A file sent along with a message: a photo, a screenshot, a PDF. The bytes travel inline
  * rather than as a reference, because the relay stores nothing — a link to it would have
- * nowhere to point. One per message, which is all a phone composer offers.
+ * nowhere to point.
  */
 export interface MessageAttachment {
   /** Original file name. What a text-only model is told was attached. */
@@ -47,9 +47,22 @@ export interface MessageData {
    * A flag rather than a kind of its own: the final message is already the thing that ends a turn.
    */
   done?: boolean;
-  /** A photo or file the user sent with this message. Only ever set on a `user` message. */
+  /** Legacy first attachment, retained while older clients remain in circulation. */
   attachment?: MessageAttachment;
+  /** Photos and files sent together. Current clients prefer this over `attachment`. */
+  attachments?: MessageAttachment[];
 }
+
+/** Latest reaction from one client wins; `remove` clears that client's matching emoji. */
+export interface ReactionData {
+  messageId: string;
+  emoji: string;
+  remove?: boolean;
+}
+
+/** Reads current and legacy message shapes without duplicating the first attachment. */
+export const messageAttachments = (data: MessageData): MessageAttachment[] =>
+  data.attachments ?? (data.attachment ? [data.attachment] : []);
 
 export interface ThoughtData {
   text: string;
@@ -383,6 +396,8 @@ export interface SyncRequestData {
 
 export interface SyncDeltaData {
   events: YorozuEvent[];
+  /** Another bounded page is available; request again after applying this one. */
+  more?: boolean;
 }
 
 /**
@@ -419,6 +434,7 @@ export interface DeviceRemoveData {
 /** Kind tag paired with its payload. Discriminates on `kind`. */
 export type EventPayload =
   | { kind: "message"; data: MessageData }
+  | { kind: "reaction"; data: ReactionData }
   | { kind: "thought"; data: ThoughtData }
   | { kind: "tool_call"; data: ToolCallData }
   | { kind: "tool_result"; data: ToolResultData }

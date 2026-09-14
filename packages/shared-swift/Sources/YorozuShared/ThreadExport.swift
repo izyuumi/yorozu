@@ -25,7 +25,7 @@ public func threadMarkdown(
         case .message(let event):
             guard case .message(let data) = event.payload else { break }
             lines += ["", "## \(data.role == .user ? "You" : "Yorozu") — \(event.date.formatted(stamp))", ""]
-            if let attachment = data.attachment {
+            for attachment in data.attachments {
                 lines += ["*Attached: \(attachment.name) (\(attachment.size))*", ""]
             }
             lines.append(data.text.isEmpty ? "*(no text)*" : data.text)

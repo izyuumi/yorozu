@@ -18,6 +18,7 @@ import {
   fromBase64Url,
   generateKeypair,
   generateSigningKeypair,
+  messageAttachments,
   open,
   seal,
   notifyFor,
@@ -71,6 +72,7 @@ import {
   renameThread,
   setThreadEffort,
   setThreadModel,
+  SYNC_LIMIT,
   threadEffort,
   threadHistory,
   threadModel,
@@ -79,6 +81,7 @@ import {
 import { closeBrowser } from "./tools/browser.js";
 import { askUserTool, questionDesk, reportProgressTool } from "./tools/cards.js";
 import { useProviderSearch } from "./tools/search.js";
+import { OpenClawRunner } from "./openclaw.js";
 import { appendTranscript, transcriptDir } from "./transcripts.js";
 
 const DEFAULT_STATE_DIR = join(homedir(), "Library", "Application Support", "Yorozu");
@@ -262,9 +265,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
   env.YOROZU_STATE_DIR = dir;
   const transcripts = transcriptDir(dir);
   const keys = loadKeys(dir);
-  const provider = options.provider ?? chainFromEnv();
+  const provider = options.provider;
+  const openclaw = provider ? undefined : new OpenClawRunner({ stateDir: dir });
   // `web_search` asks the running chain for native search before it drives a browser.
-  useProviderSearch(provider);
+  if (provider) useProviderSearch(provider);
   const log = options.log ?? ((line: string) => void stdout.write(`${line}\n`));
   const heartbeat = options.heartbeat ?? { pingMs: PING_MS, pongMs: PONG_MS };
   const state = (name: string) => log(`STATE ${name}`);
@@ -272,12 +276,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // A chain nobody is signed in to answers every turn with a 401. Said once, here, so the Mac
   // app can show it instead of leaving the user to read auth errors in a chat bubble. Skipped
   // for a caller-supplied provider: that one is the caller's business.
-  if (!options.provider) {
-    void provider
-      .auth()
-      .then((result) => state(result.ok ? "provider-ok" : "no-provider"))
-      .catch(() => state("no-provider"));
-  }
+  if (!options.provider) state("openclaw");
 
   // The main agent is a file like every specialist; the skills on disk are listed into its
   // prompt once, at startup, and their bodies load on demand through the `skill` tool.
@@ -287,7 +286,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     .filter(Boolean)
     .join("\n\n");
   /** One controller per running turn, so an `interrupt` cancels every tree at once. */
-  const running = new Set<AbortController>();
+  const running = new Map<string, AbortController>();
 
   /**
    * Session key per paired device, keyed by the X25519 public key it announced. Several
@@ -470,7 +469,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * at that point would draw an empty menu first.
    */
   const modelList = (): YorozuEvent =>
-    control({ kind: "model_list", data: { models: modelOptions(loadProviders(dir)) } });
+    control({
+      kind: "model_list",
+      data: { models: provider ? modelOptions(loadProviders(dir)) : [] },
+    });
 
   /**
    * Every device this Mac answers, the local socket's clients included: the Mac app is one more
@@ -509,21 +511,29 @@ export function serve(options: ServeOptions = {}): Sidecar {
   };
 
   /** Everything the device has not seen, across every live thread, in one frame. */
-  const syncDelta = (lastSeen: Record<string, string>): YorozuEvent =>
-    control({
+  const syncDelta = (lastSeen: Record<string, string>): YorozuEvent => {
+    const pages = listThreads(dir)
+      .filter((thread) => !thread.archived)
+      .map((thread) => eventsAfter(thread.id, lastSeen?.[thread.id], dir));
+    return control({
       kind: "sync_delta",
       data: {
-        events: listThreads(dir)
-          .filter((thread) => !thread.archived)
-          .flatMap((thread) => eventsAfter(thread.id, lastSeen?.[thread.id], dir)),
+        events: pages.flat(),
+        ...(pages.some((events) => events.length === SYNC_LIMIT) ? { more: true } : {}),
       },
     });
+  };
 
   /**
    * One agent turn in `threadId`, however it was started — a phone message or a due job —
    * with its reply emitted to the phone the same way either way.
    */
-  async function runTurn(threadId: string, text: string, recorded = false): Promise<void> {
+  async function runTurn(
+    threadId: string,
+    text: string,
+    recorded = false,
+    attachments: ReturnType<typeof messageAttachments> = [],
+  ): Promise<void> {
     // A turn the phone did not send — a due job, a background delegation — is still part of
     // the thread, so it is recorded as the user message it stands in for.
     if (!recorded) {
@@ -556,6 +566,32 @@ export function serve(options: ServeOptions = {}): Sidecar {
       data: { role: "agent", text: reply, ...(done ? { done: true } : {}) },
     });
 
+    if (openclaw) {
+      const turn = new AbortController();
+      if (!running.has(threadId)) running.set(threadId, turn);
+      try {
+        const reply = await openclaw.run({
+          threadId,
+          text,
+          model: threadModel(threadId, dir),
+          effort: threadEffort(threadId, dir),
+          attachments,
+          signal: turn.signal,
+          onUpdate: (reply) => broadcast(message(reply)),
+        });
+        if (turn.signal.aborted) return;
+        if (reply === undefined) return;
+        const final = message(reply, true);
+        appendTranscript(final, transcripts);
+        appendThreadEvent(final, dir);
+        broadcast(final);
+      } finally {
+        if (running.get(threadId) === turn) running.delete(threadId);
+      }
+      return;
+    }
+    if (!provider) throw new Error("no execution backend");
+
     // A thread put on a model of its own leads with it and keeps the configured chain behind
     // it, so one unreachable provider is a slower turn rather than a thread that cannot answer.
     // Resolved per turn: the picker may have been used since the last one. A spec naming a
@@ -573,7 +609,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
 
     const turn = new AbortController();
-    running.add(turn);
+    if (!running.has(threadId)) running.set(threadId, turn);
     let reply = "";
     /**
      * What the deltas have already put on the wire. Streaming runs one delta behind on
@@ -643,7 +679,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         }
       }
     } finally {
-      running.delete(turn);
+      if (running.get(threadId) === turn) running.delete(threadId);
     }
     // An interrupted turn says nothing: the user already knows they stopped it.
     if (turn.signal.aborted) return;
@@ -668,6 +704,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * later turn overwrites it.
    */
   async function autoTitle(threadId: string): Promise<void> {
+    if (!provider) return;
     const untitled = (): boolean =>
       listThreads(dir).find((thread) => thread.id === threadId)?.title === "";
     if (!untitled()) return;
@@ -719,9 +756,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
     appendThreadEvent(event, dir);
 
     switch (event.kind) {
+      case "reaction":
+        // Stored above, then echoed to every device so the same chips appear everywhere.
+        return broadcast(event);
       case "interrupt":
-        for (const turn of running) turn.abort();
-        running.clear();
+        running.get(event.threadId)?.abort();
+        running.delete(event.threadId);
         // A turn parked on a card would never notice the abort otherwise.
         for (const { settle } of [...pending.values()]) settle({ answer: "no" });
         questions.cancelAll();
@@ -802,7 +842,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const [oldest] = pending.values();
     const typed = oldest && typedAnswer(event.data.text, oldest.card);
     if (typed) return oldest.settle(typed);
-    runTurn(event.threadId, event.data.text, true).catch((e: unknown) =>
+    runTurn(event.threadId, event.data.text, true, messageAttachments(event.data)).catch((e: unknown) =>
       state(`agent-error ${String(e)}`),
     );
   }

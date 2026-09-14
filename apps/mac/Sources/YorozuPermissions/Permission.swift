@@ -27,16 +27,16 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
     case accessibility, screenRecording, inputMonitoring, fullDiskAccess
     case calendars, reminders, contacts, photos, music, location, camera, microphone
     case files, automation
-    /// Not TCC grants: the last three steps of the same wizard, where the Mac is told to
-    /// start Yorozu at login and stay awake, and the approval floor is set. They live here so
+    /// Not TCC grants: the last two steps of the same wizard, where the Mac is told to
+    /// start Yorozu at login and stay awake. They live here so
     /// the wizard and the Permissions tab can walk one list.
-    case startAtLogin, neverSleep, approvals
+    case startAtLogin, neverSleep
 
     /// The steps macOS has no say over: Yorozu's own settings, asked for in the same wizard
     /// because to the user they are the same list of things to turn on.
     public var isAppSetting: Bool {
         switch self {
-        case .startAtLogin, .neverSleep, .approvals: true
+        case .startAtLogin, .neverSleep: true
         default: false
         }
     }
@@ -65,7 +65,6 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
         case .automation: "Automation"
         case .startAtLogin: "Start at Login"
         case .neverSleep: "Never Sleep"
-        case .approvals: "Approvals"
         }
     }
 
@@ -105,8 +104,6 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
                 + "before you notice it rebooted."
         case .neverSleep:
             "Keeps this Mac awake so the agent can answer your phone while you are away. Reversible here or in the menu at any time."
-        case .approvals:
-            "The agent asks before acting when it is unsure, and learns from your answers. These two limits it can never learn its way past."
         }
     }
 
@@ -128,7 +125,7 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
         case .microphone: "Privacy_Microphone"
         case .files: "Privacy_FilesAndFolders"
         case .automation: "Privacy_Automation"
-        case .startAtLogin, .neverSleep, .approvals: nil
+        case .startAtLogin, .neverSleep: nil
         }
         return pane.flatMap { URL(string: "x-apple.systempreferences:com.apple.preference.security?\($0)") }
     }
@@ -137,7 +134,7 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
     /// that pane, can turn it on. Everything else prompts.
     public var canPrompt: Bool {
         switch self {
-        case .fullDiskAccess, .startAtLogin, .neverSleep, .approvals: false
+        case .fullDiskAccess, .startAtLogin, .neverSleep: false
         default: true
         }
     }
@@ -164,8 +161,6 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
         // item in System Settings, and then ours would be the only copy that still said yes.
         case .startAtLogin: SMAppService.mainApp.status == .enabled
         case .neverSleep: UserDefaults.standard.bool(forKey: "neverSleep")
-        // Nothing to verify: the floor always has a value, defaulted before it is ever shown.
-        case .approvals: true
         }
     }
 
@@ -212,7 +207,7 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
             await Permission.probeAutomation()
         case .fullDiskAccess:
             if let settingsURL { NSWorkspace.shared.open(settingsURL) }
-        case .startAtLogin, .neverSleep, .approvals:
+        case .startAtLogin, .neverSleep:
             break  // The app's own settings, not the OS's.
         }
         return await isGranted()

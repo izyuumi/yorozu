@@ -39,9 +39,8 @@ public final class ChatModel {
     public private(set) var choices: [String: ApprovalAnswerData.Answer] = [:]
     /// One composer draft per thread, so switching threads does not lose what was typed.
     public var drafts: [String: String] = [:]
-    /// The file staged in a thread's composer but not yet sent, alongside its draft text.
-    /// At most one: the composer offers one attach button and replaces what it holds.
-    public var attachments: [String: MessageAttachment] = [:]
+    /// Files staged in each thread's composer but not yet sent, alongside its draft text.
+    public var attachments: [String: [MessageAttachment]] = [:]
     /// Threads with a turn in flight, so the composer offers Stop rather than Send.
     ///
     /// Set when this device sends, cleared by the agent message flagged `done` that ends the
@@ -162,15 +161,19 @@ public final class ChatModel {
     /// Sends what the composer holds — the typed text and any staged file — and empties it.
     public func send(in thread: ThreadSummary) {
         let text = (drafts[thread.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let attachment = attachments[thread.id]
-        // A photo on its own is a message: only an empty composer is nothing to send.
-        guard !text.isEmpty || attachment != nil else { return }
+        let attachments = attachments[thread.id] ?? []
+        // Files on their own are a message: only an empty composer is nothing to send.
+        guard !text.isEmpty || !attachments.isEmpty else { return }
         drafts[thread.id] = ""
-        attachments[thread.id] = nil
-        send(text, in: thread.id, attachment: attachment)
+        self.attachments[thread.id] = nil
+        send(text, in: thread.id, attachments: attachments)
     }
 
     public func send(_ text: String, in threadId: String, attachment: MessageAttachment? = nil) {
+        send(text, in: threadId, attachments: attachment.map { [$0] } ?? [])
+    }
+
+    public func send(_ text: String, in threadId: String, attachments: [MessageAttachment]) {
         // Decided once for the whole send: a thread created here and the message that creates it
         // must not take different routes, or the runtime is told about a message in a thread it
         // has never heard of.
@@ -199,7 +202,7 @@ public final class ChatModel {
             threadId: threadId,
             ts: Int(Date().timeIntervalSince1970 * 1000),
             agentId: device,
-            payload: .message(MessageData(role: .user, text: text, attachment: attachment))
+            payload: .message(MessageData(role: .user, text: text, attachments: attachments))
         )
         // A queued message has started no turn: the composer stays a composer until the message
         // is actually on its way.
@@ -225,6 +228,17 @@ public final class ChatModel {
         outbox[index].tries = 0
         saveOutbox()
         flush()
+    }
+
+    public func reactions(to messageId: String, in threadId: String) -> [MessageReaction] {
+        messageReactions(in: events[threadId] ?? [], to: messageId, selectedBy: device)
+    }
+
+    public func react(to messageId: String, with emoji: String, in threadId: String) {
+        let remove = reactions(to: messageId, in: threadId).contains { $0.emoji == emoji && $0.selected }
+        let reaction = event(.reaction(ReactionData(messageId: messageId, emoji: emoji, remove: remove)), in: threadId)
+        upsert(reaction)
+        deliver(reaction, queue: !canDeliver)
     }
 
     private func deliver(_ event: YorozuEvent, queue: Bool) {
@@ -565,6 +579,7 @@ public final class ChatModel {
                 onThreads?()
             case .syncDelta(let data):
                 for event in data.events { upsert(event) }
+                if data.more == true { requestSync() }
                 // Counted, not just applied: a background drain is waiting for exactly this to
                 // know it has caught up and may hang up. See ``drain(timeout:)``.
                 deltas += 1

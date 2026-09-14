@@ -103,6 +103,38 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
     }
 }
 
+public struct MessageReaction: Identifiable, Equatable, Sendable {
+    public var emoji: String
+    public var count: Int
+    public var selected: Bool
+    public var id: String { emoji }
+}
+
+/// Current reactions on one message. Reaction events are append-only; latest matching event
+/// from each device wins, making add/remove deterministic after sync or reconnect.
+public func messageReactions(
+    in events: [YorozuEvent],
+    to messageId: String,
+    selectedBy device: String? = nil
+) -> [MessageReaction] {
+    var active: [String: String] = [:]
+    var order: [String] = []
+    for event in events {
+        guard case .reaction(let reaction) = event.payload, reaction.messageId == messageId else { continue }
+        if reaction.remove == true {
+            if active[event.agentId] == reaction.emoji { active[event.agentId] = nil }
+        } else {
+            active[event.agentId] = reaction.emoji
+            if !order.contains(reaction.emoji) { order.append(reaction.emoji) }
+        }
+    }
+    return order.compactMap { emoji in
+        let reactors = active.filter { $0.value == emoji }.map(\.key)
+        guard !reactors.isEmpty else { return nil }
+        return MessageReaction(emoji: emoji, count: reactors.count, selected: device.map(reactors.contains) ?? false)
+    }
+}
+
 /// The thread in render order.
 public func chatRows(from events: [YorozuEvent]) -> [ChatRow] {
     let cards = delegationCards(from: events)

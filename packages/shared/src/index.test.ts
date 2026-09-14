@@ -4,6 +4,7 @@ import {
   decodeQrPayload,
   decodePairingString,
   encodePairingString,
+  messageAttachments,
   type EventKind,
   type QrPayload,
   type YorozuEvent,
@@ -54,6 +55,7 @@ test("sync_delta nests events", () => {
 test("every spec'd kind exists", () => {
   const kinds: EventKind[] = [
     "message",
+    "reaction",
     "thought",
     "tool_call",
     "tool_result",
@@ -74,7 +76,7 @@ test("every spec'd kind exists", () => {
     "device_list",
     "device_remove",
   ];
-  expect(kinds).toHaveLength(20);
+  expect(kinds).toHaveLength(21);
 });
 
 test("a thread summary carries what a list row draws", () => {
@@ -252,4 +254,11 @@ test("a message can carry one attachment, and the cap is the same 5 MB Swift enf
   // The wire shape is the JSON both languages write, so it round-trips unchanged.
   expect(JSON.parse(JSON.stringify(event))).toEqual(event);
   expect(ATTACHMENT_MAX_BYTES).toBe(5 * 1024 * 1024);
+});
+
+test("current messages carry multiple mixed attachments and legacy messages still read", () => {
+  const image = { name: "one.png", mime: "image/png", data: "MQ==" };
+  const pdf = { name: "two.pdf", mime: "application/pdf", data: "Mg==" };
+  expect(messageAttachments({ role: "user", text: "", attachments: [image, pdf] })).toEqual([image, pdf]);
+  expect(messageAttachments({ role: "user", text: "", attachment: image })).toEqual([image]);
 });

@@ -65,7 +65,6 @@ struct PermissionStatusRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if permission == .approvals { ApprovalFloorView() }
         }
         .padding(.vertical, 2)
         .task {

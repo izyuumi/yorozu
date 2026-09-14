@@ -72,6 +72,21 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
 }
 
 @MainActor
+@Test func reactingIsOptimisticAndTappingAgainRemovesIt() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+
+    model.react(to: "m1", with: "👍", in: "home")
+    #expect(model.reactions(to: "m1", in: "home") == [MessageReaction(emoji: "👍", count: 1, selected: true)])
+    model.react(to: "m1", with: "👍", in: "home")
+    #expect(model.reactions(to: "m1", in: "home").isEmpty)
+
+    let emitted = await sent(by: transport, atLeast: 3).filter { if case .reaction = $0.payload { true } else { false } }
+    #expect(emitted.count == 2)
+    if case .reaction(let last) = emitted.last?.payload { #expect(last.remove == true) }
+}
+
+@MainActor
 @Test func theModelAppliesWhatTheTransportYieldsWhateverTransportItIs() async throws {
     let transport = FakeTransport()
     let model = ChatModel(transport: transport, device: "mac")
@@ -554,7 +569,7 @@ private func summary(
     let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
 
     // A photo with no words is still a message worth sending.
-    model.attachments["home"] = MessageAttachment(name: "p.png", mime: "image/png", data: "aGk=")
+    model.attachments["home"] = [MessageAttachment(name: "p.png", mime: "image/png", data: "aGk=")]
     model.send(in: thread)
 
     #expect(model.attachments["home"] == nil)

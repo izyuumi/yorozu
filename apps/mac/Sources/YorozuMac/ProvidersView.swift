@@ -264,11 +264,6 @@ struct ProvidersView: View {
                 Button(probe.running ? "Checking…" : "Re-check") { probe.run() }
                     .disabled(probe.running)
             }
-            if sidecar.providerSigned == false {
-                Label("No provider signed in", systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                    .font(.callout)
-            }
             Text("Tried top to bottom: the first that answers wins. Drag to reorder.")
                 .font(.caption)
                 .foregroundStyle(.secondary)

@@ -17,9 +17,6 @@ final class Sidecar: ObservableObject {
     static let shared = Sidecar()
 
     @Published private(set) var state = "starting"
-    /// Whether the runtime found a provider to use. Nil until it has looked. Kept apart from
-    /// `state`, which every relay transition overwrites.
-    @Published private(set) var providerSigned: Bool?
     @Published private(set) var qr: NSImage?
     /// The same payload the QR carries, for copying and pasting into the phone.
     @Published private(set) var pairingString: String?
@@ -46,8 +43,7 @@ final class Sidecar: ObservableObject {
         input = Pipe()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", command]
-        // Whatever the provider cards configured, including the Keychain API key.
-        var environment = ProviderSettings.environment()
+        var environment = ProcessInfo.processInfo.environment
         // The native tool host, if this build is bundled: quoted because the runtime runs the
         // command through /bin/sh, and an .app can sit in a path with spaces in it.
         if environment["YOROZU_NATIVE_CMD"] == nil,
@@ -119,11 +115,7 @@ final class Sidecar: ObservableObject {
 
     private func apply(_ line: String) {
         if let name = line.dropping("STATE ") {
-            switch name {
-            case "provider-ok": providerSigned = true
-            case "no-provider": providerSigned = false
-            default: state = name
-            }
+            state = name
         } else if let text = line.dropping("QR "), (try? QrPayload.decode(text)) != nil {
             qr = Self.qrImage(text)
         } else if let text = line.dropping("PAIR "), (try? QrPayload.decode(text)) != nil {

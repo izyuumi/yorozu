@@ -8,7 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { EventKind, ReasoningEffort, ThreadSummary, YorozuEvent } from "@yorozu/shared";
+import { messageAttachments, type EventKind, type ReasoningEffort, type ThreadSummary, type YorozuEvent } from "@yorozu/shared";
 import { stateDir } from "./memory.js";
 import type { Message } from "./provider.js";
 
@@ -47,6 +47,7 @@ export interface ThreadRecord {
 /** Kinds that belong to a thread's history. Control traffic is not logged. */
 const LOGGED: ReadonlySet<EventKind> = new Set<EventKind>([
   "message",
+  "reaction",
   "thought",
   "tool_call",
   "tool_result",
@@ -319,7 +320,8 @@ export function readThreadEvents(threadId: string, dir = stateDir()): YorozuEven
 
 /**
  * Everything the device has not seen. An unknown `afterEventId` — a fresh install, or a log
- * that has rotated past it — means the tail of the thread rather than nothing.
+ * that has rotated past it — starts from the oldest retained event. Returning the first page
+ * lets a client advance its cursor until it has the complete searchable thread.
  */
 export function eventsAfter(
   threadId: string,
@@ -328,7 +330,7 @@ export function eventsAfter(
 ): YorozuEvent[] {
   const events = readThreadEvents(threadId, dir);
   const at = afterEventId ? events.findLastIndex((event) => event.id === afterEventId) : -1;
-  return (at >= 0 ? events.slice(at + 1) : events).slice(-SYNC_LIMIT);
+  return (at >= 0 ? events.slice(at + 1) : events).slice(0, SYNC_LIMIT);
 }
 
 /**
@@ -341,20 +343,23 @@ export function threadMessages(threadId: string, dir = stateDir(), vision = fals
     .filter((event) => event.kind === "message")
     .map((event) => {
       const role = event.data.role === "user" ? ("user" as const) : ("assistant" as const);
-      const attachment = event.data.attachment;
-      if (!attachment) return { role, content: event.data.text };
+      const attachments = messageAttachments(event.data);
+      if (attachments.length === 0) return { role, content: event.data.text };
       // A model that can see gets the bytes. One that cannot is told what came with the
       // message, because the text alone often does not stand up on its own — "what is wrong
       // with this?" needs at least the file's name to be answerable.
-      if (vision && attachment.mime.startsWith("image/")) {
+      const images = vision ? attachments.filter((item) => item.mime.startsWith("image/")) : [];
+      const named = attachments.filter((item) => !vision || !item.mime.startsWith("image/"));
+      const notes = named.map((item) => `[attached: ${item.name} (${item.mime})]`).join("\n");
+      const content = [event.data.text, notes].filter(Boolean).join("\n\n");
+      if (images.length > 0) {
         return {
           role,
-          content: event.data.text,
-          images: [{ mime: attachment.mime, data: attachment.data }],
+          content,
+          images: images.map(({ mime, data }) => ({ mime, data })),
         };
       }
-      const note = `[attached: ${attachment.name} (${attachment.mime})]`;
-      return { role, content: event.data.text ? `${event.data.text}\n\n${note}` : note };
+      return { role, content };
     });
 }
 
