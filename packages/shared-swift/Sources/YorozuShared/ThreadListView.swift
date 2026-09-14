@@ -324,7 +324,6 @@ public struct ThreadListView<Destination: View>: View {
 
     @State private var renaming: ThreadSummary?
     @State private var query = ""
-    @State private var searching = false
     /// The archive opens closed: it is where threads go to stop being in the way.
     @State private var showArchived = false
 
@@ -384,7 +383,7 @@ public struct ThreadListView<Destination: View>: View {
             .listStyle(.plain)
             .animation(.default, value: threads)
             .overlay { empty(groups) }
-            .searchable(text: $query, isPresented: $searching, prompt: "Search threads")
+            .searchable(text: $query, prompt: "Search threads")
             .refreshable { await onRefresh?() }
             .navigationTitle("Yorozu")
             .toolbar {
@@ -406,9 +405,6 @@ public struct ThreadListView<Destination: View>: View {
                     }
                 }
                 #if os(iOS)
-                    ToolbarItem(placement: .primaryAction) {
-                        Button("Search threads", systemImage: "magnifyingglass") { searching = true }
-                    }
                     if threads.contains(where: \.isUnread), let onReadAll {
                         ToolbarItem(placement: .primaryAction) {
                             Button("Mark all as read", systemImage: "envelope.open", action: onReadAll)
