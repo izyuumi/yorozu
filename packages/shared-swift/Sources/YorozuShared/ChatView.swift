@@ -10,6 +10,7 @@ import SwiftUI
 public struct ChatView: View {
     public let model: ChatModel
     public let thread: ThreadSummary
+    private let onCreate: (() -> Void)?
     /// Shown while the runtime is unreachable. The two apps lose it differently: the phone
     /// queues what is typed and sends it when the Mac is back, the Mac's sidecar is simply not
     /// running yet.
@@ -44,10 +45,12 @@ public struct ChatView: View {
     public init(
         model: ChatModel,
         thread: ThreadSummary,
+        onCreate: (() -> Void)? = nil,
         offlineNotice: String = "Mac offline — what you send waits on this phone until it's back."
     ) {
         self.model = model
         self.thread = thread
+        self.onCreate = onCreate
         self.offlineNotice = offlineNotice
     }
 
@@ -130,6 +133,11 @@ public struct ChatView: View {
             // iOS gets an explicit reveal button. On Mac, ⌘F reveals the otherwise hidden field
             // through the Edit menu. See ``ChatCommands``.
             #if os(iOS)
+                if let onCreate {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("New session", systemImage: "square.and.pencil", action: onCreate)
+                    }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
                 }

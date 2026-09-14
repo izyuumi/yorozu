@@ -392,8 +392,7 @@ public struct ThreadListView<Destination: View>: View {
                     ToolbarItem(placement: .navigation) {
                         Button(action: onSettings) {
                             ZStack(alignment: .bottomTrailing) {
-                                Image(systemName: "person.crop.circle.fill")
-                                    .symbolRenderingMode(.hierarchical)
+                                Image(systemName: "gearshape")
                                 if let connection {
                                     Circle()
                                         .fill(connection.tint)
