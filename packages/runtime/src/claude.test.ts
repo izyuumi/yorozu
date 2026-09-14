@@ -107,6 +107,36 @@ test("a failure with no tool call to show for it propagates to the chain", async
   ).rejects.toThrow("401");
 });
 
+test("Claude MCP's underscore-safe browser name maps back to the registered dotted tool", async () => {
+  queryMock.mockReturnValue(
+    session([
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", id: "toolu_browser", name: "mcp__yorozu__browser_open", input: { url: "https://example.com" } },
+          ],
+        },
+      },
+    ]),
+  );
+
+  const browserOpen = {
+    name: "browser.open",
+    description: "Open a browser tab.",
+    parameters: { type: "object" as const, properties: { url: { type: "string" } } },
+    run: async () => "tab",
+  };
+  const events = await Array.fromAsync(
+    claudeCli().stream([{ role: "user", content: "open it" }], [browserOpen]),
+  );
+
+  expect(events).toContainEqual({
+    type: "tool_call",
+    call: { id: "toolu_browser", name: "browser.open", arguments: '{"url":"https://example.com"}' },
+  });
+});
+
 test("auth is ok when the CLI is on PATH and logged in", async () => {
   execFileMock.mockImplementation((_file, _args, _options, done) =>
     done(null, '{"loggedIn":true,"authMethod":"oauth_token"}', ""),

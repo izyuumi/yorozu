@@ -167,7 +167,7 @@ public struct MessageBubble: View {
         }
         if !isUser, !id.isEmpty {
             // One utterance at a time, so this is a toggle rather than a second voice.
-            Button(speaking ? "Stop" : "Listen", systemImage: speaking ? "stop" : "speaker.wave.2") {
+            Button(speaking ? String(localized: "Stop") : String(localized: "Listen"), systemImage: speaking ? "stop" : "speaker.wave.2") {
                 if speaking {
                     Speaker.shared.stop()
                 } else {
@@ -206,7 +206,7 @@ public struct MessageBubble: View {
                 .buttonStyle(.plain)
                 .disabled(onReact == nil)
                 .accessibilityLabel("\(reaction.emoji), \(reaction.count) reaction\(reaction.count == 1 ? "" : "s")")
-                .accessibilityHint(reaction.selected ? "Removes your reaction" : "Adds this reaction")
+                .accessibilityHint(reaction.selected ? String(localized: "Removes your reaction") : String(localized: "Adds this reaction"))
             }
         }
     }

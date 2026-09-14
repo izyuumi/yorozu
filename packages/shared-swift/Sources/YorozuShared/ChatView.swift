@@ -103,22 +103,20 @@ public struct ChatView: View {
             if let failure = model.failure {
                 Banner(text: failure, systemImage: "exclamationmark.triangle")
             }
-            Group {
-                if rows.isEmpty {
-                    EmptyThreadView { prompt in
-                        draft.wrappedValue = prompt
-                        send()
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    messages
+            if rows.isEmpty {
+                EmptyThreadView { prompt in
+                    draft.wrappedValue = prompt
+                    send()
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                messages
             }
-            .overlay { WorkingBezel(active: generating) }
             composer
         }
-        // Inside the stack: a trace pushed from here keeps streaming this thread.
-        .agentTraceDestination { events }
+        // `ignoresSafeArea` carries the running cue through the navigation header instead of
+        // framing only the message viewport. It remains an overlay, so title/menu taps still land.
+        .overlay { WorkingBezel(active: generating).ignoresSafeArea() }
         .navigationTitle(thread.displayTitle)
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -277,7 +275,6 @@ public struct ChatView: View {
     #if os(iOS)
         private var nativeMessages: some View {
             let notificationRequest = resumeRequest.flatMap { id -> TimelineRequest? in
-                guard let lastReadAt else { return TimelineRequest(id: id, target: .latest) }
                 // A cold notification can resolve its thread before that thread's refreshed
                 // events arrive. Keep the request pending until the unread assistant bubble
                 // exists; turning a missing target into `.latest` here consumed the request
@@ -566,14 +563,14 @@ public struct ChatView: View {
                     Menu {
                         modelPicker
                     } label: {
-                        Label(modelCaption ?? "Model", systemImage: "cpu")
+                        Label(modelCaption ?? String(localized: "Model"), systemImage: "cpu")
                             .lineLimit(1)
                     }
                     .disabled(model.models.isEmpty)
                     Menu {
                         effortPicker
                     } label: {
-                        Label(thread.effort?.label ?? "Effort", systemImage: "gauge.with.dots.needle.33percent")
+                        Label(thread.effort?.label ?? String(localized: "Effort"), systemImage: "gauge.with.dots.needle.33percent")
                     }
                     Spacer(minLength: 0)
                 }
@@ -879,10 +876,10 @@ func resumeRowId(
     notificationClass: String? = nil,
     notificationEventRef: String? = nil
 ) -> String? {
-    guard let lastReadAt else { return nil }
     if let notificationEventRef {
         return rows.first(where: { YorozuCrypto.threadRef($0.id) == notificationEventRef })?.id
     }
+    guard let lastReadAt else { return nil }
     return rows.first { row in
         switch notificationClass {
         case "approval":
@@ -1131,18 +1128,17 @@ private struct EmptyThreadView: View {
     }
 }
 
-/// A running turn lights the visible timeline edge itself. It belongs to the timeline rather
-/// than the screen, so the keyboard and composer remain outside it when they shrink that viewport.
-/// Reduce Motion keeps the same state cue as a steady bezel instead of pulsing it.
+/// A running turn lights the whole chat edge, including its navigation header. Reduce Motion
+/// keeps the same state cue as a steady bezel instead of pulsing it.
 private struct WorkingBezel: View {
     let active: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var bright = false
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
+        Rectangle()
             .strokeBorder(
-                Color.accentColor.opacity(active ? (bright || reduceMotion ? 0.9 : 0.3) : 0),
+                Color.blue.opacity(active ? (bright || reduceMotion ? 0.9 : 0.3) : 0),
                 lineWidth: 2
             )
             .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: bright)

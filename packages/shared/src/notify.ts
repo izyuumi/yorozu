@@ -2,20 +2,21 @@
  * The cleartext side-channel the Mac sends the relay alongside a sealed event, so a phone with
  * no live socket can be woken.
  *
- * Everything here is deliberately content-free. The relay — and APNs behind it — learn that
- * *something* of a given class happened in a thread named by an opaque reference, and nothing
- * else: no message text, no tool arguments, no approval details, no thread title. The event
- * itself still travels sealed on the ordinary frame; this is only the wake-up beside it.
+ * Its cleartext fields are deliberately content-free. The relay — and APNs behind it — learn
+ * that *something* of a given class happened in a thread named by an opaque reference. A reply
+ * may also carry a separately sealed preview which only that phone can open.
  */
 import type { YorozuEvent } from "./events.js";
+
+/** Maximum plaintext bytes carried by an encrypted lock-screen reply preview. */
+export const NOTIFY_PREVIEW_BYTES = 256;
 
 /** What kind of thing happened, which is the whole of what a notification says. */
 export type NotifyClass = "reply" | "approval" | "done" | "failed";
 
 /**
- * What a notification of each class says, in full. Fixed strings chosen here rather than
- * assembled from the event, because an assembled one is how content leaks: there is no path
- * from a message, a tool call or an approval card to the words on the lock screen.
+ * Fixed fallback text for each class. The notification extension replaces a reply body only
+ * after authenticating its encrypted preview; every other path keeps this content-free phrase.
  */
 export const NOTIFY_BODY: Record<NotifyClass, string> = {
   reply: "Yorozu replied.",
@@ -58,4 +59,19 @@ export function notifyFor(event: YorozuEvent): NotifyClass | null {
     default:
       return null;
   }
+}
+
+/** Reply text worth previewing, bounded before encryption so APNs stays well below 4 KB. */
+export function notificationPreview(event: YorozuEvent): string | null {
+  if (notifyFor(event) !== "reply" || event.kind !== "message") return null;
+  const text = event.data.text.trim();
+  let bytes = 0;
+  let preview = "";
+  for (const character of text) {
+    const size = Buffer.byteLength(character);
+    if (bytes + size > NOTIFY_PREVIEW_BYTES) break;
+    preview += character;
+    bytes += size;
+  }
+  return preview || null;
 }

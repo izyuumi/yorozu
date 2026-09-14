@@ -145,12 +145,12 @@ public struct RuleEditorView: View {
 
             var label: String {
                 switch id {
-                case "target": "Target"
-                case "operation": "Operation"
-                case "recipient": "Recipient"
-                case "account": "Account"
-                case "merchant": "Merchant"
-                case "category": "Category"
+                case "target": String(localized: "Target")
+                case "operation": String(localized: "Operation")
+                case "recipient": String(localized: "Recipient")
+                case "account": String(localized: "Account")
+                case "merchant": String(localized: "Merchant")
+                case "category": String(localized: "Category")
                 default: id.capitalized
                 }
             }
@@ -272,7 +272,7 @@ public struct RuleProposalCardView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if handled || dismissed {
-                Text(dismissed ? "Not now" : "Reviewed")
+                Text(dismissed ? String(localized: "Not now") : String(localized: "Reviewed"))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(minHeight: 32)
@@ -353,7 +353,7 @@ public struct RuleRowView: View {
                 Button("Edit", action: onEdit).buttonStyle(.borderless)
             }
             if let onToggle {
-                Toggle("Enabled", isOn: Binding(get: { rule.isEnabled }, set: onToggle))
+                Toggle("Enabled", isOn: Binding(get: { rule.isEnabled }, set: { onToggle($0) }))
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .accessibilityLabel("Enabled")
@@ -366,7 +366,7 @@ public struct RuleRowView: View {
     /// What the rule has actually been doing, which is what tells the user whether to keep it.
     private var usage: String {
         let count = rule.useCount ?? 0
-        guard count > 0, let last = rule.lastUsed else { return "Never used" }
+        guard count > 0, let last = rule.lastUsed else { return String(localized: "Never used") }
         let when = Date(timeIntervalSince1970: last / 1000)
             .formatted(date: .abbreviated, time: .shortened)
         return "^[Used \(count) time](inflect: true) · last \(when)"

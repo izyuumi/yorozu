@@ -42,8 +42,11 @@ final class ShareViewController: UIViewController {
             let token = try? ShareBox.write(payload, in: directory),
             let url = URL(string: "yorozu://share?token=\(token)")
         else { return dismiss(cancelled: false) }
-        extensionContext?.open(url)
-        dismiss(cancelled: false)
+        guard let extensionContext else { return dismiss(cancelled: false) }
+        // Keep the extension alive until iOS has accepted or refused the handoff. Completing
+        // immediately after `open` races the request and is why a share can wait until the app
+        // is opened later even when iOS would have launched it now.
+        extensionContext.open(url) { [weak self] _ in self?.dismiss(cancelled: false) }
     }
 
     private func dismiss(cancelled: Bool) {

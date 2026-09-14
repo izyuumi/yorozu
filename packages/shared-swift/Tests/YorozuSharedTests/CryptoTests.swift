@@ -46,3 +46,14 @@ import Testing
     let key = YorozuCrypto.generateKeypair().publicKey
     #expect(Data(base64URLEncoded: key.base64URLEncodedString()) == key)
 }
+
+@Test func notificationPreviewOpensOnlyValidUtf8UnderTheMatchingKey() throws {
+    let key = SymmetricKey(size: .bits256)
+    let other = SymmetricKey(size: .bits256)
+    let sealed = try YorozuCrypto.seal(key: key, plaintext: Data("秘密の返事".utf8))
+    let nonce = sealed.nonce.base64URLEncodedString()
+    let ciphertext = sealed.ciphertext.base64URLEncodedString()
+    #expect(NotificationPreview.decrypt(nonce: nonce, ciphertext: ciphertext, key: key) == "秘密の返事")
+    #expect(NotificationPreview.decrypt(nonce: nonce, ciphertext: ciphertext, key: other) == nil)
+    #expect(NotificationPreview.decrypt(nonce: "bad", ciphertext: ciphertext, key: key) == nil)
+}

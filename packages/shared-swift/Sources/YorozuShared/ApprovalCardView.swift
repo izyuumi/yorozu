@@ -93,7 +93,7 @@ public struct ApprovalCardView: View {
                 .foregroundStyle(.tint)
                 .frame(width: 28, height: 28)
                 .background(.tint.opacity(0.14), in: Circle())
-            Text(answered ? "Approval" : "Yorozu wants to")
+            Text(answered ? String(localized: "Approval") : String(localized: "Yorozu wants to"))
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
@@ -296,31 +296,30 @@ public struct ApprovalCardView: View {
 
     private var outcomeText: String {
         switch chosen {
-        case .yes: "Allowed once"
-        case .task: "Allowed for this task"
-        case .always: "Allowed, and saved as a rule"
-        case .no: "Not allowed"
-        case .discuss: "Discussing"
-        case nil: "Answered on another device"
+        case .yes: String(localized: "Allowed once")
+        case .task: String(localized: "Allowed for this task")
+        case .always: String(localized: "Allowed, and saved as a rule")
+        case .no: String(localized: "Not allowed")
+        case .discuss: String(localized: "Discussing")
+        case nil: String(localized: "Answered on another device")
         }
     }
 
     /// The always button names the scope it would actually cover, because a button that says
     /// "don't ask again" and then means something narrower is a promise the card cannot keep.
     private var alwaysTitle: String {
-        guard let narrowed = card.suggestedRule?.summary else { return "Always allow…" }
-        return "Always allow \(narrowed)…"
+        guard let narrowed = card.suggestedRule?.summary else { return String(localized: "Always allow…") }
+        return String(localized: "Always allow \(narrowed)…")
     }
 
     /// What the grants under the first one actually promise. It only mentions rules when one
     /// is on offer: a batch is not offered one, and neither is anything that must be confirmed.
     private var grantNote: String {
-        if card.mustConfirm == true { return "This one cannot be turned into a rule." }
+        if card.mustConfirm == true { return String(localized: "This one cannot be turned into a rule.") }
         if card.suggestedRule == nil {
-            return "“Allow for this task” lasts until this task is done. This decision covers "
-                + "exactly the items listed above."
+            return String(localized: "“Allow for this task” lasts until this task is done. This decision covers exactly the items listed above.")
         }
-        return "“Allow for this task” lasts until this task is done. A rule lasts until you revoke it."
+        return String(localized: "“Allow for this task” lasts until this task is done. A rule lasts until you revoke it.")
     }
 
     private var cardBackground: Color {
@@ -353,15 +352,15 @@ public struct ApprovalCardView: View {
         Self.verb(for: card.actionClass)
     }
 
-    static func verb(for actionClass: String) -> Verb {
+    nonisolated static func verb(for actionClass: String) -> Verb {
         switch actionClass {
-        case "send-message": return Verb(sentence: "Send a message", noun: "message", isCode: false)
-        case "purchase": return Verb(sentence: "Make a purchase", noun: "purchase", isCode: false)
-        case "transfer-money": return Verb(sentence: "Transfer money", noun: "transfer", isCode: false)
-        case "book": return Verb(sentence: "Make a booking", noun: "booking", isCode: false)
-        case "run-command": return Verb(sentence: "Run a command", noun: "command", isCode: true)
-        case "edit-file": return Verb(sentence: "Change a file", noun: "file change", isCode: true)
-        case "delete-file": return Verb(sentence: "Delete a file", noun: "file deletion", isCode: true)
+        case "send-message": return Verb(sentence: String(localized: "Send a message"), noun: String(localized: "message"), isCode: false)
+        case "purchase": return Verb(sentence: String(localized: "Make a purchase"), noun: String(localized: "purchase"), isCode: false)
+        case "transfer-money": return Verb(sentence: String(localized: "Transfer money"), noun: String(localized: "transfer"), isCode: false)
+        case "book": return Verb(sentence: String(localized: "Make a booking"), noun: String(localized: "booking"), isCode: false)
+        case "run-command": return Verb(sentence: String(localized: "Run a command"), noun: String(localized: "command"), isCode: true)
+        case "edit-file": return Verb(sentence: String(localized: "Change a file"), noun: String(localized: "file change"), isCode: true)
+        case "delete-file": return Verb(sentence: String(localized: "Delete a file"), noun: String(localized: "file deletion"), isCode: true)
         default:
             let words = actionClass.replacingOccurrences(of: "-", with: " ")
             return Verb(sentence: words.prefix(1).uppercased() + words.dropFirst(), noun: words, isCode: false)

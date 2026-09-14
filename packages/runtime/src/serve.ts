@@ -22,6 +22,7 @@ import {
   open,
   seal,
   notifyFor,
+  notificationPreview,
   signFrame,
   threadRef,
   toBase64Url,
@@ -337,7 +338,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     for (const device of devices.keys()) sendTo(device, event);
     for (const send of locals.values()) send(event);
     // Beside the sealed frame, never instead of it: a phone that is listening gets the event
-    // and never sees a push, and a phone that is not gets a wake-up carrying none of it.
+    // immediately. Every phone still gets an alert because a server-open socket can belong to a
+    // suspended iOS app; foreground presentation is suppressed by the app itself.
     notifyRelay(event);
   };
 
@@ -345,8 +347,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
   let revokeAtRelay: (signingPub: string) => void = () => {};
 
   /**
-   * Tells the relay, in the clear, that something of a given class happened — so it can wake a
-   * phone whose socket is gone. Replaced per connection, a no-op while there is none.
+   * Tells the relay that something happened and, for replies, supplies one opaque preview box
+   * per phone. Replaced per connection, a no-op while there is none.
    */
   let notifyRelay: (event: YorozuEvent) => void = () => {};
 
@@ -917,6 +919,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (ws.readyState !== WebSocket.OPEN || devices.size === 0) return;
       const cls = notifyFor(event);
       if (!cls || !event.threadId) return;
+      const preview = notificationPreview(event);
+      const previews = preview
+        ? Object.fromEntries(
+            [...devices.values()].flatMap(({ key, record }) => {
+              if (!record.signingPub) return [];
+              const box = seal(key, Buffer.from(preview));
+              return [[record.signingPub, { n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }]];
+            }),
+          )
+        : undefined;
       // Thread and event ids travel only as short one-way references. The latter lets a tap
       // select the exact encrypted card after sync without teaching the relay what it contains.
       ws.send(
@@ -925,6 +937,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           class: cls,
           threadRef: threadRef(event.threadId),
           eventRef: threadRef(event.id),
+          ...(previews && Object.keys(previews).length > 0 ? { previews } : {}),
         }),
       );
     };

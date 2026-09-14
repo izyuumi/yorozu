@@ -105,13 +105,13 @@ private struct CodeBlock: View {
                     copyToPasteboard(code)
                     withAnimation { copied = true }
                 } label: {
-                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    Label(copied ? String(localized: "Copied") : String(localized: "Copy"), systemImage: copied ? "checkmark" : "doc.on.doc")
                         .font(.caption)
                         .labelStyle(.iconOnly)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(copied ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                .accessibilityLabel(copied ? "Copied" : "Copy code")
+                .accessibilityLabel(copied ? String(localized: "Copied") : String(localized: "Copy code"))
                 // Says "Copied" for a moment, then goes back to offering the copy again.
                 .task(id: copied) {
                     guard copied else { return }

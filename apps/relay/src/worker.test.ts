@@ -602,22 +602,24 @@ test("only a joined phone may register, and only the mac may notify", async () =
   expect(await mac.closed()).toBe(4001);
 });
 
-test("a phone holding a live socket is never pushed to", async () => {
+test("a phone holding a live socket still gets an alert but no background wake", async () => {
   const calls = fakeApns();
   const { mac, phone } = await paired();
 
-  // It has the sealed frame already: it is joined, and the app is running to have joined.
+  // iOS may suspend without promptly closing this socket. Always send the alert; the app's
+  // foreground delegate suppresses presentation when somebody is already watching.
   mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
   await macSettled(mac);
-  expect(calls).toHaveLength(0);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.headers.get("apns-push-type")).toBe("alert");
 
-  // With the socket gone there is nobody watching, and the same notify does wake it: the alert
-  // for the person, and the silent push that sends the app to catch up behind it.
+  // With the socket gone there is nobody watching, so the same notify adds a silent catch-up
+  // push behind the visible alert.
   phone.ws.close();
   mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
   await macSettled(mac);
-  expect(calls).toHaveLength(2);
-  expect(calls.map((call) => call.headers.get("apns-push-type"))).toEqual(["alert", "background"]);
+  expect(calls).toHaveLength(3);
+  expect(calls.slice(1).map((call) => call.headers.get("apns-push-type"))).toEqual(["alert", "background"]);
 });
 
 test("a wake-up carries a class and an opaque reference, and nothing of the conversation", async () => {
@@ -632,7 +634,7 @@ test("a wake-up carries a class and an opaque reference, and nothing of the conv
   expect(call.url).toBe("https://apns.test/3/device/device-token");
   expect(call.headers.get("apns-topic")).toBe("to.yumi.yorozu.ios");
   expect(call.headers.get("apns-push-type")).toBe("alert");
-  expect(call.body.aps.alert).toEqual({ title: "Yorozu", body: NOTIFY_BODY.approval });
+  expect(call.body.aps.alert).toEqual({ title: "Yorozu", "loc-key": NOTIFY_BODY.approval });
   expect(call.body.ref).toBe("Ab3-_x9Z");
 
   // The payload's whole vocabulary, spelled out. Anything the runtime could have leaked would
@@ -641,7 +643,7 @@ test("a wake-up carries a class and an opaque reference, and nothing of the conv
   expect(JSON.stringify(call.body)).toBe(
     JSON.stringify({
       aps: {
-        alert: { title: "Yorozu", body: NOTIFY_BODY.approval },
+        alert: { title: "Yorozu", "loc-key": NOTIFY_BODY.approval },
         sound: "default",
         "thread-id": "Ab3-_x9Z",
       },
@@ -663,6 +665,24 @@ test("a wake-up carries a class and an opaque reference, and nothing of the conv
   mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
   await macSettled(mac);
   expect(calls[1]!.headers.get("authorization")).toBe(auth);
+});
+
+test("a wake-up selects only its device's encrypted preview", async () => {
+  const calls = fakeApns();
+  const { mac, phone, keys } = await paired();
+  phone.ws.close();
+  const own = { n: "B".repeat(16), c: "C".repeat(22) };
+  mac.send({
+    type: "notify",
+    class: "reply",
+    threadRef: "Ab3-_x9Z",
+    previews: { [keys.pub]: own, ["D".repeat(43)]: { n: "E".repeat(16), c: "F".repeat(22) } },
+  });
+  await macSettled(mac);
+
+  expect(calls[0]!.body.preview).toEqual(own);
+  expect(calls[0]!.body.aps["mutable-content"]).toBe(1);
+  expect(JSON.stringify(calls[0]!.body)).not.toContain("secret reply");
 });
 
 test("a device token Apple no longer knows is forgotten rather than retried", async () => {

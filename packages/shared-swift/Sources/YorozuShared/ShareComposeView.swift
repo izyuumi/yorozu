@@ -105,7 +105,7 @@
 
         @State private var item: SharedItem?
         @State private var note = ""
-        /// Nil is "New chat", which is also where a first-time share goes: offering the newest
+        /// Nil is "New session", which is also where a first-time share goes: offering the newest
         /// thread by default would put a link in whatever was last talked about, which is rarely
         /// where it belongs.
         @State private var threadId: String?
@@ -141,7 +141,11 @@
                     }
 
                     Section("Send to") {
-                        ShareThreadRow(title: "New chat", symbol: "plus.bubble", selected: threadId == nil) {
+                        ShareThreadRow(
+                            title: String(localized: "New session"),
+                            symbol: "plus.bubble",
+                            selected: threadId == nil
+                        ) {
                             threadId = nil
                         }
                         ForEach(threads.prefix(5)) { thread in

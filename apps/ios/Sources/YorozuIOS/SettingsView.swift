@@ -5,10 +5,10 @@ import YorozuShared
 /// one line a person actually wants: is this phone on the relay at all, and is the Mac on it too.
 ///
 /// Pure, so a test can check the mapping without a socket.
-enum MacStatus: String {
-    case connected = "Connected"
-    case offline = "Mac offline"
-    case reconnecting = "Reconnecting"
+enum MacStatus {
+    case connected
+    case offline
+    case reconnecting
 
     init(state: TransportState, ownerOnline: Bool) {
         switch state {
@@ -23,6 +23,14 @@ enum MacStatus: String {
         case .connected: .green
         case .offline: .orange
         case .reconnecting: .secondary
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .connected: String(localized: "Connected")
+        case .offline: String(localized: "Mac offline")
+        case .reconnecting: String(localized: "Reconnecting")
         }
     }
 }
@@ -60,7 +68,7 @@ struct SettingsView: View {
             List {
                 Section("Mac") {
                     LabeledContent("Status") {
-                        Text(status.rawValue).foregroundStyle(status.tint)
+                        Text(status.label).foregroundStyle(status.tint)
                     }
                     LabeledContent("Relay", value: relayUrl)
                     if let pairedAt {
@@ -79,7 +87,7 @@ struct SettingsView: View {
                         RulesListView(model: model)
                     } label: {
                         LabeledContent("Rules") {
-                            Text(model.rules.isEmpty ? "None" : "\(model.rules.count)")
+                            Text(model.rules.isEmpty ? String(localized: "None") : "\(model.rules.count)")
                         }
                     }
                 } header: {

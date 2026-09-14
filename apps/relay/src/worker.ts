@@ -284,9 +284,10 @@ export class Room implements DurableObject {
   /**
    * Wakes every paired device that is not already watching.
    *
-   * A phone holding a live socket has just been sent the sealed event itself, so a push to it
-   * would be a second copy of news it already has. Everyone else gets one alert: something a
-   * person should see, which is the only thing worth waking a phone for.
+   * Every registered phone gets the alert. iOS can suspend an app while its WebSocket still
+   * looks open from the server, so socket presence cannot prove somebody is watching. The app
+   * suppresses presentation while foregrounded; only the silent catch-up push can be skipped
+   * for a phone whose socket is still live.
    *
    * Awaited rather than left to run behind the socket: frames are handled in order on this
    * object, and a turn produces a handful of these at most — the running commentary is not
@@ -305,12 +306,17 @@ export class Room implements DurableObject {
     const storage = this.state.storage;
 
     for (const [key, record] of await storage.list<PushRecord>({ prefix: pushPrefix })) {
-      if (watching.has(key.slice(pushPrefix.length))) continue;
+      const deviceKey = key.slice(pushPrefix.length);
       const code = await apns.send(
         this.env,
         {
           token: record.deviceToken,
-          payload: alertPayload(notify.class, notify.threadRef, notify.eventRef),
+          payload: alertPayload(
+            notify.class,
+            notify.threadRef,
+            notify.eventRef,
+            notify.previews?.[key.slice(pushPrefix.length)],
+          ),
           pushType: "alert",
         },
         now,
@@ -330,6 +336,7 @@ export class Room implements DurableObject {
       // simply woken less often afterwards, which would cost the wake-ups worth having. The
       // alert above has already gone out regardless.
       if (
+        !watching.has(deviceKey) &&
         BACKGROUND_CLASSES.includes(notify.class) &&
         now - (record.backgroundAt ?? 0) >= BACKGROUND_INTERVAL_MS
       ) {

@@ -1054,7 +1054,10 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
 
   const phoneKeys = generateKeypair();
   const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
-  phone.frame(encodeBody({ t: "hello", pub: toBase64Url(phoneKeys.publicKey) }), keys);
+  phone.frame(
+    encodeBody({ t: "hello", pub: toBase64Url(phoneKeys.publicKey), spub: keys.pub }),
+    keys,
+  );
 
   const sent: YorozuEvent = {
     id: "e1",
@@ -1080,6 +1083,13 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
     threadRef: threadRef("thread-one"),
   });
   expect(notify.eventRef).toMatch(/^[A-Za-z0-9_-]{8}$/);
+  const preview = (notify.previews as Record<string, { n: string; c: string }>)[keys.pub]!;
+  expect(Buffer.from(open(
+    sessionKey,
+    fromBase64Url(preview.n),
+    fromBase64Url(preview.c),
+  )).toString()).toBe("the secret reply");
+  expect(JSON.stringify(notify)).not.toContain("the secret reply");
 
   const failed: YorozuEvent = {
     ...sent,

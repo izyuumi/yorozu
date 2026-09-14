@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// The drill-down: an inline card per delegation and the trace page it pushes. Shared so the
-/// Mac's local chat draws the same ones. The main agent's own tool use is not down here — it
-/// is drawn in the thread itself, as grouped rows; see ``ToolGroupView``.
+/// Delegated-agent trace UI: a collapsed inline card, plus a full-page renderer for callers that
+/// need one. Shared so the Mac's local chat draws the same UI. The main agent's own tool use is
+/// drawn in the thread itself, as grouped rows; see ``ToolGroupView``.
 
 /// What a trace page shows. Pushed by value, so the page re-reads the live event list rather
 /// than the snapshot the link was built from.
@@ -42,23 +42,37 @@ extension View {
     }
 }
 
-/// Inline card for one delegation: who is working, whether they still are, and a way in.
+/// Inline card for one delegation: its status stays visible while its trace starts collapsed.
 public struct DelegationCardView: View {
     private let card: DelegationCard
+    @State private var expanded = false
 
     public init(card: DelegationCard) {
         self.card = card
     }
 
     public var body: some View {
-        NavigationLink(value: TraceTarget.delegation(agentId: card.agentId, startEventId: card.startEventId)) {
+        DisclosureGroup(isExpanded: $expanded) {
+            LazyVStack(alignment: .leading, spacing: 8) {
+                ForEach(traceEntries(from: card.events)) { entry in
+                    switch entry {
+                    case .tools(let activities):
+                        ToolGroupView(activities: activities)
+                    case .other(let event):
+                        TraceRow(event: event)
+                    }
+                }
+            }
+            .padding(.top, 8)
+            .padding(.leading, 26)
+        } label: {
             HStack(spacing: 10) {
                 Image(systemName: "person.badge.clock")
                     .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(card.agentId)
                         .font(.subheadline.weight(.semibold))
-                    Text(card.done ? "done · \(card.events.count) steps" : "running…")
+                    Text(card.done ? "\(String(localized: "Done")) · \(card.events.count)" : String(localized: "Running…"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -68,15 +82,13 @@ public struct DelegationCardView: View {
                 } else {
                     ProgressView().controlSize(.small)
                 }
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
         }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
         .buttonStyle(.plain)
+        .accessibilityHint(expanded ? String(localized: "Hides the trace") : String(localized: "Shows the trace"))
     }
 }
 
