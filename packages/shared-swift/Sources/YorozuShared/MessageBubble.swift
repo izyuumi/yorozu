@@ -134,9 +134,6 @@ public struct MessageBubble: View {
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .animation(.easeOut(duration: 0.18), value: speaking)
         .contextMenu { actions }
-        // The phone's second way to the same Reply the menu offers. The menu stays: a gesture
-        // is not something VoiceOver or a trackpad-less Mac can be asked to perform.
-        .swipeToReply(fromRight: isUser, action: onReply.map { reply in { reply(parts.body) } })
         #if os(macOS)
             // An explicit shape, so the whole row tracks the pointer and not only the parts
             // of it something is drawn in.

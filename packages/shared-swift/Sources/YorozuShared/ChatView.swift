@@ -314,6 +314,7 @@ public struct ChatView: View {
                 ),
                 atBottom: $atBottom,
                 showJumpToLatest: $showJumpToLatest,
+                onReply: { replyQuote = $0 },
                 content: { row in AnyView(rowView(row).environment(\.searchHighlight, search)) }
             )
             .onChange(of: ChangeStamp(events: events)) { _, _ in noteReplyStart() }
@@ -726,6 +727,7 @@ public struct ChatView: View {
         let presentation: TimelinePresentation
         @Binding var atBottom: Bool
         @Binding var showJumpToLatest: Bool
+        let onReply: (String) -> Void
         let content: (ChatRow) -> AnyView
 
         private enum Entry: Hashable {
@@ -739,6 +741,12 @@ public struct ChatView: View {
             var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
             configuration.showsSeparators = false
             configuration.backgroundColor = .clear
+            configuration.leadingSwipeActionsConfigurationProvider = { [weak coordinator = context.coordinator] indexPath in
+                coordinator?.replyActions(at: indexPath, role: .agent)
+            }
+            configuration.trailingSwipeActionsConfigurationProvider = { [weak coordinator = context.coordinator] indexPath in
+                coordinator?.replyActions(at: indexPath, role: .user)
+            }
             let collectionView = UICollectionView(
                 frame: .zero,
                 collectionViewLayout: UICollectionViewCompositionalLayout.list(using: configuration)
@@ -884,6 +892,31 @@ public struct ChatView: View {
                 reportBottom(scrollView)
             }
             func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { reportBottom(scrollView) }
+
+            /// UIKit owns both this horizontal swipe and the timeline's vertical pan, so a
+            /// vertical drag begun on a bubble remains a scroll instead of being captured by a
+            /// gesture inside that bubble's hosted SwiftUI view.
+            func replyActions(
+                at indexPath: IndexPath,
+                role: MessageData.Role
+            ) -> UISwipeActionsConfiguration? {
+                guard let entry = dataSource?.itemIdentifier(for: indexPath),
+                      case .row(let id) = entry,
+                      case .message(let event) = rowsById[id],
+                      case .message(let message) = event.payload,
+                      message.role == role
+                else { return nil }
+                let action = UIContextualAction(style: .normal, title: String(localized: "Reply")) {
+                    [weak self] _, _, complete in
+                    self?.parent.onReply(splitQuote(message.text).body)
+                    complete(true)
+                }
+                action.image = UIImage(systemName: "arrowshape.turn.up.left")
+                action.backgroundColor = .tintColor
+                let configuration = UISwipeActionsConfiguration(actions: [action])
+                configuration.performsFirstActionWithFullSwipe = true
+                return configuration
+            }
         }
     }
 #endif
@@ -1000,10 +1033,6 @@ public enum ChatShowcase {
     /// Draws every long message already unfolded, as tapping "Read more" leaves it. Nothing on
     /// a simulator taps a button on demand, and the two states are the picture worth having.
     public static var expanded = false
-    /// Draws every bubble already pulled to its reply threshold, arrow filled. Same reason as
-    /// ``modelMenu``: nothing on a simulator performs a swipe on demand, and the half-way point
-    /// of the gesture is the part worth a picture. See ``View/swipeToReply(fromRight:action:)``.
-    public static var swipe = false
     /// Opens the approval card's rule editor over the card. Same reason as ``modelMenu``:
     /// nothing on a simulator taps a button on demand, and the sheet is the part worth showing.
     public static var ruleEditor = false
