@@ -19,6 +19,9 @@ public final class ChatModel {
     public private(set) var draft: ThreadSummary?
     /// Whether a `thread_list` has arrived yet, so an app can wait before deciding what to open.
     public private(set) var listed = false
+    /// Advances after a complete sync response. Notification navigation uses this to tell
+    /// "events have not arrived yet" from "refresh finished and there is no message anchor".
+    public private(set) var syncRevision = 0
     /// Events per thread id, oldest first.
     public private(set) var events: [String: [YorozuEvent]] = [:]
     public private(set) var state: TransportState = .connecting
@@ -580,6 +583,7 @@ public final class ChatModel {
             case .syncDelta(let data):
                 for event in data.events { upsert(event) }
                 if data.more == true { requestSync() }
+                else { syncRevision += 1 }
                 // Counted, not just applied: a background drain is waiting for exactly this to
                 // know it has caught up and may hang up. See ``drain(timeout:)``.
                 deltas += 1
