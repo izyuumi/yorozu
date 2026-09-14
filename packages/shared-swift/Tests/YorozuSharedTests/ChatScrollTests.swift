@@ -11,3 +11,32 @@ import Testing
     #expect(!followsNewest(atBottom: true, phase: .decelerating))
     #expect(!followsNewest(atBottom: false, phase: .idle))
 }
+
+@Test func notificationResumeStartsAtFirstUnreadRowOrLatest() {
+    func message(_ id: String, _ timestamp: Int) -> ChatRow {
+        .message(YorozuEvent(
+            id: id,
+            threadId: "home",
+            ts: timestamp,
+            agentId: "main",
+            payload: .message(MessageData(role: .agent, text: id))
+        ))
+    }
+
+    let rows = [message("read", 100), message("first-unread", 200), message("latest", 300)]
+    #expect(resumeRowId(rows: rows, lastReadAt: 150) == "first-unread")
+    #expect(resumeRowId(rows: rows, lastReadAt: nil) == nil)
+    #expect(resumeRowId(rows: rows, lastReadAt: 300) == nil)
+}
+
+@Test func notificationResumeKeepsGroupedActivityThatStraddlesTheReadMark() {
+    let events = [
+        YorozuEvent(id: "call", threadId: "home", ts: 100, agentId: "main",
+            payload: .toolCall(ToolCallData(callId: "tool", name: "read", args: [:]))),
+        YorozuEvent(id: "result", threadId: "home", ts: 200, agentId: "main",
+            payload: .toolResult(ToolResultData(callId: "tool", ok: true, output: "done"))),
+    ]
+    let rows = chatRows(from: events)
+
+    #expect(resumeRowId(rows: rows, lastReadAt: 150) == rows.first?.id)
+}

@@ -38,6 +38,12 @@ struct YorozuApp: App {
 @MainActor
 @Observable
 final class Session {
+    struct NotificationOpen: Equatable {
+        let id = UUID()
+        let threadId: String
+        let lastReadAt: Double?
+    }
+
     private(set) var model: ChatModel?
     private(set) var failure: String?
     /// What the thread list's navigation stack starts out holding, decided the moment the model
@@ -45,6 +51,12 @@ final class Session {
     /// ``ChatModel``'s initialiser, so the answer is already known here — and knowing it here is
     /// what keeps the chat from appearing a frame after the list it was pushed onto.
     private(set) var openPath: [String] = []
+    /// A tap is also a scroll request. Kept separate from the navigation path so tapping while
+    /// that same thread is already on the stack still moves the existing timeline.
+    private(set) var notificationOpen: NotificationOpen?
+    /// A notification can name a thread missing from the cold cache. Hold only its opaque ref;
+    /// the next authoritative thread list resolves it without trusting push content.
+    private var pendingThreadRef: String?
     /// The transport, kept apart from the model so push tokens have somewhere to be registered:
     /// the relay is the thing that holds them, because it is the thing that calls APNs.
     private(set) var relay: RelayClient?
@@ -155,11 +167,20 @@ final class Session {
     ///
     /// The mapping only exists here. The relay sent a reference precisely so that it could not
     /// do this itself, and the phone resolves it by hashing the thread ids it already holds.
-    func open(threadRef: String) {
+    @discardableResult
+    func open(threadRef: String) -> Bool {
         let match = model?.threads.first { YorozuCrypto.threadRef($0.id) == threadRef }
-        guard let match else { return }
+        guard let match else {
+            pendingThreadRef = threadRef
+            return false
+        }
+        pendingThreadRef = nil
+        notificationOpen = NotificationOpen(threadId: match.id, lastReadAt: match.lastReadAt)
         openPath = [match.id]
+        return true
     }
+
+    func clearNotificationOpen() { notificationOpen = nil }
 
     /// The few threads the share sheet's picker offers, newest first. Archived threads and the
     /// unsent draft are left out: neither is somewhere to put a link.
@@ -197,6 +218,7 @@ final class Session {
             model.onThreads = { [weak self] in
                 onThreads?()
                 self?.publishThreads()
+                if let ref = self?.pendingThreadRef { self?.open(threadRef: ref) }
             }
             model.start()
             self.model = model
@@ -312,7 +334,13 @@ struct RootView: View {
                 exportMarkdown: model.markdown(of:),
                 onSettings: { settings = true }
             ) { thread in
-                ChatView(model: model, thread: thread) {
+                let notification = session.notificationOpen.flatMap { $0.threadId == thread.id ? $0 : nil }
+                ChatView(
+                    model: model,
+                    thread: thread,
+                    resumeRequest: notification?.id,
+                    lastReadAt: notification?.lastReadAt
+                ) {
                     path = [model.newDraft().id]
                 }
             }
@@ -346,6 +374,7 @@ struct RootView: View {
             // the thread being read, so a reply arriving in it does not raise an unread dot.
             .onChange(of: path, initial: true) { old, new in
                 if let left = old.first, !new.contains(left) { model.discardDraft(left) }
+                if session.notificationOpen?.threadId != new.last { session.clearNotificationOpen() }
                 model.openThread = new.last
             }
         } else if pairing {

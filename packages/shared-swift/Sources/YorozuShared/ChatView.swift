@@ -11,6 +11,8 @@ public struct ChatView: View {
     public let model: ChatModel
     public let thread: ThreadSummary
     private let onCreate: (() -> Void)?
+    private let resumeRequest: UUID?
+    private let lastReadAt: Double?
     /// Shown while the runtime is unreachable. The two apps lose it differently: the phone
     /// queues what is typed and sends it when the Mac is back, the Mac's sidecar is simply not
     /// running yet.
@@ -45,11 +47,15 @@ public struct ChatView: View {
     public init(
         model: ChatModel,
         thread: ThreadSummary,
+        resumeRequest: UUID? = nil,
+        lastReadAt: Double? = nil,
         onCreate: (() -> Void)? = nil,
         offlineNotice: String = "Mac offline — what you send waits on this phone until it's back."
     ) {
         self.model = model
         self.thread = thread
+        self.resumeRequest = resumeRequest
+        self.lastReadAt = lastReadAt
         self.onCreate = onCreate
         self.offlineNotice = offlineNotice
     }
@@ -99,6 +105,7 @@ public struct ChatView: View {
             }
             composer
         }
+        .overlay { WorkingBezel(active: generating).ignoresSafeArea() }
         // Inside the stack: a trace pushed from here keeps streaming this thread.
         .agentTraceDestination { events }
         .navigationTitle(thread.displayTitle)
@@ -130,13 +137,6 @@ public struct ChatView: View {
                     }
                 }
             #endif
-            #if os(iOS)
-                if let onCreate {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button("New session", systemImage: "square.and.pencil", action: onCreate)
-                    }
-                }
-            #endif
             ToolbarItem(placement: .primaryAction) {
                 Menu("More", systemImage: "ellipsis") {
                     #if os(iOS)
@@ -150,6 +150,13 @@ public struct ChatView: View {
                     }
                 }
             }
+            #if os(iOS)
+                if let onCreate {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("New session", systemImage: "square.and.pencil", action: onCreate)
+                    }
+                }
+            #endif
         }
         // Screenshot only: the menu's own choices, raised far enough down the screen that the
         // caption they set is in the same picture. Nothing on a simulator can open a real menu.
@@ -258,11 +265,19 @@ public struct ChatView: View {
 
     #if os(iOS)
         private var nativeMessages: some View {
-            IOSChatTimeline(
+            let notificationRequest = resumeRequest.map {
+                TimelineRequest(
+                    id: $0,
+                    target: resumeRowId(rows: rows, lastReadAt: lastReadAt).map(TimelineRequest.Target.event)
+                        ?? .latest
+                )
+            }
+            return IOSChatTimeline(
                 rows: rows,
                 generating: generating,
                 streamingId: streamingId,
                 request: timelineRequest,
+                notificationRequest: notificationRequest,
                 presentation: TimelinePresentation(
                     search: search,
                     outbox: model.outbox,
@@ -516,9 +531,11 @@ public struct ChatView: View {
                     #if os(macOS)
                         .onSubmit { draft.wrappedValue += "\n" }
                     #endif
-                sendOrStop
+                if generating {
+                    stopButton
+                }
+                sendButton
                     .padding(.trailing, 6)
-                    .frame(height: controlTarget)
             }
             #if os(macOS)
                 HStack(spacing: 12) {
@@ -543,9 +560,12 @@ public struct ChatView: View {
             #endif
         }
         .background(fieldBackground, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        // While a turn runs the outline itself breathes in the accent: the field is the one
-        // thing on screen that changes job, so it is the one thing that says "working".
-        .overlay(WorkingOutline(active: generating))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(.separator.opacity(0.6))
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        )
         .animation(.easeOut(duration: 0.18), value: attachments.wrappedValue.count)
         .animation(.easeOut(duration: 0.18), value: generating)
         .animation(.easeOut(duration: 0.18), value: replyQuote != nil)
@@ -562,44 +582,43 @@ public struct ChatView: View {
         #endif
     }
 
-    /// One slot, two states. Send is a filled accent circle only once there is something to
-    /// send; before that it is a hollow outline, so the eye is not pulled to a dead control.
-    /// Stop replaces it with a filled square in the same place: same size, same spot, new job.
-    @ViewBuilder private var sendOrStop: some View {
-        if generating {
-            Button {
-                model.interrupt(in: thread.id)
-            } label: {
-                Image(systemName: "stop.fill")
-                    .font(.footnote.weight(.bold))
-                    // `.background` against `Color.primary`, not white against it: primary is
-                    // white in the dark, and a white glyph on it was an empty circle.
-                    .foregroundStyle(.background)
-                    .frame(width: sendCircle, height: sendCircle)
-                    .background(Color.primary, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .macKey(.escape)
-            .accessibilityLabel("Stop")
-            .transition(.scale(scale: 0.8).combined(with: .opacity))
-        } else {
-            Button {
-                send()
-            } label: {
-                Image(systemName: "arrow.up")
-                    .font(.body.weight(.bold))
-                    .foregroundStyle(canSend ? Color.white : Color.secondary)
-                    .frame(width: sendCircle, height: sendCircle)
-                    .background(canSend ? Color.accentColor : Color.clear, in: Circle())
-                    .overlay(Circle().strokeBorder(.separator, lineWidth: canSend ? 0 : 1.5))
-            }
-            .buttonStyle(.plain)
-            .disabled(!canSend)
-            .macKey(.return)
-            .accessibilityLabel("Send")
-            .animation(.easeOut(duration: 0.15), value: canSend)
-            .transition(.scale(scale: 0.8).combined(with: .opacity))
+    /// Stop stays beside the composer while a turn runs. Send never changes jobs: another
+    /// message steers that active turn, which is why replacing it with Stop made steering
+    /// impossible from the app.
+    private var stopButton: some View {
+        Button {
+            model.interrupt(in: thread.id)
+        } label: {
+            Image(systemName: "stop.fill")
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(.background)
+                .frame(width: sendCircle, height: sendCircle)
+                .background(Color.primary, in: Circle())
         }
+        .buttonStyle(.plain)
+        .frame(width: controlTarget, height: controlTarget)
+        .macKey(.escape)
+        .accessibilityLabel("Stop")
+        .transition(.scale(scale: 0.8).combined(with: .opacity))
+    }
+
+    private var sendButton: some View {
+        Button {
+            send()
+        } label: {
+            Image(systemName: "arrow.up")
+                .font(.body.weight(.bold))
+                .foregroundStyle(canSend ? Color.white : Color.secondary)
+                .frame(width: sendCircle, height: sendCircle)
+                .background(canSend ? Color.accentColor : Color.clear, in: Circle())
+                .overlay(Circle().strokeBorder(.separator, lineWidth: canSend ? 0 : 1.5))
+        }
+        .buttonStyle(.plain)
+        .frame(width: controlTarget, height: controlTarget)
+        .disabled(!canSend)
+        .macKey(.return)
+        .accessibilityLabel("Send")
+        .animation(.easeOut(duration: 0.15), value: canSend)
     }
 
     private var canSend: Bool {
@@ -639,8 +658,13 @@ public struct ChatView: View {
 #if os(iOS)
     private struct TimelineRequest: Equatable {
         enum Target: Equatable { case latest, event(String) }
-        let id = UUID()
+        let id: UUID
         let target: Target
+
+        init(id: UUID = UUID(), target: Target) {
+            self.id = id
+            self.target = target
+        }
     }
 
     /// State that changes a row without changing its event. Keeping it separate lets streaming
@@ -664,6 +688,7 @@ public struct ChatView: View {
         let generating: Bool
         let streamingId: String?
         let request: TimelineRequest?
+        let notificationRequest: TimelineRequest?
         let presentation: TimelinePresentation
         @Binding var atBottom: Bool
         let content: (ChatRow) -> AnyView
@@ -703,6 +728,7 @@ public struct ChatView: View {
             private var previousRows: [String: ChatRow] = [:]
             private var previousPresentation: TimelinePresentation?
             private var lastRequest: UUID?
+            private var lastNotificationRequest: TimelineRequest?
             private var didInitialScroll = false
 
             init(_ parent: IOSChatTimeline) { self.parent = parent }
@@ -763,8 +789,20 @@ public struct ChatView: View {
             }
 
             private func applyRequest(_ collectionView: UICollectionView) {
-                guard let request = parent.request, request.id != lastRequest else { return }
-                lastRequest = request.id
+                let request: TimelineRequest
+                if let notification = parent.notificationRequest,
+                   notification != lastNotificationRequest {
+                    lastNotificationRequest = notification
+                    // A notification wins if it arrives in the same update as an old search or
+                    // latest request. Mark that request consumed so it cannot pull the view away
+                    // again on the next render.
+                    lastRequest = parent.request?.id
+                    request = notification
+                } else {
+                    guard let ordinary = parent.request, ordinary.id != lastRequest else { return }
+                    lastRequest = ordinary.id
+                    request = ordinary
+                }
                 switch request.target {
                 case .latest:
                     scrollToLatest(collectionView, animated: true)
@@ -807,6 +845,23 @@ public struct ChatView: View {
         }
     }
 #endif
+
+/// First rendered row nobody had read when a notification was sent. Nil means the timeline was
+/// already current (or had never been read), so its normal latest-message anchor wins.
+func resumeRowId(rows: [ChatRow], lastReadAt: Double?) -> String? {
+    guard let lastReadAt else { return nil }
+    return rows.first { row in
+        switch row {
+        case .message(let event), .approval(let event), .proposal(let event),
+             .question(let event), .progress(let event):
+            Double(event.ts) > lastReadAt
+        case .tools(let activities):
+            activities.contains { Double(max($0.startedAt, $0.finishedAt ?? .min)) > lastReadAt }
+        case .delegation(let card):
+            card.events.contains { Double($0.ts) > lastReadAt }
+        }
+    }?.id
+}
 
 func followsNewest(atBottom: Bool, phase: ScrollPhase) -> Bool {
     guard atBottom else { return false }
@@ -1034,20 +1089,18 @@ private struct EmptyThreadView: View {
     }
 }
 
-/// The composer's outline. Quiet at rest; while a turn runs it settles into the accent and
-/// breathes, which reads as activity without adding a spinner to the field. Reduce Motion
-/// gets the steady accent outline with no pulse.
-private struct WorkingOutline: View {
+/// A running turn lights the screen edge itself, leaving every control's job unchanged. Reduce
+/// Motion keeps the same state cue as a steady bezel instead of pulsing it.
+private struct WorkingBezel: View {
     let active: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var bright = false
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 22, style: .continuous)
+        Rectangle()
             .strokeBorder(
-                active ? AnyShapeStyle(Color.accentColor.opacity(bright || reduceMotion ? 0.9 : 0.35))
-                       : AnyShapeStyle(.separator.opacity(0.6)),
-                lineWidth: active ? 1.5 : 1
+                Color.accentColor.opacity(active ? (bright || reduceMotion ? 0.9 : 0.3) : 0),
+                lineWidth: 2
             )
             .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: bright)
             .onChange(of: active, initial: true) { _, running in

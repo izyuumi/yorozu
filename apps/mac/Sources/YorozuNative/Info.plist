@@ -17,6 +17,7 @@
 <dict>
   <key>CFBundleIdentifier</key><string>to.yumi.yorozu.native</string>
   <key>CFBundleName</key><string>Yorozu</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>NSAppleEventsUsageDescription</key>
   <string>Yorozu drives Finder, Safari, Mail, Calendar, Messages and other apps on your behalf.</string>
   <key>NSCalendarsUsageDescription</key>

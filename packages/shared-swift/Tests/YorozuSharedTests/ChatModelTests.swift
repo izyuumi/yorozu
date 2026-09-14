@@ -547,6 +547,19 @@ private func summary(
 }
 
 @MainActor
+@Test func sendingWhileATurnRunsSteersItWithoutStoppingIt() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+
+    model.send("start", in: "home")
+    model.send("change course", in: "home")
+
+    #expect(model.generating.contains("home"))
+    let messages = await sent(by: transport, atLeast: 3).filter { $0.payload.kind == .message }
+    #expect(messages.count == 2)
+}
+
+@MainActor
 @Test func aDelegatedAgentsLastMessageEndsItsCardAndNotTheWholeTurn() async throws {
     let transport = FakeTransport()
     let model = await connected(transport)
