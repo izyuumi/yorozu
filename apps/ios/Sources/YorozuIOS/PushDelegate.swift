@@ -64,8 +64,9 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         let info = response.notification.request.content.userInfo
         guard let ref = info["ref"] as? String else { return }
         let model = await MainActor.run { () -> ChatModel? in
-            Session.shared.open(threadRef: ref)
-            return Session.shared.model
+            let session = Session.shared
+            session.open(threadRef: ref)
+            return session.model
         }
         // Opened from a lock screen, so what this phone holds of that thread is whatever it had
         // before the push. Ask for the rest now rather than leaving the chat to be pulled down.

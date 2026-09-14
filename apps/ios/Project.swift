@@ -45,6 +45,7 @@ let project = Project(
                 "UILaunchScreen": [:],
                 "ITSAppUsesNonExemptEncryption": false,
                 "CFBundleDisplayName": "Yorozu",
+                "LSApplicationCategoryType": "public.app-category.productivity",
                 "NSCameraUsageDescription": "Yorozu scans the pairing QR code shown by your Mac.",
                 // The relay's silent push, which wakes the app for a few seconds so it can
                 // drain its sync over its own socket while suspended. Nothing is read out of
