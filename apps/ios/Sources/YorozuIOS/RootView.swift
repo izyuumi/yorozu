@@ -3,6 +3,21 @@ import UIKit
 import UserNotifications
 import YorozuShared
 
+#if DEBUG
+/// Local transport for deterministic showcase screenshots. Production never enters this path.
+private actor ShowcaseTransport: ChatTransport {
+    func connect() -> AsyncStream<TransportUpdate> {
+        AsyncStream { continuation in
+            continuation.yield(.ownerOnline(true))
+            continuation.yield(.state(.paired))
+        }
+    }
+
+    func send(_ event: YorozuEvent) async throws {}
+    func close() async {}
+}
+#endif
+
 @main
 struct YorozuApp: App {
     /// APNs has to be answered by an app delegate — there is no SwiftUI form of the device
@@ -47,6 +62,17 @@ final class Session {
     static let shared = Session()
 
     private init() {
+        #if DEBUG
+        if launchArgument("yorozuShowcase") != nil || launchArgument("yorozuScene") != nil {
+            let model = ChatModel(transport: ShowcaseTransport())
+            E2EHarness.attach(to: model)
+            model.start()
+            self.model = model
+            let showcase = launchArgument("yorozuShowcase") ?? launchArgument("yorozuScene")
+            openPath = showcase == "threads" ? [] : model.threads.prefix(1).map(\.id)
+            return
+        }
+        #endif
         if let injected = launchArgument("yorozuPair") {
             // Surface the reason rather than silently falling back to the scanner.
             do { try pair(with: injected) } catch { failure = error.localizedDescription }

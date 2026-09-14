@@ -136,6 +136,11 @@ public struct ChatView: View {
             #endif
             ToolbarItem(placement: .primaryAction) {
                 Menu("More", systemImage: "ellipsis") {
+                    #if os(iOS)
+                        modelPicker
+                        effortPicker
+                        Divider()
+                    #endif
                     ExportThreadButton(title: thread.displayTitle) {
                         threadMarkdown(thread: thread, events: events)
                     }
@@ -511,25 +516,27 @@ public struct ChatView: View {
                     .padding(.trailing, 6)
                     .frame(height: controlTarget)
             }
-            HStack(spacing: 12) {
-                Menu {
-                    modelPicker
-                } label: {
-                    Label(modelCaption ?? "Model", systemImage: "cpu")
-                        .lineLimit(1)
+            #if os(macOS)
+                HStack(spacing: 12) {
+                    Menu {
+                        modelPicker
+                    } label: {
+                        Label(modelCaption ?? "Model", systemImage: "cpu")
+                            .lineLimit(1)
+                    }
+                    .disabled(model.models.isEmpty)
+                    Menu {
+                        effortPicker
+                    } label: {
+                        Label(thread.effort?.label ?? "Effort", systemImage: "gauge.with.dots.needle.33percent")
+                    }
+                    Spacer(minLength: 0)
                 }
-                .disabled(model.models.isEmpty)
-                Menu {
-                    effortPicker
-                } label: {
-                    Label(thread.effort?.label ?? "Effort", systemImage: "gauge.with.dots.needle.33percent")
-                }
-                Spacer(minLength: 0)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 12)
-            .padding(.bottom, 7)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 7)
+            #endif
         }
         .background(fieldBackground, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         // While a turn runs the outline itself breathes in the accent: the field is the one
@@ -709,8 +716,8 @@ public struct ChatView: View {
                             ThinkingRow()
                         }
                     }
-                    .margins(.horizontal, 16)
-                    .margins(.vertical, 6)
+                    .margins(.horizontal, 10)
+                    .margins(.vertical, 3)
                 }
                 dataSource = UICollectionViewDiffableDataSource<Int, Entry>(collectionView: collectionView) {
                     collectionView, indexPath, entry in
