@@ -1,6 +1,7 @@
 import type { EventPayload, YorozuEvent } from "@yorozu/shared";
 import {
   checkApproval,
+  verifyApproved,
   type ActionClass,
   type ActionDetail,
   type AskFn,
@@ -269,6 +270,13 @@ export async function* runAgent(
           gate.actionId && options.context
             ? { ...options.context, actionId: gate.actionId }
             : options.context;
+        if (gate.actionId && tool.action) {
+          const stale = verifyApproved(gate.actionId, {
+            ...tool.action(args),
+            ...(tool.batch ? { items: tool.batch(args) } : {}),
+          });
+          if (stale) return stale;
+        }
         return await tool.run(args, context);
       } catch (e) {
         return `error: ${e instanceof Error ? e.message : String(e)}`;

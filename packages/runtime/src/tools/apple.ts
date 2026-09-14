@@ -8,7 +8,7 @@
  * names are limited to `[A-Za-z0-9_-]`.
  */
 
-import { summarize, verifyApproved } from "../approval.js";
+import { hashContent, summarize, verifyApproved } from "../approval.js";
 import type { Tool } from "../index.js";
 import { askNative } from "./native.js";
 import { truncate } from "./shell.js";
@@ -103,6 +103,9 @@ export const calendarCreateTool: Tool = {
     contentSummary: summarize(
       JSON.stringify(given(args, ["title", "start", "end", "calendar", "notes", "location"])),
     ),
+    contentHash: hashContent(
+      JSON.stringify(given(args, ["title", "start", "end", "calendar", "notes", "location"])),
+    ),
     consequence: "Creates an event in the user's calendar.",
   }),
   parameters: {
@@ -141,6 +144,9 @@ export const calendarUpdateTool: Tool = {
     target: String(args.id ?? ""),
     operation: "edit",
     contentSummary: summarize(
+      JSON.stringify(given(args, ["title", "start", "end", "calendar", "notes", "location"])),
+    ),
+    contentHash: hashContent(
       JSON.stringify(given(args, ["title", "start", "end", "calendar", "notes", "location"])),
     ),
     consequence: "Changes an existing event in the user's calendar.",
@@ -231,6 +237,7 @@ export const remindersCreateTool: Tool = {
     target: String(args.title ?? ""),
     operation: "edit",
     contentSummary: summarize(JSON.stringify(given(args, ["title", "due", "list", "notes"]))),
+    contentHash: hashContent(JSON.stringify(given(args, ["title", "due", "list", "notes"]))),
     consequence: "Creates a reminder in the user's Reminders account.",
   }),
   parameters: {
@@ -343,6 +350,7 @@ export const mailSendTool: Tool = {
     operation: "send",
     recipient: String(to ?? ""),
     contentSummary: summarize(`${String(subject ?? "")}\n\n${String(body ?? "")}`.trim()),
+    contentHash: hashContent(`${String(subject ?? "")}\n\n${String(body ?? "")}`.trim()),
     consequence: "Sends this email from the user's own Mail account. It cannot be recalled.",
   }),
   batch: ({ to, subject }) => {

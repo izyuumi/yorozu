@@ -6,7 +6,7 @@
 
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { summarize } from "../approval.js";
+import { hashContent, summarize } from "../approval.js";
 import type { Tool } from "../index.js";
 import { expandHome, truncate } from "./shell.js";
 
@@ -30,6 +30,7 @@ export const fsWriteTool: Tool = {
     target: expandHome(String(path ?? "")),
     operation: "edit",
     contentSummary: summarize(String(content ?? "")),
+    contentHash: hashContent(String(content ?? "")),
     consequence: `Replaces ${expandHome(String(path ?? ""))} with this text.`,
   }),
   parameters: {
