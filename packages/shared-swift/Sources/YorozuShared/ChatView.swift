@@ -71,20 +71,6 @@ public struct ChatView: View {
         Binding(get: { model.attachments[thread.id] ?? [] }, set: { model.attachments[thread.id] = $0 })
     }
 
-    #if os(iOS)
-        @ViewBuilder private var newSessionButton: some View {
-            let button = Button("New session", systemImage: "square.and.pencil") { onCreate?() }
-                .labelStyle(.iconOnly)
-                .controlSize(.large)
-                .buttonBorderShape(.circle)
-            if #available(iOS 26, *) {
-                button.buttonStyle(.glassProminent)
-            } else {
-                button.buttonStyle(.borderedProminent)
-            }
-        }
-    #endif
-
     /// The last agent message, which is the only one that can still be streaming.
     private var streamingId: String? {
         guard generating else { return nil }
@@ -102,21 +88,14 @@ public struct ChatView: View {
             if let failure = model.failure {
                 Banner(text: failure, systemImage: "exclamationmark.triangle")
             }
-            Group {
-                if rows.isEmpty {
-                    EmptyThreadView { prompt in
-                        draft.wrappedValue = prompt
-                        send()
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    messages
+            if rows.isEmpty {
+                EmptyThreadView { prompt in
+                    draft.wrappedValue = prompt
+                    send()
                 }
-            }
-            .overlay(alignment: .bottomTrailing) {
-                #if os(iOS)
-                    if onCreate != nil { newSessionButton.padding(16) }
-                #endif
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                messages
             }
             composer
         }
@@ -148,6 +127,13 @@ public struct ChatView: View {
                                 .lineLimit(1)
                         }
                         .accessibilityElement(children: .combine)
+                    }
+                }
+            #endif
+            #if os(iOS)
+                if let onCreate {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("New session", systemImage: "square.and.pencil", action: onCreate)
                     }
                 }
             #endif

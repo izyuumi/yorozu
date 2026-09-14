@@ -366,6 +366,13 @@ public struct ThreadListView<Destination: View>: View {
             .searchable(text: $query, prompt: "Search threads")
             .refreshable { await onRefresh?() }
             .navigationTitle("Yorozu")
+            .overlay(alignment: .bottomTrailing) {
+                #if os(iOS)
+                    newThreadButton
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 72)
+                #endif
+            }
             .toolbar {
                 if let onSettings {
                     ToolbarItem(placement: .navigation) {
@@ -391,9 +398,7 @@ public struct ThreadListView<Destination: View>: View {
                         }
                     }
                 #endif
-                #if os(iOS)
-                    ToolbarItem(placement: .primaryAction) { newThreadButton }
-                #else
+                #if os(macOS)
                     ToolbarItem(placement: .primaryAction) { newThreadButton }
                 #endif
             }
@@ -406,9 +411,21 @@ public struct ThreadListView<Destination: View>: View {
         .renameAlert($renaming, onRename: onRename)
     }
 
-    /// The system's own bar button: a bare symbol the toolbar sizes and centres itself.
+    /// Native toolbar button on Mac; native floating button above iOS's bottom search field.
     @ViewBuilder private var newThreadButton: some View {
-        Button("New thread", systemImage: "square.and.pencil", action: onCreate)
+        #if os(iOS)
+            let button = Button("New thread", systemImage: "square.and.pencil", action: onCreate)
+                .labelStyle(.iconOnly)
+                .controlSize(.large)
+                .buttonBorderShape(.circle)
+            if #available(iOS 26, *) {
+                button.buttonStyle(.glassProminent)
+            } else {
+                button.buttonStyle(.borderedProminent)
+            }
+        #else
+            Button("New thread", systemImage: "square.and.pencil", action: onCreate)
+        #endif
     }
 
     /// The archive: shut by default, and the only place a thread comes back from.
