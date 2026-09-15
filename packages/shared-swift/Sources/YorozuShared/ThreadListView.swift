@@ -221,7 +221,7 @@ struct ThreadRow: View {
 
 /// How the phone reports the link to its Mac. Two independent facts collapsed into the one thing
 /// worth saying: the relay has us or it does not, and behind it the Mac is there or it is not.
-public enum ConnectionState: Sendable {
+public enum ConnectionState: Equatable, Sendable {
     case connected, reconnecting, offline
 
     public init(state: TransportState, ownerOnline: Bool) {
@@ -245,6 +245,36 @@ public enum ConnectionState: Sendable {
         case .connected: .green
         case .reconnecting: .secondary
         case .offline: .red
+        }
+    }
+}
+
+/// UI-facing connection state. Backgrounding freezes the last label; a foreground disconnect
+/// has to survive the grace period before it replaces that label. Recovery is always immediate.
+@MainActor
+@Observable
+public final class ConnectionPresentation {
+    public private(set) var state: ConnectionState
+    private var pending: Task<Void, Never>?
+
+    public init(_ state: ConnectionState) { self.state = state }
+
+    public func update(
+        _ actual: ConnectionState,
+        active: Bool,
+        delay: Duration = .seconds(3.2)
+    ) {
+        pending?.cancel()
+        pending = nil
+        guard active, actual != state else { return }
+        guard actual != .connected else {
+            state = actual
+            return
+        }
+        pending = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            self?.state = actual
         }
     }
 }
