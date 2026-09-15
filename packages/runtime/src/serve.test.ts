@@ -28,7 +28,7 @@ import { openaiCompat } from "./provider.js";
 import { loadDevices, serve, typedAnswer, type Sidecar } from "./serve.js";
 import { OpenClawRunner, type OpenClawTurn } from "./openclaw.js";
 import { localSocketPath } from "./local.js";
-import { readThreadEvents } from "./threads.js";
+import { appendThreadEvent, createThread, readThreadEvents } from "./threads.js";
 
 let relay: Relay;
 let sidecar: Sidecar;
@@ -84,11 +84,12 @@ test("a sealed message from a phone round-trips through the agent loop", async (
   const phoneKeys = generateKeypair();
   const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
   phone.frame(encodeBody({ t: "hello", pub: toBase64Url(phoneKeys.publicKey) }), keys);
+  await vi.waitFor(() => expect(lines).toContain("STATE paired"));
 
   const sent: YorozuEvent = {
     id: "e1",
     threadId: "t1",
-    ts: 1,
+    ts: Date.now(),
     agentId: "phone",
     kind: "message",
     data: { role: "user", text: "ping" },
@@ -127,7 +128,7 @@ test("a sealed message from a phone round-trips through the agent loop", async (
   expect(fetchMock.mock.calls[0]![0]).toBe("https://example.invalid/v1/chat/completions");
 });
 
-test("a phone rejoins a restarted sidecar without pairing again", async () => {
+test.each([false, true])("a phone rejoins without hello and preserves a safe cutoff (legacy=%s)", async (legacy) => {
   relay = await startRelay(0);
   const stateDir = mkdtempSync(join(tmpdir(), "yorozu-rejoin-"));
   const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => sse("pong"));
@@ -163,6 +164,10 @@ test("a phone rejoins a restarted sidecar without pairing again", async () => {
 
   phone.ws.close();
   await first.cast.close();
+  const originalPairedAt = loadDevices(join(stateDir, "devices.json"))[0]!.pairedAt;
+  if (legacy) writeFileSync(join(stateDir, "devices.json"), JSON.stringify([{ pub, lastSeen: 1 }]));
+  createThread("Old history", stateDir, "old-history");
+  appendThreadEvent({ id: "old-message", threadId: "old-history", ts: 1, agentId: "phone", kind: "message", data: { role: "user", text: "before pairing" } }, stateDir);
 
   // A rejoin: the one-time token is long burnt, so the phone proves itself to the relay against
   // the connect nonce, and says no `hello` — the restarted sidecar has to know it from disk.
@@ -171,11 +176,18 @@ test("a phone rejoins a restarted sidecar without pairing again", async () => {
   await second.qr;
   const again = await rejoinPhone(relay.port, qr.roomId!, keys);
   expect(await again.next()).toMatchObject({ type: "joined" });
+  const restoredPairedAt = loadDevices(join(stateDir, "devices.json"))[0]!.pairedAt;
+  expect(restoredPairedAt).toBeGreaterThan(1);
+  if (!legacy) expect(restoredPairedAt).toBe(originalPairedAt);
+  const sync = seal(sessionKey, Buffer.from(JSON.stringify({ id: "sync", threadId: "", ts: Date.now(), agentId: "phone", kind: "sync_request", data: { lastSeen: {} } })));
+  again.frame(encodeBody({ t: "box", n: toBase64Url(sync.nonce), c: toBase64Url(sync.ciphertext) }), keys);
+  const syncBody = frameBody((await again.next()).payload);
+  expect(JSON.parse(Buffer.from(open(sessionKey, fromBase64Url(syncBody.n), fromBase64Url(syncBody.c))).toString())).toMatchObject({ kind: "sync_delta", data: { events: [] } });
 
   const sent: YorozuEvent = {
     id: "e2",
     threadId: "home",
-    ts: 2,
+    ts: Date.now(),
     agentId: "phone",
     kind: "message",
     data: { role: "user", text: "ping" },
@@ -642,8 +654,8 @@ async function pairPhone(port: number, qr: QrPayload) {
   phone.frame(encodeBody({ t: "hello", pub: toBase64Url(identity.publicKey) }), keys);
 
   return {
-    send(threadId: string, payload: EventPayload): void {
-      const event: YorozuEvent = { id: randomUUID(), threadId, ts: Date.now(), agentId: "phone", ...payload };
+    send(threadId: string, payload: EventPayload, ts = Date.now()): void {
+      const event: YorozuEvent = { id: randomUUID(), threadId, ts, agentId: "phone", ...payload };
       const box = seal(sessionKey, Buffer.from(JSON.stringify(event)));
       phone.frame(
         encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }),
@@ -807,9 +819,14 @@ test("a newly paired phone syncs only events created after it paired", async () 
 
   await new Promise((resolve) => setTimeout(resolve, 2));
   const second = await pairPhone(relay.port, await qrs.next());
-  await second.next("thread_list");
+  const greeting = await second.next("thread_list");
+  expect(JSON.stringify(greeting)).not.toContain("old prompt");
   second.send(chat, { kind: "sync_request", data: { lastSeen: {} } });
   expect(await second.next("sync_delta")).toMatchObject({ data: { events: [] } });
+
+  // An older offline outbox message must not evade the cutoff through live broadcast.
+  first.send(chat, { kind: "message", data: { role: "user", text: "old offline prompt" } }, 1);
+  expect(await second.next("message")).toMatchObject({ data: { role: "agent", text: "pong" } });
 
   first.send(chat, { kind: "message", data: { role: "user", text: "new prompt" } });
   expect(await second.next("message")).toMatchObject({
@@ -1074,7 +1091,7 @@ test("a second sidecar on the same state dir is the same Mac: same keys, same ro
   // that generated new ones would silently unpair every device. It must not.
   relay = await startRelay(0);
   const stateDir = mkdtempSync(join(tmpdir(), "yorozu-restart-"));
-  const paired = { pub: toBase64Url(generateKeypair().publicKey), signingPub: "s", lastSeen: 7 };
+  const paired = { pub: toBase64Url(generateKeypair().publicKey), signingPub: "s", pairedAt: 5, lastSeen: 7 };
   writeFileSync(join(stateDir, "devices.json"), JSON.stringify([paired]));
 
   const start = async () => {

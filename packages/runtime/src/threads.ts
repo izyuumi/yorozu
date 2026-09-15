@@ -244,8 +244,8 @@ const PREVIEW_LIMIT = 140;
  * Both are undefined in a thread nothing has been said in yet, so the row draws nothing rather
  * than "" and the thread reads as read rather than as unread-since-the-epoch.
  */
-function logSummary(threadId: string, dir: string): { preview?: string; lastAgentAt?: number } {
-  const events = readThreadEvents(threadId, dir);
+function logSummary(threadId: string, dir: string, minTs = 0): { preview?: string; lastAgentAt?: number } {
+  const events = readThreadEvents(threadId, dir).filter((event) => event.ts >= minTs);
   const last = events.findLast((event) => event.kind === "message");
   const lastAgent = events.findLast(
     (event) => event.kind === "message" && event.data.role === "agent",
@@ -258,9 +258,9 @@ function logSummary(threadId: string, dir: string): { preview?: string; lastAgen
 }
 
 /** What the phone's thread list renders. */
-export const threadSummaries = (dir = stateDir()): ThreadSummary[] =>
+export const threadSummaries = (dir = stateDir(), minTs = 0): ThreadSummary[] =>
   listThreads(dir).map((thread) => {
-    const { preview, lastAgentAt } = logSummary(thread.id, dir);
+    const { preview, lastAgentAt } = logSummary(thread.id, dir, minTs);
     return {
       id: thread.id,
       title: thread.title,
