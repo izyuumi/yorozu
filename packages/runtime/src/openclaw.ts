@@ -61,7 +61,7 @@ export class OpenClawRunner {
   async run(turn: OpenClawTurn): Promise<string | undefined> {
     if (turn.signal?.aborted) return "";
     const client = await this.connect();
-    const sessionKey = `agent:main:yorozu:${turn.threadId}`;
+    const sessionKey = `agent:main:yorozu:${turn.threadId}`.toLowerCase();
     const active = [...this.#pending].find((item) => item.sessionKey === sessionKey);
     if (active) {
       await client.request("chat.send", {
