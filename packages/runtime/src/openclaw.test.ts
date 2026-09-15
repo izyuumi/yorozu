@@ -26,7 +26,7 @@ function harness() {
     dir,
     request,
     clientFactory,
-    event: (payload: object) => options.onEvent?.({ type: "event", event: "chat", payload } as never),
+    event: (payload: object, event = "chat") => options.onEvent?.({ type: "event", event, payload } as never),
   };
 }
 
@@ -93,6 +93,63 @@ describe("OpenClawRunner", () => {
     }));
     gateway.event({ state: "final", sessionKey: "agent:main:yorozu:one", runId: "run-1", seq: 1, message: { content: "revised" } });
     await expect(running).resolves.toBe("revised");
+  });
+
+  test("waits for a delegated requester-settle announcement after an empty parent final", async () => {
+    const gateway = harness();
+    const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    const result = runner.run({ threadId: "delegated", text: "what is on my calendar?" });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    gateway.event({
+      action: "upserted",
+      task: {
+        id: "child",
+        sessionKey: "agent:main:yorozu:delegated",
+        status: "running",
+        deliveryStatus: "pending",
+      },
+    }, "task");
+    gateway.event({
+      state: "final", sessionKey: "agent:main:yorozu:delegated", runId: "run-1", seq: 1,
+    });
+    await expect(Promise.race([result, Promise.resolve("still-pending")])).resolves.toBe("still-pending");
+    gateway.event({
+      state: "final",
+      sessionKey: "agent:main:yorozu:delegated",
+      runId: "announce:requester-settle:main:agent:main:yorozu:delegated:child:yield-1",
+      seq: 1,
+      message: { content: [{ type: "text", text: "Tomorrow at 10am." }] },
+    });
+    await expect(result).resolves.toBe("Tomorrow at 10am.");
+  });
+
+  test("finishes an intentional empty turn when it did not delegate", async () => {
+    const gateway = harness();
+    const result = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).run({
+      threadId: "silent", text: "perform a side effect",
+    });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    gateway.event({ state: "final", sessionKey: "agent:main:yorozu:silent", runId: "run-1", seq: 1 });
+    await expect(result).resolves.toBe("");
+  });
+
+  test("finishes an empty turn after a fire-and-forget task", async () => {
+    const gateway = harness();
+    const result = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).run({
+      threadId: "quiet", text: "start this in the background without a completion message",
+    });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    gateway.event({
+      action: "upserted",
+      task: {
+        id: "child",
+        sessionKey: "agent:main:yorozu:quiet",
+        status: "running",
+        deliveryStatus: "not_applicable",
+      },
+    }, "task");
+    gateway.event({ state: "final", sessionKey: "agent:main:yorozu:quiet", runId: "run-1", seq: 1 });
+    await expect(result).resolves.toBe("");
   });
 
   test("persists bootstrap device credentials with owner-only permissions", async () => {
