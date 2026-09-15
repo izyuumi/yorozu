@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "node:process";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { defaultTools } from "./index.js";
+import { defaultTools, eventPayload, runAgent } from "./index.js";
 import { listSkills, skillsDir, skillsPrompt, skillTool } from "./skills.js";
 
 let dir: string;
@@ -52,9 +52,9 @@ test("the skill tool returns the body, and only for a listed skill", async () =>
   skill("recipes", "---\nname: recipes\ndescription: Cook\n---\n\nStart with the pantry.");
 
   expect(await skillTool.run({ name: "recipes" })).toBe("Start with the pantry.");
-  expect(await skillTool.run({ name: "missing" })).toBe("no such skill: missing");
+  expect(() => skillTool.run({ name: "missing" })).toThrow("no such skill: missing");
   // The name is matched against the listing, so it never reaches a path.
-  expect(await skillTool.run({ name: "../../../etc/passwd" })).toBe(
+  expect(() => skillTool.run({ name: "../../../etc/passwd" })).toThrow(
     "no such skill: ../../../etc/passwd",
   );
 });
@@ -62,6 +62,21 @@ test("the skill tool returns the body, and only for a listed skill", async () =>
 test("a state directory without skills is not an error", () => {
   expect(listSkills(skillsDir(dir))).toEqual([]);
   expect(skillsPrompt(listSkills(skillsDir(dir)))).toBe("");
+});
+
+test("a missing skill is emitted as a failed tool result", async () => {
+  const events = await Array.fromAsync(runAgent({
+    provider: {
+      auth: async () => ({ ok: true }),
+      async *stream() {
+        yield { type: "tool_call" as const, call: { id: "missing", name: "skill", arguments: '{"name":"grill-me"}' } };
+        yield { type: "done" as const, reason: "tool_calls" as const };
+      },
+    },
+    tools: [skillTool], system: "", messages: [], maxTurns: 1,
+  }));
+  const result = events.find((event) => event.type === "tool_result")!;
+  expect(eventPayload(result)).toMatchObject({ data: { ok: false, output: "error: no such skill: grill-me" } });
 });
 
 test("the schema is the one argument the model must supply", async () => {
@@ -75,8 +90,8 @@ test("the schema is the one argument the model must supply", async () => {
   // Loading instructions has no effect outside the runtime, so there is no approval card.
   expect(skillTool.actionClass).toBeUndefined();
 
-  // A call with no name is answered rather than thrown: the model can read this and retry.
-  expect(await skillTool.run({})).toBe("no such skill: ");
+  // Dispatch turns thrown failures into error results, never successful skill loads.
+  expect(() => skillTool.run({})).toThrow("no such skill: ");
 });
 
 test("a SKILL.md with no frontmatter is still a skill, named after its directory", () => {

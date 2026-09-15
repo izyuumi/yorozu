@@ -107,14 +107,14 @@ test("a failure with no tool call to show for it propagates to the chain", async
   ).rejects.toThrow("401");
 });
 
-test("Claude MCP's underscore-safe browser name maps back to the registered dotted tool", async () => {
+test.each(["mcp__yorozu__browser_open", "browser_open"])("Claude browser name %s maps back to the registered dotted tool", async (name) => {
   queryMock.mockReturnValue(
     session([
       {
         type: "assistant",
         message: {
           content: [
-            { type: "tool_use", id: "toolu_browser", name: "mcp__yorozu__browser_open", input: { url: "https://example.com" } },
+            { type: "tool_use", id: "toolu_browser", name, input: { url: "https://example.com" } },
           ],
         },
       },

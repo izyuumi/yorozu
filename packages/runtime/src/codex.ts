@@ -12,7 +12,7 @@
 
 import { Codex, type ThreadEvent } from "@openai/codex-sdk";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createServer, type Server } from "node:net";
+import { createServer, type Server, type Socket as NetSocket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { execPath } from "node:process";
@@ -60,8 +60,11 @@ async function listen(): Promise<Socket> {
   const queue: Pending[] = [];
   let wake: (() => void) | undefined;
   let calls = 0;
+  const connections = new Set<NetSocket>();
 
   const server: Server = createServer((socket) => {
+    connections.add(socket);
+    socket.once("close", () => connections.delete(socket));
     socket.setEncoding("utf8");
     let buffer = "";
     socket.on("data", (chunk: string) => {
@@ -95,6 +98,7 @@ async function listen(): Promise<Socket> {
       return queue.shift()!;
     },
     close() {
+      for (const socket of connections) socket.destroy();
       server.close();
       void rm(dir, { recursive: true, force: true }).catch(() => {});
     },
@@ -109,65 +113,76 @@ interface Session {
   /** Held across `stream` calls so neither promise of the race is ever dropped half-settled. */
   nextEvent?: Promise<{ event: IteratorResult<ThreadEvent> }>;
   nextCall?: Promise<{ incoming: Pending }>;
+  cleanupAbort?(): void;
   close(): void;
 }
 
 export function codexCli(config: CodexCliConfig = {}): Provider {
-  /** Set only between the turn's tool call and the loop coming back with its result. */
-  let paused: Session | undefined;
+  /** Each agent loop owns its paused turn, including workers sharing this provider. */
+  const paused = new Map<AbortSignal | undefined, Session>();
 
   async function start(
     messages: Message[],
     tools: ToolDef[],
     effort?: "low" | "medium" | "high",
+    signal?: AbortSignal,
   ): Promise<Session> {
     const socket = await listen();
-    const configFile = join(dirname(socket.path), "bridge.json");
-    await writeFile(configFile, JSON.stringify({ socket: socket.path, tools }));
+    try {
+      const configFile = join(dirname(socket.path), "bridge.json");
+      await writeFile(configFile, JSON.stringify({ socket: socket.path, tools }));
 
-    // The SDK resolves its own bundled binary by default; point it at the one the
-    // user logged in with instead, when there is one.
-    const binary = onPath(BINARY);
-    const thread = new Codex({
-      ...(binary ? { codexPathOverride: binary } : {}),
-      ...(tools.length
-        ? {
-            config: {
-              mcp_servers: {
-                [SERVER]: {
-                  command: execPath,
-                  args: [BRIDGE, configFile],
-                  // Auto-approved at the Codex layer because ours is the real gate: an
-                  // approval Codex asks for here has nobody to ask under `approvalPolicy:
-                  // "never"`, and the call fails with "requires approval" instead.
-                  default_tools_approval_mode: "approve",
+      // The SDK resolves its own bundled binary by default; point it at the one the
+      // user logged in with instead, when there is one.
+      const binary = onPath(BINARY);
+      const thread = new Codex({
+        ...(binary ? { codexPathOverride: binary } : {}),
+        ...(tools.length
+          ? {
+              config: {
+                mcp_servers: {
+                  [SERVER]: {
+                    command: execPath,
+                    args: [BRIDGE, configFile],
+                    // Auto-approved at the Codex layer because ours is the real gate: an
+                    // approval Codex asks for here has nobody to ask under `approvalPolicy:
+                    // "never"`, and the call fails with "requires approval" instead.
+                    default_tools_approval_mode: "approve",
+                  },
                 },
               },
-            },
-          }
-        : {}),
-    }).startThread({
-      ...(config.model ? { model: config.model } : {}),
-      ...(effort ? { modelReasoningEffort: effort } : {}),
-      sandboxMode: "read-only",
-      skipGitRepoCheck: true,
-      // Ours is the only gate: Codex asking for its own approval would have nobody to ask.
-      approvalPolicy: "never",
-    });
+            }
+          : {}),
+      }).startThread({
+        ...(config.model ? { model: config.model } : {}),
+        ...(effort ? { modelReasoningEffort: effort } : {}),
+        sandboxMode: "read-only",
+        skipGitRepoCheck: true,
+        // Ours is the only gate: Codex asking for its own approval would have nobody to ask.
+        approvalPolicy: "never",
+      });
 
-    const system = systemOf(messages);
-    const transcript = renderTranscript(messages);
-    const { events } = await thread.runStreamed(
-      system ? `${system}\n\n${transcript}` : transcript,
-    );
-    return {
-      socket,
-      events,
-      close() {
-        socket.close();
-        void events.return?.(undefined).catch(() => {});
-      },
-    };
+      const system = systemOf(messages);
+      const transcript = renderTranscript(messages);
+      const { events } = await thread.runStreamed(
+        system ? `${system}\n\n${transcript}` : transcript,
+        { signal },
+      );
+      let closed = false;
+      return {
+        socket,
+        events,
+        close() {
+          if (closed) return;
+          closed = true;
+          socket.close();
+          void events.return?.(undefined).catch(() => {});
+        },
+      };
+    } catch (error) {
+      socket.close();
+      throw error;
+    }
   }
 
   return {
@@ -188,8 +203,10 @@ export function codexCli(config: CodexCliConfig = {}): Provider {
     },
 
     async *stream(messages, tools, options) {
-      let resumed = paused;
-      paused = undefined;
+      const signal = options?.signal;
+      if (signal?.aborted) return;
+      let resumed = paused.get(signal);
+      paused.delete(signal);
       if (resumed) {
         const pending = resumed.pending!;
         const result = messages.findLast(
@@ -201,26 +218,41 @@ export function codexCli(config: CodexCliConfig = {}): Provider {
           resumed.pending = undefined;
           pending.reply(result.content);
         } else {
+          resumed.cleanupAbort?.();
           resumed.close();
           resumed = undefined;
         }
       }
-      const session = resumed ?? (await start(messages, tools, options?.effort));
+      const session = resumed ?? (await start(messages, tools, options?.effort, signal));
+      session.cleanupAbort?.();
+      let cancel!: () => void;
+      const cancelled = new Promise<{ cancelled: true }>((resolve) => {
+        cancel = () => {
+          session.cleanupAbort?.();
+          if (paused.get(signal) === session) paused.delete(signal);
+          session.close();
+          resolve({ cancelled: true });
+        };
+      });
+      signal?.addEventListener("abort", cancel, { once: true });
+      session.cleanupAbort = () => signal?.removeEventListener("abort", cancel);
+      if (signal?.aborted) cancel();
 
       try {
         for (;;) {
           session.nextEvent ??= session.events.next().then((event) => ({ event }));
           session.nextCall ??= session.socket.next().then((incoming) => ({ incoming }));
           const settled = await Promise.race<
-            { event: IteratorResult<ThreadEvent> } | { incoming: Pending }
-          >([session.nextEvent, session.nextCall]);
+            { event: IteratorResult<ThreadEvent> } | { incoming: Pending } | { cancelled: true }
+          >([session.nextEvent, session.nextCall, cancelled]);
+          if (signal?.aborted || "cancelled" in settled) return;
 
           if ("incoming" in settled) {
             session.nextCall = undefined;
             session.pending = settled.incoming;
             // The Codex turn stays alive, blocked on the bridge, until the loop comes back
             // with the result; `paused` is what stops the `finally` below from killing it.
-            paused = session;
+            paused.set(signal, session);
             yield { type: "tool_call", call: settled.incoming.call } satisfies ProviderEvent;
             yield { type: "done", reason: "tool_calls" };
             return;
@@ -248,7 +280,10 @@ export function codexCli(config: CodexCliConfig = {}): Provider {
         }
         yield { type: "done" };
       } finally {
-        if (paused !== session) session.close();
+        if (paused.get(signal) !== session) {
+          session.cleanupAbort();
+          session.close();
+        }
       }
     },
   };

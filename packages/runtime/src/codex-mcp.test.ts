@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { beforeEach, expect, test, vi } from "vitest";
 import type { ProviderEvent, ToolDef } from "./provider.js";
+import { defaultTools, runAgent } from "./index.js";
 
 const { codexMock, startThreadMock, runStreamedMock } = vi.hoisted(() => {
   const runStreamedMock = vi.fn();
@@ -139,6 +140,38 @@ test("a bridge that fails before the first token lets the chain advance", async 
     { type: "text", text: "from the fallback" },
     { type: "done", reason: "stop" },
   ]);
+});
+
+test("Codex bridge browser_open reaches the registered browser implementation", async () => {
+  let release: () => void = () => {};
+  const answered = new Promise<void>((resolve) => (release = resolve));
+  runStreamedMock.mockResolvedValue({
+    events: (async function* () {
+      await answered;
+      yield { type: "turn.completed", usage: {} };
+    })(),
+  });
+  const browserOpen = defaultTools.find((tool) => tool.name === "browser.open")!;
+  const open = vi.spyOn(browserOpen, "run").mockResolvedValue("tab-1");
+  try {
+    const turn = Array.fromAsync(runAgent({
+      provider: codexCli(), system: "Open the page.",
+      messages: [{ role: "user", content: "Open https://example.com" }],
+    }));
+    const configFile = await until(() =>
+      (codexMock.mock.calls[0]?.[0] as { config?: { mcp_servers: { yorozu: { args: string[] } } } } | undefined)
+        ?.config?.mcp_servers.yorozu.args[1],
+    );
+    const bridge = JSON.parse(await readFile(configFile, "utf8")) as { socket: string };
+    const result = await callAdapter(bridge.socket, { name: "browser_open", arguments: { url: "https://example.com" } });
+    release();
+    await turn;
+    expect(result).toBe("tab-1");
+    expect(open).toHaveBeenCalledWith({ url: "https://example.com" }, undefined);
+  } finally {
+    release();
+    open.mockRestore();
+  }
 });
 
 test("a bridge that fails after the first token fails the turn", async () => {
