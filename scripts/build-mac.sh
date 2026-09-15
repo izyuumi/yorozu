@@ -56,6 +56,8 @@ cp -R "$BIN/Sparkle.framework" "$APP/Contents/Frameworks/"
 # for iOS, but this bundle is assembled by hand and has no catalog, so it takes the .icns
 # that scripts/icon-render.sh renders from the same artwork.
 cp apps/mac/Resources/Yorozu.icns "$APP/Contents/Resources/Yorozu.icns"
+xcrun xcstringstool compile apps/mac/Resources/Localizable.xcstrings \
+  --output-directory "$APP/Contents/Resources"
 # The watchdog, which is a resource rather than an executable on purpose: it has to be
 # runnable by launchd when the app it supervises is not running at all.
 cp apps/mac/Resources/watchdog.sh "$APP/Contents/Resources/watchdog.sh"
@@ -113,6 +115,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>Yorozu</string>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleName</key><string>Yorozu</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleIconFile</key><string>Yorozu</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>

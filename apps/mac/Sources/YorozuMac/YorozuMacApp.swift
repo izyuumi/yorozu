@@ -109,6 +109,8 @@ final class Sidecar: ObservableObject {
 
     /// Asks the sidecar to mint the next join token, which prints a fresh pairing payload.
     func newCode() {
+        qr = nil
+        pairingString = nil
         guard process?.isRunning == true else { return }
         try? input.fileHandleForWriting.write(contentsOf: Data("MINT\n".utf8))
     }
@@ -143,6 +145,10 @@ private extension String {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Yorozu is a menu-bar agent. Closing chat or Settings only hides UI; relay, runtime,
+    /// updates, and phone connectivity keep running until the user explicitly chooses Quit.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
             let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev"
@@ -152,7 +158,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Re-registered rather than only written once: an update moves the bundle, and an
             // agent pointing at the old path supervises nothing.
             if Watchdog.isEnabled { Watchdog.install() }
-            LoginItem.enableByDefaultOnce()
+            if Bundle.main.bundleIdentifier == "to.yumi.yorozu" {
+                LoginItem.enableByDefaultOnce()
+            } else {
+                // Preview/test bundles must never survive as login items or supervise production.
+                LoginItem.set(false)
+            }
             Task { await Permission.logAll() }
             // Starts Sparkle here rather than when Settings is first opened: the whole point of
             // an automatic update is that nobody had to go looking for it.

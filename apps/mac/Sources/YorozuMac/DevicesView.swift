@@ -61,7 +61,13 @@ struct DevicesView: View {
                 try? await Task.sleep(for: .seconds(5))
             }
         }
-        .sheet(isPresented: $pairing) { PairingSheet(sidecar: sidecar, done: { pairing = false }) }
+        .sheet(isPresented: $pairing) {
+            PairingSheet(
+                sidecar: sidecar,
+                existingDeviceIDs: Set(model.devices.filter(removable).map(\.pub)),
+                done: { pairing = false }
+            )
+        }
     }
 
     private func subtitle(_ device: DeviceInfo) -> String {
@@ -77,42 +83,85 @@ struct DevicesView: View {
 /// pairing is something you do once per device, not a setting.
 struct PairingSheet: View {
     @ObservedObject var sidecar: Sidecar
+    let existingDeviceIDs: Set<String>
     var done: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var paired = false
+
+    private var model: ChatModel { LocalChat.model }
 
     var body: some View {
         VStack(spacing: 12) {
-            Text("Pair a device").font(.headline)
-            if let qr = sidecar.qr {
-                Image(nsImage: qr)
-                    .interpolation(.none)
-                    .resizable()
-                    .frame(width: 220, height: 220)
-                    .accessibilityLabel("Pairing QR code")
-                Text("Scan from the Yorozu iOS app.").font(.caption).foregroundStyle(.secondary)
+            if paired {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 56))
+                    .foregroundStyle(.green)
+                    .accessibilityHidden(true)
+                Text("Device paired").font(.headline)
+                Text("Your iPhone is connected and ready to use.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             } else {
-                ProgressView("Waiting for the runtime…").frame(height: 220)
-            }
-            if let code = sidecar.pairingString {
-                // A field bound to a constant: selectable and scrollable, edits go nowhere.
-                HStack {
-                    TextField("", text: .constant(code))
-                        .font(.system(.caption, design: .monospaced))
-                        .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("Pairing code")
-                    Button("Copy") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(code, forType: .string)
-                    }
+                Text("Pair a device").font(.headline)
+                if let qr = sidecar.qr {
+                    Image(nsImage: qr)
+                        .interpolation(.none)
+                        .resizable()
+                        .frame(width: 220, height: 220)
+                        .accessibilityLabel("Pairing QR code")
+                    Text("Scan from the Yorozu iOS app.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    ProgressView("Waiting for the runtime…").frame(height: 220)
                 }
-                Text("Or paste this code into the app.").font(.caption).foregroundStyle(.secondary)
-            }
-            HStack {
-                Button("New code") { sidecar.newCode() }
-                Spacer()
-                Button("Done", action: done).keyboardShortcut(.defaultAction)
+                if let code = sidecar.pairingString {
+                    HStack {
+                        Text(code)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 5)
+                            .background(.background, in: RoundedRectangle(cornerRadius: 5))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 5)
+                                    .stroke(.separator, lineWidth: 1)
+                            }
+                        .font(.system(.caption, design: .monospaced))
+                        .accessibilityLabel("Pairing code")
+                        Button("Copy") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(code, forType: .string)
+                        }
+                    }
+                    Text("Or paste this code into the app.").font(.caption).foregroundStyle(.secondary)
+                }
+                HStack {
+                    Button("New code") { sidecar.newCode() }
+                    Spacer()
+                    Button("Done", action: done).keyboardShortcut(.defaultAction)
+                }
             }
         }
         .padding()
-        .frame(width: 320)
+        .frame(width: 340)
+        .frame(minHeight: 180)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: paired)
+        .task {
+            while !Task.isCancelled, !paired {
+                model.requestDevices()
+                if model.devices.contains(where: {
+                    $0.via == .relay && !existingDeviceIDs.contains($0.pub)
+                }) {
+                    paired = true
+                    try? await Task.sleep(for: .seconds(1.2))
+                    done()
+                    return
+                }
+                try? await Task.sleep(for: .seconds(0.5))
+            }
+        }
     }
 }
