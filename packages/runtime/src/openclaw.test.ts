@@ -89,6 +89,7 @@ describe("OpenClawRunner", () => {
     gateway.event({ ...tool, seq: 2, data: { ...tool.data, phase: "result", isError: true,
       result: { text: "failed password=fixture-secret", screenshot: "base64-private", huge: "x".repeat(100_000) } } }, "agent");
     expect(events.map((event) => event.kind)).toEqual(["thought", "tool_call", "tool_result"]);
+    expect(events[0]).toMatchObject({ data: { text: "Starting OpenClaw…", transient: true } });
     expect(events[1]).toMatchObject({ data: { callId: "run-1:call-1", args: { token: "[redacted]" } } });
     expect(events[2]).toMatchObject({ data: { callId: "run-1:call-1", ok: false } });
     expect(JSON.stringify(events)).not.toContain("fixture-secret");

@@ -84,6 +84,8 @@ export function attachmentsWithinLimits(attachments: readonly MessageAttachment[
 
 export interface ThoughtData {
   text: string;
+  /** Live lifecycle status. Clients show only the latest and drop it once real work arrives. */
+  transient?: boolean;
 }
 
 export interface ToolCallData {

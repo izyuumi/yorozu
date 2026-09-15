@@ -370,8 +370,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   /** Everything the runtime sees is logged first: the nightly job reads the log back. */
   function emit(event: YorozuEvent): void {
-    appendTranscript(event, transcripts);
-    appendThreadEvent(event, dir);
+    // Startup/lifecycle copy is live UI state, not conversation history or memory material.
+    const transient = event.kind === "thought" && event.data.transient === true;
+    if (!transient) {
+      appendTranscript(event, transcripts);
+      appendThreadEvent(event, dir);
+    }
     broadcast(event);
   }
 
