@@ -92,7 +92,7 @@ export interface ApnsRequest {
 
 /**
  * Sends one push and reports the status. A token Apple no longer knows — the app was deleted
- * or reinstalled — comes back 410 or 400, which is the caller's cue to forget it.
+ * or reinstalled — comes back 410, which is the caller's cue to forget it.
  */
 export async function send(
   env: ApnsEnv,
@@ -115,4 +115,4 @@ export async function send(
 }
 
 /** Whether a status means the token is dead and should be dropped rather than retried. */
-export const gone = (status: number): boolean => status === 410 || status === 400;
+export const gone = (status: number): boolean => status === 410;

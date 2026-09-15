@@ -281,6 +281,15 @@ export class Room implements DurableObject {
     }
   }
 
+  /** A failed APNs request costs this device's attempt, never the rest of the room's fan-out. */
+  private async push(request: apns.ApnsRequest, now: number): Promise<number | null> {
+    try {
+      return await apns.send(this.env, request, now);
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Alerts every paired device; background catch-up only wakes devices not already watching.
    *
@@ -307,20 +316,17 @@ export class Room implements DurableObject {
 
     for (const [key, record] of await storage.list<PushRecord>({ prefix: pushPrefix })) {
       const deviceKey = key.slice(pushPrefix.length);
-      const code = await apns.send(
-        this.env,
-        {
-          token: record.deviceToken,
-          payload: alertPayload(
-            notify.class,
-            notify.threadRef,
-            notify.eventRef,
-            notify.previews?.[key.slice(pushPrefix.length)],
-          ),
-          pushType: "alert",
-        },
-        now,
-      );
+      const code = await this.push({
+        token: record.deviceToken,
+        payload: alertPayload(
+          notify.class,
+          notify.threadRef,
+          notify.eventRef,
+          notify.previews?.[key.slice(pushPrefix.length)],
+        ),
+        pushType: "alert",
+      }, now);
+      if (code === null) continue;
       // Apple no longer knows this token: the app was deleted or reinstalled. Keeping the
       // registration would only fail again on the next turn, so the device is forgotten.
       if (apns.gone(code)) {
@@ -340,18 +346,15 @@ export class Room implements DurableObject {
         BACKGROUND_CLASSES.includes(notify.class) &&
         now - (record.backgroundAt ?? 0) >= BACKGROUND_INTERVAL_MS
       ) {
-        const silent = await apns.send(
-          this.env,
-          {
-            token: record.deviceToken,
-            payload: backgroundPayload(),
-            pushType: "background",
-            // A background push is explicitly not urgent, and Apple rejects one that claims
-            // to be: 5 is what "deliver when it suits you" is spelled as.
-            priority: 5,
-          },
-          now,
-        );
+        const silent = await this.push({
+          token: record.deviceToken,
+          payload: backgroundPayload(),
+          pushType: "background",
+          // A background push is explicitly not urgent, and Apple rejects one that claims
+          // to be: 5 is what "deliver when it suits you" is spelled as.
+          priority: 5,
+        }, now);
+        if (silent === null) continue;
         if (apns.gone(silent)) {
           await storage.delete(key);
           continue;

@@ -411,6 +411,14 @@ public final class ChatModel {
         foreground && openThread == threadId
     }
 
+    /// Resolves a notification's opaque thread reference locally, then applies the same
+    /// foreground-and-visible rule. The relay never learns the underlying thread id.
+    public func isReading(threadRef: String) -> Bool {
+        guard let thread = threads.first(where: { YorozuCrypto.threadRef($0.id) == threadRef })
+        else { return false }
+        return isReading(thread.id)
+    }
+
     /// Reports the open thread read, if it is in fact being read. Called on entering a thread,
     /// on the app becoming active with one open, and — debounced — when a reply lands in it.
     private func reportRead() {

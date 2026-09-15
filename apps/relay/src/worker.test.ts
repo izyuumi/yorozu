@@ -701,6 +701,31 @@ test("a device token Apple no longer knows is forgotten rather than retried", as
   expect(calls).toHaveLength(1);
 });
 
+test("one APNs network failure does not block another phone", async () => {
+  apns.resetToken();
+  const calls: string[] = [];
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+    calls.push(String(input));
+    if (calls.length === 1) throw new Error("network down for first phone");
+    return new Response(null, { status: 200 });
+  });
+  const { mac, phone, room } = await paired();
+  const second = await connectPhone(room, await mintToken(mac));
+  await second.phone.next();
+  second.phone.send({ type: "push", deviceToken: "device-token-2" });
+  await settled(second.phone);
+  phone.ws.close();
+  second.phone.ws.close();
+
+  mac.send({ type: "notify", class: "approval", threadRef: "Ab3-_x9Z" });
+  await macSettled(mac);
+
+  expect(calls).toHaveLength(2);
+  expect(new Set(calls.map((url) => url.split("/").at(-1)))).toEqual(
+    new Set(["device-token", "device-token-2"]),
+  );
+});
+
 test("a wake-up also nudges the app awake, at most once a minute", async () => {
   const calls = fakeApns();
   const { mac, phone, keys, room } = await paired();

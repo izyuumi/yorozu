@@ -48,13 +48,17 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         return await model.drain() ? .newData : .noData
     }
 
-    /// A notification that arrives while the app is open has nothing to say: the socket is live,
-    /// so the event itself is already in the chat. Shown as nothing rather than as a duplicate.
+    /// Suppress only a notification for the chat visibly being read. A live socket does not mean
+    /// somebody watching another chat, the thread list, or Settings saw what arrived.
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        []
+        let ref = notification.request.content.userInfo["ref"] as? String
+        let reading = await MainActor.run {
+            ref.map { Session.shared.model?.isReading(threadRef: $0) == true } ?? false
+        }
+        return reading ? [] : [.banner, .list, .sound]
     }
 
     func userNotificationCenter(
