@@ -16,7 +16,10 @@ struct ScannerView: View {
                 .multilineTextAlignment(.center)
 
             if DataScannerViewController.isSupported && DataScannerViewController.isAvailable {
-                Scanner { error = onScan($0) }
+                Scanner { text in
+                    error = onScan(text)
+                    return error == nil
+                }
                     .clipShape(RoundedRectangle(cornerRadius: 16))
             } else {
                 ContentUnavailableView(
@@ -35,7 +38,7 @@ struct ScannerView: View {
 }
 
 private struct Scanner: UIViewControllerRepresentable {
-    let onScan: (String) -> Void
+    let onScan: (String) -> Bool
 
     func makeUIViewController(context: Context) -> DataScannerViewController {
         let controller = DataScannerViewController(
@@ -55,11 +58,11 @@ private struct Scanner: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(onScan: onScan) }
 
     final class Coordinator: NSObject, DataScannerViewControllerDelegate {
-        private let onScan: (String) -> Void
+        private let onScan: (String) -> Bool
         /// One QR is enough; the scanner keeps reporting the same code every frame.
         private var done = false
 
-        init(onScan: @escaping (String) -> Void) { self.onScan = onScan }
+        init(onScan: @escaping (String) -> Bool) { self.onScan = onScan }
 
         func dataScanner(
             _ scanner: DataScannerViewController,
@@ -69,9 +72,10 @@ private struct Scanner: UIViewControllerRepresentable {
             guard !done, case .barcode(let code) = addedItems.first,
                 let text = code.payloadStringValue
             else { return }
-            done = true
-            scanner.stopScanning()
-            onScan(text)
+            if onScan(text) {
+                done = true
+                scanner.stopScanning()
+            }
         }
     }
 }

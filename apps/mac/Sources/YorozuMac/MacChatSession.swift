@@ -10,21 +10,32 @@ enum MacRole: String, CaseIterable, Identifiable { case host, client; var id: Se
 final class MacChatSession {
     static let shared = MacChatSession()
     private static let roleKey = "macRole"
-    private(set) var role: MacRole
+    private(set) var role: MacRole?
     private(set) var model: ChatModel
     private(set) var relay: RelayClient?
     private(set) var pairedAt: Date?
     private(set) var failure: String?
 
     private init() {
-        role = MacRole(rawValue: UserDefaults.standard.string(forKey: Self.roleKey) ?? "") ?? .host
-        model = Self.localModel()
+        var initialRole = MacRole(rawValue: UserDefaults.standard.string(forKey: Self.roleKey) ?? "")
+        // Build 139 and earlier had no explicit role preference and always hosted. Preserve
+        // that choice for existing installs; a truly fresh install gets the role question.
+        if initialRole == nil, UserDefaults.standard.bool(forKey: OnboardingWindow.completedKey) {
+            initialRole = .host
+            UserDefaults.standard.set(MacRole.host.rawValue, forKey: Self.roleKey)
+        }
+        role = initialRole
+        model = initialRole == .host ? Self.localModel() : Self.idleModel()
     }
 
     func start() {
-        if role == .host { startHost() }
-        else if let stored = MacPairingStore.load() { connect(stored) }
-        else { model = Self.idleModel() }
+        switch role {
+        case .host: startHost()
+        case .client:
+            if let stored = MacPairingStore.load() { connect(stored) }
+            else { model = Self.idleModel() }
+        case nil: model = Self.idleModel()
+        }
     }
 
     func select(_ role: MacRole) {
@@ -38,6 +49,18 @@ final class MacChatSession {
             if let stored = MacPairingStore.load() { connect(stored) }
             else { model = Self.idleModel() }
         }
+    }
+
+    func clearRole() {
+        model.close(); relay = nil; failure = nil
+        if role == .client {
+            MacPairingStore.clear()
+            MacCacheStore.clear()
+        }
+        Sidecar.shared.stop()
+        role = nil
+        model = Self.idleModel()
+        UserDefaults.standard.removeObject(forKey: Self.roleKey)
     }
 
     func pair(with text: String) throws {

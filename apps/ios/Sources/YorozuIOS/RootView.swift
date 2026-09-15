@@ -49,6 +49,7 @@ final class Session {
 
     private(set) var model: ChatModel?
     private(set) var failure: String?
+    private(set) var isPairing = false
     /// What the thread list's navigation stack starts out holding, decided the moment the model
     /// exists rather than after the list has drawn. The cache is read synchronously in
     /// ``ChatModel``'s initialiser, so the answer is already known here — and knowing it here is
@@ -94,18 +95,26 @@ final class Session {
             // Surface the reason rather than silently falling back to the scanner.
             do { try pair(with: injected) } catch { failure = error.localizedDescription }
         } else if let stored = PairingStore.load() {
+            isPairing = stored.paired != true
             connect(stored)
         }
     }
 
     /// Accepts an untrusted QR string, persists it with a fresh device identity, and connects.
     func pair(with text: String) throws {
-        let stored = PairingStore.Stored(
-            pairing: try QrPayload.decode(text),
-            identity: .generate()
-        )
-        try PairingStore.save(stored)
-        connect(stored)
+        do {
+            let stored = PairingStore.Stored(
+                pairing: try QrPayload.decode(text),
+                identity: .generate()
+            )
+            try PairingStore.save(stored)
+            failure = nil
+            isPairing = true
+            connect(stored)
+        } catch {
+            failure = String(localized: "Not a Yorozu pairing code.")
+            throw error
+        }
     }
 
     /// Asks for notifications, once, at the moment they start to make sense: something is paired,
@@ -136,6 +145,7 @@ final class Session {
         model = nil
         relay = nil
         failure = nil
+        isPairing = false
         pushFailure = nil
         deviceToken = nil
         openPath = []
@@ -240,7 +250,13 @@ final class Session {
             let onPaired = model.onPaired
             model.onPaired = { [weak self] in
                 onPaired?()
+                self?.isPairing = false
                 self?.drainShares()
+                if let deviceToken = self?.deviceToken {
+                    Task { await relay.registerPush(deviceToken: deviceToken) }
+                } else {
+                    self?.requestNotifications()
+                }
             }
             // The share extension cannot read the encrypted thread cache, so the picker's
             // titles are put where it can: here at startup from the cache, and again whenever
@@ -260,14 +276,6 @@ final class Session {
             model.start()
             self.model = model
             publishThreads(model)
-            // Something is paired now, so being woken by it starts to make sense. A token this
-            // phone was already given is handed straight to the new relay; otherwise the ask is
-            // what eventually produces one.
-            if let deviceToken {
-                Task { await relay.registerPush(deviceToken: deviceToken) }
-            } else {
-                requestNotifications()
-            }
             // Land on the thread list; Yumi prefers choosing over being dropped into the latest.
             // The screenshot harness is the one exception: it opens the thread it seeded,
             // unless what it seeded is the list itself.
@@ -284,8 +292,6 @@ final class Session {
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var session = Session.shared
-    /// Set once the user has pressed "Get started", so the splash is shown only before that.
-    @State private var pairing = false
     /// The thread ids pushed on the list's stack: at most one, and what lets the app open a
     /// thread by itself rather than waiting to be tapped. Seeded from the session, which decided
     /// it before this view was ever built, so the first frame is already the chat.
@@ -322,7 +328,7 @@ struct RootView: View {
                     // see ``Session/drainShares()``.
                     session.drainShares()
                 default:
-                    do { try session.pair(with: url.absoluteString) } catch { pairing = true }
+                    do { try session.pair(with: url.absoluteString) } catch {}
                 }
             }
             // iOS suspends the app and its socket with it. Coming back is the moment to re-dial,
@@ -355,7 +361,7 @@ struct RootView: View {
     }
 
     @ViewBuilder private var content: some View {
-        if let model = session.model {
+        if let model = session.model, !session.isPairing {
             ThreadListView(
                 threads: model.threads,
                 workingThreads: model.generating,
@@ -428,10 +434,14 @@ struct RootView: View {
                 if session.notificationOpen?.threadId != new.last { session.clearNotificationOpen() }
                 model.openThread = new.last
             }
-        } else if pairing {
-            PairView(onPair: pair)
         } else {
-            SplashView { pairing = true }
+            PairingFlowView(
+                onPair: pair,
+                externalError: session.failure ?? session.model?.failure.map { _ in
+                    String(localized: "Couldn’t connect. Generate a new pairing code and try again.")
+                },
+                connecting: session.isPairing && session.model?.failure == nil
+            )
         }
     }
 

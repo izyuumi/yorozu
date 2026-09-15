@@ -1,6 +1,47 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Couldn’t connect. Generate a new pairing code and try again." : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo conectar. Genera un nuevo código de emparejamiento e inténtalo de nuevo." } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "接続できませんでした。新しいペアリングコードを生成して、もう一度お試しください。" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "연결할 수 없습니다. 새 페어링 코드를 생성한 후 다시 시도하세요." } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法连接。请生成新的配对码，然后重试。" } }
+      }
+    },
+    "On your host Mac, open Yorozu, then choose Settings › Devices › Pair Another Device." : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "En el Mac anfitrión, abre Yorozu y elige Ajustes › Dispositivos › Emparejar otro dispositivo." } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストMacでYorozuを開き、「設定」›「デバイス」›「別のデバイスをペアリング」を選びます。" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "호스트 Mac에서 Yorozu를 열고 설정 › 기기 › 다른 기기 페어링을 선택하세요." } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "在主机 Mac 上打开 Yorozu，然后选择“设置”›“设备”›“配对其他设备”。" } }
+      }
+    },
+    "Scan pairing code" : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "Escanear código de emparejamiento" } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "ペアリングコードをスキャン" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "페어링 코드 스캔" } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "扫描配对码" } }
+      }
+    },
+    "Enter code manually" : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "Introducir código manualmente" } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "コードを手動入力" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "코드 직접 입력" } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "手动输入代码" } }
+      }
+    },
+    "Paste the code shown by Yorozu on your host Mac." : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "Pega el código que muestra Yorozu en el Mac anfitrión." } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストMacのYorozuに表示されたコードを貼り付けます。" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "호스트 Mac의 Yorozu에 표시된 코드를 붙여 넣으세요." } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "粘贴主机 Mac 上 Yorozu 显示的代码。" } }
+      }
+    },
+
     "•" : {
       "extractionState" : "stale",
       "localizations" : {
