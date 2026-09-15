@@ -22,6 +22,8 @@ public func threadMarkdown(
     var lines = ["# \(thread.displayTitle)", "", "*Exported \(now.formatted(stamp))*"]
     for row in chatRows(from: events) {
         switch row {
+        case .thought(let event):
+            if case .thought(let data) = event.payload { lines += ["", "> \(data.text)"] }
         case .message(let event):
             guard case .message(let data) = event.payload else { break }
             lines += ["", "## \(data.role == .user ? "You" : "Yorozu") — \(event.date.formatted(stamp))", ""]
@@ -122,8 +124,8 @@ public struct ThreadMarkdown: Transferable, Sendable {
     }
 }
 
-/// The one export control, so the chat's toolbar and the list's context menu offer exactly the
-/// same thing. `markdown` is a closure because building it walks the whole thread, and a menu
+/// Export lives in the thread list's low-frequency actions, outside the chat toolbar.
+/// `markdown` is a closure because building it walks the whole thread, and a menu
 /// that is never opened should not have paid for that.
 public struct ExportThreadButton: View {
     private let title: String

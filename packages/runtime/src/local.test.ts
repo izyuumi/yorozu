@@ -161,6 +161,7 @@ test("the local socket round-trips a turn and receives broadcasts, with no relay
   send(socket, "t1", { kind: "thread_create", data: { title: "Chores" } });
   await events.nextOf("thread_list");
   send(socket, "t1", { kind: "message", data: { role: "user", text: "ping" } });
+  expect(await events.nextOf("message")).toMatchObject({ data: { role: "user", text: "ping" } });
   expect(await events.nextOf("message")).toMatchObject({
     threadId: "t1",
     kind: "message",
@@ -204,6 +205,7 @@ test("one reply is one message id, however many deltas streamed it, and the last
   send(socket, "t1", { kind: "thread_create", data: { title: "Chores" } });
   await events.nextOf("thread_list");
   send(socket, "t1", { kind: "message", data: { role: "user", text: "ping" } });
+  expect(await events.nextOf("message")).toMatchObject({ data: { role: "user", text: "ping" } });
   expect(await events.nextOf("message")).toMatchObject({ data: { role: "agent", text: "pong" } });
 
   // Every delta and the finished reply share one id, so a client replaces in place rather
@@ -370,5 +372,6 @@ test("a thread set to a model the user has since deleted still gets an answer", 
   // The spec cannot be built at all, so the turn falls all the way back to the configured
   // chain: an answer from the default beats no answer.
   send(socket, "t1", { kind: "message", data: { role: "user", text: "ping" } });
+  expect(await events.nextOf("message")).toMatchObject({ data: { role: "user", text: "ping" } });
   expect(await events.nextOf("message")).toMatchObject({ data: { role: "agent", text: "pong" } });
 });

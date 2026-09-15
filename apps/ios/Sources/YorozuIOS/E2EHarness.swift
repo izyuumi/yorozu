@@ -38,6 +38,9 @@ final class E2EHarness {
             break
         case "threads":
             model.previewThreads()
+        case "activity":
+            model.previewThreads()
+            model.previewActivity(in: model.threads[0].id)
         case "queued":
             model.previewThreads()
             model.previewQueued(in: model.threads[0].id)

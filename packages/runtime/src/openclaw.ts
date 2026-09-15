@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { GatewayClient, type DeviceIdentity, type GatewayClientHostDeps } from "@openclaw/gateway-client";
 import type { EventFrame } from "@openclaw/gateway-protocol/frame-guards";
-import type { MessageAttachment, ModelOption, ReasoningEffort } from "@yorozu/shared";
+import type { EventPayload, MessageAttachment, ModelOption, ReasoningEffort, YorozuEvent } from "@yorozu/shared";
 
 const DEFAULT_GATEWAY_URL = "ws://127.0.0.1:18789";
 
@@ -16,8 +16,14 @@ interface Gateway {
   request<T = Record<string, unknown>>(method: string, params?: unknown): Promise<T>;
 }
 interface PendingTurn {
+  threadId: string;
   sessionKey: string;
   runId?: string;
+  startedAt: number;
+  seen: Set<string>;
+  calls: Set<string>;
+  tasks: Map<string, string>;
+  onEvent?: (event: YorozuEvent) => void;
   awaitsAnnouncement: boolean;
   text: string;
   onUpdate?: (text: string) => void;
@@ -33,6 +39,7 @@ export interface OpenClawTurn {
   attachments?: MessageAttachment[];
   signal?: AbortSignal;
   onUpdate?: (text: string) => void;
+  onEvent?: (event: YorozuEvent) => void;
 }
 
 export interface OpenClawRunnerOptions {
@@ -101,7 +108,11 @@ export class OpenClawRunner {
 
     let pending!: PendingTurn;
     const completed = new Promise<string>((resolve, reject) => {
-      pending = { sessionKey, awaitsAnnouncement: false, text: "", onUpdate: turn.onUpdate, resolve, reject };
+      pending = {
+        threadId: turn.threadId, sessionKey, runId: randomUUID(), startedAt: Date.now(),
+        seen: new Set(), calls: new Set(), tasks: new Map(), onEvent: turn.onEvent,
+        awaitsAnnouncement: false, text: "", onUpdate: turn.onUpdate, resolve, reject,
+      };
       this.#pending.add(pending);
       const abort = () => {
         this.#pending.delete(pending);
@@ -119,15 +130,16 @@ export class OpenClawRunner {
     });
 
     try {
+      this.activity(pending, "starting", { kind: "thought", data: { text: "Starting OpenClaw…" } });
       const result = await client.request<{ runId?: string }>("chat.send", {
         sessionKey,
         message: turn.text,
         attachments: gatewayAttachments(turn.attachments),
         thinking: turn.effort,
         deliver: false,
-        idempotencyKey: randomUUID(),
+        idempotencyKey: pending.runId,
       });
-      pending.runId = result.runId;
+      pending.runId = result.runId ?? pending.runId;
     } catch (error) {
       pending.reject(error instanceof Error ? error : new Error(String(error)));
     }
@@ -173,12 +185,22 @@ export class OpenClawRunner {
       mode: "backend",
       role: "operator",
       scopes: ["operator.read", "operator.write"],
+      caps: ["tool-events"],
       minProtocol: 4,
       maxProtocol: 4,
       onEvent: (event) => this.handleEvent(event),
       onHelloOk: () => {
         this.#client = client;
         ready.resolve(client);
+        // Tool recipient IDs belong to the old connection. The installed Gateway exposes
+        // ongoing tools via session.tool after reconnect; filter those by our active run.
+        if (this.#pending.size) void client.request("sessions.subscribe", {}).catch(() => {});
+        for (const pending of this.#pending) void this.restoreProgress(client, pending);
+      },
+      onClose: () => {
+        for (const pending of this.#pending) this.activity(pending, `reconnecting:${Date.now()}`, {
+          kind: "thought", data: { text: "Reconnecting to OpenClaw…" },
+        });
       },
       onConnectError: (error) => ready.reject(error),
     });
@@ -195,20 +217,38 @@ export class OpenClawRunner {
   private handleEvent(event: EventFrame): void {
     if (!event.payload || typeof event.payload !== "object") return;
     const payload = event.payload as Record<string, unknown>;
+    if (event.event === "agent" || event.event === "session.tool") {
+      const sessionKey = string(payload.sessionKey).toLowerCase();
+      const pending = [...this.#pending].find((item) => item.sessionKey === sessionKey && item.runId === payload.runId);
+      if (pending) this.agentActivity(pending, payload);
+      return;
+    }
     if (event.event === "task") {
       const task = payload.task;
       if (payload.action === "upserted" && task && typeof task === "object") {
-        const sessionKey = (task as Record<string, unknown>).sessionKey;
+        const record = task as Record<string, unknown>;
+        const sessionKey = string(record.sessionKey ?? record.ownerKey).toLowerCase();
         const pending = [...this.#pending].find((item) => item.sessionKey === sessionKey);
-        const deliveryStatus = (task as Record<string, unknown>).deliveryStatus;
+        if (!pending || typeof record.createdAt !== "number" || record.createdAt < pending.startedAt) return;
+        const deliveryStatus = record.deliveryStatus;
         if (pending && (deliveryStatus === "pending" || deliveryStatus === "in_progress")) {
           pending.awaitsAnnouncement = true;
+        }
+        const taskId = string(record.id ?? record.taskId);
+        const status = string(record.status);
+        if (taskId && taskId.length <= 256 && status && pending.tasks.get(taskId) !== status) {
+          pending.tasks.set(taskId, status);
+          const agentId = `${activityText(record.title ?? record.label ?? record.agentId).slice(0, 120) || "Delegated work"} · ${taskId.slice(0, 8)}`;
+          const terminal = ["completed", "succeeded", "failed", "timed_out", "cancelled", "lost"].includes(status);
+          this.activity(pending, `task:${taskId}:${status}`, terminal ? {
+            kind: "message", data: { role: "agent", text: `Delegated work ${status.replaceAll("_", " ")}.`, done: true },
+          } : { kind: "thought", data: { text: `Delegated work ${status}.` } }, agentId);
         }
       }
       return;
     }
     if (event.event !== "chat") return;
-    const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : undefined;
+    const sessionKey = string(payload.sessionKey).toLowerCase();
     const runId = typeof payload.runId === "string" ? payload.runId : undefined;
     const pending = [...this.#pending].find(
       (item) => item.sessionKey === sessionKey && (
@@ -218,18 +258,81 @@ export class OpenClawRunner {
       ),
     );
     if (!pending || !runId) return;
-    pending.runId ??= runId;
+    const key = `chat:${runId}:${payload.seq}:${payload.state}`;
+    if (pending.seen.has(key)) return;
+    pending.seen.add(key);
     if (payload.state === "delta") {
       const delta = typeof payload.deltaText === "string" ? payload.deltaText : "";
       pending.text = payload.replace === true ? delta : pending.text + delta;
       if (pending.text) pending.onUpdate?.(pending.text);
     } else if (payload.state === "final") {
       const text = messageText(payload.message) || pending.text;
-      if (text || !pending.awaitsAnnouncement || runId.startsWith("announce:requester-settle:")) pending.resolve(text);
+      if (!pending.awaitsAnnouncement || runId.startsWith("announce:requester-settle:")) pending.resolve(text);
+      else if (text) pending.onUpdate?.(text);
     } else if (payload.state === "aborted") {
       pending.resolve("");
     } else if (payload.state === "error") {
       pending.reject(new Error(typeof payload.errorMessage === "string" ? payload.errorMessage : "OpenClaw turn failed"));
+    }
+  }
+
+  private activity(pending: PendingTurn, key: string, payload: EventPayload, agentId = "main"): void {
+    const id = `openclaw:${pending.runId}:${key}`;
+    if (pending.seen.has(id)) return;
+    pending.seen.add(id);
+    pending.onEvent?.({ id, threadId: pending.threadId, ts: Date.now(), agentId,
+      ...(agentId !== "main" ? { parentAgentId: "main" } : {}), ...payload });
+  }
+
+  private agentActivity(pending: PendingTurn, payload: Record<string, unknown>): void {
+    const data = record(payload.data);
+    const phase = string(data.phase);
+    const key = `agent:${payload.seq}:${payload.stream}`;
+    if (payload.stream === "tool") {
+      const rawId = string(data.toolCallId);
+      if (!rawId || rawId.length > 256) return;
+      const callId = `${pending.runId}:${rawId}`;
+      if (!pending.calls.has(callId)) {
+        pending.calls.add(callId);
+        this.activity(pending, `call:${rawId}`, { kind: "tool_call", data: {
+          callId, name: activityText(data.name).slice(0, 128) || "Tool", args: record(safeActivityValue(data.args)),
+        } });
+      }
+      if (phase === "result") this.activity(pending, `result:${rawId}`, { kind: "tool_result", data: {
+        callId, ok: data.isError !== true,
+        output: activityText(data.result ?? data.output ?? "Completed"),
+      } });
+    } else if (payload.stream === "reasoning" || (payload.stream === "lifecycle" && phase === "start")) {
+      this.activity(pending, "thinking", { kind: "thought", data: { text: "Thinking…" } });
+    } else if (payload.stream === "run_status") {
+      if (phase) this.activity(pending, key, { kind: "thought", data: { text: `${phase.replaceAll("_", " ")}…` } });
+    } else if (payload.stream === "item" && data.kind === "preamble" && phase !== "delta") {
+      const text = activityText(data.text ?? data.content ?? "");
+      if (text) this.activity(pending, key, { kind: "thought", data: { text } });
+    } else if (payload.stream === "plan" && Array.isArray(data.steps)) {
+      const cardId = `openclaw-plan:${pending.runId}`;
+      this.activity(pending, key, { kind: "progress_card", data: {
+        cardId, title: "Progress", steps: data.steps.slice(0, 30).map((step) => {
+          const item = record(step);
+          const status = item.status ?? item.state;
+          return { label: activityText(item.step ?? item.label), state: status === "completed" ? "done" : status === "in_progress" ? "running" : status === "failed" ? "failed" : "pending" };
+        }),
+      } });
+    }
+  }
+
+  private async restoreProgress(client: Gateway, pending: PendingTurn): Promise<void> {
+    try {
+      const history = await client.request<{ inFlightRun?: Record<string, unknown> }>("chat.history", { sessionKey: pending.sessionKey, limit: 1 });
+      const snapshot = history.inFlightRun;
+      if (!this.#pending.has(pending) || !snapshot || snapshot.runId !== pending.runId) return;
+      if (Array.isArray(snapshot.events)) for (const event of snapshot.events) this.agentActivity(pending, record(event));
+      if (typeof snapshot.text === "string" && snapshot.text) {
+        pending.text = snapshot.text;
+        pending.onUpdate?.(pending.text);
+      }
+    } catch {
+      // Connection recovery remains owned by GatewayClient. Never replay chat.send.
     }
   }
 
@@ -305,4 +408,42 @@ function gatewayAttachments(attachments: MessageAttachment[] | undefined): objec
     content: attachment.data,
     sizeBytes: Buffer.from(attachment.data, "base64").byteLength,
   }));
+}
+
+const string = (value: unknown): string => typeof value === "string" ? value : "";
+const record = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+
+/** Display-only copy: bounded before persistence/relay; never forward binary or credential fields. */
+function safeActivityValue(value: unknown): unknown {
+  let remaining = 12_000;
+  const visit = (value: unknown, depth: number): unknown => {
+    if (remaining <= 0 || depth > 4) return "[omitted]";
+    if (typeof value === "string") {
+      if (value.length > 65_536) return "[oversized content omitted]";
+      const redacted = value
+        .replace(/-----BEGIN [\s\S]*?PRIVATE KEY-----[\s\S]*?-----END [\s\S]*?PRIVATE KEY-----/g, "[redacted]")
+        .replace(/\bBearer\s+[^\s"']+/gi, "Bearer [redacted]")
+        .replace(/\b(password|passwd|secret|(?:access[_-]?|refresh[_-]?)?token|api[_-]?key|authorization|cookie)\b(["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;}]+)/gi, "$1$2[redacted]")
+        .replace(/\b(?:sk-[a-zA-Z0-9_-]{16,}|gh[pousr]_[a-zA-Z0-9]{20,})\b/g, "[redacted]")
+        .replace(/data:[^\s;,]+;base64,[a-zA-Z0-9+/=]+/g, "[binary omitted]");
+      const result = redacted.slice(0, remaining);
+      remaining -= result.length;
+      return result + (result.length < redacted.length ? "… [truncated]" : "");
+    }
+    if (Array.isArray(value)) return value.slice(0, 30).map((item) => visit(item, depth + 1));
+    if (value && typeof value === "object" && ["image", "image_url", "base64", "file"].includes(string(record(value).type))) return "[binary omitted]";
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).slice(0, 30).map(([key, item]) => {
+      remaining -= key.length + 8;
+      return [key.slice(0, 100), /password|passwd|secret|token|authorization|cookie|api.?key|private.?key|base64|image|screenshot/i.test(key)
+        ? "[redacted]" : visit(item, depth + 1)];
+    }));
+    return typeof value === "number" || typeof value === "boolean" || value === null ? value : "";
+  };
+  return visit(value, 0);
+}
+
+function activityText(value: unknown): string {
+  const safe = safeActivityValue(value);
+  return (typeof safe === "string" ? safe : JSON.stringify(safe)).slice(0, 14_000);
 }

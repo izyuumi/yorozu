@@ -79,6 +79,7 @@ public func mainTrace(from events: [YorozuEvent]) -> [YorozuEvent] {
 /// specialist did lives behind its card; what the main agent did is shown here.
 public enum ChatRow: Identifiable, Equatable, Sendable {
     case message(YorozuEvent)
+    case thought(YorozuEvent)
     /// An unbroken run of the main agent's tool calls, drawn as one group.
     case tools([ToolActivity])
     case delegation(DelegationCard)
@@ -90,6 +91,7 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
 
     public var id: String {
         switch self {
+        case .thought(let event): event.id
         case .message(let event): event.id
         case .tools(let activities): "tools-\(activities.first?.callId ?? "")"
         // Prefixed, because a delegation whose first event is a card is two rows out of one
@@ -160,6 +162,12 @@ func messageReactionsByMessage(
 
 /// The thread in render order.
 public func chatRows(from events: [YorozuEvent]) -> [ChatRow] {
+    // Progress revisions keep unique transport IDs, so an offline client's cursor cannot
+    // skip an update. Only the newest revision of each card belongs in the timeline.
+    var latestProgress: [String: String] = [:]
+    for event in events {
+        if case .progressCard(let data) = event.payload { latestProgress[data.cardId] = event.id }
+    }
     let cards = delegationCards(from: events)
     let byStart = Dictionary(cards.map { ($0.startEventId, $0) }, uniquingKeysWith: { first, _ in first })
 
@@ -179,15 +187,13 @@ public func chatRows(from events: [YorozuEvent]) -> [ChatRow] {
 
     for event in events {
         // A specialist's tool use belongs to its card, so only the main agent's own is
-        // grouped here. A result is already folded into the call it answered, and a thought
-        // the thread does not draw would otherwise split one run of tool use into two groups
-        // with nothing visible between them — so neither breaks the run.
+        // grouped here. Results are already folded into the call they answered.
         if event.parentAgentId == nil {
             switch event.payload {
             case .toolCall(let data):
                 if let activity = activities[data.callId] { open.append(activity) }
                 continue
-            case .toolResult, .thought:
+            case .toolResult:
                 continue
             default:
                 break
@@ -197,6 +203,8 @@ public func chatRows(from events: [YorozuEvent]) -> [ChatRow] {
 
         if let card = byStart[event.id] { rows.append(.delegation(card)) }
         switch event.payload {
+        case .thought where event.parentAgentId == nil:
+            rows.append(.thought(event))
         case .message where event.parentAgentId == nil:
             rows.append(.message(event))
         // Cards are never folded away, wherever they were raised: one put up inside a
@@ -210,7 +218,9 @@ public func chatRows(from events: [YorozuEvent]) -> [ChatRow] {
         case .questionCard:
             rows.append(.question(event))
         case .progressCard:
-            rows.append(.progress(event))
+            if case .progressCard(let data) = event.payload, latestProgress[data.cardId] == event.id {
+                rows.append(.progress(event))
+            }
         default:
             break
         }

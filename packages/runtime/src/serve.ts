@@ -226,6 +226,8 @@ type FrameBody =
 export interface DeviceRecord {
   pub: string;
   signingPub?: string;
+  /** First pairing time. Sync never backfills events older than this device relationship. */
+  pairedAt?: number;
   /** Epoch milliseconds we last heard from it; 0 for a device paired before this was kept. */
   lastSeen: number;
 }
@@ -514,10 +516,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
   };
 
   /** Everything the device has not seen, across every live thread, in one frame. */
-  const syncDelta = (lastSeen: Record<string, string>): YorozuEvent => {
+  const syncDelta = (lastSeen: Record<string, string>, pairedAt = 0): YorozuEvent => {
     const pages = listThreads(dir)
       .filter((thread) => !thread.archived)
-      .map((thread) => eventsAfter(thread.id, lastSeen?.[thread.id], dir));
+      .map((thread) => eventsAfter(thread.id, lastSeen?.[thread.id], dir, pairedAt));
     return control({
       kind: "sync_delta",
       data: {
@@ -582,6 +584,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           attachments,
           signal: turn.signal,
           onUpdate: (reply) => broadcast(message(reply)),
+          onEvent: emit,
         });
         if (turn.signal.aborted) return;
         if (reply === undefined) return;
@@ -589,6 +592,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
         appendTranscript(final, transcripts);
         appendThreadEvent(final, dir);
         broadcast(final);
+        const untitled = listThreads(dir).find((thread) => thread.id === threadId)?.title === "";
+        const title = text.trim().split(/\s+/).slice(0, 5).join(" ");
+        if (untitled && title && renameThread(threadId, cleanTitle(title), dir)) broadcast(threadList());
       } finally {
         if (running.get(threadId) === turn) running.delete(threadId);
       }
@@ -756,7 +762,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * the local socket. `reply` answers that one device; the thread admin cases answer all of
    * them, so a second device sees the same list.
    */
-  function handleEvent(event: YorozuEvent, reply: Send): void {
+  function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0): void {
     appendTranscript(event, transcripts);
     appendThreadEvent(event, dir);
 
@@ -839,10 +845,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
       case "device_remove":
         return forgetDevice(event.data.pub);
       case "sync_request":
-        return reply(syncDelta(event.data.lastSeen));
+        return reply(syncDelta(event.data.lastSeen, pairedAt));
     }
 
     if (event.kind !== "message" || event.data.role !== "user") return;
+    // The sender already drew this optimistically; every other client needs the same event.
+    // Upsert-by-id makes echoing it to the sender harmless and keeps all devices convergent.
+    broadcast(event);
     // A plain "yes" while a card is up answers the card rather than starting a turn.
     const [oldest] = pending.values();
     const typed = oldest && typedAnswer(event.data.text, oldest.card);
@@ -993,6 +1002,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           ...(body.spub ? { signingPub: body.spub } : known?.record.signingPub
             ? { signingPub: known.record.signingPub }
             : {}),
+          pairedAt: known?.record.pairedAt ?? Date.now(),
           lastSeen: Date.now(),
         });
         saveDevices();
@@ -1014,7 +1024,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const known = devices.get(device);
       // Hearing from a device is the only thing that makes it online, so the stamp is kept.
       if (known) known.record.lastSeen = Date.now();
-      handleEvent(event, (answer) => sendTo(device, answer));
+      handleEvent(event, (answer) => sendTo(device, answer), known?.record.pairedAt ?? 0);
     }
 
     /**

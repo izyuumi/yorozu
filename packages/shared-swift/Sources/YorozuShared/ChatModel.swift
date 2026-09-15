@@ -784,6 +784,23 @@ public final class ChatModel {
             ))))
     }
 
+    /// Same live activity fixture on Mac and iOS, without invoking a provider.
+    public func previewActivity(in threadId: String) {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        let payloads: [YorozuEvent.Payload] = [
+            .message(MessageData(role: .user, text: "Inspect the project and check the build")),
+            .thought(ThoughtData(text: "Checking project files…")),
+            .toolCall(ToolCallData(callId: "read", name: "read_file", args: ["path": .string("Package.swift")])),
+            .toolResult(ToolResultData(callId: "read", ok: true, output: "Shared Mac and iOS package found.")),
+            .toolCall(ToolCallData(callId: "build", name: "build", args: [:])),
+        ]
+        for (index, payload) in payloads.enumerated() {
+            upsert(YorozuEvent(id: "activity-\(index)", threadId: threadId, ts: now + index, agentId: "main", payload: payload))
+        }
+        upsert(YorozuEvent(id: "activity-delegation", threadId: threadId, ts: now + 10, agentId: "Reviewer", parentAgentId: "main", payload: .thought(ThoughtData(text: "Reviewing changes…"))))
+        generating.insert(threadId)
+    }
+
     /// Test-only: a reply with a bare link in it, for the preview row.
     public func previewLink(in threadId: String) {
         upsert(

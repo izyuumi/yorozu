@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import type { GatewayClientOptions } from "@openclaw/gateway-client";
+import type { YorozuEvent } from "@yorozu/shared";
 import { describe, expect, test, vi } from "vitest";
 import { OpenClawRunner } from "./openclaw.js";
 
@@ -26,11 +27,80 @@ function harness() {
     dir,
     request,
     clientFactory,
+    hello: () => options.onHelloOk?.({ auth: {} } as never),
     event: (payload: object, event = "chat") => options.onEvent?.({ type: "event", event, payload } as never),
   };
 }
 
 describe("OpenClawRunner", () => {
+  test("streams scoped, bounded tool activity with stable IDs before the final reply", async () => {
+    const gateway = harness();
+    const events: YorozuEvent[] = [];
+    const result = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).run({
+      threadId: "one", text: "inspect", onEvent: (event) => events.push(event),
+    });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    expect(gateway.clientFactory.mock.calls[0]![0].caps).toContain("tool-events");
+    const tool = { sessionKey: "agent:main:yorozu:one", runId: "run-1", stream: "tool", seq: 1,
+      data: { phase: "start", toolCallId: "call-1", name: "exec", args: { command: "echo hello", token: "fixture-secret" } } };
+    gateway.event({ ...tool, runId: "old-run" }, "agent");
+    gateway.event({ ...tool, sessionKey: "agent:main:other" }, "agent");
+    gateway.event(tool, "agent");
+    gateway.event(tool, "agent");
+    gateway.event({ ...tool, seq: 2, data: { ...tool.data, phase: "result", isError: true,
+      result: { text: "failed password=fixture-secret", screenshot: "base64-private", huge: "x".repeat(100_000) } } }, "agent");
+    expect(events.map((event) => event.kind)).toEqual(["thought", "tool_call", "tool_result"]);
+    expect(events[1]).toMatchObject({ data: { callId: "run-1:call-1", args: { token: "[redacted]" } } });
+    expect(events[2]).toMatchObject({ data: { callId: "run-1:call-1", ok: false } });
+    expect(JSON.stringify(events)).not.toContain("fixture-secret");
+    expect(JSON.stringify(events)).not.toContain("base64-private");
+    expect(JSON.stringify(events).length).toBeLessThan(16_000);
+    gateway.event({ state: "final", sessionKey: tool.sessionKey, runId: "run-1", seq: 3 });
+    await result;
+    gateway.event({ ...tool, data: { ...tool.data, toolCallId: "after-final" } }, "agent");
+    expect(events).toHaveLength(3);
+  });
+
+  test("reconnect restores missed progress once and resumes tool results without resending", async () => {
+    const gateway = harness();
+    const events: YorozuEvent[] = [];
+    const result = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).run({
+      threadId: "one", text: "inspect", onEvent: (event) => events.push(event),
+    });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    const tool = { sessionKey: "agent:main:yorozu:one", runId: "run-1", stream: "tool", seq: 1,
+      data: { phase: "start", toolCallId: "call-1", name: "read", args: {} } };
+    gateway.request.mockImplementation(async (method) => method === "chat.history" ? {
+      inFlightRun: { runId: "run-1", events: [tool], text: "" },
+    } : {});
+    gateway.hello();
+    await vi.waitFor(() => expect(events.filter((event) => event.kind === "tool_call")).toHaveLength(1));
+    gateway.event(tool, "session.tool");
+    gateway.event({ ...tool, seq: 2, data: { ...tool.data, phase: "result", result: "file contents" } }, "session.tool");
+    expect(events.map((event) => event.kind)).toEqual(["thought", "tool_call", "tool_result"]);
+    expect(gateway.request.mock.calls.filter(([method]) => method === "chat.send")).toHaveLength(1);
+    expect(gateway.request).toHaveBeenCalledWith("sessions.subscribe", {});
+    gateway.event({ state: "final", sessionKey: tool.sessionKey, runId: "run-1", seq: 3 });
+    await result;
+  });
+
+  test("publishes real task-summary completion and ignores previous-turn tasks", async () => {
+    const gateway = harness();
+    const events: YorozuEvent[] = [];
+    const result = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).run({
+      threadId: "one", text: "delegate", onEvent: (event) => events.push(event),
+    });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    const task = { id: "child", title: "Research", sessionKey: "agent:main:yorozu:one", status: "running", deliveryStatus: "pending", createdAt: Date.now() };
+    gateway.event({ action: "upserted", task: { ...task, createdAt: 1 } }, "task");
+    gateway.event({ action: "upserted", task }, "task");
+    gateway.event({ action: "upserted", task: { ...task, status: "completed" } }, "task");
+    expect(events.slice(1).map((event) => event.kind)).toEqual(["thought", "message"]);
+    expect(events[2]).toMatchObject({ parentAgentId: "main", data: { done: true } });
+    gateway.event({ state: "final", sessionKey: task.sessionKey, runId: "run-1", seq: 1 });
+    gateway.event({ state: "final", sessionKey: task.sessionKey, runId: "announce:requester-settle:child", seq: 1, message: { content: "Done" } });
+    await expect(result).resolves.toBe("Done");
+  });
   test("lists available Gateway models in Yorozu's picker shape", async () => {
     const gateway = harness();
     gateway.request.mockImplementation(async (method: string) => method === "models.list" ? {
@@ -119,6 +189,7 @@ describe("OpenClawRunner", () => {
       action: "upserted",
       task: {
         id: "child",
+        createdAt: Date.now(),
         sessionKey: "agent:main:yorozu:delegated",
         status: "running",
         deliveryStatus: "pending",
@@ -158,6 +229,7 @@ describe("OpenClawRunner", () => {
       action: "upserted",
       task: {
         id: "child",
+        createdAt: Date.now(),
         sessionKey: "agent:main:yorozu:quiet",
         status: "running",
         deliveryStatus: "not_applicable",

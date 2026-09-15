@@ -146,17 +146,13 @@ public struct ChatView: View {
                     }
                 }
             #endif
-            ToolbarItem(placement: .primaryAction) {
-                Menu("More", systemImage: "ellipsis") {
-                    #if os(iOS)
+            #if os(iOS)
+                ToolbarItem(placement: .primaryAction) {
+                    Menu("More", systemImage: "ellipsis") {
                         Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
-                        Divider()
-                    #endif
-                    ExportThreadButton(title: thread.displayTitle) {
-                        threadMarkdown(thread: thread, events: events)
                     }
                 }
-            }
+            #endif
             #if os(iOS)
                 if let onCreate {
                     ToolbarItem(placement: .primaryAction) {
@@ -437,6 +433,14 @@ public struct ChatView: View {
         reactions: [String: [MessageReaction]]
     ) -> some View {
         switch row {
+        case .thought(let event):
+            if case .thought(let data) = event.payload {
+                Text(data.text)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .id(event.id)
+            }
         case .message(let event):
             if case .message(let data) = event.payload {
                 MessageBubble(

@@ -73,6 +73,9 @@ enum Showcase {
         case "tools":
             model.previewThreads()
             model.previewTools(in: model.threads[0].id)
+        case "activity":
+            model.previewThreads()
+            model.previewActivity(in: model.threads[0].id)
         case "link":
             model.previewThreads()
             LinkPreviewStore.shared.preload(
