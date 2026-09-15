@@ -285,11 +285,6 @@ struct RootView: View {
     /// because a simulator cannot be made to open a real share sheet.
     @State private var shareShowcase = ChatShowcase.share
 
-    private var working: Bool {
-        guard let thread = path.last else { return false }
-        return session.model?.generating.contains(thread) == true
-    }
-
     private var actualConnection: ConnectionState {
         guard let model = session.model else { return .reconnecting }
         return ConnectionState(state: model.state, ownerOnline: model.ownerOnline)
@@ -297,10 +292,6 @@ struct RootView: View {
 
     var body: some View {
         content
-            .overlay {
-                PhoneWorkingBezel(active: working)
-                    .ignoresSafeArea(.container)
-            }
             // Four things arrive as a `yorozu://` link and they are told apart by the host, not
             // by trying each parser in turn: `pair` is the pairing string tapped in Messages,
             // `thread` and `ref` name a thread to open, `share` is the share extension handing
@@ -441,28 +432,5 @@ struct RootView: View {
         } catch {
             return String(localized: "Not a Yorozu pairing code.")
         }
-    }
-}
-
-/// A running turn follows the window's own corner geometry. Placing this at the scene root is
-/// important: inside a pushed chat, `ContainerRelativeShape` inherits navigation chrome's
-/// asymmetric shape instead of the physical display's four corners.
-private struct PhoneWorkingBezel: View {
-    let active: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var bright = false
-
-    var body: some View {
-        ContainerRelativeShape()
-            .strokeBorder(
-                Color.blue.opacity(active ? (bright || reduceMotion ? 0.9 : 0.3) : 0),
-                lineWidth: 2
-            )
-            .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: bright)
-            .onChange(of: active, initial: true) { _, running in
-                bright = running && !reduceMotion
-            }
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
     }
 }
