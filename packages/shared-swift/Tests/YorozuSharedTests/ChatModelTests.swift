@@ -728,6 +728,22 @@ private func summary(
 }
 
 @MainActor
+@Test func lateSyncEventReturnsToWireOrderInsteadOfArrivalOrder() async throws {
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, device: "phone")
+    model.start()
+
+    let newer = YorozuEvent(id: "new", threadId: "home", ts: 3, agentId: "main",
+                            payload: .message(MessageData(role: .agent, text: "new")))
+    let older = YorozuEvent(id: "old", threadId: "home", ts: 2, agentId: "main",
+                            payload: .thought(ThoughtData(text: "old")))
+    await transport.yield(.event(newer))
+    await transport.yield(.event(event("sync", .syncDelta(SyncDeltaData(events: [older])))))
+
+    #expect(await eventually { model.events["home"]?.map(\.id) == ["old", "new"] })
+}
+
+@MainActor
 @Test func theModelsOnOfferComeFromTheRuntimeAndPickingOneSetsTheThread() async throws {
     let transport = FakeTransport()
     let model = await connected(transport)
