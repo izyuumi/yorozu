@@ -662,6 +662,7 @@ test("two phones pair at once and see the same threads, events and deltas", asyn
   // A device that holds nothing gets every thread's history in one delta, newest thread first.
   first.send(chat, { kind: "sync_request", data: { lastSeen: {} } });
   const delta = await first.next("sync_delta");
+  expect(delta).toMatchObject({ data: { workingThreadIds: [] } });
   expect(
     delta.kind === "sync_delta" &&
       delta.data.events.map((e) => `${e.threadId}:${e.kind === "message" ? e.data.text : e.kind}`),

@@ -414,7 +414,9 @@ public struct ThreadListView<Destination: View>: View {
             .listStyle(.plain)
             .animation(.default, value: threads)
             .overlay { empty(groups) }
-            .searchable(text: $query, prompt: "Search threads")
+            // A search modifier on the root navigation stack otherwise follows pushed chats:
+            // pulling a transcript down reveals "Search threads" above the conversation.
+            .threadListSearch(text: $query, enabled: path.isEmpty)
             .refreshable { await onRefresh?() }
             .navigationTitle("Yorozu")
             .overlay(alignment: .bottomTrailing) {
@@ -566,6 +568,16 @@ public struct ThreadListView<Destination: View>: View {
             } else {
                 ContentUnavailableView.search(text: query)
             }
+        }
+    }
+}
+
+extension View {
+    @ViewBuilder fileprivate func threadListSearch(text: Binding<String>, enabled: Bool) -> some View {
+        if enabled {
+            searchable(text: text, prompt: "Search threads")
+        } else {
+            self
         }
     }
 }

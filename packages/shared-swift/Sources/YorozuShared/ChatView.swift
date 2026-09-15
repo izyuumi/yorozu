@@ -542,6 +542,7 @@ public struct ChatView: View {
                     .textFieldStyle(.plain)
                     .font(.body)
                     .lineLimit(1...6)
+                    .padding(.horizontal, 4)
                     .padding(.vertical, composerPadding)
                     .frame(minHeight: controlTarget)
                     // Hardware keyboards only, which is the whole point: on a paired iPad,

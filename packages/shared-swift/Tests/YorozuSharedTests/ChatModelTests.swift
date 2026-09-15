@@ -622,6 +622,23 @@ private func summary(
 }
 
 @MainActor
+@Test func syncRestoresWorkingTurnsAfterClientRelaunch() async {
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport)
+    model.start()
+
+    await transport.yield(
+        .event(event("sync", .syncDelta(SyncDeltaData(events: [], workingThreadIds: ["home"]))))
+    )
+    #expect(await eventually { model.generating == Set(["home"]) })
+
+    await transport.yield(
+        .event(event("sync-2", .syncDelta(SyncDeltaData(events: [], workingThreadIds: []))))
+    )
+    #expect(await eventually { model.generating.isEmpty })
+}
+
+@MainActor
 @Test func stoppingATurnReleasesTheComposerRatherThanWaitingForAReplyThatIsNotComing() async throws {
     let transport = FakeTransport()
     let model = await connected(transport)
