@@ -177,6 +177,7 @@ public func chatRows(from events: [YorozuEvent]) -> [ChatRow] {
     )
 
     var rows: [ChatRow] = []
+    var transientStatus: YorozuEvent?
     /// The run of tool use being filled, so the next call in an unbroken run joins it rather
     /// than starting a second group under the first.
     var open: [ToolActivity] = []
@@ -186,6 +187,16 @@ public func chatRows(from events: [YorozuEvent]) -> [ChatRow] {
     }
 
     for event in events {
+        if case .thought(let data) = event.payload,
+            event.parentAgentId == nil,
+            data.transient == true
+        {
+            transientStatus = event
+            continue
+        }
+        // Any substantive event supersedes startup/lifecycle chrome. User messages occur
+        // before those statuses, so they do not clear a status that has not arrived yet.
+        transientStatus = nil
         // A specialist's tool use belongs to its card, so only the main agent's own is
         // grouped here. Results are already folded into the call they answered.
         if event.parentAgentId == nil {
@@ -226,6 +237,7 @@ public func chatRows(from events: [YorozuEvent]) -> [ChatRow] {
         }
     }
     closeTools()
+    if let transientStatus { rows.append(.thought(transientStatus)) }
     return rows
 }
 

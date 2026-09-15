@@ -347,6 +347,20 @@ private func toolResult(_ id: String, ok: Bool = true, output: String = "", at t
     #expect(value == latest)
 }
 
+@Test func transientStartupStatusUsesOneRowAndLeavesWhenRealWorkArrives() {
+    let prompt = event(ask("check this"), id: "u1", agent: "phone")
+    let starting = event(.thought(ThoughtData(text: "Starting OpenClaw…", transient: true)), id: "s1")
+    let workspace = event(.thought(ThoughtData(text: "preparing workspace…", transient: true)), id: "s2")
+
+    #expect(chatRows(from: [prompt, starting, workspace]).map(\.id) == ["u1", "s2"])
+
+    let meaningful = event(.thought(ThoughtData(text: "Checking project files")), id: "t1")
+    #expect(chatRows(from: [prompt, starting, workspace, meaningful]).map(\.id) == ["u1", "t1"])
+
+    let final = event(reply("Done", done: true), id: "m1")
+    #expect(chatRows(from: [prompt, starting, workspace, final]).map(\.id) == ["u1", "m1"])
+}
+
 @Test func theMainAgentsToolUseIsGroupedIntoTheThreadWhereItHappened() {
     let rows = chatRows(from: [
         event(ask("tidy up"), id: "u1", agent: "phone"),

@@ -149,7 +149,7 @@ export class OpenClawRunner {
     });
 
     try {
-      this.activity(pending, "starting", { kind: "thought", data: { text: "Starting OpenClaw…" } });
+      this.activity(pending, "starting", { kind: "thought", data: { text: "Starting OpenClaw…", transient: true } });
       const result = await client.request<{ runId?: string }>("chat.send", {
         sessionKey,
         message: turn.text,
@@ -218,7 +218,7 @@ export class OpenClawRunner {
       },
       onClose: () => {
         for (const pending of this.#pending) this.activity(pending, `reconnecting:${Date.now()}`, {
-          kind: "thought", data: { text: "Reconnecting to OpenClaw…" },
+          kind: "thought", data: { text: "Reconnecting to OpenClaw…", transient: true },
         });
       },
       onConnectError: (error) => ready.reject(error),
@@ -322,9 +322,9 @@ export class OpenClawRunner {
         output: activityText(data.result ?? data.output ?? "Completed"),
       } });
     } else if (payload.stream === "reasoning" || (payload.stream === "lifecycle" && phase === "start")) {
-      this.activity(pending, "thinking", { kind: "thought", data: { text: "Thinking…" } });
+      this.activity(pending, "thinking", { kind: "thought", data: { text: "Thinking…", transient: true } });
     } else if (payload.stream === "run_status") {
-      if (phase) this.activity(pending, key, { kind: "thought", data: { text: `${phase.replaceAll("_", " ")}…` } });
+      if (phase) this.activity(pending, key, { kind: "thought", data: { text: `${phase.replaceAll("_", " ")}…`, transient: true } });
     } else if (payload.stream === "item" && data.kind === "preamble" && phase !== "delta") {
       const text = activityText(data.text ?? data.content ?? "");
       if (text) this.activity(pending, key, { kind: "thought", data: { text } });

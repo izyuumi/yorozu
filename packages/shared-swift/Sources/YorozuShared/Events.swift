@@ -325,7 +325,12 @@ public struct ReactionData: Codable, Equatable, Sendable {
 
 public struct ThoughtData: Codable, Equatable, Sendable {
     public var text: String
-    public init(text: String) { self.text = text }
+    /// Live lifecycle status, replaced by newer status and removed when substantive work arrives.
+    public var transient: Bool?
+    public init(text: String, transient: Bool? = nil) {
+        self.text = text
+        self.transient = transient
+    }
 }
 
 public struct ToolCallData: Codable, Equatable, Sendable {

@@ -29,6 +29,7 @@ import { loadDevices, serve, typedAnswer, type Sidecar } from "./serve.js";
 import { OpenClawRunner, type OpenClawTurn } from "./openclaw.js";
 import { localSocketPath } from "./local.js";
 import { appendThreadEvent, createThread, listThreads, readThreadEvents } from "./threads.js";
+import { readTranscripts, transcriptDir } from "./transcripts.js";
 
 let relay: Relay;
 let sidecar: Sidecar;
@@ -320,6 +321,11 @@ test("OpenClaw activity reaches Mac and encrypted phone live, then replays durin
     send({ kind: "thread_create", data: {} });
     send({ kind: "message", data: { role: "user", text: "inspect" } });
     await vi.waitFor(() => expect(turn).toBeDefined());
+    const startup: YorozuEvent = { id: "startup", threadId: "t1", ts: Date.now(), agentId: "main", kind: "thought", data: { text: "Starting OpenClaw…", transient: true } };
+    turn.onEvent?.(startup);
+    expect((await eventsUntil((event) => event.id === startup.id)).at(-1)).toEqual(startup);
+    expect(readThreadEvents("t1", dir)).not.toContainEqual(startup);
+    expect(readTranscripts(new Date(0), transcriptDir(dir))).not.toContainEqual(startup);
     const activity: YorozuEvent = { id: "live-call", threadId: "t1", ts: Date.now(), agentId: "main", kind: "tool_call", data: { callId: "call-1", name: "read", args: {} } };
     turn.onEvent?.(activity);
     expect((await eventsUntil((event) => event.id === activity.id)).at(-1)).toEqual(activity);
