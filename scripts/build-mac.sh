@@ -37,7 +37,9 @@ APP="$DIST/Yorozu.app"
 DMG="$DIST/Yorozu-$VERSION-$BUILD.dmg"
 STAGE="$DIST/stage"
 
-pnpm -r build
+# The app embeds shared + runtime. Relay is deployed separately and compiling it here adds work
+# to every local package/release build without changing a byte in the bundle.
+pnpm --filter @yorozu/shared --filter @yorozu/runtime build
 env -u SDKROOT swift build --package-path apps/mac -c release
 BIN="$(env -u SDKROOT swift build --package-path apps/mac -c release --show-bin-path | tail -1)"
 

@@ -19,7 +19,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - run: swift build --package-path packages/shared-swift
+      # `swift test` already builds this package; a separate build compiled it twice.
       - run: swift test --package-path packages/shared-swift
       - run: swift build --package-path apps/mac
 
@@ -35,4 +35,5 @@ jobs:
             -workspace apps/ios/Yorozu.xcworkspace \
             -scheme YorozuIOS \
             -destination 'generic/platform=iOS Simulator' \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO
