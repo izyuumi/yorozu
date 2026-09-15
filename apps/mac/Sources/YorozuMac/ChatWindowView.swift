@@ -39,6 +39,7 @@ struct ChatWindowView: View {
         NavigationSplitView {
             ThreadSidebar(
                 threads: model.threads,
+                workingThreads: model.generating,
                 selection: $selection,
                 onCreate: { selection = model.newDraft().id },
                 onRename: { model.rename($0, to: $1) },

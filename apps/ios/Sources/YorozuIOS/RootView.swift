@@ -356,6 +356,7 @@ struct RootView: View {
         if let model = session.model {
             ThreadListView(
                 threads: model.threads,
+                workingThreads: model.generating,
                 connection: connection.state,
                 path: $path,
                 onCreate: { path = [model.newDraft().id] },
