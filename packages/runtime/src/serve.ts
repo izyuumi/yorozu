@@ -30,6 +30,7 @@ import {
   type DeviceInfo,
   type EventPayload,
   type Keypair,
+  type ModelOption,
   type ProgressCardData,
   type YorozuEvent,
 } from "@yorozu/shared";
@@ -467,8 +468,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const modelList = (): YorozuEvent =>
     control({
       kind: "model_list",
-      data: { models: provider ? modelOptions(loadProviders(dir)) : [] },
+      data: { models: provider ? modelOptions(loadProviders(dir)) : openclawModels },
     });
+
+  let openclawModels: ModelOption[] = [];
+  void openclaw?.listModels().then((models) => {
+    openclawModels = models;
+    broadcast(modelList());
+  }).catch((error: unknown) => state(`model-list-error ${String(error)}`));
 
   /**
    * Every device this Mac answers, the local socket's clients included: the Mac app is one more

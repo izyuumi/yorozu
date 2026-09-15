@@ -31,6 +31,21 @@ function harness() {
 }
 
 describe("OpenClawRunner", () => {
+  test("lists available Gateway models in Yorozu's picker shape", async () => {
+    const gateway = harness();
+    gateway.request.mockImplementation(async (method: string) => method === "models.list" ? {
+      models: [
+        { id: "gpt-6-astra", provider: "openai", alias: "Astra", available: true },
+        { id: "offline", provider: "local", available: false },
+        { provider: "broken" },
+      ],
+    } : {});
+    await expect(new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).listModels()).resolves.toEqual([
+      { id: "openai/gpt-6-astra", label: "Astra", providerLabel: "openai" },
+    ]);
+    expect(gateway.request).toHaveBeenCalledWith("models.list", {});
+  });
+
   test("sends through Gateway and publishes streaming deltas", async () => {
     const gateway = harness();
     const updates: string[] = [];
