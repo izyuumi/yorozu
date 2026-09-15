@@ -396,6 +396,8 @@ export interface SyncRequestData {
 
 export interface SyncDeltaData {
   events: YorozuEvent[];
+  /** Threads with a turn still running on the Mac when this page was made. */
+  workingThreadIds?: string[];
   /** Another bounded page is available; request again after applying this one. */
   more?: boolean;
 }

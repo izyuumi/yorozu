@@ -15,10 +15,10 @@ import CoreGraphics
     public let controlTarget: CGFloat = 44
 #endif
 
-/// What the composer's text field pads itself by, above and below. Enough to centre one line
-/// of body text in a ``controlTarget``-tall row on either platform.
+/// What the composer's text field pads itself by, above and below. Four points beyond the
+/// control-centering minimum gives typed text room to breathe on both platforms.
 #if os(macOS)
-    public let composerPadding: CGFloat = 5
+    public let composerPadding: CGFloat = 9
 #else
-    public let composerPadding: CGFloat = 11
+    public let composerPadding: CGFloat = 15
 #endif

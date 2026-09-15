@@ -822,9 +822,12 @@ public struct SyncRequestData: Codable, Equatable, Sendable {
 
 public struct SyncDeltaData: Codable, Equatable, Sendable {
     public var events: [YorozuEvent]
+    /// Threads with a turn still running on the Mac when this page was made.
+    public var workingThreadIds: [String]?
     public var more: Bool?
-    public init(events: [YorozuEvent], more: Bool? = nil) {
+    public init(events: [YorozuEvent], workingThreadIds: [String]? = nil, more: Bool? = nil) {
         self.events = events
+        self.workingThreadIds = workingThreadIds
         self.more = more
     }
 }

@@ -615,6 +615,9 @@ public final class ChatModel {
                 onThreads?()
             case .syncDelta(let data):
                 for event in data.events { upsert(event) }
+                if let workingThreadIds = data.workingThreadIds {
+                    generating = Set(workingThreadIds)
+                }
                 if data.more == true { requestSync() }
                 else { syncRevision += 1 }
                 // Counted, not just applied: a background drain is waiting for exactly this to

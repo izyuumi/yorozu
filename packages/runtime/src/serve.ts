@@ -515,6 +515,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       kind: "sync_delta",
       data: {
         events: pages.flat(),
+        workingThreadIds: [...running.keys()],
         ...(pages.some((events) => events.length === SYNC_LIMIT) ? { more: true } : {}),
       },
     });
