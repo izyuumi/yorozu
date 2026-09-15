@@ -34,9 +34,9 @@ struct PermissionStatusRow: View {
     @ObservedObject private var neverSleep = NeverSleep.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(permission.title)
+                Text(permission.title).fontWeight(.medium)
                 Spacer()
                 if permission == .startAtLogin {
                     Toggle("Start Yorozu at login", isOn: Binding(
@@ -53,20 +53,25 @@ struct PermissionStatusRow: View {
                 } else {
                     PermissionBadge(granted: granted, asking: asking)
                 }
-                if permission.canPrompt {
-                    Button("Request") { Task { await ask() } }
-                        .disabled(asking)
-                }
-                if let url = permission.settingsURL {
-                    Button("Open System Settings") { NSWorkspace.shared.open(url) }
-                }
             }
             Text(permission.detail)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if permission.canPrompt || permission.settingsURL != nil {
+                HStack {
+                    Spacer()
+                    if permission.canPrompt {
+                        Button("Request") { Task { await ask() } }
+                            .disabled(asking)
+                    }
+                    if let url = permission.settingsURL {
+                        Button("Open System Settings") { NSWorkspace.shared.open(url) }
+                    }
+                }
+            }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 6)
         .task {
             while !Task.isCancelled {
                 granted = await permission.isGranted()
@@ -82,18 +87,71 @@ struct PermissionStatusRow: View {
     }
 }
 
-/// The onboarding checks as a list that is always true, rather than a wizard to walk once.
+private struct PermissionSection: Identifiable {
+    let id: String
+    let title: String
+    let detail: String
+    let systemImage: String
+    let permissions: [Permission]
+
+    static let all = [
+        PermissionSection(
+            id: "availability",
+            title: String(localized: "Stay available"),
+            detail: String(localized: "Keep Yorozu reachable from your iPhone, including after login and while you are away."),
+            systemImage: "antenna.radiowaves.left.and.right",
+            permissions: [.startAtLogin, .neverSleep]
+        ),
+        PermissionSection(
+            id: "control",
+            title: String(localized: "Control this Mac"),
+            detail: String(localized: "See and operate apps when you ask Yorozu to do something on your Mac."),
+            systemImage: "macwindow.on.rectangle",
+            permissions: [.accessibility, .inputMonitoring, .screenRecording, .automation]
+        ),
+        PermissionSection(
+            id: "files",
+            title: String(localized: "Files"),
+            detail: String(localized: "Work with documents, downloads, cloud drives, and app data."),
+            systemImage: "folder",
+            permissions: [.files, .fullDiskAccess]
+        ),
+        PermissionSection(
+            id: "personal",
+            title: String(localized: "Apps and personal data"),
+            detail: String(localized: "Use only the services you want Yorozu to help with."),
+            systemImage: "person.crop.circle.badge.checkmark",
+            permissions: [.calendars, .reminders, .contacts, .photos, .music, .location, .camera, .microphone]
+        ),
+    ]
+}
+
+/// Grants grouped by what they enable, with availability first because remote access depends
+/// on it even when every privacy grant is already in place.
 struct PermissionsView: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 20) {
             HStack {
                 Text("Permissions").font(.headline)
                 Spacer()
                 Button("Run Setup Wizard…") { OnboardingWindow.show() }
+                    .fixedSize()
+                    .layoutPriority(1)
             }
-            ForEach(Permission.allCases) { permission in
-                Divider()
-                PermissionStatusRow(permission: permission)
+            ForEach(PermissionSection.all) { section in
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(section.title, systemImage: section.systemImage)
+                        .font(.headline)
+                    Text(section.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    VStack(spacing: 0) {
+                        ForEach(Array(section.permissions.enumerated()), id: \.element) { index, permission in
+                            if index > 0 { Divider() }
+                            PermissionStatusRow(permission: permission)
+                        }
+                    }
+                }
             }
         }
     }

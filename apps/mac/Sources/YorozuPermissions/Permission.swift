@@ -49,61 +49,59 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
 
     public var title: String {
         switch self {
-        case .accessibility: "Accessibility"
-        case .screenRecording: "Screen Recording"
-        case .inputMonitoring: "Input Monitoring"
-        case .fullDiskAccess: "Full Disk Access"
-        case .calendars: "Calendars"
-        case .reminders: "Reminders"
-        case .contacts: "Contacts"
-        case .photos: "Photos"
-        case .music: "Music"
-        case .location: "Location"
-        case .camera: "Camera"
-        case .microphone: "Microphone"
-        case .files: "Files & Folders"
-        case .automation: "Automation"
-        case .startAtLogin: "Start at Login"
-        case .neverSleep: "Never Sleep"
+        case .accessibility: String(localized: "Accessibility")
+        case .screenRecording: String(localized: "Screen Recording")
+        case .inputMonitoring: String(localized: "Input Monitoring")
+        case .fullDiskAccess: String(localized: "Full Disk Access")
+        case .calendars: String(localized: "Calendars")
+        case .reminders: String(localized: "Reminders")
+        case .contacts: String(localized: "Contacts")
+        case .photos: String(localized: "Photos")
+        case .music: String(localized: "Music")
+        case .location: String(localized: "Location")
+        case .camera: String(localized: "Camera")
+        case .microphone: String(localized: "Microphone")
+        case .files: String(localized: "Files & Folders")
+        case .automation: String(localized: "Automation")
+        case .startAtLogin: String(localized: "Start at Login")
+        case .neverSleep: String(localized: "Never Sleep")
         }
     }
 
     public var detail: String {
         switch self {
         case .accessibility:
-            "Lets the agent read the window you are looking at as an accessibility tree, and click or type in it."
+            String(localized: "Lets the agent read the window you are looking at as an accessibility tree, and click or type in it.")
         case .screenRecording:
-            "Used only when a window exposes no accessibility tree, so the agent can fall back to a screenshot."
+            String(localized: "Used only when a window exposes no accessibility tree, so the agent can fall back to a screenshot.")
         case .inputMonitoring:
-            "Lets the agent synthesise keystrokes and clicks so it can act on what it sees."
+            String(localized: "Lets the agent synthesise keystrokes and clicks so it can act on what it sees.")
         case .fullDiskAccess:
-            "Lets the agent read and write files anywhere you can, including Mail and Safari data."
+            String(localized: "Lets the agent read and write files anywhere you can, including Mail and Safari data.")
         case .calendars:
-            "Lets the agent read your calendar and make, move and cancel events when you ask."
+            String(localized: "Lets the agent read your calendar and make, move and cancel events when you ask.")
         case .reminders:
-            "Lets the agent read your reminder lists and add to or tick off items."
+            String(localized: "Lets the agent read your reminder lists and add to or tick off items.")
         case .contacts:
-            "Lets the agent look up the people you write to, so you can say a name instead of an address."
+            String(localized: "Lets the agent look up the people you write to, so you can say a name instead of an address.")
         case .photos:
-            "Lets the agent find and attach pictures from your library."
+            String(localized: "Lets the agent find and attach pictures from your library.")
         case .music:
-            "Lets the agent see your music library so it can play what you ask for."
+            String(localized: "Lets the agent see your music library so it can play what you ask for.")
         case .location:
-            "Lets the agent answer questions about where you are — travel time, the weather, what is nearby."
+            String(localized: "Lets the agent answer questions about where you are — travel time, the weather, what is nearby.")
         case .camera:
-            "Lets the agent take a picture when you ask it to. Never used without you asking."
+            String(localized: "Lets the agent take a picture when you ask it to. Never used without you asking.")
         case .microphone:
-            "Lets the agent listen when you ask it to. Never used without you asking."
+            String(localized: "Lets the agent listen when you ask it to. Never used without you asking.")
         case .files:
-            "Your Desktop, Documents, Downloads and cloud drives. macOS asks once per folder."
+            String(localized: "Your Desktop, Documents, Downloads and cloud drives. macOS asks once per folder.")
         case .automation:
-            "Lets the agent drive Finder, Safari, Mail, Calendar, Messages and the rest. Each app asks "
-                + "separately and may launch while it does; anything that was not already open is quit again."
+            String(localized: "Lets the agent drive Finder, Safari, Mail, Calendar, Messages and the rest. Each app asks separately and may launch while it does; anything that was not already open is quit again.")
         case .startAtLogin:
-            "Starts Yorozu whenever you log in, so a Mac that restarted overnight is answering your phone again "
-                + "before you notice it rebooted."
+            String(localized: "Starts Yorozu whenever you log in, so a Mac that restarted overnight is answering your phone again before you notice it rebooted.")
         case .neverSleep:
-            "Keeps this Mac awake so the agent can answer your phone while you are away. Reversible here or in the menu at any time."
+            String(localized: "Keeps this Mac awake so the agent can answer your phone while you are away. Reversible here or in the menu at any time.")
         }
     }
 

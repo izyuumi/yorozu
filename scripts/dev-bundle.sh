@@ -9,6 +9,7 @@ cd "$(dirname "$0")/.."
 
 CONFIG=${CONFIG:-debug}
 APP=${APP:-apps/mac/.build/Yorozu.app}
+BUNDLE_ID=${BUNDLE_ID:-to.yumi.yorozu}
 
 swift build --package-path apps/mac -c "$CONFIG"
 BIN="$(swift build --package-path apps/mac -c "$CONFIG" --show-bin-path)/YorozuMac"
@@ -31,6 +32,8 @@ install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/Mac
 # for iOS, but this bundle is assembled by hand and has no catalog, so it takes the .icns
 # that scripts/icon-render.sh renders from the same artwork.
 cp apps/mac/Resources/Yorozu.icns "$APP/Contents/Resources/Yorozu.icns"
+xcrun xcstringstool compile apps/mac/Resources/Localizable.xcstrings \
+  --output-directory "$APP/Contents/Resources"
 
 # The NS…UsageDescription strings, taken from the helper's own Info.plist rather than
 # written out again here: TCC reads them from whichever binary is asking, so the app and
@@ -43,8 +46,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key><string>Yorozu</string>
-  <key>CFBundleIdentifier</key><string>to.yumi.yorozu</string>
+  <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleName</key><string>Yorozu</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleIconFile</key><string>Yorozu</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1</string>
@@ -56,5 +60,5 @@ $USAGE
 </plist>
 PLIST
 
-codesign --force --sign - --identifier to.yumi.yorozu "$APP"
+codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
 echo "$APP"
