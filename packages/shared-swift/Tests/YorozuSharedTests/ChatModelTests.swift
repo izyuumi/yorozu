@@ -84,6 +84,26 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
 }
 
 @MainActor
+@Test func connectionPresentationFreezesInBackgroundAndDelaysDisconnection() async throws {
+    let presentation = ConnectionPresentation(.connected)
+
+    presentation.update(.reconnecting, active: false, delay: .milliseconds(30))
+    try await Task.sleep(for: .milliseconds(40))
+    #expect(presentation.state == .connected)
+
+    presentation.update(.reconnecting, active: true, delay: .milliseconds(30))
+    try await Task.sleep(for: .milliseconds(10))
+    #expect(presentation.state == .connected)
+    presentation.update(.connected, active: true, delay: .milliseconds(30))
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(presentation.state == .connected)
+
+    presentation.update(.offline, active: true, delay: .milliseconds(30))
+    try await Task.sleep(for: .milliseconds(40))
+    #expect(presentation.state == .offline)
+}
+
+@MainActor
 @Test func wireSendsFinishInEmissionOrder() async {
     let transport = BlockingTransport()
     let model = ChatModel(transport: transport)

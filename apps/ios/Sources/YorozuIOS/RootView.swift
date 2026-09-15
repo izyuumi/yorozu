@@ -280,6 +280,7 @@ struct RootView: View {
     /// it before this view was ever built, so the first frame is already the chat.
     @State private var path: [String] = Session.shared.openPath
     @State private var settings = false
+    @State private var connection = ConnectionPresentation(.reconnecting)
     /// Screenshot only: `-yorozuShowcase share` draws the share extension's composer here,
     /// because a simulator cannot be made to open a real share sheet.
     @State private var shareShowcase = ChatShowcase.share
@@ -287,6 +288,11 @@ struct RootView: View {
     private var working: Bool {
         guard let thread = path.last else { return false }
         return session.model?.generating.contains(thread) == true
+    }
+
+    private var actualConnection: ConnectionState {
+        guard let model = session.model else { return .reconnecting }
+        return ConnectionState(state: model.state, ownerOnline: model.ownerOnline)
     }
 
     var body: some View {
@@ -321,6 +327,7 @@ struct RootView: View {
             // rather than waiting out a backoff that ran down while nothing was executing — and
             // the moment to pick up anything shared while it was away.
             .onChange(of: scenePhase) { _, phase in
+                connection.update(actualConnection, active: phase == .active)
                 guard phase == .active else { return }
                 // A background drain hangs up so the OS can suspend the app cleanly, so
                 // coming back may be a fresh dial rather than a reconnect. `start()` does
@@ -328,6 +335,9 @@ struct RootView: View {
                 session.model?.start()
                 session.model?.reconnect()
                 session.drainShares()
+            }
+            .onChange(of: actualConnection, initial: true) { _, state in
+                connection.update(state, active: scenePhase == .active)
             }
             // Half of "genuinely reading": a thread on screen in an app nobody is looking at is
             // not being read, and must not report that it was. Kept apart from the switch above
@@ -346,7 +356,7 @@ struct RootView: View {
         if let model = session.model {
             ThreadListView(
                 threads: model.threads,
-                connection: ConnectionState(state: model.state, ownerOnline: model.ownerOnline),
+                connection: connection.state,
                 path: $path,
                 onCreate: { path = [model.newDraft().id] },
                 onRename: { model.rename($0, to: $1) },
@@ -390,7 +400,7 @@ struct RootView: View {
                 // read to be worth caching.
                 let stored = PairingStore.load()
                 SettingsView(
-                    status: ConnectionState(state: model.state, ownerOnline: model.ownerOnline),
+                    status: connection.state,
                     relayUrl: stored?.pairing.relayUrl ?? "—",
                     pairedAt: stored?.pairedAt,
                     onUnpair: session.unpair,
