@@ -9,7 +9,6 @@ cd "$(dirname "$0")/.."
 
 CONFIG=${CONFIG:-debug}
 APP=${APP:-apps/mac/.build/Yorozu.app}
-BUNDLE_ID=${BUNDLE_ID:-to.yumi.yorozu}
 
 swift build --package-path apps/mac -c "$CONFIG"
 BIN="$(swift build --package-path apps/mac -c "$CONFIG" --show-bin-path)/YorozuMac"
@@ -46,7 +45,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key><string>Yorozu</string>
-  <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
+  <key>CFBundleIdentifier</key><string>to.yumi.yorozu</string>
   <key>CFBundleName</key><string>Yorozu</string>
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleIconFile</key><string>Yorozu</string>
@@ -60,5 +59,5 @@ $USAGE
 </plist>
 PLIST
 
-codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
+codesign --force --sign - --identifier to.yumi.yorozu "$APP"
 echo "$APP"

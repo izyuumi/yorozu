@@ -158,12 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Re-registered rather than only written once: an update moves the bundle, and an
             // agent pointing at the old path supervises nothing.
             if Watchdog.isEnabled { Watchdog.install() }
-            if Bundle.main.bundleIdentifier == "to.yumi.yorozu" {
-                LoginItem.enableByDefaultOnce()
-            } else {
-                // Preview/test bundles must never survive as login items or supervise production.
-                LoginItem.set(false)
-            }
+            LoginItem.enableByDefaultOnce()
             Task { await Permission.logAll() }
             // Starts Sparkle here rather than when Settings is first opened: the whole point of
             // an automatic update is that nobody had to go looking for it.
