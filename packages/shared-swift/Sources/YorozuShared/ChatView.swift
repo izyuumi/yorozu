@@ -509,19 +509,10 @@ public struct ChatView: View {
         // to type into rather than three controls in a row.
         VStack(alignment: .leading, spacing: 0) {
             if !attachments.wrappedValue.isEmpty {
-                ScrollView(.horizontal) {
-                    HStack(spacing: 8) {
-                        ForEach(Array(attachments.wrappedValue.enumerated()), id: \.offset) { index, staged in
-                            StagedAttachment(attachment: staged) {
-                                attachments.wrappedValue.remove(at: index)
-                            }
-                            .frame(width: 240)
-                        }
-                    }
+                StagedStrip(attachments: attachments.wrappedValue) { index in
+                    attachments.wrappedValue.remove(at: index)
                 }
-                .scrollIndicators(.hidden)
-                    .padding(.horizontal, 8)
-                    .padding(.top, 8)
+                .padding(.top, 8)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             if let quote = replyQuote {
@@ -532,6 +523,7 @@ public struct ChatView: View {
             }
             HStack(alignment: .bottom, spacing: 4) {
                 AttachButton(
+                    remaining: MessageAttachment.maxCount - attachments.wrappedValue.count,
                     onPick: { picked in
                         let combined = attachments.wrappedValue + picked
                         guard combined.count <= MessageAttachment.maxCount,
@@ -1033,6 +1025,7 @@ private struct ChangeStamp: Equatable {
 /// live in the view rather than in the model, and so cannot be seeded through ``ChatModel``.
 @MainActor
 public enum ChatShowcase {
+    public static var imageViewer = false
     /// A term, which opens the search field over the transcript with it already typed.
     public static var search: String?
     /// A message, which puts its quote chip above the field.

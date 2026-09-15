@@ -19,6 +19,35 @@ private func showcaseIcon() -> Data {
     }
 }
 
+/// Four stand-in photos for the images showcase, drawn rather than bundled: a screenshot should
+/// not need anybody's real kitchen, and the app should not ship one. Portrait and numbered, so
+/// the grid's cells and the viewer's pages are told apart at a glance.
+@MainActor
+private func showcaseImages() -> [MessageAttachment] {
+    let plates: [(String, UIColor)] = [
+        ("kitchen.jpg", .systemTeal),
+        ("tap-brass.jpg", .systemOrange),
+        ("tap-chrome.jpg", .systemIndigo),
+        ("sink.jpg", .systemPink),
+    ]
+    let size = CGSize(width: 900, height: 1200)
+    return plates.enumerated().compactMap { index, plate in
+        let (name, colour) = plate
+        let data = UIGraphicsImageRenderer(size: size).jpegData(withCompressionQuality: 0.9) { context in
+            colour.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            ("\(index + 1)" as NSString).draw(
+                at: CGPoint(x: 300, y: 420),
+                withAttributes: [
+                    .font: UIFont.boldSystemFont(ofSize: 340),
+                    .foregroundColor: UIColor.white.withAlphaComponent(0.9),
+                ]
+            )
+        }
+        return MessageAttachment(name: name, mime: "image/jpeg", bytes: data)
+    }
+}
+
 /// Test harness only, and inert unless `-yorozuSend` was passed: it drives the first message and
 /// prints the lines `apps/ios/e2e/run.sh` asserts on. It hangs off the model's hooks rather than
 /// living inside it, so nothing about the harness ships in the shared model.
@@ -65,6 +94,18 @@ final class E2EHarness {
             // Nothing on a simulator can open a menu, so the menu's own contents are drawn as
             // a popover over the button they hang off.
             ChatShowcase.modelMenu = true
+        // The two t53 pictures: several photos in one message as a grid, and the viewer that
+        // opens on one of them. Re-seeded on every thread list for the same reason as `share`.
+        case "images", "images-viewer":
+            ChatShowcase.imageViewer = launchArgument("yorozuShowcase") == "images-viewer"
+            let images = showcaseImages()
+            let seed = { [weak model] in
+                model?.previewThreads()
+                guard let thread = model?.threads.first?.id else { return }
+                model?.previewImages(in: thread, images: images)
+            }
+            seed()
+            model.onThreads = seed
         case "link":
             model.previewThreads()
             LinkPreviewStore.shared.preload(

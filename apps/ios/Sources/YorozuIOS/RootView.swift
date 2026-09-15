@@ -175,7 +175,9 @@ final class Session {
         for payload in ShareBox.takeAll(in: directory) {
             let thread = payload.threadId.flatMap { id in model.threads.first { $0.id == id } }
                 ?? model.newDraft()
-            model.send(payload.text, in: thread.id, attachment: payload.attachment)
+            // The share sheet carries at most one picture — its activation rule says so — so
+            // this is the one-element case of what the composer sends several of.
+            model.send(payload.text, in: thread.id, attachments: payload.attachment.map { [$0] } ?? [])
             openPath = [thread.id]
         }
     }

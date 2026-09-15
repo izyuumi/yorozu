@@ -37,6 +37,8 @@ export interface MessageAttachment {
  * any provider imposes.
  */
 export const ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
+export const MAX_ATTACHMENTS_PER_MESSAGE = 10;
+export const MESSAGE_ATTACHMENTS_MAX_BYTES = 20 * 1024 * 1024;
 
 export interface MessageData {
   role: "user" | "agent";
@@ -63,6 +65,22 @@ export interface ReactionData {
 /** Reads current and legacy message shapes without duplicating the first attachment. */
 export const messageAttachments = (data: MessageData): MessageAttachment[] =>
   data.attachments ?? (data.attachment ? [data.attachment] : []);
+
+export function attachmentBytes(attachment: MessageAttachment): number {
+  const padding = attachment.data.endsWith("==") ? 2 : attachment.data.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor(attachment.data.length / 4) * 3 - padding);
+}
+
+export function attachmentsWithinLimits(attachments: readonly MessageAttachment[]): boolean {
+  if (attachments.length > MAX_ATTACHMENTS_PER_MESSAGE) return false;
+  let total = 0;
+  for (const attachment of attachments) {
+    const bytes = attachmentBytes(attachment);
+    if (bytes > ATTACHMENT_MAX_BYTES) return false;
+    total += bytes;
+  }
+  return total <= MESSAGE_ATTACHMENTS_MAX_BYTES;
+}
 
 export interface ThoughtData {
   text: string;

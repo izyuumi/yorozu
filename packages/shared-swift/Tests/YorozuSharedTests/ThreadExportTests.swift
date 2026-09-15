@@ -72,13 +72,18 @@ private func event(
     #expect(empty.hasPrefix("# New chat\n"))
 
     let photo = MessageAttachment(name: "receipt.png", mime: "image/png", data: "aGVsbG8=")
+    let second = MessageAttachment(name: "kitchen.jpg", mime: "image/jpeg", data: "aGVsbG8=")
     let withPhoto = threadMarkdown(
         thread: thread,
-        events: [event("m1", .message(MessageData(role: .user, text: "", attachment: photo)), at: 0)],
+        events: [
+            event("m1", .message(MessageData(role: .user, text: "", attachments: [photo, second])), at: 0)
+        ],
         locale: posix,
         timeZone: utc
     )
+    // Every one of them is named, in the order they were sent.
     #expect(withPhoto.contains("*Attached: receipt.png (5 bytes)*"))
+    #expect(withPhoto.contains("*Attached: kitchen.jpg (5 bytes)*"))
     // A photo with no words says so rather than leaving a heading with nothing under it.
     #expect(withPhoto.contains("*(no text)*"))
 }
