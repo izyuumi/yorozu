@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { GatewayClient, type DeviceIdentity, type GatewayClientHostDeps } from "@openclaw/gateway-client";
 import type { EventFrame } from "@openclaw/gateway-protocol/frame-guards";
-import type { MessageAttachment, ReasoningEffort } from "@yorozu/shared";
+import type { MessageAttachment, ModelOption, ReasoningEffort } from "@yorozu/shared";
 
 const DEFAULT_GATEWAY_URL = "ws://127.0.0.1:18789";
 
@@ -57,6 +57,22 @@ export class OpenClawRunner {
     this.#stateFile = join(options.stateDir ?? process.env.YOROZU_STATE_DIR ?? ".", "openclaw-gateway.json");
     this.#spawn = options.spawnProcess ?? spawn;
     this.#clientFactory = options.clientFactory ?? ((clientOptions) => new GatewayClient(clientOptions));
+  }
+
+  async listModels(): Promise<ModelOption[]> {
+    const result = await (await this.connect()).request<{ models?: unknown[] }>("models.list", {});
+    return (result.models ?? []).flatMap((value) => {
+      if (!value || typeof value !== "object") return [];
+      const model = value as Record<string, unknown>;
+      const id = typeof model.id === "string" ? model.id : "";
+      const provider = typeof model.provider === "string" ? model.provider : "";
+      if (!id || !provider || model.available === false) return [];
+      return [{
+        id: `${provider}/${id}`,
+        label: typeof model.alias === "string" && model.alias ? model.alias : id,
+        providerLabel: provider,
+      }];
+    });
   }
 
   async run(turn: OpenClawTurn): Promise<string | undefined> {
