@@ -117,21 +117,44 @@ public func messageReactions(
     to messageId: String,
     selectedBy device: String? = nil
 ) -> [MessageReaction] {
-    var active: [String: String] = [:]
-    var order: [String] = []
+    messageReactionsByMessage(in: events, selectedBy: device)[messageId] ?? []
+}
+
+/// Current reactions for every message in one pass. A chat redraws while the last reply streams;
+/// scanning the whole thread separately for every bubble made that redraw quadratic.
+func messageReactionsByMessage(
+    in events: [YorozuEvent],
+    selectedBy device: String? = nil
+) -> [String: [MessageReaction]] {
+    var active: [String: [String: String]] = [:]
+    var order: [String: [String]] = [:]
     for event in events {
-        guard case .reaction(let reaction) = event.payload, reaction.messageId == messageId else { continue }
+        guard case .reaction(let reaction) = event.payload else { continue }
+        let messageId = reaction.messageId
         if reaction.remove == true {
-            if active[event.agentId] == reaction.emoji { active[event.agentId] = nil }
+            if active[messageId]?[event.agentId] == reaction.emoji {
+                active[messageId]?[event.agentId] = nil
+            }
         } else {
-            active[event.agentId] = reaction.emoji
-            if !order.contains(reaction.emoji) { order.append(reaction.emoji) }
+            active[messageId, default: [:]][event.agentId] = reaction.emoji
+            if order[messageId, default: []].contains(reaction.emoji) == false {
+                order[messageId, default: []].append(reaction.emoji)
+            }
         }
     }
-    return order.compactMap { emoji in
-        let reactors = active.filter { $0.value == emoji }.map(\.key)
-        guard !reactors.isEmpty else { return nil }
-        return MessageReaction(emoji: emoji, count: reactors.count, selected: device.map(reactors.contains) ?? false)
+    return order.reduce(into: [:]) { result, entry in
+        let (messageId, emojiOrder) = entry
+        let reactors = active[messageId] ?? [:]
+        let reactions = emojiOrder.compactMap { emoji -> MessageReaction? in
+            let matching = reactors.filter { $0.value == emoji }.map(\.key)
+            guard !matching.isEmpty else { return nil }
+            return MessageReaction(
+                emoji: emoji,
+                count: matching.count,
+                selected: device.map(matching.contains) ?? false
+            )
+        }
+        if !reactions.isEmpty { result[messageId] = reactions }
     }
 }
 

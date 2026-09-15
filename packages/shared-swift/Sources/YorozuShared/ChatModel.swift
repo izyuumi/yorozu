@@ -244,6 +244,10 @@ public final class ChatModel {
         messageReactions(in: events[threadId] ?? [], to: messageId, selectedBy: device)
     }
 
+    public func reactions(in threadId: String) -> [String: [MessageReaction]] {
+        messageReactionsByMessage(in: events[threadId] ?? [], selectedBy: device)
+    }
+
     public func react(to messageId: String, with emoji: String, in threadId: String) {
         let remove = reactions(to: messageId, in: threadId).contains { $0.emoji == emoji && $0.selected }
         let reaction = event(.reaction(ReactionData(messageId: messageId, emoji: emoji, remove: remove)), in: threadId)
