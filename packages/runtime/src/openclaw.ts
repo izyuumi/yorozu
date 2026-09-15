@@ -18,6 +18,7 @@ interface Gateway {
 interface PendingTurn {
   sessionKey: string;
   runId?: string;
+  awaitsAnnouncement: boolean;
   text: string;
   onUpdate?: (text: string) => void;
   resolve: (text: string) => void;
@@ -84,7 +85,7 @@ export class OpenClawRunner {
 
     let pending!: PendingTurn;
     const completed = new Promise<string>((resolve, reject) => {
-      pending = { sessionKey, text: "", onUpdate: turn.onUpdate, resolve, reject };
+      pending = { sessionKey, awaitsAnnouncement: false, text: "", onUpdate: turn.onUpdate, resolve, reject };
       this.#pending.add(pending);
       const abort = () => {
         this.#pending.delete(pending);
@@ -176,12 +177,29 @@ export class OpenClawRunner {
   }
 
   private handleEvent(event: EventFrame): void {
-    if (event.event !== "chat" || !event.payload || typeof event.payload !== "object") return;
+    if (!event.payload || typeof event.payload !== "object") return;
     const payload = event.payload as Record<string, unknown>;
+    if (event.event === "task") {
+      const task = payload.task;
+      if (payload.action === "upserted" && task && typeof task === "object") {
+        const sessionKey = (task as Record<string, unknown>).sessionKey;
+        const pending = [...this.#pending].find((item) => item.sessionKey === sessionKey);
+        const deliveryStatus = (task as Record<string, unknown>).deliveryStatus;
+        if (pending && (deliveryStatus === "pending" || deliveryStatus === "in_progress")) {
+          pending.awaitsAnnouncement = true;
+        }
+      }
+      return;
+    }
+    if (event.event !== "chat") return;
     const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : undefined;
     const runId = typeof payload.runId === "string" ? payload.runId : undefined;
     const pending = [...this.#pending].find(
-      (item) => item.sessionKey === sessionKey && (!item.runId || item.runId === runId),
+      (item) => item.sessionKey === sessionKey && (
+        !item.runId || item.runId === runId || (
+          item.awaitsAnnouncement && runId?.startsWith("announce:requester-settle:")
+        )
+      ),
     );
     if (!pending || !runId) return;
     pending.runId ??= runId;
@@ -190,7 +208,8 @@ export class OpenClawRunner {
       pending.text = payload.replace === true ? delta : pending.text + delta;
       if (pending.text) pending.onUpdate?.(pending.text);
     } else if (payload.state === "final") {
-      pending.resolve(messageText(payload.message) || pending.text);
+      const text = messageText(payload.message) || pending.text;
+      if (text || !pending.awaitsAnnouncement || runId.startsWith("announce:requester-settle:")) pending.resolve(text);
     } else if (payload.state === "aborted") {
       pending.resolve("");
     } else if (payload.state === "error") {
