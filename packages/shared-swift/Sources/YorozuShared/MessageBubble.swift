@@ -108,12 +108,7 @@ public struct MessageBubble: View {
     public var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
             if !data.attachments.isEmpty {
-                LazyVGrid(columns: attachmentColumns, spacing: 4) {
-                    ForEach(Array(data.attachments.enumerated()), id: \.offset) { _, attachment in
-                        AttachmentView(attachment: attachment)
-                    }
-                }
-                .frame(maxWidth: 360, alignment: isUser ? .trailing : .leading)
+                AttachmentsView(attachments: data.attachments)
             }
             if !data.text.isEmpty || streaming {
                 bubble
@@ -140,12 +135,6 @@ public struct MessageBubble: View {
             .contentShape(.rect)
             .onHover { hovering = $0 }
         #endif
-    }
-
-    private var attachmentColumns: [GridItem] {
-        data.attachments.count == 1
-            ? [GridItem(.flexible())]
-            : [GridItem(.flexible(), spacing: 4), GridItem(.flexible())]
     }
 
     /// Everything that can be done to one message. Shared by the context menu and, on the Mac,
@@ -356,40 +345,159 @@ struct QuoteStrip: View {
     }
 }
 
-/// What the user attached, above their message: a photo as a photo, anything else as a file.
-private struct AttachmentView: View {
+private struct GridImage: Identifiable {
+    let id: Int
     let attachment: MessageAttachment
+    let image: Image
+}
+
+private struct ViewedImage: Identifiable {
+    let index: Int
+    var id: Int { index }
+}
+
+/// Images form a compact grid; files remain named rows. Any image opens the paged viewer.
+private struct AttachmentsView: View {
+    let attachments: [MessageAttachment]
+    @State private var viewing: ViewedImage?
+
+    private var split: (images: [GridImage], files: [MessageAttachment]) {
+        var images: [GridImage] = []
+        var files: [MessageAttachment] = []
+        for attachment in attachments {
+            if attachment.isImage, let bytes = attachment.bytes, let image = Image.from(data: bytes) {
+                images.append(GridImage(id: images.count, attachment: attachment, image: image))
+            } else {
+                files.append(attachment)
+            }
+        }
+        return (images, files)
+    }
 
     var body: some View {
-        if attachment.isImage, let bytes = attachment.bytes, let image = Image.from(data: bytes) {
-            image
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: 240, maxHeight: 240)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .accessibilityLabel("Attached image, \(attachment.name)")
-        } else {
-            Label {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(attachment.name).lineLimit(1).truncationMode(.middle)
-                    Text(attachment.size).font(.caption).foregroundStyle(.secondary)
+        let (images, files) = split
+        VStack(alignment: .leading, spacing: 6) {
+            if images.count == 1, let image = images.first {
+                imageButton(image, hidden: 0)
+                    .frame(maxWidth: 260, maxHeight: 320)
+            } else if !images.isEmpty {
+                let shown = Array(images.prefix(4))
+                LazyVGrid(columns: [GridItem(.fixed(128)), GridItem(.fixed(128))], spacing: 3) {
+                    ForEach(shown) { image in
+                        imageButton(image, hidden: image.id == shown.last?.id ? images.count - shown.count : 0)
+                            .frame(width: 128, height: 128)
+                    }
                 }
-            } icon: {
-                Image(systemName: "doc").foregroundStyle(.secondary)
             }
-            .font(.subheadline)
-            .padding(10)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            ForEach(Array(files.enumerated()), id: \.offset) { _, file in
+                fileRow(file)
+            }
         }
+        .onAppear {
+            if ChatShowcase.imageViewer, viewing == nil, !images.isEmpty {
+                viewing = ViewedImage(index: 0)
+            }
+        }
+        .imageViewer(item: $viewing) { selected in
+            ImageViewer(images: images, page: selected.index)
+        }
+    }
+
+    private func imageButton(_ item: GridImage, hidden: Int) -> some View {
+        Button { viewing = ViewedImage(index: item.id) } label: {
+            item.image
+                .resizable()
+                .scaledToFill()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+                .overlay {
+                    if hidden > 0 {
+                        ZStack {
+                            Color.black.opacity(0.45)
+                            Text("+\(hidden)").font(.title2.bold()).foregroundStyle(.white)
+                        }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(hidden > 0
+            ? "Attached image, \(item.attachment.name), and \(hidden) more"
+            : "Attached image, \(item.attachment.name)")
+        .accessibilityHint("Opens the picture full screen")
+    }
+
+    private func fileRow(_ attachment: MessageAttachment) -> some View {
+        Label {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(attachment.name).lineLimit(1).truncationMode(.middle)
+                Text(attachment.size).font(.caption).foregroundStyle(.secondary)
+            }
+        } icon: {
+            Image(systemName: "doc").foregroundStyle(.secondary)
+        }
+        .font(.subheadline)
+        .padding(10)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityLabel("Attached file, \(attachment.name), \(attachment.size)")
+    }
+}
+
+private struct ImageViewer: View {
+    let images: [GridImage]
+    @State private var page: Int
+    @Environment(\.dismiss) private var dismiss
+
+    init(images: [GridImage], page: Int) {
+        self.images = images
+        _page = State(initialValue: page)
+    }
+
+    var body: some View {
+        NavigationStack {
+            TabView(selection: $page) {
+                ForEach(images) { item in
+                    item.image.resizable().scaledToFit().tag(item.id)
+                        .accessibilityLabel(item.attachment.name)
+                }
+            }
+            #if os(iOS)
+                .tabViewStyle(.page)
+            #endif
+            .background(.black)
+            .navigationTitle(images.first { $0.id == page }?.attachment.name ?? "")
+            #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .primaryAction) {
+                    if let current = images.first(where: { $0.id == page }) {
+                        ShareLink(item: current.image, preview: SharePreview(current.attachment.name, image: current.image))
+                    }
+                }
+            }
+        }
+        .accessibilityAction(.escape) { dismiss() }
+    }
+}
+
+extension View {
+    @ViewBuilder fileprivate func imageViewer<Item: Identifiable>(
+        item: Binding<Item?>,
+        @ViewBuilder content: @escaping (Item) -> some View
+    ) -> some View {
+        #if os(iOS)
+            fullScreenCover(item: item, content: content)
+        #else
+            sheet(item: item) { content($0).frame(minWidth: 640, minHeight: 520) }
+        #endif
     }
 }
 
 extension MessageAttachment {
-    /// The decoded size, as a file listing would put it. Base64 is 4 characters per 3 bytes,
-    /// less whatever padding it ends with, so this needs no decode to work out.
+    /// The decoded size, as a file listing would put it.
     public var size: String {
-        let padding = data.suffix(2).filter { $0 == "=" }.count
-        let bytes = max(0, data.count / 4 * 3 - padding)
-        return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+        ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file)
     }
 }

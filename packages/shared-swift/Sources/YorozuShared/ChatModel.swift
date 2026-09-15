@@ -807,6 +807,27 @@ public final class ChatModel {
         generating.insert(threadId)
     }
 
+    /// Test-only: several pictures in one message for grid and viewer screenshots.
+    public func previewImages(in threadId: String, images: [MessageAttachment]) {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        upsert(YorozuEvent(
+            id: "showcase-images", threadId: threadId, ts: now, agentId: device,
+            payload: .message(MessageData(
+                role: .user,
+                text: "Here's the kitchen from a few angles — which tap would you get?",
+                attachments: images
+            ))
+        ))
+        upsert(YorozuEvent(
+            id: "showcase-images-reply", threadId: threadId, ts: now + 1, agentId: "main",
+            payload: .message(MessageData(
+                role: .agent,
+                text: "The pull-out tap beside the window fits best.",
+                done: true
+            ))
+        ))
+    }
+
     /// Test-only: a reply with a bare link in it, for the preview row.
     public func previewLink(in threadId: String) {
         upsert(

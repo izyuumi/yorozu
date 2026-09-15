@@ -18,6 +18,7 @@ import {
   fromBase64Url,
   generateKeypair,
   generateSigningKeypair,
+  attachmentsWithinLimits,
   messageAttachments,
   open,
   seal,
@@ -804,6 +805,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
   }
 
   function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0): void {
+    if (event.kind === "message" && !attachmentsWithinLimits(messageAttachments(event.data))) {
+      return state("rejected-oversized-attachments");
+    }
     appendTranscript(event, transcripts);
     appendThreadEvent(event, dir);
 

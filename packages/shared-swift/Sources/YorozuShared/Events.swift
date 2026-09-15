@@ -222,6 +222,14 @@ public struct MessageAttachment: Codable, Equatable, Sendable {
     public static let maxBytes = 5 * 1024 * 1024
     public static let maxCount = 10
     public static let maxTotalBytes = 20 * 1024 * 1024
+    public static let maxPerMessage = maxCount
+    public static let messageMaxBytes = maxTotalBytes
+
+    public static func withinLimits(_ attachments: [MessageAttachment]) -> Bool {
+        attachments.count <= maxCount
+            && attachments.allSatisfy { ($0.bytes?.count ?? maxBytes + 1) <= maxBytes }
+            && attachments.compactMap(\.bytes).reduce(0) { $0 + $1.count } <= maxTotalBytes
+    }
 
     /// Original file name. What a text-only model is told was attached.
     public var name: String
@@ -246,6 +254,7 @@ public struct MessageAttachment: Codable, Equatable, Sendable {
 
     /// The bytes back, or nil if what arrived was not base64 after all.
     public var bytes: Data? { Data(base64Encoded: data) }
+    public var byteCount: Int { bytes?.count ?? 0 }
 
     public var isImage: Bool { mime.hasPrefix("image/") }
 }

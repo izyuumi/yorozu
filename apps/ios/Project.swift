@@ -47,7 +47,9 @@ let project = Project(
                 "ITSAppUsesNonExemptEncryption": false,
                 "CFBundleDisplayName": "Yorozu",
                 "LSApplicationCategoryType": "public.app-category.productivity",
-                "NSCameraUsageDescription": "Yorozu scans the pairing QR code shown by your Mac.",
+                // Two uses, one key: scanning the pairing code, and taking a photo to send from
+                // the composer. The string has to cover both, because iOS only asks once.
+                "NSCameraUsageDescription": "Yorozu scans the pairing QR code shown by your Mac, and takes photos you choose to send in a message.",
                 "YorozuNotificationKeychainAccessGroup": .string(notificationKeychainGroup),
                 // The relay's silent push, which wakes the app for a few seconds so it can
                 // drain its sync over its own socket while suspended. Nothing is read out of
