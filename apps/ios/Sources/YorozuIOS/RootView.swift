@@ -135,12 +135,23 @@ final class Session {
         model?.close()
         model = nil
         relay = nil
+        failure = nil
+        pushFailure = nil
+        deviceToken = nil
+        openPath = []
+        notificationOpen = nil
+        pendingThreadRef = nil
+        pendingNotificationClass = nil
+        pendingEventRef = nil
         PairingStore.clear()
         NotificationPreview.clearKey()
         CacheStore.clear()
         // The thread titles the picker offers, and anything half-shared, belong to the pairing
         // just as much as the cache does.
         if let directory = ShareBox.directory() { ShareBox.clear(in: directory) }
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        UIApplication.shared.applicationIconBadgeNumber = 0
     }
 
     /// Sends everything the share extension has left in the App Group container, oldest first.

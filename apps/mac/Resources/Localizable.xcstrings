@@ -2,6 +2,110 @@
   "sourceLanguage": "en",
   "version": "1.0",
   "strings": {
+    "This Mac": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Este Mac" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "このMac" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "이 Mac" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "此 Mac" } }
+      }
+    },
+    "Role": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Función" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "役割" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "역할" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "角色" } }
+      }
+    },
+    "Host Yorozu here": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Alojar Yorozu aquí" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "このMacでYorozuをホスト" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "이 Mac에서 Yorozu 호스팅" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "在此 Mac 上托管 Yorozu" } }
+      }
+    },
+    "Connect to another Mac": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Conectar a otro Mac" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "別のMacに接続" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "다른 Mac에 연결" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "连接到另一台 Mac" } }
+      }
+    },
+    "Paste pairing code": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Pegar código de enlace" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ペアリングコードを貼り付け" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "페어링 코드 붙여넣기" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "粘贴配对代码" } }
+      }
+    },
+    "Connect": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Conectar" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "接続" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "연결" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "连接" } }
+      }
+    },
+    "Connection": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Conexión" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "接続" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "연결" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "连接" } }
+      }
+    },
+    "Connecting…": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Conectando…" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "接続中…" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "연결 중…" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在连接…" } }
+      }
+    },
+    "Paired since": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Enlazado desde" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ペアリング日時" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "페어링 날짜" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "配对时间" } }
+      }
+    },
+    "Unpair": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Desenlazar" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ペアリング解除" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "페어링 해제" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "取消配对" } }
+      }
+    },
+    "Unpair this Mac?": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "¿Desenlazar este Mac?" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "このMacのペアリングを解除しますか？" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "이 Mac의 페어링을 해제할까요?" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "要取消此 Mac 的配对吗？" } }
+      }
+    },
+    "Yorozu will remove pairing keys and all cached chats from this Mac.": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Yorozu eliminará las claves de enlace y todos los chats almacenados en caché de este Mac." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "YorozuはこのMacからペアリングキーとキャッシュされたすべてのチャットを削除します。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Yorozu가 이 Mac에서 페어링 키와 캐시된 모든 채팅을 삭제합니다." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "Yorozu 将从此 Mac 移除配对密钥和所有缓存聊天。" } }
+      }
+    },
+    "This Mac uses the OpenClaw runtime on its paired host Mac.": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Este Mac usa el entorno OpenClaw del Mac anfitrión enlazado." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "このMacはペアリングしたホストMacのOpenClawランタイムを使用します。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "이 Mac은 페어링된 호스트 Mac의 OpenClaw 런타임을 사용합니다." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "此 Mac 使用已配对主机 Mac 上的 OpenClaw 运行时。" } }
+      }
+    },
     "0": {
       "shouldTranslate": false
     },

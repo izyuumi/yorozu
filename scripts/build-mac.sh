@@ -123,6 +123,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>LSUIElement</key><true/>
+  <key>CFBundleURLTypes</key>
+  <array><dict>
+    <key>CFBundleURLName</key><string>to.yumi.yorozu.pair</string>
+    <key>CFBundleURLSchemes</key><array><string>yorozu</string></array>
+  </dict></array>
   <key>SUFeedURL</key><string>$FEED_URL</string>
   <key>SUPublicEDKey</key><string>$SU_PUBLIC_KEY</string>
   <!-- Updates install themselves: check hourly, download in the background, install without
