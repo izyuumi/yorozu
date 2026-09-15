@@ -25,17 +25,20 @@ final class Sidecar: ObservableObject {
     private var input = Pipe()
     /// Consecutive failed starts, which is what the delay between them is derived from.
     private var restarts = 0
+    /// Invalidates stdout/end callbacks from a process stopped during a live role switch.
+    private var generation = 0
     /// Set by ``stop``, so quitting is not mistaken for a crash worth restarting.
     private var stopping = false
 
     var isPaired: Bool { state == "paired" }
 
     func start() {
+        generation += 1
         stopping = false
-        spawn()
+        spawn(generation: generation)
     }
 
-    private func spawn() {
+    private func spawn(generation: Int) {
         let command = ProcessInfo.processInfo.environment["YOROZU_RUNTIME_CMD"]
             ?? RuntimeCommand.defaultCommand
         let output = Pipe()
@@ -58,7 +61,7 @@ final class Sidecar: ObservableObject {
         } catch {
             state = "failed: \(error.localizedDescription)"
             Log.write("sidecar: could not start — \(error.localizedDescription)")
-            scheduleRestart(ranFor: 0)
+            scheduleRestart(ranFor: 0, generation: generation)
             return
         }
         self.process = process
@@ -69,24 +72,28 @@ final class Sidecar: ObservableObject {
             // both go to the same place. Anything else would drop a crash on the floor.
             do {
                 for try await line in output.fileHandleForReading.bytes.lines {
+                    guard self?.generation == generation else { return }
                     self?.apply(line)
                 }
             } catch {}
-            self?.ended(ranFor: Date().timeIntervalSince(started))
+            self?.ended(ranFor: Date().timeIntervalSince(started), generation: generation)
         }
     }
 
     func stop() {
+        generation += 1
         stopping = true
         if process?.isRunning == true { process?.terminate() }
+        process = nil
     }
 
-    private func ended(ranFor seconds: TimeInterval) {
+    private func ended(ranFor seconds: TimeInterval, generation: Int) {
+        guard generation == self.generation else { return }
         state = "stopped"
         process = nil
         guard !stopping else { return }
         Log.write("sidecar: exited after \(Int(seconds))s")
-        scheduleRestart(ranFor: seconds)
+        scheduleRestart(ranFor: seconds, generation: generation)
     }
 
     /// Doubling from a second up to a minute, so a sidecar that cannot start does not spin,
@@ -94,7 +101,7 @@ final class Sidecar: ObservableObject {
     ///
     /// The count resets after a run that lasted a minute: that was a working sidecar that
     /// later died, not the same failure over and over, and it deserves a fast retry.
-    private func scheduleRestart(ranFor seconds: TimeInterval) {
+    private func scheduleRestart(ranFor seconds: TimeInterval, generation: Int) {
         if seconds >= 60 { restarts = 0 }
         let delay = min(pow(2, Double(restarts)), 60)
         restarts += 1
@@ -102,8 +109,8 @@ final class Sidecar: ObservableObject {
         Log.write("sidecar: restarting in \(Int(delay))s (attempt \(restarts))")
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-            guard let self, !self.stopping else { return }
-            self.spawn()
+            guard let self, !self.stopping, self.generation == generation else { return }
+            self.spawn(generation: generation)
         }
     }
 
@@ -163,14 +170,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Starts Sparkle here rather than when Settings is first opened: the whole point of
             // an automatic update is that nobody had to go looking for it.
             Updates.start()
-            NeverSleep.shared.restoreFromDefaults()
-            Sidecar.shared.start()
-            // Connects to the sidecar's local socket once it is listening. Not tied to the
-            // window: the chat has to keep up while the chat window is closed.
-            LocalChat.start()
+            if MacChatSession.shared.role == .host { NeverSleep.shared.restoreFromDefaults() }
+            MacChatSession.shared.start()
             // Test harness only, and inert without a `-yorozuShowcase` argument. After
             // `LocalChat.start`, whose thread hook it chains onto.
-            Showcase.attach(to: LocalChat.model)
+            Showcase.attach(to: MacChatSession.shared.model)
             OnboardingWindow.showIfFirstLaunch()
         }
     }
@@ -199,6 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct YorozuMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var sidecar = Sidecar.shared
+    @State private var session = MacChatSession.shared
     @Environment(\.openWindow) private var openWindow
 
     /// The chat window's id, so the status item can ask for it by name.
@@ -210,6 +215,7 @@ struct YorozuMacApp: App {
         // at all to hang ⌘N, ⌘F and Stop off — see ``ChatWindowView``.
         Window("Yorozu", id: Self.chatWindow) {
             ChatWindowView()
+                .onOpenURL { url in try? MacChatSession.shared.pair(with: url.absoluteString) }
                 .onAppear { WindowPresence.opened() }
                 .onDisappear {
                     WindowPresence.closed()
@@ -220,6 +226,7 @@ struct YorozuMacApp: App {
         }
         .defaultSize(width: 860, height: 560)
         .commands { ChatMenus() }
+        .handlesExternalEvents(matching: ["pair"])
 
         // The status item is now the way to that window rather than the place the chat lives.
         // A menu rather than a panel, because everything in it is one click that goes somewhere.
@@ -232,11 +239,11 @@ struct YorozuMacApp: App {
             Divider()
             // Not a control: the sidecar's own word for where the relay stands, which is the
             // one thing worth knowing without opening anything.
-            Text(sidecar.state).disabled(true)
+            Text(session.role == .host ? sidecar.state : "client").disabled(true)
             Divider()
             Button("Quit Yorozu") { NSApp.terminate(nil) }
         } label: {
-            Image(systemName: sidecar.isPaired ? "circle.fill" : "circle.dotted")
+            Image(systemName: session.model.state == .paired ? "circle.fill" : "circle.dotted")
         }
 
         Settings { SettingsView(sidecar: sidecar) }

@@ -5,18 +5,56 @@ import YorozuKeepalive
 /// belong to OpenClaw and intentionally do not appear here.
 struct GeneralView: View {
     @ObservedObject private var neverSleep = NeverSleep.shared
+    @State private var session = MacChatSession.shared
+    @State private var pairingCode = ""
+    @State private var confirmingUnpair = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            RelayView()
+            VStack(alignment: .leading, spacing: 8) {
+                Text("This Mac").font(.headline)
+                Picker("Role", selection: Binding(get: { session.role }, set: { session.select($0) })) {
+                    Text("Host Yorozu here").tag(MacRole.host)
+                    Text("Connect to another Mac").tag(MacRole.client)
+                }
+                .pickerStyle(.segmented)
+                if session.role == .client {
+                    if session.relay == nil {
+                        TextField("Paste pairing code", text: $pairingCode, axis: .vertical)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Connect") {
+                            if (try? session.pair(with: pairingCode)) != nil { pairingCode = "" }
+                        }
+                        .disabled(pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        if let failure = session.failure { Text(failure).font(.caption).foregroundStyle(.red) }
+                    } else {
+                        LabeledContent("Connection", value: session.model.state == .paired ? "Connected" : "Connecting…")
+                        if let pairedAt = session.pairedAt {
+                            LabeledContent("Paired since", value: pairedAt.formatted(date: .abbreviated, time: .shortened))
+                        }
+                        Button("Unpair", role: .destructive) { confirmingUnpair = true }
+                    }
+                }
+            }
+            .alert("Unpair this Mac?", isPresented: $confirmingUnpair) {
+                Button("Unpair", role: .destructive) { session.unpair() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Yorozu will remove pairing keys and all cached chats from this Mac.")
+            }
+            if session.role == .host {
+                RelayView()
+            }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Agent runtime").font(.headline)
-                Text("OpenClaw owns models, tools, browser access, credentials, and approvals.")
+                Text(session.role == .host
+                    ? "OpenClaw owns models, tools, browser access, credentials, and approvals."
+                    : "This Mac uses the OpenClaw runtime on its paired host Mac.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            KeepaliveView()
-            VStack(alignment: .leading, spacing: 4) {
+            if session.role == .host { KeepaliveView() }
+            if session.role == .host { VStack(alignment: .leading, spacing: 4) {
                 Toggle("Never sleep", isOn: Binding(
                     get: { neverSleep.isRunning },
                     set: { $0 ? neverSleep.start() : neverSleep.stop() }
@@ -24,7 +62,7 @@ struct GeneralView: View {
                 Text("Keeps this Mac awake so the agent can answer your phone while you are away.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
+            } }
             AutomaticUpdatesToggle()
             CheckForUpdatesButton()
         }

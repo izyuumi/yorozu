@@ -54,6 +54,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>LSUIElement</key><true/>
+  <key>CFBundleURLTypes</key>
+  <array><dict>
+    <key>CFBundleURLName</key><string>to.yumi.yorozu.pair</string>
+    <key>CFBundleURLSchemes</key><array><string>yorozu</string></array>
+  </dict></array>
 $USAGE
 </dict>
 </plist>

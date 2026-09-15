@@ -9,7 +9,7 @@ struct DevicesView: View {
     @ObservedObject var sidecar: Sidecar
     @State private var pairing = false
 
-    private var model: ChatModel { LocalChat.model }
+    private var model: ChatModel { MacChatSession.shared.model }
 
     /// A paired phone, not this Mac's own client: only those are ours to revoke.
     private func removable(_ device: DeviceInfo) -> Bool { device.via == .relay }
@@ -89,7 +89,7 @@ struct PairingSheet: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var paired = false
 
-    private var model: ChatModel { LocalChat.model }
+    private var model: ChatModel { MacChatSession.shared.model }
 
     var body: some View {
         VStack(spacing: 12) {

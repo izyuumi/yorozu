@@ -13,15 +13,15 @@ import YorozuShared
 /// ``YorozuMacApp``, where the menu bar item is now the way to this window rather than the
 /// place the chat lives.
 struct ChatWindowView: View {
+    @State private var session = MacChatSession.shared
     @State private var selection: String?
     /// `.key` is this window being the key window of the active app, which is exactly the Mac's
     /// half of "somebody is looking at this": `.active` is a window in the active app that is
     /// not key, and `.inactive` is the whole app sitting behind something else.
     @Environment(\.controlActiveState) private var controlActiveState
     @Environment(\.openSettings) private var openSettings
-    @ObservedObject private var sidecar = Sidecar.shared
 
-    private var model: ChatModel { LocalChat.model }
+    private var model: ChatModel { session.model }
 
     /// Falls back to the first thread, so archiving the selected one leaves a chat on screen.
     private var thread: ThreadSummary? {
@@ -115,7 +115,7 @@ struct ChatWindowView: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
             Spacer(minLength: 0)
-            Text(sidecar.state)
+            Text(session.role == .host ? Sidecar.shared.state : connectionLabel)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -125,6 +125,14 @@ struct ChatWindowView: View {
         .padding(.vertical, 6)
         .background(.bar)
     }
+
+    private var connectionLabel: String {
+        switch model.state {
+        case .paired: "connected"
+        case .connecting, .joined: "connecting"
+        case .closed: "offline"
+        }
+    }
 }
 
 /// Everything that is not chat. These used to be stacked in the menu bar window itself; the
@@ -132,17 +140,20 @@ struct ChatWindowView: View {
 /// menu both find them.
 struct SettingsView: View {
     @ObservedObject var sidecar: Sidecar
+    @State private var session = MacChatSession.shared
 
     var body: some View {
         TabView {
             Tab("General", systemImage: "gearshape") {
                 pane { GeneralView() }
             }
-            Tab("Devices", systemImage: "iphone.and.arrow.forward") {
-                pane { DevicesView(sidecar: sidecar) }
-            }
-            Tab("Permissions", systemImage: "lock.shield") {
-                pane { PermissionsView() }
+            if session.role == .host {
+                Tab("Devices", systemImage: "iphone.and.arrow.forward") {
+                    pane { DevicesView(sidecar: sidecar) }
+                }
+                Tab("Permissions", systemImage: "lock.shield") {
+                    pane { PermissionsView() }
+                }
             }
         }
         .frame(width: 480, height: 460)
