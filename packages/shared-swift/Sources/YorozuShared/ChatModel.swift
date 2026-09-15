@@ -984,7 +984,11 @@ public final class ChatModel {
         if let index = thread.firstIndex(where: { $0.id == event.id }) {
             thread[index] = event
         } else {
-            thread.append(event)
+            // A reconnect sync can race a live relay frame. Put the older synced event back
+            // where its runtime timestamp belongs instead of preserving network arrival order.
+            // Equal timestamps keep arrival order, which also keeps call before result.
+            let index = thread.lastIndex(where: { $0.ts <= event.ts }).map { $0 + 1 } ?? 0
+            thread.insert(event, at: index)
         }
         events[event.threadId] = thread
         // The agent's last message ends the turn, whether it streamed or arrived whole.
