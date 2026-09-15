@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # The Xcode project is generated, not checked in; see apps/ios/Project.swift.
-      - run: brew install --cask tuist
+      - run: command -v tuist >/dev/null || brew install --cask tuist
       - run: tuist generate --no-open --path apps/ios
       - run: |
           xcodebuild build \
