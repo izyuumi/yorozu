@@ -285,10 +285,15 @@ struct RootView: View {
     /// because a simulator cannot be made to open a real share sheet.
     @State private var shareShowcase = ChatShowcase.share
 
+    private var working: Bool {
+        guard let thread = path.last else { return false }
+        return session.model?.generating.contains(thread) == true
+    }
+
     var body: some View {
         content
             .overlay {
-                PhoneWorkingBezel(active: session.model?.generating.isEmpty == false)
+                PhoneWorkingBezel(active: working)
                     .ignoresSafeArea(.container)
             }
             // Four things arrive as a `yorozu://` link and they are told apart by the host, not
