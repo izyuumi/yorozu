@@ -6,7 +6,7 @@ on:
 
 jobs:
   ios:
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS, ARM64, yorozu]
     steps:
       # fetch-depth: 0 because the build number is the commit count and the marketing
       # version is the latest tag.

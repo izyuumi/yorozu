@@ -3,7 +3,7 @@ on: [push, pull_request]
 
 jobs:
   node:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, ARM64, yorozu]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -16,7 +16,7 @@ jobs:
       - run: pnpm -r test
 
   swift:
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS, ARM64, yorozu]
     steps:
       - uses: actions/checkout@v4
       # `swift test` already builds this package; a separate build compiled it twice.
@@ -24,7 +24,7 @@ jobs:
       - run: swift build --package-path apps/mac
 
   ios:
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS, ARM64, yorozu]
     steps:
       - uses: actions/checkout@v4
       # The Xcode project is generated, not checked in; see apps/ios/Project.swift.
