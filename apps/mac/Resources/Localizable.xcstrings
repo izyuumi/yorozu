@@ -2,6 +2,135 @@
   "sourceLanguage": "en",
   "version": "1.0",
   "strings": {
+    "Couldn’t connect. Generate a new pairing code and try again." : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo conectar. Genera un nuevo código de emparejamiento e inténtalo de nuevo." } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "接続できませんでした。新しいペアリングコードを生成して、もう一度お試しください。" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "연결할 수 없습니다. 새 페어링 코드를 생성한 후 다시 시도하세요." } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法连接。请生成新的配对码，然后重试。" } }
+      }
+    },
+    "How will this Mac use Yorozu?" : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "¿Cómo usará Yorozu este Mac?" } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "このMacでYorozuをどのように使いますか？" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "이 Mac에서 Yorozu를 어떻게 사용하시겠어요?" } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "这台 Mac 将如何使用 Yorozu？" } }
+      }
+    },
+    "You can change this later in Settings." : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "Puedes cambiarlo más tarde en Ajustes." } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "後で設定から変更できます。" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "나중에 설정에서 변경할 수 있습니다." } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "稍后可在“设置”中更改。" } }
+      }
+    },
+    "Host Yorozu on this Mac" : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "Alojar Yorozu en este Mac" } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "このMacでYorozuをホスト" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "이 Mac에서 Yorozu 호스트" } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "在这台 Mac 上托管 Yorozu" } }
+      }
+    },
+    "Run OpenClaw here and let your iPhone or other Macs connect." : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "Ejecuta OpenClaw aquí y conecta tu iPhone u otros Mac." } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "ここでOpenClawを実行し、iPhoneやほかのMacから接続します。" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "여기서 OpenClaw를 실행하고 iPhone이나 다른 Mac을 연결하세요." } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "在这里运行 OpenClaw，并让 iPhone 或其他 Mac 连接。" } }
+      }
+    },
+    "Use Yorozu here while your host Mac does the work." : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "Usa Yorozu aquí mientras el Mac anfitrión hace el trabajo." } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストMacで処理しながら、このMacでYorozuを使います。" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "호스트 Mac에서 처리하고 이 Mac에서는 Yorozu를 사용하세요." } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "由主机 Mac 执行任务，在这台 Mac 上使用 Yorozu。" } }
+      }
+    },
+    "Connect your devices" : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "Conecta tus dispositivos" } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "デバイスを接続" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "기기 연결" } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "连接设备" } }
+      }
+    },
+    "Scan this code from Yorozu on an iPhone or client Mac." : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "Escanea este código desde Yorozu en un iPhone o Mac cliente." } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "iPhoneまたはクライアントMacのYorozuでこのコードをスキャンします。" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "iPhone 또는 클라이언트 Mac의 Yorozu에서 이 코드를 스캔하세요." } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "使用 iPhone 或客户端 Mac 上的 Yorozu 扫描此代码。" } }
+      }
+    },
+    "Skip for now" : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "Omitir por ahora" } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "今はスキップ" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "나중에 하기" } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "暂时跳过" } }
+      }
+    },
+    "Connect to your host Mac" : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "Conecta con tu Mac anfitrión" } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストMacに接続" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "호스트 Mac에 연결" } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "连接到主机 Mac" } }
+      }
+    },
+    "On the host Mac, open Settings › Devices › Pair Another Device, then paste its code here." : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "En el Mac anfitrión, abre Ajustes › Dispositivos › Emparejar otro dispositivo y pega aquí el código." } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストMacで「設定」›「デバイス」›「別のデバイスをペアリング」を開き、コードをここに貼り付けます。" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "호스트 Mac에서 설정 › 기기 › 다른 기기 페어링을 열고 코드를 여기에 붙여 넣으세요." } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "在主机 Mac 上打开“设置”›“设备”›“配对其他设备”，然后将代码粘贴到这里。" } }
+      }
+    },
+    "That pairing code is invalid or expired." : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "El código de emparejamiento no es válido o ha caducado." } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "ペアリングコードが無効か、有効期限が切れています。" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "페어링 코드가 잘못되었거나 만료되었습니다." } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "该配对码无效或已过期。" } }
+      }
+    },
+    "Choose what Yorozu can do" : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "Elige qué puede hacer Yorozu" } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozuでできることを選ぶ" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu가 할 수 있는 작업 선택" } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "选择 Yorozu 可以执行的操作" } }
+      }
+    },
+    "Optional. Grant only capabilities you want; you can return anytime." : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "Opcional. Concede solo las funciones que quieras; puedes volver cuando quieras." } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "任意です。必要な機能だけを許可してください。いつでも変更できます。" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "선택 사항입니다. 원하는 기능만 허용하세요. 언제든 다시 설정할 수 있습니다." } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "可选。只授予你需要的功能；随时可以回来更改。" } }
+      }
+    },
+    "This Mac is ready to use Yorozu through your host Mac." : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "Este Mac ya puede usar Yorozu a través del Mac anfitrión." } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "このMacでホストMac経由のYorozuを使う準備ができました。" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "이 Mac에서 호스트 Mac을 통해 Yorozu를 사용할 준비가 되었습니다." } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "这台 Mac 已可通过主机 Mac 使用 Yorozu。" } }
+      }
+    },
+    "Your device is connected and ready to use." : {
+      "localizations" : {
+          "es" : { "stringUnit" : { "state" : "translated", "value" : "Tu dispositivo está conectado y listo para usar." } },
+          "ja" : { "stringUnit" : { "state" : "translated", "value" : "デバイスが接続され、使用できるようになりました。" } },
+          "ko" : { "stringUnit" : { "state" : "translated", "value" : "기기가 연결되어 사용할 준비가 되었습니다." } },
+          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "设备已连接，可以使用。" } }
+      }
+    },
+
     "This Mac": {
       "localizations": {
         "es": { "stringUnit": { "state": "translated", "value": "Este Mac" } },

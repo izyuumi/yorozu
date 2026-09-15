@@ -13,7 +13,7 @@ struct GeneralView: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("This Mac").font(.headline)
-                Picker("Role", selection: Binding(get: { session.role }, set: { session.select($0) })) {
+                Picker("Role", selection: Binding(get: { session.role ?? .host }, set: { session.select($0) })) {
                     Text("Host Yorozu here").tag(MacRole.host)
                     Text("Connect to another Mac").tag(MacRole.client)
                 }
@@ -26,7 +26,12 @@ struct GeneralView: View {
                             if (try? session.pair(with: pairingCode)) != nil { pairingCode = "" }
                         }
                         .disabled(pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        if let failure = session.failure { Text(failure).font(.caption).foregroundStyle(.red) }
+                        if let failure = session.failure {
+                            Text(failure).font(.caption).foregroundStyle(.red)
+                        } else if session.model.failure != nil {
+                            Text("Couldn’t connect. Generate a new pairing code and try again.")
+                                .font(.caption).foregroundStyle(.red)
+                        }
                     } else {
                         LabeledContent("Connection", value: session.model.state == .paired ? "Connected" : "Connecting…")
                         if let pairedAt = session.pairedAt {

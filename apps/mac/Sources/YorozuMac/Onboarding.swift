@@ -1,131 +1,177 @@
 import AppKit
 import SwiftUI
-import YorozuKeepalive
-import YorozuPermissions
+import YorozuShared
 
-/// One `Permission` per page, in `Permission.allCases` order.
-///
-/// Every page asks macOS for its grant the moment it appears, using the real API, so the
-/// user answers a system prompt instead of being sent to System Settings to find a checkbox.
-/// The page then polls until the answer lands and the badge turns green. "Skip" is always
-/// there: a grant nobody wants is a grant the agent can ask for again later, through the
-/// request_permission tool.
 struct OnboardingView: View {
+    enum Step { case role, hostPair, hostPermissions, clientPair, success }
+
     var onFinish: () -> Void
+    @State private var session = MacChatSession.shared
+    @State private var step: Step
+    @State private var pairingCode = ""
+    @State private var pairingError: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @State private var index = 0
-    @State private var granted = false
-    @State private var asking = false
-    @State private var skipped: Set<Permission> = []
-    @ObservedObject private var neverSleep = NeverSleep.shared
-
-    private var step: Permission { Permission.allCases[index] }
-    private var isLast: Bool { index == Permission.allCases.count - 1 }
-    private var canContinue: Bool { granted || skipped.contains(step) }
+    init(onFinish: @escaping () -> Void) {
+        self.onFinish = onFinish
+        _step = State(initialValue: MacChatSession.shared.role == nil ? .role : .hostPermissions)
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Step \(index + 1) of \(Permission.allCases.count)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(step.title).font(.title2.bold())
-            Text(step.detail)
-                .fixedSize(horizontal: false, vertical: true)
-                .foregroundStyle(.secondary)
-            if step == .startAtLogin {
-                // Already turned on by the time this is drawn — see `.task` below. The toggle
-                // is here to say so, and to let the one user in a hundred who does not want it
-                // say no without hunting through System Settings.
-                Toggle("Start Yorozu at login", isOn: Binding(
-                    get: { granted },
-                    set: { LoginItem.set($0) }
-                ))
-                Text(LoginItem.statusText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if step == .neverSleep {
-                Toggle("Keep this Mac awake", isOn: neverSleepBinding)
-            } else {
-                PermissionBadge(granted: granted, asking: asking)
+        Group {
+            switch step {
+            case .role: roleChoice
+            case .hostPair: hostPairing
+            case .hostPermissions: hostPermissions
+            case .clientPair: clientPairing
+            case .success: success
             }
+        }
+        .padding(24)
+        .frame(width: 520, height: 520)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: step)
+        .onChange(of: session.model.state) { _, state in
+            if step == .clientPair, state == .paired { step = .success }
+        }
+    }
+
+    private var roleChoice: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            setupHeader("How will this Mac use Yorozu?", detail: "You can change this later in Settings.")
+            roleButton(
+                title: "Host Yorozu on this Mac",
+                detail: "Run OpenClaw here and let your iPhone or other Macs connect.",
+                systemImage: "macmini", role: .host
+            )
+            roleButton(
+                title: "Connect to another Mac",
+                detail: "Use Yorozu here while your host Mac does the work.",
+                systemImage: "laptopcomputer.and.arrow.down", role: .client
+            )
             Spacer()
-            HStack {
-                if !step.isAppSetting {
-                    Button(step.canPrompt ? "Ask Again" : "Open System Settings") {
-                        Task { await ask() }
-                    }
-                    .disabled(asking)
-                    if step.canPrompt, let url = step.settingsURL {
-                        Button("Open System Settings") { NSWorkspace.shared.open(url) }
-                    }
+        }
+    }
+
+    private func roleButton(title: LocalizedStringKey, detail: LocalizedStringKey, systemImage: String, role: MacRole) -> some View {
+        Button {
+            session.select(role)
+            if role == .host {
+                Sidecar.shared.newCode()
+                step = .hostPair
+            } else {
+                step = .clientPair
+            }
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: systemImage).font(.title2).frame(width: 32)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.headline)
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Skip") {
-                    skipped.insert(step)
-                    advance()
-                }
-                Button(isLast ? "Done" : "Continue", action: advance)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canContinue)
+                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
             }
+            .padding(14)
+            .contentShape(Rectangle())
         }
-        .padding(20)
-        .frame(width: 460, height: 340)
-        // Restarted on every step, so only the step on screen is asked for and polled.
-        .task(id: index) {
-            granted = await step.isGranted()
-            // Asking for something already granted would be a prompt the user has to dismiss
-            // for no reason, and for Automation a round of app launches for no reason.
-            if !granted {
-                // The one step that is on by default: a Mac bought to answer a phone should
-                // not need this wizard run again after the first power cut. macOS shows no
-                // prompt for it, so turning it on here costs the user nothing to undo.
-                if step == .startAtLogin {
-                    LoginItem.set(true)
-                    granted = await step.isGranted()
-                } else {
-                    await ask()
-                }
-            }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
-                granted = await step.isGranted()
+        .buttonStyle(.plain)
+        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var hostPairing: some View {
+        VStack(spacing: 10) {
+            setupHeader("Connect your devices", detail: "Scan this code from Yorozu on an iPhone or client Mac.")
+            PairingSheet(
+                sidecar: .shared,
+                existingDeviceIDs: Set(session.model.devices.filter { $0.via == .relay }.map(\.pub)),
+                done: { step = .hostPermissions },
+                autoDismiss: false,
+                showsActions: false
+            )
+            Spacer()
+            HStack {
+                Button("Back") { session.clearRole(); step = .role }
+                Spacer()
+                Button("New code") { Sidecar.shared.newCode() }
+                Button("Skip for now") { step = .hostPermissions }
+                Button("Continue") { step = .hostPermissions }.buttonStyle(.borderedProminent)
             }
         }
     }
 
-    private func ask() async {
-        asking = true
-        granted = await step.request()
-        asking = false
+    private var clientPairing: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            setupHeader("Connect to your host Mac", detail: "On the host Mac, open Settings › Devices › Pair Another Device, then paste its code here.")
+            TextField("Paste pairing code", text: $pairingCode, axis: .vertical)
+                .font(.system(.callout, design: .monospaced))
+                .textFieldStyle(.roundedBorder)
+            Button("Connect") {
+                do {
+                    try session.pair(with: pairingCode)
+                    pairingError = nil
+                } catch {
+                    pairingError = String(localized: "That pairing code is invalid or expired.")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            if session.relay != nil && session.model.state != .paired && session.model.failure == nil {
+                ProgressView("Connecting…")
+            }
+            if let pairingError {
+                Text(pairingError).font(.caption).foregroundStyle(.red)
+            } else if session.model.failure != nil {
+                Text("Couldn’t connect. Generate a new pairing code and try again.")
+                    .font(.caption).foregroundStyle(.red)
+            }
+            Spacer()
+            Button("Back") { session.clearRole(); step = .role }
+        }
     }
 
-    private var neverSleepBinding: Binding<Bool> {
-        Binding(get: { neverSleep.isRunning }, set: { $0 ? neverSleep.start() : neverSleep.stop() })
+    private var hostPermissions: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            setupHeader("Choose what Yorozu can do", detail: "Optional. Grant only capabilities you want; you can return anytime.")
+            ScrollView { PermissionsView(showSetupButton: false, showsTitle: false) }
+            HStack {
+                Button("Back") { step = .hostPair }
+                Spacer()
+                Button("Finish", action: onFinish).buttonStyle(.borderedProminent)
+            }
+        }
     }
 
-    private func advance() {
-        guard !isLast else { return onFinish() }
-        index += 1
-        granted = false
+    private var success: some View {
+        VStack(spacing: 14) {
+            Spacer()
+            Image(systemName: "checkmark.circle.fill").font(.system(size: 58)).foregroundStyle(.green)
+            Text("Connected").font(.title2.bold())
+            Text("This Mac is ready to use Yorozu through your host Mac.")
+                .foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Spacer()
+            Button("Open Yorozu", action: onFinish).buttonStyle(.borderedProminent).controlSize(.large)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func setupHeader(_ title: LocalizedStringKey, detail: LocalizedStringKey) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.title2.bold())
+            Text(detail).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
-/// The wizard lives in a plain window: the app is an `LSUIElement` menu bar agent, so there is
-/// no main scene to host it and nothing to restore it on relaunch.
 @MainActor
 enum OnboardingWindow {
     static let completedKey = "onboardingCompleted"
-
     private static var window: NSWindow?
 
     static func show() {
         if window == nil {
             let panel = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 460, height: 340),
-                styleMask: [.titled, .closable],
-                backing: .buffered,
-                defer: false
+                contentRect: NSRect(x: 0, y: 0, width: 520, height: 520),
+                styleMask: [.titled, .closable], backing: .buffered, defer: false
             )
             panel.title = "Yorozu Setup"
             panel.isReleasedWhenClosed = false
@@ -138,7 +184,7 @@ enum OnboardingWindow {
     }
 
     static func showIfFirstLaunch() {
-        if !UserDefaults.standard.bool(forKey: completedKey) { show() }
+        if MacChatSession.shared.role == nil { show() }
     }
 
     private static func finish() {

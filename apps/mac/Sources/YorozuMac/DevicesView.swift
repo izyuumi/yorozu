@@ -85,6 +85,9 @@ struct PairingSheet: View {
     @ObservedObject var sidecar: Sidecar
     let existingDeviceIDs: Set<String>
     var done: () -> Void
+    var autoDismiss = true
+    var onPaired: () -> Void = {}
+    var showsActions = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var paired = false
@@ -99,7 +102,7 @@ struct PairingSheet: View {
                     .foregroundStyle(.green)
                     .accessibilityHidden(true)
                 Text("Device paired").font(.headline)
-                Text("Your iPhone is connected and ready to use.")
+                Text("Your device is connected and ready to use.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -138,10 +141,12 @@ struct PairingSheet: View {
                     }
                     Text("Or paste this code into the app.").font(.caption).foregroundStyle(.secondary)
                 }
-                HStack {
-                    Button("New code") { sidecar.newCode() }
-                    Spacer()
-                    Button("Done", action: done).keyboardShortcut(.defaultAction)
+                if showsActions {
+                    HStack {
+                        Button("New code") { sidecar.newCode() }
+                        Spacer()
+                        Button("Done", action: done).keyboardShortcut(.defaultAction)
+                    }
                 }
             }
         }
@@ -150,14 +155,24 @@ struct PairingSheet: View {
         .frame(minHeight: 180)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: paired)
         .task {
+            // Establish what was already paired before looking for the device using this code.
+            // A fresh host has not necessarily received its first device list yet.
+            model.requestDevices()
+            try? await Task.sleep(for: .milliseconds(500))
+            let baseline = existingDeviceIDs.union(
+                model.devices.filter { $0.via == .relay }.map(\.pub)
+            )
             while !Task.isCancelled, !paired {
                 model.requestDevices()
                 if model.devices.contains(where: {
-                    $0.via == .relay && !existingDeviceIDs.contains($0.pub)
+                    $0.via == .relay && !baseline.contains($0.pub)
                 }) {
                     paired = true
-                    try? await Task.sleep(for: .seconds(1.2))
-                    done()
+                    onPaired()
+                    if autoDismiss {
+                        try? await Task.sleep(for: .seconds(1.2))
+                        done()
+                    }
                     return
                 }
                 try? await Task.sleep(for: .seconds(0.5))
