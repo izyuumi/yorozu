@@ -53,6 +53,23 @@ describe("OpenClawRunner", () => {
     await expect(result).resolves.toBe("new answer");
   });
 
+  test("matches Gateway events after session key case normalization", async () => {
+    const gateway = harness();
+    const updates: string[] = [];
+    const result = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).run({
+      threadId: "5A235B7C-1B10-4197-A533-FEA8CB2A9D4B",
+      text: "hello",
+      onUpdate: (text) => updates.push(text),
+    });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.objectContaining({
+      sessionKey: "agent:main:yorozu:5a235b7c-1b10-4197-a533-fea8cb2a9d4b",
+    })));
+    gateway.event({ state: "delta", sessionKey: "agent:main:yorozu:5a235b7c-1b10-4197-a533-fea8cb2a9d4b", runId: "run-1", seq: 1, deltaText: "done" });
+    gateway.event({ state: "final", sessionKey: "agent:main:yorozu:5a235b7c-1b10-4197-a533-fea8cb2a9d4b", runId: "run-1", seq: 2 });
+    expect(updates).toEqual(["done"]);
+    await expect(result).resolves.toBe("done");
+  });
+
   test("patches model and effort before sending", async () => {
     const gateway = harness();
     const result = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).run({
