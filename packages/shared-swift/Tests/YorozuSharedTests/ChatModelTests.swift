@@ -646,7 +646,7 @@ private func summary(
     model.send("hi", in: "home")
     model.interrupt(in: "home")
     #expect(!model.generating.contains("home"))
-    #expect(await sent(by: transport, atLeast: 2).contains { $0.payload.kind == .interrupt })
+    #expect(await sent(by: transport, atLeast: 3).contains { $0.payload.kind == .interrupt })
 }
 
 @MainActor
