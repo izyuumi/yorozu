@@ -83,10 +83,14 @@ final class MacChatSession {
     }
 
     private func startHost() {
+        // A hard quit can leave the old Unix-socket pathname behind. Do not let the new
+        // NWConnection race that dead endpoint while the sidecar replaces it: NWConnection
+        // does not redial after that failure, leaving Settings with an empty device list.
+        let path = LocalSocketTransport.defaultPath()
+        try? FileManager.default.removeItem(atPath: path)
         Sidecar.shared.start()
         model = Self.localModel(); configure(model)
         Task {
-            let path = LocalSocketTransport.defaultPath()
             var waited = 0
             while !FileManager.default.fileExists(atPath: path), waited < 100 {
                 try? await Task.sleep(for: .milliseconds(100)); waited += 1
