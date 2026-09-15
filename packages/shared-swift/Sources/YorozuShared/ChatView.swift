@@ -116,6 +116,7 @@ public struct ChatView: View {
             }
             composer
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle(thread.displayTitle)
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
