@@ -112,6 +112,13 @@ private let result = YorozuEvent.Payload.toolResult(
         MessageReaction(emoji: "👍", count: 1, selected: false),
         MessageReaction(emoji: "❤️", count: 1, selected: true),
     ])
+    #expect(messageReactionsByMessage(in: reactions, selectedBy: "phone") == [
+        "m1": [
+            MessageReaction(emoji: "👍", count: 1, selected: false),
+            MessageReaction(emoji: "❤️", count: 1, selected: true),
+        ],
+        "else": [MessageReaction(emoji: "😂", count: 1, selected: false)],
+    ])
     #expect(chatRows(from: reactions).isEmpty)
 }
 

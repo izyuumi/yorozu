@@ -269,15 +269,16 @@ public struct ChatView: View {
     }
 
     @ViewBuilder private var messages: some View {
+        let reactions = model.reactions(in: thread.id)
         #if os(iOS)
-            nativeMessages
+            nativeMessages(reactions: reactions)
         #else
-            swiftUIMessages
+            swiftUIMessages(reactions: reactions)
         #endif
     }
 
     #if os(iOS)
-        private var nativeMessages: some View {
+        private func nativeMessages(reactions: [String: [MessageReaction]]) -> some View {
             let notificationRequest = resumeRequest.flatMap { id -> TimelineRequest? in
                 // A cold notification can resolve its thread before that thread's refreshed
                 // events arrive. Keep the request pending until the unread assistant bubble
@@ -310,14 +311,14 @@ public struct ChatView: View {
                     answeredQuestions: model.answeredQuestions,
                     handledProposals: model.handledProposals,
                     choices: model.choices,
-                    reactions: Dictionary(uniqueKeysWithValues: rows.map {
-                        ($0.id, model.reactions(to: $0.id, in: thread.id))
-                    })
+                    reactions: reactions
                 ),
                 atBottom: $atBottom,
                 showJumpToLatest: $showJumpToLatest,
                 onReply: { replyQuote = $0 },
-                content: { row in AnyView(rowView(row).environment(\.searchHighlight, search)) }
+                content: { row in
+                    AnyView(rowView(row, reactions: reactions).environment(\.searchHighlight, search))
+                }
             )
             .onChange(of: ChangeStamp(events: events)) { _, _ in noteReplyStart() }
             .overlay(alignment: .bottom) {
@@ -353,14 +354,14 @@ public struct ChatView: View {
         }
     #endif
 
-    private var swiftUIMessages: some View {
+    private func swiftUIMessages(reactions: [String: [MessageReaction]]) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     // A delegation collapses to one card where it started and what the
                     // specialist did is behind it; the main agent's own tool use is shown
                     // here, grouped, where it happened.
-                    ForEach(rows) { row in rowView(row) }
+                    ForEach(rows) { row in rowView(row, reactions: reactions) }
                     // Waiting with nothing drawn yet: the turn has started but the first token
                     // has not landed, so there is no bubble to put a caret on.
                     if generating, streamingId == nil {
@@ -437,7 +438,10 @@ public struct ChatView: View {
         }
     }
 
-    @ViewBuilder private func rowView(_ row: ChatRow) -> some View {
+    @ViewBuilder private func rowView(
+        _ row: ChatRow,
+        reactions: [String: [MessageReaction]]
+    ) -> some View {
         switch row {
         case .message(let event):
             if case .message(let data) = event.payload {
@@ -450,7 +454,7 @@ public struct ChatView: View {
                     onDelete: { model.delete(event.id, in: thread.id) },
                     onReply: { replyQuote = $0 },
                     onResend: { model.retry(event.id) },
-                    reactions: model.reactions(to: event.id, in: thread.id),
+                    reactions: reactions[event.id] ?? [],
                     onReact: { model.react(to: event.id, with: $0, in: thread.id) }
                 )
                 .id(event.id)
