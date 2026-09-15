@@ -361,7 +361,13 @@ public final class ChatModel {
             return
         }
         set(thread.id) { $0.archived = archived }
-        emit(.threadArchive(ThreadArchiveData(archived: archived)), in: thread.id)
+        // Unlike a cosmetic local toggle, archive changes canonical thread state. Keep the
+        // exact request until transport sends it; a refused socket must not silently undo
+        // the user's action on the next thread list.
+        let request = event(.threadArchive(ThreadArchiveData(archived: archived)), in: thread.id)
+        outbox = Outbox.pruned(outbox + [OutboxItem(event: request)])
+        saveOutbox()
+        flush()
     }
 
     /// Pins a thread to the top of the list, or unpins it. A draft cannot be pinned: it does not

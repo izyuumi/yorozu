@@ -108,6 +108,42 @@ private func reconnect(_ transport: QueueTransport) async {
 }
 
 @MainActor
+@Test func anArchiveRequestSurvivesDisconnectionAndFlushesOnReconnect() async throws {
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, device: "phone")
+    model.start()
+    let thread = ThreadSummary(id: "t1", title: "Kyoto", archived: false, lastActivity: 1)
+    await transport.yield(.event(YorozuEvent(
+        id: "threads", threadId: "", ts: 1, agentId: "main",
+        payload: .threadList(ThreadListData(threads: [thread]))
+    )))
+    #expect(await settle { model.threads == [thread] })
+
+    model.archive(model.threads[0])
+    #expect(model.threads[0].archived)
+    #expect(model.outbox.map(\.event.payload.kind) == [.threadArchive])
+    #expect(await transport.sent.isEmpty)
+
+    await reconnect(transport)
+    #expect(await settle { model.outbox.isEmpty })
+    #expect(await transport.sent.last?.payload == .threadArchive(ThreadArchiveData(archived: true)))
+}
+
+@MainActor
+@Test func aRefusedArchiveRequestRemainsQueuedInsteadOfDisappearing() async throws {
+    let transport = QueueTransport()
+    await transport.refuse(true)
+    let model = ChatModel(transport: transport, device: "phone")
+    model.start()
+    await reconnect(transport)
+
+    let thread = ThreadSummary(id: "t1", title: "Kyoto", archived: false, lastActivity: 1)
+    model.setArchived(thread, true)
+    #expect(await settle { model.outbox.first?.tries == 1 })
+    #expect(model.outbox.first?.event.payload == .threadArchive(ThreadArchiveData(archived: true)))
+}
+
+@MainActor
 @Test func aMessageThatWillNotGoGivesUpAfterThreeTriesAndOffersARetry() async throws {
     let transport = QueueTransport()
     await transport.refuse(true)

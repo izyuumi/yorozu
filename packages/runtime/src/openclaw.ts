@@ -82,6 +82,25 @@ export class OpenClawRunner {
     });
   }
 
+  async setArchived(threadId: string, archived: boolean): Promise<void> {
+    const client = await this.connect();
+    const key = `agent:main:yorozu:${threadId}`.toLowerCase();
+    type Description = { session: { sessionId?: string; archived?: boolean } | null };
+    const { session } = await client.request<Description>("sessions.describe", { key });
+    // A local thread that never ran has no Gateway session to archive. Do not create one.
+    if (session === null) return;
+    if (!session?.sessionId) throw new Error("OpenClaw session identity unavailable");
+    try {
+      await client.request("sessions.patch", { key, archived, expectedSessionId: session.sessionId });
+    } catch (error) {
+      // Archive cleanup can fail after committing, or its acknowledgment can be lost.
+      // Read back the same generation before reporting failure; never replay the mutation.
+      const current = await client.request<Description>("sessions.describe", { key }).catch(() => null);
+      if (current?.session?.sessionId === session.sessionId && current.session.archived === archived) return;
+      throw error;
+    }
+  }
+
   async run(turn: OpenClawTurn): Promise<string | undefined> {
     if (turn.signal?.aborted) return "";
     const client = await this.connect();

@@ -28,7 +28,7 @@ import { openaiCompat } from "./provider.js";
 import { loadDevices, serve, typedAnswer, type Sidecar } from "./serve.js";
 import { OpenClawRunner, type OpenClawTurn } from "./openclaw.js";
 import { localSocketPath } from "./local.js";
-import { appendThreadEvent, createThread, readThreadEvents } from "./threads.js";
+import { appendThreadEvent, createThread, listThreads, readThreadEvents } from "./threads.js";
 
 let relay: Relay;
 let sidecar: Sidecar;
@@ -339,6 +339,73 @@ test("OpenClaw activity reaches Mac and encrypted phone live, then replays durin
   } finally {
     mac.destroy();
   }
+});
+
+test("client archive and restore reach OpenClaw in order before the canonical list changes", async () => {
+  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
+  let finishArchive!: () => void;
+  const archive = vi.spyOn(OpenClawRunner.prototype, "setArchived").mockImplementationOnce(
+    () => new Promise<void>((resolve) => { finishArchive = resolve; }),
+  ).mockResolvedValue(undefined);
+  const { dir, send, eventsUntil } = await pairedPhone([], true);
+  send({ kind: "thread_create", data: {} });
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
+  const mac = createConnection(localSocketPath(dir));
+  const macEvents: YorozuEvent[] = [];
+  let buffer = "";
+  mac.setEncoding("utf8");
+  mac.on("data", (chunk: string) => {
+    buffer += chunk;
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) if (line) macEvents.push(JSON.parse(line));
+  });
+  await new Promise<void>((resolve, reject) => { mac.once("connect", resolve); mac.once("error", reject); });
+  const macArchive = (archived: boolean) => mac.write(JSON.stringify({
+    id: randomUUID(), threadId: "t1", ts: Date.now(), agentId: "mac", kind: "thread_archive", data: { archived },
+  }) + "\n");
+  try {
+  send({ kind: "thread_archive", data: { archived: true } });
+  await vi.waitFor(() => expect(archive).toHaveBeenCalledWith("t1", true));
+  expect(listThreads(dir).find((thread) => thread.id === "t1")?.archived).toBe(false);
+  macArchive(false);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(archive).toHaveBeenCalledTimes(1);
+  finishArchive();
+  const first = await threadsAfter(eventsUntil);
+  expect(first.find((thread) => thread.id === "t1")?.archived).toBe(true);
+  const second = await threadsAfter(eventsUntil);
+  expect(second.find((thread) => thread.id === "t1")?.archived).toBe(false);
+  expect(archive.mock.calls).toEqual([["t1", true], ["t1", false]]);
+  expect(listThreads(dir).find((thread) => thread.id === "t1")?.archived).toBe(false);
+  await vi.waitFor(() => expect(macEvents.filter((event) => event.kind === "thread_list").slice(-2)).toMatchObject([
+    { data: { threads: [{ id: "t1", archived: true }] } },
+    { data: { threads: [{ id: "t1", archived: false }] } },
+  ]));
+
+  // A Gateway refusal must not lie to other clients or poison the next ordered request.
+  archive.mockRejectedValueOnce(new Error("Session is still active; retry the archive."));
+  macArchive(true);
+  await vi.waitFor(() => expect(macEvents).toContainEqual(expect.objectContaining({
+    kind: "thought", data: { text: "Could not archive this thread. Please retry." },
+  })));
+  expect((await threadsAfter(eventsUntil)).find((thread) => thread.id === "t1")?.archived).toBe(false);
+  send({ kind: "thread_archive", data: {} });
+  expect((await threadsAfter(eventsUntil)).find((thread) => thread.id === "t1")?.archived).toBe(true);
+  expect(listThreads(dir).find((thread) => thread.id === "t1")?.archived).toBe(true);
+
+  // A newly connected Mac receives the persisted result, not this client's optimistic state.
+  const again = createConnection(localSocketPath(dir));
+  try {
+    const firstChunk = await new Promise<string>((resolve, reject) => {
+      again.once("data", (chunk) => resolve(chunk.toString()));
+      again.once("error", reject);
+    });
+    expect(JSON.parse(firstChunk.split("\n")[0]!)).toMatchObject({
+      kind: "thread_list", data: { threads: [{ id: "t1", archived: true }] },
+    });
+  } finally { again.destroy(); }
+  } finally { mac.destroy(); }
 });
 
 test("always runs the action and is permanent: the next one needs no second card", async () => {
