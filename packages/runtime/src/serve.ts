@@ -772,6 +772,37 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * the local socket. `reply` answers that one device; the thread admin cases answer all of
    * them, so a second device sees the same list.
    */
+  const archiveUpdates = new Map<string, Promise<void>>();
+
+  function updateArchive(event: YorozuEvent & { kind: "thread_archive" }, reply: Send): void {
+    const threadId = event.threadId;
+    const archived = event.data.archived ?? true;
+    if (!openclaw) {
+      archiveThread(threadId, dir, archived);
+      return broadcast(threadList());
+    }
+    // A restore may arrive while Gateway is still draining an archive. Preserve client order
+    // and publish only committed state, so the two backends cannot finish in opposite states.
+    const previous = archiveUpdates.get(threadId) ?? Promise.resolve();
+    const update = previous.then(async () => {
+      if (!listThreads(dir).some((thread) => thread.id === threadId)) return;
+      try {
+        await openclaw.setArchived(threadId, archived);
+        archiveThread(threadId, dir, archived);
+      } catch (error) {
+        state(`archive-error ${String(error)}`);
+        reply({
+          id: randomUUID(), threadId, ts: Date.now(), agentId: MAIN_AGENT,
+          kind: "thought", data: { text: `Could not ${archived ? "archive" : "restore"} this thread. Please retry.` },
+        });
+      }
+      broadcast(threadList());
+    }).finally(() => {
+      if (archiveUpdates.get(threadId) === update) archiveUpdates.delete(threadId);
+    });
+    archiveUpdates.set(threadId, update);
+  }
+
   function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0): void {
     appendTranscript(event, transcripts);
     appendThreadEvent(event, dir);
@@ -828,8 +859,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         renameThread(event.threadId, event.data.title, dir);
         return broadcast(threadList());
       case "thread_archive":
-        archiveThread(event.threadId, dir, event.data.archived ?? true);
-        return broadcast(threadList());
+        return updateArchive(event, reply);
       case "thread_pin":
         pinThread(event.threadId, event.data.pinned, dir);
         return broadcast(threadList());

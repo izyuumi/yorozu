@@ -33,6 +33,45 @@ function harness() {
 }
 
 describe("OpenClawRunner", () => {
+  test("archives and restores the canonical Gateway session without starting a turn", async () => {
+    const gateway = harness();
+    gateway.request.mockImplementation(async (method) => method === "sessions.describe"
+      ? { session: { sessionId: "observed-session", archived: false } } : {});
+    const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    await runner.setArchived("A1B2-C3D4", true);
+    await runner.setArchived("A1B2-C3D4", false);
+    expect(gateway.request.mock.calls).toEqual([
+      ["sessions.describe", { key: "agent:main:yorozu:a1b2-c3d4" }],
+      ["sessions.patch", { key: "agent:main:yorozu:a1b2-c3d4", archived: true, expectedSessionId: "observed-session" }],
+      ["sessions.describe", { key: "agent:main:yorozu:a1b2-c3d4" }],
+      ["sessions.patch", { key: "agent:main:yorozu:a1b2-c3d4", archived: false, expectedSessionId: "observed-session" }],
+    ]);
+    gateway.request.mockImplementation(async (method) => {
+      if (method === "sessions.patch") throw new Error("Session is still active; retry the archive.");
+      return { session: { sessionId: "observed-session", archived: false } };
+    });
+    await expect(runner.setArchived("A1B2-C3D4", true)).rejects.toThrow("still active");
+  });
+
+  test("archive skips absent sessions and reconciles a committed-but-rejected patch without replay", async () => {
+    const gateway = harness();
+    const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    gateway.request.mockResolvedValueOnce({ session: null });
+    await runner.setArchived("empty", true);
+    expect(gateway.request).toHaveBeenCalledTimes(1);
+    gateway.request.mockReset();
+    gateway.request.mockResolvedValueOnce({ session: { sessionId: "same", archived: false } })
+      .mockRejectedValueOnce(new Error("Session archived, but worktree cleanup did not finish"))
+      .mockResolvedValueOnce({ session: { sessionId: "same", archived: true } });
+    await expect(runner.setArchived("one", true)).resolves.toBeUndefined();
+    expect(gateway.request.mock.calls.map(([method]) => method)).toEqual(["sessions.describe", "sessions.patch", "sessions.describe"]);
+    gateway.request.mockReset();
+    gateway.request.mockResolvedValueOnce({ session: { sessionId: "old", archived: false } })
+      .mockRejectedValueOnce(new Error("Session changed before patch"))
+      .mockResolvedValueOnce({ session: { sessionId: "replacement", archived: true } });
+    await expect(runner.setArchived("one", true)).rejects.toThrow("Session changed");
+  });
+
   test("streams scoped, bounded tool activity with stable IDs before the final reply", async () => {
     const gateway = harness();
     const events: YorozuEvent[] = [];
