@@ -115,11 +115,10 @@ final class Session {
         // thread underneath it — would be the picture.
         guard launchArgument("yorozuShowcase") == nil, launchArgument("yorozuScene") == nil else { return }
         Task {
-            let granted = try? await UNUserNotificationCenter.current()
+            _ = try? await UNUserNotificationCenter.current()
                 .requestAuthorization(options: [.alert, .sound, .badge])
-            // Registering regardless of the answer would be dishonest, and pointless: without
-            // authorization there is nothing APNs would deliver.
-            guard granted == true else { return }
+            // Registration also enables content-free background catch-up. Alert permission may
+            // be denied while that silent sync remains useful, so these are separate decisions.
             UIApplication.shared.registerForRemoteNotifications()
         }
     }

@@ -13,10 +13,11 @@ test("a room without a complete apple key is not configured, and wakes nobody", 
   expect(configured({ APNS_KEY_ID: "k", APNS_TEAM_ID: "t", APNS_KEY_P8: "pem" })).toBe(true);
 });
 
-test("a token is dead when apple says it never knew it", () => {
-  // 410 Unregistered, and the 400 that a malformed or stale token comes back as.
+test("only an unregistered token is dead", () => {
+  // A generic 400 also covers bad payloads, topics and priorities. Deleting a valid token for
+  // one of those server-side mistakes silently disables every later notification.
   expect(gone(410)).toBe(true);
-  expect(gone(400)).toBe(true);
+  expect(gone(400)).toBe(false);
   // Everything else is either fine or worth keeping the token for.
   expect(gone(200)).toBe(false);
   expect(gone(429)).toBe(false);

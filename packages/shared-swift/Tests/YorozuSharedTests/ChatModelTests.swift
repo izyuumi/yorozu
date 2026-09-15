@@ -396,6 +396,8 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     model.foreground = true
     #expect(model.isReading("home"))
     #expect(!model.isReading("somewhere-else"))
+    #expect(model.isReading(threadRef: YorozuCrypto.threadRef("home")))
+    #expect(!model.isReading(threadRef: YorozuCrypto.threadRef("somewhere-else")))
     var reported: YorozuEvent?
     for _ in 0..<300 {
         reported = await transport.sent.last { $0.payload.kind == .threadRead }
