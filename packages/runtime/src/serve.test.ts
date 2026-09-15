@@ -21,10 +21,14 @@ import {
 } from "@yorozu/shared";
 import { listRules, type AskResult, type Rule } from "./approval.js";
 import type { AddressInfo } from "node:net";
+import { createConnection } from "node:net";
 import { afterEach, expect, test, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import { openaiCompat } from "./provider.js";
 import { loadDevices, serve, typedAnswer, type Sidecar } from "./serve.js";
+import { OpenClawRunner, type OpenClawTurn } from "./openclaw.js";
+import { localSocketPath } from "./local.js";
+import { readThreadEvents } from "./threads.js";
 
 let relay: Relay;
 let sidecar: Sidecar;
@@ -32,6 +36,7 @@ let sidecar: Sidecar;
 afterEach(async () => {
   await sidecar?.close();
   await relay?.close();
+  vi.restoreAllMocks();
 });
 
 /** A one-turn chat completion, streamed the way the adapter expects it. */
@@ -111,6 +116,11 @@ test("a sealed message from a phone round-trips through the agent loop", async (
   expect(await openNext()).toMatchObject({
     threadId: "t1",
     kind: "message",
+    data: { role: "user", text: "ping" },
+  });
+  expect(await openNext()).toMatchObject({
+    threadId: "t1",
+    kind: "message",
     data: { role: "agent", text: "pong" },
   });
   expect(lines).toContain("STATE paired");
@@ -173,8 +183,15 @@ test("a phone rejoins a restarted sidecar without pairing again", async () => {
   const box = seal(sessionKey, Buffer.from(JSON.stringify(sent)));
   again.frame(encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }), keys);
 
-  const body = frameBody((await again.next()).payload);
-  const plain = open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c));
+  let body = frameBody((await again.next()).payload);
+  let plain = open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c));
+  expect(JSON.parse(Buffer.from(plain).toString())).toMatchObject({
+    threadId: "home",
+    kind: "message",
+    data: { role: "user", text: "ping" },
+  });
+  body = frameBody((await again.next()).payload);
+  plain = open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c));
   expect(JSON.parse(Buffer.from(plain).toString())).toMatchObject({
     threadId: "home",
     kind: "message",
@@ -211,7 +228,7 @@ function cardOf(events: YorozuEvent[]): ApprovalCardData {
 }
 
 /** A paired phone plus the session key, so a test can talk sealed events both ways. */
-async function pairedPhone(responses: (() => Response)[]) {
+async function pairedPhone(responses: (() => Response)[], openclaw = false) {
   relay = await startRelay(0);
   const dir = mkdtempSync(join(tmpdir(), "yorozu-approval-serve-"));
 
@@ -222,7 +239,7 @@ async function pairedPhone(responses: (() => Response)[]) {
   sidecar = serve({
     relayUrl: `ws://127.0.0.1:${relay.port}`,
     stateDir: dir,
-    provider: openaiCompat({
+    provider: openclaw ? undefined : openaiCompat({
       baseUrl: "https://example.invalid",
       model: "m",
       fetch: vi.fn<typeof fetch>().mockImplementation(async () => queue.shift()!()),
@@ -266,6 +283,51 @@ async function pairedPhone(responses: (() => Response)[]) {
 
   return { dir, send, eventsUntil, isReply };
 }
+
+test("OpenClaw activity reaches Mac and encrypted phone live, then replays during a running tool", async () => {
+  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
+  let turn!: OpenClawTurn;
+  let finish!: (reply: string) => void;
+  vi.spyOn(OpenClawRunner.prototype, "run").mockImplementation(async (value) => {
+    turn = value;
+    return new Promise<string>((resolve) => { finish = resolve; });
+  });
+  const { dir, send, eventsUntil } = await pairedPhone([], true);
+  const mac = createConnection(localSocketPath(dir));
+  const macEvents: YorozuEvent[] = [];
+  let buffer = "";
+  mac.setEncoding("utf8");
+  mac.on("data", (chunk: string) => {
+    buffer += chunk;
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) if (line) macEvents.push(JSON.parse(line));
+  });
+  try {
+    await new Promise<void>((resolve, reject) => { mac.once("connect", resolve); mac.once("error", reject); });
+    send({ kind: "thread_create", data: {} });
+    send({ kind: "message", data: { role: "user", text: "inspect" } });
+    await vi.waitFor(() => expect(turn).toBeDefined());
+    const activity: YorozuEvent = { id: "live-call", threadId: "t1", ts: Date.now(), agentId: "main", kind: "tool_call", data: { callId: "call-1", name: "read", args: {} } };
+    turn.onEvent?.(activity);
+    expect((await eventsUntil((event) => event.id === activity.id)).at(-1)).toEqual(activity);
+    await vi.waitFor(() => expect(macEvents).toContainEqual(activity));
+    expect(readThreadEvents("t1", dir)).toContainEqual(activity);
+    // A reconnecting phone's normal sync sees the in-flight call before a final answer exists.
+    send({ kind: "sync_request", data: { lastSeen: {} } });
+    const replay = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
+    expect(JSON.stringify(replay)).toContain("live-call");
+    const result: YorozuEvent = { ...activity, id: "live-result", kind: "tool_result", data: { callId: "call-1", ok: true, output: "contents" } };
+    turn.onEvent?.(result);
+    expect((await eventsUntil((event) => event.id === result.id)).at(-1)).toEqual(result);
+    finish("Done");
+    await eventsUntil((event) => event.kind === "message" && event.data.done === true);
+    expect((await threadsAfter(eventsUntil)).find((thread) => thread.id === "t1")?.title).toBe("inspect");
+    expect(readThreadEvents("t1", dir).filter((event) => event.kind.startsWith("tool_")).map((event) => event.id)).toEqual(["live-call", "live-result"]);
+  } finally {
+    mac.destroy();
+  }
+});
 
 test("always runs the action and is permanent: the next one needs no second card", async () => {
   // Harmless, and its output is proof the gate let the tool run rather than refusing it.
@@ -641,9 +703,13 @@ test("two phones pair at once and see the same threads, events and deltas", asyn
     expect(await phone.next("thread_list")).toMatchObject({ data: { threads: [{ id: chat }] } });
   }
 
-  // A turn started on one phone is answered to both.
+  // A turn started on one phone is visible in full on both: prompt, then answer.
   first.send(chat, { kind: "message", data: { role: "user", text: "ping" } });
   for (const phone of [first, second]) {
+    expect(await phone.next("message")).toMatchObject({
+      threadId: chat,
+      data: { role: "user", text: "ping" },
+    });
     expect(await phone.next("message")).toMatchObject({
       threadId: chat,
       data: { role: "agent", text: "pong" },
@@ -657,6 +723,7 @@ test("two phones pair at once and see the same threads, events and deltas", asyn
   const groceries = "draft-2";
 
   second.send(groceries, { kind: "message", data: { role: "user", text: "milk" } });
+  expect(await second.next("message")).toMatchObject({ threadId: groceries, data: { role: "user", text: "milk" } });
   expect(await second.next("message")).toMatchObject({ threadId: groceries });
 
   // A device that holds nothing gets every thread's history in one delta, newest thread first.
@@ -710,6 +777,44 @@ test("two phones pair at once and see the same threads, events and deltas", asyn
   expect(await nextGroceries()).toMatchObject({
     title: "Food",
     lastReadAt: 5_000_000_000_000,
+  });
+});
+
+test("a newly paired phone syncs only events created after it paired", async () => {
+  relay = await startRelay(0);
+  const qrs = qrQueue();
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${relay.port}`,
+    stateDir: mkdtempSync(join(tmpdir(), "yorozu-serve-")),
+    provider: openaiCompat({
+      baseUrl: "https://example.invalid",
+      model: "m",
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => sse("pong")),
+    }),
+    log: (line) => {
+      if (line.startsWith("QR ")) qrs.push(line.slice(3));
+    },
+  });
+
+  const first = await pairPhone(relay.port, await qrs.next());
+  await first.next("thread_list");
+  const chat = "before-second-pairing";
+  first.send(chat, { kind: "thread_create", data: {} });
+  await first.next("thread_list");
+  first.send(chat, { kind: "message", data: { role: "user", text: "old prompt" } });
+  await first.next("message");
+  await first.next("message");
+
+  await new Promise((resolve) => setTimeout(resolve, 2));
+  const second = await pairPhone(relay.port, await qrs.next());
+  await second.next("thread_list");
+  second.send(chat, { kind: "sync_request", data: { lastSeen: {} } });
+  expect(await second.next("sync_delta")).toMatchObject({ data: { events: [] } });
+
+  first.send(chat, { kind: "message", data: { role: "user", text: "new prompt" } });
+  expect(await second.next("message")).toMatchObject({
+    threadId: chat,
+    data: { role: "user", text: "new prompt" },
   });
 });
 

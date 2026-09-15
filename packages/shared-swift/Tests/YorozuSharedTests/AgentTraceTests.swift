@@ -338,23 +338,36 @@ private func toolResult(_ id: String, ok: Bool = true, output: String = "", at t
     #expect(unifiedDiff(in: "") == nil)
 }
 
+@Test func progressRevisionsWithUniqueSyncIdsShowOnlyTheLatestCard() {
+    let first = event(.progressCard(ProgressCardData(cardId: "plan", title: "Progress", steps: [ProgressStep(label: "Inspect", state: .running)])), id: "plan-1")
+    let latest = event(.progressCard(ProgressCardData(cardId: "plan", title: "Progress", steps: [ProgressStep(label: "Inspect", state: .done)])), id: "plan-2")
+    let rows = chatRows(from: [first, latest])
+    #expect(rows.map(\.id) == ["plan-2"])
+    guard case .progress(let value) = rows.first else { return #expect(Bool(false), "expected progress") }
+    #expect(value == latest)
+}
+
 @Test func theMainAgentsToolUseIsGroupedIntoTheThreadWhereItHappened() {
     let rows = chatRows(from: [
         event(ask("tidy up"), id: "u1", agent: "phone"),
         toolCall("c1", "shell", args: ["cmd": .string("ls")]),
         toolResult("c1", output: "README.md"),
-        // A thought the thread does not draw must not split one run of tool use into two.
+        // Live status stays visible between the two tool groups on Mac and iOS.
         event(.thought(ThoughtData(text: "and now the other one")), id: "t1"),
         toolCall("c2", "fs_read", args: ["path": .string("/tmp/x")]),
         toolResult("c2", output: "hi"),
         event(reply("Tidied.", done: true), id: "m1"),
     ])
 
-    #expect(rows.map(\.id) == ["u1", "tools-c1", "m1"])
+    #expect(rows.map(\.id) == ["u1", "tools-c1", "t1", "tools-c2", "m1"])
     guard case .tools(let activities) = rows[1] else {
         return #expect(Bool(false), "expected one group of tool activity")
     }
-    #expect(activities.map(\.name) == ["shell", "fs_read"])
+    #expect(activities.map(\.name) == ["shell"])
+    guard case .thought(let thought) = rows[2] else {
+        return #expect(Bool(false), "expected live status row")
+    }
+    #expect(thought.id == "t1")
 }
 
 /// A specialist's tool use belongs to its card, not to the thread: the thread would otherwise

@@ -184,6 +184,13 @@ test("sync pages advance through a long thread without dropping searchable histo
   expect(eventsAfter(HOME, first.at(-1)!.id, dir).map((event) => event.id)).toEqual([`e${SYNC_LIMIT}`]);
 });
 
+test("pairing cutoff is applied before the sync page limit", () => {
+  for (let n = 0; n < SYNC_LIMIT + 10; n++) appendThreadEvent(message(`e${n}`, `old ${n}`), dir);
+  appendThreadEvent({ ...message("e1000", "new"), ts: 1_000 }, dir);
+
+  expect(eventsAfter(HOME, undefined, dir, 1_000).map((event) => event.id)).toEqual(["e1000"]);
+});
+
 test("history is the thread's messages, compacted to the last HISTORY_LIMIT", () => {
   for (let n = 1; n <= HISTORY_LIMIT + 5; n++) appendThreadEvent(message(`e${n}`, `m${n}`), dir);
   appendThreadEvent(

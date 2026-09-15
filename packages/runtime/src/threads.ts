@@ -327,10 +327,13 @@ export function eventsAfter(
   threadId: string,
   afterEventId?: string,
   dir = stateDir(),
+  minTs = 0,
 ): YorozuEvent[] {
   const events = readThreadEvents(threadId, dir);
   const at = afterEventId ? events.findLastIndex((event) => event.id === afterEventId) : -1;
-  return (at >= 0 ? events.slice(at + 1) : events).slice(0, SYNC_LIMIT);
+  return (at >= 0 ? events.slice(at + 1) : events)
+    .filter((event) => event.ts >= minTs)
+    .slice(0, SYNC_LIMIT);
 }
 
 /**
