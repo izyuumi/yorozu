@@ -201,6 +201,8 @@ export function loadDevices(file: string): DeviceRecord[] {
         {
           pub: record.pub,
           ...(typeof record.signingPub === "string" ? { signingPub: record.signingPub } : {}),
+          ...(typeof record.pairedAt === "number" && Number.isFinite(record.pairedAt) && record.pairedAt > 0
+            ? { pairedAt: record.pairedAt } : {}),
           lastSeen: typeof record.lastSeen === "number" ? record.lastSeen : 0,
         },
       ];
@@ -316,14 +318,22 @@ export function serve(options: ServeOptions = {}): Sidecar {
       record,
     });
   };
+  let migratedPairingTime = false;
   for (const record of loadDevices(devicesFile)) {
     // A key on disk we can no longer agree with is simply dropped, not a reason not to start.
     try {
+      // Older releases never recorded first pairing. Do not invent historical access:
+      // start a conservative cutoff once, before even a no-hello reconnect can sync.
+      if (!Number.isFinite(record.pairedAt) || !record.pairedAt || record.pairedAt < 0) {
+        record.pairedAt = Date.now();
+        migratedPairingTime = true;
+      }
       remember(record);
     } catch {
       // Not a usable X25519 key any more.
     }
   }
+  if (migratedPairingTime) saveDevices();
 
   /**
    * The same thing for devices on the local socket, which need no key: the Mac app is one more
@@ -943,7 +953,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const previews = preview
         ? Object.fromEntries(
             [...devices.values()].flatMap(({ key, record }) => {
-              if (!record.signingPub) return [];
+              if (!record.signingPub || event.ts < (record.pairedAt ?? 0)) return [];
               const box = seal(key, Buffer.from(preview));
               return [[record.signingPub, { n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }]];
             }),
@@ -969,8 +979,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
     };
 
     sendTo = (device: string, event: YorozuEvent): void => {
-      const key = devices.get(device)?.key;
+      const known = devices.get(device);
+      const key = known?.key;
       if (!key || ws.readyState !== WebSocket.OPEN) return;
+      const cutoff = known.record.pairedAt ?? 0;
+      if (event.threadId && event.ts < cutoff) return;
+      if (event.kind === "thread_list") event = { ...event, data: { threads: threadSummaries(dir, cutoff) } };
       const box = seal(key, Buffer.from(JSON.stringify(event)));
       sendFrame({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) });
     };
