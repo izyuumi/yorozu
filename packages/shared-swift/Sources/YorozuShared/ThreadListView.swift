@@ -173,6 +173,7 @@ extension View {
 /// font and the two lines of text wrap by truncating, never by clipping.
 struct ThreadRow: View {
     let thread: ThreadSummary
+    var working = false
 
     @ScaledMetric(relativeTo: .body) private var dot = 9
 
@@ -201,7 +202,15 @@ struct ThreadRow: View {
                     // The title gives way first: the time is short and always worth its width.
                     .layoutPriority(1)
                 }
-                if let preview = thread.lastMessage, !preview.isEmpty {
+                if working {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Working…")
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .accessibilityElement(children: .combine)
+                } else if let preview = thread.lastMessage, !preview.isEmpty {
                     Text(preview)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -326,6 +335,7 @@ struct ConnectionPill: View {
 /// the list rather than on top of it.
 public struct ThreadListView<Destination: View>: View {
     private let threads: [ThreadSummary]
+    private let workingThreads: Set<String>
     private let connection: ConnectionState?
     @Binding private var path: [String]
     private let onCreate: () -> Void
@@ -348,6 +358,7 @@ public struct ThreadListView<Destination: View>: View {
 
     public init(
         threads: [ThreadSummary],
+        workingThreads: Set<String> = [],
         connection: ConnectionState? = nil,
         path: Binding<[String]>,
         onCreate: @escaping () -> Void,
@@ -363,6 +374,7 @@ public struct ThreadListView<Destination: View>: View {
         @ViewBuilder destination: @escaping (ThreadSummary) -> Destination
     ) {
         self.threads = threads
+        self.workingThreads = workingThreads
         self.connection = connection
         self._path = path
         self.onCreate = onCreate
@@ -480,7 +492,7 @@ public struct ThreadListView<Destination: View>: View {
     @ViewBuilder private func rows(_ threads: [ThreadSummary]) -> some View {
         ForEach(threads) { thread in
             NavigationLink(value: thread.id) {
-                ThreadRow(thread: thread)
+                ThreadRow(thread: thread, working: workingThreads.contains(thread.id))
             }
             .swipeActions(edge: .leading) {
                 if thread.archived {
@@ -569,6 +581,7 @@ public struct ThreadListView<Destination: View>: View {
 /// thread's cached messages say, exactly as on the phone.
 public struct ThreadSidebar: View {
     private let threads: [ThreadSummary]
+    private let workingThreads: Set<String>
     @Binding private var selection: String?
     private let onCreate: () -> Void
     private let onRename: (ThreadSummary, String) -> Void
@@ -586,6 +599,7 @@ public struct ThreadSidebar: View {
 
     public init(
         threads: [ThreadSummary],
+        workingThreads: Set<String> = [],
         selection: Binding<String?>,
         onCreate: @escaping () -> Void,
         onRename: @escaping (ThreadSummary, String) -> Void,
@@ -596,6 +610,7 @@ public struct ThreadSidebar: View {
         exportMarkdown: ((ThreadSummary) -> String)? = nil
     ) {
         self.threads = threads
+        self.workingThreads = workingThreads
         self._selection = selection
         self.onCreate = onCreate
         self.onRename = onRename
@@ -650,7 +665,7 @@ public struct ThreadSidebar: View {
 
     @ViewBuilder private func rows(_ threads: [ThreadSummary]) -> some View {
         ForEach(threads) { thread in
-            ThreadRow(thread: thread)
+            ThreadRow(thread: thread, working: workingThreads.contains(thread.id))
                 .tag(thread.id)
                 .contextMenu { menu(thread) }
         }
