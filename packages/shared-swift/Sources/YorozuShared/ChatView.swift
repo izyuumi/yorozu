@@ -116,11 +116,6 @@ public struct ChatView: View {
             }
             composer
         }
-        // Reach through navigation chrome, but keep keyboard as a real boundary: when it opens,
-        // the bezel contracts to the visible chat instead of glowing behind it.
-        #if os(macOS)
-            .overlay { WorkingBezel(active: generating) }
-        #endif
         .navigationTitle(thread.displayTitle)
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -154,8 +149,6 @@ public struct ChatView: View {
                 Menu("More", systemImage: "ellipsis") {
                     #if os(iOS)
                         Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
-                        modelPicker
-                        effortPicker
                         Divider()
                     #endif
                     ExportThreadButton(title: thread.displayTitle) {
@@ -577,35 +570,45 @@ public struct ChatView: View {
                 sendButton
                     .padding(.trailing, 6)
             }
-            #if os(macOS)
-                HStack(spacing: 12) {
-                    Menu {
-                        modelPicker
-                    } label: {
-                        Label(modelCaption ?? String(localized: "Model"), systemImage: "cpu")
-                            .lineLimit(1)
-                    }
-                    .disabled(model.models.isEmpty)
-                    Menu {
-                        effortPicker
-                    } label: {
-                        Label(thread.effort?.label ?? String(localized: "Effort"), systemImage: "gauge.with.dots.needle.33percent")
-                    }
-                    Spacer(minLength: 0)
+            HStack(spacing: 12) {
+                Menu {
+                    modelPicker
+                } label: {
+                    Label(modelCaption ?? String(localized: "Model"), systemImage: "cpu")
+                        .lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .frame(height: controlTarget - 8)
+                        .background(.quaternary, in: Capsule())
+                        .frame(minHeight: controlTarget)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 7)
-            #endif
+                .disabled(model.models.isEmpty)
+                Menu {
+                    effortPicker
+                } label: {
+                    Label(thread.effort?.label ?? String(localized: "Effort"), systemImage: "gauge.with.dots.needle.33percent")
+                        .lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .frame(height: controlTarget - 8)
+                        .background(.quaternary, in: Capsule())
+                        .frame(minHeight: controlTarget)
+                }
+                Spacer(minLength: 0)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 4)
         }
         .background(fieldBackground, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(.separator.opacity(0.6))
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        )
+        .overlay {
+            ZStack {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(.separator.opacity(0.6))
+                WorkingBezel(active: generating)
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
         .animation(.easeOut(duration: 0.18), value: attachments.wrappedValue.count)
         .animation(.easeOut(duration: 0.18), value: generating)
         .animation(.easeOut(duration: 0.18), value: replyQuote != nil)
@@ -1188,15 +1191,15 @@ private struct EmptyThreadView: View {
     }
 }
 
-/// A running turn lights the whole chat edge, including its navigation header. Reduce Motion
-/// keeps the same state cue as a steady bezel instead of pulsing it.
+/// A running turn lights the composer edge. Reduce Motion keeps the same state cue as a steady
+/// bezel instead of pulsing it.
 private struct WorkingBezel: View {
     let active: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var bright = false
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 28, style: .continuous)
+        RoundedRectangle(cornerRadius: 22, style: .continuous)
             .strokeBorder(
                 Color.blue.opacity(active ? (bright || reduceMotion ? 0.9 : 0.3) : 0),
                 lineWidth: 2
