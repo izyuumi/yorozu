@@ -368,12 +368,14 @@ enum Apple {
     }
 
     static func mailRead(_ request: [String: Any]) throws -> [String: Any] {
-        let id = try string(request, "id")
+        guard let id = Int(try string(request, "id")), id > 0 else {
+            throw Failure("id must be a positive message number")
+        }
         let text = try applescript(
             """
             tell application "Mail"
                 set m to first message of inbox whose id is \(id)
-                return (id of m) & tab & (sender of m) & tab & (subject of m) & tab & ¬
+                return ((id of m) as string) & tab & (sender of m) & tab & (subject of m) & tab & ¬
                     ((date received of m) as string) & linefeed & (content of m)
             end tell
             """

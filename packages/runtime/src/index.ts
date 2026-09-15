@@ -12,7 +12,7 @@ import {
 import { autoAssignTool } from "./assign.js";
 import type { Memory } from "./memory.js";
 import { rememberTool } from "./memory.js";
-import type { Message, Provider, ToolCall, ToolDef } from "./provider.js";
+import { resolveToolName, type Message, type Provider, type ToolCall, type ToolDef } from "./provider.js";
 import { listScheduleTool, scheduleTool, unscheduleTool } from "./scheduler.js";
 import { skillTool } from "./skills.js";
 import { appleTools } from "./tools/apple.js";
@@ -209,93 +209,109 @@ export interface RunOptions {
 export async function* runAgent(
   options: RunOptions,
 ): AsyncGenerator<AgentEvent> {
-  const tools = options.tools ?? defaultTools;
-  const defs = tools.map(({ name, description, parameters }) => ({
-    name,
-    description,
-    parameters,
-  }));
-  const lastUser = options.messages.findLast((m) => m.role === "user");
-  const recall = lastUser
-    ? (options.memory?.recallForPrompt(lastUser.content) ?? "")
-    : "";
-  const history: Message[] = [
-    {
-      role: "system",
-      content: recall ? `${recall}\n\n${options.system}` : options.system,
-    },
-    ...options.messages,
-  ];
+  const lifetime = new AbortController();
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, lifetime.signal])
+    : lifetime.signal;
+  try {
+    const tools = options.tools ?? defaultTools;
+    const defs = tools.map(({ name, description, parameters }) => ({
+      name,
+      description,
+      parameters,
+    }));
+    const lastUser = options.messages.findLast((m) => m.role === "user");
+    const recall = lastUser
+      ? (options.memory?.recallForPrompt(lastUser.content) ?? "")
+      : "";
+    const history: Message[] = [
+      {
+        role: "system",
+        content: recall ? `${recall}\n\n${options.system}` : options.system,
+      },
+      ...options.messages,
+    ];
 
-  let text = "";
-  for (let turn = 0; turn < (options.maxTurns ?? 10); turn++) {
-    if (options.signal?.aborted) break;
-    text = "";
-    const calls: ToolCall[] = [];
-    for await (const event of options.provider.stream(history, defs, { effort: options.effort })) {
+    let text = "";
+    let finished = false;
+    for (let turn = 0; turn < (options.maxTurns ?? 10); turn++) {
       if (options.signal?.aborted) break;
-      if (event.type === "text") {
-        text += event.text;
-        yield event;
-      } else if (event.type === "tool_call") {
-        calls.push(event.call);
-        yield event;
-      }
-    }
-
-    history.push({
-      role: "assistant",
-      content: text,
-      ...(calls.length ? { tool_calls: calls } : {}),
-    });
-    if (!calls.length) break;
-
-    /** One call, gate and all. Never throws: a thrown tool is a result the model can read. */
-    const dispatch = async (call: ToolCall): Promise<string> => {
-      const tool = tools.find((t) => t.name === call.name);
-      if (!tool) return `unknown tool: ${call.name}`;
-      try {
-        const args = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
-        // The gate runs before the tool does: a refusal is what the model gets back.
-        const gate = options.ask
-          ? await checkApproval(tool, args, {
-              ask: options.ask,
-              ...(options.context ? { context: options.context } : {}),
-              ...(options.grants ? { grants: options.grants } : {}),
-              ...(options.onProposal ? { onProposal: options.onProposal } : {}),
-            })
-          : { refusal: null as string | null };
-        if (gate.refusal !== null) return gate.refusal;
-        const context =
-          gate.actionId && options.context
-            ? { ...options.context, actionId: gate.actionId }
-            : options.context;
-        if (gate.actionId && tool.action) {
-          const stale = verifyApproved(gate.actionId, {
-            ...tool.action(args),
-            ...(tool.batch ? { items: tool.batch(args) } : {}),
-          });
-          if (stale) return stale;
+      text = "";
+      const calls: ToolCall[] = [];
+      for await (const event of options.provider.stream(history, defs, { effort: options.effort, signal })) {
+        if (options.signal?.aborted) break;
+        if (event.type === "text") {
+          text += event.text;
+          yield event;
+        } else if (event.type === "tool_call") {
+          const call = { ...event.call, name: resolveToolName(event.call.name, defs) };
+          calls.push(call);
+          yield { ...event, call };
         }
-        return await tool.run(args, context);
-      } catch (e) {
-        return `error: ${e instanceof Error ? e.message : String(e)}`;
       }
-    };
 
-    // Started together rather than one after another: a call parked on an approval card must
-    // not hold up the independent calls beside it, which is the whole of story 30. Only the
-    // gated branch waits. Results are yielded in call order so the model reads them in the
-    // order it asked for them, and an interrupt still stops the lot at the next boundary.
-    const running = options.signal?.aborted ? [] : calls.map(dispatch);
-    for (const [index, pending] of running.entries()) {
-      const result = await pending;
-      if (options.signal?.aborted) break;
-      const call = calls[index];
-      yield { type: "tool_result", id: call.id, name: call.name, result };
-      history.push({ role: "tool", tool_call_id: call.id, content: result });
+      history.push({
+        role: "assistant",
+        content: text,
+        ...(calls.length ? { tool_calls: calls } : {}),
+      });
+      if (!calls.length) {
+        finished = true;
+        break;
+      }
+
+      /** One call, gate and all. Never throws: a thrown tool is a result the model can read. */
+      const dispatch = async (call: ToolCall): Promise<string> => {
+        const tool = tools.find((t) => t.name === call.name);
+        if (!tool) return `error: unknown tool: ${call.name}`;
+        try {
+          const args = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
+          // The gate runs before the tool does: a refusal is what the model gets back.
+          const gate = options.ask
+            ? await checkApproval(tool, args, {
+                ask: options.ask,
+                ...(options.context ? { context: options.context } : {}),
+                ...(options.grants ? { grants: options.grants } : {}),
+                ...(options.onProposal ? { onProposal: options.onProposal } : {}),
+              })
+            : { refusal: null as string | null };
+          if (gate.refusal !== null) return gate.refusal;
+          const context =
+            gate.actionId && options.context
+              ? { ...options.context, actionId: gate.actionId }
+              : options.context;
+          if (gate.actionId && tool.action) {
+            const stale = verifyApproved(gate.actionId, {
+              ...tool.action(args),
+              ...(tool.batch ? { items: tool.batch(args) } : {}),
+            });
+            if (stale) return stale;
+          }
+          return await tool.run(args, context);
+        } catch (e) {
+          return `error: ${e instanceof Error ? e.message : String(e)}`;
+        }
+      };
+
+      // Started together rather than one after another: a call parked on an approval card must
+      // not hold up the independent calls beside it, which is the whole of story 30. Only the
+      // gated branch waits. Results are yielded in call order so the model reads them in the
+      // order it asked for them, and an interrupt still stops the lot at the next boundary.
+      const running = options.signal?.aborted ? [] : calls.map(dispatch);
+      for (const [index, pending] of running.entries()) {
+        const result = await pending;
+        if (options.signal?.aborted) break;
+        const call = calls[index];
+        yield { type: "tool_result", id: call.id, name: call.name, result };
+        history.push({ role: "tool", tool_call_id: call.id, content: result });
+      }
     }
-  }
 
-  yield { type: "final", text };
+    if (!finished && !options.signal?.aborted) {
+      text = "I couldn't finish because the tool-call limit was reached.";
+    }
+    yield { type: "final", text };
+  } finally {
+    lifetime.abort();
+  }
 }

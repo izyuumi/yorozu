@@ -168,6 +168,26 @@ test("loop dispatches a streamed tool call and returns final text", async () => 
   });
 });
 
+test("tool-call exhaustion cannot finish as an empty or promised reply", async () => {
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(sse(toolCallTurn));
+  const events = await Array.fromAsync(runAgent({
+    provider: openaiCompat({
+      baseUrl: "https://example.invalid",
+      apiKey: "k",
+      model: "m",
+      fetch: fetchMock,
+    }),
+    system: "sys",
+    messages: [{ role: "user", content: "echo forever" }],
+    maxTurns: 1,
+  }));
+
+  expect(events.at(-1)).toEqual({
+    type: "final",
+    text: "I couldn't finish because the tool-call limit was reached.",
+  });
+});
+
 test("listModels and auth hit /v1/models", async () => {
   const fetchMock = vi
     .fn<typeof fetch>()
@@ -448,6 +468,6 @@ test("a call naming a tool the registry does not have is reported, not guessed a
   );
 
   expect(events.find((event) => event.type === "tool_result")).toMatchObject({
-    result: "unknown tool: telepathy",
+    result: "error: unknown tool: telepathy",
   });
 });

@@ -66,6 +66,7 @@ export const skillTool: Tool = {
   run: ({ name }) => {
     const wanted = String(name ?? "");
     const skill = listSkills().find((s) => s.name === wanted);
-    return skill ? skill.body : `no such skill: ${wanted}`;
+    if (!skill) throw new Error(`no such skill: ${wanted}`);
+    return skill.body;
   },
 };

@@ -44,6 +44,15 @@ export interface ToolDef {
   parameters: unknown;
 }
 
+/** MCP clients make dotted names identifier-safe. Resolve only an unambiguous advertised tool. */
+export function resolveToolName(name: string, tools: readonly ToolDef[]): string {
+  if (tools.some((tool) => tool.name === name)) return name;
+  const received = name.startsWith("mcp__yorozu__") ? name.slice("mcp__yorozu__".length) : name;
+  if (tools.some((tool) => tool.name === received)) return received;
+  const matches = tools.filter((tool) => tool.name.replaceAll(".", "_") === received);
+  return matches.length === 1 ? matches[0]!.name : name;
+}
+
 export type ProviderEvent =
   | { type: "text"; text: string }
   | { type: "tool_call"; call: ToolCall }
@@ -52,6 +61,8 @@ export type ProviderEvent =
 export interface ProviderOptions {
   /** Portable reasoning depth. Providers without a compatible control ignore it. */
   effort?: ReasoningEffort;
+  /** Identity and lifetime of one agent loop; shared providers must isolate its session. */
+  signal?: AbortSignal;
 }
 
 export interface Provider {

@@ -12,6 +12,7 @@ import { z } from "zod";
 import {
   onPath,
   renderTranscript,
+  resolveToolName,
   runCli,
   systemOf,
   type Provider,
@@ -21,7 +22,6 @@ import {
 const BINARY = "claude";
 /** MCP server name. The CLI exposes its tools as `mcp__<server>__<tool>`. */
 const SERVER = "yorozu";
-const PREFIX = `mcp__${SERVER}__`;
 
 export interface ClaudeCliConfig {
   /** Empty means whatever the CLI is already configured to use. */
@@ -167,19 +167,9 @@ export function claudeCli(config: ClaudeCliConfig = {}): Provider {
             if (block.type === "text") {
               if (block.text) yield { type: "text", text: block.text };
             } else if (block.type === "tool_use") {
-              const received = block.name.startsWith(PREFIX)
-                ? block.name.slice(PREFIX.length)
-                : block.name;
-              // Claude's MCP transport makes dotted tool names identifier-safe in tool_use
-              // blocks (`browser.open` -> `browser_open`). Map only to a tool we advertised;
-              // arbitrary underscores remain untouched and still fail closed in dispatch.
-              const name = tools.some((tool) => tool.name === received)
-                ? received
-                : tools.find((tool) => tool.name.replaceAll(".", "_") === received)?.name
-                  ?? received;
               calls.push({
                 id: block.id,
-                name,
+                name: resolveToolName(block.name, tools),
                 arguments: JSON.stringify(block.input ?? {}),
               });
             }
