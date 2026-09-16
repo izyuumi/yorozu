@@ -238,8 +238,8 @@ public struct ApprovalCardView: View {
     private var choices: some View {
         VStack(spacing: LayoutMetrics.inner) {
             #if os(macOS)
+                choice(.yes, "Allow once", prominent: true)
                 HStack(spacing: LayoutMetrics.inner) {
-                    choice(.yes, "Allow once", prominent: true)
                     choice(.task, "Allow for this task", prominent: false)
                     choice(.no, "Don't allow", prominent: false)
                 }

@@ -141,8 +141,10 @@ for scene in "${SCENES[@]}"; do
   say "$name"
   xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true
   log="$WORK/$name.log"
-  xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" -yorozuPair "$PAIR" $args >"$log" 2>&1 &
-  PIDS+=($!)
+  # A console PTY sometimes becomes the foreground process instead of the app and leaves the
+  # simulator on a blank transition frame. A normal launch returns the app pid immediately and
+  # keeps SpringBoard focused on the scene we are about to capture.
+  xcrun simctl launch "$UDID" "$BUNDLE_ID" -yorozuPair "$PAIR" $args >"$log" 2>&1
   # Pairing owns the root view. The first launch of a fresh simulator can spend several seconds
   # registering with the throwaway relay before the seeded root swaps in.
   sleep 12

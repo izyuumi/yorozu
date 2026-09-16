@@ -104,10 +104,7 @@ public struct ChatView: View {
                 Banner(text: failure, systemImage: "exclamationmark.triangle")
             }
             if rows.isEmpty {
-                EmptyThreadView { prompt in
-                    draft.wrappedValue = prompt
-                    send()
-                }
+                EmptyThreadView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 messages
@@ -123,7 +120,7 @@ public struct ChatView: View {
             // is the case that needs no caption. The Mac has a title bar subtitle for exactly
             // this; the phone's stacked `.principal` item is squeezed between the title it
             // repeats and the buttons next to it when a window toolbar draws it.
-            .navigationSubtitle(modelCaption ?? "")
+            .navigationSubtitle(macModelCaption)
         #endif
         .toolbar {
             #if os(iOS)
@@ -272,6 +269,23 @@ public struct ChatView: View {
     private var modelCaption: String? {
         guard let spec = thread.model else { return nil }
         return model.models.first { $0.id == spec }?.menuLabel ?? spec
+    }
+
+    /// Compact Quiet keeps the active runtime visible beside every Mac thread title. A default
+    /// thread is still running on a concrete first model; hiding that identity made the shipped
+    /// toolbar materially different from the design and forced a menu open to discover it.
+    private var macModelCaption: String {
+        let spec = thread.model ?? model.models.first?.id
+        guard let spec, !spec.isEmpty else { return "" }
+        if let option = model.models.first(where: { $0.id == spec }) {
+            return option.menuLabel
+        }
+        let parts = spec.split(separator: "/", maxSplits: 1).map(String.init)
+        if parts.count == 2 {
+            let provider = parts[0] == "anthropic" ? "Claude" : parts[0].capitalized
+            return "\(provider) · \(parts[1])"
+        }
+        return spec
     }
 
     @ViewBuilder private var messages: some View {
@@ -980,7 +994,7 @@ func followsNewest(atBottom: Bool, phase: ScrollPhase) -> Bool {
 extension View {
     @ViewBuilder fileprivate func compactQuietTranscriptLayout() -> some View {
         #if os(macOS)
-            frame(maxWidth: 680, alignment: .leading)
+            frame(maxWidth: 700, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .top)
                 .padding(.horizontal, LayoutMetrics.section)
                 .padding(.vertical, LayoutMetrics.gutter)
@@ -991,7 +1005,7 @@ extension View {
 
     @ViewBuilder fileprivate func compactQuietComposerLayout() -> some View {
         #if os(macOS)
-            frame(maxWidth: 680)
+            frame(maxWidth: 700)
                 .frame(maxWidth: .infinity, alignment: .center)
         #else
             self
@@ -1156,48 +1170,15 @@ private struct ScrollToBottomPill: View {
     }
 }
 
-/// A thread nobody has said anything in yet: what this is for, and three ways to start.
+/// A thread nobody has said anything in yet. Compact Quiet leaves it genuinely quiet: the
+/// composer is already the action, so suggestion pills only repeat it and dominate the screen.
 private struct EmptyThreadView: View {
-    let onPrompt: (String) -> Void
-
-    private static let examples = [
-        "Summarise my unread messages",
-        "What's on my calendar tomorrow?",
-        "Find the invoice I saved last week",
-    ]
-
-    /// The prompts go in the `actions` slot rather than in a stack under the view, which is
-    /// what centres the whole group as one thing. They used to be a sibling, with the
-    /// `ContentUnavailableView` pinned by `fixedSize` so it would stop taking the whole thread
-    /// and pushing them onto the composer — and on the Mac that asked it for its ideal height,
-    /// which is unbounded: the chat came out nineteen hundred points tall inside a five
-    /// hundred point window, with the composer and everything under it clipped away.
     var body: some View {
-        ContentUnavailableView {
-            Label("Start a conversation", systemImage: "bubble.left.and.bubble.right")
-        } description: {
-            Text("Ask your Mac to look something up, keep track of it, or do it for you.")
-        } actions: {
-            VStack(spacing: 8) {
-                ForEach(Self.examples, id: \.self) { example in
-                    Button { onPrompt(example) } label: {
-                        HStack(spacing: 8) {
-                            Text(example)
-                                .multilineTextAlignment(.leading)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Image(systemName: "arrow.up.right")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                    }
-                    .buttonStyle(.plain)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                }
-            }
-            .frame(maxWidth: 420)
-        }
+        ContentUnavailableView(
+            "Start the conversation",
+            systemImage: "bubble.left.and.bubble.right",
+            description: Text("Ask for anything your Mac can do — files, mail, calendars, or the browser.")
+        )
         .padding()
     }
 }
@@ -1242,18 +1223,18 @@ extension View {
     /// drawer; Mac uses the default toolbar placement.
     @ViewBuilder fileprivate func threadSearch(text: Binding<String>, presented: Binding<Bool>) -> some View {
         #if os(iOS)
-            searchable(
-                text: text,
-                isPresented: presented,
-                placement: .navigationBarDrawer(displayMode: .automatic),
-                prompt: "Find in thread"
-            )
-        #else
             if presented.wrappedValue {
-                searchable(text: text, isPresented: presented, prompt: "Find in thread")
+                searchable(
+                    text: text,
+                    isPresented: presented,
+                    placement: .navigationBarDrawer(displayMode: .automatic),
+                    prompt: "Find in thread"
+                )
             } else {
                 self
             }
+        #else
+            searchable(text: text, isPresented: presented, prompt: "Find in thread")
         #endif
     }
 

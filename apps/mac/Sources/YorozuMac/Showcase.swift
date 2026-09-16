@@ -106,6 +106,7 @@ enum Showcase {
         }
         if let scene = launchArgument("yorozuScene") {
             model.previewChat(in: model.threads.first?.id ?? model.newDraft().id)
+            if let thread = model.threads.first?.id { model.previewModels(in: thread) }
             switch scene {
             case "search":
                 ChatShowcase.search = "invoice"
