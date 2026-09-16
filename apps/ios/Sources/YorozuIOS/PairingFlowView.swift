@@ -14,14 +14,14 @@ struct PairingFlowView: View {
     @State private var error: String?
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             Spacer()
             Image("AppIconImage")
                 .resizable()
-                .frame(width: 128, height: 128)
-                .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                .frame(width: 96, height: 96)
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .accessibilityHidden(true)
-            Text("Yorozu").font(.largeTitle.bold())
+            Text("Yorozu").font(.largeTitle.weight(.semibold))
             Text("Your Mac's agent, in your pocket.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -30,19 +30,22 @@ struct PairingFlowView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .padding(.top, 8)
+                .padding(.top, 4)
+                .frame(maxWidth: 320)
             Spacer()
             Button("Scan pairing code", systemImage: "qrcode.viewfinder") { scanning = true }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .frame(maxWidth: .infinity)
             Button("Enter code manually") { enteringCode = true }
-                .buttonStyle(.bordered)
+                .frame(minHeight: 44)
             if connecting { ProgressView("Connecting…") }
             if let error = error ?? externalError {
                 Text(error).font(.footnote).foregroundStyle(.red)
             }
         }
-        .padding(32)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
         .sheet(isPresented: $scanning) {
             ScannerView { text in
                 let failure = onPair(text)
@@ -66,27 +69,30 @@ struct PairView: View {
     @State private var error: String?
 
     var body: some View {
-        VStack(spacing: 16) {
-            Text("Pair with your Mac")
-                .font(.title2.bold())
-            Text("Paste the code shown by Yorozu on your host Mac.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
-            TextField("Paste pairing code", text: $code, axis: .vertical)
-                .font(.system(.footnote, design: .monospaced))
-                .textFieldStyle(.roundedBorder)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-            Button("Connect") { error = onPair(code) }
-                .buttonStyle(.borderedProminent)
-                .disabled(code.isEmpty)
-
-            if let error {
-                Text(error).font(.footnote).foregroundStyle(.red)
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Paste pairing code", text: $code, axis: .vertical)
+                        .font(.system(.footnote, design: .monospaced))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .lineLimit(3...6)
+                } footer: {
+                    Text("Paste the code shown in Yorozu on your host Mac.")
+                }
+                if let error {
+                    Section { Label(error, systemImage: "exclamationmark.circle") }
+                        .foregroundStyle(.red)
+                }
             }
-            Spacer()
+            .navigationTitle("Pair with Mac")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Connect") { error = onPair(code) }
+                        .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
         }
-        .padding()
     }
 }

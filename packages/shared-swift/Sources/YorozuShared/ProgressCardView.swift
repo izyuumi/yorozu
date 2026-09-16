@@ -11,8 +11,8 @@ public struct ProgressCardView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
+            HStack(spacing: LayoutMetrics.inner) {
                 Text(card.title)
                     .font(.subheadline.weight(.semibold))
                 Spacer(minLength: 8)
@@ -25,22 +25,21 @@ public struct ProgressCardView: View {
                 }
             }
             bar
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
                 ForEach(card.steps) { step in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: LayoutMetrics.inner) {
                         mark(for: step.state)
                         Text(step.label)
                             .font(.caption)
                             .foregroundStyle(step.state == .pending ? .tertiary : .secondary)
-                            .strikethrough(step.state == .done, color: .secondary)
                         Spacer(minLength: 0)
                     }
                 }
             }
         }
-        .padding(12)
+        .padding(LayoutMetrics.stack)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(card.title)
         .accessibilityValue(spoken)

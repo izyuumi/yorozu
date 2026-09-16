@@ -150,6 +150,23 @@ public struct ChatView: View {
                 ToolbarItem(placement: .primaryAction) {
                     Menu("More", systemImage: "ellipsis") {
                         Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
+                        Menu("Model", systemImage: "cpu") { modelPicker }
+                            .disabled(model.models.isEmpty)
+                        Menu("Effort", systemImage: "gauge.with.dots.needle.33percent") {
+                            effortPicker
+                        }
+                    }
+                }
+            #endif
+            #if os(macOS)
+                ToolbarItem(placement: .primaryAction) {
+                    Menu("More", systemImage: "ellipsis") {
+                        Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
+                        Menu("Model", systemImage: "cpu") { modelPicker }
+                            .disabled(model.models.isEmpty)
+                        Menu("Effort", systemImage: "gauge.with.dots.needle.33percent") {
+                            effortPicker
+                        }
                     }
                 }
             #endif
@@ -359,14 +376,18 @@ public struct ChatView: View {
                     }
                     Color.clear.frame(height: 1).id(Self.bottomAnchor)
                 }
-                .padding()
+                .compactQuietTranscriptLayout()
                 // Handed down rather than threaded through every bubble, block and table cell
                 // between the field and the run of text a hit is inside.
                 .environment(\.searchHighlight, search)
             }
             // A thread opens on its newest message, like every other chat: the anchor does it
             // during layout, so there is no jump from the top to watch on the way in.
-            .defaultScrollAnchor(.bottom)
+            #if os(macOS)
+                .defaultScrollAnchor(.top)
+            #else
+                .defaultScrollAnchor(.bottom)
+            #endif
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 // `visibleRect` is in content coordinates, which is what makes this reliable:
                 // a thread shorter than the screen sits under a content inset and reports a
@@ -568,42 +589,14 @@ public struct ChatView: View {
                 sendButton
                     .padding(.trailing, 6)
             }
-            HStack(spacing: 12) {
-                Menu {
-                    modelPicker
-                } label: {
-                    Label(modelCaption ?? String(localized: "Model"), systemImage: "cpu")
-                        .lineLimit(1)
-                        .padding(.horizontal, 10)
-                        .frame(height: controlTarget - 8)
-                        .background(.quaternary, in: Capsule())
-                        .frame(minHeight: controlTarget)
-                }
-                .disabled(model.models.isEmpty)
-                Menu {
-                    effortPicker
-                } label: {
-                    Label(thread.effort?.label ?? String(localized: "Effort"), systemImage: "gauge.with.dots.needle.33percent")
-                        .lineLimit(1)
-                        .padding(.horizontal, 10)
-                        .frame(height: controlTarget - 8)
-                        .background(.quaternary, in: Capsule())
-                        .frame(minHeight: controlTarget)
-                }
-                Spacer(minLength: 0)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 12)
-            .padding(.bottom, 4)
         }
-        .background(fieldBackground, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(fieldBackground, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
         .overlay {
-            ZStack {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(.separator.opacity(0.6))
-                WorkingBezel(active: generating)
-            }
+            RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous)
+                .strokeBorder(
+                    generating ? Color.accentColor.opacity(0.55) : Color.secondary.opacity(0.25),
+                    lineWidth: generating ? 1.5 : 1
+                )
             .allowsHitTesting(false)
             .accessibilityHidden(true)
         }
@@ -611,8 +604,8 @@ public struct ChatView: View {
         .animation(.easeOut(duration: 0.18), value: generating)
         .animation(.easeOut(duration: 0.18), value: replyQuote != nil)
         .padding(.horizontal, 12)
-        .padding(.top, 8)
-        .padding(.bottom, 8)
+        .padding(.vertical, 8)
+        .compactQuietComposerLayout()
     }
 
     private var fieldBackground: Color {
@@ -986,6 +979,26 @@ func followsNewest(atBottom: Bool, phase: ScrollPhase) -> Bool {
 #endif
 
 extension View {
+    @ViewBuilder fileprivate func compactQuietTranscriptLayout() -> some View {
+        #if os(macOS)
+            frame(maxWidth: 680, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .top)
+                .padding(.horizontal, LayoutMetrics.section)
+                .padding(.vertical, LayoutMetrics.gutter)
+        #else
+            padding()
+        #endif
+    }
+
+    @ViewBuilder fileprivate func compactQuietComposerLayout() -> some View {
+        #if os(macOS)
+            frame(maxWidth: 680)
+                .frame(maxWidth: .infinity, alignment: .center)
+        #else
+            self
+        #endif
+    }
+
     /// A key equivalent, on the Mac only.
     ///
     /// The composer's own `onKeyPress` never sees Return there: a `TextField` is an

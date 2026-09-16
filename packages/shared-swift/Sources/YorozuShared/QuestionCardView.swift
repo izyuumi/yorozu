@@ -20,7 +20,7 @@ public struct QuestionCardView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
             Label(card.question, systemImage: "questionmark.bubble")
                 .font(.headline)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -30,7 +30,7 @@ public struct QuestionCardView: View {
             } else {
                 // One per line: the options are sentences, not words, and a row of them
                 // truncates the moment Dynamic Type grows.
-                VStack(spacing: 8) {
+                VStack(spacing: LayoutMetrics.inner) {
                     ForEach(card.options, id: \.self) { option in
                         Button { answer(option) } label: {
                             Text(option)
@@ -38,32 +38,33 @@ public struct QuestionCardView: View {
                                 .padding(.vertical, 2)
                         }
                         .buttonStyle(.bordered)
-                        .frame(minHeight: 44)
+                        .frame(minHeight: controlTarget)
                     }
                 }
                 if card.offersFreeText { freeText }
             }
         }
-        .padding(12)
+        .padding(LayoutMetrics.stack)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
     }
 
     private var freeText: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: LayoutMetrics.inner) {
             TextField("Something else", text: $other, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...4)
                 .focused($writing)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(.quaternary, in: Capsule())
+                .padding(.horizontal, LayoutMetrics.stack)
+                .padding(.vertical, LayoutMetrics.inner)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.controlRadius, style: .continuous))
                 .onSubmit(sendOther)
             Button("Send", systemImage: "arrow.up.circle.fill", action: sendOther)
                 .labelStyle(.iconOnly)
                 .font(.title3)
                 .buttonStyle(.plain)
                 .disabled(trimmed.isEmpty)
+                .frame(minWidth: controlTarget, minHeight: controlTarget)
         }
     }
 

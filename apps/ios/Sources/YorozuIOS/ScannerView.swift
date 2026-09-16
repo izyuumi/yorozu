@@ -10,7 +10,7 @@ struct ScannerView: View {
     @State private var error: String?
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             Text("Scan the QR code in your Mac's menu bar.")
                 .font(.headline)
                 .multilineTextAlignment(.center)
@@ -20,7 +20,7 @@ struct ScannerView: View {
                     error = onScan(text)
                     return error == nil
                 }
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             } else {
                 ContentUnavailableView(
                     "No camera",
@@ -33,7 +33,7 @@ struct ScannerView: View {
                 Text(error).font(.footnote).foregroundStyle(.red)
             }
         }
-        .padding()
+        .padding(16)
     }
 }
 

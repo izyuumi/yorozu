@@ -101,7 +101,7 @@ public struct RuleEditorView: View {
         @Binding var field: Draft.Field
 
         var body: some View {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
                 HStack {
                     Text(field.label)
                     Spacer(minLength: 8)
@@ -112,7 +112,7 @@ public struct RuleEditorView: View {
                     Text("Any").font(.caption).foregroundStyle(.secondary)
                 }
                 if !field.isAny {
-                    HStack(spacing: 8) {
+                    HStack(spacing: LayoutMetrics.inner) {
                         Picker("Match", selection: $field.mode) {
                             Text("is").tag(ApprovalRuleField.Mode.exact)
                             Text("starts with").tag(ApprovalRuleField.Mode.prefix)
@@ -247,8 +247,8 @@ public struct RuleProposalCardView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: LayoutMetrics.stack) {
+            HStack(spacing: LayoutMetrics.inner) {
                 Image(systemName: "lightbulb.fill")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.tint)
@@ -277,7 +277,7 @@ public struct RuleProposalCardView: View {
                     .foregroundStyle(.secondary)
                     .frame(minHeight: 32)
             } else {
-                HStack(spacing: 8) {
+                HStack(spacing: LayoutMetrics.inner) {
                     Button("Review") { editing = proposal.rule }
                         .buttonStyle(.borderedProminent)
                         .frame(minHeight: controlTarget)
@@ -291,11 +291,11 @@ public struct RuleProposalCardView: View {
                 }
             }
         }
-        .padding(16)
+        .padding(LayoutMetrics.gutter)
         .frame(maxWidth: 560, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(proposalBackground, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.separator))
+        .background(proposalBackground, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous).strokeBorder(.separator))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Rule suggestion: \(proposal.rule.summary)")
         .sheet(item: $editing) { rule in
@@ -333,7 +333,7 @@ public struct RuleRowView: View {
     }
 
     public var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+        HStack(alignment: .firstTextBaseline, spacing: LayoutMetrics.inner) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Image(systemName: rule.decision == .never ? "nosign" : "checkmark.seal.fill")

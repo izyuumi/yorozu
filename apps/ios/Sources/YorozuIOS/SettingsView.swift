@@ -84,6 +84,7 @@ struct SettingsView: View {
                     Button("Unpair", role: .destructive) { confirmingUnpair = true }
                 }
             }
+            .listStyle(.insetGrouped)
             .navigationTitle("Settings")
             .onAppear { model.requestApprovalSettings() }
             .toolbar {

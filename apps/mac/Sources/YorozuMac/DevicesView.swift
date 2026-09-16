@@ -15,9 +15,8 @@ struct DevicesView: View {
     private func removable(_ device: DeviceInfo) -> Bool { device.via == .relay }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Devices").font(.headline)
                 Spacer()
                 Text(sidecar.state).font(.caption).foregroundStyle(.secondary)
             }
@@ -43,6 +42,7 @@ struct DevicesView: View {
                     }
                 }
             }
+            .listStyle(.inset)
             .frame(minHeight: 160)
 
             Button("Pair Another Device…") {
@@ -95,7 +95,7 @@ struct PairingSheet: View {
     private var model: ChatModel { MacChatSession.shared.model }
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 16) {
             if paired {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 56))
@@ -150,8 +150,8 @@ struct PairingSheet: View {
                 }
             }
         }
-        .padding()
-        .frame(width: 340)
+        .padding(24)
+        .frame(width: 380)
         .frame(minHeight: 180)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: paired)
         .task {

@@ -58,9 +58,7 @@ struct ChatWindowView: View {
                 },
                 exportMarkdown: model.markdown(of:)
             )
-            // 220 rather than 180: a row is a title, a relative time and a line of preview, and
-            // below about this the time starts eating the title it is meant to caption.
-            .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 360)
+            .navigationSplitViewColumnWidth(min: 210, ideal: 236, max: 280)
             .safeAreaInset(edge: .bottom) { gear }
         } detail: {
             NavigationStack {
@@ -77,7 +75,7 @@ struct ChatWindowView: View {
         }
         // A floor rather than a fixed size: the window is resizable now, and the chat has to
         // stay legible at the narrowest a window is worth having.
-        .frame(minWidth: 640, minHeight: 420)
+        .frame(minWidth: 720, minHeight: 480)
         // Selecting something else is what discards a draft nothing was ever sent in, and what
         // tells the model which thread is being read — a reply landing in the open thread is
         // read on arrival, and one landing anywhere else raises a dot in the sidebar.
@@ -100,7 +98,7 @@ struct ChatWindowView: View {
     /// Pairing, providers, browser, models and the wizard all moved into the Settings scene when
     /// the window became the chat; this is the way back to them, plus the sidecar's state.
     private var gear: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Menu {
                 Button("Settings…") {
                     NSApp.activate(ignoringOtherApps: true)
@@ -115,14 +113,20 @@ struct ChatWindowView: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
             Spacer(minLength: 0)
-            Text(session.role == .host ? Sidecar.shared.state : connectionLabel)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .help("Relay state reported by the runtime")
+            Label {
+                Text(session.role == .host ? Sidecar.shared.state : connectionLabel)
+            } icon: {
+                Image(systemName: model.state == .paired ? "circle.fill" : "circle.dotted")
+                    .font(.system(size: 7))
+                    .foregroundStyle(model.state == .paired ? .green : .secondary)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .help("Relay state reported by the runtime")
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .background(.bar)
     }
 
@@ -139,31 +143,74 @@ struct ChatWindowView: View {
 /// window is the chat now, so they live in the standard Settings scene where ⌘, and the gear
 /// menu both find them.
 struct SettingsView: View {
-    @ObservedObject var sidecar: Sidecar
-    @State private var session = MacChatSession.shared
+    private enum SettingsSection: String, CaseIterable, Identifiable {
+        case general, devices, permissions, providers, models, browser, approvals, rules
 
-    var body: some View {
-        TabView {
-            Tab("General", systemImage: "gearshape") {
-                pane { GeneralView() }
-            }
-            if session.role == .host {
-                Tab("Devices", systemImage: "iphone.and.arrow.forward") {
-                    pane { DevicesView(sidecar: sidecar) }
-                }
-                Tab("Permissions", systemImage: "lock.shield") {
-                    pane { PermissionsView() }
-                }
+        var id: Self { self }
+        var presentation: (title: String, symbol: String) {
+            switch self {
+            case .general: ("General", "gearshape")
+            case .devices: ("Devices", "iphone.and.arrow.forward")
+            case .permissions: ("Permissions", "lock.shield")
+            case .providers: ("Providers", "point.3.connected.trianglepath.dotted")
+            case .models: ("Models", "cpu")
+            case .browser: ("Browser", "globe")
+            case .approvals: ("Approvals", "hand.raised")
+            case .rules: ("Rules", "checklist")
             }
         }
-        .frame(width: 480, height: 460)
+    }
+
+    @ObservedObject var sidecar: Sidecar
+    @State private var session = MacChatSession.shared
+    @State private var selection: SettingsSection? = .general
+
+    private var sections: [SettingsSection] {
+        session.role == .host ? SettingsSection.allCases : [.general]
+    }
+
+    var body: some View {
+        NavigationSplitView {
+            List(sections, selection: $selection) { section in
+                Label(section.presentation.title, systemImage: section.presentation.symbol)
+                    .tag(section)
+            }
+            .navigationTitle("Settings")
+            .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 230)
+        } detail: {
+            pane { selectedView }
+        }
+        .frame(minWidth: 760, idealWidth: 820, minHeight: 520, idealHeight: 580)
+        .onChange(of: session.role) { _, role in
+            if role != .host { selection = .general }
+        }
     }
 
     private func pane(@ViewBuilder content: () -> some View) -> some View {
         ScrollView {
-            content()
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 20) {
+                Text((selection ?? .general).presentation.title)
+                    .font(.title2.weight(.semibold))
+                content()
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 20)
+            .frame(maxWidth: 680, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .background(.background)
+    }
+
+    @ViewBuilder private var selectedView: some View {
+        switch selection ?? .general {
+        case .general: GeneralView()
+        case .devices: DevicesView(sidecar: sidecar)
+        case .permissions: PermissionsView(showsTitle: false)
+        case .providers: ProvidersView()
+        case .models: ModelsView()
+        case .browser: BrowserView()
+        case .approvals: ApprovalFloorView()
+        case .rules: RulesView()
         }
     }
 }

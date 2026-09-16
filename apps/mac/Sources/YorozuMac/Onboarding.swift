@@ -27,8 +27,8 @@ struct OnboardingView: View {
             case .success: success
             }
         }
-        .padding(24)
-        .frame(width: 520, height: 520)
+        .padding(28)
+        .frame(width: 560, height: 540)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: step)
         .onChange(of: session.model.state) { _, state in
             if step == .clientPair, state == .paired { step = .success }
@@ -36,7 +36,7 @@ struct OnboardingView: View {
     }
 
     private var roleChoice: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 20) {
             setupHeader("How will this Mac use Yorozu?", detail: "You can change this later in Settings.")
             roleButton(
                 title: "Host Yorozu on this Mac",
@@ -62,7 +62,7 @@ struct OnboardingView: View {
                 step = .clientPair
             }
         } label: {
-            HStack(spacing: 14) {
+            HStack(spacing: 12) {
                 Image(systemName: systemImage).font(.title2).frame(width: 32)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(.headline)
@@ -71,11 +71,15 @@ struct OnboardingView: View {
                 Spacer()
                 Image(systemName: "chevron.right").foregroundStyle(.tertiary)
             }
-            .padding(14)
+            .padding(12)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(.separator.opacity(0.65), lineWidth: 1)
+        }
     }
 
     private var hostPairing: some View {
@@ -170,7 +174,7 @@ enum OnboardingWindow {
     static func show() {
         if window == nil {
             let panel = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 520, height: 520),
+                contentRect: NSRect(x: 0, y: 0, width: 560, height: 540),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false
             )
             panel.title = "Yorozu Setup"
