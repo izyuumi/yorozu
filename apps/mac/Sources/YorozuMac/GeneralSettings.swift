@@ -101,7 +101,7 @@ struct KeepaliveView: View {
                     .onChange(of: keepRunning) { Watchdog.isEnabled = keepRunning }
                 Text(
                     "Checks every minute and opens Yorozu again if it has died. Quitting from the menu is "
-                        + "still a quit: it holds the check off for ten minutes."
+                        + "still a quit; supervision resumes next time Yorozu opens."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)

@@ -181,16 +181,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
-            // A quit the user asked for has to stick, or the watchdog undoes it within the
-            // minute. A crash never gets here, writes no pause, and is relaunched — which is
-            // the whole distinction the pause file exists to draw.
+            // A quit the user asked for has to stick. A crash never gets here, so the
+            // watchdog remains installed and relaunches it. The next manual/login launch
+            // installs the watchdog again.
             //
             // Sparkle's relaunch is not a quit: it is about to start the new build itself, and
             // if that fails the watchdog is exactly who should notice.
             if Updates.installing {
                 Log.write("quit: installing an update, watchdog left running")
             } else {
-                Watchdog.pause()
+                Watchdog.remove()
             }
             Sidecar.shared.stop()
             // Quitting is not the user opting out: keep the preference for the next launch.
