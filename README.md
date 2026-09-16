@@ -265,15 +265,12 @@ under its own `BUNDLE_ID` supervises itself under its own label and cannot touch
 BUNDLE_ID=to.yumi.yorozu.t46test ./scripts/build-mac.sh
 ```
 
-**Quitting still quits.** ⌘Q would otherwise last 60 seconds. On the way out the app writes a
-deadline ten minutes ahead to
-`~/Library/Application Support/<bundle-id>.watchdog-pause`, and the script honours it; a crash
-gets nowhere near that code, writes nothing, and is relaunched. An unreadable or expired file
-is not a pause — when in doubt the watchdog supervises. The pause is cleared on the next
-launch, so a Mac that is up again is covered again, and Sparkle's relaunch does not write one
-at all: if installing the update fails, the watchdog is exactly who should notice.
+**Quitting still quits.** ⌘Q unloads the watchdog; a crash gets nowhere near that code, so the
+watchdog remains loaded and relaunches the app. The next manual or login-item launch installs
+the watchdog again. Sparkle's update relaunch does not unload it: if installation fails, the
+watchdog is exactly who should notice.
 
-The agent it writes and the pause rule are unit-tested, script included —
+The agent and watchdog script are unit-tested —
 `env -u SDKROOT swift test --package-path apps/mac`.
 
 ### Dev bundle
