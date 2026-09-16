@@ -35,9 +35,7 @@ public struct ChatView: View {
     /// The message being replied to, quoted above the field until it is sent or dismissed.
     @State private var replyQuote: String?
     @State private var searching = false
-    /// Screenshot only: draws the model menu's own contents as a popover, because nothing on a
-    /// simulator can open a real menu. See ``ChatShowcase``.
-    @State private var modelShowcase = ChatShowcase.modelMenu
+    @State private var choosingRunSettings = ChatShowcase.modelMenu
     @State private var search = ""
     /// Which hit the arrows are on. Reset whenever the term changes.
     @State private var hit = 0
@@ -150,22 +148,8 @@ public struct ChatView: View {
                 ToolbarItem(placement: .primaryAction) {
                     Menu("More", systemImage: "ellipsis") {
                         Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
-                        Menu("Model", systemImage: "cpu") { modelPicker }
-                            .disabled(model.models.isEmpty)
-                        Menu("Effort", systemImage: "gauge.with.dots.needle.33percent") {
-                            effortPicker
-                        }
-                    }
-                }
-            #endif
-            #if os(macOS)
-                ToolbarItem(placement: .primaryAction) {
-                    Menu("More", systemImage: "ellipsis") {
-                        Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
-                        Menu("Model", systemImage: "cpu") { modelPicker }
-                            .disabled(model.models.isEmpty)
-                        Menu("Effort", systemImage: "gauge.with.dots.needle.33percent") {
-                            effortPicker
+                        Button("Model and effort", systemImage: "slider.horizontal.3") {
+                            choosingRunSettings = true
                         }
                     }
                 }
@@ -180,9 +164,24 @@ public struct ChatView: View {
         }
         // Screenshot only: the menu's own choices, raised far enough down the screen that the
         // caption they set is in the same picture. Nothing on a simulator can open a real menu.
-        .sheet(isPresented: $modelShowcase) {
-            List { modelPicker }.presentationDetents([.fraction(0.45)])
-        }
+        #if os(iOS)
+            .sheet(isPresented: $choosingRunSettings) {
+                NavigationStack {
+                    Form {
+                        Section("Model") { modelPicker }
+                        Section("Effort") { effortPicker }
+                    }
+                    .navigationTitle("Run settings")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { choosingRunSettings = false }
+                        }
+                    }
+                }
+                .presentationDetents([.medium, .large])
+            }
+        #endif
         // Opened from the magnifier rather than always on show: a thread is for reading, and
         // a permanent search field would be one more thing to read past — and on iOS 26 it
         // would be one more bar under the composer, which already owns the bottom of a chat.
@@ -1250,7 +1249,11 @@ extension View {
                 prompt: "Find in thread"
             )
         #else
-            searchable(text: text, isPresented: presented, prompt: "Find in thread")
+            if presented.wrappedValue {
+                searchable(text: text, isPresented: presented, prompt: "Find in thread")
+            } else {
+                self
+            }
         #endif
     }
 

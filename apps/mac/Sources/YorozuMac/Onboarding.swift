@@ -27,8 +27,8 @@ struct OnboardingView: View {
             case .success: success
             }
         }
-        .padding(28)
-        .frame(width: 560, height: 540)
+        .padding(24)
+        .frame(width: 520, height: 520)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: step)
         .onChange(of: session.model.state) { _, state in
             if step == .clientPair, state == .paired { step = .success }
@@ -75,11 +75,7 @@ struct OnboardingView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(.separator.opacity(0.65), lineWidth: 1)
-        }
+        .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var hostPairing: some View {
@@ -174,7 +170,7 @@ enum OnboardingWindow {
     static func show() {
         if window == nil {
             let panel = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 560, height: 540),
+                contentRect: NSRect(x: 0, y: 0, width: 520, height: 520),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false
             )
             panel.title = "Yorozu Setup"

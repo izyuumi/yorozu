@@ -114,7 +114,7 @@ struct ChatWindowView: View {
             .fixedSize()
             Spacer(minLength: 0)
             Label {
-                Text(session.role == .host ? Sidecar.shared.state : connectionLabel)
+                Text(connectionLabel)
             } icon: {
                 Image(systemName: model.state == .paired ? "circle.fill" : "circle.dotted")
                     .font(.system(size: 7))
@@ -132,9 +132,9 @@ struct ChatWindowView: View {
 
     private var connectionLabel: String {
         switch model.state {
-        case .paired: "connected"
-        case .connecting, .joined: "connecting"
-        case .closed: "offline"
+        case .paired: "Connected"
+        case .connecting, .joined: "Connecting"
+        case .closed: "Offline"
         }
     }
 }
@@ -144,7 +144,7 @@ struct ChatWindowView: View {
 /// menu both find them.
 struct SettingsView: View {
     private enum SettingsSection: String, CaseIterable, Identifiable {
-        case general, devices, permissions, providers, models, browser, approvals, rules
+        case general, devices, permissions, providers, approvals, rules
 
         var id: Self { self }
         var presentation: (title: String, symbol: String) {
@@ -153,8 +153,6 @@ struct SettingsView: View {
             case .devices: ("Devices", "iphone.and.arrow.forward")
             case .permissions: ("Permissions", "lock.shield")
             case .providers: ("Providers", "point.3.connected.trianglepath.dotted")
-            case .models: ("Models", "cpu")
-            case .browser: ("Browser", "globe")
             case .approvals: ("Approvals", "hand.raised")
             case .rules: ("Rules", "checklist")
             }
@@ -206,9 +204,12 @@ struct SettingsView: View {
         case .general: GeneralView()
         case .devices: DevicesView(sidecar: sidecar)
         case .permissions: PermissionsView(showsTitle: false)
-        case .providers: ProvidersView()
-        case .models: ModelsView()
-        case .browser: BrowserView()
+        case .providers:
+            ProvidersView()
+            Divider().padding(.vertical, 4)
+            ModelsView()
+            Divider().padding(.vertical, 4)
+            BrowserView()
         case .approvals: ApprovalFloorView()
         case .rules: RulesView()
         }

@@ -111,8 +111,9 @@ public struct MessageBubble: View {
                 AttachmentsView(attachments: data.attachments)
             }
             if (!data.text.isEmpty || streaming), !isUser {
-                Text("Yorozu")
+                Text("YOROZU")
                     .font(.caption2.weight(.semibold))
+                    .tracking(0.5)
                     .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
             }

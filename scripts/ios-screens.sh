@@ -34,6 +34,20 @@ PIDS=()
 # One line per picture: <file> <launch arguments…>, where <file> is the name in docs/screens
 # without its extension.
 SCENES=(
+  "t33-thread-list   -yorozuShowcase threads"
+  "32-chat-empty-state -yorozuShowcase threads -yorozuScene empty"
+  "32-chat-markdown  -yorozuShowcase chat"
+  "37-tool-rows      -yorozuShowcase activity"
+  "38-approval-card  -yorozuShowcase approval"
+  "39-search         -yorozuShowcase threads -yorozuScene search"
+  "39-reply          -yorozuShowcase threads -yorozuScene reply"
+  "40-queued         -yorozuShowcase queued"
+  "40-link-preview   -yorozuShowcase link"
+  "42-model-menu     -yorozuShowcase model"
+  "45-card           -yorozuShowcase card"
+  "45-rule-editor    -yorozuShowcase rule-editor"
+  "45-proposal       -yorozuShowcase proposal"
+  "45-batch          -yorozuShowcase batch"
   "53-images-grid    -yorozuShowcase images"
   "53-images-viewer  -yorozuShowcase images-viewer"
 )
@@ -106,6 +120,13 @@ xcrun simctl install "$UDID" "$WORK/dd/Build/Products/Debug-iphonesimulator/Yoro
 xcrun simctl status_bar "$UDID" override --time "9:41" --batteryState charged --batteryLevel 100 \
   --cellularMode active --cellularBars 4 --wifiMode active --wifiBars 3 2>/dev/null || true
 
+# First launch on a newly created iOS 27 simulator can return to SpringBoard while launch
+# services finishes registering embedded extensions. Warm once before evidence capture so the
+# first named scene is held to the same standard as every later one.
+xcrun simctl launch "$UDID" "$BUNDLE_ID" -yorozuPair "$PAIR" -yorozuShowcase threads >/dev/null 2>&1 || true
+sleep 8
+xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true
+
 taken=0
 mkdir -p "$OUT"
 for scene in "${SCENES[@]}"; do
@@ -122,9 +143,9 @@ for scene in "${SCENES[@]}"; do
   log="$WORK/$name.log"
   xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" -yorozuPair "$PAIR" $args >"$log" 2>&1 &
   PIDS+=($!)
-  # The seeded thread is drawn as soon as the model exists, which is before the relay has
-  # answered anything — but give the first frame, its images and any sheet a moment to settle.
-  sleep 6
+  # Pairing owns the root view. The first launch of a fresh simulator can spend several seconds
+  # registering with the throwaway relay before the seeded root swaps in.
+  sleep 12
   xcrun simctl io "$UDID" screenshot "$OUT/$name.png" >/dev/null
   echo "$OUT/$name.png"
 done
