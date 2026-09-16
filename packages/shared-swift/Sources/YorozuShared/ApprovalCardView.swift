@@ -244,8 +244,10 @@ public struct ApprovalCardView: View {
                     choice(.no, "Don't allow", prominent: false)
                 }
             #else
-                choice(.yes, "Allow once", prominent: true)
-                choice(.task, "Allow for this task", prominent: false)
+                HStack(spacing: LayoutMetrics.inner) {
+                    choice(.yes, "Allow once", prominent: true)
+                    choice(.task, "For this task", prominent: false)
+                }
             #endif
             // A grant that ends with the turn, so it is offered wherever a card is — but it
             // has nothing to promise about the actions no rule may stand in for either.
@@ -263,14 +265,24 @@ public struct ApprovalCardView: View {
                 .accessibilityHint("Opens a rule you can widen before saving")
             }
             #if !os(macOS)
-                choice(.no, "Don't allow", prominent: false)
+                HStack(spacing: LayoutMetrics.inner) {
+                    choice(.no, "Don't allow", prominent: false)
+                    Button("Discuss first") { answer(.discuss, nil) }
+                        .font(.subheadline)
+                        .buttonStyle(.bordered)
+                        .frame(maxWidth: .infinity, minHeight: controlTarget)
+                        .buttonBorderShape(.roundedRectangle(radius: LayoutMetrics.controlRadius))
+                        .accessibilityHint("Ask Yorozu to explain before deciding")
+                }
             #endif
-            Button("Discuss first") { answer(.discuss, nil) }
-                .font(.subheadline)
-                .buttonStyle(.plain)
-                .foregroundStyle(.tint)
-                .frame(minHeight: controlTarget)
-                .accessibilityHint("Ask Yorozu to explain before deciding")
+            #if os(macOS)
+                Button("Discuss first") { answer(.discuss, nil) }
+                    .font(.subheadline)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
+                    .frame(minHeight: controlTarget)
+                    .accessibilityHint("Ask Yorozu to explain before deciding")
+            #endif
             Text(grantNote)
                 .font(.caption)
                 .foregroundStyle(.secondary)

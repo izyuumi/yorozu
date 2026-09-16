@@ -100,9 +100,9 @@ public struct ToolRowView: View {
 
             if expanded { details }
         }
-        .padding(LayoutMetrics.inner)
+        .padding(.vertical, LayoutMetrics.inner)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.controlRadius, style: .continuous))
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     private var header: some View {
@@ -150,37 +150,38 @@ public struct ToolRowView: View {
     }
 
     @ViewBuilder private var details: some View {
-        Divider()
-        if !activity.argsDetail.isEmpty {
-            Text(activity.argsDetail)
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        if let output = activity.output, !output.isEmpty {
+        VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
+            if !activity.argsDetail.isEmpty {
+                Text(activity.argsDetail)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let output = activity.output, !output.isEmpty {
             // The first lines sit in the thread and scroll with it — a scroll view inside one
             // is a thing to fight with on a phone. Only "Show all" makes one, because that is
             // the case where the row would otherwise be as tall as the file.
-            if showingAll {
-                ScrollView {
+                if showingAll {
+                    ScrollView { body(of: output) }
+                        .frame(maxHeight: Self.maxOutputHeight)
+                } else {
                     body(of: output)
-                }
-                .frame(maxHeight: Self.maxOutputHeight)
-            } else {
-                body(of: output)
-                if lineCount(output) > Self.previewLines {
-                    Button("Show all \(lineCount(output)) lines") {
-                        withAnimation(.snappy) { showingAll = true }
+                    if lineCount(output) > Self.previewLines {
+                        Button("Show all \(lineCount(output)) lines") {
+                            withAnimation(.snappy) { showingAll = true }
+                        }
+                        .font(.caption)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.tint)
                     }
-                    .font(.caption)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.tint)
                 }
+            } else if !activity.running {
+                Text("No output.").font(.caption).foregroundStyle(.tertiary)
             }
-        } else if !activity.running {
-            Text("No output.").font(.caption).foregroundStyle(.tertiary)
         }
+        .padding(LayoutMetrics.inner)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.controlRadius, style: .continuous))
     }
 
     /// What the tool printed: a coloured diff when that is what it is, and monospaced text
