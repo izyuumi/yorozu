@@ -59,8 +59,7 @@ struct ModelsView: View {
     @StateObject private var assign = AutoAssign()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Models").font(.headline)
+        VStack(alignment: .leading, spacing: 8) {
             Picker("Knowledge source", selection: $mode) {
                 Text("GitHub catalog").tag(ModelSettings.catalog)
                 Text("Research prices on the web").tag(ModelSettings.research)
@@ -103,6 +102,6 @@ struct ModelsView: View {
                 Button("Done") { assign.diff = nil }.keyboardShortcut(.defaultAction)
             }
         }
-        .padding()
+        .padding(20)
     }
 }

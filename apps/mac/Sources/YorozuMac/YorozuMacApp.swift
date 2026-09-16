@@ -224,7 +224,7 @@ struct YorozuMacApp: App {
                     Speaker.shared.stop()
                 }
         }
-        .defaultSize(width: 860, height: 560)
+        .defaultSize(width: 1040, height: 680)
         .commands { ChatMenus() }
         .handlesExternalEvents(matching: ["pair"])
 

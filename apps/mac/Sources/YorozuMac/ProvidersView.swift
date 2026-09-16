@@ -257,9 +257,8 @@ struct ProvidersView: View {
     private var specs: [String] { entries.filter(\.enabled).flatMap(\.specs) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Providers").font(.headline)
                 Spacer()
                 Button(probe.running ? "Checking…" : "Re-check") { probe.run() }
                     .disabled(probe.running)
@@ -276,6 +275,7 @@ struct ProvidersView: View {
                 }
                 .onMove { from, to in entries.move(fromOffsets: from, toOffset: to) }
             }
+            .listStyle(.inset)
             .frame(minHeight: 200)
 
             HStack {

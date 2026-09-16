@@ -106,9 +106,15 @@ public struct MessageBubble: View {
     private var link: URL? { isUser ? nil : firstLink(in: data.text) }
 
     public var body: some View {
-        VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
+        VStack(alignment: isUser ? .trailing : .leading, spacing: LayoutMetrics.tight) {
             if !data.attachments.isEmpty {
                 AttachmentsView(attachments: data.attachments)
+            }
+            if (!data.text.isEmpty || streaming), !isUser {
+                Text("Yorozu")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
             }
             if !data.text.isEmpty || streaming {
                 bubble
@@ -244,7 +250,7 @@ public struct MessageBubble: View {
     }
 
     private var bubble: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
             if let quote = parts.quote {
                 QuoteStrip(text: quote)
             }
@@ -260,13 +266,16 @@ public struct MessageBubble: View {
                     .accessibilityHint("Shows the rest of this message")
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(.horizontal, isUser ? LayoutMetrics.stack : 0)
+        .padding(.vertical, isUser ? LayoutMetrics.inner : 0)
+        #if os(macOS)
+            // Flat assistant prose has no bubble inset to absorb its hover control. Reserve
+            // the trailing control lane so the menu never covers selectable text.
+            .padding(.trailing, isUser ? 0 : controlTarget + LayoutMetrics.tight)
+        #endif
         .foregroundStyle(isUser ? AnyShapeStyle(Color.white) : AnyShapeStyle(Color.primary))
-        .background(
-            bubbleBackground,
-            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-        )
+        .background(isUser ? bubbleBackground : AnyShapeStyle(.clear),
+                    in: RoundedRectangle(cornerRadius: LayoutMetrics.bubbleRadius, style: .continuous))
         // The message's actions as a control of their own, because on the Mac the context
         // menu never opens: the text is selectable, selectable text brings AppKit's own
         // contextual menu — Look Up, Translate, Copy, Font — and that menu wins over this
@@ -297,7 +306,7 @@ public struct MessageBubble: View {
         #if os(iOS)
             300
         #else
-            560
+            isUser ? 560 : 680
         #endif
     }
 

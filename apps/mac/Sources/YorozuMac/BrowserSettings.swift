@@ -38,8 +38,7 @@ struct BrowserView: View {
     private let detected = BrowserSettings.detected()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Browser").font(.headline)
+        VStack(alignment: .leading, spacing: 6) {
             Picker("Browser", selection: $choice) {
                 Text("Bundled Chromium").tag(BrowserSettings.bundled)
                 ForEach(detected) { browser in

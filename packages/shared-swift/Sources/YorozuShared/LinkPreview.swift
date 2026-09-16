@@ -182,7 +182,7 @@ public struct LinkPreviewRow: View {
         Group {
             if let preview = store.cached(url) {
                 Link(destination: url) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: LayoutMetrics.inner) {
                         icon(preview)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(preview.title)
@@ -197,12 +197,12 @@ public struct LinkPreviewRow: View {
                         }
                         Spacer(minLength: 0)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .frame(minHeight: 44)
+                    .padding(.horizontal, LayoutMetrics.stack)
+                    .padding(.vertical, LayoutMetrics.inner)
+                    .frame(minHeight: controlTarget)
                 }
                 .buttonStyle(.plain)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
                 .frame(maxWidth: 420, alignment: .leading)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Link: \(preview.title), \(preview.host)")

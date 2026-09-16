@@ -1,12 +1,33 @@
 import CoreGraphics
 
+/// Compact Quiet's shared rhythm. A four-point scale keeps related content tight while
+/// preserving clear turn and section boundaries on both platforms.
+public enum LayoutMetrics {
+    public static let hair: CGFloat = 2
+    public static let tight: CGFloat = 4
+    public static let inner: CGFloat = 8
+    public static let stack: CGFloat = 12
+    public static let gutter: CGFloat = 16
+    public static let section: CGFloat = 24
+
+    #if os(macOS)
+        public static let controlRadius: CGFloat = 6
+        public static let cardRadius: CGFloat = 10
+        public static let bubbleRadius: CGFloat = 10
+    #else
+        public static let controlRadius: CGFloat = 10
+        public static let cardRadius: CGFloat = 12
+        public static let bubbleRadius: CGFloat = 16
+    #endif
+}
+
 /// The two sizes that differ because a finger and a pointer are not the same instrument.
 ///
 /// A phone control has to be 44 points before it can be hit reliably, and everything in the
-/// chat is sized from that. A pointer lands where it is aimed, so the same 44 points on a Mac
+/// shared chat is sized from that. A pointer lands where it is aimed, so the same 44 points on a Mac
 /// buys nothing and costs the composer a third of its height — it reads as a phone app blown
 /// up. These two constants are the whole of the difference; every control in the chat takes
-/// its size from them rather than from a literal, so the two platforms cannot drift apart.
+/// its size from them rather than from a literal, so shared chat controls cannot drift apart.
 
 /// The smallest a control may be and still be easy to hit.
 #if os(macOS)

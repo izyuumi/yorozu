@@ -36,7 +36,7 @@ public struct ApprovalCardView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: LayoutMetrics.stack) {
             header
             subject
             if let amount = card.amount {
@@ -55,14 +55,14 @@ public struct ApprovalCardView: View {
                 choices
             }
         }
-        .padding(16)
+        .padding(LayoutMetrics.gutter)
         // Capped where a bubble is capped, and for the same reason: stretched across a wide
         // Mac window the buttons end up the width of the screen and the card stops reading as
         // a prompt. On a phone the cap is wider than the screen and changes nothing.
         .frame(maxWidth: 560, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardBackground, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.separator))
+        .background(cardBackground, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous).strokeBorder(.separator))
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared || reduceMotion ? 0 : 12)
         .onAppear {
@@ -87,7 +87,7 @@ public struct ApprovalCardView: View {
     // MARK: Pieces
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: LayoutMetrics.inner) {
             Image(systemName: "hand.raised.fill")
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.tint)
@@ -103,7 +103,7 @@ public struct ApprovalCardView: View {
     /// The action as a sentence, with the target as its object. A command or a path is shown
     /// as code, since that is what it is; an email address or a shop name is prose.
     private var subject: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
             Text(verb.sentence)
                 .font(.headline)
                 .fixedSize(horizontal: false, vertical: true)
@@ -114,11 +114,11 @@ public struct ApprovalCardView: View {
                     .lineLimit(verb.isCode ? 6 : 3)
                     .truncationMode(.middle)
                     .textSelection(.enabled)
-                    .padding(verb.isCode ? 10 : 0)
+                    .padding(verb.isCode ? LayoutMetrics.inner : 0)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
                         verb.isCode ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        in: RoundedRectangle(cornerRadius: LayoutMetrics.controlRadius, style: .continuous)
                     )
             }
         }
@@ -128,9 +128,9 @@ public struct ApprovalCardView: View {
     @ViewBuilder private var scopeRows: some View {
         let rows = card.scope?.rows ?? []
         if !rows.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
                 ForEach(rows, id: \.label) { row in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: LayoutMetrics.inner) {
                         Text(row.label)
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
@@ -155,9 +155,9 @@ public struct ApprovalCardView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(5)
                 .textSelection(.enabled)
-                .padding(10)
+                .padding(LayoutMetrics.inner)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.controlRadius, style: .continuous))
         }
     }
 
@@ -165,7 +165,7 @@ public struct ApprovalCardView: View {
     /// the list is *exact* rather than that it fills the screen — but every item is reachable.
     @ViewBuilder private var items: some View {
         if let items = card.items, !items.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
                 Button {
                     withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
                         itemsExpanded.toggle()
@@ -204,9 +204,9 @@ public struct ApprovalCardView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            .padding(10)
+            .padding(LayoutMetrics.inner)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.controlRadius, style: .continuous))
         }
     }
 
@@ -236,11 +236,19 @@ public struct ApprovalCardView: View {
     }
 
     private var choices: some View {
-        VStack(spacing: 8) {
-            choice(.yes, "Allow once", prominent: true)
+        VStack(spacing: LayoutMetrics.inner) {
+            #if os(macOS)
+                HStack(spacing: LayoutMetrics.inner) {
+                    choice(.yes, "Allow once", prominent: true)
+                    choice(.task, "Allow for this task", prominent: false)
+                    choice(.no, "Don't allow", prominent: false)
+                }
+            #else
+                choice(.yes, "Allow once", prominent: true)
+                choice(.task, "Allow for this task", prominent: false)
+            #endif
             // A grant that ends with the turn, so it is offered wherever a card is — but it
             // has nothing to promise about the actions no rule may stand in for either.
-            choice(.task, "Allow for this task", prominent: false)
             if card.mustConfirm != true, let suggestion = card.suggestedRule {
                 Button {
                     editingRule = suggestion
@@ -251,10 +259,12 @@ public struct ApprovalCardView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(quietButtonTint)
                 .foregroundStyle(Color.primary)
-                .buttonBorderShape(.roundedRectangle(radius: 10))
+                .buttonBorderShape(.roundedRectangle(radius: LayoutMetrics.controlRadius))
                 .accessibilityHint("Opens a rule you can widen before saving")
             }
-            choice(.no, "Don't allow", prominent: false)
+            #if !os(macOS)
+                choice(.no, "Don't allow", prominent: false)
+            #endif
             Button("Discuss first") { answer(.discuss, nil) }
                 .font(.subheadline)
                 .buttonStyle(.plain)
@@ -280,7 +290,7 @@ public struct ApprovalCardView: View {
         .buttonStyle(.borderedProminent)
         .tint(prominent ? Color.accentColor : quietButtonTint)
         .foregroundStyle(prominent ? Color.white : Color.primary)
-        .buttonBorderShape(.roundedRectangle(radius: 10))
+        .buttonBorderShape(.roundedRectangle(radius: LayoutMetrics.controlRadius))
     }
 
     private var outcome: some View {

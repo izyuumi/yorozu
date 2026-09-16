@@ -53,7 +53,7 @@ public struct DelegationCardView: View {
 
     public var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
-            LazyVStack(alignment: .leading, spacing: 8) {
+            LazyVStack(alignment: .leading, spacing: LayoutMetrics.inner) {
                 ForEach(traceEntries(from: card.events)) { entry in
                     switch entry {
                     case .tools(let activities):
@@ -63,10 +63,10 @@ public struct DelegationCardView: View {
                     }
                 }
             }
-            .padding(.top, 8)
-            .padding(.leading, 26)
+            .padding(.top, LayoutMetrics.inner)
+            .padding(.leading, LayoutMetrics.section)
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: LayoutMetrics.inner) {
                 Image(systemName: "person.badge.clock")
                     .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 2) {
@@ -84,9 +84,9 @@ public struct DelegationCardView: View {
                 }
             }
         }
-        .padding(10)
+        .padding(LayoutMetrics.inner)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
         .buttonStyle(.plain)
         .accessibilityHint(expanded ? String(localized: "Hides the trace") : String(localized: "Shows the trace"))
     }
@@ -105,7 +105,7 @@ public struct AgentTraceView: View {
 
     public var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 8) {
+            LazyVStack(alignment: .leading, spacing: LayoutMetrics.inner) {
                 if events.isEmpty {
                     Text("Nothing yet.").foregroundStyle(.secondary)
                 }

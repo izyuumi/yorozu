@@ -25,11 +25,11 @@ public struct ToolGroupView: View {
         if activities.count == 1, let only = activities.first {
             ToolRowView(activity: only)
         } else if !activities.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
                 Button {
                     withAnimation(.snappy) { expanded.toggle() }
                 } label: {
-                    HStack(spacing: 8) {
+                    HStack(spacing: LayoutMetrics.inner) {
                         Image(systemName: expanded ? "chevron.down" : "chevron.right")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
@@ -52,10 +52,10 @@ public struct ToolGroupView: View {
                 .accessibilityHint(expanded ? String(localized: "Hides the steps") : String(localized: "Shows the steps"))
 
                 if expanded {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
                         ForEach(activities) { ToolRowView(activity: $0) }
                     }
-                    .padding(.leading, 16)
+                    .padding(.leading, LayoutMetrics.gutter)
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
@@ -88,7 +88,7 @@ public struct ToolRowView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
             Button {
                 withAnimation(.snappy) { expanded.toggle() }
             } label: {
@@ -100,13 +100,13 @@ public struct ToolRowView: View {
 
             if expanded { details }
         }
-        .padding(8)
+        .padding(LayoutMetrics.inner)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.controlRadius, style: .continuous))
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: LayoutMetrics.inner) {
             Image(systemName: activity.symbol)
                 .font(.caption)
                 .foregroundStyle(.secondary)

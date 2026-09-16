@@ -180,7 +180,7 @@ struct ThreadRow: View {
     var body: some View {
         // Drawn from the thread's own two timestamps, which the runtime owns: reading on the
         // phone puts this dot out on the Mac too. See ``ThreadSummary/isUnread``.
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(thread.displayTitle)
@@ -224,7 +224,7 @@ struct ThreadRow: View {
                     .accessibilityLabel("Unread")
             }
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, 2)
     }
 }
 
@@ -412,6 +412,7 @@ public struct ThreadListView<Destination: View>: View {
                 }
             }
             .listStyle(.plain)
+            .contentMargins(.vertical, 4)
             .animation(.default, value: threads)
             .overlay { empty(groups) }
             // A search modifier on the root navigation stack otherwise follows pushed chats:
@@ -419,13 +420,6 @@ public struct ThreadListView<Destination: View>: View {
             .threadListSearch(text: $query, enabled: path.isEmpty)
             .refreshable { await onRefresh?() }
             .navigationTitle("Yorozu")
-            .overlay(alignment: .bottomTrailing) {
-                #if os(iOS)
-                    newThreadButton
-                        .padding(.trailing, 16)
-                        .padding(.bottom, 16)
-                #endif
-            }
             .toolbar {
                 if let onSettings {
                     ToolbarItem(placement: .navigation) {
@@ -445,6 +439,7 @@ public struct ThreadListView<Destination: View>: View {
                     }
                 }
                 #if os(iOS)
+                    ToolbarItem(placement: .primaryAction) { newThreadButton }
                     if threads.contains(where: \.isUnread), let onReadAll {
                         ToolbarItem(placement: .primaryAction) {
                             Button("Mark all as read", systemImage: "envelope.open", action: onReadAll)
@@ -464,18 +459,11 @@ public struct ThreadListView<Destination: View>: View {
         .renameAlert($renaming, onRename: onRename)
     }
 
-    /// Native toolbar button on Mac; native floating button above iOS's bottom search field.
+    /// Native toolbar button on both platforms. Keeping it in the bar leaves the final thread
+    /// and the always-visible search field unobstructed.
     @ViewBuilder private var newThreadButton: some View {
         #if os(iOS)
-            let button = Button("New thread", systemImage: "square.and.pencil", action: onCreate)
-                .labelStyle(.iconOnly)
-                .controlSize(.extraLarge)
-                .buttonBorderShape(.circle)
-            if #available(iOS 26, *) {
-                button.buttonStyle(.glassProminent)
-            } else {
-                button.buttonStyle(.borderedProminent)
-            }
+            Button("New thread", systemImage: "square.and.pencil", action: onCreate)
         #else
             Button("New thread", systemImage: "square.and.pencil", action: onCreate)
         #endif
@@ -575,7 +563,15 @@ public struct ThreadListView<Destination: View>: View {
 extension View {
     @ViewBuilder fileprivate func threadListSearch(text: Binding<String>, enabled: Bool) -> some View {
         if enabled {
-            searchable(text: text, prompt: "Search threads")
+            #if os(iOS)
+                searchable(
+                    text: text,
+                    placement: .navigationBarDrawer(displayMode: .always),
+                    prompt: "Search threads"
+                )
+            #else
+                searchable(text: text, prompt: "Search threads")
+            #endif
         } else {
             self
         }
