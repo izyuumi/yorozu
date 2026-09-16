@@ -419,7 +419,7 @@ public struct ThreadListView<Destination: View>: View {
             // pulling a transcript down reveals "Search threads" above the conversation.
             .threadListSearch(text: $query, enabled: path.isEmpty)
             .refreshable { await onRefresh?() }
-            .navigationTitle("Yorozu")
+            .navigationTitle("Threads")
             .toolbar {
                 if let onSettings {
                     ToolbarItem(placement: .navigation) {

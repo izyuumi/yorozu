@@ -143,7 +143,7 @@ final class E2EHarness {
             // then the scene's own messages into whichever thread happened to be first put the
             // two halves of a picture in two different chats.
             let seeded = model.newDraft().id
-            model.previewChat(in: seeded)
+            if scene != "empty" { model.previewChat(in: seeded) }
             switch scene {
             case "search":
                 ChatShowcase.search = "invoice"

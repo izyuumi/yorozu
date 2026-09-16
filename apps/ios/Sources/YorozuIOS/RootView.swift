@@ -8,7 +8,7 @@ import YorozuShared
 private actor ShowcaseTransport: ChatTransport {
     func connect() -> AsyncStream<TransportUpdate> {
         AsyncStream { continuation in
-            continuation.yield(.ownerOnline(true))
+            continuation.yield(.ownerOnline(launchArgument("yorozuShowcase") != "queued"))
             continuation.yield(.state(.paired))
         }
     }
@@ -86,7 +86,7 @@ final class Session {
             E2EHarness.attach(to: model)
             model.start()
             self.model = model
-            let showcase = launchArgument("yorozuShowcase") ?? launchArgument("yorozuScene")
+            let showcase = launchArgument("yorozuScene") ?? launchArgument("yorozuShowcase")
             openPath = showcase == "threads" ? [] : model.threads.prefix(1).map(\.id)
             return
         }
@@ -281,7 +281,7 @@ final class Session {
             // Land on the thread list; Yumi prefers choosing over being dropped into the latest.
             // The screenshot harness is the one exception: it opens the thread it seeded,
             // unless what it seeded is the list itself.
-            let showcase = launchArgument("yorozuShowcase") ?? launchArgument("yorozuScene")
+            let showcase = launchArgument("yorozuScene") ?? launchArgument("yorozuShowcase")
             openPath =
                 showcase == nil || showcase == "threads"
                 ? [] : model.threads.map(\.id).prefix(1).map { $0 }
