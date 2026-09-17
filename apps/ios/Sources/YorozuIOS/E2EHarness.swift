@@ -88,6 +88,11 @@ final class E2EHarness {
             // The runtime behind a screenshot has no threads of its own, and its empty
             // `thread_list` would otherwise wipe the seeded ones out from under the picker.
             model.onThreads = { [weak model] in model?.previewThreads() }
+        case "settings":
+            model.previewThreads()
+            model.onThreads = { [weak model] in model?.previewThreads() }
+        case "pairing", "pairing-manual", "pairing-error":
+            break
         case "model":
             // Re-seeded whenever the runtime sends a list, for the same reason as `share`: the
             // Mac behind a screenshot has no threads, and its empty `thread_list` would
@@ -132,6 +137,10 @@ final class E2EHarness {
             model.previewBatchApproval(in: model.newDraft().id)
         case "proposal":
             model.previewRuleProposal(in: model.newDraft().id)
+        case "question":
+            model.previewQuestion(in: model.newDraft().id)
+        case "progress":
+            model.previewProgress(in: model.newDraft().id)
         default:
             model.previewApproval(in: model.newDraft().id)
         }
@@ -139,11 +148,21 @@ final class E2EHarness {
         // one piece of view state each of these screenshots is about. Nothing here can tap a
         // magnifier, so search is seeded rather than performed.
         if let scene = launchArgument("yorozuScene") {
+            if scene == "thread-search" {
+                ThreadListShowcase.query = "invoice"
+                let seed = { [weak model] in
+                    model?.previewThreads()
+                    guard let thread = model?.threads.first?.id else { return }
+                    model?.previewChat(in: thread)
+                }
+                seed()
+                model.onThreads = seed
+            }
             // One thread for the whole scene: seeding the conversation into a fresh draft and
             // then the scene's own messages into whichever thread happened to be first put the
             // two halves of a picture in two different chats.
-            let seeded = model.newDraft().id
-            if scene != "empty" { model.previewChat(in: seeded) }
+            let seeded = scene == "thread-search" ? nil : model.newDraft().id
+            if scene != "empty", let seeded { model.previewChat(in: seeded) }
             switch scene {
             case "search":
                 ChatShowcase.search = "invoice"

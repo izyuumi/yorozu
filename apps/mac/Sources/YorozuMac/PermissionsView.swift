@@ -129,8 +129,15 @@ private struct PermissionSection: Identifiable {
 /// Grants grouped by what they enable, with availability first because remote access depends
 /// on it even when every privacy grant is already in place.
 struct PermissionsView: View {
+    enum Scope { case onboarding, all }
+
     var showSetupButton = true
     var showsTitle = true
+    var scope: Scope = .all
+
+    private var sections: [PermissionSection] {
+        scope == .onboarding ? Array(PermissionSection.all.prefix(2)) : PermissionSection.all
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -145,7 +152,7 @@ struct PermissionsView: View {
                     }
                 }
             }
-            ForEach(PermissionSection.all) { section in
+            ForEach(sections) { section in
                 VStack(alignment: .leading, spacing: 6) {
                     Label(section.title, systemImage: section.systemImage)
                         .font(.headline)

@@ -16,7 +16,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 IOS="$ROOT/apps/ios"
-OUT="$ROOT/docs/screens"
+OUT=${OUT:-"$ROOT/docs/screens"}
 BUNDLE_ID=to.yumi.yorozu.ios
 DEVICE_TYPE=${DEVICE_TYPE:-com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro}
 RELAY_PORT=${RELAY_PORT:-8793}
@@ -34,19 +34,27 @@ PIDS=()
 # One line per picture: <file> <launch arguments…>, where <file> is the name in docs/screens
 # without its extension.
 SCENES=(
+  "54-pairing          -yorozuShowcase pairing"
+  "54-pairing-manual   -yorozuShowcase pairing-manual"
+  "54-pairing-error    -yorozuShowcase pairing-error"
   "t33-thread-list   -yorozuShowcase threads"
   "32-chat-empty-state -yorozuShowcase threads -yorozuScene empty"
   "32-chat-markdown  -yorozuShowcase chat"
   "37-tool-rows      -yorozuShowcase activity"
   "38-approval-card  -yorozuShowcase approval"
   "39-search         -yorozuShowcase threads -yorozuScene search"
+  "54-thread-search  -yorozuShowcase threads -yorozuScene thread-search"
   "39-reply          -yorozuShowcase threads -yorozuScene reply"
   "40-queued         -yorozuShowcase queued"
   "40-link-preview   -yorozuShowcase link"
   "42-model-menu     -yorozuShowcase model"
+  "41-share-sheet    -yorozuShowcase share"
+  "54-settings       -yorozuShowcase settings"
   "45-card           -yorozuShowcase card"
   "45-rule-editor    -yorozuShowcase rule-editor"
   "45-proposal       -yorozuShowcase proposal"
+  "45-question       -yorozuShowcase question"
+  "45-progress       -yorozuShowcase progress"
   "45-batch          -yorozuShowcase batch"
   "53-images-grid    -yorozuShowcase images"
   "53-images-viewer  -yorozuShowcase images-viewer"

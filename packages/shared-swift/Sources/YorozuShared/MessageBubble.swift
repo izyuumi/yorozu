@@ -299,7 +299,7 @@ public struct MessageBubble: View {
                 ? AnyShapeStyle(Color.accentColor)
                 : AnyShapeStyle(Color(uiColor: .secondarySystemBackground))
         #else
-            isUser ? AnyShapeStyle(Color.accentColor.opacity(0.18)) : AnyShapeStyle(.quaternary)
+            isUser ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary)
         #endif
     }
 
@@ -307,7 +307,7 @@ public struct MessageBubble: View {
         #if os(iOS)
             300
         #else
-            isUser ? 560 : 680
+            isUser ? 520 : LayoutMetrics.readingWidth
         #endif
     }
 

@@ -53,7 +53,7 @@ struct OnboardingView: View {
     }
 
     private func roleButton(title: LocalizedStringKey, detail: LocalizedStringKey, systemImage: String, role: MacRole) -> some View {
-        Button {
+        RoleChoiceButton(title: title, detail: detail, systemImage: systemImage) {
             session.select(role)
             if role == .host {
                 Sidecar.shared.newCode()
@@ -61,21 +61,7 @@ struct OnboardingView: View {
             } else {
                 step = .clientPair
             }
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: systemImage).font(.title2).frame(width: 32)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.headline)
-                    Text(detail).font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-            }
-            .padding(12)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var hostPairing: some View {
@@ -132,7 +118,7 @@ struct OnboardingView: View {
     private var hostPermissions: some View {
         VStack(alignment: .leading, spacing: 12) {
             setupHeader("Choose what Yorozu can do", detail: "Optional. Grant only capabilities you want; you can return anytime.")
-            ScrollView { PermissionsView(showSetupButton: false, showsTitle: false) }
+            ScrollView { PermissionsView(showSetupButton: false, showsTitle: false, scope: .onboarding) }
             HStack {
                 Button("Back") { step = .hostPair }
                 Spacer()
@@ -159,6 +145,36 @@ struct OnboardingView: View {
             Text(title).font(.title2.bold())
             Text(detail).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+private struct RoleChoiceButton: View {
+    let title: LocalizedStringKey
+    let detail: LocalizedStringKey
+    let systemImage: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage).font(.title2).frame(width: 32)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.headline)
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+            }
+            .padding(12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(
+            hovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+        .onHover { hovering = $0 }
     }
 }
 

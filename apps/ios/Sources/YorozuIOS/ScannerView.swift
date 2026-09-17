@@ -8,32 +8,42 @@ struct ScannerView: View {
     let onScan: (String) -> String?
 
     @State private var error: String?
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(spacing: 12) {
-            Text("Scan the QR code in your Mac's menu bar.")
-                .font(.headline)
-                .multilineTextAlignment(.center)
+        NavigationStack {
+            VStack(spacing: 12) {
+                Text("Scan the QR code in your Mac's menu bar.")
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
 
-            if DataScannerViewController.isSupported && DataScannerViewController.isAvailable {
-                Scanner { text in
-                    error = onScan(text)
-                    return error == nil
-                }
+                if DataScannerViewController.isSupported && DataScannerViewController.isAvailable {
+                    Scanner { text in
+                        error = onScan(text)
+                        return error == nil
+                    }
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            } else {
-                ContentUnavailableView(
-                    "No camera",
-                    systemImage: "qrcode.viewfinder",
-                    description: Text("This device cannot scan QR codes.")
-                )
-            }
+                } else {
+                    ContentUnavailableView(
+                        "No camera",
+                        systemImage: "qrcode.viewfinder",
+                        description: Text("This device cannot scan QR codes.")
+                    )
+                }
 
-            if let error {
-                Text(error).font(.footnote).foregroundStyle(.red)
+                if let error {
+                    Text(error).font(.footnote).foregroundStyle(.red)
+                }
+            }
+            .padding(16)
+            .navigationTitle("Scan pairing code")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
             }
         }
-        .padding(16)
     }
 }
 

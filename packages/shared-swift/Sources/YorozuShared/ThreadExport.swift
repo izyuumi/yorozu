@@ -141,7 +141,7 @@ public struct ExportThreadButton: View {
             item: ThreadMarkdown(title: title, text: markdown()),
             preview: SharePreview(title, image: Image(systemName: "doc.text"))
         ) {
-            Label("Export as Markdown", systemImage: "square.and.arrow.up")
+            Label("Export as Markdown…", systemImage: "square.and.arrow.up")
         }
     }
 }

@@ -98,6 +98,10 @@ enum Showcase {
             model.previewBatchApproval(in: draft(model))
         case "proposal":
             model.previewRuleProposal(in: draft(model))
+        case "question":
+            model.previewQuestion(in: draft(model))
+        case "progress":
+            model.previewProgress(in: draft(model))
         default:
             // The one scene whose thread is a draft rather than a synced one. Remembered, so
             // re-seeding on a later thread list does not leave a second empty draft behind —

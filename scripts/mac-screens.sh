@@ -18,7 +18,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-OUT="$ROOT/docs/screens"
+OUT=${OUT:-"$ROOT/docs/screens"}
 APP="$ROOT/apps/mac/.build/Yorozu.app"
 BIN="$APP/Contents/MacOS/Yorozu"
 STATE=${STATE:-/tmp/yorozu-mac-screens}
@@ -45,6 +45,8 @@ SCENES=(
   "45-card             -yorozuShowcase card"
   "45-rule-editor      -yorozuShowcase rule-editor"
   "45-proposal         -yorozuShowcase proposal"
+  "45-question         -yorozuShowcase question"
+  "45-progress         -yorozuShowcase progress"
   "45-batch            -yorozuShowcase batch"
 )
 
@@ -67,7 +69,7 @@ env -u SDKROOT sh "$ROOT/scripts/dev-bundle.sh" >/dev/null
 
 taken=0
 mkdir -p "$OUT"
-rm -rf "$STATE"
+[ -d "$STATE" ] && trash "$STATE"
 mkdir -p "$STATE"
 
 for scene in "${SCENES[@]}"; do

@@ -8,14 +8,21 @@ public struct QuestionCardView: View {
     public let card: QuestionCardData
     /// Answered cards keep their place in the thread but stop offering buttons.
     public let answered: Bool
+    public let chosen: String?
     public let answer: (String) -> Void
 
     @State private var other = ""
     @FocusState private var writing: Bool
 
-    public init(card: QuestionCardData, answered: Bool = false, answer: @escaping (String) -> Void) {
+    public init(
+        card: QuestionCardData,
+        answered: Bool = false,
+        chosen: String? = nil,
+        answer: @escaping (String) -> Void
+    ) {
         self.card = card
         self.answered = answered
+        self.chosen = chosen
         self.answer = answer
     }
 
@@ -26,7 +33,9 @@ public struct QuestionCardView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             if answered {
-                Text("Answered").font(.caption).foregroundStyle(.secondary)
+                Label(chosen.map { "Answered: \($0)" } ?? String(localized: "Answered"), systemImage: "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             } else {
                 // One per line: the options are sentences, not words, and a row of them
                 // truncates the moment Dynamic Type grows.
@@ -44,7 +53,7 @@ public struct QuestionCardView: View {
                 if card.offersFreeText { freeText }
             }
         }
-        .padding(LayoutMetrics.stack)
+        .padding(LayoutMetrics.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
     }

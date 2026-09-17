@@ -8,6 +8,7 @@ import YorozuShared
 struct DevicesView: View {
     @ObservedObject var sidecar: Sidecar
     @State private var pairing = false
+    @State private var confirmingRemoval: DeviceInfo?
 
     private var model: ChatModel { MacChatSession.shared.model }
 
@@ -38,7 +39,7 @@ struct DevicesView: View {
                         .foregroundStyle(device.online ? .green : .secondary)
                         .accessibilityLabel(device.online ? "online" : "offline")
                     if removable(device) {
-                        Button("Remove", role: .destructive) { model.removeDevice(device.pub) }
+                        Button("Remove", role: .destructive) { confirmingRemoval = device }
                     }
                 }
             }
@@ -67,6 +68,22 @@ struct DevicesView: View {
                 existingDeviceIDs: Set(model.devices.filter(removable).map(\.pub)),
                 done: { pairing = false }
             )
+        }
+        .confirmationDialog(
+            "Remove this device?",
+            isPresented: Binding(
+                get: { confirmingRemoval != nil },
+                set: { if !$0 { confirmingRemoval = nil } }
+            ),
+            presenting: confirmingRemoval
+        ) { device in
+            Button("Remove", role: .destructive) {
+                model.removeDevice(device.pub)
+                confirmingRemoval = nil
+            }
+            Button("Cancel", role: .cancel) { confirmingRemoval = nil }
+        } message: { _ in
+            Text("It will forget its key here and at the relay, and must pair again.")
         }
     }
 

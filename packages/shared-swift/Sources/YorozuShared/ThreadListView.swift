@@ -1,5 +1,10 @@
 import SwiftUI
 
+/// Screenshot-only list state. Empty in production.
+@MainActor public enum ThreadListShowcase {
+    public static var query = ""
+}
+
 /// Most recently active first; archived threads are not shown. Both thread lists order
 /// themselves with it, and an unsent draft leads because its activity is the moment it was made.
 public func visibleThreads(_ threads: [ThreadSummary]) -> [ThreadSummary] {
@@ -116,8 +121,35 @@ public func threadMatches(
     return body().localizedCaseInsensitiveContains(needle)
 }
 
+/// One short, whitespace-normalized window around a search match. Search results show the line
+/// that matched instead of an unrelated latest-message preview.
+public func searchExcerpt(in text: String, matching query: String, limit: Int = 96) -> String? {
+    let haystack = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+    let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !needle.isEmpty, let match = haystack.range(of: needle, options: .caseInsensitive) else { return nil }
+    let matchOffset = haystack.distance(from: haystack.startIndex, to: match.lowerBound)
+    let startOffset = max(0, matchOffset - limit / 3)
+    let start = haystack.index(haystack.startIndex, offsetBy: startOffset)
+    let end = haystack.index(start, offsetBy: min(limit, haystack.distance(from: start, to: haystack.endIndex)))
+    return (start > haystack.startIndex ? "…" : "") + String(haystack[start..<end])
+        + (end < haystack.endIndex ? "…" : "")
+}
+
 /// How stale the newest thread may be and still be the one an app opens itself.
 public let openWindow: TimeInterval = 2 * 60 * 60
+
+/// One glanceable unit with no redundant “ago”, matching the compact row anatomy on both
+/// platforms. Dates replace vague large relative numbers after a year.
+public func compactThreadTime(_ date: Date, now: Date = Date()) -> String {
+    let seconds = max(0, now.timeIntervalSince(date))
+    if seconds < 60 { return String(localized: "now") }
+    if seconds < 3_600 { return "\(max(1, Int(seconds / 60)))m" }
+    if seconds < 86_400 { return "\(Int(seconds / 3_600))h" }
+    if seconds < 604_800 { return "\(Int(seconds / 86_400))d" }
+    if seconds < 2_629_800 { return "\(Int(seconds / 604_800))w" }
+    if seconds < 31_557_600 { return "\(Int(seconds / 2_629_800))mo" }
+    return date.formatted(.dateTime.month(.abbreviated).day())
+}
 
 /// Which thread to open on launch, or on coming back to the foreground: the most recent one
 /// while it is still warm, and `nil` — meaning start a fresh draft — once it has gone cold.
@@ -174,6 +206,8 @@ extension View {
 struct ThreadRow: View {
     let thread: ThreadSummary
     var working = false
+    var preview: String? = nil
+    var highlightQuery = ""
 
     @ScaledMetric(relativeTo: .body) private var dot = 9
 
@@ -183,7 +217,7 @@ struct ThreadRow: View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(thread.displayTitle)
+                    highlightedText(thread.displayTitle)
                         .font(.body.weight(thread.isUnread ? .semibold : .regular))
                         // An untitled thread is one the runtime has not named yet, so its
                         // placeholder is drawn as the aside it is.
@@ -192,10 +226,7 @@ struct ThreadRow: View {
                         )
                         .lineLimit(1)
                     Spacer(minLength: 0)
-                    Text(
-                        thread.lastActivityDate,
-                        format: Date.RelativeFormatStyle(presentation: .numeric, unitsStyle: .narrow)
-                    )
+                    Text(compactThreadTime(thread.lastActivityDate))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -210,8 +241,8 @@ struct ThreadRow: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .accessibilityElement(children: .combine)
-                } else if let preview = thread.lastMessage, !preview.isEmpty {
-                    Text(preview)
+                } else if let preview = preview ?? thread.lastMessage, !preview.isEmpty {
+                    highlightedText(preview)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -225,6 +256,18 @@ struct ThreadRow: View {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    /// Search uses the same compact row, with the matching token carrying the only emphasis.
+    /// Building one `Text` keeps truncation and Dynamic Type behavior identical to normal rows.
+    private func highlightedText(_ text: String) -> Text {
+        let needle = highlightQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty, let match = text.range(of: needle, options: .caseInsensitive) else {
+            return Text(text)
+        }
+        return Text(String(text[..<match.lowerBound]))
+            + Text(String(text[match])).foregroundColor(.orange).bold()
+            + Text(String(text[match.upperBound...]))
     }
 }
 
@@ -352,7 +395,7 @@ public struct ThreadListView<Destination: View>: View {
     private let destination: (ThreadSummary) -> Destination
 
     @State private var renaming: ThreadSummary?
-    @State private var query = ""
+    @State private var query = ThreadListShowcase.query
     /// The archive opens closed: it is where threads go to stop being in the way.
     @State private var showArchived = false
 
@@ -395,20 +438,46 @@ public struct ThreadListView<Destination: View>: View {
         ThreadGroups(threads.filter { threadMatches($0, query: query, body: messageText($0.id)) })
     }
 
+    private var searchNeedle: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var threadResults: [ThreadSummary] {
+        guard !searchNeedle.isEmpty else { return [] }
+        return threads.filter {
+            $0.displayTitle.localizedCaseInsensitiveContains(searchNeedle)
+                || $0.lastMessage?.localizedCaseInsensitiveContains(searchNeedle) == true
+        }
+    }
+
+    private var messageResults: [ThreadSummary] {
+        guard !searchNeedle.isEmpty else { return [] }
+        return threads.filter { messageText($0.id).localizedCaseInsensitiveContains(searchNeedle) }
+    }
+
     public var body: some View {
         NavigationStack(path: $path) {
             let groups = groups
             List {
-                if !groups.pinned.isEmpty {
-                    Section("Pinned") { rows(groups.pinned) }
-                }
-                // Today, Yesterday, This week, Earlier: the headings are the only thing telling
-                // a thread from this morning apart from one from last month at a glance.
-                ForEach(groups.sections) { section in
-                    Section(section.title) { rows(section.threads) }
-                }
-                if !groups.archived.isEmpty {
-                    Section { archive(groups.archived) }
+                if searchNeedle.isEmpty {
+                    if !groups.pinned.isEmpty {
+                        Section("Pinned") { rows(groups.pinned) }
+                    }
+                    // Today, Yesterday, This week, Earlier: the headings are the only thing telling
+                    // a thread from this morning apart from one from last month at a glance.
+                    ForEach(groups.sections) { section in
+                        Section(section.title) { rows(section.threads) }
+                    }
+                    if !groups.archived.isEmpty {
+                        Section { archive(groups.archived) }
+                    }
+                } else {
+                    if !threadResults.isEmpty {
+                        Section("Threads") { rows(threadResults) }
+                    }
+                    if !messageResults.isEmpty {
+                        Section("Messages") {
+                            rows(messageResults) { searchExcerpt(in: messageText($0.id), matching: searchNeedle) }
+                        }
+                    }
                 }
             }
             .listStyle(.plain)
@@ -479,14 +548,22 @@ public struct ThreadListView<Destination: View>: View {
         }
     }
 
-    @ViewBuilder private func rows(_ threads: [ThreadSummary]) -> some View {
+    @ViewBuilder private func rows(
+        _ threads: [ThreadSummary],
+        preview: @escaping (ThreadSummary) -> String? = { _ in nil }
+    ) -> some View {
         ForEach(threads) { thread in
             NavigationLink(value: thread.id) {
-                ThreadRow(thread: thread, working: workingThreads.contains(thread.id))
+                ThreadRow(
+                    thread: thread,
+                    working: workingThreads.contains(thread.id),
+                    preview: preview(thread),
+                    highlightQuery: searchNeedle
+                )
             }
             .swipeActions(edge: .leading) {
                 if thread.archived {
-                    Button("Unarchive", systemImage: "tray.and.arrow.up") { onArchive(thread, false) }
+                    Button("Restore", systemImage: "tray.and.arrow.up") { onArchive(thread, false) }
                         .tint(.blue)
                 } else {
                     if thread.isUnread {
@@ -502,7 +579,7 @@ public struct ThreadListView<Destination: View>: View {
             }
             .swipeActions(edge: .trailing) {
                 if thread.archived {
-                    Button("Unarchive", systemImage: "tray.and.arrow.up") { onArchive(thread, false) }
+                    Button("Restore", systemImage: "tray.and.arrow.up") { onArchive(thread, false) }
                         .tint(.blue)
                 } else {
                     Button("Archive", systemImage: "archivebox", role: .destructive) {
@@ -513,22 +590,20 @@ public struct ThreadListView<Destination: View>: View {
             }
             .contextMenu {
                 Button("Rename", systemImage: "pencil") { renaming = thread }
-                readButton(thread)
                 if !thread.archived {
                     Button(
                         thread.pinned ? String(localized: "Unpin") : String(localized: "Pin"),
                         systemImage: thread.pinned ? "pin.slash" : "pin"
                     ) { onPin(thread, !thread.pinned) }
                 }
-                Button(
-                    thread.archived ? String(localized: "Unarchive") : String(localized: "Archive"),
-                    systemImage: thread.archived ? "tray.and.arrow.up" : "archivebox"
-                ) { onArchive(thread, !thread.archived) }
-                // Built here rather than up front: rendering a whole thread as Markdown is
-                // work, and a menu that is never opened should not have done it.
+                readButton(thread)
                 if let exportMarkdown {
                     ExportThreadButton(title: thread.displayTitle) { exportMarkdown(thread) }
                 }
+                Button(
+                    thread.archived ? String(localized: "Restore") : String(localized: "Archive"),
+                    systemImage: thread.archived ? "tray.and.arrow.up" : "archivebox"
+                ) { onArchive(thread, !thread.archived) }
             }
         }
     }
@@ -602,6 +677,7 @@ public struct ThreadSidebar: View {
 
     @State private var renaming: ThreadSummary?
     @State private var query = ""
+    @State private var hoveredThreadID: String?
     /// The archive opens closed: it is where threads go to stop being in the way.
     @State private var showArchived = false
 
@@ -673,9 +749,23 @@ public struct ThreadSidebar: View {
 
     @ViewBuilder private func rows(_ threads: [ThreadSummary]) -> some View {
         ForEach(threads) { thread in
-            ThreadRow(thread: thread, working: workingThreads.contains(thread.id))
-                .tag(thread.id)
-                .contextMenu { menu(thread) }
+            HStack(spacing: LayoutMetrics.tight) {
+                ThreadRow(thread: thread, working: workingThreads.contains(thread.id))
+                Menu { menu(thread) } label: {
+                    Image(systemName: "ellipsis")
+                        .frame(width: 20, height: 20)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .opacity(hoveredThreadID == thread.id ? 1 : 0)
+                .allowsHitTesting(hoveredThreadID == thread.id)
+                .accessibilityLabel("Thread actions")
+            }
+            .tag(thread.id)
+            .contentShape(.rect)
+            .onHover { hoveredThreadID = $0 ? thread.id : nil }
+            .contextMenu { menu(thread) }
         }
     }
 
@@ -683,27 +773,27 @@ public struct ThreadSidebar: View {
     /// between two swipes and a long press, and the Mac has one menu to put them all in.
     @ViewBuilder private func menu(_ thread: ThreadSummary) -> some View {
         Button("Rename", systemImage: "pencil") { renaming = thread }
-        // A thread the agent has never spoken in cannot be made unread: nothing in it is news.
-        if thread.isUnread {
-            Button("Mark as read", systemImage: "envelope.open") { onRead(thread, true) }
-        } else if thread.lastAgentAt != nil {
-            Button("Mark as unread", systemImage: "envelope.badge") { onRead(thread, false) }
-        }
         if !thread.archived {
             Button(
                 thread.pinned ? String(localized: "Unpin") : String(localized: "Pin"),
                 systemImage: thread.pinned ? "pin.slash" : "pin"
             ) { onPin(thread, !thread.pinned) }
         }
-        Button(
-            thread.archived ? String(localized: "Unarchive") : String(localized: "Archive"),
-            systemImage: thread.archived ? "tray.and.arrow.up" : "archivebox"
-        ) { onArchive(thread, !thread.archived) }
+        // A thread the agent has never spoken in cannot be made unread: nothing in it is news.
+        if thread.isUnread {
+            Button("Mark as read", systemImage: "envelope.open") { onRead(thread, true) }
+        } else if thread.lastAgentAt != nil {
+            Button("Mark as unread", systemImage: "envelope.badge") { onRead(thread, false) }
+        }
         // Built here rather than up front: rendering a whole thread as Markdown is work, and
         // a menu that is never opened should not have done it.
         if let exportMarkdown {
             ExportThreadButton(title: thread.displayTitle) { exportMarkdown(thread) }
         }
+        Button(
+            thread.archived ? String(localized: "Restore") : String(localized: "Archive"),
+            systemImage: thread.archived ? "tray.and.arrow.up" : "archivebox"
+        ) { onArchive(thread, !thread.archived) }
     }
 
     @ViewBuilder private func empty(_ groups: ThreadGroups) -> some View {

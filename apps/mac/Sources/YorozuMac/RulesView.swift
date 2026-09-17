@@ -13,6 +13,7 @@ struct RulesView: View {
     @State private var rules = ApprovalSettings.loadRules()
     @State private var editing: ApprovalRule?
     @State private var confirmingDelete: ApprovalRule?
+    @State private var hoveredRuleID: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -50,7 +51,11 @@ struct RulesView: View {
                         .buttonStyle(.borderless)
                         .help("Revoke this rule")
                         .offset(x: 34)
+                        .opacity(hoveredRuleID == rule.id ? 1 : 0)
+                        .allowsHitTesting(hoveredRuleID == rule.id)
                     }
+                    .contentShape(.rect)
+                    .onHover { hoveredRuleID = $0 ? rule.id : nil }
                     Divider()
                 }
             }

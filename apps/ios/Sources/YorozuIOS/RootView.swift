@@ -87,7 +87,8 @@ final class Session {
             model.start()
             self.model = model
             let showcase = launchArgument("yorozuScene") ?? launchArgument("yorozuShowcase")
-            openPath = showcase == "threads" ? [] : model.threads.prefix(1).map(\.id)
+            openPath = showcase == "threads" || showcase == "thread-search"
+                ? [] : model.threads.prefix(1).map(\.id)
             return
         }
         #endif
@@ -283,7 +284,7 @@ final class Session {
             // unless what it seeded is the list itself.
             let showcase = launchArgument("yorozuScene") ?? launchArgument("yorozuShowcase")
             openPath =
-                showcase == nil || showcase == "threads"
+                showcase == nil || showcase == "threads" || showcase == "thread-search"
                 ? [] : model.threads.map(\.id).prefix(1).map { $0 }
         } catch {
             failure = error.localizedDescription
@@ -298,7 +299,7 @@ struct RootView: View {
     /// thread by itself rather than waiting to be tapped. Seeded from the session, which decided
     /// it before this view was ever built, so the first frame is already the chat.
     @State private var path: [String] = Session.shared.openPath
-    @State private var settings = false
+    @State private var settings = launchArgument("yorozuShowcase") == "settings"
     @State private var connection = ConnectionPresentation(.reconnecting)
     /// Screenshot only: `-yorozuShowcase share` draws the share extension's composer here,
     /// because a simulator cannot be made to open a real share sheet.
@@ -363,7 +364,29 @@ struct RootView: View {
     }
 
     @ViewBuilder private var content: some View {
+        #if DEBUG
+        if launchArgument("yorozuShowcase") == "pairing-manual" {
+            PairView(onPair: { _ in String(localized: "Not a Yorozu pairing code.") })
+        } else if let pairingScene = launchArgument("yorozuShowcase"), pairingScene.hasPrefix("pairing") {
+            PairingFlowView(
+                onPair: { _ in String(localized: "Not a Yorozu pairing code.") },
+                externalError: pairingScene == "pairing-error" ? String(localized: "Not a Yorozu pairing code.") : nil
+            )
+        } else if let model = session.model, !session.isPairing {
+            pairedContent(model)
+        } else {
+            pairingContent
+        }
+        #else
         if let model = session.model, !session.isPairing {
+            pairedContent(model)
+        } else {
+            pairingContent
+        }
+        #endif
+    }
+
+    @ViewBuilder private func pairedContent(_ model: ChatModel) -> some View {
             ThreadListView(
                 threads: model.threads,
                 workingThreads: model.generating,
@@ -436,15 +459,16 @@ struct RootView: View {
                 if session.notificationOpen?.threadId != new.last { session.clearNotificationOpen() }
                 model.openThread = new.last
             }
-        } else {
-            PairingFlowView(
-                onPair: pair,
-                externalError: session.failure ?? session.model?.failure.map { _ in
-                    String(localized: "Couldn’t connect. Generate a new pairing code and try again.")
-                },
-                connecting: session.isPairing && session.model?.failure == nil
-            )
-        }
+    }
+
+    private var pairingContent: some View {
+        PairingFlowView(
+            onPair: pair,
+            externalError: session.failure ?? session.model?.failure.map { _ in
+                String(localized: "Couldn’t connect. Generate a new pairing code and try again.")
+            },
+            connecting: session.isPairing && session.model?.failure == nil
+        )
     }
 
     /// Returns the message the pairing screens show, or nil when the code was good.

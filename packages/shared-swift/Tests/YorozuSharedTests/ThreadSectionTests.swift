@@ -75,3 +75,25 @@ private func thread(_ id: String, _ date: Date, pinned: Bool = false, archived: 
     #expect(quiet.sections.map(\.title) == ["Today"])
     #expect(ThreadGroups([], now: now, calendar: calendar).sections.isEmpty)
 }
+
+@Test func threadTimesStayCompactWithoutAgo() {
+    let cases: [(TimeInterval, String)] = [
+        (30, "now"),
+        (29 * 60, "29m"),
+        (5 * 3_600, "5h"),
+        (3 * 86_400, "3d"),
+        (2 * 604_800, "2w"),
+        (3 * 2_629_800, "3mo"),
+    ]
+    for (seconds, expected) in cases {
+        #expect(compactThreadTime(now.addingTimeInterval(-seconds), now: now) == expected)
+    }
+}
+
+@Test func searchResultPreviewShowsTheMatchingPart() {
+    let text = "Opening sentence.\n\nThe butcher closes at 19:00 on weekdays. Final sentence."
+    let excerpt = searchExcerpt(in: text, matching: "butcher", limit: 42)
+    #expect(excerpt?.contains("butcher closes at 19:00") == true)
+    #expect(excerpt?.contains("\n") == false)
+    #expect(searchExcerpt(in: text, matching: "missing") == nil)
+}

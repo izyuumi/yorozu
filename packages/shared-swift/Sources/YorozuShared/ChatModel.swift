@@ -32,6 +32,8 @@ public final class ChatModel {
     public private(set) var answered: Set<String> = []
     /// The same for question cards, which are answered with a choice rather than a decision.
     public private(set) var answeredQuestions: Set<String> = []
+    /// The choice made on this device, so a resolved question keeps its answer visible.
+    public private(set) var questionChoices: [String: String] = [:]
     /// Proposals this device has reviewed or waved away, so the card stops offering buttons.
     public private(set) var handledProposals: Set<String> = []
     /// The stored approval rules, as the runtime last listed them. What the Rules screens draw.
@@ -527,6 +529,7 @@ public final class ChatModel {
     /// call is suspended on this: until it arrives, or expires, the turn is parked.
     public func answerQuestion(_ questionId: String, in threadId: String, _ answer: String) {
         answeredQuestions.insert(questionId)
+        questionChoices[questionId] = answer
         emit(.questionAnswer(QuestionAnswerData(questionId: questionId, answer: answer)), in: threadId)
     }
 
@@ -938,6 +941,40 @@ public final class ChatModel {
                 rule: Self.previewPurchaseCard.suggestedRule!,
                 approvals: 3
             ))))
+    }
+
+    /// Test-only: a waiting choice, so both platforms can render the real question card.
+    public func previewQuestion(in threadId: String) {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        upsert(YorozuEvent(id: "showcase-user", threadId: threadId, ts: now, agentId: device,
+            payload: .message(MessageData(role: .user, text: "Book somewhere quiet for dinner"))))
+        upsert(YorozuEvent(id: "showcase-question", threadId: threadId, ts: now + 1, agentId: "main",
+            payload: .questionCard(QuestionCardData(
+                questionId: "showcase-question",
+                question: "Which neighbourhood should I search?",
+                options: ["Ginza", "Ebisu", "Kagurazaka"],
+                allowOther: true
+            ))))
+        generating.insert(threadId)
+    }
+
+    /// Test-only: a live multi-step job, so both platforms can render the real progress card.
+    public func previewProgress(in threadId: String) {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        upsert(YorozuEvent(id: "showcase-user", threadId: threadId, ts: now, agentId: device,
+            payload: .message(MessageData(role: .user, text: "Prepare the September expense report"))))
+        upsert(YorozuEvent(id: "showcase-progress", threadId: threadId, ts: now + 1, agentId: "main",
+            payload: .progressCard(ProgressCardData(
+                cardId: "showcase-progress",
+                title: "Preparing expense report",
+                steps: [
+                    ProgressStep(label: "Collect receipts", state: .done),
+                    ProgressStep(label: "Match transactions", state: .running),
+                    ProgressStep(label: "Export report", state: .pending),
+                ],
+                percent: 55
+            ))))
+        generating.insert(threadId)
     }
 
     /// Test-only, alongside ``previewApproval``: a short finished conversation to search, quote

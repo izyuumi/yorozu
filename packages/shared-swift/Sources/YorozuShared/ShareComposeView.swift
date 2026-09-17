@@ -140,7 +140,7 @@
                         }
                     }
 
-                    Section("Send to") {
+                    Section {
                         ShareThreadRow(
                             title: String(localized: "New session"),
                             symbol: "plus.bubble",
@@ -157,6 +157,10 @@
                                 threadId = thread.id
                             }
                         }
+                    } header: {
+                        Text("Send to")
+                    } footer: {
+                        Text("If your Mac is offline, this waits securely and sends when it reconnects.")
                     }
                 }
                 .navigationTitle("Yorozu")

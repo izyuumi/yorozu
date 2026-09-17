@@ -164,6 +164,8 @@ enum Keychain {
     }
 
     static func hasKey(_ account: String = legacyAccount) -> Bool { read(account)?.isEmpty == false }
+
+    static func delete(_ account: String) { SecItemDelete(query(account) as CFDictionary) }
 }
 
 /// One subcommand of the runtime sidecar — `probe`, `models`, `assign`, `assign-cron` — run to
@@ -252,6 +254,7 @@ struct ProvidersView: View {
     @ObservedObject private var sidecar = Sidecar.shared
     /// Loaded once and written back on every edit: this file is the runtime's own configuration.
     @State private var entries: [ProviderEntry] = ProvidersStore.load()
+    @State private var confirmingRemoval: ProviderEntry?
 
     /// Every model of every enabled entry, in chain order. The first is the default model.
     private var specs: [String] { entries.filter(\.enabled).flatMap(\.specs) }
@@ -270,7 +273,7 @@ struct ProvidersView: View {
             List {
                 ForEach($entries) { $entry in
                     ProviderRowView(entry: $entry, state: probe.report?.status[entry.id]) {
-                        entries.removeAll { $0.id == entry.id }
+                        confirmingRemoval = entry
                     }
                 }
                 .onMove { from, to in entries.move(fromOffsets: from, toOffset: to) }
@@ -310,6 +313,23 @@ struct ProvidersView: View {
             if entries.isEmpty, let probed, !probed.isEmpty { entries = probed }
         }
         .onChange(of: entries) { ProvidersStore.save(entries) }
+        .confirmationDialog(
+            "Remove this provider?",
+            isPresented: Binding(
+                get: { confirmingRemoval != nil },
+                set: { if !$0 { confirmingRemoval = nil } }
+            ),
+            presenting: confirmingRemoval
+        ) { entry in
+            Button("Remove", role: .destructive) {
+                entries.removeAll { $0.id == entry.id }
+                if let keyRef = entry.keyRef { Keychain.delete(keyRef) }
+                confirmingRemoval = nil
+            }
+            Button("Cancel", role: .cancel) { confirmingRemoval = nil }
+        } message: { entry in
+            Text("Removes \(entry.label) from the model chain and deletes its stored key from Keychain.")
+        }
     }
 
     private func add(_ kind: ProviderEntry.Kind) {
