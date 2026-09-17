@@ -37,7 +37,7 @@ public struct ProgressCardView: View {
                 }
             }
         }
-        .padding(LayoutMetrics.stack)
+        .padding(LayoutMetrics.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
         .accessibilityElement(children: .combine)

@@ -11,12 +11,21 @@ public enum LayoutMetrics {
     public static let section: CGFloat = 24
 
     #if os(macOS)
+        public static let cardPadding: CGFloat = 12
         public static let controlRadius: CGFloat = 6
         public static let cardRadius: CGFloat = 10
         public static let bubbleRadius: CGFloat = 10
+        public static let readingWidth: CGFloat = 700
+        public static let composerWidth: CGFloat = 640
+        public static let sidebarMinWidth: CGFloat = 220
+        public static let sidebarIdealWidth: CGFloat = 240
+        public static let sidebarMaxWidth: CGFloat = 260
+        public static let windowMinWidth: CGFloat = 640
+        public static let windowMinHeight: CGFloat = 420
     #else
+        public static let cardPadding: CGFloat = 14
         public static let controlRadius: CGFloat = 10
-        public static let cardRadius: CGFloat = 12
+        public static let cardRadius: CGFloat = 14
         public static let bubbleRadius: CGFloat = 16
     #endif
 }

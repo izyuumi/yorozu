@@ -291,7 +291,7 @@ public struct RuleProposalCardView: View {
                 }
             }
         }
-        .padding(LayoutMetrics.gutter)
+        .padding(LayoutMetrics.cardPadding)
         .frame(maxWidth: 560, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(proposalBackground, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
@@ -325,6 +325,7 @@ public struct RuleRowView: View {
     /// Nil on the phone, which lists rules without switching them on and off.
     public let onToggle: ((Bool) -> Void)?
     public let onEdit: (() -> Void)?
+    @State private var hovering = false
 
     public init(rule: ApprovalRule, onToggle: ((Bool) -> Void)? = nil, onEdit: (() -> Void)? = nil) {
         self.rule = rule
@@ -351,6 +352,10 @@ public struct RuleRowView: View {
             Spacer(minLength: 0)
             if let onEdit {
                 Button("Edit", action: onEdit).buttonStyle(.borderless)
+                    #if os(macOS)
+                        .opacity(hovering ? 1 : 0)
+                        .allowsHitTesting(hovering)
+                    #endif
             }
             if let onToggle {
                 Toggle("Enabled", isOn: Binding(get: { rule.isEnabled }, set: { onToggle($0) }))
@@ -360,6 +365,10 @@ public struct RuleRowView: View {
             }
         }
         .padding(.vertical, 4)
+        #if os(macOS)
+            .contentShape(.rect)
+            .onHover { hovering = $0 }
+        #endif
         .accessibilityElement(children: .contain)
     }
 

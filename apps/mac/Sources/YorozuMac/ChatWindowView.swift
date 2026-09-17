@@ -58,7 +58,11 @@ struct ChatWindowView: View {
                 },
                 exportMarkdown: model.markdown(of:)
             )
-            .navigationSplitViewColumnWidth(min: 210, ideal: 236, max: 280)
+            .navigationSplitViewColumnWidth(
+                min: LayoutMetrics.sidebarMinWidth,
+                ideal: LayoutMetrics.sidebarIdealWidth,
+                max: LayoutMetrics.sidebarMaxWidth
+            )
             .safeAreaInset(edge: .bottom) { gear }
         } detail: {
             NavigationStack {
@@ -75,7 +79,7 @@ struct ChatWindowView: View {
         }
         // A floor rather than a fixed size: the window is resizable now, and the chat has to
         // stay legible at the narrowest a window is worth having.
-        .frame(minWidth: 720, minHeight: 480)
+        .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
         // Selecting something else is what discards a draft nothing was ever sent in, and what
         // tells the model which thread is being read — a reply landing in the open thread is
         // read on arrival, and one landing anywhere else raises a dot in the sidebar.

@@ -329,6 +329,7 @@ public struct ChatView: View {
                     outbox: model.outbox,
                     answered: model.answered,
                     answeredQuestions: model.answeredQuestions,
+                    questionChoices: model.questionChoices,
                     handledProposals: model.handledProposals,
                     choices: model.choices,
                     reactions: reactions
@@ -520,7 +521,8 @@ public struct ChatView: View {
             if case .questionCard(let card) = event.payload {
                 QuestionCardView(
                     card: card,
-                    answered: model.answeredQuestions.contains(card.questionId)
+                    answered: model.answeredQuestions.contains(card.questionId),
+                    chosen: model.questionChoices[card.questionId]
                 ) { model.answerQuestion(card.questionId, in: thread.id, $0) }
                 .id(event.id)
             }
@@ -723,6 +725,7 @@ public struct ChatView: View {
         let outbox: [OutboxItem]
         let answered: Set<String>
         let answeredQuestions: Set<String>
+        let questionChoices: [String: String]
         let handledProposals: Set<String>
         let choices: [String: ApprovalAnswerData.Answer]
         let reactions: [String: [MessageReaction]]
@@ -994,7 +997,7 @@ func followsNewest(atBottom: Bool, phase: ScrollPhase) -> Bool {
 extension View {
     @ViewBuilder fileprivate func compactQuietTranscriptLayout() -> some View {
         #if os(macOS)
-            frame(maxWidth: 700, alignment: .leading)
+            frame(maxWidth: LayoutMetrics.readingWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .top)
                 .padding(.horizontal, LayoutMetrics.section)
                 .padding(.vertical, LayoutMetrics.gutter)
@@ -1005,7 +1008,7 @@ extension View {
 
     @ViewBuilder fileprivate func compactQuietComposerLayout() -> some View {
         #if os(macOS)
-            frame(maxWidth: 700)
+            frame(maxWidth: LayoutMetrics.composerWidth)
                 .frame(maxWidth: .infinity, alignment: .center)
         #else
             self

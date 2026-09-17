@@ -67,6 +67,7 @@ struct PairView: View {
 
     @State private var code = ""
     @State private var error: String?
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
@@ -85,9 +86,12 @@ struct PairView: View {
                         .foregroundStyle(.red)
                 }
             }
-            .navigationTitle("Pair with Mac")
+            .navigationTitle("Pair with your Mac")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Connect") { error = onPair(code) }
                         .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

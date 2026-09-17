@@ -22,6 +22,7 @@ public struct ApprovalCardView: View {
     @State private var editingRule: ApprovalRule?
     @State private var itemsExpanded = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     public init(
         card: ApprovalCardData,
@@ -55,7 +56,7 @@ public struct ApprovalCardView: View {
                 choices
             }
         }
-        .padding(LayoutMetrics.gutter)
+        .padding(LayoutMetrics.cardPadding)
         // Capped where a bubble is capped, and for the same reason: stretched across a wide
         // Mac window the buttons end up the width of the screen and the card stops reading as
         // a prompt. On a phone the cap is wider than the screen and changes nothing.
@@ -256,21 +257,24 @@ public struct ApprovalCardView: View {
                     editingRule = suggestion
                 } label: {
                     Text(alwaysTitle)
+                        .foregroundStyle(quietButtonForeground)
                         .frame(maxWidth: .infinity, minHeight: controlTarget)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(quietButtonTint)
-                .foregroundStyle(Color.primary)
+                .foregroundStyle(quietButtonForeground)
                 .buttonBorderShape(.roundedRectangle(radius: LayoutMetrics.controlRadius))
                 .accessibilityHint("Opens a rule you can widen before saving")
             }
             #if !os(macOS)
                 HStack(spacing: LayoutMetrics.inner) {
                     choice(.no, "Don't allow", prominent: false)
-                    Button("Discuss first") { answer(.discuss, nil) }
-                        .font(.subheadline)
+                    Button { answer(.discuss, nil) } label: {
+                        Text("Discuss first")
+                            .font(.subheadline)
+                            .frame(maxWidth: .infinity, minHeight: controlTarget)
+                    }
                         .buttonStyle(.bordered)
-                        .frame(maxWidth: .infinity, minHeight: controlTarget)
                         .buttonBorderShape(.roundedRectangle(radius: LayoutMetrics.controlRadius))
                         .accessibilityHint("Ask Yorozu to explain before deciding")
                 }
@@ -286,6 +290,7 @@ public struct ApprovalCardView: View {
             Text(grantNote)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 2)
         }
@@ -297,23 +302,40 @@ public struct ApprovalCardView: View {
         } label: {
             Text(title)
                 .font(.body.weight(prominent ? .semibold : .regular))
+                .foregroundStyle(prominent ? Color.white : quietButtonForeground)
                 .frame(maxWidth: .infinity, minHeight: controlTarget)
         }
         .buttonStyle(.borderedProminent)
         .tint(prominent ? Color.accentColor : quietButtonTint)
-        .foregroundStyle(prominent ? Color.white : Color.primary)
+        .foregroundStyle(prominent ? Color.white : quietButtonForeground)
         .buttonBorderShape(.roundedRectangle(radius: LayoutMetrics.controlRadius))
     }
 
     private var outcome: some View {
-        HStack(spacing: 8) {
-            Image(systemName: chosen == .no ? "xmark.circle.fill" : "checkmark.circle.fill")
-                .foregroundStyle(chosen == .no ? Color.secondary : Color.accentColor)
-            Text(outcomeText)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
+            HStack(spacing: LayoutMetrics.inner) {
+                Image(systemName: chosen == .no ? "xmark.circle.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(chosen == .no ? Color.secondary : Color.accentColor)
+                Text(outcomeText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            if chosen == .always, let rule = card.suggestedRule {
+                HStack(spacing: LayoutMetrics.inner) {
+                    Text("Rule saved: \(rule.summary)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Button("Edit") { editingRule = rule }
+                        .font(.caption)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.tint)
+                }
+                .padding(LayoutMetrics.inner)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.controlRadius, style: .continuous))
+            }
         }
-        .frame(minHeight: 32)
+        .frame(minHeight: 32, alignment: .leading)
     }
 
     private var outcomeText: String {
@@ -357,6 +379,14 @@ public struct ApprovalCardView: View {
             Color(.tertiarySystemFill)
         #else
             Color(nsColor: .quaternaryLabelColor)
+        #endif
+    }
+
+    private var quietButtonForeground: Color {
+        #if os(macOS)
+            colorScheme == .dark ? .white : .primary
+        #else
+            .primary
         #endif
     }
 
