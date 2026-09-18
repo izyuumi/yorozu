@@ -202,6 +202,16 @@ locally and replaces the fallback; missing keys, malformed boxes and failed auth
 the fallback unchanged. Tapping routes on the reference, which the phone resolves against the
 thread ids it already holds — the one end that can.
 
+An approval can be answered from the notification. The Mac marks a `notify` with `actions: true`
+when the action is quick-approvable — below every floor and not an external commitment (no
+message, purchase, booking or transfer) — and the relay sets the notification category to
+`approval-quick`, which the app registers with **Allow** and **Don't allow** buttons; anything
+else gets `approval-review`, whose only button opens the card. A button answer launches the app
+in the background, which dials the relay, finds the card the push's opaque `event` reference
+names (from its cache, or from the sync connecting asks for), sends the same `approval_answer`
+the card would, and hangs up. Approvals are also a background-wake class now, so the card is
+usually already cached by the time a button is pressed.
+
 A phone holding a live socket still receives the alert because iOS may have suspended it; a visible
 app suppresses that alert locally. Nor is the running commentary — deltas, tool traffic, a delegated agent finishing — ever notified at all, so a
 turn's every tool call does not become a push: only a turn arriving somewhere a person has to be

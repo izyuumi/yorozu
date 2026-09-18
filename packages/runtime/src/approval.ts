@@ -347,6 +347,22 @@ export function hitsFloor(action: Action, settings: Settings, dir = stateDir()):
   );
 }
 
+/**
+ * Classes that commit something outside this Mac: a message somebody receives, money that
+ * moves, a reservation held. Answering one of these deserves the card, not a lock-screen
+ * button that shows two lines of it.
+ */
+const EXTERNAL_CLASSES: readonly ActionClass[] = ["send-message", "purchase", "book", "transfer-money"];
+
+/**
+ * Whether an approval may be answered from the notification itself, without opening the app.
+ * Only an action below every floor and with no external commitment qualifies: a local file
+ * edit, a command, a calendar change, a page read. Everything else gets a Review button.
+ */
+export function quickApprovable(action: Action, settings: Settings, dir = stateDir()): boolean {
+  return !hitsFloor(action, settings, dir) && !EXTERNAL_CLASSES.includes(action.actionClass);
+}
+
 /** The value of one scope field on an action, as a string. `target` lives on the action itself. */
 export const scopeValue = (action: Action, field: ScopeField): string | undefined => {
   const value = action[field];

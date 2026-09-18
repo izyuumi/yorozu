@@ -9,11 +9,40 @@ import YorozuShared
 /// of the conversation — so opening the right chat is a lookup this phone does against the
 /// threads it already holds. See ``Session/open(threadRef:)``.
 final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    /// The categories an approval push names, and the buttons each draws. `approval-quick` is
+    /// what the Mac sends when the action is below every floor and commits nothing external;
+    /// everything else gets `approval-review`, whose only button opens the card.
+    static let quickCategory = "approval-quick"
+    static let reviewCategory = "approval-review"
+    static let allowAction = "approval.allow"
+    static let denyAction = "approval.deny"
+    static let reviewAction = "approval.review"
+
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        UNUserNotificationCenter.current().delegate = self
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        let allow = UNNotificationAction(
+            identifier: Self.allowAction,
+            title: String(localized: "Allow"),
+            options: [.authenticationRequired]
+        )
+        let deny = UNNotificationAction(
+            identifier: Self.denyAction,
+            title: String(localized: "Don't allow"),
+            options: [.authenticationRequired, .destructive]
+        )
+        let review = UNNotificationAction(
+            identifier: Self.reviewAction,
+            title: String(localized: "Review"),
+            options: [.foreground]
+        )
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: Self.quickCategory, actions: [allow, deny, review], intentIdentifiers: []),
+            UNNotificationCategory(identifier: Self.reviewCategory, actions: [review], intentIdentifiers: []),
+        ])
         return true
     }
 
@@ -69,6 +98,19 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         guard let ref = info["ref"] as? String else { return }
         let notificationClass = info["cls"] as? String
         let eventRef = info["event"] as? String
+
+        // A button, not a tap: answer the card without bringing the app forward. The phone
+        // was just unlocked to press it, and the answer is the same `approval_answer` the card
+        // would send. A card that cannot be found is left for the app to show.
+        let answer: ApprovalAnswerData.Answer? = switch response.actionIdentifier {
+        case Self.allowAction: .yes
+        case Self.denyAction: .no
+        default: nil
+        }
+        if let answer, let eventRef {
+            guard let model = await MainActor.run(body: { Session.shared.model }) else { return }
+            if await model.answerFromNotification(eventRef: eventRef, answer) { return }
+        }
         let model = await MainActor.run { () -> ChatModel? in
             let session = Session.shared
             session.open(threadRef: ref, notificationClass: notificationClass, eventRef: eventRef)

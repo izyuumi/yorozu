@@ -44,6 +44,7 @@ import {
   loadSettings,
   listRules,
   narrowestRule,
+  quickApprovable,
   saveSettings,
   TaskGrants,
   type Action,
@@ -386,6 +387,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   /** Cards on screen somewhere, waiting to be answered, by action ID. */
   const pending = new Map<string, { card: ApprovalCardData; settle: (result: AskResult) => void }>();
+  /** Whether each pending card may be answered from a notification button. */
+  const quickActions = new Map<string, boolean>();
 
   /**
    * Puts a card in front of every paired device and blocks the tool call until one of them
@@ -395,9 +398,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
   function ask(action: Action, context?: { threadId: string; agentId: string }): Promise<AskResult> {
     const actionId = randomUUID();
     const card = cardFor(actionId, action);
+    // Judged here, where the action is, and read by `notifyRelay` when the card goes out.
+    quickActions.set(actionId, quickApprovable(action, loadSettings(dir), dir));
     return new Promise<AskResult>((resolve) => {
       const timer = setTimeout(() => {
         pending.delete(actionId);
+        quickActions.delete(actionId);
         resolve({ answer: "no" });
       }, APPROVAL_TIMEOUT_MS);
       timer.unref?.();
@@ -406,6 +412,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         settle: (result) => {
           clearTimeout(timer);
           pending.delete(actionId);
+          quickActions.delete(actionId);
           resolve(result);
         },
       });
@@ -1017,6 +1024,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
             }),
           )
         : undefined;
+      // An approval the phone may answer from its lock screen: below every floor and nothing
+      // external. One bit for the relay; the action itself stays in the sealed frame.
+      const actions =
+        event.kind === "approval_card" &&
+        quickActions.get(event.data.actionId) === true;
       // Thread and event ids travel only as short one-way references. The latter lets a tap
       // select the exact encrypted card after sync without teaching the relay what it contains.
       ws.send(
@@ -1026,6 +1038,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           threadRef: threadRef(event.threadId),
           eventRef: threadRef(event.id),
           ...(previews && Object.keys(previews).length > 0 ? { previews } : {}),
+          ...(actions ? { actions: true } : {}),
         }),
       );
     };

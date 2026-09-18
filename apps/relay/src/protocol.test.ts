@@ -120,6 +120,14 @@ test("a notify is a known class and an opaque reference, or it is nothing", () =
     eventRef: "e",
   });
   expect(parseNotify({ class: "approval", threadRef: "r", eventRef: "" })).toBeNull();
+  // The one bit an approval may carry: answerable from the lock screen. Meaningless elsewhere.
+  expect(parseNotify({ class: "approval", threadRef: "r", actions: true })).toEqual({
+    class: "approval",
+    threadRef: "r",
+    actions: true,
+  });
+  expect(parseNotify({ class: "reply", threadRef: "r", actions: true })).toEqual({ class: "reply", threadRef: "r" });
+  expect(parseNotify({ class: "approval", threadRef: "r", actions: "yes" })).toBeNull();
   // Nothing else on the message survives into what the relay acts on.
   expect(parseNotify({ class: "reply", threadRef: "r", text: "the secret" })).toEqual({
     class: "reply",
@@ -138,6 +146,12 @@ test("a notify is a known class and an opaque reference, or it is nothing", () =
 test("an alert carries a fixed phrase and an opaque reference, and nothing else", () => {
   const payload = alertPayload("approval", "Ab3-_x9Z", "Ev3-_x9Z") as any;
   expect(payload.aps.alert).toEqual({ title: "Yorozu", "loc-key": NOTIFY_BODY.approval });
+  // An approval names which buttons the phone draws: review by default, quick when the Mac
+  // has judged the action safe to answer from the lock screen.
+  expect(payload.aps.category).toBe("approval-review");
+  expect((alertPayload("approval", "Ab3-_x9Z", "Ev3-_x9Z", undefined, true) as any).aps.category)
+    .toBe("approval-quick");
+  expect((alertPayload("reply", "Ab3-_x9Z") as any).aps.category).toBeUndefined();
   expect(payload.ref).toBe("Ab3-_x9Z");
   expect(payload.cls).toBe("approval");
   expect(payload.event).toBe("Ev3-_x9Z");
@@ -159,6 +173,8 @@ test("an alert carries a fixed phrase and an opaque reference, and nothing else"
     "ref",
     "cls",
     "event",
+    "category",
+    "approval-review",
   ]);
   for (const quoted of strings) expect(allowed).toContain(quoted.slice(1, -1));
 });

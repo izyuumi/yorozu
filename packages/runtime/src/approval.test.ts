@@ -24,6 +24,7 @@ import {
   PRECEDENT,
   PROPOSAL_WINDOW_MS,
   proposalFor,
+  quickApprovable,
   readLog,
   recordApproval,
   saveSettings,
@@ -473,6 +474,21 @@ test("visiting a URL is allowed by default, fenced by a never rule, and asked ab
   for (const url of ["https://example.com/blog/login-flows-explained", "https://auth-docs.example/"]) {
     expect(needsFreshConfirmation(visit(url)), url).toBe(false);
   }
+});
+
+test("only a local action below every floor may be approved from the lock screen", () => {
+  const stored = settings({ moneyThreshold: 100, confirmIrreversibleDeletes: true });
+  const local: Action = { actionClass: "edit-file", target: join(dir, "notes.md"), operation: "edit" };
+  expect(quickApprovable(local, stored, dir)).toBe(true);
+  expect(quickApprovable({ actionClass: "visit-url", target: "https://example.com/a", operation: "run" }, stored, dir)).toBe(true);
+  expect(quickApprovable({ actionClass: "edit-calendar", target: "Lunch", operation: "edit" }, stored, dir)).toBe(true);
+  // External commitments get the card, however small.
+  expect(quickApprovable({ actionClass: "send-message", target: "bob", recipient: "bob" }, stored, dir)).toBe(false);
+  expect(quickApprovable({ actionClass: "purchase", target: "coffee", amount: 5 }, stored, dir)).toBe(false);
+  // And so does anything a floor catches.
+  expect(quickApprovable({ actionClass: "interact-web", target: "tab 1 element 3" }, stored, dir)).toBe(false);
+  expect(quickApprovable({ actionClass: "delete-file", target: "/Users/someone/Documents/x" }, stored, dir)).toBe(false);
+  expect(quickApprovable({ actionClass: "visit-url", target: "https://a.example/confirm/x", operation: "run" }, stored, dir)).toBe(false);
 });
 
 test("an ordinary purchase is not one of those, and says so on the card", () => {

@@ -190,7 +190,20 @@ export type Notify = {
   threadRef: string;
   eventRef?: string;
   previews?: Record<string, EncryptedPreview>;
+  /**
+   * An approval the Mac has judged answerable from the lock screen: below every safety floor
+   * and committing nothing external. The relay learns one bit and passes it on as the
+   * notification category; what the action is stays in the sealed frame.
+   */
+  actions?: boolean;
 };
+
+/**
+ * Notification categories the app registers. `approval-quick` carries Allow / Don't allow
+ * buttons; `approval-review` carries only a button that opens the card.
+ */
+export const CATEGORY_APPROVAL_QUICK = "approval-quick";
+export const CATEGORY_APPROVAL_REVIEW = "approval-review";
 
 const base64url = /^[A-Za-z0-9_-]+$/;
 const parsePreviews = (value: unknown): Record<string, EncryptedPreview> | null | undefined => {
@@ -219,11 +232,14 @@ export const parseNotify = (msg: Record<string, unknown>): Notify | null => {
   if (msg.eventRef !== undefined && (typeof msg.eventRef !== "string" || msg.eventRef === "")) return null;
   const previews = parsePreviews(msg.previews);
   if (previews === null) return null;
+  if (msg.actions !== undefined && typeof msg.actions !== "boolean") return null;
   return {
     class: msg.class as NotifyClass,
     threadRef: msg.threadRef,
     ...(typeof msg.eventRef === "string" ? { eventRef: msg.eventRef } : {}),
     ...(previews ? { previews } : {}),
+    // Only an approval has buttons to offer; the bit is meaningless on any other class.
+    ...(msg.actions === true && msg.class === "approval" ? { actions: true } : {}),
   };
 };
 
@@ -236,6 +252,7 @@ export function alertPayload(
   ref: string,
   eventRef?: string,
   preview?: EncryptedPreview,
+  actions = false,
 ): unknown {
   return {
     aps: {
@@ -246,6 +263,11 @@ export function alertPayload(
       // Groups every notification about one thread together, without naming it.
       "thread-id": ref,
       ...(preview ? { "mutable-content": 1 } : {}),
+      // Which buttons the phone draws under an approval. The category names are fixed
+      // vocabulary, like the body keys.
+      ...(cls === "approval"
+        ? { category: actions ? CATEGORY_APPROVAL_QUICK : CATEGORY_APPROVAL_REVIEW }
+        : {}),
     },
     ref,
     cls,
@@ -256,10 +278,10 @@ export function alertPayload(
 
 /**
  * The classes that are worth waking the app for as well as the person: something landed in a
- * thread that this phone's cache is now behind on. An approval is deliberately not one of them —
- * it is a question to answer in the app, not history to catch up on.
+ * thread that this phone's cache is now behind on. An approval is one of them since 2026-09-18:
+ * a card answered from the lock screen has to be in the cache before the button is pressed.
  */
-export const BACKGROUND_CLASSES: readonly NotifyClass[] = ["reply", "done", "failed"];
+export const BACKGROUND_CLASSES: readonly NotifyClass[] = ["reply", "approval", "done", "failed"];
 
 /**
  * At most one silent push per phone per minute. iOS budgets background wake-ups and throttles an
