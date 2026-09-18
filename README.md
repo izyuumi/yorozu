@@ -662,12 +662,17 @@ it pushes). Navigation is by value — `.agentTraceDestination { model.events }`
 resolves a `TraceTarget` against the *live* event list, so an open trace keeps streaming rather
 than showing the snapshot the link was built from.
 
-The main agent's own tool use is not behind that drill-down any more. It used to be one
-`working… <tool>` line under the latest message; it is now `ToolGroupView` in the thread
-itself — a row per call with the tool's family symbol, a one-line argument summary, how it went
-and how long it took, opening to the arguments in full and whatever the tool printed. An
-unbroken run of calls collapses to `N steps`, so a turn that ran eight commands is one line
-until it is asked to be eight. A result that is a unified diff is drawn as one, coloured, with
+Everything the main agent does between one message and the next is one row in the thread:
+`WorkRowView`, over a `TurnWork`. While the turn runs it is a single live line — a spinner and
+what is happening right now: the newest thought, the running tool, the delegated agent, or a
+progress card's title and percentage — that replaces itself as the work moves on. When the turn
+is over it collapses to `N steps · 2m` (and `n failed`), and opens to the whole trace in order:
+thoughts, `ToolGroupView` runs (a row per call with the tool's family symbol, a one-line
+argument summary, how it went and how long it took, opening to the arguments in full and
+whatever the tool printed), delegation cards, and progress cards. Approval, question and rule
+proposal cards close the work row and stand below it: they need a person, so they are never
+folded away. `chatRows(from:generating:)` marks the last work row live only while the thread is
+generating; the events alone cannot tell paused from finished. A result that is a unified diff is drawn as one, coloured, with
 its `+n −m` counts on the collapsed row; `unifiedDiff(in:)` decides that on the hunk header,
 because a `+` at the start of a line is ordinary enough in ordinary output. Long output is cut
 to twelve lines behind **Show all**, which is also the only thing that makes a scroll view

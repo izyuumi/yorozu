@@ -74,33 +74,111 @@ public func mainTrace(from events: [YorozuEvent]) -> [YorozuEvent] {
     }
 }
 
-/// One line of the thread: a message bubble, a run of the main agent's own tool use, a
-/// delegation card where the delegation started, or a card waiting to be answered. What a
-/// specialist did lives behind its card; what the main agent did is shown here.
+/// Everything the main agent did between one message and the next, as one row. While it runs
+/// the row is a single live status line; when it is over the row collapses to how many steps
+/// it took and how long, and opens to the full trace — thoughts, tool runs and delegations in
+/// the order they happened. Cards that need a person stay outside it.
+public struct TurnWork: Identifiable, Equatable, Sendable {
+    /// What the trace is made of, in order.
+    public enum Entry: Identifiable, Equatable, Sendable {
+        case thought(YorozuEvent)
+        /// An unbroken run of the main agent's tool calls, drawn as one group.
+        case tools([ToolActivity])
+        case delegation(DelegationCard)
+        /// The newest revision of a progress card the job reported.
+        case progress(YorozuEvent)
+
+        public var id: String {
+            switch self {
+            case .thought(let event): event.id
+            case .tools(let activities): "tools-\(activities.first?.callId ?? "")"
+            case .delegation(let card): "delegation-\(card.id)"
+            case .progress(let event): event.id
+            }
+        }
+    }
+
+    /// Id of the first event in the work, which is what the row is keyed on.
+    public var startEventId: String
+    public var entries: [Entry]
+    /// Epoch milliseconds of the first and latest event in it.
+    public var startedAt: Int
+    public var lastAt: Int
+    /// Whether the turn this work belongs to is still running. Set by the caller: the events
+    /// alone cannot tell "paused" from "finished".
+    public var running: Bool
+
+    public var id: String { "work-\(startEventId)" }
+
+    public init(startEventId: String, entries: [Entry], startedAt: Int, lastAt: Int, running: Bool) {
+        self.startEventId = startEventId
+        self.entries = entries
+        self.startedAt = startedAt
+        self.lastAt = lastAt
+        self.running = running
+    }
+
+    /// Tool calls, counting a delegation's own as well: what "N steps" counts.
+    public var steps: Int {
+        entries.reduce(0) { count, entry in
+            switch entry {
+            case .tools(let activities): count + activities.count
+            case .delegation(let card): count + toolActivities(from: card.events).count
+            default: count
+            }
+        }
+    }
+
+    public var failed: Int {
+        entries.reduce(0) { count, entry in
+            guard case .tools(let activities) = entry else { return count }
+            return count + activities.filter { !$0.running && !$0.ok }.count
+        }
+    }
+
+    /// Wall time between the first and latest event, never negative.
+    public var duration: Duration { .milliseconds(max(0, lastAt - startedAt)) }
+
+    /// The one line shown while the work runs: what is happening right now. A progress card's
+    /// title wins when there is one, because it was written to be read; otherwise the newest
+    /// thought, running tool or running delegation.
+    public var status: String? {
+        for entry in entries.reversed() {
+            switch entry {
+            case .progress(let event):
+                if case .progressCard(let card) = event.payload {
+                    guard let percent = card.percent else { return card.title }
+                    return "\(card.title) · \(Int(percent.rounded()))%"
+                }
+            case .thought(let event):
+                if case .thought(let data) = event.payload, !data.text.isEmpty { return data.text }
+            case .tools(let activities):
+                if let live = activities.last(where: { $0.running }) ?? activities.last { return live.name }
+            case .delegation(let card):
+                return card.agentId
+            }
+        }
+        return nil
+    }
+}
+
+/// One line of the thread: a message bubble, the work the main agent did between messages,
+/// or a card waiting to be answered. What a specialist did lives behind the work row.
 public enum ChatRow: Identifiable, Equatable, Sendable {
     case message(YorozuEvent)
-    case thought(YorozuEvent)
-    /// An unbroken run of the main agent's tool calls, drawn as one group.
-    case tools([ToolActivity])
-    case delegation(DelegationCard)
+    case work(TurnWork)
     case approval(YorozuEvent)
     /// A rule Yorozu is offering, not one it has applied.
     case proposal(YorozuEvent)
     case question(YorozuEvent)
-    case progress(YorozuEvent)
 
     public var id: String {
         switch self {
-        case .thought(let event): event.id
         case .message(let event): event.id
-        case .tools(let activities): "tools-\(activities.first?.callId ?? "")"
-        // Prefixed, because a delegation whose first event is a card is two rows out of one
-        // event — the card and the delegation it started — and two rows need two ids.
-        case .delegation(let card): "delegation-\(card.id)"
+        case .work(let work): work.id
         case .approval(let event): event.id
         case .proposal(let event): event.id
         case .question(let event): event.id
-        case .progress(let event): event.id
         }
     }
 }
@@ -161,7 +239,10 @@ func messageReactionsByMessage(
 }
 
 /// The thread in render order.
-public func chatRows(from events: [YorozuEvent]) -> [ChatRow] {
+///
+/// - Parameter generating: whether a turn is running in this thread. The last work row is
+///   live while it is, and settled once it is not; the events alone cannot say which.
+public func chatRows(from events: [YorozuEvent], generating: Bool = false) -> [ChatRow] {
     // Progress revisions keep unique transport IDs, so an offline client's cursor cannot
     // skip an update. Only the newest revision of each card belongs in the timeline.
     var latestProgress: [String: String] = [:]
@@ -178,12 +259,30 @@ public func chatRows(from events: [YorozuEvent]) -> [ChatRow] {
 
     var rows: [ChatRow] = []
     var transientStatus: YorozuEvent?
-    /// The run of tool use being filled, so the next call in an unbroken run joins it rather
-    /// than starting a second group under the first.
+    /// The work row being filled: everything the main agent does between one message and the
+    /// next lands in it, so a long turn reads as one line rather than a stack.
+    var work: TurnWork?
+    /// The run of tool use being filled inside it, so the next call in an unbroken run joins
+    /// it rather than starting a second group under the first.
     var open: [ToolActivity] = []
     func closeTools() {
-        if !open.isEmpty { rows.append(.tools(open)) }
+        if !open.isEmpty { work?.entries.append(.tools(open)) }
         open = []
+    }
+    func touch(_ event: YorozuEvent) {
+        var current = work ?? TurnWork(startEventId: event.id, entries: [], startedAt: event.ts, lastAt: event.ts, running: false)
+        current.lastAt = max(current.lastAt, event.ts)
+        work = current
+    }
+    func add(_ entry: TurnWork.Entry, at event: YorozuEvent) {
+        closeTools()
+        touch(event)
+        work?.entries.append(entry)
+    }
+    func closeWork() {
+        closeTools()
+        if let done = work { rows.append(.work(done)) }
+        work = nil
     }
 
     for event in events {
@@ -202,42 +301,65 @@ public func chatRows(from events: [YorozuEvent]) -> [ChatRow] {
         if event.parentAgentId == nil {
             switch event.payload {
             case .toolCall(let data):
-                if let activity = activities[data.callId] { open.append(activity) }
+                if let activity = activities[data.callId] {
+                    touch(event)
+                    open.append(activity)
+                }
                 continue
             case .toolResult:
+                if work != nil { touch(event) }
                 continue
             default:
                 break
             }
         }
-        closeTools()
 
-        if let card = byStart[event.id] { rows.append(.delegation(card)) }
+        if let card = byStart[event.id] { add(.delegation(card), at: event) }
         switch event.payload {
         case .thought where event.parentAgentId == nil:
-            rows.append(.thought(event))
+            add(.thought(event), at: event)
         case .message where event.parentAgentId == nil:
+            closeWork()
             rows.append(.message(event))
-        // Cards are never folded away, wherever they were raised: one put up inside a
-        // delegation still has to reach the thread, because the agent is parked on it and
-        // nothing happens until it is answered. A progress card is not answered at all, but
-        // being seen is the whole of what it is for.
+        // Cards that need a person are never folded away, wherever they were raised: one put
+        // up inside a delegation still has to reach the thread, because the agent is parked
+        // on it and nothing happens until it is answered. The work row closes on them, so the
+        // card sits below the work that led to it.
         case .approvalCard:
+            closeWork()
             rows.append(.approval(event))
         case .ruleProposal:
+            closeWork()
             rows.append(.proposal(event))
         case .questionCard:
+            closeWork()
             rows.append(.question(event))
+        // A progress card is only ever read, and while the work runs its title is the status
+        // line, so it belongs inside the work rather than beside it.
         case .progressCard:
             if case .progressCard(let data) = event.payload, latestProgress[data.cardId] == event.id {
-                rows.append(.progress(event))
+                add(.progress(event), at: event)
             }
         default:
             break
         }
     }
-    closeTools()
-    if let transientStatus { rows.append(.thought(transientStatus)) }
+    closeWork()
+    // The turn is still going: the last work row is live, whichever row that is. Nothing after
+    // a reply can be live — the reply ended it — and a turn with no work yet has no row.
+    if generating, let last = rows.indices.last, case .work(var live) = rows[last] {
+        live.running = true
+        rows[last] = .work(live)
+    }
+    if let transientStatus {
+        rows.append(.work(TurnWork(
+            startEventId: transientStatus.id,
+            entries: [.thought(transientStatus)],
+            startedAt: transientStatus.ts,
+            lastAt: transientStatus.ts,
+            running: true
+        )))
+    }
     return rows
 }
 
