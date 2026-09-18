@@ -15,6 +15,7 @@
 import {
   alertPayload,
   allowFrame,
+  parseAck,
   BACKGROUND_CLASSES,
   BACKGROUND_INTERVAL_MS,
   backgroundPayload,
@@ -75,6 +76,18 @@ function send(ws: WebSocket, raw: string): void {
   }
 }
 
+/**
+ * One line per thing worth knowing about a room's sockets, as JSON so Workers Logs can filter
+ * on it. Never a payload, never a key: the relay is blind and its logs stay that way. This is
+ * the only evidence there is when a phone reports "it just stopped arriving".
+ */
+function log(ev: string, fields: Record<string, unknown> = {}): void {
+  console.log(JSON.stringify({ ev, ...fields }));
+}
+
+const roleOf = (ws: WebSocket): Conn["role"] =>
+  (ws.deserializeAttachment() as Conn | null)?.role ?? null;
+
 /** Per-socket state. Serialized into the attachment so it survives hibernation. */
 type Conn = {
   nonce: string;
@@ -85,7 +98,7 @@ type Conn = {
   key: string | null;
 };
 
-type Buffered = { raw: string; bytes: number; at: number };
+type Buffered = { raw: string; bytes: number; at: number; seq: number };
 
 /** Buffer keys sort lexicographically, so zero-pad the sequence to keep them in order. */
 const bufferKey = (seq: number): string => `b:${String(seq).padStart(16, "0")}`;
@@ -143,12 +156,23 @@ export class Room implements DurableObject {
     return done;
   }
 
-  webSocketClose(ws: WebSocket): void {
+  webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): void {
     const conn = ws.deserializeAttachment() as Conn | null;
+    log("close", { role: conn?.role ?? null, code, reason, wasClean });
     // A re-registering Mac closes its own stale socket: only go offline if none is left.
     if (conn?.role === "mac" && !this.sockets("mac").some((other) => other !== ws)) {
       this.notifyOwner(false);
     }
+  }
+
+  webSocketError(ws: WebSocket, error: unknown): void {
+    log("error", { role: roleOf(ws), error: String(error) });
+  }
+
+  /** The relay hanging up on a socket, with the reason on record. */
+  private drop(ws: WebSocket, code: number, reason: string): void {
+    log("drop", { role: roleOf(ws), code, reason });
+    ws.close(code, reason);
   }
 
   /** The buffer's TTL, swept once rather than per entry. */
@@ -221,7 +245,11 @@ export class Room implements DurableObject {
       entries.map(([, entry]) => entry),
       now,
     );
-    if (drop > 0) await this.state.storage.delete(entries.slice(0, drop).map(([key]) => key));
+    if (drop > 0) {
+      // The one place the relay loses a frame on purpose. Logged because it is data gone.
+      log("buffer-trim", { dropped: drop, kept: entries.length - drop });
+      await this.state.storage.delete(entries.slice(0, drop).map(([key]) => key));
+    }
   }
 
   private async buffer(raw: string, now: number): Promise<void> {
@@ -231,6 +259,7 @@ export class Room implements DurableObject {
       raw,
       bytes: new TextEncoder().encode(raw).length,
       at: now,
+      seq,
     } satisfies Buffered);
     await storage.put("seq", seq + 1);
     await this.trim(now);
@@ -239,16 +268,31 @@ export class Room implements DurableObject {
     if ((await storage.getAlarm()) === null) await storage.setAlarm(now + BUFFER_TTL_MS);
   }
 
+  /**
+   * Replays what the phones sent while no Mac was here. Each frame goes out tagged with its
+   * buffer sequence and stays in storage until the Mac acks it: a send onto a socket that is
+   * about to die is not a delivery, and a Mac that reconnects without having acked simply
+   * gets the frames again. The runtime is idempotent on event id, so a replay costs nothing.
+   */
   private async drain(mac: WebSocket, now: number): Promise<void> {
+    await this.trim(now);
     const entries = await this.entries();
     if (entries.length === 0) return;
-    const drop = dropCount(
-      entries.map(([, entry]) => entry),
-      now,
-    );
-    for (const [, entry] of entries.slice(drop)) send(mac, entry.raw);
-    await this.state.storage.delete(entries.map(([key]) => key));
-    await this.state.storage.deleteAlarm();
+    log("drain", { count: entries.length });
+    for (const [, entry] of entries) {
+      send(mac, JSON.stringify({ ...(JSON.parse(entry.raw) as object), seq: entry.seq }));
+    }
+    // Entries buffered before frames carried a sequence cannot be acked, so they are let go
+    // on send as they always were rather than replayed until their TTL.
+    const legacy = entries.filter(([, entry]) => entry.seq === undefined).map(([key]) => key);
+    if (legacy.length > 0) await this.state.storage.delete(legacy);
+  }
+
+  /** The Mac has handled everything up to `seq`; those entries are done with. */
+  private async ack(seq: number): Promise<void> {
+    const entries = await this.entries();
+    const done = entries.filter(([, entry]) => entry.seq <= seq).map(([key]) => key);
+    if (done.length > 0) await this.state.storage.delete(done);
   }
 
   /**
@@ -277,15 +321,18 @@ export class Room implements DurableObject {
     const gone = new Set(pubkeys);
     for (const phone of this.sockets("phone")) {
       const key = (phone.deserializeAttachment() as Conn | null)?.key;
-      if (key && gone.has(key)) phone.close(CLOSE_PROTOCOL, "revoked");
+      if (key && gone.has(key)) this.drop(phone, CLOSE_PROTOCOL, "revoked");
     }
   }
 
   /** A failed APNs request costs this device's attempt, never the rest of the room's fan-out. */
   private async push(request: apns.ApnsRequest, now: number): Promise<number | null> {
     try {
-      return await apns.send(this.env, request, now);
-    } catch {
+      const code = await apns.send(this.env, request, now);
+      if (code < 200 || code >= 300) log("apns", { pushType: request.pushType, code });
+      return code;
+    } catch (error) {
+      log("apns", { pushType: request.pushType, error: String(error) });
       return null;
     }
   }
@@ -375,39 +422,48 @@ export class Room implements DurableObject {
     try {
       msg = JSON.parse(raw);
     } catch {
-      return ws.close(CLOSE_PROTOCOL, "bad json");
+      return this.drop(ws, CLOSE_PROTOCOL, "bad json");
     }
 
     switch (msg.type) {
       case "register": {
         const register = parseRegister(msg);
-        if (!register) return ws.close(CLOSE_PROTOCOL, "bad register");
+        if (!register) return this.drop(ws, CLOSE_PROTOCOL, "bad register");
         const { pubkey, nonceSig } = register;
         let id: string;
         try {
           id = await roomId(pubkey);
         } catch {
-          return ws.close(CLOSE_PROTOCOL, "bad pubkey");
+          return this.drop(ws, CLOSE_PROTOCOL, "bad pubkey");
         }
         // The Node relay derives the room from the key, so a key can only ever own its own
         // room. Here the caller picked the room in the URL: pin it back to the key, or a
         // stranger could squat someone else's room and drain its buffer.
         const owner = (await storage.get<string>("owner")) ?? null;
         if (id !== conn.room || (owner !== null && owner !== pubkey)) {
-          return ws.close(CLOSE_PROTOCOL, "wrong room");
+          return this.drop(ws, CLOSE_PROTOCOL, "wrong room");
         }
         if (!(await this.verify(conn.nonce, nonceSig, pubkey))) {
-          return ws.close(CLOSE_BAD_SIGNATURE, "bad challenge");
+          return this.drop(ws, CLOSE_BAD_SIGNATURE, "bad challenge");
         }
         if (owner === null) await storage.put("owner", pubkey);
         // A fresh registration wins; the stale Mac socket is dropped.
         for (const stale of this.sockets("mac")) {
-          if (stale !== ws) stale.close(CLOSE_PROTOCOL, "replaced");
+          if (stale !== ws) this.drop(stale, CLOSE_PROTOCOL, "replaced");
         }
         ws.serializeAttachment({ ...conn, role: "mac", key: pubkey } satisfies Conn);
         ws.send(JSON.stringify({ type: "registered", roomId: id }));
+        log("registered", { phones: this.sockets("phone").length });
         this.notifyOwner(true);
         return await this.drain(ws, now);
+      }
+
+      // The Mac has handled the replayed frames up to this sequence number.
+      case "ack": {
+        if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
+        const ack = parseAck(msg);
+        if (!ack) return this.drop(ws, CLOSE_PROTOCOL, "bad ack");
+        return await this.ack(ack.seq);
       }
 
       // The heartbeat the edge normally answers for us. Handled here too so a socket that
@@ -419,12 +475,12 @@ export class Room implements DurableObject {
       // "Is my Mac there?", asked by a phone after every join. The `joined` reply already
       // carries it, but a phone that has been asleep has no way to trust what it last heard.
       case "owner": {
-        if (conn.role !== "phone") return ws.close(CLOSE_PROTOCOL, "not joined");
+        if (conn.role !== "phone") return this.drop(ws, CLOSE_PROTOCOL, "not joined");
         return void ws.send(JSON.stringify({ type: "owner", online: this.ownerOnline() }));
       }
 
       case "mint": {
-        if (conn.role !== "mac") return ws.close(CLOSE_PROTOCOL, "not registered");
+        if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
         const token = randomToken();
         const expiresAt = now + TOKEN_TTL_MS;
         await storage.put(`t:${token}`, expiresAt);
@@ -435,9 +491,9 @@ export class Room implements DurableObject {
       // The Mac unpairing a phone: forgotten, so it cannot rejoin against the nonce, and
       // dropped now rather than at its next reconnect.
       case "revoke": {
-        if (conn.role !== "mac") return ws.close(CLOSE_PROTOCOL, "not registered");
+        if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
         const revoke = parseRevoke(msg);
-        if (!revoke) return ws.close(CLOSE_PROTOCOL, "bad revoke");
+        if (!revoke) return this.drop(ws, CLOSE_PROTOCOL, "bad revoke");
         return await this.forget([revoke.pubkey]);
       }
 
@@ -449,9 +505,9 @@ export class Room implements DurableObject {
       // itself, and the Mac's file may not have caught up with a token join it is still
       // being told about. Unpairing a connected phone is what `revoke` is for.
       case "devices": {
-        if (conn.role !== "mac") return ws.close(CLOSE_PROTOCOL, "not registered");
+        if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
         const announced = parseDevices(msg);
-        if (!announced) return ws.close(CLOSE_PROTOCOL, "bad devices");
+        if (!announced) return this.drop(ws, CLOSE_PROTOCOL, "bad devices");
         const keep = new Set(announced.devices);
         for (const phone of this.sockets("phone")) {
           const key = (phone.deserializeAttachment() as Conn | null)?.key;
@@ -470,44 +526,45 @@ export class Room implements DurableObject {
 
       case "join": {
         const join = parseJoin(msg);
-        if (!join) return ws.close(CLOSE_PROTOCOL, "bad join");
+        if (!join) return this.drop(ws, CLOSE_PROTOCOL, "bad join");
         const { roomId: id, token, phonePubkey, sig } = join;
-        if (id !== conn.room) return ws.close(CLOSE_PROTOCOL, "wrong room");
+        if (id !== conn.room) return this.drop(ws, CLOSE_PROTOCOL, "wrong room");
         if (token === undefined) {
           // A rejoin: the room already knows this device, so it proves itself against the
           // connect nonce rather than spending a token it no longer has.
           if ((await storage.get<number>(devicePrefix + phonePubkey)) === undefined) {
-            return ws.close(CLOSE_PROTOCOL, "unknown device");
+            return this.drop(ws, CLOSE_PROTOCOL, "unknown device");
           }
           if (!(await this.verify(conn.nonce, sig, phonePubkey))) {
-            return ws.close(CLOSE_BAD_SIGNATURE, "bad join signature");
+            return this.drop(ws, CLOSE_BAD_SIGNATURE, "bad join signature");
           }
           await storage.put(devicePrefix + phonePubkey, now);
         } else {
           const expiresAt = await storage.get<number>(`t:${token}`);
-          if (expiresAt === undefined) return ws.close(CLOSE_PROTOCOL, "unknown token");
+          if (expiresAt === undefined) return this.drop(ws, CLOSE_PROTOCOL, "unknown token");
           if (now > expiresAt) {
             await storage.delete(`t:${token}`);
-            return ws.close(CLOSE_PROTOCOL, "expired token");
+            return this.drop(ws, CLOSE_PROTOCOL, "expired token");
           }
           // Verified before burning, so a bad signature cannot consume the token.
           if (!(await this.verify(token, sig, phonePubkey))) {
-            return ws.close(CLOSE_BAD_SIGNATURE, "bad join signature");
+            return this.drop(ws, CLOSE_BAD_SIGNATURE, "bad join signature");
           }
           await storage.delete(`t:${token}`);
           await this.remember(phonePubkey, now);
         }
         ws.serializeAttachment({ ...conn, role: "phone", key: phonePubkey } satisfies Conn);
         ws.send(JSON.stringify({ type: "joined", roomId: id, ownerOnline: this.ownerOnline() }));
+        log("joined", { rejoin: token === undefined, ownerOnline: this.ownerOnline() });
         return;
       }
 
       // A phone saying where it can be woken. Filed against the key the relay already knows
       // the device by, so revoking it takes the tokens with it and nothing has to remember to.
       case "push": {
-        if (conn.role !== "phone" || !conn.key) return ws.close(CLOSE_PROTOCOL, "not joined");
+        if (conn.role !== "phone" || !conn.key) return this.drop(ws, CLOSE_PROTOCOL, "not joined");
         const push = parsePush(msg);
-        if (!push) return ws.close(CLOSE_PROTOCOL, "bad push");
+        if (!push) return this.drop(ws, CLOSE_PROTOCOL, "bad push");
         const key = pushPrefix + conn.key;
         // Merged rather than written over: a phone re-registers its token on every launch, and
         // that must not hand it a fresh background budget it has already spent.
@@ -522,33 +579,35 @@ export class Room implements DurableObject {
       // The Mac, beside a sealed frame: something of this class happened over there. The frame
       // itself has already gone out; this is only the wake-up for whoever did not catch it.
       case "notify": {
-        if (conn.role !== "mac") return ws.close(CLOSE_PROTOCOL, "not registered");
+        if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
         const notify = parseNotify(msg);
-        if (!notify) return ws.close(CLOSE_PROTOCOL, "bad notify");
+        if (!notify) return this.drop(ws, CLOSE_PROTOCOL, "bad notify");
         return await this.wake(notify, now);
       }
 
       case "frame": {
-        if (!conn.role || !conn.key) return ws.close(CLOSE_PROTOCOL, "not joined");
+        if (!conn.role || !conn.key) return this.drop(ws, CLOSE_PROTOCOL, "not joined");
         const frame = parseFrame(msg);
-        if (!frame) return ws.close(CLOSE_BAD_SIGNATURE, "unsigned frame");
+        if (!frame) return this.drop(ws, CLOSE_BAD_SIGNATURE, "unsigned frame");
         if (!(await this.verify(frame.payload, frame.sig, conn.key))) {
-          return ws.close(CLOSE_BAD_SIGNATURE, "bad frame signature");
+          return this.drop(ws, CLOSE_BAD_SIGNATURE, "bad frame signature");
         }
-        if (!allowFrame(this.bucket, now)) return ws.close(CLOSE_RATE_LIMIT, "rate limit");
+        if (!allowFrame(this.bucket, now)) return this.drop(ws, CLOSE_RATE_LIMIT, "rate limit");
 
         if (conn.role === "phone") {
           const mac = this.mac();
           if (mac) send(mac, raw);
           else await this.buffer(raw, now);
         } else {
+          // Not buffered: a phone that is away catches up by asking the Mac on its next join,
+          // which holds the whole history. The relay is only ever the fast path down.
           for (const phone of this.sockets("phone")) send(phone, raw);
         }
         return;
       }
 
       default:
-        return ws.close(CLOSE_PROTOCOL, "unknown type");
+        return this.drop(ws, CLOSE_PROTOCOL, "unknown type");
     }
   }
 }

@@ -153,13 +153,44 @@ test("buffers frames while the mac is offline and drains them in order", async (
   for (const payload of payloads) await frame(phone, payload, phoneKeys);
 
   const reconnected = await connectMac(macKeys);
+  let last = -1;
   for (const payload of payloads) {
-    expect(await reconnected.next()).toMatchObject({ type: "frame", payload });
+    const replayed = await reconnected.next();
+    expect(replayed).toMatchObject({ type: "frame", payload });
+    // Each replayed frame names its place in the buffer, which is what the ack refers to.
+    expect(replayed.seq).toBe(last + 1);
+    last = replayed.seq;
   }
-  // Drained, not replayed: a second registration finds an empty buffer.
+
+  // Sent, not delivered: a Mac that goes away without acking sees the frames again, because
+  // a send onto a socket that was about to die must not count.
+  reconnected.ws.close();
+  const again = await connectMac(macKeys);
+  for (const payload of payloads) {
+    expect(await again.next()).toMatchObject({ type: "frame", payload });
+  }
+
+  // Acked, and only then let go: the next registration replays nothing ahead of a live frame.
+  again.send({ type: "ack", seq: last });
+  again.ws.close();
   const third = await connectMac(macKeys);
-  await frame(third, "YWZ0ZXI", macKeys);
-  expect(await phone.next()).toMatchObject({ type: "owner", online: true });
+  await frame(third, "bGF0ZXI", macKeys);
+  // The phone also hears the owner go and come back around each Mac socket.
+  let msg = await phone.next();
+  while (msg.type === "owner") msg = await phone.next();
+  expect(msg).toMatchObject({ type: "frame", payload: "bGF0ZXI" });
+});
+
+test("only the room's mac may ack, and a malformed ack closes the socket", async () => {
+  const macKeys = await keypair();
+  const mac = await connectMac(macKeys);
+  const { phone } = await connectPhone(await roomId(macKeys.pub), await mintToken(mac));
+  await phone.next(); // joined
+
+  phone.send({ type: "ack", seq: 0 });
+  expect(await phone.closed()).toBe(4001);
+  mac.send({ type: "ack", seq: "zero" });
+  expect(await mac.closed()).toBe(4001);
 });
 
 test("join tokens are one-time", async () => {

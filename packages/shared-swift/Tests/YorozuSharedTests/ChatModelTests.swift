@@ -118,6 +118,12 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
     await transport.releaseFirst()
 }
 
+/// What pairing itself puts on the wire before a test sends anything: pull is truth, so every
+/// join asks for the thread list, a sync, the devices and the rules rather than trusting what
+/// was last pushed. Tests that count sends start from here.
+private let pairingSends = 4
+private let pairingKinds: Set<YorozuEvent.Kind> = [.threadList, .syncRequest, .deviceList, .ruleList]
+
 /// A model with a live link behind it: paired and the Mac awake. Anything less and a send goes
 /// to the outbox instead of to the transport, which is what ``OutboxTests`` is about.
 @MainActor
@@ -140,7 +146,7 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     model.react(to: "m1", with: "👍", in: "home")
     #expect(model.reactions(to: "m1", in: "home").isEmpty)
 
-    let emitted = await sent(by: transport, atLeast: 3).filter { if case .reaction = $0.payload { true } else { false } }
+    let emitted = await sent(by: transport, atLeast: pairingSends + 2).filter { if case .reaction = $0.payload { true } else { false } }
     #expect(emitted.count == 2)
     if case .reaction(let last) = emitted.last?.payload { #expect(last.remove == true) }
 }
@@ -377,7 +383,7 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
 
     model.markAllRead()
     #expect(model.unreadCount == 0)
-    let reads = await sent(by: transport, atLeast: 2).filter { $0.payload.kind == .threadRead }
+    let reads = await sent(by: transport, atLeast: pairingSends + 1).filter { $0.payload.kind == .threadRead }
     #expect(reads.map(\.threadId) == ["unread"])
 }
 
@@ -469,16 +475,11 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     model.answer("a1", in: "home", .always)
     #expect(model.answered.contains("a1"))
 
-    var tries = 0
-    while await transport.sent.count < 3, tries < 300 {
-        try? await Task.sleep(for: .milliseconds(10))
-        tries += 1
-    }
-    let sent = await transport.sent
+    let sent = await sent(by: transport, atLeast: pairingSends + 2)
     // Pairing asks for everything this device has not seen, and the typed message and the answer
     // follow it. Each goes out in a task of its own, so which lands first is not fixed — every
     // one of them carries its own ids, and the runtime matches on those rather than on order.
-    #expect(Set(sent.map(\.payload.kind)) == [.syncRequest, .message, .approvalAnswer])
+    #expect(Set(sent.map(\.payload.kind)) == pairingKinds.union([.message, .approvalAnswer]))
     #expect(sent.allSatisfy { $0.agentId == "mac" })
     let messages = sent.compactMap { event -> MessageData? in
         guard case .message(let data) = event.payload else { return nil }
@@ -512,12 +513,7 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     model.send("hi", in: second.id)
     #expect(model.draft == nil)
     #expect(model.threads.map(\.id) == [second.id])
-    var tries = 0
-    while await transport.sent.count < 2, tries < 300 {
-        try? await Task.sleep(for: .milliseconds(10))
-        tries += 1
-    }
-    let sent = await transport.sent
+    let sent = await sent(by: transport, atLeast: pairingSends + 2)
     #expect(sent.filter { $0.payload.kind == .threadCreate }.map(\.threadId) == [second.id])
     #expect(sent.filter { $0.payload.kind == .message }.map(\.threadId) == [second.id])
     // And discarding it now is a no-op: it is a real thread, not a draft, any more.
@@ -646,7 +642,7 @@ private func summary(
     model.send("hi", in: "home")
     model.interrupt(in: "home")
     #expect(!model.generating.contains("home"))
-    #expect(await sent(by: transport, atLeast: 3).contains { $0.payload.kind == .interrupt })
+    #expect(await sent(by: transport, atLeast: pairingSends + 2).contains { $0.payload.kind == .interrupt })
 }
 
 @MainActor
@@ -658,7 +654,7 @@ private func summary(
     model.send("change course", in: "home")
 
     #expect(model.generating.contains("home"))
-    let messages = await sent(by: transport, atLeast: 3).filter { $0.payload.kind == .message }
+    let messages = await sent(by: transport, atLeast: pairingSends + 2).filter { $0.payload.kind == .message }
     #expect(messages.count == 2)
 }
 
@@ -690,9 +686,9 @@ private func summary(
 
     #expect(model.attachments["home"] == nil)
     #expect(model.drafts["home"] == "")
-    // Two: pairing's own `sync_request` went first, and the message is behind it.
+    // Pairing's own requests went first, and the message is behind them.
     let message = try #require(
-        await sent(by: transport, atLeast: 2).first { $0.payload.kind == .message }
+        await sent(by: transport, atLeast: pairingSends + 1).first { $0.payload.kind == .message }
     )
     guard case .message(let data) = message.payload else {
         Issue.record("not a message")
@@ -765,14 +761,14 @@ private func summary(
     // Applied here and now, so the caption and the tick move under the tap rather than a round
     // trip later, and sent for the runtime to persist.
     #expect(model.threads[0].model == "codex/gpt-5.6")
-    // Pairing already sent a `sync_request`, so it is the next one that is the pick.
-    let picked = await sent(by: transport, atLeast: 2)
+    // Pairing already sent its own requests, so it is the next one that is the pick.
+    let picked = await sent(by: transport, atLeast: pairingSends + 1)
     #expect(picked.last?.threadId == "t1")
     #expect(picked.last?.payload == .threadSetModel(ThreadSetModelData(model: "codex/gpt-5.6")))
 
     model.setModel(model.threads[0], nil)
     #expect(model.threads[0].model == nil)
-    let cleared = await sent(by: transport, atLeast: 3)
+    let cleared = await sent(by: transport, atLeast: pairingSends + 2)
     #expect(cleared.last?.payload == .threadSetModel(ThreadSetModelData(model: nil)))
 }
 
@@ -785,8 +781,8 @@ private func summary(
     let model = await connected(transport)
     let draft = model.newDraft()
 
-    // Pairing's own `sync_request` is all that has gone out so far.
-    let before = await transport.sent.count
+    // Pairing's own requests are all that has gone out so far.
+    let before = await sent(by: transport, atLeast: pairingSends).count
 
     model.setModel(draft, "claude/claude-opus-5")
     #expect(model.draft?.model == "claude/claude-opus-5")
@@ -809,11 +805,11 @@ private func summary(
 
     model.setEffort(model.threads[0], .high)
     #expect(model.threads[0].effort == .high)
-    let picked = await sent(by: transport, atLeast: 2)
+    let picked = await sent(by: transport, atLeast: pairingSends + 1)
     #expect(picked.last?.payload == .threadSetEffort(ThreadSetEffortData(effort: .high)))
 
     let draft = model.newDraft()
-    let before = await transport.sent.count
+    let before = await sent(by: transport, atLeast: pairingSends + 1).count
     model.setEffort(draft, .low)
     #expect(model.draft?.effort == .low)
     #expect(await transport.sent.count == before)
@@ -826,7 +822,7 @@ private func summary(
 @Test func approvalSettingsAreRequestedAndUpdatedAcrossTheWire() async throws {
     let transport = FakeTransport()
     let model = await connected(transport)
-    let before = await transport.sent.count
+    let before = await sent(by: transport, atLeast: pairingSends).count
 
     model.requestApprovalSettings()
     var events = await sent(by: transport, atLeast: before + 1)

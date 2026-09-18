@@ -9,6 +9,7 @@ import {
   dropCount,
   evictions,
   newBucket,
+  parseAck,
   parseDevices,
   parseFrame,
   parseJoin,
@@ -43,10 +44,17 @@ function verifySignature(data: string, signature: string, key: KeyObject): boole
   }
 }
 
-type Buffered = { raw: string; bytes: number; at: number };
+type Buffered = { raw: string; bytes: number; at: number; seq: number };
+
+/** One line per socket event, the same shape as the Worker's, so both relays read alike. */
+function log(ev: string, fields: Record<string, unknown> = {}): void {
+  console.log(JSON.stringify({ ev, ...fields }));
+}
 
 type Room = {
   mac: WebSocket | null;
+  /** Next buffer sequence number; never reused, so an ack cannot name a later frame. */
+  seq: number;
   phones: Set<WebSocket>;
   /** token -> expiry epoch ms. Deleted on use: one-time. */
   tokens: Map<string, number>;
@@ -71,6 +79,7 @@ type Conn = {
 function newRoom(now: number): Room {
   return {
     mac: null,
+    seq: 0,
     phones: new Set(),
     tokens: new Map(),
     devices: new Map(),
@@ -86,11 +95,15 @@ function remember(room: Room, pubkey: string, now: number): void {
 }
 
 function trimBuffer(room: Room, now: number): void {
-  room.buffer.splice(0, dropCount(room.buffer, now));
+  const drop = dropCount(room.buffer, now);
+  if (drop > 0) {
+    log("buffer-trim", { dropped: drop, kept: room.buffer.length - drop });
+    room.buffer.splice(0, drop);
+  }
 }
 
 function bufferFrame(room: Room, raw: string, now: number): void {
-  room.buffer.push({ raw, bytes: Buffer.byteLength(raw), at: now });
+  room.buffer.push({ raw, bytes: Buffer.byteLength(raw), at: now, seq: room.seq++ });
   trimBuffer(room, now);
 }
 
@@ -104,10 +117,22 @@ function notifyOwner(room: Room, online: boolean): void {
   for (const phone of room.phones) phone.send(raw);
 }
 
+/**
+ * Replays the buffer, each frame tagged with its sequence, and keeps it until the Mac acks:
+ * a send onto a socket that is about to die is not a delivery. The runtime is idempotent on
+ * event id, so a Mac that reconnects without acking harmlessly sees the frames again.
+ */
 function drainBuffer(room: Room, mac: WebSocket, now: number): void {
   trimBuffer(room, now);
-  for (const entry of room.buffer) mac.send(entry.raw);
-  room.buffer = [];
+  if (room.buffer.length === 0) return;
+  log("drain", { count: room.buffer.length });
+  for (const entry of room.buffer) {
+    mac.send(JSON.stringify({ ...(JSON.parse(entry.raw) as object), seq: entry.seq }));
+  }
+}
+
+function ackBuffer(room: Room, seq: number): void {
+  room.buffer = room.buffer.filter((entry) => entry.seq > seq);
 }
 
 export type Relay = { port: number; close: () => Promise<void> };
@@ -204,9 +229,18 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           conn.roomId = id;
           conn.key = key;
           ws.send(JSON.stringify({ type: "registered", roomId: id }));
+          log("registered", { phones: room.phones.size });
           notifyOwner(room, true);
           drainBuffer(room, ws, now);
           return;
+        }
+
+        // The Mac has handled the replayed frames up to this sequence number.
+        case "ack": {
+          if (conn.role !== "mac" || !conn.room) return ws.close(CLOSE_PROTOCOL, "not registered");
+          const ack = parseAck(msg);
+          if (!ack) return ws.close(CLOSE_PROTOCOL, "bad ack");
+          return ackBuffer(conn.room, ack.seq);
         }
 
         case "mint": {
@@ -308,6 +342,8 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
             if (conn.room.mac) conn.room.mac.send(raw);
             else bufferFrame(conn.room, raw, now);
           } else {
+            // Not buffered: a phone that is away catches up by asking the Mac on its next
+            // join, which holds the whole history. The relay is only ever the fast path down.
             for (const phone of conn.room.phones) phone.send(raw);
           }
           return;
@@ -330,8 +366,9 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
       }
     });
 
-    ws.on("close", () => {
+    ws.on("close", (code, reason) => {
       const { room, roomId: id } = conn;
+      log("close", { role: conn.role, code, reason: reason.toString() });
       if (!room || !id) return;
       if (room.mac === ws) {
         room.mac = null;

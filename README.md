@@ -145,9 +145,14 @@ The relay forwards ciphertext between Mac and phone and can read none of it. Roo
 `base64url(sha256(macPublicKey))`. The Mac registers by signing a server-issued nonce with its
 Ed25519 key, then mints one-time join tokens (10 minute TTL) that the phone redeems with a
 signature over the token. Every frame carries a signature from the sender's registered key;
-unsigned or mis-signed frames close the connection. While the Mac is offline, frames are buffered
-per room (24h TTL, 5 MB cap, oldest dropped first) and drained in order on reconnect. Each room
-is rate limited to 60 frames per second.
+unsigned or mis-signed frames close the connection. While the Mac is offline, phone frames are
+buffered per room (24h TTL, 5 MB cap, oldest dropped first) and replayed in order on reconnect,
+each tagged with a `seq` the Mac acks (`{"type":"ack","seq"}`) once handled; an unacked frame is
+replayed to the next registration rather than lost. Mac frames are never buffered: the phone
+treats the socket as a fast path only, and on every join asks the Mac for the thread list, a
+sync, the devices and the rules, so nothing depends on the socket having been up. Each room is
+rate limited to 60 frames per second. Both relays log one JSON line per socket event
+(`registered`, `joined`, `close`, `drop`, `drain`, `buffer-trim`, `apns`) with no payloads or keys.
 
 Clients pass the room as `?room=<roomId>` on the websocket URL. The room only appears on the wire
 inside `register`/`join`, which is too late for a relay that must route the socket before reading

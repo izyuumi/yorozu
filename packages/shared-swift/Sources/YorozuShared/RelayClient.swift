@@ -80,6 +80,9 @@ public actor RelayClient: ChatTransport {
     private static let maxBackoff: Double = 30
     /// The relay keeps a socket that is talking; nothing else on an idle phone would.
     private static let pingInterval: Duration = .seconds(30)
+    /// A ping the relay does not answer within this is a socket that is open in name only —
+    /// the phone slept, the network changed — and the receive loop would never find out.
+    private static let pongDeadline: Duration = .seconds(10)
 
     private let pairing: QrPayload
     private let identity: PhoneIdentity
@@ -107,6 +110,7 @@ public actor RelayClient: ChatTransport {
     private var loop: Task<Void, Never>?
     private var backoff: Task<Void, Never>?
     private var pinger: Task<Void, Never>?
+    private var pongDeadline: Task<Void, Never>?
 
     /// Throws if the QR payload is not usable: a bad relay URL, a missing room, or a Mac
     /// public key the session key cannot be agreed from.
@@ -172,9 +176,11 @@ public actor RelayClient: ChatTransport {
 
     /// Dials again now instead of waiting out the backoff — the app came back to the
     /// foreground, where a socket dropped while it was suspended is worth nothing. A socket
-    /// that is joined is left alone.
+    /// that still says it is joined is dropped too: iOS can suspend the app with the socket
+    /// half-open, and from here that is indistinguishable from a healthy quiet one. One
+    /// redial and a sync costs less than sitting on a dead socket until the pong deadline.
     public func reconnect() {
-        guard !stopped, !joined else { return }
+        guard !stopped else { return }
         attempt = 0
         backoff?.cancel()
         socket?.cancel()
@@ -183,6 +189,7 @@ public actor RelayClient: ChatTransport {
     public func close() {
         stopped = true
         pinger?.cancel()
+        pongDeadline?.cancel()
         backoff?.cancel()
         loop?.cancel()
         socket?.cancel(with: .goingAway, reason: nil)
@@ -204,6 +211,7 @@ public actor RelayClient: ChatTransport {
             socket.resume()
             await receiveLoop(socket)
             pinger?.cancel()
+            pongDeadline?.cancel()
             guard !stopped else { return }
             // 1s, 2s, 4s … capped, and back to 1s after a join that stuck.
             let delay = min(Self.maxBackoff, pow(2, Double(attempt)))
@@ -219,6 +227,10 @@ public actor RelayClient: ChatTransport {
     ///
     /// It is a `{"type":"ping"}` message rather than a websocket ping frame because that is what
     /// the relay answers at its edge, leaving the room itself hibernated.
+    ///
+    /// Each ping arms a deadline that the pong disarms. A missed one cancels the socket, which
+    /// ends the receive loop and lets the reconnect loop dial afresh — the only way a phone can
+    /// tell a half-open socket from an idle one.
     private func startPings() {
         pinger?.cancel()
         pinger = Task {
@@ -228,8 +240,26 @@ public actor RelayClient: ChatTransport {
                 // A send that throws means the socket is already gone, and the receive loop is
                 // the one that reports that; there is nothing useful to do with it here.
                 try? await self.send(["type": "ping"])
+                self.armPongDeadline()
             }
         }
+    }
+
+    private func armPongDeadline() {
+        guard pongDeadline == nil else { return }
+        let socket = self.socket
+        pongDeadline = Task {
+            try? await Task.sleep(for: Self.pongDeadline)
+            guard !Task.isCancelled else { return }
+            await self.pongMissed(on: socket)
+        }
+    }
+
+    private func pongMissed(on socket: URLSessionWebSocketTask?) {
+        pongDeadline = nil
+        guard !stopped, let socket, socket === self.socket else { return }
+        updates?.yield(.failed("relay stopped answering"))
+        socket.cancel()
     }
 
     /// Seals `event` under the session key and sends it as one signed frame.
@@ -287,6 +317,9 @@ public actor RelayClient: ChatTransport {
             // Where to wake this device, said again: this may be a room that has never heard
             // of us — a redeployed relay, an evicted object — and there is no way to tell.
             Task { await self.sendPush() }
+        case "pong":
+            pongDeadline?.cancel()
+            pongDeadline = nil
         case "owner":
             updates?.yield(.ownerOnline(message.online ?? false))
         case "frame":

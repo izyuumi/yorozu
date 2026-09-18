@@ -55,9 +55,37 @@ test("buffers frames while the mac is offline and drains them in order", async (
   await sleep(50);
 
   const reconnected = await connectMac(relay.port, macKeys);
+  let last = -1;
   for (const payload of payloads) {
-    expect(await reconnected.next()).toMatchObject({ type: "frame", payload });
+    const replayed = await reconnected.next();
+    expect(replayed).toMatchObject({ type: "frame", payload });
+    expect(replayed.seq).toBe(last + 1);
+    last = replayed.seq;
   }
+
+  // Sent, not delivered: a Mac that goes away without acking sees the frames again.
+  reconnected.ws.close();
+  await reconnected.closed;
+  await sleep(50);
+  const again = await connectMac(relay.port, macKeys);
+  for (const payload of payloads) {
+    expect(await again.next()).toMatchObject({ type: "frame", payload });
+  }
+
+  // Acked, and only then let go.
+  again.send({ type: "ack", seq: last });
+  await sleep(50);
+  again.ws.close();
+  await again.closed;
+  await sleep(50);
+  const third = await connectMac(relay.port, macKeys);
+  const down = Buffer.from("later").toString("base64");
+  third.send({ type: "frame", payload: down, sig: signChallenge(down, macKeys.priv) });
+  // Nothing replayed ahead of the live frame: the phone's next message is the live one.
+  // (The phone also hears the owner go and come back around each Mac socket.)
+  let msg = await phone.next();
+  while (msg.type === "owner") msg = await phone.next();
+  expect(msg).toMatchObject({ type: "frame", payload: down });
 });
 
 test("join tokens are one-time", async () => {
