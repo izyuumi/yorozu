@@ -442,6 +442,39 @@ test.each<[string, Partial<Action>]>([
   expect(cardFor("a1", action).suggestedRule).toBeUndefined();
 });
 
+test("visiting a URL is allowed by default, fenced by a never rule, and asked about when it acts on arrival", () => {
+  const visit = (target: string): Action => ({ actionClass: "visit-url", target, operation: "run" });
+
+  // No rule at all: reading a page is not worth a card.
+  expect(decide(visit("https://example.com/article"), settings(), dir).verdict).toBe("allow");
+  expect(needsFreshConfirmation(visit("https://example.com/article"))).toBe(false);
+
+  // A never rule on a host fences it off, as it does for any class.
+  const fenced = settings({
+    rules: [rule({ actionClass: "visit-url", decision: "never", scope: { target: { mode: "glob", value: "https://evil.example/*" } } })],
+  });
+  expect(decide(visit("https://evil.example/anything"), fenced, dir).verdict).toBe("deny");
+  expect(decide(visit("https://example.com/article"), fenced, dir).verdict).toBe("allow");
+
+  // A URL that looks like it commits on arrival asks fresh, past any allow rule and past YOLO.
+  const wide = settings({ yolo: true, rules: [rule({ actionClass: "visit-url", decision: "always" })] });
+  for (const url of [
+    "https://mail.example/confirm/abc",
+    "https://shop.example/unsubscribe?u=1",
+    "https://app.example/login?token=xyz",
+    "https://app.example/x?code=123456",
+    "https://app.example/magic",
+  ]) {
+    expect(needsFreshConfirmation(visit(url)), url).toBe(true);
+    expect(hitsFloor(visit(url), wide, dir), url).toBe(true);
+    expect(decide(visit(url), wide, dir).verdict, url).toBe("ask");
+  }
+  // Ordinary reads with those words merely in the path or host do not.
+  for (const url of ["https://example.com/blog/login-flows-explained", "https://auth-docs.example/"]) {
+    expect(needsFreshConfirmation(visit(url)), url).toBe(false);
+  }
+});
+
 test("an ordinary purchase is not one of those, and says so on the card", () => {
   const action: Action = {
     actionClass: "purchase",

@@ -17,6 +17,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import WebSocket from "ws";
 import { hashContent, summarize, verifyApproved } from "../approval.js";
+import { visitAction } from "./fetch.js";
 import type { Tool } from "../index.js";
 import { stateDir } from "../memory.js";
 
@@ -418,6 +419,8 @@ export const browserOpenTool: Tool = {
   description:
     "Open a URL in the agent's own browser profile and return the tab ID. Never touches " +
     "the user's own tabs.",
+  actionClass: "visit-url",
+  action: ({ url }) => visitAction(url),
   parameters: {
     type: "object",
     properties: { url: { type: "string" } },

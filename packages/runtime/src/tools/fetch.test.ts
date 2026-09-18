@@ -159,8 +159,13 @@ test("the schema is the one argument the model must supply, and a call without i
   };
   expect(required).toEqual(["url"]);
   expect(Object.keys(properties)).toEqual(["url"]);
-  // Reading a page has no effect outside the runtime, so there is no approval card.
-  expect(fetchTool.actionClass).toBeUndefined();
+  // A GET is a read until the server decides otherwise, so visiting is a class of its own:
+  // allowed by default, and asked about fresh when the URL looks like it acts on arrival.
+  expect(fetchTool.actionClass).toBe("visit-url");
+  expect(fetchTool.action!({ url: "https://example.com/post" })).toMatchObject({
+    target: "https://example.com/post",
+    operation: "run",
+  });
 
   await expect(Promise.resolve(fetchTool.run({}))).rejects.toThrow(
     "fetch: url must be http or https",

@@ -45,7 +45,7 @@ Version 1.5 makes remote work dependable without changing Yorozu's local-first, 
 27. As a user, I want capped routine purchases to use reusable merchant or category rules, so that low-risk shopping can be automated.
 28. As a user, I want subscriptions, transfers, securities trades, and crypto transactions to require final confirmation, so that consequential financial actions remain deliberate.
 29. As a user, I want changed price, quantity, recipient, or account details to invalidate approval, so that I approve the transaction actually submitted.
-30. As a user, I want independent branches to continue while another branch awaits approval, so that one commit gate does not freeze the task.
+30. As a user, I want the whole turn to pause while an approval is pending, so that nothing lands while I am reading the card. (Revised 2026-09-18: replaces "independent branches continue"; with approvals answerable from the lock screen the wait is seconds, and a paused world is easier to trust.)
 31. As a user, I want an audit trail showing which rule authorized each automatic action, so that I can understand and revoke behavior.
 32. As an iPhone user, I want Apple's native dictation to work in the composer, so that voice entry is available without a custom service or fee.
 
@@ -71,14 +71,15 @@ Version 1.5 makes remote work dependable without changing Yorozu's local-first, 
 - Any change to price, quantity, recipient, account, or batch membership invalidates the applicable approval.
 - Approval cards describe the concrete commit payload and consequences, not underlying browser or tool mechanics.
 - A batch approval is bound to the exact displayed item set. It cannot authorize later additions or mutations.
-- A pending approval suspends only its dependent execution branch. Independent safe work continues.
+- A pending approval suspends the turn. Nothing else executes until the card is answered.
+- Visiting a URL (`fetch`, `browser.open`) is its own action class, `visit-url`: allowed by default, fenceable by a `never` rule, and always confirmed fresh when the URL itself looks like it acts on arrival (a token or code in the query, or a confirm/verify/unsubscribe/activate/reset/magic/login/auth path).
 - Every decision and automatic execution records actor, action class, structured scope, matched rule, reason, timestamp, and outcome without secrets.
 - Use the native iOS text-input dictation path only. No microphone capture, transcription model, audio storage, or third-party voice service is added.
 
 ## Testing Decisions
 
 - Test externally observable behavior at existing high seams; do not introduce a new test framework.
-- Runtime integration tests exercise a full turn with an existing summary plus recent messages, a Codex MCP tool call through the runtime dispatcher, structured approval evaluation, exact batches, rule proposals, and continuation of an independent branch while approval is pending.
+- Runtime integration tests exercise a full turn with an existing summary plus recent messages, a Codex MCP tool call through the runtime dispatcher, structured approval evaluation, exact batches, rule proposals, and the `visit-url` default, fence and fresh-confirmation cases.
 - Thread tests prove summary boundaries never omit or duplicate messages, old summaries rebuild, transcript truth survives failed generation, and recent messages remain verbatim.
 - Approval tests cover specificity, deny-on-tie, global use across delegated agents, persistent rules, proposal-without-auto-activation, financial floors, mutated transactions, batch binding, audit records, and revocation.
 - Relay tests prove a registered device receives an opaque wake event, revoked devices do not, and payloads expose no conversation or approval content.

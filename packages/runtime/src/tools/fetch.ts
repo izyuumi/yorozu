@@ -9,6 +9,7 @@
  *
  * See docs/spec-v1.html section 3.
  */
+import { looksCommitting } from "../approval.js";
 
 import type { Tool } from "../index.js";
 import { MAX_OUTPUT, truncate } from "./shell.js";
@@ -115,11 +116,30 @@ export async function fetchReadable(url: string, max = MAX_OUTPUT): Promise<Page
   };
 }
 
+/**
+ * A GET is a read until the server decides otherwise: a magic link logs in, an unsubscribe
+ * link unsubscribes, a confirmation link confirms. So visiting a URL is an action with a
+ * class — allowed by default, fenceable by a `never` rule on a host, and asked about fresh
+ * when the URL itself looks like it commits on arrival.
+ */
+export const visitAction = (url: unknown): { target: string; operation: "run"; consequence: string } => {
+  const target = String(url ?? "").trim();
+  return {
+    target,
+    operation: "run",
+    consequence: looksCommitting(target)
+      ? "Opens a URL that looks like it acts on arrival — a login, confirmation or unsubscribe link."
+      : "Reads a web page in the agent's own browser profile.",
+  };
+};
+
 export const fetchTool: Tool = {
   name: "fetch",
   description:
     "Fetch a URL and return it as readable text: the page title and its main content, with " +
     "scripts, styles and navigation stripped. Use this to read a page, not browser.open.",
+  actionClass: "visit-url",
+  action: ({ url }) => visitAction(url),
   parameters: {
     type: "object",
     properties: { url: { type: "string", description: "An http or https URL." } },

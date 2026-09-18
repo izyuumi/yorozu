@@ -206,9 +206,11 @@ test("every browser tool is exposed with a tabId-shaped schema", async () => {
     ["tabId", "js"],
     ["tabId"],
   ]);
-  // Reads and tab lifecycle stay local. Page interaction can submit external state, so it gates.
+  // Opening a URL is a visit, allowed by default but fenceable and asked about when the URL
+  // itself acts on arrival. Snapshot and tab lifecycle stay local. Page interaction can submit
+  // external state, so it gates every time.
   expect(browserTools.map((t) => t.actionClass)).toEqual([
-    undefined,
+    "visit-url",
     undefined,
     "interact-web",
     "interact-web",

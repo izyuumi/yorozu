@@ -671,9 +671,13 @@ and `run.sh` waits for the phone to log `YOROZU-E2E-TOOL echo` beside the stream
 
 Every tool with an effect outside the runtime declares an `actionClass` — the spec's list:
 `send-message`, `purchase`, `delete-file`, `book`, `transfer-money`, `run-command`,
-`edit-file`, `interact-web`, `edit-calendar`, `edit-reminder`. Browser click/type/eval and the
-Calendar/Reminders mutations use their distinct classes so an older broad shell/file rule cannot
-authorize them. Their read-only siblings stay undeclared and ungated.
+`edit-file`, `interact-web`, `interact-app`, `edit-calendar`, `edit-reminder`, `visit-url`.
+Browser click/type/eval and the Calendar/Reminders mutations use their distinct classes so an
+older broad shell/file rule cannot authorize them. `fetch` and `browser.open` carry `visit-url`:
+the one class allowed by default, because a GET is a read until the server decides otherwise —
+a `never` rule fences a host, and a URL that looks like it acts on arrival (a token or code in
+the query; a confirm/verify/unsubscribe/activate/reset/magic/login/auth path) is confirmed fresh
+past any rule and past YOLO. Snapshot, search and the other read-only siblings stay ungated.
 
 Alongside it each tool carries an extractor that turns the call's arguments into the
 **structured scope** of the action: the `target` and whichever of `operation`, `recipient`,
@@ -716,8 +720,10 @@ something and what to revoke to stop it.
 Asking means the sidecar emits an `approval_card` to every paired device and parks that tool
 call until an `approval_answer` carrying the `actionId` comes back. Unanswered after ten minutes
 it resolves as a refusal rather than hanging the turn, and an interrupt settles any card still
-on screen. **A pending card only parks its own branch**: the loop starts every tool call in a
-turn together, so independent work carries on while one of them waits.
+on screen. **A pending card parks the whole turn**: tool calls run one after another in the
+order the model asked, so nothing lands while a card is being read. (Until 2026-09-18 the loop
+started every call together and only the gated one waited; with approvals answerable from the
+lock screen the wait is seconds, and a paused world is the easier one to trust.)
 
 There are three ways to say yes:
 
