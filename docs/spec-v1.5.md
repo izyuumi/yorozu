@@ -61,6 +61,7 @@ Version 1.5 makes remote work dependable without changing Yorozu's local-first, 
 - Register APNs device tokens through the encrypted paired channel. Store token ownership per paired device and remove it when that device is revoked.
 - Push payloads contain opaque routing identifiers and event class only. Message text, tool arguments, approval details, and summaries remain end-to-end encrypted and absent from relay-visible payloads.
 - Notification classes are reply, approval-required, task-complete, and task-failed. Tapping routes to the exact thread and, when relevant, approval card.
+- An approval-required notification carries Allow / Don't allow actions only when the action is below every safety floor and commits nothing external (no message, purchase, booking or transfer); otherwise its only action is Review, which opens the card. A button answer is the same `approval_answer` the card sends. Approvals also wake the app silently so the card is cached before the button is pressed.
 - Approval rules are global across agents and match structured action scope rather than agent identity or chat prose.
 - Supported decisions are allow once, allow for bounded task, always allow under an explicit rule, deny once, and persistent deny.
 - Reusable external-action rules must be narrowly scoped. Blanket authorization across every external action is unsupported.

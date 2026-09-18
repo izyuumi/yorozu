@@ -1246,8 +1246,11 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
       baseUrl: "https://example.invalid",
       model: "m",
       fetch: vi.fn<typeof fetch>().mockImplementation(async () => {
-        if (turn++ === 0) return sse("the secret reply");
-        throw new Error("provider unavailable");
+        const n = turn++;
+        if (n === 0) return sse("the secret reply");
+        if (n === 1) throw new Error("provider unavailable");
+        // A command, which is gated and local: the card it raises is quick-approvable.
+        return shellTurn("echo yorozu-lockscreen");
       }),
     }),
     log: (line) => {
@@ -1311,11 +1314,28 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   );
   await vi.waitFor(() => expect(seen.map((msg) => msg.class)).toContain("failed"));
 
+  // An approval for something local and below every floor may be answered from the lock
+  // screen, and the relay is told so with one bit. The command itself is not in the notify.
+  const gated: YorozuEvent = {
+    ...sent,
+    id: "e3",
+    ts: 3,
+    data: { role: "user", text: "run the secret script" },
+  };
+  const gatedBox = seal(sessionKey, Buffer.from(JSON.stringify(gated)));
+  phone.frame(
+    encodeBody({ t: "box", n: toBase64Url(gatedBox.nonce), c: toBase64Url(gatedBox.ciphertext) }),
+    keys,
+  );
+  await vi.waitFor(() => expect(seen.map((msg) => msg.class)).toContain("approval"));
+  expect(seen.find((msg) => msg.class === "approval")).toMatchObject({ actions: true });
+
   // The whole side-channel, everything the relay was ever told in the clear. Neither side of
   // the conversation is in it, and neither is the thread it happened in.
   const wire = JSON.stringify(seen);
   expect(wire).not.toContain("secret");
   expect(wire).not.toContain("thread-one");
+  expect(wire).not.toContain("echo");
 
   // `close()` waits on the open sockets, and this test attached a phone to them as well.
   phone.ws.close();

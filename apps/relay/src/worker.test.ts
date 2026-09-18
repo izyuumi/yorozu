@@ -677,6 +677,8 @@ test("a wake-up carries a class and an opaque reference, and nothing of the conv
         alert: { title: "Yorozu", "loc-key": NOTIFY_BODY.approval },
         sound: "default",
         "thread-id": "Ab3-_x9Z",
+        // Which buttons the phone draws: a fixed name, not a word about the action.
+        category: "approval-review",
       },
       ref: "Ab3-_x9Z",
       cls: "approval",
@@ -751,7 +753,9 @@ test("one APNs network failure does not block another phone", async () => {
   mac.send({ type: "notify", class: "approval", threadRef: "Ab3-_x9Z" });
   await macSettled(mac);
 
-  expect(calls).toHaveLength(2);
+  // The first phone's alert failed, which costs it its silent wake too; the second phone
+  // gets both. Three calls, and both tokens were tried.
+  expect(calls).toHaveLength(3);
   expect(new Set(calls.map((url) => url.split("/").at(-1)))).toEqual(
     new Set(["device-token", "device-token-2"]),
   );
@@ -799,14 +803,17 @@ test("a wake-up also nudges the app awake, at most once a minute", async () => {
   expect(calls[4]!.headers.get("apns-push-type")).toBe("background");
 });
 
-test("an approval buzzes without waking the app: it is a question, not history", async () => {
+test("an approval buzzes and wakes the app, so the card is cached before a button is pressed", async () => {
   const calls = fakeApns();
   const { mac, phone } = await paired();
   phone.ws.close();
 
-  // Nothing to catch up on — the answer is given in the app, by a person who has come to it.
-  mac.send({ type: "notify", class: "approval", threadRef: "Ab3-_x9Z" });
+  mac.send({ type: "notify", class: "approval", threadRef: "Ab3-_x9Z", actions: true });
   await macSettled(mac);
-  expect(calls).toHaveLength(1);
+  expect(calls).toHaveLength(2);
   expect(calls[0]!.headers.get("apns-push-type")).toBe("alert");
+  // The Mac's one bit becomes the category the phone draws buttons for; nothing else of the
+  // action is in the payload.
+  expect(calls[0]!.body.aps.category).toBe("approval-quick");
+  expect(calls[1]!.headers.get("apns-push-type")).toBe("background");
 });

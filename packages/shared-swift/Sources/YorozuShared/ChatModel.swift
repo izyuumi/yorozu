@@ -170,6 +170,49 @@ public final class ChatModel {
         return deltas > before
     }
 
+    /// Answers an approval from a notification button, with the app not running: dial, find
+    /// the card the push named, send the answer, wait for it to leave, and hang up.
+    ///
+    /// The push carries only an opaque reference to the card event, so the card itself has to
+    /// be here — from the cache, or from the sync that connecting asks for. Returns false when
+    /// it never turns up, in which case the card stays unanswered and the app shows it.
+    @discardableResult
+    public func answerFromNotification(
+        eventRef: String,
+        _ answer: ApprovalAnswerData.Answer,
+        timeout: Duration = .seconds(20)
+    ) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        if started { reconnect() } else { start() }
+        while state != .paired, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        // Not in the cache: connecting asked for a sync, so give the delta a moment to land.
+        let before = deltas
+        while approvalCard(eventRef: eventRef) == nil, deltas == before, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        defer {
+            close()
+            started = false
+        }
+        guard state == .paired, let (threadId, card) = approvalCard(eventRef: eventRef) else { return false }
+        self.answer(card.actionId, in: threadId, answer)
+        // The send is queued behind everything before it; wait for the queue to drain.
+        await emitter?.value
+        return true
+    }
+
+    /// The approval card whose event id the push referenced, wherever it is.
+    private func approvalCard(eventRef: String) -> (String, ApprovalCardData)? {
+        for (threadId, list) in events {
+            for event in list where YorozuCrypto.threadRef(event.id) == eventRef {
+                if case .approvalCard(let card) = event.payload { return (threadId, card) }
+            }
+        }
+        return nil
+    }
+
     /// Sends what the composer holds — the typed text and any staged file — and empties it.
     public func send(in thread: ThreadSummary) {
         let text = (drafts[thread.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)

@@ -370,6 +370,7 @@ export class Room implements DurableObject {
           notify.threadRef,
           notify.eventRef,
           notify.previews?.[key.slice(pushPrefix.length)],
+          notify.actions === true,
         ),
         pushType: "alert",
       }, now);

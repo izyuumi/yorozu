@@ -122,6 +122,56 @@ private func eventually(_ condition: @Sendable () async -> Bool) async -> Bool {
     #expect(model.events["home"]?.count == 2)
 }
 
+private func card(_ id: String, actionId: String, thread: String = "home") -> YorozuEvent {
+    YorozuEvent(
+        id: id,
+        threadId: thread,
+        ts: 1,
+        agentId: "main",
+        payload: .approvalCard(ApprovalCardData(actionId: actionId, actionClass: "edit-file", target: "notes.md"))
+    )
+}
+
+@MainActor
+@Test func aLockScreenButtonAnswersTheCardThePushNamedAndHangsUp() async throws {
+    let transport = DrainTransport()
+    let model = ChatModel(transport: transport)
+    let ref = YorozuCrypto.threadRef("card-1")
+
+    async let answered = model.answerFromNotification(eventRef: ref, .yes, timeout: .seconds(10))
+    #expect(await eventually { await transport.asked() })
+    // The card was not in the cache: the sync connecting asked for is what brings it.
+    await transport.deliver(delta([card("card-1", actionId: "a-1")]))
+
+    #expect(await answered)
+    let sent = await transport.sent
+    let answer = sent.compactMap { event -> ApprovalAnswerData? in
+        if case .approvalAnswer(let data) = event.payload { return data }
+        return nil
+    }
+    // The same `approval_answer` the card would send, in the card's thread, and then hang up
+    // so iOS suspends the app cleanly.
+    #expect(answer == [ApprovalAnswerData(actionId: "a-1", answer: .yes)])
+    #expect(sent.first { $0.payload.kind == .approvalAnswer }?.threadId == "home")
+    #expect(model.answered.contains("a-1"))
+    #expect(await eventually { await transport.closes == 1 })
+}
+
+@MainActor
+@Test func aLockScreenButtonForACardThatNeverArrivesAnswersNothing() async throws {
+    let transport = DrainTransport()
+    let model = ChatModel(transport: transport)
+
+    let answered = await model.answerFromNotification(
+        eventRef: YorozuCrypto.threadRef("missing"), .no, timeout: .milliseconds(300)
+    )
+
+    // Left for the app to show rather than guessed at: no answer went out.
+    #expect(!answered)
+    #expect(await transport.sent.allSatisfy { $0.payload.kind != .approvalAnswer })
+    #expect(await eventually { await transport.closes == 1 })
+}
+
 @MainActor
 @Test func aDrainNothingAnswersGivesUpAndStillHangsUp() async throws {
     let transport = DrainTransport()
