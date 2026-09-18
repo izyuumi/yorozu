@@ -290,7 +290,7 @@ const twoCallTurn = [
   },
 ];
 
-test("30: a call waiting on approval does not hold up the independent call beside it", async () => {
+test("30: a call waiting on approval holds the whole turn, so nothing lands while the card is read", async () => {
   // The gate writes its decision log, and that must land in a throwaway directory rather than
   // in the real one this machine's Yorozu uses.
   vi.stubEnv("YOROZU_STATE_DIR", mkdtempSync(join(tmpdir(), "yorozu-branch-")));
@@ -335,8 +335,8 @@ test("30: a call waiting on approval does not hold up the independent call besid
       messages: [{ role: "user", content: "mail bob and look something up" }],
       tools: [mailer, reader],
       ask: async () => {
-        // A card is up. Whatever else the turn had to do should be getting on with it, so
-        // this yields the microtask queue a few times rather than answering instantly.
+        // A card is up. Nothing else in the turn may run until it is answered, so this yields
+        // the microtask queue a few times and checks the other call has not started.
         for (let i = 0; i < 5; i++) await Promise.resolve();
         lookedBeforeAnswering = looked;
         return { answer: "yes" };
@@ -344,7 +344,8 @@ test("30: a call waiting on approval does not hold up the independent call besid
     }),
   );
 
-  expect(lookedBeforeAnswering).toBe(true);
+  expect(lookedBeforeAnswering).toBe(false);
+  expect(looked).toBe(true);
   // Both still come back, in the order the model asked for them, so the model reads them the
   // way it wrote them.
   expect(

@@ -293,15 +293,16 @@ export async function* runAgent(
         }
       };
 
-      // Started together rather than one after another: a call parked on an approval card must
-      // not hold up the independent calls beside it, which is the whole of story 30. Only the
-      // gated branch waits. Results are yielded in call order so the model reads them in the
-      // order it asked for them, and an interrupt still stops the lot at the next boundary.
-      const running = options.signal?.aborted ? [] : calls.map(dispatch);
-      for (const [index, pending] of running.entries()) {
-        const result = await pending;
+      // One after another, in the order the model asked. A call parked on an approval card
+      // holds the rest: when Yorozu asks, everything is waiting on the answer, so nothing
+      // lands while the card is being read. (Until 2026-09-18 the calls started together and
+      // only the gated one waited; with approvals answerable from the lock screen the wait is
+      // seconds, and a paused world is the easier one to trust.) An interrupt stops the lot
+      // at the next boundary.
+      for (const call of calls) {
         if (options.signal?.aborted) break;
-        const call = calls[index];
+        const result = await dispatch(call);
+        if (options.signal?.aborted) break;
         yield { type: "tool_result", id: call.id, name: call.name, result };
         history.push({ role: "tool", tool_call_id: call.id, content: result });
       }

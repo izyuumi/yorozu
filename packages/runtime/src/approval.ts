@@ -39,9 +39,27 @@ export const ACTION_CLASSES = [
   "interact-app",
   "edit-calendar",
   "edit-reminder",
+  "visit-url",
 ] as const;
 
 export type ActionClass = (typeof ACTION_CLASSES)[number];
+
+/**
+ * Classes that are allowed unless a rule says otherwise. Every other class asks. Reading a
+ * URL is the one: gating it makes "every network write is gated" true and lets a `never`
+ * rule fence off a host, without a card on every page the agent reads.
+ */
+export const DEFAULT_ALLOW_CLASSES: readonly ActionClass[] = ["visit-url"];
+
+/**
+ * A URL that looks like it commits on arrival: a magic-link login, a one-click unsubscribe,
+ * a confirmation endpoint. A GET like this is an action the server takes on the agent's
+ * behalf, so it is always asked about fresh, whatever the default and whatever rule stands.
+ */
+const COMMITTING_URL =
+  /[?&](token|key|code|auth|otp|sig|signature|nonce|ticket)=|\/(confirm|verify|unsubscribe|activate|reset|magic|login|auth)(\/|\?|#|$)/i;
+
+export const looksCommitting = (url: string): boolean => COMMITTING_URL.test(url);
 
 /** What is being done, independent of which tool does it. */
 export const OPERATIONS = [
@@ -301,11 +319,15 @@ function insideDir(target: string, dir: string): boolean {
  * a recurring charge or a movement of money unattended, because those are the ones a wrong
  * scope is expensive on and the ones the user would want to have seen.
  */
-export function needsFreshConfirmation(action: Pick<Action, "actionClass" | "operation" | "category">): boolean {
+export function needsFreshConfirmation(
+  action: Pick<Action, "actionClass" | "operation" | "category"> & Partial<Pick<Action, "target">>,
+): boolean {
   // Generic browser mechanics cannot prove which real-world commit a page will perform. They
   // therefore never inherit standing authority or YOLO mode: each interaction is approved once.
   if (action.actionClass === "interact-web" || action.actionClass === "interact-app") return true;
   if (action.actionClass === "transfer-money") return true;
+  // Reading a page is routine; a URL that commits on arrival is not, whatever rule stands.
+  if (action.actionClass === "visit-url" && looksCommitting(action.target ?? "")) return true;
   if (action.operation && ALWAYS_CONFIRM_OPERATIONS.includes(action.operation)) return true;
   return ALWAYS_CONFIRM_CATEGORIES.includes((action.category ?? "").toLowerCase());
 }
@@ -387,7 +409,8 @@ export function decide(action: Action, settings: Settings, dir = stateDir()): De
   const denied = mostSpecific.find((rule) => rule.decision === "never");
   if (denied) return { verdict: "deny", ruleId: denied.id };
   const allowed = mostSpecific.find((rule) => rule.decision === "always");
-  return allowed ? { verdict: "allow", ruleId: allowed.id } : { verdict: "ask" };
+  if (allowed) return { verdict: "allow", ruleId: allowed.id };
+  return { verdict: DEFAULT_ALLOW_CLASSES.includes(action.actionClass) ? "allow" : "ask" };
 }
 
 export const decideFromDisk = (action: Action, dir = stateDir()): Decision =>
