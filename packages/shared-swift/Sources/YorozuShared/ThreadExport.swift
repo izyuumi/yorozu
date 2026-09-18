@@ -22,8 +22,36 @@ public func threadMarkdown(
     var lines = ["# \(thread.displayTitle)", "", "*Exported \(now.formatted(stamp))*"]
     for row in chatRows(from: events) {
         switch row {
-        case .thought(let event):
-            if case .thought(let data) = event.payload { lines += ["", "> \(data.text)"] }
+        case .work(let work):
+            for entry in work.entries {
+                switch entry {
+                case .thought(let event):
+                    if case .thought(let data) = event.payload { lines += ["", "> \(data.text)"] }
+                case .tools(let activities):
+                    lines += ["", collapsed(title: toolsTitle(activities), body: activities.map(toolLine))]
+                case .delegation(let card):
+                    let inner = card.events.compactMap { event -> String? in
+                        guard case .message(let data) = event.payload, !data.text.isEmpty else { return nil }
+                        return data.text
+                    }
+                    lines += [
+                        "",
+                        collapsed(
+                            title: "Delegated to \(card.agentId)",
+                            body: inner.isEmpty ? ["*(no reply)*"] : inner
+                        ),
+                    ]
+                case .progress(let event):
+                    guard case .progressCard(let card) = event.payload else { break }
+                    lines += [
+                        "",
+                        collapsed(
+                            title: card.title,
+                            body: card.steps.map { "- \($0.label) — \($0.state.rawValue)" }
+                        ),
+                    ]
+                }
+            }
         case .message(let event):
             guard case .message(let data) = event.payload else { break }
             lines += ["", "## \(data.role == .user ? "You" : "Yorozu") — \(event.date.formatted(stamp))", ""]
@@ -31,20 +59,6 @@ public func threadMarkdown(
                 lines += ["*Attached: \(attachment.name) (\(attachment.size))*", ""]
             }
             lines.append(data.text.isEmpty ? "*(no text)*" : data.text)
-        case .tools(let activities):
-            lines += ["", collapsed(title: toolsTitle(activities), body: activities.map(toolLine))]
-        case .delegation(let card):
-            let inner = card.events.compactMap { event -> String? in
-                guard case .message(let data) = event.payload, !data.text.isEmpty else { return nil }
-                return data.text
-            }
-            lines += [
-                "",
-                collapsed(
-                    title: "Delegated to \(card.agentId)",
-                    body: inner.isEmpty ? ["*(no reply)*"] : inner
-                ),
-            ]
         case .approval(let event):
             guard case .approvalCard(let card) = event.payload else { break }
             lines += ["", "> **Approval asked** — \(card.actionClass): \(card.target)"]
@@ -54,15 +68,6 @@ public func threadMarkdown(
         case .question(let event):
             guard case .questionCard(let card) = event.payload else { break }
             lines += ["", "> **Question asked** — \(card.question)"]
-        case .progress(let event):
-            guard case .progressCard(let card) = event.payload else { break }
-            lines += [
-                "",
-                collapsed(
-                    title: card.title,
-                    body: card.steps.map { "- \($0.label) — \($0.state.rawValue)" }
-                ),
-            ]
         }
     }
     return lines.joined(separator: "\n") + "\n"

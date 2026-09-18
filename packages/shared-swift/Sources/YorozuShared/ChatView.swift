@@ -71,7 +71,15 @@ public struct ChatView: View {
 
     private var events: [YorozuEvent] { model.events[thread.id] ?? [] }
 
-    private var rows: [ChatRow] { chatRows(from: events) }
+    private var rows: [ChatRow] { chatRows(from: events, generating: generating) }
+
+    /// Waiting with nothing drawn yet: the turn has started, no token has landed, and there is
+    /// no live work row saying what is happening either. Only then is "Thinking…" worth a line.
+    private var thinking: Bool {
+        guard generating, streamingId == nil else { return false }
+        if case .work(let work) = rows.last, work.running { return false }
+        return true
+    }
 
     private var generating: Bool { model.generating.contains(thread.id) }
 
@@ -320,7 +328,7 @@ public struct ChatView: View {
             }
             return IOSChatTimeline(
                 rows: rows,
-                generating: generating,
+                generating: thinking,
                 streamingId: streamingId,
                 request: timelineRequest,
                 notificationRequest: notificationRequest,
@@ -383,11 +391,7 @@ public struct ChatView: View {
                     // specialist did is behind it; the main agent's own tool use is shown
                     // here, grouped, where it happened.
                     ForEach(rows) { row in rowView(row, reactions: reactions) }
-                    // Waiting with nothing drawn yet: the turn has started but the first token
-                    // has not landed, so there is no bubble to put a caret on.
-                    if generating, streamingId == nil {
-                        ThinkingRow()
-                    }
+                    if thinking { ThinkingRow() }
                     Color.clear.frame(height: 1).id(Self.bottomAnchor)
                 }
                 .compactQuietTranscriptLayout()
@@ -468,14 +472,8 @@ public struct ChatView: View {
         reactions: [String: [MessageReaction]]
     ) -> some View {
         switch row {
-        case .thought(let event):
-            if case .thought(let data) = event.payload {
-                Text(data.text)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .id(event.id)
-            }
+        case .work(let work):
+            WorkRowView(work: work).id(work.id)
         case .message(let event):
             if case .message(let data) = event.payload {
                 MessageBubble(
@@ -492,10 +490,6 @@ public struct ChatView: View {
                 )
                 .id(event.id)
             }
-        case .tools(let activities):
-            ToolGroupView(activities: activities)
-        case .delegation(let card):
-            DelegationCardView(card: card).id(card.id)
         case .approval(let event):
             if case .approvalCard(let card) = event.payload {
                 ApprovalCardView(
@@ -525,10 +519,6 @@ public struct ChatView: View {
                     chosen: model.questionChoices[card.questionId]
                 ) { model.answerQuestion(card.questionId, in: thread.id, $0) }
                 .id(event.id)
-            }
-        case .progress(let event):
-            if case .progressCard(let card) = event.payload {
-                ProgressCardView(card: card).id(event.id)
             }
         }
     }

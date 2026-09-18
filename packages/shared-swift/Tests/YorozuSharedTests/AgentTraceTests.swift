@@ -142,7 +142,10 @@ private let result = YorozuEvent.Payload.toolResult(
         event(reply("Tuesday.", done: true), id: "d3", agent: "calendar", parent: "main"),
         event(reply("You are free Tuesday."), id: "answer"),
     ]
-    #expect(chatRows(from: events).map(\.id) == ["ask", "delegation-card", "answer"])
+    // The delegation is the work of that turn, one row between the ask and the answer.
+    #expect(chatRows(from: events).map(\.id) == ["ask", "work-card", "answer"])
+    guard case .work(let work) = chatRows(from: events)[1] else { return #expect(Bool(false), "expected work") }
+    #expect(work.entries.map(\.id) == ["delegation-card"])
 }
 
 @Test func aTraceTargetReadsItsOwnRowsBack() {
@@ -301,10 +304,13 @@ private func toolResult(_ id: String, ok: Bool = true, output: String = "", at t
         event(reply("booked", done: true), id: "m1", agent: "reservation", parent: "main"),
     ])
 
-    #expect(rows.map(\.id) == ["u1", "job-1", "delegation-q1", "q1"])
+    // The progress card and the delegation fold into the work; the question, which needs a
+    // person, closes the work and stands on its own below it.
+    #expect(rows.map(\.id) == ["u1", "work-job-1", "q1"])
+    guard case .work(let work) = rows[1] else { return #expect(Bool(false), "expected work") }
     // The delegation card starts at the question, which is the specialist's first event.
-    guard case .delegation = rows[2] else { return #expect(Bool(false), "expected a delegation card") }
-    guard case .question = rows[3] else { return #expect(Bool(false), "expected a question card") }
+    #expect(work.entries.map(\.id) == ["job-1", "delegation-q1"])
+    guard case .question = rows[2] else { return #expect(Bool(false), "expected a question card") }
 }
 
 @Test func aUnifiedDiffIsReadAsOneAndAnythingElseIsLeftAlone() throws {
@@ -342,8 +348,11 @@ private func toolResult(_ id: String, ok: Bool = true, output: String = "", at t
     let first = event(.progressCard(ProgressCardData(cardId: "plan", title: "Progress", steps: [ProgressStep(label: "Inspect", state: .running)])), id: "plan-1")
     let latest = event(.progressCard(ProgressCardData(cardId: "plan", title: "Progress", steps: [ProgressStep(label: "Inspect", state: .done)])), id: "plan-2")
     let rows = chatRows(from: [first, latest])
-    #expect(rows.map(\.id) == ["plan-2"])
-    guard case .progress(let value) = rows.first else { return #expect(Bool(false), "expected progress") }
+    #expect(rows.map(\.id) == ["work-plan-2"])
+    guard case .work(let work) = rows.first, case .progress(let value) = work.entries.first else {
+        return #expect(Bool(false), "expected progress inside the work")
+    }
+    #expect(work.entries.count == 1)
     #expect(value == latest)
 }
 
@@ -352,36 +361,81 @@ private func toolResult(_ id: String, ok: Bool = true, output: String = "", at t
     let starting = event(.thought(ThoughtData(text: "Starting OpenClaw…", transient: true)), id: "s1")
     let workspace = event(.thought(ThoughtData(text: "preparing workspace…", transient: true)), id: "s2")
 
-    #expect(chatRows(from: [prompt, starting, workspace]).map(\.id) == ["u1", "s2"])
+    #expect(chatRows(from: [prompt, starting, workspace]).map(\.id) == ["u1", "work-s2"])
 
     let meaningful = event(.thought(ThoughtData(text: "Checking project files")), id: "t1")
-    #expect(chatRows(from: [prompt, starting, workspace, meaningful]).map(\.id) == ["u1", "t1"])
+    #expect(chatRows(from: [prompt, starting, workspace, meaningful]).map(\.id) == ["u1", "work-t1"])
 
     let final = event(reply("Done", done: true), id: "m1")
     #expect(chatRows(from: [prompt, starting, workspace, final]).map(\.id) == ["u1", "m1"])
 }
 
-@Test func theMainAgentsToolUseIsGroupedIntoTheThreadWhereItHappened() {
-    let rows = chatRows(from: [
+@Test func theMainAgentsWorkBetweenTwoMessagesIsOneRow() {
+    let events = [
         event(ask("tidy up"), id: "u1", agent: "phone"),
-        toolCall("c1", "shell", args: ["cmd": .string("ls")]),
-        toolResult("c1", output: "README.md"),
-        // Live status stays visible between the two tool groups on Mac and iOS.
+        toolCall("c1", "shell", args: ["cmd": .string("ls")], at: 1_000),
+        toolResult("c1", output: "README.md", at: 1_400),
         event(.thought(ThoughtData(text: "and now the other one")), id: "t1"),
-        toolCall("c2", "fs_read", args: ["path": .string("/tmp/x")]),
-        toolResult("c2", output: "hi"),
+        toolCall("c2", "fs_read", args: ["path": .string("/tmp/x")], at: 2_000),
+        toolResult("c2", ok: false, output: "no such file", at: 3_500),
         event(reply("Tidied.", done: true), id: "m1"),
-    ])
+    ]
+    let rows = chatRows(from: events)
 
-    #expect(rows.map(\.id) == ["u1", "tools-c1", "t1", "tools-c2", "m1"])
-    guard case .tools(let activities) = rows[1] else {
-        return #expect(Bool(false), "expected one group of tool activity")
+    // Everything between the ask and the reply is one row, keyed on where the work started.
+    #expect(rows.map(\.id) == ["u1", "work-call-c1", "m1"])
+    guard case .work(let work) = rows[1] else { return #expect(Bool(false), "expected one work row") }
+    // Inside it the order is kept, and the thought keeps the two tool runs apart.
+    #expect(work.entries.map(\.id) == ["tools-c1", "t1", "tools-c2"])
+    #expect(work.steps == 2)
+    #expect(work.failed == 1)
+    #expect(work.duration == .milliseconds(2_500))
+    // The reply ended the turn, so the work is settled even if the caller says the thread
+    // is still generating: nothing after a reply is live.
+    #expect(!work.running)
+    #expect(!chatRows(from: events, generating: true).contains { if case .work(let w) = $0 { w.running } else { false } })
+}
+
+@Test func aRunningTurnsLastWorkRowIsLiveAndSaysWhatIsHappeningNow() {
+    let partial = [
+        event(ask("tidy up"), id: "u1", agent: "phone"),
+        event(.thought(ThoughtData(text: "Having a look")), id: "t1"),
+        toolCall("c1", "shell", args: ["cmd": .string("ls")]),
+    ]
+    let rows = chatRows(from: partial, generating: true)
+    #expect(rows.map(\.id) == ["u1", "work-t1"])
+    guard case .work(let work) = rows[1] else { return #expect(Bool(false), "expected work") }
+    #expect(work.running)
+    // The newest thing is the status: the running tool, not the thought before it.
+    #expect(work.status == "shell")
+
+    // A progress card's title is written to be read, so it wins while it is the newest.
+    let withProgress = partial + [event(
+        .progressCard(ProgressCardData(cardId: "job", title: "Sorting the files", steps: [], percent: 40)),
+        id: "p1"
+    )]
+    guard case .work(let progressing) = chatRows(from: withProgress, generating: true)[1] else {
+        return #expect(Bool(false), "expected work")
     }
-    #expect(activities.map(\.name) == ["shell"])
-    guard case .thought(let thought) = rows[2] else {
-        return #expect(Bool(false), "expected live status row")
-    }
-    #expect(thought.id == "t1")
+    #expect(progressing.status == "Sorting the files · 40%")
+
+    // Not generating: the same events are a settled row, however unfinished they look.
+    guard case .work(let settled) = chatRows(from: partial)[1] else { return #expect(Bool(false), "expected work") }
+    #expect(!settled.running)
+}
+
+@Test func aCardThatNeedsAPersonClosesTheWorkAndStandsBelowIt() {
+    let rows = chatRows(from: [
+        event(ask("send it"), id: "u1", agent: "phone"),
+        toolCall("c1", "shell"),
+        event(.approvalCard(ApprovalCardData(actionId: "a1", actionClass: "send-message", target: "bob")), id: "a1"),
+        // After the answer the agent carries on: a second run of work, then the reply.
+        toolCall("c2", "mail_send"),
+        toolResult("c2"),
+        event(reply("Sent.", done: true), id: "m1"),
+    ], generating: true)
+
+    #expect(rows.map(\.id) == ["u1", "work-call-c1", "a1", "work-call-c2", "m1"])
 }
 
 /// A specialist's tool use belongs to its card, not to the thread: the thread would otherwise
@@ -393,7 +447,11 @@ private func toolResult(_ id: String, ok: Bool = true, output: String = "", at t
         event(reply("Tuesday.", done: true), id: "d3", agent: "calendar", parent: "main"),
         event(reply("You are free Tuesday.", done: true), id: "m1"),
     ])
-    #expect(rows.map(\.id) == ["delegation-d1", "m1"])
+    #expect(rows.map(\.id) == ["work-d1", "m1"])
+    guard case .work(let work) = rows[0] else { return #expect(Bool(false), "expected work") }
+    #expect(work.entries.map(\.id) == ["delegation-d1"])
+    // The specialist's one call counts as a step of the turn's work.
+    #expect(work.steps == 1)
 }
 
 /// A rule proposal is a row of its own, drawn where it was raised, and it survives an export:
