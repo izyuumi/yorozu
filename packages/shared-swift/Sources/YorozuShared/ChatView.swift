@@ -132,30 +132,9 @@ public struct ChatView: View {
         #endif
         .toolbar {
             #if os(iOS)
-                // A thread on a model of its own says so under its title, since a phone's
-                // navigation bar has nowhere else to put a caption.
-                if let caption = modelCaption {
-                    ToolbarItem(placement: .principal) {
-                        VStack(spacing: 0) {
-                            Text(thread.displayTitle)
-                                .font(.headline)
-                                .lineLimit(1)
-                            Text(caption)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        .accessibilityElement(children: .combine)
-                    }
-                }
-            #endif
-            #if os(iOS)
                 ToolbarItem(placement: .primaryAction) {
                     Menu("More", systemImage: "ellipsis") {
                         Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
-                        Button("Model and effort", systemImage: "slider.horizontal.3") {
-                            choosingRunSettings = true
-                        }
                     }
                 }
             #endif
@@ -269,14 +248,6 @@ public struct ChatView: View {
 
     private var effortBinding: Binding<ReasoningEffort?> {
         Binding(get: { thread.effort }, set: { model.setEffort(thread, $0) })
-    }
-
-    /// What the caption under the title says, or nil for a thread on the default chain. A spec
-    /// the Mac no longer offers still gets a caption: the thread really is set to it, and
-    /// saying so is how the user finds out it wants changing.
-    private var modelCaption: String? {
-        guard let spec = thread.model else { return nil }
-        return model.models.first { $0.id == spec }?.menuLabel ?? spec
     }
 
     /// Compact Quiet keeps the active runtime visible beside every Mac thread title. A default
@@ -547,53 +518,50 @@ public struct ChatView: View {
                     .padding(.top, 8)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            HStack(alignment: .bottom, spacing: 4) {
-                AttachButton(
-                    remaining: MessageAttachment.maxCount - attachments.wrappedValue.count,
-                    onPick: { picked in
-                        let combined = attachments.wrappedValue + picked
-                        guard combined.count <= MessageAttachment.maxCount,
-                            combined.compactMap(\.bytes).reduce(0, { $0 + $1.count })
-                                <= MessageAttachment.maxTotalBytes
-                        else { return attachmentTooLarge = true }
-                        attachments.wrappedValue = combined
-                    },
-                    onTooLarge: { attachmentTooLarge = true }
-                )
-                .disabled(generating)
+            #if os(iOS)
                 TextField("Message Yorozu", text: draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.body)
                     .lineLimit(1...6)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, composerPadding)
-                    .frame(minHeight: controlTarget)
-                    // Hardware keyboards only, which is the whole point: on a paired iPad,
-                    // Return sends and Shift-Return keeps typing. The on-screen keyboard never
-                    // gets here, so its Return still inserts a newline. The Mac takes the same
-                    // pair as key equivalents on the send and stop buttons instead — see
-                    // ``View/macKey(_:)``, which explains why this modifier is not enough there.
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
                     .onKeyPress(.return, phases: .down) { press in
                         guard !press.modifiers.contains(.shift) else { return .ignored }
                         send()
                         return .handled
                     }
                     .accessibilityLabel("Message")
-                    // Shift-Return, on the Mac. AppKit's field editor ends editing on Return
-                    // whatever else is held down, and it is Shift-Return that gets there: plain
-                    // Return is taken first by the send button's key equivalent, which is why
-                    // `onSubmit` here means "Shift-Return" and not "Return". Ending editing also
-                    // selects the whole field, so without this the next keystroke would replace
-                    // the message rather than continue it.
-                    #if os(macOS)
-                        .onSubmit { draft.wrappedValue += "\n" }
-                    #endif
-                if generating {
-                    stopButton
+
+                HStack(alignment: .center, spacing: 4) {
+                    attachButton
+                    runSettingsButton
+                    Spacer(minLength: 4)
+                    if generating {
+                        stopButton
+                    }
+                    sendButton
                 }
-                sendButton
-                    .padding(.trailing, 6)
-            }
+                .padding(.horizontal, 4)
+                .padding(.bottom, 4)
+            #else
+                HStack(alignment: .bottom, spacing: 4) {
+                    attachButton
+                    TextField("Message Yorozu", text: draft, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.body)
+                        .lineLimit(1...6)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, composerPadding)
+                        .frame(minHeight: controlTarget)
+                        .onSubmit { draft.wrappedValue += "\n" }
+                        .accessibilityLabel("Message")
+                    if generating {
+                        stopButton
+                    }
+                    sendButton
+                        .padding(.trailing, 6)
+                }
+            #endif
         }
         .background(fieldBackground, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
         .overlay {
@@ -612,6 +580,54 @@ public struct ChatView: View {
         .padding(.vertical, 8)
         .compactQuietComposerLayout()
     }
+
+    private var attachButton: some View {
+        AttachButton(
+            remaining: MessageAttachment.maxCount - attachments.wrappedValue.count,
+            onPick: { picked in
+                let combined = attachments.wrappedValue + picked
+                guard combined.count <= MessageAttachment.maxCount,
+                    combined.compactMap(\.bytes).reduce(0, { $0 + $1.count })
+                        <= MessageAttachment.maxTotalBytes
+                else { return attachmentTooLarge = true }
+                attachments.wrappedValue = combined
+            },
+            onTooLarge: { attachmentTooLarge = true }
+        )
+        .disabled(generating)
+    }
+
+    #if os(iOS)
+        private var runSettingsButton: some View {
+            Button { choosingRunSettings = true } label: {
+                HStack(spacing: 4) {
+                    Text(composerModelLabel)
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.caption2.weight(.semibold))
+                }
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 10)
+                .frame(height: 32)
+                .background(Color.primary.opacity(0.06), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .frame(minHeight: controlTarget)
+            .accessibilityLabel("Model and effort")
+            .accessibilityValue(runSettingsAccessibilityValue)
+        }
+
+        private var composerModelLabel: String {
+            guard let spec = thread.model else { return "Auto" }
+            return model.models.first(where: { $0.id == spec })?.label ?? spec.split(separator: "/").last.map(String.init) ?? spec
+        }
+
+        private var runSettingsAccessibilityValue: String {
+            let effort = thread.effort?.label ?? "Default effort"
+            return "\(composerModelLabel), \(effort)"
+        }
+    #endif
 
     private var fieldBackground: Color {
         #if os(iOS)
