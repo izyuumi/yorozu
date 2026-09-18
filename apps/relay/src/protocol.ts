@@ -114,6 +114,18 @@ export const parseFrame = (msg: Record<string, unknown>): Frame | null =>
 export const parseRevoke = (msg: Record<string, unknown>): Revoke | null =>
   strings(msg, "pubkey");
 
+/**
+ * The Mac saying it has handled every replayed frame up to `seq`. Frames buffered while the
+ * Mac was away are replayed with a `seq` on each and kept until acked: a send onto a socket
+ * that is about to die is not a delivery. A Mac that never acks simply sees them again.
+ */
+export type Ack = { seq: number };
+
+export const parseAck = (msg: Record<string, unknown>): Ack | null =>
+  typeof msg.seq === "number" && Number.isInteger(msg.seq) && msg.seq >= 0
+    ? { seq: msg.seq }
+    : null;
+
 /** Trimmed to the cap here, so neither relay has to remember to do it. */
 export const parseDevices = (msg: Record<string, unknown>, cap = MAX_DEVICES): Devices | null =>
   Array.isArray(msg.devices) && msg.devices.every((key) => typeof key === "string")

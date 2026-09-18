@@ -596,7 +596,13 @@ public final class ChatModel {
             self.state = state
             if state == .paired {
                 failure = nil
+                // Pull is truth. Nothing sent while this socket was down was kept for us —
+                // thread, device and rule lists live in no thread's log — so every join asks
+                // for all of it again rather than trusting whatever was last pushed.
+                emit(.threadList(ThreadListData(threads: [])), in: "")
                 requestSync()
+                requestDevices()
+                requestRules()
                 onPaired?()
                 flush()
             }
@@ -628,10 +634,13 @@ public final class ChatModel {
                     generating = Set(workingThreadIds)
                 }
                 if data.more == true { requestSync() }
-                else { syncRevision += 1 }
-                // Counted, not just applied: a background drain is waiting for exactly this to
-                // know it has caught up and may hang up. See ``drain(timeout:)``.
-                deltas += 1
+                else {
+                    syncRevision += 1
+                    // Counted only once the sync is whole: a background drain is waiting for
+                    // exactly this to know it has caught up and may hang up, and a page with
+                    // `more` behind it would let it hang up mid-catch-up. See ``drain(timeout:)``.
+                    deltas += 1
+                }
             // What the model picker offers, sent with every thread list. Not a thread's event.
             case .modelList(let data):
                 models = data.models

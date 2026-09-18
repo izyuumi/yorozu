@@ -48,14 +48,14 @@ private actor DrainTransport: ChatTransport {
     }
 }
 
-private func delta(_ events: [YorozuEvent]) -> TransportUpdate {
+private func delta(_ events: [YorozuEvent], more: Bool? = nil, id: String = "d1") -> TransportUpdate {
     .event(
         YorozuEvent(
-            id: "d1",
+            id: id,
             threadId: "",
             ts: 1,
             agentId: "main",
-            payload: .syncDelta(SyncDeltaData(events: events))
+            payload: .syncDelta(SyncDeltaData(events: events, more: more))
         )
     )
 }
@@ -100,6 +100,26 @@ private func eventually(_ condition: @Sendable () async -> Bool) async -> Bool {
     #expect(await eventually { await transport.closes == 1 })
     // Moved by the real events, not by anything the push claimed — it claimed nothing.
     #expect(model.events["home"]?.count == 1)
+}
+
+@MainActor
+@Test func aDrainStaysOnTheLineUntilTheLastPageOfALongSync() async throws {
+    let transport = DrainTransport()
+    let model = ChatModel(transport: transport)
+
+    async let drained = model.drain(timeout: .seconds(10))
+    #expect(await eventually { await transport.asked() })
+
+    // A phone far behind gets its sync in pages. Hanging up after the first would leave the
+    // cache short of everything on the pages behind it.
+    await transport.deliver(delta([reply("m1", "one")], more: true, id: "d1"))
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(await transport.closes == 0)
+
+    await transport.deliver(delta([reply("m2", "two")], id: "d2"))
+    #expect(await drained)
+    #expect(await eventually { await transport.closes == 1 })
+    #expect(model.events["home"]?.count == 2)
 }
 
 @MainActor

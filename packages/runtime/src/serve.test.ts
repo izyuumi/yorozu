@@ -60,9 +60,10 @@ test("a sealed message from a phone round-trips through the agent loop", async (
   const qrPrinted = new Promise<string>((resolve) => (qrLine = resolve));
 
   const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => sse("pong"));
+  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-serve-"));
   sidecar = serve({
     relayUrl: `ws://127.0.0.1:${relay.port}`,
-    stateDir: mkdtempSync(join(tmpdir(), "yorozu-serve-")),
+    stateDir,
     provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: fetchMock }),
     log: (line) => {
       lines.push(line);
@@ -127,6 +128,16 @@ test("a sealed message from a phone round-trips through the agent loop", async (
   });
   expect(lines).toContain("STATE paired");
   expect(fetchMock.mock.calls[0]![0]).toBe("https://example.invalid/v1/chat/completions");
+
+  // The same message again — a relay replaying an unacked frame, or a phone retrying a send
+  // it never saw land — is not a second turn and not a second line in the thread.
+  phone.frame(
+    encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }),
+    keys,
+  );
+  await vi.waitFor(() => expect(lines).toContain("STATE duplicate-message"));
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(readThreadEvents("t1", stateDir).filter((e) => e.id === "e1")).toHaveLength(1);
 });
 
 test.each([false, true])("a phone rejoins without hello and preserves a safe cutoff (legacy=%s)", async (legacy) => {
@@ -1307,6 +1318,121 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   expect(wire).not.toContain("thread-one");
 
   // `close()` waits on the open sockets, and this test attached a phone to them as well.
+  phone.ws.close();
+  await sidecar.close();
+  await new Promise<void>((done) => fake.close(() => done()));
+});
+
+test("a replayed frame is acked once handled, and a turn that ends offline is announced on reconnect", async () => {
+  // A relay double that drops the Mac mid-turn: the Mac socket is closed while the model is
+  // thinking, a phone frame sent meanwhile is held, and the next registration replays it
+  // tagged with a `seq`, the way both real relays now do.
+  const seen: Record<string, unknown>[] = [];
+  const macSockets: any[] = [];
+  let phoneSocket: any;
+  let buffered: Record<string, unknown> | null = null;
+  const fake = new WebSocketServer({ port: 0 });
+  fake.on("connection", (ws) => {
+    ws.send(JSON.stringify({ type: "nonce", nonce: "n" }));
+    ws.on("message", (data) => {
+      const msg = JSON.parse(data.toString()) as Record<string, unknown>;
+      switch (msg.type) {
+        case "register":
+          macSockets.push(ws);
+          ws.send(JSON.stringify({ type: "registered", roomId: "r" }));
+          if (buffered) {
+            ws.send(JSON.stringify({ ...buffered, seq: 7 }));
+            buffered = null;
+          }
+          return;
+        case "mint":
+          return ws.send(
+            JSON.stringify({ type: "token", token: "tok", expiresAt: Date.now() + 60_000 }),
+          );
+        case "join":
+          phoneSocket = ws;
+          return ws.send(JSON.stringify({ type: "joined", roomId: "r", ownerOnline: true }));
+        case "ack":
+        case "notify":
+          return void seen.push(msg);
+        case "frame": {
+          if (ws === phoneSocket) {
+            const mac = macSockets.at(-1);
+            if (mac && mac.readyState === mac.OPEN) mac.send(JSON.stringify(msg));
+            else buffered = msg;
+          } else {
+            phoneSocket?.send(JSON.stringify(msg));
+          }
+          return;
+        }
+      }
+    });
+  });
+  const port = (fake.address() as AddressInfo).port;
+
+  let qrLine!: (line: string) => void;
+  const qrPrinted = new Promise<string>((resolve) => (qrLine = resolve));
+  const lines: string[] = [];
+  let turn = 0;
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${port}`,
+    stateDir: mkdtempSync(join(tmpdir(), "yorozu-held-")),
+    provider: openaiCompat({
+      baseUrl: "https://example.invalid",
+      model: "m",
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => {
+        if (turn++ === 0) {
+          // The Mac's relay socket dies while the model is thinking, so the reply lands on a
+          // socket that is not open.
+          macSockets[0].close();
+          await vi.waitFor(() => expect(lines).toContain("STATE disconnected"));
+        }
+        return sse("answered");
+      }),
+    }),
+    log: (line) => {
+      lines.push(line);
+      if (line.startsWith("QR ")) qrLine(line.slice(3));
+    },
+  });
+
+  const qr = decodeQrPayload(await qrPrinted);
+  const { phone, keys } = await connectPhone(port, qr.roomId!, qr.token);
+  expect(await phone.next()).toMatchObject({ type: "joined" });
+  const phoneKeys = generateKeypair();
+  const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
+  phone.frame(
+    encodeBody({ t: "hello", pub: toBase64Url(phoneKeys.publicKey), spub: keys.pub }),
+    keys,
+  );
+  await vi.waitFor(() => expect(lines).toContain("STATE paired"));
+
+  const ask = (id: string, text: string): void => {
+    const event: YorozuEvent = {
+      id, threadId: "thread-one", ts: Date.now(), agentId: "phone",
+      kind: "message", data: { role: "user", text },
+    };
+    const box = seal(sessionKey, Buffer.from(JSON.stringify(event)));
+    phone.frame(
+      encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }),
+      keys,
+    );
+  };
+  ask("e1", "a question");
+
+  // The reply happened with no relay socket: there was nobody to tell. The runtime reconnects
+  // on its own, and on re-registering the wake-up that could not go out goes out now — the
+  // phone will sync the reply itself, but it has to be told to look.
+  await vi.waitFor(() => expect(macSockets).toHaveLength(2), { timeout: 10_000 });
+  await vi.waitFor(() => expect(seen.map((msg) => msg.class)).toContain("reply"));
+
+  // And a frame the relay replayed with a `seq` is acked once handled.
+  macSockets[1].close();
+  await vi.waitFor(() => expect(lines.filter((l) => l === "STATE disconnected")).toHaveLength(2));
+  ask("e2", "sent while the mac was away");
+  await vi.waitFor(() => expect(buffered).not.toBeNull());
+  await vi.waitFor(() => expect(seen).toContainEqual({ type: "ack", seq: 7 }), { timeout: 10_000 });
+
   phone.ws.close();
   await sidecar.close();
   await new Promise<void>((done) => fake.close(() => done()));

@@ -126,7 +126,8 @@ private func reconnect(_ transport: QueueTransport) async {
 
     await reconnect(transport)
     #expect(await settle { model.outbox.isEmpty })
-    #expect(await transport.sent.last?.payload == .threadArchive(ThreadArchiveData(archived: true)))
+    // Beside pairing's own requests, which go out in tasks of their own around the flush.
+    #expect(await transport.sent.map(\.payload).contains(.threadArchive(ThreadArchiveData(archived: true))))
 }
 
 @MainActor

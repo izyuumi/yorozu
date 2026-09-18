@@ -72,6 +72,7 @@ import {
   listThreads,
   markThreadRead,
   pinThread,
+  readThreadEvents,
   renameThread,
   setThreadEffort,
   setThreadModel,
@@ -367,6 +368,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * per phone. Replaced per connection, a no-op while there is none.
    */
   let notifyRelay: (event: YorozuEvent) => void = () => {};
+  /** Turns that ended while the relay socket was down, waiting to be announced on reconnect. */
+  const heldNotifies: YorozuEvent[] = [];
+  const latestPerThread = (events: YorozuEvent[]): YorozuEvent[] =>
+    [...new Map(events.map((event) => [event.threadId, event])).values()];
 
   /** Everything the runtime sees is logged first: the nightly job reads the log back. */
   function emit(event: YorozuEvent): void {
@@ -812,6 +817,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (event.kind === "message" && !attachmentsWithinLimits(messageAttachments(event.data))) {
       return state("rejected-oversized-attachments");
     }
+    // The relay replays a buffered frame to every registration until it is acked, and a phone
+    // retries a send it never saw land. A message this thread already holds is the same
+    // message again: not a second turn, and not a second line in the log.
+    if (
+      event.kind === "message" &&
+      readThreadEvents(event.threadId, dir).some((known) => known.id === event.id)
+    ) {
+      return state("duplicate-message");
+    }
     appendTranscript(event, transcripts);
     appendThreadEvent(event, dir);
 
@@ -982,11 +996,17 @@ export function serve(options: ServeOptions = {}): Sidecar {
     };
 
     notifyRelay = (event: YorozuEvent): void => {
-      // Nothing to wake: no device has ever paired through the relay, or the socket is down —
-      // in which case the frame did not go out either and there is nothing to announce.
-      if (ws.readyState !== WebSocket.OPEN || devices.size === 0) return;
+      // Nothing to wake: no device has ever paired through the relay.
+      if (devices.size === 0) return;
       const cls = notifyFor(event);
       if (!cls || !event.threadId) return;
+      // The socket is down. The frame did not go out either, but the phone will catch up on
+      // its own by asking for a sync — what it cannot do on its own is find out that it
+      // should look. So the wake-up is held for the next registration rather than dropped.
+      if (ws.readyState !== WebSocket.OPEN) {
+        heldNotifies.push(event);
+        return;
+      }
       const preview = notificationPreview(event);
       const previews = preview
         ? Object.fromEntries(
@@ -1130,6 +1150,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
             room = String(msg.roomId);
             state("registered");
             announceDevices();
+            // One wake-up per thread that finished while we were away: the phone's sync picks
+            // up every event in that thread, so the class of the last one is what matters.
+            for (const held of latestPerThread(heldNotifies.splice(0))) notifyRelay(held);
             return ws.send(JSON.stringify({ type: "mint" }));
           case "token": {
             const pairing = encodePairingString({
@@ -1144,7 +1167,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
             return log(`PAIR ${pairing}`);
           }
           case "frame":
-            return onFrame(msg.payload);
+            onFrame(msg.payload);
+            // A replayed frame carries the relay's buffer sequence; acking it is what lets the
+            // relay let go. Sent after handling, so a crash in between means a replay rather
+            // than a loss. Live frames carry no `seq` and need no ack.
+            if (typeof msg.seq === "number") ws.send(JSON.stringify({ type: "ack", seq: msg.seq }));
+            return;
         }
       } catch (e) {
         state(`frame-error ${e instanceof Error ? e.message : String(e)}`);
