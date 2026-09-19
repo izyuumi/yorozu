@@ -360,7 +360,31 @@ struct RootView: View {
             // up to. Zero clears it rather than drawing a nought.
             .onChange(of: session.model?.unreadCount ?? 0, initial: true) { _, count in
                 Task { try? await UNUserNotificationCenter.current().setBadgeCount(count) }
+                // Read state is the runtime's, so this fires when any device reads a thread —
+                // and a notification for a thread nobody is behind on is stale on every device.
+                pruneDeliveredNotifications()
             }
+            // Opening the app is the moment its notifications stop being news: what is still
+            // unread keeps its dot in the list, the notification centre need not repeat it.
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { UNUserNotificationCenter.current().removeAllDeliveredNotifications() }
+            }
+    }
+
+    /// Withdraws delivered notifications whose thread is no longer unread. Threads are matched by
+    /// the opaque reference a push carries, so nothing here learns more than the phone already knows.
+    private func pruneDeliveredNotifications() {
+        guard let model = session.model else { return }
+        let unread = Set(model.threads.filter(\.isUnread).map { YorozuCrypto.threadRef($0.id) })
+        let center = UNUserNotificationCenter.current()
+        center.getDeliveredNotifications { delivered in
+            let stale = delivered.compactMap { note -> String? in
+                guard let ref = note.request.content.userInfo["ref"] as? String, !unread.contains(ref)
+                else { return nil }
+                return note.request.identifier
+            }
+            if !stale.isEmpty { center.removeDeliveredNotifications(withIdentifiers: stale) }
+        }
     }
 
     @ViewBuilder private var content: some View {
