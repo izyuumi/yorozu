@@ -133,9 +133,7 @@ public struct ChatView: View {
         .toolbar {
             #if os(iOS)
                 ToolbarItem(placement: .primaryAction) {
-                    Menu("More", systemImage: "ellipsis") {
-                        Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
-                    }
+                    Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
                 }
             #endif
             #if os(iOS)
