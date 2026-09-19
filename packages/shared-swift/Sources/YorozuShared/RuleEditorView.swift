@@ -84,6 +84,7 @@ public struct RuleEditorView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", role: .cancel) { onCancel() }
+                        .keyboardShortcut(.cancelAction)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { onSave(draft.rule) }

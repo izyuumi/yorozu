@@ -729,13 +729,22 @@ public struct ThreadSidebar: View {
         .searchable(text: $query, placement: .sidebar, prompt: "Search threads")
         .navigationTitle("Threads")
         .toolbar {
-            Button("New thread", systemImage: "plus", action: onCreate)
+            // The same compose glyph the phone's list and every Mac mail or notes app use.
+            Button("New thread", systemImage: "square.and.pencil", action: onCreate)
         }
         .renameAlert($renaming, onRename: onRename)
-        // What the Mac's File menu acts on. Published from here because a new thread is the
-        // list's business and outlives whichever one is open — see ``ThreadCommands``.
         #if os(macOS)
+            // What the Mac's File menu acts on. Published from here because a new thread is the
+            // list's business and outlives whichever one is open — see ``ThreadCommands``.
             .focusedSceneValue(\.threadCommands, ThreadCommands(newThread: onCreate))
+            // Delete on a selected row puts it away, as it does in every Mac list. Archiving
+            // rather than deleting, because that is the only removal this list has — and it
+            // is undone from the Archived section rather than with ⌘Z.
+            .onDeleteCommand {
+                guard let thread = threads.first(where: { $0.id == selection }), !thread.archived
+                else { return }
+                onArchive(thread, true)
+            }
         #endif
     }
 

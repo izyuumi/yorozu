@@ -103,5 +103,6 @@ struct ModelsView: View {
             }
         }
         .padding(20)
+        .onExitCommand { assign.diff = nil }
     }
 }
