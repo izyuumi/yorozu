@@ -230,6 +230,10 @@ struct ThreadRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    // "1h" is for the eye; VoiceOver gets the phrase it stands for.
+                    .accessibilityLabel(
+                        thread.lastActivityDate.formatted(.relative(presentation: .named))
+                    )
                     // The title gives way first: the time is short and always worth its width.
                     .layoutPriority(1)
                 }
@@ -266,7 +270,9 @@ struct ThreadRow: View {
             return Text(text)
         }
         return Text(String(text[..<match.lowerBound]))
-            + Text(String(text[match])).foregroundColor(.orange).bold()
+            // Weight rather than colour: orange on white falls short of 4.5:1, and the
+            // secondary preview line would fall shorter still.
+            + Text(String(text[match])).foregroundStyle(.primary).bold()
             + Text(String(text[match.upperBound...]))
     }
 }

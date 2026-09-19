@@ -72,8 +72,11 @@ struct SettingsView: View {
                     Text("Approvals")
                 } footer: {
                     if model.yoloMode {
-                        Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
-                            .foregroundStyle(.red)
+                        Label {
+                            Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                        }
                     }
                 }
                 Section("App") {
@@ -88,7 +91,9 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .onAppear { model.requestApprovalSettings() }
             .toolbar {
-                Button("Done") { dismiss() }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
             }
             // Unpairing throws away the keys in the Keychain and the cached threads with them,
             // and only a fresh QR from the Mac undoes it, so it is asked about first.

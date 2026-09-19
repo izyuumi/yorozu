@@ -268,6 +268,9 @@ private struct StagedThumbnail: View {
                         .foregroundStyle(.white, .black.opacity(0.6))
                         .font(.body)
                         .padding(2)
+                        // Hit area wider than the glyph; hangs past the thumbnail's corner.
+                        .frame(width: controlTarget, height: controlTarget, alignment: .topTrailing)
+                        .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Remove \(attachment.name)")

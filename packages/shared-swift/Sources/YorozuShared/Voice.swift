@@ -87,10 +87,13 @@ public struct SpeakingChip: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .frame(minHeight: 28)
+            .background(.tint.opacity(0.12), in: Capsule())
+            // The chip stays small; the target does not.
+            .frame(minHeight: controlTarget)
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .foregroundStyle(.tint)
-        .background(.tint.opacity(0.12), in: Capsule())
         .accessibilityLabel("Stop reading aloud")
     }
 }
