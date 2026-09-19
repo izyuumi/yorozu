@@ -4,12 +4,25 @@ import {
   fromBase64Url,
   generateKeypair,
   generateSigningKeypair,
+  helloProof,
   open,
   seal,
   signFrame,
+  threadRef,
   toBase64Url,
   verifyFrame,
 } from "./crypto.js";
+
+/**
+ * Fixed vectors, byte-identical in CryptoTests.swift: the relay routes on `threadRef` and the
+ * runtime checks `helloProof`, so the two languages must agree on both to the character.
+ */
+test("references and proofs are spelled the same in both languages", () => {
+  expect(threadRef("home")).toBe("TqFAWIFQ");
+  expect(helloProof("secret", "pub", "spub")).toBe("MFvwTalbqCws08QSHDUcxRUlQi2EJlN53U9I-hoq_U0");
+  // Bound to every input: any of them changed is a different proof.
+  expect(helloProof("secret", "pub", "other")).not.toBe(helloProof("secret", "pub", "spub"));
+});
 
 test("both peers derive the same session key", () => {
   const mac = generateKeypair();

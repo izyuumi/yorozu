@@ -216,6 +216,21 @@ export interface ApprovalAnswerData {
   answer: "yes" | "task" | "always" | "no" | "discuss";
   /** The rule the editor produced, sent with `always`. */
   rule?: ApprovalRule;
+  /**
+   * Where the answer was given. `notification` is a lock-screen button, which the runtime only
+   * honours for a card it judged quick-approvable itself — the relay chooses which buttons a
+   * push draws, and a relay is not trusted to decide what a button may approve.
+   */
+  source?: "notification";
+}
+
+/**
+ * The runtime has taken a command a device sent: it is logged or applied, whichever the kind
+ * calls for. A device keeps every command in its outbox until this arrives, since a socket that
+ * accepted a send is not a runtime that received it.
+ */
+export interface ReceiptData {
+  eventId: string;
 }
 
 /**
@@ -483,7 +498,8 @@ export type EventPayload =
   | { kind: "sync_request"; data: SyncRequestData }
   | { kind: "sync_delta"; data: SyncDeltaData }
   | { kind: "device_list"; data: DeviceListData }
-  | { kind: "device_remove"; data: DeviceRemoveData };
+  | { kind: "device_remove"; data: DeviceRemoveData }
+  | { kind: "receipt"; data: ReceiptData };
 
 export type EventKind = EventPayload["kind"];
 
@@ -502,6 +518,12 @@ export interface QrPayload {
    * different key from `macPubkey` and so cannot be derived from it.
    */
   roomId?: string;
+  /**
+   * A Mac-minted secret the relay never sees: the QR goes from the Mac's screen to the phone's
+   * camera. The phone proves it holds it in its `hello` (see `helloProof`), which is what stops
+   * a relay from enrolling a device of its own.
+   */
+  secret?: string;
 }
 
 /**
@@ -518,6 +540,7 @@ export const encodePairingString = (payload: QrPayload): string => {
     token: payload.token,
   });
   if (payload.roomId) query.set("room", payload.roomId);
+  if (payload.secret) query.set("secret", payload.secret);
   return `yorozu://pair?${query}`;
 };
 
@@ -531,16 +554,18 @@ export function decodePairingString(text: string): QrPayload {
   const macPubkey = query.get("key") ?? "";
   const token = query.get("token") ?? "";
   const roomId = query.get("room") ?? undefined;
+  const secret = query.get("secret") ?? undefined;
   if (
     query.get("v") !== "1" ||
     relayUrl === "" ||
     !BASE64URL.test(macPubkey) ||
     !BASE64URL.test(token) ||
-    (roomId !== undefined && !BASE64URL.test(roomId))
+    (roomId !== undefined && !BASE64URL.test(roomId)) ||
+    (secret !== undefined && !BASE64URL.test(secret))
   ) {
     throw new Error("not a Yorozu v1 pairing string");
   }
-  return { v: 1, relayUrl, macPubkey, token, ...(roomId ? { roomId } : {}) };
+  return { v: 1, relayUrl, macPubkey, token, ...(roomId ? { roomId } : {}), ...(secret ? { secret } : {}) };
 }
 
 /**
@@ -557,7 +582,8 @@ export function decodeQrPayload(text: string): QrPayload {
     typeof (p as QrPayload).relayUrl !== "string" ||
     typeof (p as QrPayload).macPubkey !== "string" ||
     typeof (p as QrPayload).token !== "string" ||
-    !["string", "undefined"].includes(typeof (p as QrPayload).roomId)
+    !["string", "undefined"].includes(typeof (p as QrPayload).roomId) ||
+    !["string", "undefined"].includes(typeof (p as QrPayload).secret)
   ) {
     throw new Error("not a Yorozu v1 QR payload");
   }

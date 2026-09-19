@@ -44,6 +44,10 @@ private struct FrameBody: Codable {
     /// `hello`: phone Ed25519 public key, the one the relay knows this device by. The Mac keeps
     /// it so "remove this device" can be addressed to the relay as well as to itself.
     var spub: String?
+    /// `hello`, first time only: ``YorozuCrypto/helloProof`` over the QR's secret and both keys,
+    /// which is what tells the Mac these keys came from a phone that read its screen and not
+    /// from the relay.
+    var proof: String?
     /// `box`: nonce and ciphertext, base64url.
     var n: String?
     var c: String?
@@ -373,13 +377,13 @@ public actor RelayClient: ChatTransport {
 
     private func sayHello() async {
         do {
-            try await sendFrame(
-                FrameBody(
-                    t: "hello",
-                    pub: identity.sessionPublicKey.base64URLEncodedString(),
-                    spub: identity.signingPublicKey.base64URLEncodedString()
-                )
-            )
+            let pub = identity.sessionPublicKey.base64URLEncodedString()
+            let spub = identity.signingPublicKey.base64URLEncodedString()
+            // Sent every time rather than only first: the Mac may have lost `devices.json`, and
+            // a `hello` it cannot verify is a phone it will not seal for. The relay saw the
+            // secret's hash and nothing else, and the hash is bound to these two keys alone.
+            let proof = pairing.secret.map { YorozuCrypto.helloProof(secret: $0, pub: pub, spub: spub) }
+            try await sendFrame(FrameBody(t: "hello", pub: pub, spub: spub, proof: proof))
             updates?.yield(.state(.paired))
         } catch {
             updates?.yield(.failed(error.localizedDescription))

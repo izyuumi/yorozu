@@ -102,6 +102,16 @@ import Testing
     )
 }
 
+@Test func inlineMarkdownLinksBareAddressesAndUnderlinesEveryLink() {
+    let pasted = AttributedString.chatInline("see https://example.com/a?b=1 or mail me@example.com")
+    let links = pasted.runs.compactMap(\.link)
+    #expect(links.map(\.absoluteString) == ["https://example.com/a?b=1", "mailto:me@example.com"])
+    #expect(pasted.runs.filter { $0.link != nil }.allSatisfy { $0.underlineStyle == .single })
+    // A written link keeps its own destination; the detector does not relink its text.
+    let written = AttributedString.chatInline("[docs](https://docs.example.com)")
+    #expect(written.runs.compactMap(\.link).map(\.absoluteString) == ["https://docs.example.com"])
+}
+
 @Test func inlineMarkdownNeverThrowsAwayTheTextItCannotParse() {
     #expect(String(AttributedString.chatInline("**bold**").characters) == "bold")
     // Half-written emphasis is what a streaming reply looks like most of the time.

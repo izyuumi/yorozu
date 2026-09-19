@@ -4,12 +4,14 @@ import Testing
 @testable import YorozuShared
 
 /// A transport that can be told to refuse, so a send that fails is a test rather than an
-/// unplugged cable.
+/// unplugged cable. It answers every send with the runtime's receipt, as the runtime does —
+/// unless told to swallow them, which is what a half-open socket looks like from here.
 private actor QueueTransport: ChatTransport {
     private var updates: AsyncStream<TransportUpdate>.Continuation?
     private var held: [TransportUpdate] = []
     private(set) var sent: [YorozuEvent] = []
     private var refusing = false
+    private var swallowing = false
 
     struct Refused: Error {}
 
@@ -24,7 +26,14 @@ private actor QueueTransport: ChatTransport {
     func send(_ event: YorozuEvent) async throws {
         if refusing { throw Refused() }
         sent.append(event)
+        guard !swallowing else { return }
+        yield(.event(YorozuEvent(
+            id: "r-\(event.id)", threadId: "", ts: 1, agentId: "main",
+            payload: .receipt(ReceiptData(eventId: event.id))
+        )))
     }
+
+    func swallow(_ swallowing: Bool) { self.swallowing = swallowing }
 
     func close() {
         updates?.finish()
@@ -199,6 +208,38 @@ private func reconnect(_ transport: QueueTransport) async {
     #expect(await transport.messages.map(\.id) == [id])
     // And the flushed queue is written back, so a third launch does not send it again.
     #expect(cache.outbox().isEmpty)
+}
+
+@MainActor
+@Test func aMessageSentOnAHalfOpenSocketIsKeptAndSentAgainUntilTheRuntimeReceiptsIt() async throws {
+    let transport = QueueTransport()
+    await transport.swallow(true)
+    let model = ChatModel(transport: transport, device: "phone")
+    model.start()
+    await reconnect(transport)
+    #expect(await settle { model.canDeliver })
+
+    // The link looks fine, so the send goes straight out — and there is no caption, because
+    // nothing is known to be wrong yet.
+    model.send("hi", in: "home")
+    let id = try #require(model.outbox.first?.id)
+    var count = 0
+    for _ in 0..<300 where count == 0 {
+        count = await transport.messages.count
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(count == 1)
+    #expect(model.outboxStatus(of: id) == nil)
+    // But the runtime never said it had it, so it is still ours to deliver.
+    #expect(model.outbox.map(\.id) == [id])
+
+    // The socket turns out to have been dead: the next link sends it again, same id.
+    await transport.yield(.ownerOnline(false))
+    #expect(await settle { model.outboxStatus(of: id) == .queued })
+    await transport.swallow(false)
+    await reconnect(transport)
+    #expect(await settle { model.outbox.isEmpty })
+    #expect(await transport.messages.map(\.id) == [id, id])
 }
 
 @Test func theQueueStopsTryingAfterTwoDaysAndHoldsOnlyFifty() {

@@ -8,15 +8,19 @@ import {
   CLOSE_RATE_LIMIT,
   dropCount,
   evictions,
+  frameWire,
   newBucket,
   parseAck,
   parseDevices,
-  parseFrame,
+  parseEnvelope,
+  parseFrames,
   parseJoin,
+  parsePush,
   parseRegister,
   parseRevoke,
   PING,
   PONG,
+  safeReason,
   TOKEN_TTL_MS,
   type Bucket,
 } from "./protocol.js";
@@ -63,8 +67,12 @@ type Room = {
    * the connect nonce, so a background or a network change does not cost a new token.
    */
   devices: Map<string, number>;
+  /**
+   * Phone signing pubkey -> APNs device token. Kept, as the Worker keeps it, so the two relays
+   * hold the same state; this one has no Apple key and never sends to it.
+   */
+  pushTokens: Map<string, string>;
   buffer: Buffered[];
-  bucket: Bucket;
 };
 
 type Conn = {
@@ -74,18 +82,25 @@ type Conn = {
   roomId: string | null;
   /** Key whose signature every frame from this socket must carry. */
   key: KeyObject | null;
+  /** Per socket: a flooding phone closes itself and nobody else. */
+  bucket: Bucket;
 };
 
-function newRoom(now: number): Room {
+function newRoom(): Room {
   return {
     mac: null,
     seq: 0,
     phones: new Set(),
     tokens: new Map(),
     devices: new Map(),
+    pushTokens: new Map(),
     buffer: [],
-    bucket: newBucket(now),
   };
+}
+
+/** Expired tokens go on mint, so a token nobody redeemed does not sit in memory forever. */
+function sweepTokens(room: Room, now: number): void {
+  for (const [token, expiresAt] of room.tokens) if (now > expiresAt) room.tokens.delete(token);
 }
 
 /** Records a phone as a device this room knows. Capped, oldest evicted first. */
@@ -129,6 +144,9 @@ function drainBuffer(room: Room, mac: WebSocket, now: number): void {
   for (const entry of room.buffer) {
     mac.send(JSON.stringify({ ...(JSON.parse(entry.raw) as object), seq: entry.seq }));
   }
+  // Entries without a sequence cannot be acked, so they are let go on send. Every entry this
+  // relay writes has one; the rule is here so both relays drain alike.
+  room.buffer = room.buffer.filter((entry) => entry.seq !== undefined);
 }
 
 function ackBuffer(room: Room, seq: number): void {
@@ -149,7 +167,10 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
    */
   const forget = (room: Room, pubkeys: readonly string[]): void => {
     const gone = new Set(pubkeys);
-    for (const pubkey of gone) room.devices.delete(pubkey);
+    for (const pubkey of gone) {
+      room.devices.delete(pubkey);
+      room.pushTokens.delete(pubkey);
+    }
     for (const phone of room.phones) {
       const key = phoneKeys.get(phone);
       if (key && gone.has(key)) phone.close(CLOSE_PROTOCOL, "revoked");
@@ -177,6 +198,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
       room: null,
       roomId: null,
       key: null,
+      bucket: newBucket(Date.now()),
     };
     ws.send(JSON.stringify({ type: "nonce", nonce: conn.nonce }));
 
@@ -185,12 +207,8 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
       const now = Date.now();
 
       // Only the envelope is parsed; `payload` is forwarded byte-for-byte.
-      let msg: Record<string, unknown>;
-      try {
-        msg = JSON.parse(raw);
-      } catch {
-        return ws.close(CLOSE_PROTOCOL, "bad json");
-      }
+      const msg = parseEnvelope(raw);
+      if (!msg) return ws.close(CLOSE_PROTOCOL, "bad json");
 
       switch (msg.type) {
         // The heartbeat both clients send on an otherwise quiet socket. The Worker relay
@@ -219,7 +237,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
             return ws.close(CLOSE_BAD_SIGNATURE, "bad challenge");
           }
           const id = roomId(pubkey);
-          const room = rooms.get(id) ?? newRoom(now);
+          const room = rooms.get(id) ?? newRoom();
           rooms.set(id, room);
           // A fresh registration wins; the stale Mac socket is dropped.
           if (room.mac && room.mac !== ws) room.mac.close(CLOSE_PROTOCOL, "replaced");
@@ -245,6 +263,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
 
         case "mint": {
           if (conn.role !== "mac" || !conn.room) return ws.close(CLOSE_PROTOCOL, "not registered");
+          sweepTokens(conn.room, now);
           const token = randomBytes(32).toString("base64url");
           const expiresAt = now + TOKEN_TTL_MS;
           conn.room.tokens.set(token, expiresAt);
@@ -288,8 +307,9 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           const join = parseJoin(msg);
           if (!join) return ws.close(CLOSE_PROTOCOL, "bad join");
           const { roomId: id, token, phonePubkey, sig } = join;
-          const room = rooms.get(id);
-          if (!room) return ws.close(CLOSE_PROTOCOL, "unknown room");
+          // A room nobody registered yet is empty rather than absent, as it is on the Worker,
+          // so a join there fails for the same reason on both: no such device, no such token.
+          const room = rooms.get(id) ?? newRoom();
           let key: KeyObject;
           try {
             key = publicKeyFrom(phonePubkey);
@@ -330,13 +350,18 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
 
         case "frame": {
           if (!conn.role || !conn.room || !conn.key) return ws.close(CLOSE_PROTOCOL, "not joined");
-          const frame = parseFrame(msg);
-          if (!frame) return ws.close(CLOSE_BAD_SIGNATURE, "unsigned frame");
-          const { payload, sig } = frame;
-          if (!verifySignature(payload, sig, conn.key)) {
-            return ws.close(CLOSE_BAD_SIGNATURE, "bad frame signature");
+          const frames = parseFrames(msg);
+          if (!frames) return ws.close(CLOSE_BAD_SIGNATURE, "unsigned frame");
+          // Only the Mac fans out; a phone batching would be a 16x discount on its bucket.
+          if (msg.frames !== undefined && conn.role === "phone") {
+            return ws.close(CLOSE_PROTOCOL, "batch from phone");
           }
-          if (!allowFrame(conn.room.bucket, now)) return ws.close(CLOSE_RATE_LIMIT, "rate limit");
+          for (const { payload, sig } of frames) {
+            if (!verifySignature(payload, sig, conn.key)) {
+              return ws.close(CLOSE_BAD_SIGNATURE, "bad frame signature");
+            }
+          }
+          if (!allowFrame(conn.bucket, now)) return ws.close(CLOSE_RATE_LIMIT, "rate limit");
 
           if (conn.role === "phone") {
             if (conn.room.mac) conn.room.mac.send(raw);
@@ -344,18 +369,25 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           } else {
             // Not buffered: a phone that is away catches up by asking the Mac on its next
             // join, which holds the whole history. The relay is only ever the fast path down.
-            for (const phone of conn.room.phones) phone.send(raw);
+            // A batch is unpacked here: each phone sees plain frames, never the batch.
+            const wires = msg.frames === undefined ? [raw] : frames.map(frameWire);
+            for (const phone of conn.room.phones) for (const wire of wires) phone.send(wire);
           }
           return;
         }
 
-        // The push side-channel. This relay holds no Apple auth key and wakes nobody, so it
-        // takes these and does nothing with them: one client speaks to either relay unchanged,
-        // and a self-hosted room simply has no notifications. The roles are still enforced, so
-        // the two relays refuse the same things.
-        case "push":
-          if (conn.role !== "phone") return ws.close(CLOSE_PROTOCOL, "not joined");
+        // The push side-channel. This relay holds no Apple auth key and wakes nobody: the
+        // token is filed against the device as the Worker files it, and `notify` is taken and
+        // dropped, so one client speaks to either relay unchanged and a self-hosted room simply
+        // has no notifications. The roles are enforced, so the two relays refuse the same things.
+        case "push": {
+          if (conn.role !== "phone" || !conn.room) return ws.close(CLOSE_PROTOCOL, "not joined");
+          const push = parsePush(msg);
+          if (!push) return ws.close(CLOSE_PROTOCOL, "bad push");
+          const pubkey = phoneKeys.get(ws);
+          if (pubkey) conn.room.pushTokens.set(pubkey, push.deviceToken);
           return;
+        }
 
         case "notify":
           if (conn.role !== "mac") return ws.close(CLOSE_PROTOCOL, "not registered");
@@ -368,7 +400,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
 
     ws.on("close", (code, reason) => {
       const { room, roomId: id } = conn;
-      log("close", { role: conn.role, code, reason: reason.toString() });
+      log("close", { role: conn.role, code, reason: safeReason(reason.toString()) });
       if (!room || !id) return;
       if (room.mac === ws) {
         room.mac = null;

@@ -202,7 +202,9 @@ public final class ChatModel {
         }
         defer { suspend() }
         guard state == .paired, let (threadId, card) = approvalCard(eventRef: eventRef) else { return false }
-        self.answer(card.actionId, in: threadId, answer)
+        // Tagged as a button press: the runtime honours one only for a card it judged answerable
+        // from the lock screen, whatever buttons the push happened to draw.
+        self.answer(card.actionId, in: threadId, answer, source: .notification)
         // The send is queued behind everything before it; wait for the queue to drain.
         await emitter?.value
         return true
@@ -276,9 +278,13 @@ public final class ChatModel {
     /// the outbox is for.
     public var canDeliver: Bool { state == .paired && ownerOnline }
 
-    /// What a bubble says about a message, or nil for one that went out normally.
+    /// What a bubble says about a message, or nil for one that went out normally. A message sent
+    /// on a live link and waiting for its receipt is going out normally: the caption appears
+    /// only once the link is known to be down, or the message has been given up on.
     public func outboxStatus(of eventId: String) -> OutboxStatus? {
-        outbox.first { $0.id == eventId }?.status
+        guard let item = outbox.first(where: { $0.id == eventId }) else { return nil }
+        if item.status == .queued && canDeliver { return nil }
+        return item.status
     }
 
     /// Sends a message the queue gave up on again, from the top: pressing "Not sent" is a fresh
@@ -305,27 +311,36 @@ public final class ChatModel {
         deliver(reaction, queue: !canDeliver)
     }
 
+    /// Every message goes through the outbox, link or no link: it leaves only on the runtime's
+    /// receipt, so a send onto a socket that was quietly dead is sent again rather than lost.
+    /// `queue` says whether there was a link to try now.
     private func deliver(_ event: YorozuEvent, queue: Bool) {
-        guard queue else { return emit(event) }
         outbox = Outbox.pruned(outbox + [OutboxItem(event: event)])
         saveOutbox()
+        if !queue { flush() }
     }
 
-    /// Empties the queue, oldest first, and stops at the first message the transport refuses:
+    /// Sends the queue, oldest first, and stops at the first message the transport refuses:
     /// the rest are behind it, and a thread read out of order is worse than one that arrives
     /// late. A refusal costs that message one of its three tries and the next reconnect tries
     /// again; one that has spent all three is stepped over rather than left blocking the queue,
     /// because it is waiting on the person now and not on the network.
+    ///
+    /// A send that went is not a message that landed: the socket may be half-open, with the Mac
+    /// gone and the relay still counting it present. So nothing leaves the queue here. An item
+    /// leaves when the runtime's `receipt` names it (``apply(_:)``), and until then every flush
+    /// sends it again — the runtime keys on the id, so a copy that did land is dropped there.
     public func flush() {
         guard !flushing, canDeliver, !outbox.isEmpty else { return }
         flushing = true
         Task { [weak self] in
+            var sent: Set<String> = []
             while let self, self.canDeliver,
-                let item = self.outbox.first(where: { $0.status == .queued })
+                let item = self.outbox.first(where: { $0.status == .queued && !sent.contains($0.id) })
             {
                 do {
                     try await self.transport.send(item.event)
-                    self.outbox.removeAll { $0.id == item.id }
+                    sent.insert(item.id)
                 } catch {
                     self.bumpTries(of: item.id)
                     break
@@ -334,6 +349,13 @@ public final class ChatModel {
             self?.flushing = false
             self?.saveOutbox()
         }
+    }
+
+    /// The runtime has this one. Only now is it out of the queue.
+    private func receipted(_ eventId: String) {
+        guard outbox.contains(where: { $0.id == eventId }) else { return }
+        outbox.removeAll { $0.id == eventId }
+        saveOutbox()
     }
 
     private func bumpTries(of id: String) {
@@ -531,12 +553,13 @@ public final class ChatModel {
         _ actionId: String,
         in threadId: String,
         _ answer: ApprovalAnswerData.Answer,
-        rule: ApprovalRule? = nil
+        rule: ApprovalRule? = nil,
+        source: ApprovalAnswerData.Source? = nil
     ) {
         answered.insert(actionId)
         choices[actionId] = answer
         emit(
-            .approvalAnswer(ApprovalAnswerData(actionId: actionId, answer: answer, rule: rule)),
+            .approvalAnswer(ApprovalAnswerData(actionId: actionId, answer: answer, rule: rule, source: source)),
             in: threadId
         )
     }
@@ -703,6 +726,8 @@ public final class ChatModel {
                 onRules?()
             case .approvalSettings(let data):
                 if let yolo = data.yolo { yoloMode = yolo }
+            case .receipt(let data):
+                receipted(data.eventId)
             default:
                 applyEvent(event)
             }

@@ -58,6 +58,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case syncDelta = "sync_delta"
         case deviceList = "device_list"
         case deviceRemove = "device_remove"
+        case receipt
     }
 
     public enum Payload: Equatable, Sendable {
@@ -90,6 +91,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case syncDelta(SyncDeltaData)
         case deviceList(DeviceListData)
         case deviceRemove(DeviceRemoveData)
+        case receipt(ReceiptData)
 
         public var kind: Kind {
             switch self {
@@ -122,6 +124,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .syncDelta: .syncDelta
             case .deviceList: .deviceList
             case .deviceRemove: .deviceRemove
+            case .receipt: .receipt
             }
         }
     }
@@ -167,6 +170,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .syncDelta: payload = .syncDelta(try c.decode(SyncDeltaData.self, forKey: .data))
         case .deviceList: payload = .deviceList(try c.decode(DeviceListData.self, forKey: .data))
         case .deviceRemove: payload = .deviceRemove(try c.decode(DeviceRemoveData.self, forKey: .data))
+        case .receipt: payload = .receipt(try c.decode(ReceiptData.self, forKey: .data))
         }
     }
 
@@ -208,6 +212,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .syncDelta(let d): try c.encode(d, forKey: .data)
         case .deviceList(let d): try c.encode(d, forKey: .data)
         case .deviceRemove(let d): try c.encode(d, forKey: .data)
+        case .receipt(let d): try c.encode(d, forKey: .data)
         }
     }
 }
@@ -522,11 +527,24 @@ public struct ApprovalAnswerData: Codable, Equatable, Sendable {
     public var answer: Answer
     /// The rule the editor produced, sent with `always`.
     public var rule: ApprovalRule?
-    public init(actionId: String, answer: Answer, rule: ApprovalRule? = nil) {
+    /// Where the answer was given. `notification` is a lock-screen button, which the runtime
+    /// honours only for a card it judged quick-approvable itself: the relay chose which buttons
+    /// the push drew, and the relay is not trusted to decide what a button may approve.
+    public var source: Source?
+    public enum Source: String, Codable, Sendable { case notification }
+    public init(actionId: String, answer: Answer, rule: ApprovalRule? = nil, source: Source? = nil) {
         self.actionId = actionId
         self.answer = answer
         self.rule = rule
+        self.source = source
     }
+}
+
+/// The runtime has taken a command this device sent. The outbox holds a command until this
+/// arrives: a socket that accepted a send is not a runtime that received it.
+public struct ReceiptData: Codable, Equatable, Sendable {
+    public var eventId: String
+    public init(eventId: String) { self.eventId = eventId }
 }
 
 /// Repeated matching approvals, offered back as a rule. Never active until the user saves it.
@@ -930,13 +948,21 @@ public struct QrPayload: Codable, Equatable, Sendable {
     /// Relay room to join: base64url sha256 of the Mac's Ed25519 relay key, which is a
     /// different key from `macPubkey` and so cannot be derived from it.
     public var roomId: String?
+    /// A Mac-minted secret the relay never sees: the QR goes from the Mac's screen to this
+    /// phone's camera. The first `hello` proves the phone holds it (``YorozuCrypto/helloProof``),
+    /// which is what stops a relay from enrolling a device of its own.
+    public var secret: String?
 
-    public init(v: Int = 1, relayUrl: String, macPubkey: String, token: String, roomId: String? = nil) {
+    public init(
+        v: Int = 1, relayUrl: String, macPubkey: String, token: String, roomId: String? = nil,
+        secret: String? = nil
+    ) {
         self.v = v
         self.relayUrl = relayUrl
         self.macPubkey = macPubkey
         self.token = token
         self.roomId = roomId
+        self.secret = secret
     }
 
     public func encoded() throws -> String {
@@ -983,7 +1009,8 @@ public struct QrPayload: Codable, Equatable, Sendable {
             relayUrl: relayUrl,
             macPubkey: try base64Url(query["key"]),
             token: try base64Url(query["token"]),
-            roomId: query["room"].flatMap { $0.isEmpty ? nil : $0 }
+            roomId: query["room"].flatMap { $0.isEmpty ? nil : $0 },
+            secret: try query["secret"].flatMap { $0.isEmpty ? nil : $0 }.map(base64Url)
         )
     }
 }

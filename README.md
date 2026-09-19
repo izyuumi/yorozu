@@ -41,9 +41,15 @@ The QR encodes that same string, so one parser (`decodePairingString` in `packag
 `yorozu://` link a phone opens when it is tapped in Messages. The older JSON form still decodes,
 so a phone paired before this stays paired.
 
-The phone joins the room, announces its own X25519 key in one cleartext `hello` frame
-(authenticated by the relay's per-frame signature check), and every frame after that is
-ChaCha20-Poly1305 sealed under the derived session key.
+The phone joins the room, announces its own X25519 key in one cleartext `hello` frame, and every
+frame after that is ChaCha20-Poly1305 sealed under the derived session key. The relay checks the
+frame's signature, but the relay could have signed it itself, so the runtime does not take the
+relay's word for who is enrolling: the pairing string carries a `secret` the Mac minted and the
+relay never sees, and a `hello` for keys not already on file is accepted only with `proof`, a
+hash over that secret and both announced keys (`helloProof`, byte-identical in both languages).
+The Mac honours the last four secrets it drew and spends them all on a pairing. A `keys.json`
+that exists but will not read stops the sidecar instead of minting a new identity, since new keys
+would silently unpair every phone; only an absent file is a first run.
 
 ## Mac app
 
@@ -150,8 +156,11 @@ buffered per room (24h TTL, 5 MB cap, oldest dropped first) and replayed in orde
 each tagged with a `seq` the Mac acks (`{"type":"ack","seq"}`) once handled; an unacked frame is
 replayed to the next registration rather than lost. Mac frames are never buffered: the phone
 treats the socket as a fast path only, and on every join asks the Mac for the thread list, a
-sync, the devices and the rules, so nothing depends on the socket having been up. Each room is
-rate limited to 60 frames per second. Both relays log one JSON line per socket event
+sync, the devices and the rules, so nothing depends on the socket having been up. Each socket is
+rate limited to 60 frames per second, so a flooding phone closes only itself; the Mac's fan-out to
+every paired phone travels as one `frames` batch and costs one token. Expired join tokens are
+swept rather than kept until redeemed, and a push to APNs is given five seconds and runs off the
+room's message chain, so a slow Apple delays no frame. Both relays log one JSON line per socket event
 (`registered`, `joined`, `close`, `drop`, `drain`, `buffer-trim`, `apns`) with no payloads or keys.
 
 Clients pass the room as `?room=<roomId>` on the websocket URL. The room only appears on the wire
@@ -209,8 +218,12 @@ message, purchase, booking or transfer) — and the relay sets the notification 
 else gets `approval-review`, whose only button opens the card. A button answer launches the app
 in the background, which dials the relay, finds the card the push's opaque `event` reference
 names (from its cache, or from the sync connecting asks for), sends the same `approval_answer`
-the card would, and hangs up. Approvals are also a background-wake class now, so the card is
-usually already cached by the time a button is pressed.
+the card would — tagged `source: "notification"` — and hangs up. Approvals are also a
+background-wake class now, so the card is usually already cached by the time a button is pressed.
+The runtime honours a notification-sourced answer only for a card it judged quick-approvable
+itself: the relay chooses which buttons a push draws, and a relay that put **Allow** under a
+purchase card gets `notification-answer-refused` rather than a purchase. The relay also learns a
+reply's length to within the 256-byte preview cap, and how often events land in each thread.
 
 A phone holding a live socket still receives the alert because iOS may have suspended it; a visible
 app suppresses that alert locally. Nor is the running commentary — deltas, tool traffic, a delegated agent finishing — ever notified at all, so a
@@ -451,13 +464,17 @@ before the relay is even reachable.
 
 ### Outbox
 
-Typing with the Mac asleep, or before the relay has paired the socket, is not an error: `send`
-queues the event instead of dropping it (`Outbox` in `packages/shared-swift`), the bubble appears
-in the thread captioned **Queued**, and the queue is flushed in order the moment `paired` and
-`ownerOnline` are both true. The queued events keep the ids they were given, so a message that did
-reach the runtime before the socket dropped is deduped there rather than said twice, and a thread
-started offline carries its `thread_create` ahead of the message that created it. Three refusals
-and the caption becomes **Not sent — tap to retry**; the queue steps over it and carries on.
+Every message, reaction and archive request goes through the outbox (`Outbox` in
+`packages/shared-swift`), link or no link, and leaves it only when the runtime's `receipt` names
+its id: a socket that accepted a send is not a runtime that received it, and iOS can leave a
+socket half-open with the Mac long gone. With the Mac asleep, or before the relay has paired the
+socket, the bubble is captioned **Queued**; on a live link there is no caption, since nothing is
+known to be wrong yet. The queue is flushed in order whenever `paired` and `ownerOnline` are both
+true, and a flush re-sends everything still unreceipted. The events keep the ids they were given,
+so a copy that did land is dropped by the runtime rather than applied twice — it keeps a window of
+the last two thousand command ids for exactly this, and the thread log for messages — and a
+thread started offline carries its `thread_create` ahead of the message that created it. Three
+refusals and the caption becomes **Not sent — tap to retry**; the queue steps over it and carries on.
 It holds 50 messages and stops re-sending one by itself after 48 hours. It is sealed in the same
 `ThreadCache`, so a phone closed on the underground still has it in the morning.
 
@@ -719,9 +736,10 @@ The gate sits in the agent loop, before the tool runs, and returns one of three 
    never on which agent is acting, so delegating work does not change what is authorized. Each
    field it constrains carries a pattern (`exact`, `prefix` or `glob`, matched
    case-insensitively) and it may carry a `maxAmount` cap; a field it leaves out is not checked
-   at all. Among the allows the most specific wins, but **a `never` wins over any allow it
-   overlaps with**, however much narrower that allow is — an overlap is exactly the ambiguity
-   worth resolving the safe way. A rule can be switched off (`enabled: false`) without being
+   at all. The most specific matching rules decide, and **among those a `never` beats an
+   `always`**: a broad deny is overridden by a narrower allow, since the narrower rule is the
+   more deliberate one, but a deny as specific as the allow wins the tie (`decide` in
+   `approval.ts`, test 24). A rule can be switched off (`enabled: false`) without being
    lost, and the runtime keeps `lastUsed` and `useCount` on it so Settings can show what it is
    actually doing.
 3. **Ask.** Nothing is inferred from history here. Repeated approvals produce a *proposal*, never

@@ -75,8 +75,9 @@ test("every spec'd kind exists", () => {
     "sync_delta",
     "device_list",
     "device_remove",
+    "receipt",
   ];
-  expect(kinds).toHaveLength(21);
+  expect(kinds).toHaveLength(22);
 });
 
 test("a thread summary carries what a list row draws", () => {
@@ -219,6 +220,10 @@ test("pairing strings round-trip and untrusted input is rejected", () => {
   expect(decodeQrPayload(code)).toEqual(qr);
   const { roomId, ...noRoom } = qr;
   expect(decodePairingString(encodePairingString(noRoom))).toEqual(noRoom);
+  // The pairing secret rides along when the Mac minted one, and is checked like the keys.
+  const withSecret = { ...qr, secret: "s3cr3t" };
+  expect(decodePairingString(encodePairingString(withSecret))).toEqual(withSecret);
+  expect(() => decodePairingString(`${encodePairingString(qr)}&secret=not+base64url`)).toThrow();
 
   const bad = (query: string) => () => decodePairingString(`yorozu://pair?${query}`);
   expect(bad("v=1&relay=ws://r&token=t")).toThrow(); // missing key

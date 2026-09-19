@@ -314,6 +314,8 @@ public struct MessageBubble: View {
             .padding(.trailing, isUser ? 0 : controlTarget + LayoutMetrics.tight)
         #endif
         .foregroundStyle(isUser ? AnyShapeStyle(Color.white) : AnyShapeStyle(Color.primary))
+        // Links draw in the tint, and the user bubble is filled with it: accent on accent.
+        .tint(isUser ? Color.white : nil)
         .background(isUser ? bubbleBackground : AnyShapeStyle(.clear),
                     in: RoundedRectangle(cornerRadius: LayoutMetrics.bubbleRadius, style: .continuous))
         // The message's actions as a control of their own, because on the Mac the context

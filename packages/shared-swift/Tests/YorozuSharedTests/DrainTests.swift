@@ -149,9 +149,10 @@ private func card(_ id: String, actionId: String, thread: String = "home") -> Yo
         if case .approvalAnswer(let data) = event.payload { return data }
         return nil
     }
-    // The same `approval_answer` the card would send, in the card's thread, and then hang up
+    // The same `approval_answer` the card would send, in the card's thread, marked as a button
+    // press so the runtime can refuse it for a card it never judged quick — and then hang up
     // so iOS suspends the app cleanly.
-    #expect(answer == [ApprovalAnswerData(actionId: "a-1", answer: .yes)])
+    #expect(answer == [ApprovalAnswerData(actionId: "a-1", answer: .yes, source: .notification)])
     #expect(sent.first { $0.payload.kind == .approvalAnswer }?.threadId == "home")
     #expect(model.answered.contains("a-1"))
     #expect(await eventually { await transport.closes == 1 })
