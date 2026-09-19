@@ -60,6 +60,8 @@ public struct MessageBubble: View {
     @State private var expanded = ChatShowcase.expanded
     /// Mac only: whether the pointer is over this message, which is what shows its actions.
     @State private var hovering = false
+    /// iPhone only: the custom message menu otherwise wins the long press that selects text.
+    @State private var selecting = false
     /// Set by the thread's search field; every hit inside this bubble is drawn highlighted.
     @Environment(\.searchHighlight) private var highlight
 
@@ -136,6 +138,7 @@ public struct MessageBubble: View {
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .animation(.easeOut(duration: 0.18), value: speaking)
         .contextMenu { actions }
+        .sheet(isPresented: $selecting) { selectionSheet }
         #if os(macOS)
             // An explicit shape, so the whole row tracks the pointer and not only the parts
             // of it something is drawn in.
@@ -155,6 +158,11 @@ public struct MessageBubble: View {
             }
         }
         Button("Copy", systemImage: "doc.on.doc") { copyToPasteboard(data.text) }
+        #if os(iOS)
+            if !isUser, !data.text.isEmpty {
+                Button("Select", systemImage: "text.cursor") { selecting = true }
+            }
+        #endif
         if let onReply {
             Button("Reply", systemImage: "arrowshape.turn.up.left") { onReply(parts.body) }
         }
@@ -179,6 +187,28 @@ public struct MessageBubble: View {
             // would promise something this button cannot do.
             Button("Remove from this device", systemImage: "trash", role: .destructive, action: onDelete)
         }
+    }
+
+    @ViewBuilder private var selectionSheet: some View {
+        #if os(iOS)
+            NavigationStack {
+                ScrollView {
+                    MarkdownText(data.text)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
+                .navigationTitle("Select text")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { selecting = false }
+                    }
+                }
+            }
+        #else
+            EmptyView()
+        #endif
     }
 
     private var reactionChips: some View {
