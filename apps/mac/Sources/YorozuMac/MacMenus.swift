@@ -3,7 +3,8 @@ import SwiftUI
 import YorozuShared
 
 /// The chat's own commands in the menu bar, where a Mac looks for them: ⌘N for a thread, ⌘F to
-/// search one, ⌘E to export it, ⌘. to stop a turn, and the per-thread model as a submenu.
+/// search one, ⇧⌘E to export it, ⌘. to stop a turn, and the per-thread model as a submenu.
+/// ⇧⌘E rather than ⌘E, which the system reserves for Use Selection for Find.
 ///
 /// Every item acts on whatever the chat window is showing, which the views publish as
 /// ``ChatCommands`` and ``ThreadCommands``. An action that is not available right now arrives
@@ -24,17 +25,18 @@ struct ChatMenus: Commands {
                 .keyboardShortcut("f")
                 .disabled(chat == nil)
         }
+        // One app menu rather than two with an item or two each: everything here acts on the
+        // open thread, and a menu is where a Mac keeps commands it has to be able to find again.
         CommandMenu("Thread") {
-            Button("Export as Markdown…") { export() }
-                .keyboardShortcut("e")
-                .disabled(chat == nil)
-            Menu("Model") { models }
-                .disabled(chat?.models.isEmpty != false)
-        }
-        CommandMenu("Chat") {
             Button("Stop") { chat?.stop?() }
                 .keyboardShortcut(".")
                 .disabled(chat?.stop == nil)
+            Menu("Model") { models }
+                .disabled(chat?.models.isEmpty != false)
+            Divider()
+            Button("Export as Markdown…") { export() }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(chat == nil)
         }
     }
 

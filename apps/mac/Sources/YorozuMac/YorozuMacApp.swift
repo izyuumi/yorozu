@@ -244,6 +244,7 @@ struct YorozuMacApp: App {
             Button("Quit Yorozu") { NSApp.terminate(nil) }
         } label: {
             Image(systemName: session.model.state == .paired ? "circle.fill" : "circle.dotted")
+                .accessibilityLabel(session.model.state == .paired ? "Yorozu, connected" : "Yorozu, not connected")
         }
 
         Settings { SettingsView(sidecar: sidecar) }
