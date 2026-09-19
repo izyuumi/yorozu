@@ -162,11 +162,8 @@ private struct MarkdownList: View {
     }
 }
 
-/// A pipe table as a grid, falling back to a monospaced block when the grid will not fit.
-///
-/// `ViewThatFits` is what makes that decision rather than a character count: it measures the
-/// grid at the reader's actual text size, so the same table can be a grid on an iPad and a
-/// scrolling block on a phone at an accessibility size, with no threshold to guess at.
+/// A pipe table as a grid. A table wider than the bubble scrolls sideways, as a code block
+/// does, rather than degrading into something that is no longer a table.
 private struct MarkdownTable: View {
     let header: [String]
     let rows: [[String]]
@@ -175,15 +172,9 @@ private struct MarkdownTable: View {
     private var columns: Int { max(header.count, rows.map(\.count).max() ?? 0) }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            grid
-            ScrollView(.horizontal, showsIndicators: false) {
-                Text(monospaced)
-                    .font(.caption.monospaced())
-                    .textSelection(.enabled)
-            }
+        ScrollView(.horizontal, showsIndicators: false) {
+            grid.padding(8)
         }
-        .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
     }
@@ -213,23 +204,5 @@ private struct MarkdownTable: View {
     /// the columns stay aligned.
     private func cells(_ row: [String]) -> [String] {
         row + Array(repeating: "", count: max(0, columns - row.count))
-    }
-
-    /// The fallback: columns padded to a common width, which is the only thing that keeps a
-    /// table readable once it is a block of monospaced text.
-    private var monospaced: String {
-        let all = [header] + rows
-        let widths = (0..<columns).map { column in
-            all.map { $0.count > column ? $0[column].count : 0 }.max() ?? 0
-        }
-        func line(_ row: [String]) -> String {
-            cells(row).enumerated()
-                // Padded by character count rather than `padding(toLength:)`, which counts
-                // UTF-16 units and would cut an emoji in a cell in half.
-                .map { $0.element + String(repeating: " ", count: max(0, widths[$0.offset] - $0.element.count)) }
-                .joined(separator: "  ")
-        }
-        let rule = widths.map { String(repeating: "─", count: $0) }.joined(separator: "  ")
-        return ([line(header), rule] + rows.map(line)).joined(separator: "\n")
     }
 }
