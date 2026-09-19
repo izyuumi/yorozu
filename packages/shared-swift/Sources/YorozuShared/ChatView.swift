@@ -136,32 +136,13 @@ public struct ChatView: View {
                 // into a "…" overflow menu, which is exactly the button this replaced.
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
+                        .keyboardShortcut("f")
                     if let onCreate {
                         Button("New session", systemImage: "square.and.pencil", action: onCreate)
                     }
                 }
             #endif
         }
-        // Screenshot only: the menu's own choices, raised far enough down the screen that the
-        // caption they set is in the same picture. Nothing on a simulator can open a real menu.
-        #if os(iOS)
-            .sheet(isPresented: $choosingRunSettings) {
-                NavigationStack {
-                    Form {
-                        Section("Model") { modelPicker }
-                        Section("Effort") { effortPicker }
-                    }
-                    .navigationTitle("Run settings")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") { choosingRunSettings = false }
-                        }
-                    }
-                }
-                .presentationDetents([.medium, .large])
-            }
-        #endif
         // Opened from the magnifier rather than always on show: a thread is for reading, and
         // a permanent search field would be one more thing to read past — and on iOS 26 it
         // would be one more bar under the composer, which already owns the bottom of a chat.
@@ -611,8 +592,26 @@ public struct ChatView: View {
             }
             .buttonStyle(.plain)
             .frame(minHeight: controlTarget)
+            .hoverHighlight()
             .accessibilityLabel("Model and effort")
             .accessibilityValue(runSettingsAccessibilityValue)
+            // On the button, so the iPad popover points at what opened it.
+            .runSettings(isPresented: $choosingRunSettings) {
+                NavigationStack {
+                    Form {
+                        Section("Model") { modelPicker }
+                        Section("Effort") { effortPicker }
+                    }
+                    .navigationTitle("Run settings")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { choosingRunSettings = false }
+                        }
+                    }
+                }
+                .presentationDetents([.medium, .large])
+            }
         }
 
         private var composerModelLabel: String {
@@ -650,7 +649,9 @@ public struct ChatView: View {
         .buttonStyle(.plain)
         .frame(width: controlTarget, height: controlTarget)
         .contentShape(Rectangle())
-        .macKey(.escape)
+        .hoverHighlight()
+        // Esc stops on both platforms: unlike Return, nothing else in the composer claims it.
+        .keyboardShortcut(.escape, modifiers: [])
         .accessibilityLabel("Stop")
         .transition(.scale(scale: 0.8).combined(with: .opacity))
     }
@@ -668,6 +669,7 @@ public struct ChatView: View {
         }
         .buttonStyle(.plain)
         .frame(width: controlTarget, height: controlTarget)
+        .hoverHighlight()
         .disabled(!canSend)
         .macKey(.return)
         .accessibilityLabel("Send")
@@ -800,9 +802,11 @@ public struct ChatView: View {
                     cell.contentConfiguration = UIHostingConfiguration {
                         switch entry {
                         case .row(let id):
-                            if let row = self.rowsById[id] { self.parent.content(row) }
+                            if let row = self.rowsById[id] {
+                                self.parent.content(row).compactQuietTranscriptLayout()
+                            }
                         case .thinking:
-                            ThinkingRow()
+                            ThinkingRow().compactQuietTranscriptLayout()
                         }
                     }
                     .margins(.horizontal, 10)
@@ -991,6 +995,10 @@ func followsNewest(atBottom: Bool, phase: ScrollPhase) -> Bool {
 #endif
 
 extension View {
+    /// Prose stops at a reading width and sits centred in whatever is left. On the Mac that is
+    /// the whole transcript; on iOS it is each hosted row, because the timeline there is a
+    /// collection view. A phone is never wider than the cap, so there it changes nothing — an
+    /// iPad in landscape is, and a line of text running the full 1024 points was not readable.
     @ViewBuilder fileprivate func compactQuietTranscriptLayout() -> some View {
         #if os(macOS)
             frame(maxWidth: LayoutMetrics.readingWidth, alignment: .leading)
@@ -998,16 +1006,45 @@ extension View {
                 .padding(.horizontal, LayoutMetrics.section)
                 .padding(.vertical, LayoutMetrics.gutter)
         #else
-            padding()
+            frame(maxWidth: LayoutMetrics.readingWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
         #endif
     }
 
+    /// The composer keeps to the same column as the prose above it. Like the cap on the
+    /// transcript, this is a no-op on a phone.
     @ViewBuilder fileprivate func compactQuietComposerLayout() -> some View {
-        #if os(macOS)
-            frame(maxWidth: LayoutMetrics.composerWidth)
-                .frame(maxWidth: .infinity, alignment: .center)
+        frame(maxWidth: LayoutMetrics.composerWidth)
+            .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    /// A pointer hovering over a plain-styled button gets the system highlight on iPad, where
+    /// a trackpad is common; the Mac's own controls already track the pointer.
+    @ViewBuilder fileprivate func hoverHighlight() -> some View {
+        #if os(iOS)
+            hoverEffect(.highlight)
         #else
             self
+        #endif
+    }
+
+    /// The run settings, over the button that opens them: an anchored popover on iPad, where a
+    /// full sheet for two pickers is the pattern the HIG warns against, and the same half-height
+    /// sheet as before on the phone.
+    @ViewBuilder fileprivate func runSettings<Content: View>(
+        isPresented: Binding<Bool>,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        #if os(iOS)
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                popover(isPresented: isPresented, arrowEdge: .bottom) {
+                    content().frame(minWidth: 320, minHeight: 360)
+                }
+            } else {
+                sheet(isPresented: isPresented, content: content)
+            }
+        #else
+            sheet(isPresented: isPresented, content: content)
         #endif
     }
 
@@ -1133,6 +1170,7 @@ private struct SearchHitBar: View {
                 .frame(width: controlTarget, height: controlTarget)
         }
         .buttonStyle(.plain)
+        .hoverHighlight()
         .disabled(total == 0)
         .accessibilityLabel(label)
     }
@@ -1165,6 +1203,7 @@ private struct ScrollToBottomPill: View {
         }
         .buttonStyle(.plain)
         .pillBackground()
+        .hoverHighlight()
         .accessibilityLabel("Jump to latest message")
     }
 }
