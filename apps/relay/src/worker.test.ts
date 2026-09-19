@@ -537,9 +537,10 @@ type Call = { url: string; headers: Headers; body: any };
  * the host are real bindings — see vitest.config.ts — because a Durable Object is handed its
  * env by the runtime and never sees one a test assigned to.
  *
- * `status` is what Apple answers with, which is how the dead-token path is exercised.
+ * `status` is what Apple answers with, by URL, which is how the dead-token and wrong-environment
+ * paths are exercised: a 400 here is always Apple's `BadDeviceToken`.
  */
-function fakeApns(status: () => number = () => 200): Call[] {
+function fakeApns(status: (url: string) => number = () => 200): Call[] {
   // Another test's cached JWT would be signed by the same key, but the cache is per isolate
   // and a test that asserts on minting must start from nothing.
   apns.resetToken();
@@ -550,7 +551,10 @@ function fakeApns(status: () => number = () => 200): Call[] {
       headers: new Headers(init?.headers),
       body: JSON.parse(String(init?.body)),
     });
-    return new Response(null, { status: status() });
+    const code = status(String(input));
+    return new Response(code === 400 ? JSON.stringify({ reason: "BadDeviceToken" }) : null, {
+      status: code,
+    });
   });
   return calls;
 }
@@ -816,4 +820,27 @@ test("an approval buzzes and wakes the app, so the card is cached before a butto
   // action is in the payload.
   expect(calls[0]!.body.aps.category).toBe("approval-quick");
   expect(calls[1]!.headers.get("apns-push-type")).toBe("background");
+});
+
+test("a token production APNs refuses as bad is retried through sandbox, and that is remembered", async () => {
+  // An Xcode-signed build registers a sandbox token, and the phone has no way to say so.
+  const calls = fakeApns((url) => (url.startsWith("https://apns.test/") ? 400 : 200));
+  const { mac, phone, keys, room } = await paired();
+  const hosts = () => calls.map((call) => new URL(call.url).host);
+
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
+  await macSettled(mac);
+  expect(hosts()).toEqual(["apns.test", "apns-sandbox.test"]);
+  expect(await record(room, keys.pub)).toMatchObject({ sandbox: true });
+
+  // The next one goes straight there: production is not asked again.
+  calls.length = 0;
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
+  await macSettled(mac);
+  expect(hosts()).toEqual(["apns-sandbox.test"]);
+
+  // A new token may be from either environment, so nothing is assumed about it.
+  phone.send({ type: "push", deviceToken: "device-token-2" });
+  await settled(phone);
+  expect(await record(room, keys.pub)).toEqual({ deviceToken: "device-token-2" });
 });

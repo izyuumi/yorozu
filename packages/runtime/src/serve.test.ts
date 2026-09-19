@@ -28,7 +28,7 @@ import { openaiCompat } from "./provider.js";
 import { loadDevices, serve, typedAnswer, type Sidecar } from "./serve.js";
 import { OpenClawRunner, type OpenClawTurn } from "./openclaw.js";
 import { localSocketPath } from "./local.js";
-import { appendThreadEvent, createThread, listThreads, readThreadEvents } from "./threads.js";
+import { SYNC_PAGE_BYTES, appendThreadEvent, createThread, listThreads, readThreadEvents } from "./threads.js";
 import { readTranscripts, transcriptDir } from "./transcripts.js";
 
 let relay: Relay;
@@ -1456,4 +1456,51 @@ test("a replayed frame is acked once handled, and a turn that ends offline is an
   phone.ws.close();
   await sidecar.close();
   await new Promise<void>((done) => fake.close(() => done()));
+});
+
+test("a sync page stops short of the relay's frame limit, and the rest follows on request", async () => {
+  relay = await startRelay(0);
+  const qrs = qrQueue();
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${relay.port}`,
+    stateDir: mkdtempSync(join(tmpdir(), "yorozu-serve-")),
+    provider: openaiCompat({
+      baseUrl: "https://example.invalid",
+      model: "m",
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => sse("pong")),
+    }),
+    log: (line) => {
+      if (line.startsWith("QR ")) qrs.push(line.slice(3));
+    },
+  });
+  const phone = await pairPhone(relay.port, await qrs.next());
+  await phone.next("thread_list");
+  const chat = "draft-1";
+  phone.send(chat, { kind: "thread_create", data: {} });
+  await phone.next("thread_list");
+
+  // Two turns that together outgrow one page, though either fits on its own.
+  const big = "x".repeat(Math.floor(SYNC_PAGE_BYTES * 0.6));
+  const replies: string[] = [];
+  for (let n = 0; n < 2; n++) {
+    phone.send(chat, { kind: "message", data: { role: "user", text: big } });
+    await phone.next("message"); // our own, echoed
+    replies.push((await phone.next("message")).id); // pong
+  }
+  const roles = (delta: YorozuEvent) =>
+    delta.kind === "sync_delta"
+      ? delta.data.events.map((e) => (e.kind === "message" ? e.data.role : e.kind))
+      : delta.kind;
+
+  // From nothing: the first turn only, and word that there is more.
+  phone.send(chat, { kind: "sync_request", data: { lastSeen: {} } });
+  const page = await phone.next("sync_delta");
+  expect(roles(page)).toEqual(["user", "agent"]);
+  expect(page).toMatchObject({ data: { more: true } });
+
+  // From the end of that page: the second turn, and that is all.
+  phone.send(chat, { kind: "sync_request", data: { lastSeen: { [chat]: replies[0]! } } });
+  const rest = await phone.next("sync_delta");
+  expect(roles(rest)).toEqual(["user", "agent"]);
+  expect(rest.kind === "sync_delta" && rest.data.more).toBeUndefined();
 });

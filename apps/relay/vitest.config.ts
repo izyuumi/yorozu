@@ -17,6 +17,7 @@ const apns = {
     .privateKey.export({ type: "pkcs8", format: "pem" })
     .toString(),
   APNS_HOST: "apns.test",
+  APNS_SANDBOX_HOST: "apns-sandbox.test",
 };
 
 /**

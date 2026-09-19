@@ -136,6 +136,17 @@ public final class ChatModel {
         Task { [transport] in await transport.close() }
     }
 
+    /// Hangs up ahead of a suspension. iOS freezes the app with whatever socket it holds, and
+    /// from the relay that frozen socket is indistinguishable from a phone that is watching —
+    /// which is exactly the phone it does not send a silent catch-up to. A closed socket is
+    /// the truth; the next ``start()`` dials afresh.
+    public func suspend() {
+        close()
+        // The stream is finished, so the next foreground has to start a new one rather than
+        // reconnect a transport that has already hung up.
+        started = false
+    }
+
     /// Called when the app comes back to the foreground: a socket that dropped while it was
     /// suspended is re-dialled now instead of after the transport's backoff.
     public func reconnect() {
@@ -163,10 +174,7 @@ public final class ChatModel {
         while deltas == before, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(50))
         }
-        close()
-        // The stream is finished, so the next foreground has to start a new one rather than
-        // reconnect a transport that has already hung up.
-        started = false
+        suspend()
         return deltas > before
     }
 
@@ -192,10 +200,7 @@ public final class ChatModel {
         while approvalCard(eventRef: eventRef) == nil, deltas == before, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(50))
         }
-        defer {
-            close()
-            started = false
-        }
+        defer { suspend() }
         guard state == .paired, let (threadId, card) = approvalCard(eventRef: eventRef) else { return false }
         self.answer(card.actionId, in: threadId, answer)
         // The send is queued behind everything before it; wait for the queue to drain.

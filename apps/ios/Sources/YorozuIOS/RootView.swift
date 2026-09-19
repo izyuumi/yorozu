@@ -246,6 +246,9 @@ final class Session {
                 onPaired: PairingStore.markPaired
             )
             self.relay = relay
+            // A token that arrived before there was a relay to tell — registration is asked for
+            // at launch, and iOS answers whenever it likes — is told now rather than never.
+            if let deviceToken { Task { await relay.registerPush(deviceToken: deviceToken) } }
             let model = ChatModel(transport: relay, cache: CacheStore.open())
             E2EHarness.attach(to: model)
             // The harness owns `onPaired` when it is running at all, so this is added to
@@ -339,6 +342,10 @@ struct RootView: View {
             // the moment to pick up anything shared while it was away.
             .onChange(of: scenePhase) { _, phase in
                 connection.update(actualConnection, active: phase == .active)
+                // Hang up before iOS suspends the app with the socket half-open: the relay
+                // would go on counting a frozen socket as a phone that is watching, and so
+                // not worth a silent wake-up. See ``ChatModel/suspend()``.
+                if phase == .background { session.model?.suspend() }
                 guard phase == .active else { return }
                 // A background drain hangs up so the OS can suspend the app cleanly, so
                 // coming back may be a fresh dial rather than a reconnect. `start()` does

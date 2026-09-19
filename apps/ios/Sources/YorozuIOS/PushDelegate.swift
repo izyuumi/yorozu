@@ -43,6 +43,10 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
             UNNotificationCategory(identifier: Self.quickCategory, actions: [allow, deny, review], intentIdentifiers: []),
             UNNotificationCategory(identifier: Self.reviewCategory, actions: [review], intentIdentifiers: []),
         ])
+        // Every launch, as Apple asks: the token can change with a restore or an OS update, and
+        // a token the relay was never told is a phone it cannot wake. Permission is a separate
+        // question — ``Session/requestNotifications()`` — and the silent catch-up needs none.
+        application.registerForRemoteNotifications()
         return true
     }
 
@@ -72,6 +76,9 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         _ application: UIApplication,
         didReceiveRemoteNotification userInfo: [AnyHashable: Any]
     ) async -> UIBackgroundFetchResult {
+        // On screen, the socket is already open and being read: a drain here would hang it up
+        // and leave the app sitting disconnected until the next foreground.
+        guard application.applicationState != .active else { return .noData }
         // Nothing paired: woken for a room this phone no longer belongs to.
         guard let model = await MainActor.run(body: { Session.shared.model }) else { return .noData }
         return await model.drain() ? .newData : .noData
