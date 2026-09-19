@@ -132,13 +132,11 @@ public struct ChatView: View {
         #endif
         .toolbar {
             #if os(iOS)
-                ToolbarItem(placement: .primaryAction) {
+                // One group, not two `.primaryAction` items: iOS folds a second primary action
+                // into a "…" overflow menu, which is exactly the button this replaced.
+                ToolbarItemGroup(placement: .topBarTrailing) {
                     Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
-                }
-            #endif
-            #if os(iOS)
-                if let onCreate {
-                    ToolbarItem(placement: .primaryAction) {
+                    if let onCreate {
                         Button("New session", systemImage: "square.and.pencil", action: onCreate)
                     }
                 }

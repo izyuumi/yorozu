@@ -219,3 +219,42 @@ extension AttributedString {
         return attributed.highlighting(highlight)
     }
 }
+
+extension AttributedString {
+    /// The whole reply as one attributed string, block by block, for a place that has to select
+    /// across it — the phone's Select sheet. Inline Markdown is rendered; the block kinds are
+    /// spelled out plainly (a code fence as monospaced text, a list as its items with markers, a
+    /// table as its rows) rather than drawn, because the point here is the words, not the look.
+    public static func chatDocument(_ markdown: String) -> AttributedString {
+        var document = AttributedString()
+        for (offset, block) in markdownBlocks(markdown).enumerated() {
+            if offset > 0 { document += AttributedString("\n\n") }
+            switch block {
+            case .paragraph(let text):
+                document += chatInline(text)
+            case .heading(_, let text):
+                var heading = chatInline(text)
+                heading.font = .headline
+                document += heading
+            case .code(_, let text):
+                var code = AttributedString(text)
+                code.font = .body.monospaced()
+                document += code
+            case .list(let ordered, let items):
+                for (index, item) in items.enumerated() {
+                    if index > 0 { document += AttributedString("\n") }
+                    document += AttributedString(ordered ? "\(index + 1). " : "• ")
+                    document += chatInline(item)
+                }
+            case .table(let header, let rows):
+                for (index, row) in ([header] + rows).enumerated() {
+                    if index > 0 { document += AttributedString("\n") }
+                    document += AttributedString(row.joined(separator: "  ·  "))
+                }
+            case .rule:
+                document += AttributedString("———")
+            }
+        }
+        return document
+    }
+}
