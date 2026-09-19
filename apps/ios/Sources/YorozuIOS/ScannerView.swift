@@ -32,7 +32,10 @@ struct ScannerView: View {
                 }
 
                 if let error {
-                    Text(error).font(.footnote).foregroundStyle(.red)
+                    Label { Text(error) } icon: {
+                        Image(systemName: "exclamationmark.circle").foregroundStyle(.red)
+                    }
+                    .font(.footnote)
                 }
             }
             .padding(16)

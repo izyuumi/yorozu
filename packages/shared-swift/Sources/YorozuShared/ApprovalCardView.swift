@@ -43,7 +43,10 @@ public struct ApprovalCardView: View {
             if let amount = card.amount {
                 Text(amount, format: .currency(code: Locale.current.currency?.identifier ?? "USD"))
                     .font(.title2.weight(.semibold).monospacedDigit())
-                    .accessibilityLabel("Amount")
+                    // The label must carry the number: a bare "Amount" replaced it.
+                    .accessibilityLabel(
+                        "Amount: \(amount.formatted(.currency(code: Locale.current.currency?.identifier ?? "USD")))"
+                    )
             }
             scopeRows
             content
@@ -202,7 +205,7 @@ public struct ApprovalCardView: View {
                 if !itemsExpanded, items.count > Self.itemsShown {
                     Text("and \(items.count - Self.itemsShown) more")
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                 }
             }
             .padding(LayoutMetrics.inner)
@@ -330,6 +333,8 @@ public struct ApprovalCardView: View {
                         .font(.caption)
                         .buttonStyle(.plain)
                         .foregroundStyle(.tint)
+                        .frame(minWidth: controlTarget, minHeight: controlTarget)
+                        .contentShape(.rect)
                 }
                 .padding(LayoutMetrics.inner)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.controlRadius, style: .continuous))
