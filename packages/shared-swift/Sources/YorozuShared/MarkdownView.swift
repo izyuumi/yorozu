@@ -20,6 +20,10 @@ public struct MarkdownText: View {
                 view(at: offset)
             }
         }
+        // The phone's timeline hosts each row in a collection cell, which can propose less
+        // height than the prose needs; without this a list item or paragraph is cut off at a
+        // couple of lines with an ellipsis instead of wrapping to its full length.
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder private func view(at offset: Int) -> some View {

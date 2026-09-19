@@ -9,31 +9,35 @@ import Testing
 
 @Test func aMessageIsOnlyLongEnoughToReadElsewhereWhenItIsReallyLong() {
     #expect(!needsReader("short"))
-    #expect(!needsReader(String(repeating: "a", count: readerCharacterLimit)))
-    #expect(needsReader(String(repeating: "a", count: readerCharacterLimit + 1)))
-    // Lines count too: a wall of short ones is just as unreadable in a bubble.
+    // Lines count: a wall of short ones is unreadable in a bubble.
     let lines = Array(repeating: "x", count: readerLineLimit).joined(separator: "\n")
     #expect(!needsReader(lines))
     #expect(needsReader(lines + "\nx"))
+    // Characters count too, once there is a line boundary to cut on.
+    let paragraphs = Array(repeating: String(repeating: "a", count: 500), count: 3).joined(separator: "\n")
+    #expect(needsReader(paragraphs))
 }
 
-@Test func theExcerptStopsAtTheLineLimitAndSaysThatItDid() {
+@Test func theExcerptStopsAtTheLineLimit() {
     let long = (1...50).map { "line \($0)" }.joined(separator: "\n")
     let excerpt = readerExcerpt(long)
-    #expect(excerpt.hasSuffix("…"))
-    #expect(excerpt.contains("line 30"))
+    #expect(excerpt.hasSuffix("line 30"))
     #expect(!excerpt.contains("line 31"))
-    // A message that fits comes back untouched — no ellipsis on something that was not cut.
+    // A message that fits comes back untouched.
     #expect(readerExcerpt("hello") == "hello")
 }
 
-@Test func theExcerptCutsOnAWordAndNotThroughOne() {
-    let prose = String(repeating: "alpha beta ", count: 200)
-    let excerpt = readerExcerpt(prose)
-    #expect(excerpt.count <= readerCharacterLimit + 1)
-    #expect(excerpt.hasSuffix("alpha…") || excerpt.hasSuffix("beta…"))
-    // One unbroken run has no word to cut on, so the hard cut is all there is.
-    #expect(readerExcerpt(String(repeating: "z", count: 2000)).count == readerCharacterLimit + 1)
+@Test func theExcerptCutsBetweenLinesAndNeverInsideOne() {
+    let line = String(repeating: "alpha beta ", count: 50)
+    let excerpt = readerExcerpt([line, line, line].joined(separator: "\n"))
+    // Whole lines only: the third line would cross the character limit, so it is dropped
+    // entirely rather than cut, and the two before it are on screen intact with no ellipsis.
+    #expect(excerpt == [line, line].joined(separator: "\n").trimmingCharacters(in: .whitespaces))
+    #expect(!excerpt.contains("…"))
+    // One enormous line has no boundary to cut on, so it is drawn whole rather than cut.
+    let single = String(repeating: "z", count: 2000)
+    #expect(readerExcerpt(single) == single)
+    #expect(!needsReader(single))
 }
 
 @Test func aQuotedReplyIsOneMessageWithABlockquoteOnTop() {
