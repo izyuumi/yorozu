@@ -33,6 +33,28 @@ function harness() {
 }
 
 describe("OpenClawRunner", () => {
+  test("admission writes ledger before logs and replays either crash side idempotently", () => {
+    const gateway = harness();
+    const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    const turn = { threadId: "atomic", text: "once", userEventId: "user-1" };
+    expect(() => runner.admitUserTurn(turn, () => { throw new Error("log crash"); })).toThrow("log crash");
+    expect(runner.pendingTurns()).toHaveLength(1);
+    let repairs = 0;
+    const replayed = runner.admitUserTurn(turn, () => { repairs += 1; });
+    expect(repairs).toBe(1);
+    expect(runner.pendingTurns()).toHaveLength(1);
+    expect(replayed.runId).toBe(runner.pendingTurns()[0]!.runId);
+
+    const blocked = join(gateway.dir, "not-a-directory");
+    writeFileSync(blocked, "file");
+    let accepted = false;
+    expect(() => new OpenClawRunner({ stateDir: blocked }).admitUserTurn(
+      { threadId: "atomic", text: "never", userEventId: "user-2" },
+      () => { accepted = true; },
+    )).toThrow();
+    expect(accepted).toBe(false);
+  });
+
   test("archives and restores the canonical Gateway session without starting a turn", async () => {
     const gateway = harness();
     gateway.request.mockImplementation(async (method) => method === "sessions.describe"
@@ -131,16 +153,453 @@ describe("OpenClawRunner", () => {
       threadId: "one", text: "delegate", onEvent: (event) => events.push(event),
     });
     await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
-    const task = { id: "child", title: "Research", sessionKey: "agent:main:yorozu:one", status: "running", deliveryStatus: "pending", createdAt: Date.now() };
+    const task = { id: "task-row", runId: "child-run", title: "Research", sessionKey: "agent:main:yorozu:one", status: "running", deliveryStatus: "pending", createdAt: Date.now() };
     gateway.event({ action: "upserted", task: { ...task, createdAt: 1 } }, "task");
     gateway.event({ action: "upserted", task }, "task");
     gateway.event({ action: "upserted", task: { ...task, status: "completed" } }, "task");
     expect(events.slice(1).map((event) => event.kind)).toEqual(["thought", "message"]);
     expect(events[2]).toMatchObject({ parentAgentId: "main", data: { done: true } });
     gateway.event({ state: "final", sessionKey: task.sessionKey, runId: "run-1", seq: 1 });
-    gateway.event({ state: "final", sessionKey: task.sessionKey, runId: "announce:requester-settle:child", seq: 1, message: { content: "Done" } });
+    gateway.event({ state: "final", sessionKey: task.sessionKey, runId: "announce:requester-settle:child-run", seq: 1, message: { content: "Done" } });
     await expect(result).resolves.toBe("Done");
   });
+
+  test("reattaches after sidecar replacement without resending the OpenClaw turn", async () => {
+    const gateway = harness();
+    void new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).run({
+      threadId: "release", text: "install the update",
+    });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.objectContaining({ message: "install the update" })));
+    const tool = { sessionKey: "agent:main:yorozu:release", runId: "run-1", stream: "tool", seq: 2,
+      data: { phase: "result", toolCallId: "exec-1", name: "bash", result: "installed" } };
+    gateway.request.mockImplementation(async (method) => method === "chat.history" ? {
+      inFlightRun: { runId: "run-1", events: [tool], text: "Update installed." },
+    } : {});
+
+    const events: YorozuEvent[] = [];
+    const updates: string[] = [];
+    const replacement = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    expect(replacement.pendingTurns().map((turn) => turn.threadId)).toEqual(["release"]);
+    const resumed = replacement.resume({
+      threadId: "release", onEvent: (event) => events.push(event), onUpdate: (text) => updates.push(text),
+    });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.history", {
+      sessionKey: "agent:main:yorozu:release", limit: 1000, inputRunIds: ["run-1"],
+    }));
+    expect(gateway.request.mock.calls.filter(([method]) => method === "chat.send")).toHaveLength(1);
+    await vi.waitFor(() => expect(updates).toEqual(["Update installed."]));
+    expect(events.map((event) => event.kind)).toEqual(["tool_call", "tool_result"]);
+    gateway.event({ state: "final", sessionKey: tool.sessionKey, runId: "run-1", seq: 3,
+      message: { content: "Update installed." } });
+    await expect(resumed).resolves.toBe("Update installed.");
+    expect(replacement.pendingTurns().map((turn) => turn.threadId)).toEqual(["release"]);
+    replacement.acknowledge("release", replacement.pendingTurns()[0]!.completionId);
+    expect(replacement.pendingTurns()).toEqual([]);
+  });
+  test("keeps recovery ownership until durable-final acknowledgment", async () => {
+    const gateway = harness();
+    const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    const result = runner.run({ threadId: "ack", text: "update", completionId: "final-ack", userEventId: "user-ack" });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    gateway.event({ state: "final", sessionKey: "agent:main:yorozu:ack", runId: "run-1", seq: 1, message: { content: "done" } });
+    await expect(result).resolves.toBe("done");
+    expect(runner.pendingTurns()).toMatchObject([{ completionId: "final-ack", userEventId: "user-ack" }]);
+    runner.acknowledge("ack", "wrong");
+    expect(runner.pendingTurns()).toHaveLength(1);
+    runner.acknowledge("ack", "final-ack");
+    expect(runner.pendingTurns()).toEqual([]);
+  });
+
+  test("late completed and aborted replays never rerun without bounded tombstones", async () => {
+    const gateway = harness();
+    const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    const turn = { threadId: "once", text: "release", userEventId: "user-once", completionId: "openclaw:user-once:final" };
+    runner.admitUserTurn(turn, () => {});
+    const result = runner.run(turn);
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    gateway.event({ state: "final", sessionKey: "agent:main:yorozu:once", runId: "run-1", seq: 1,
+      message: { content: "done" } });
+    await expect(result).resolves.toBe("done");
+    runner.acknowledge("once", "openclaw:user-once:final");
+    let repaired = 0;
+    expect(runner.admitUserTurn(turn, () => { repaired += 1; }, () => true)).toBeUndefined();
+    expect(repaired).toBe(1);
+    expect(gateway.request.mock.calls.filter(([method]) => method === "chat.send")).toHaveLength(1);
+    expect(runner.pendingTurns()).toEqual([]);
+
+    for (let index = 0; index < 300; index += 1) {
+      expect(runner.admitUserTurn({ threadId: "old", text: "old", userEventId: `old-${index}` },
+        () => {}, () => true)).toBeUndefined();
+    }
+    expect(runner.admitUserTurn({ threadId: "aborted", text: "stop", userEventId: "aborted-user" },
+      () => {}, () => true)).toBeUndefined();
+    expect(gateway.request.mock.calls.filter(([method]) => method === "chat.send")).toHaveLength(1);
+  });
+
+  test("abort during pending chat.send aborts before and after response", async () => {
+    const gateway = harness();
+    const sent = Promise.withResolvers<{ runId: string }>();
+    gateway.request.mockImplementation(async (method) => method === "chat.send" ? sent.promise : {});
+    const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    const controller = new AbortController();
+    const result = runner.run({ threadId: "send-abort", text: "stop", signal: controller.signal });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    const submitted = gateway.request.mock.calls.find(([method]) => method === "chat.send")![1] as { idempotencyKey: string };
+    controller.abort();
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.abort", {
+      sessionKey: "agent:main:yorozu:send-abort", runId: submitted.idempotencyKey,
+    }));
+    sent.resolve({ runId: "accepted-run" });
+    await expect(result).resolves.toBe("");
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.abort", {
+      sessionKey: "agent:main:yorozu:send-abort", runId: "accepted-run",
+    }));
+  });
+
+  test("abort during connect or session patch never dispatches chat.send", async () => {
+    let connected!: () => void;
+    const connectRequest = vi.fn(async () => ({}));
+    const connectFactory = vi.fn((options: GatewayClientOptions) => ({
+      start: () => { connected = () => options.onHelloOk?.({ auth: {} } as never); },
+      stop: vi.fn(), request: connectRequest,
+    }));
+    const connectDir = harness().dir;
+    const connectRunner = new OpenClawRunner({ stateDir: connectDir, clientFactory: connectFactory });
+    const connectAbort = new AbortController();
+    const connecting = connectRunner.run({ threadId: "connect-abort", text: "never", signal: connectAbort.signal });
+    await vi.waitFor(() => expect(connected).toBeTypeOf("function"));
+    connectAbort.abort();
+    connected();
+    await expect(connecting).resolves.toBe("");
+    expect(connectRequest).not.toHaveBeenCalledWith("chat.send", expect.anything());
+
+    const gateway = harness();
+    const patchReady = Promise.withResolvers<void>();
+    gateway.request.mockImplementation(async (method) => {
+      if (method === "sessions.patch") await patchReady.promise;
+      return {};
+    });
+    const patchRunner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    const patchAbort = new AbortController();
+    const patching = patchRunner.run({ threadId: "patch-abort", text: "never", model: "openai/model", signal: patchAbort.signal });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("sessions.patch", expect.anything()));
+    patchAbort.abort();
+    patchReady.resolve();
+    await expect(patching).resolves.toBe("");
+    expect(gateway.request).not.toHaveBeenCalledWith("chat.send", expect.anything());
+  });
+
+  test("abort during recovery session patch prevents stored resend", async () => {
+    const gateway = harness();
+    const first = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    void first.run({ threadId: "recover-patch-abort", text: "never", model: "openai/model",
+      userEventId: "recover-patch-user" });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    gateway.request.mockClear();
+    const patchReady = Promise.withResolvers<void>();
+    gateway.request.mockImplementation(async (method) => {
+      if (method === "chat.history") return { messages: [] };
+      if (method === "sessions.patch") await patchReady.promise;
+      return {};
+    });
+    const replacement = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory,
+      recoveryDelayMs: 1 });
+    const controller = new AbortController();
+    const resumed = replacement.resume({ threadId: "recover-patch-abort", signal: controller.signal });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("sessions.patch", expect.anything()));
+    controller.abort();
+    patchReady.resolve();
+    await expect(resumed).resolves.toBe("");
+    expect(gateway.request).not.toHaveBeenCalledWith("chat.send", expect.anything());
+  });
+
+  test("abort during recovery chat.send aborts returned run without resurrecting ledger", async () => {
+    const gateway = harness();
+    const first = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    void first.run({ threadId: "recover-send-abort", text: "never", userEventId: "recover-send-user" });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    gateway.request.mockClear();
+    const sent = Promise.withResolvers<{ runId: string }>();
+    gateway.request.mockImplementation(async (method) => {
+      if (method === "chat.history") return { messages: [] };
+      if (method === "chat.send") return sent.promise;
+      return {};
+    });
+    const replacement = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory,
+      recoveryDelayMs: 1 });
+    const controller = new AbortController();
+    const resumed = replacement.resume({ threadId: "recover-send-abort", signal: controller.signal });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    controller.abort();
+    sent.resolve({ runId: "accepted-recovery-run" });
+    await expect(resumed).resolves.toBe("");
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.abort", {
+      sessionKey: "agent:main:yorozu:recover-send-abort", runId: "accepted-recovery-run",
+    }));
+    expect(replacement.pendingTurns()).toEqual([]);
+  });
+
+  test("retries transient history failure in-process without releasing recovery ownership", async () => {
+    const gateway = harness();
+    const first = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    void first.run({ threadId: "failure", text: "update", completionId: "final-failure" });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    let histories = 0;
+    gateway.request.mockImplementation(async (method) => {
+      if (method !== "chat.history") return {};
+      if (++histories === 1) throw new Error("history unavailable");
+      return { messages: [{ role: "assistant", content: "recovered", stopReason: "stop",
+        __openclaw: { runId: "run-1", idempotencyKey: "provider-scoped-key" } }] };
+    });
+    const replacement = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, recoveryDelayMs: 1 });
+    await expect(replacement.resume({ threadId: "failure" })).resolves.toBe("recovered");
+    expect(histories).toBe(2);
+    expect(replacement.pendingTurns()).toHaveLength(1);
+  });
+
+  test("retries startup connection failure while recovery keeps queue ownership", async () => {
+    const gateway = harness();
+    void new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).run({
+      threadId: "connect-retry", text: "update",
+    });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    let attempts = 0;
+    const request = vi.fn(async (method: string) => method === "chat.history" ? { messages: [
+      { role: "assistant", content: "recovered", stopReason: "stop", __openclaw: { runId: "run-1" } },
+    ] } : {});
+    const clientFactory = vi.fn((options: GatewayClientOptions) => ({
+      start: () => {
+        attempts += 1;
+        if (attempts === 1) options.onConnectError?.(new Error("gateway starting"));
+        else options.onHelloOk?.({ auth: {} } as never);
+      },
+      stop: vi.fn(),
+      request,
+    }));
+    const replacement = new OpenClawRunner({
+      stateDir: gateway.dir, clientFactory, recoveryDelayMs: 1,
+    });
+    await expect(replacement.resume({ threadId: "connect-retry" })).resolves.toBe("recovered");
+    expect(attempts).toBe(2);
+  });
+
+  test("resume honors pre-abort and abort removes only active ledger head", async () => {
+    const gateway = harness();
+    const first = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    const head = { threadId: "abort-resume", text: "head", userEventId: "head-user" };
+    first.admitUserTurn(head, () => {});
+    first.admitUserTurn({ threadId: "abort-resume", text: "next", userEventId: "next-user" }, () => {});
+    void first.run(head);
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+
+    const stopped = new AbortController();
+    stopped.abort();
+    const neverFactory = vi.fn();
+    await expect(new OpenClawRunner({ stateDir: gateway.dir, clientFactory: neverFactory }).resume({
+      threadId: "abort-resume", signal: stopped.signal,
+    })).resolves.toBe("");
+    expect(neverFactory).not.toHaveBeenCalled();
+    expect(first.pendingTurns()).toMatchObject([{ userEventId: "next-user", state: "queued" }]);
+
+    gateway.request.mockImplementation(async () => ({}));
+    first.admitUserTurn({ threadId: "abort-resume", text: "third", userEventId: "third-user" }, () => {});
+    void first.run({ threadId: "abort-resume", text: "next", userEventId: "next-user" });
+    await vi.waitFor(() => expect(gateway.request.mock.calls.filter(([method]) => method === "chat.send")).toHaveLength(2));
+    const replacement = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, recoveryDelayMs: 1 });
+    const controller = new AbortController();
+    const resumed = replacement.resume({ threadId: "abort-resume", signal: controller.signal });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.history", expect.anything()));
+    controller.abort();
+    await expect(resumed).resolves.toBe("");
+    expect(replacement.pendingTurns()).toMatchObject([{ userEventId: "third-user", state: "queued" }]);
+  });
+
+  test("restores delegated completion wait and dedupes persisted activity", async () => {
+    const gateway = harness();
+    const first = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    void first.run({ threadId: "delegated-restart", text: "delegate" });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    gateway.event({ action: "upserted", task: { id: "task-row", runId: "child-run", createdAt: Date.now(), sessionKey: "agent:main:yorozu:delegated-restart", status: "running", deliveryStatus: "pending" } }, "task");
+    expect(first.pendingTurns()[0]?.awaitsAnnouncement).toBe(true);
+    const tool = { sessionKey: "agent:main:yorozu:delegated-restart", runId: "run-1", stream: "tool", seq: 2,
+      data: { phase: "result", toolCallId: "exec-1", name: "bash", result: "done" } };
+    gateway.request.mockImplementation(async (method) => method === "chat.history" ? {
+      inFlightRun: { runId: "run-1", events: [tool], text: "" },
+    } : {});
+    const events: YorozuEvent[] = [];
+    const replacement = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    const waiting = replacement.resume({
+      threadId: "delegated-restart",
+      seenEventIds: ["openclaw:run-1:call:exec-1", "openclaw:run-1:result:exec-1"],
+      onEvent: (event) => events.push(event),
+    });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.history", expect.anything()));
+    expect(events).toEqual([]);
+    gateway.event({ state: "final", sessionKey: "agent:main:yorozu:delegated-restart", runId: "run-1", seq: 3 });
+    await expect(Promise.race([waiting, Promise.resolve("waiting")])).resolves.toBe("waiting");
+    gateway.event({ state: "final", sessionKey: "agent:main:yorozu:delegated-restart", runId: "announce:requester-settle:child-run", seq: 1, message: { content: "delegated done" } });
+    await expect(waiting).resolves.toBe("delegated done");
+  });
+
+  test("recovers exact delegated announcement completed while sidecar was down", async () => {
+    const gateway = harness();
+    const first = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    void first.run({ threadId: "delegated-down", text: "delegate" });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    gateway.event({ action: "upserted", task: { id: "task-row-7", runId: "child-run-7", createdAt: Date.now(),
+      sessionKey: "agent:main:yorozu:delegated-down", status: "running", deliveryStatus: "pending" } }, "task");
+    gateway.request.mockImplementation(async (method) => method === "chat.history" ? { messages: [
+      { role: "assistant", content: "preliminary", __openclaw: { runId: "run-1", idempotencyKey: "provider-parent" } },
+      { role: "assistant", content: "wrong child", stopReason: "stop", __openclaw: {
+        runId: "announce:requester-settle:child-run-8", idempotencyKey: "provider-wrong" } },
+      { role: "assistant", content: "delegated result", stopReason: "stop", __openclaw: {
+        runId: "announce:requester-settle:child-run-7", idempotencyKey: "provider-child" } },
+    ] } : {});
+    const replacement = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, recoveryDelayMs: 1 });
+    await expect(replacement.resume({ threadId: "delegated-down" })).resolves.toBe("delegated result");
+  });
+
+  test("ambiguous accepted chat.send loss recovers by receipt without duplicate send", async () => {
+    const gateway = harness();
+    let runId = "";
+    let histories = 0;
+    gateway.request.mockImplementation(async (method, params) => {
+      if (method === "chat.send") {
+        runId = (params as { idempotencyKey: string }).idempotencyKey;
+        throw new Error("response lost");
+      }
+      if (method === "chat.history") return ++histories === 1
+        ? { inputReceipts: [{ runId, state: "accepted" }] }
+        : { inputReceipts: [{ runId, state: "accepted" }], messages: [
+          { role: "assistant", content: "done", stopReason: "stop", __openclaw: { runId: runId } },
+        ] };
+      return {};
+    });
+    const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, recoveryDelayMs: 1 });
+    const result = runner.run({ threadId: "ambiguous", text: "once" });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.history", expect.anything()));
+    await expect(result).resolves.toBe("done");
+    expect(gateway.request.mock.calls.filter(([method]) => method === "chat.send")).toHaveLength(1);
+  });
+
+  test("persists and idempotently resends full input envelope when no receipt exists", async () => {
+    const gateway = harness();
+    let sends = 0;
+    gateway.request.mockImplementation(async (method) => {
+      if (method === "chat.send") {
+        sends += 1;
+        if (sends === 1) throw new Error("response lost before acceptance");
+        return { runId: "same-run" };
+      }
+      if (method === "chat.history") return sends === 1 ? { inputReceipts: [] } : {
+        inFlightRun: { runId: "same-run", events: [], text: "" },
+      };
+      return {};
+    });
+    const attachment = { id: "a", name: "proof.txt", mime: "text/plain", data: "cHJvb2Y=" };
+    const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, recoveryDelayMs: 1 });
+    void runner.run({ threadId: "envelope", text: "exact prompt", model: "openai/m", effort: "high", attachments: [attachment] });
+    await vi.waitFor(() => expect(sends).toBe(2));
+    expect(runner.pendingTurns()[0]).toMatchObject({
+      input: { text: "exact prompt", model: "openai/m", effort: "high", attachments: [attachment] },
+    });
+    expect(gateway.request).toHaveBeenCalledWith("sessions.patch", { key: "agent:main:yorozu:envelope", model: "openai/m", thinkingLevel: "high" });
+    const calls = gateway.request.mock.calls.filter(([method]) => method === "chat.send");
+    expect(calls[1]?.[1]).toMatchObject({
+      message: "exact prompt", thinking: "high", idempotencyKey: calls[0]?.[1].idempotencyKey,
+      attachments: [{ fileName: "proof.txt", content: "cHJvb2Y=" }],
+    });
+  });
+
+  test("first dispatch retries transient patch and uses only admitted envelope", async () => {
+    const gateway = harness();
+    let patches = 0;
+    gateway.request.mockImplementation(async (method) => {
+      if (method === "sessions.patch" && ++patches === 1) throw Object.assign(new Error("offline"), { retryable: true });
+      if (method === "chat.send") return { runId: "stored-run" };
+      return { inFlightRun: { runId: "stored-run", events: [], text: "" } };
+    });
+    const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, recoveryDelayMs: 1 });
+    runner.admitUserTurn({ threadId: "stored", text: "stored text", model: "openai/stored", effort: "high",
+      attachments: [], userEventId: "stored-user" }, () => {});
+    void runner.run({ threadId: "stored", text: "live text", model: "openai/live", effort: "low",
+      userEventId: "stored-user" });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.objectContaining({ message: "stored text", thinking: "high" })));
+    expect(gateway.request).toHaveBeenCalledWith("sessions.patch", {
+      key: "agent:main:yorozu:stored", model: "openai/stored", thinkingLevel: "high",
+    });
+    expect(patches).toBe(2);
+  });
+
+  test("replays actual chat.history toolCall and top-level toolResult shapes beyond 80 rows", async () => {
+    const gateway = harness();
+    void new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).run({
+      threadId: "history-events", text: "delegate",
+    });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    gateway.request.mockImplementation(async (method) => method === "chat.history" ? { messages: [
+      ...Array.from({ length: 81 }, (_, index) => ({ role: "assistant", content: `old-${index}` })),
+      { role: "user", content: "delegate", __openclaw: { runId: "run-1" } },
+      { role: "assistant", content: [
+        { type: "toolCall", id: "spawn-1", name: "sessions_spawn", arguments: { task: "work" } },
+      ] },
+      { role: "toolResult", toolCallId: "spawn-1", name: "sessions_spawn", content: { status: "accepted" } },
+      { role: "assistant", content: "done", stopReason: "stop", __openclaw: { runId: "run-1" } },
+    ] } : {});
+    const events: YorozuEvent[] = [];
+    const replacement = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, recoveryDelayMs: 1 });
+    await expect(replacement.resume({ threadId: "history-events", onEvent: (event) => events.push(event) })).resolves.toBe("done");
+    expect(events.map((event) => event.kind)).toEqual(["tool_call", "tool_result"]);
+  });
+
+  test("authoritative Gateway rejection terminalizes durably before acknowledgment", async () => {
+    const gateway = harness();
+    gateway.request.mockImplementation(async (method) => {
+      if (method === "chat.send") throw Object.assign(new Error("forbidden"), { code: "FORBIDDEN", retryable: false });
+      return {};
+    });
+    const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    await expect(runner.run({ threadId: "rejected", text: "bad" })).resolves.toBe("OpenClaw turn failed: forbidden");
+    expect(runner.pendingTurns()).toHaveLength(1);
+    runner.acknowledge("rejected", runner.pendingTurns()[0]!.completionId);
+    expect(runner.pendingTurns()).toEqual([]);
+  });
+
+  test("ignores uncorrelated and preliminary history rows, but accepts exact empty terminal", async () => {
+    const gateway = harness();
+    const first = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    void first.run({ threadId: "exact", text: "quiet" });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    let histories = 0;
+    gateway.request.mockImplementation(async (method) => method === "chat.history" ? (++histories === 1 ? { messages: [
+      { role: "assistant", content: "wrong latest", timestamp: Date.now() },
+      { role: "assistant", content: "commentary", __openclaw: { runId: "other-run" } },
+    ] } : { messages: [
+      { role: "assistant", content: "NO_REPLY", stopReason: "stop", __openclaw: { runId: "run-1" } },
+    ] }) : {});
+    const replacement = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, recoveryDelayMs: 1 });
+    await expect(replacement.resume({ threadId: "exact" })).resolves.toBe("");
+    expect(histories).toBe(2);
+  });
+
+  test("live and recovered terminal errors produce the same durable reply", async () => {
+    const liveGateway = harness();
+    const liveRunner = new OpenClawRunner({ stateDir: liveGateway.dir, clientFactory: liveGateway.clientFactory });
+    const live = liveRunner.run({ threadId: "live-error", text: "fail" });
+    await vi.waitFor(() => expect(liveGateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    liveGateway.event({ state: "error", sessionKey: "agent:main:yorozu:live-error", runId: "run-1", seq: 1, errorMessage: "boom" });
+    await expect(live).resolves.toBe("OpenClaw turn failed: boom");
+
+    const gateway = harness();
+    void new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).run({ threadId: "recovered-error", text: "fail" });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    gateway.request.mockImplementation(async (method) => method === "chat.history" ? { messages: [
+      { role: "assistant", content: "boom", stopReason: "error", __openclaw: { runId: "run-1" } },
+    ] } : {});
+    const replacement = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, recoveryDelayMs: 1 });
+    await expect(replacement.resume({ threadId: "recovered-error" })).resolves.toBe("OpenClaw turn failed: boom");
+  });
+
   test("lists available Gateway models in Yorozu's picker shape", async () => {
     const gateway = harness();
     gateway.request.mockImplementation(async (method: string) => method === "models.list" ? {
@@ -207,19 +666,6 @@ describe("OpenClawRunner", () => {
     await expect(result).resolves.toBe("done");
   });
 
-  test("steers an active turn instead of starting a parallel run in one thread", async () => {
-    const gateway = harness();
-    const first = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
-    const running = first.run({ threadId: "one", text: "start" });
-    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.objectContaining({ message: "start" })));
-    await expect(first.run({ threadId: "one", text: "change course" })).resolves.toBeUndefined();
-    expect(gateway.request).toHaveBeenLastCalledWith("chat.send", expect.objectContaining({
-      message: "change course", queueMode: "steer",
-    }));
-    gateway.event({ state: "final", sessionKey: "agent:main:yorozu:one", runId: "run-1", seq: 1, message: { content: "revised" } });
-    await expect(running).resolves.toBe("revised");
-  });
-
   test("waits for a delegated requester-settle announcement after an empty parent final", async () => {
     const gateway = harness();
     const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
@@ -229,6 +675,7 @@ describe("OpenClawRunner", () => {
       action: "upserted",
       task: {
         id: "child",
+        runId: "child-run",
         createdAt: Date.now(),
         sessionKey: "agent:main:yorozu:delegated",
         status: "running",
@@ -242,7 +689,7 @@ describe("OpenClawRunner", () => {
     gateway.event({
       state: "final",
       sessionKey: "agent:main:yorozu:delegated",
-      runId: "announce:requester-settle:main:agent:main:yorozu:delegated:child:yield-1",
+      runId: "announce:requester-settle:child-run",
       seq: 1,
       message: { content: [{ type: "text", text: "Tomorrow at 10am." }] },
     });

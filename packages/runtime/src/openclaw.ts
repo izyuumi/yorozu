@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomUUID, sign } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { GatewayClient, type DeviceIdentity, type GatewayClientHostDeps } from "@openclaw/gateway-client";
 import type { EventFrame } from "@openclaw/gateway-protocol/frame-guards";
@@ -20,9 +20,14 @@ interface PendingTurn {
   sessionKey: string;
   runId?: string;
   startedAt: number;
+  completionId?: string;
+  userEventId?: string;
   seen: Set<string>;
   calls: Set<string>;
   tasks: Map<string, string>;
+  childRunIds: Set<string>;
+  input: StoredTurnInput;
+  signal?: AbortSignal;
   onEvent?: (event: YorozuEvent) => void;
   awaitsAnnouncement: boolean;
   text: string;
@@ -31,6 +36,25 @@ interface PendingTurn {
   reject: (error: Error) => void;
 }
 
+export interface StoredPendingTurn {
+  threadId: string;
+  sessionKey: string;
+  runId: string;
+  startedAt: number;
+  completionId: string;
+  userEventId?: string;
+  awaitsAnnouncement: boolean;
+  taskIds: string[];
+  childRunIds: string[];
+  input: StoredTurnInput;
+  state: "queued" | "active";
+}
+export interface StoredTurnInput {
+  text: string;
+  model?: string;
+  effort?: ReasoningEffort;
+  attachments: MessageAttachment[];
+}
 export interface OpenClawTurn {
   threadId: string;
   text: string;
@@ -40,6 +64,9 @@ export interface OpenClawTurn {
   signal?: AbortSignal;
   onUpdate?: (text: string) => void;
   onEvent?: (event: YorozuEvent) => void;
+  completionId?: string;
+  userEventId?: string;
+  seenEventIds?: Iterable<string>;
 }
 
 export interface OpenClawRunnerOptions {
@@ -47,6 +74,7 @@ export interface OpenClawRunnerOptions {
   stateDir?: string;
   spawnProcess?: typeof spawn;
   clientFactory?: (options: ConstructorParameters<typeof GatewayClient>[0]) => Gateway;
+  recoveryDelayMs?: number;
 }
 
 /** Thin Gateway bridge. OpenClaw owns sessions, tools, credentials, and policy. */
@@ -54,7 +82,9 @@ export class OpenClawRunner {
   readonly #command: string;
   readonly #stateFile: string;
   readonly #spawn: typeof spawn;
+  readonly #pendingFile: string;
   readonly #clientFactory: NonNullable<OpenClawRunnerOptions["clientFactory"]>;
+  readonly #recoveryDelayMs: number;
   readonly #pending = new Set<PendingTurn>();
   #client?: Gateway;
   #connecting?: Promise<Gateway>;
@@ -63,7 +93,9 @@ export class OpenClawRunner {
     this.#command = options.command ?? process.env.OPENCLAW_BIN ?? "openclaw";
     this.#stateFile = join(options.stateDir ?? process.env.YOROZU_STATE_DIR ?? ".", "openclaw-gateway.json");
     this.#spawn = options.spawnProcess ?? spawn;
+    this.#pendingFile = join(options.stateDir ?? process.env.YOROZU_STATE_DIR ?? ".", "openclaw-pending.json");
     this.#clientFactory = options.clientFactory ?? ((clientOptions) => new GatewayClient(clientOptions));
+    this.#recoveryDelayMs = options.recoveryDelayMs ?? 250;
   }
 
   async listModels(): Promise<ModelOption[]> {
@@ -100,42 +132,215 @@ export class OpenClawRunner {
       throw error;
     }
   }
+  pendingTurns(): StoredPendingTurn[] {
+    return this.readPending().sort((a, b) => a.startedAt - b.startedAt);
+  }
+
+  /** Durably owns a user turn before its visible event is accepted. Replays repair either side. */
+  admitUserTurn(turn: OpenClawTurn, accept: (stored?: StoredPendingTurn) => void,
+    alreadyAccepted: () => boolean = () => false): StoredPendingTurn | undefined {
+    if (!turn.userEventId) throw new Error("OpenClaw queued turn requires userEventId");
+    const turns = this.readPending();
+    let stored = turns.find((item) => item.userEventId === turn.userEventId);
+    if (!stored && alreadyAccepted()) {
+      accept();
+      return undefined;
+    }
+    if (!stored) {
+      const runId = randomUUID();
+      stored = {
+        threadId: turn.threadId,
+        sessionKey: `agent:main:yorozu:${turn.threadId}`.toLowerCase(),
+        runId,
+        startedAt: Date.now(),
+        completionId: turn.completionId ?? `openclaw:${turn.userEventId}:final`,
+        userEventId: turn.userEventId,
+        awaitsAnnouncement: false,
+        taskIds: [], childRunIds: [], state: "queued",
+        input: { text: turn.text, ...(turn.model ? { model: turn.model } : {}),
+          ...(turn.effort ? { effort: turn.effort } : {}), attachments: turn.attachments ?? [] },
+      };
+      this.writePending([...turns, stored]);
+    }
+    accept(stored);
+    return stored;
+  }
+
+  acknowledge(threadId: string, completionId: string): void {
+    const turns = this.readPending();
+    const head = turns.find((item) => item.threadId === threadId);
+    if (head?.completionId !== completionId) return;
+    this.writePending(turns.filter((item) => item !== head));
+  }
 
   async run(turn: OpenClawTurn): Promise<string | undefined> {
     if (turn.signal?.aborted) return "";
-    const client = await this.connect();
     const sessionKey = `agent:main:yorozu:${turn.threadId}`.toLowerCase();
-    const active = [...this.#pending].find((item) => item.sessionKey === sessionKey);
-    if (active) {
-      await client.request("chat.send", {
-        sessionKey,
-        message: turn.text,
-        attachments: gatewayAttachments(turn.attachments),
-        queueMode: "steer",
-        deliver: false,
-        idempotencyKey: randomUUID(),
-      });
-      return undefined;
-    }
-    if (turn.model || turn.effort) {
-      await client.request("sessions.patch", {
-        key: sessionKey,
-        ...(turn.model ? { model: turn.model } : {}),
-        ...(turn.effort ? { thinkingLevel: turn.effort } : {}),
-      });
-    }
+    const stored = turn.userEventId
+      ? this.readPending().find((item) => item.userEventId === turn.userEventId)
+      : undefined;
+    const input = stored?.input ?? { text: turn.text, model: turn.model, effort: turn.effort, attachments: turn.attachments ?? [] };
+    let client: Gateway | undefined;
+    const { pending, completed } = this.createPending({ ...turn, ...input,
+      completionId: stored?.completionId ?? turn.completionId }, () => client, sessionKey,
+      stored?.runId ?? randomUUID(), stored?.startedAt ?? Date.now());
+    if (!this.#pending.has(pending)) return completed;
+    this.storePending(pending);
+    void this.dispatch(pending, (connected) => { client = connected; });
+    return completed;
+  }
 
+  /** Reattaches after process replacement; missing receipt is safely resent with same idempotency key. */
+  async resume(turn: Omit<OpenClawTurn, "text">): Promise<string | undefined> {
+    const stored = this.readPending().find((item) => item.threadId === turn.threadId && item.state === "active");
+    if (!stored) return undefined;
+    if (turn.signal?.aborted) {
+      this.clearStored(stored);
+      return "";
+    }
+    let client!: Gateway;
+    while (!turn.signal?.aborted) {
+      try {
+        client = await this.connect();
+        if (turn.signal?.aborted) {
+          this.clearStored(stored);
+          return "";
+        }
+        break;
+      } catch {
+        if (turn.signal?.aborted) {
+          this.clearStored(stored);
+          return "";
+        }
+        await delay(this.#recoveryDelayMs);
+      }
+    }
+    if (turn.signal?.aborted) {
+      this.clearStored(stored);
+      return "";
+    }
+    const { pending, completed } = this.createPending({ ...turn, ...stored.input,
+      completionId: stored.completionId, userEventId: stored.userEventId }, () => client,
+    stored.sessionKey, stored.runId, stored.startedAt);
+    pending.awaitsAnnouncement = stored.awaitsAnnouncement;
+    for (const taskId of stored.taskIds) pending.tasks.set(taskId, "recovering");
+    for (const runId of stored.childRunIds) pending.childRunIds.add(runId);
+    await client.request("sessions.subscribe", {}).catch(() => {});
+    if (turn.signal?.aborted || !this.#pending.has(pending)) return completed;
+    void this.recover(pending, client, () => this.sendStored(client, pending));
+    return completed;
+  }
+
+  private async dispatch(pending: PendingTurn, connected: (client: Gateway) => void): Promise<Gateway | undefined> {
+    while (this.#pending.has(pending)) {
+      let client: Gateway;
+      try {
+        client = await this.connect();
+        connected(client);
+        if (!this.#pending.has(pending)) return undefined;
+        await this.patchStored(client, pending);
+        if (!this.#pending.has(pending)) return undefined;
+      } catch (error) {
+        if (definitiveRejection(error)) {
+          pending.resolve(failureText(error));
+          return undefined;
+        }
+        await delay(this.#recoveryDelayMs);
+        continue;
+      }
+      try {
+        if (!this.#pending.has(pending)) return client;
+        this.activity(pending, "starting", { kind: "thought", data: { text: "Starting OpenClaw…", transient: true } });
+        const result = await this.sendChat(client, pending);
+        if (!this.#pending.has(pending)) {
+          await client.request("chat.abort", { sessionKey: pending.sessionKey, runId: result.runId ?? pending.runId }).catch(() => {});
+          return client;
+        }
+        pending.runId = result.runId ?? pending.runId;
+        this.storePending(pending);
+        void this.recover(pending, client);
+      } catch (error) {
+        if (definitiveRejection(error)) pending.resolve(failureText(error));
+        else void this.recover(pending, client, () => this.sendStored(client, pending));
+      }
+      return client;
+    }
+    return undefined;
+  }
+
+  private async recover(pending: PendingTurn, client: Gateway, resend?: () => Promise<{ runId?: string }>): Promise<void> {
+    while (this.#pending.has(pending)) {
+      try {
+        const history = await client.request<History>("chat.history", {
+          sessionKey: pending.sessionKey, limit: 1000, inputRunIds: [pending.runId],
+        });
+        if (!this.#pending.has(pending)) return;
+        const snapshot = history.inFlightRun;
+        if (snapshot && snapshot.runId === pending.runId) {
+          this.restoreSnapshot(pending, snapshot);
+          await delay(this.#recoveryDelayMs);
+          continue;
+        }
+        this.restoreHistory(pending, history.messages ?? []);
+        const final = correlatedFinal(history.messages ?? [], pending);
+        if (final.found) { pending.resolve(final.text); return; }
+        const accepted = history.inputReceipts?.some((receipt) => receipt.runId === pending.runId);
+        if (resend && !accepted) {
+          const result = await resend();
+          if (!this.#pending.has(pending) || pending.signal?.aborted) {
+            await client.request("chat.abort", {
+              sessionKey: pending.sessionKey, runId: result.runId ?? pending.runId,
+            }).catch(() => {});
+            return;
+          }
+          pending.runId = result.runId ?? pending.runId;
+          this.storePending(pending);
+          await delay(this.#recoveryDelayMs);
+          continue;
+        }
+      } catch (error) {
+        if (definitiveRejection(error)) {
+          pending.resolve(failureText(error));
+          return;
+        }
+        // Keep durable ownership. Same idempotency key makes resend safe.
+      }
+      await delay(this.#recoveryDelayMs);
+    }
+  }
+
+  private async sendStored(client: Gateway, pending: PendingTurn): Promise<{ runId?: string }> {
+    await this.patchStored(client, pending);
+    if (!this.#pending.has(pending) || pending.signal?.aborted) return {};
+    return this.sendChat(client, pending);
+  }
+
+  private async patchStored(client: Gateway, pending: PendingTurn): Promise<void> {
+    if (pending.input.model || pending.input.effort) await client.request("sessions.patch", {
+      key: pending.sessionKey, ...(pending.input.model ? { model: pending.input.model } : {}),
+      ...(pending.input.effort ? { thinkingLevel: pending.input.effort } : {}),
+    });
+  }
+
+  private sendChat(client: Gateway, pending: PendingTurn): Promise<{ runId?: string }> {
+    return client.request("chat.send", {
+      sessionKey: pending.sessionKey, message: pending.input.text,
+      attachments: gatewayAttachments(pending.input.attachments), thinking: pending.input.effort,
+      deliver: false, idempotencyKey: pending.runId,
+    });
+  }
+
+  private createPending(turn: OpenClawTurn, client: () => Gateway | undefined, sessionKey: string, runId: string, startedAt: number): { pending: PendingTurn; completed: Promise<string> } {
     let pending!: PendingTurn;
     const completed = new Promise<string>((resolve, reject) => {
-      pending = {
-        threadId: turn.threadId, sessionKey, runId: randomUUID(), startedAt: Date.now(),
-        seen: new Set(), calls: new Set(), tasks: new Map(), onEvent: turn.onEvent,
-        awaitsAnnouncement: false, text: "", onUpdate: turn.onUpdate, resolve, reject,
-      };
+      pending = { threadId: turn.threadId, sessionKey, runId, startedAt, completionId: turn.completionId, userEventId: turn.userEventId, seen: new Set(turn.seenEventIds), calls: new Set(), tasks: new Map(), childRunIds: new Set(),
+        input: { text: turn.text, ...(turn.model ? { model: turn.model } : {}), ...(turn.effort ? { effort: turn.effort } : {}), attachments: turn.attachments ?? [] },
+        signal: turn.signal, onEvent: turn.onEvent, awaitsAnnouncement: false, text: "", onUpdate: turn.onUpdate, resolve, reject };
       this.#pending.add(pending);
       const abort = () => {
         this.#pending.delete(pending);
-        void client.request("chat.abort", { sessionKey, ...(pending.runId ? { runId: pending.runId } : {}) });
+        this.clearPending(pending);
+        void client()?.request("chat.abort", { sessionKey, runId: pending.runId });
         resolve("");
       };
       turn.signal?.addEventListener("abort", abort, { once: true });
@@ -146,23 +351,9 @@ export class OpenClawRunner {
       };
       pending.resolve = (text) => finish(() => resolve(text));
       pending.reject = (error) => finish(() => reject(error));
+      if (turn.signal?.aborted) abort();
     });
-
-    try {
-      this.activity(pending, "starting", { kind: "thought", data: { text: "Starting OpenClaw…", transient: true } });
-      const result = await client.request<{ runId?: string }>("chat.send", {
-        sessionKey,
-        message: turn.text,
-        attachments: gatewayAttachments(turn.attachments),
-        thinking: turn.effort,
-        deliver: false,
-        idempotencyKey: pending.runId,
-      });
-      pending.runId = result.runId ?? pending.runId;
-    } catch (error) {
-      pending.reject(error instanceof Error ? error : new Error(String(error)));
-    }
-    return completed;
+    return { pending, completed };
   }
 
   private connect(): Promise<Gateway> {
@@ -252,11 +443,18 @@ export class OpenClawRunner {
         const deliveryStatus = record.deliveryStatus;
         if (pending && (deliveryStatus === "pending" || deliveryStatus === "in_progress")) {
           pending.awaitsAnnouncement = true;
+          this.storePending(pending);
         }
         const taskId = string(record.id ?? record.taskId);
+        const childRunId = string(record.runId ?? record.childRunId);
+        if (childRunId && !pending.childRunIds.has(childRunId)) {
+          pending.childRunIds.add(childRunId);
+          this.storePending(pending);
+        }
         const status = string(record.status);
         if (taskId && taskId.length <= 256 && status && pending.tasks.get(taskId) !== status) {
           pending.tasks.set(taskId, status);
+          this.storePending(pending);
           const agentId = `${activityText(record.title ?? record.label ?? record.agentId).slice(0, 120) || "Delegated work"} · ${taskId.slice(0, 8)}`;
           const terminal = ["completed", "succeeded", "failed", "timed_out", "cancelled", "lost"].includes(status);
           this.activity(pending, `task:${taskId}:${status}`, terminal ? {
@@ -272,7 +470,7 @@ export class OpenClawRunner {
     const pending = [...this.#pending].find(
       (item) => item.sessionKey === sessionKey && (
         !item.runId || item.runId === runId || (
-          item.awaitsAnnouncement && runId?.startsWith("announce:requester-settle:")
+          item.awaitsAnnouncement && announcementMatches(runId, item.childRunIds)
         )
       ),
     );
@@ -286,12 +484,13 @@ export class OpenClawRunner {
       if (pending.text) pending.onUpdate?.(pending.text);
     } else if (payload.state === "final") {
       const text = messageText(payload.message) || pending.text;
-      if (!pending.awaitsAnnouncement || runId.startsWith("announce:requester-settle:")) pending.resolve(text);
+      if (!pending.awaitsAnnouncement || announcementMatches(runId, pending.childRunIds)) pending.resolve(text);
       else if (text) pending.onUpdate?.(text);
     } else if (payload.state === "aborted") {
       pending.resolve("");
     } else if (payload.state === "error") {
-      pending.reject(new Error(typeof payload.errorMessage === "string" ? payload.errorMessage : "OpenClaw turn failed"));
+      const detail = typeof payload.errorMessage === "string" ? payload.errorMessage : "unknown error";
+      pending.resolve("OpenClaw turn failed: " + detail);
     }
   }
 
@@ -345,14 +544,110 @@ export class OpenClawRunner {
       const history = await client.request<{ inFlightRun?: Record<string, unknown> }>("chat.history", { sessionKey: pending.sessionKey, limit: 1 });
       const snapshot = history.inFlightRun;
       if (!this.#pending.has(pending) || !snapshot || snapshot.runId !== pending.runId) return;
-      if (Array.isArray(snapshot.events)) for (const event of snapshot.events) this.agentActivity(pending, record(event));
-      if (typeof snapshot.text === "string" && snapshot.text) {
-        pending.text = snapshot.text;
-        pending.onUpdate?.(pending.text);
-      }
+      this.restoreSnapshot(pending, snapshot);
     } catch {
       // Connection recovery remains owned by GatewayClient. Never replay chat.send.
     }
+  }
+
+  private restoreSnapshot(pending: PendingTurn, snapshot: Record<string, unknown>): void {
+    if (Array.isArray(snapshot.events)) for (const event of snapshot.events) this.agentActivity(pending, record(event));
+    if (typeof snapshot.text === "string" && snapshot.text) {
+      pending.text = snapshot.text;
+      pending.onUpdate?.(pending.text);
+    }
+  }
+
+  private restoreHistory(pending: PendingTurn, messages: unknown[]): void {
+    const start = messages.findIndex((value) => {
+      const message = record(value);
+      return string(record(message.__openclaw).runId ?? message.runId) === pending.runId && message.role === "user";
+    });
+    const end = messages.findIndex((value, index) => {
+      if (index < start) return false;
+      const message = record(value);
+      return message.role === "assistant" &&
+        string(record(message.__openclaw).runId ?? message.runId) === pending.runId &&
+        ["stop", "length", "error", "aborted"].includes(string(message.stopReason));
+    });
+    for (const [index, value] of messages.entries()) {
+      const message = record(value);
+      const meta = record(message.__openclaw);
+      const owner = string(meta.runId ?? message.runId);
+      if (owner !== pending.runId && !(start >= 0 && index >= start && (end < 0 || index <= end))) continue;
+      for (const blockValue of Array.isArray(message.content) ? message.content : []) {
+        const block = record(blockValue);
+        const type = string(block.type);
+        const rawId = string(block.id ?? block.toolCallId);
+        if (type === "toolCall" && rawId) this.agentActivity(pending, {
+          runId: pending.runId, stream: "tool", seq: block.seq ?? rawId,
+          data: { phase: "start", toolCallId: rawId, name: block.name, args: block.arguments },
+        });
+      }
+      if (message.role === "toolResult") {
+        const rawId = string(message.toolCallId);
+        if (rawId) this.agentActivity(pending, {
+          runId: pending.runId, stream: "tool", seq: message.seq ?? rawId,
+          data: { phase: "result", toolCallId: rawId, name: message.name, result: message.content, isError: message.isError },
+        });
+      }
+    }
+    this.storePending(pending);
+  }
+
+  private readPending(): StoredPendingTurn[] {
+    try {
+      const value = JSON.parse(readFileSync(this.#pendingFile, "utf8"));
+      if (!Array.isArray(value)) return [];
+      const turns = value.filter((item): item is StoredPendingTurn =>
+        item && typeof item.threadId === "string" && typeof item.sessionKey === "string" &&
+        typeof item.runId === "string" && typeof item.startedAt === "number")
+        .map((item) => ({ ...item,
+          completionId: typeof item.completionId === "string" ? item.completionId : `openclaw:${item.runId}:final`,
+          awaitsAnnouncement: item.awaitsAnnouncement === true,
+          taskIds: Array.isArray(item.taskIds) ? item.taskIds.filter((id): id is string => typeof id === "string") : [],
+          childRunIds: Array.isArray(item.childRunIds) ? item.childRunIds.filter((id): id is string => typeof id === "string") : [],
+          input: storedInput(item.input),
+          state: item.state === "queued" ? "queued" as const : "active" as const,
+        }));
+      return turns;
+    } catch {
+      return [];
+    }
+  }
+
+  private storePending(pending: PendingTurn): void {
+    const turns = this.readPending();
+    const index = turns.findIndex((item) =>
+      pending.userEventId ? item.userEventId === pending.userEventId : item.threadId === pending.threadId);
+    const current = turns[index];
+    const stored: StoredPendingTurn = {
+      threadId: pending.threadId, sessionKey: pending.sessionKey, runId: pending.runId!, startedAt: pending.startedAt,
+      completionId: current?.completionId ?? pending.completionId ?? `openclaw:` + pending.runId + `:final`,
+      ...(current?.userEventId ?? pending.userEventId ? { userEventId: current?.userEventId ?? pending.userEventId } : {}),
+      awaitsAnnouncement: pending.awaitsAnnouncement, taskIds: [...pending.tasks.keys()],
+      childRunIds: [...pending.childRunIds], input: pending.input, state: "active",
+    };
+    if (index >= 0) turns[index] = stored;
+    else turns.push(stored);
+    this.writePending(turns);
+  }
+
+  private clearPending(pending: PendingTurn): void {
+    this.writePending(this.readPending().filter((item) => pending.userEventId ? item.userEventId !== pending.userEventId : item.threadId !== pending.threadId));
+  }
+
+  private clearStored(stored: StoredPendingTurn): void {
+    this.writePending(this.readPending().filter((item) => stored.userEventId
+      ? item.userEventId !== stored.userEventId
+      : item.threadId !== stored.threadId || item.runId !== stored.runId));
+  }
+
+  private writePending(turns: StoredPendingTurn[]): void {
+    mkdirSync(dirname(this.#pendingFile), { recursive: true });
+    const temporary = `${this.#pendingFile}.tmp`;
+    writeFileSync(temporary, JSON.stringify(turns), { mode: 0o600 });
+    renameSync(temporary, this.#pendingFile);
   }
 
   private readStoredAuth(): StoredGatewayAuth | undefined {
@@ -406,6 +701,50 @@ function createIdentity(): DeviceIdentity {
 function rawPublicKey(pem: string): Buffer {
   return createPublicKey(pem).export({ type: "spki", format: "der" }).subarray(-32);
 }
+interface History { messages?: unknown[]; inFlightRun?: Record<string, unknown>; inputReceipts?: Array<{ runId?: string; state?: string }> }
+function correlatedFinal(messages: unknown[], pending: Pick<PendingTurn, "runId" | "awaitsAnnouncement" | "childRunIds">): { found: boolean; text: string } {
+  for (const value of [...messages].reverse()) {
+    const message = record(value);
+    if (message.role !== "assistant") continue;
+    const meta = record(message.__openclaw);
+    const runId = string(meta.runId ?? message.runId);
+    const terminal = ["stop", "length", "error", "aborted"].includes(string(message.stopReason));
+    const exact = pending.awaitsAnnouncement
+      ? announcementMatches(runId, pending.childRunIds)
+      : runId === pending.runId;
+    if (exact && terminal) {
+      const text = messageText(message).replace(/^NO_REPLY$/i, "");
+      return { found: true, text: string(message.stopReason) === "error"
+        ? "OpenClaw turn failed: " + (text || "unknown error") : text };
+    }
+  }
+  return { found: false, text: "" };
+}
+function definitiveRejection(error: unknown): boolean {
+  const value = record(error);
+  const code = string(value.code);
+  return value.retryable === false || ["INVALID_REQUEST", "UNAUTHORIZED", "FORBIDDEN", "NOT_FOUND"].includes(code);
+}
+function failureText(error: unknown): string {
+  const value = record(error);
+  return "OpenClaw turn failed: " + (error instanceof Error ? error.message : string(value.message) || String(error));
+}
+function announcementMatches(runId: unknown, childRunIds: Set<string>): boolean {
+  const id = string(runId);
+  if (!id.startsWith("announce:requester-settle:")) return false;
+  const batch = id.replace(/:yield-[^:]+$/, "").split(":").at(-1)?.split(",") ?? [];
+  return batch.some((childRunId) => childRunIds.has(childRunId));
+}
+function storedInput(value: unknown): StoredTurnInput {
+  const item = record(value);
+  return {
+    text: string(item.text),
+    ...(typeof item.model === "string" ? { model: item.model } : {}),
+    ...(typeof item.effort === "string" ? { effort: item.effort as ReasoningEffort } : {}),
+    attachments: Array.isArray(item.attachments) ? item.attachments as MessageAttachment[] : [],
+  };
+}
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 function messageText(value: unknown): string {
   if (!value || typeof value !== "object") return "";

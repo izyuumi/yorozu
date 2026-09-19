@@ -8,7 +8,9 @@ import { afterEach, expect, test, vi } from "vitest";
 import { localSocketPath } from "./local.js";
 import { openaiCompat } from "./provider.js";
 import { serve, type Sidecar } from "./serve.js";
-import { threadModel } from "./threads.js";
+import { OpenClawRunner } from "./openclaw.js";
+import { appendThreadEvent, createThread, readThreadEvents, threadModel } from "./threads.js";
+import { readTranscripts, transcriptDir } from "./transcripts.js";
 
 let relay: Relay;
 let sidecar: Sidecar;
@@ -50,7 +52,7 @@ const toolTurn = (name: string, args: Record<string, unknown>) =>
  * `responses` is one per model call, in order; it falls back to a plain "pong" turn once the
  * queue runs out, which is what ends a turn that called a tool.
  */
-async function localSidecar(responses: (() => Response)[] = []) {
+async function localSidecar(responses: (() => Response | Promise<Response>)[] = []) {
   relay = await startRelay(0);
   const dir = mkdtempSync(join(tmpdir(), "yorozu-local-"));
   // Two entries with named models, so `model_list` has something to publish. The turns
@@ -63,17 +65,18 @@ async function localSidecar(responses: (() => Response)[] = []) {
     ]),
   );
   const queue = [...responses];
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => (queue.shift() ?? (() => sse("pong")))());
   sidecar = serve({
     relayUrl: `ws://127.0.0.1:${relay.port}`,
     stateDir: dir,
     provider: openaiCompat({
       baseUrl: "https://example.invalid",
       model: "m",
-      fetch: vi.fn<typeof fetch>().mockImplementation(async () => (queue.shift() ?? (() => sse("pong")))()),
+      fetch: fetchMock,
     }),
     log: () => {},
   });
-  return { dir, path: localSocketPath(dir) };
+  return { dir, path: localSocketPath(dir), fetchMock };
 }
 
 /** The bind is a tick or two behind `serve()`, so the first connect may be early. */
@@ -183,6 +186,134 @@ test("the local socket round-trips a turn and receives broadcasts, with no relay
     delta.kind === "sync_delta" &&
       delta.data.events.map((e) => (e.kind === "message" ? e.data.text : e.kind)),
   ).toEqual(["ping", "pong"]);
+});
+
+test("messages in one thread run FIFO without overlap", async () => {
+  let release!: (response: Response) => void;
+  const first = new Promise<Response>((resolve) => { release = resolve; });
+  const { path, fetchMock } = await localSidecar([() => first, () => sse("second")]);
+  socket = await connectLocal(path);
+  const events = reader(socket);
+  await events.nextOf("thread_list");
+  send(socket, "t1", { kind: "thread_create", data: { title: "Queue" } });
+  await events.nextOf("thread_list");
+
+  send(socket, "t1", { kind: "message", data: { role: "user", text: "first" } });
+  await events.nextOf("message");
+  send(socket, "t1", { kind: "message", data: { role: "user", text: "second" } });
+  await events.nextOf("message");
+  await new Promise((done) => setTimeout(done, 20));
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+
+  release(sse("first"));
+  const replies = [];
+  while (replies.length < 2) {
+    const event = await events.nextOf("message");
+    if (event.kind === "message" && event.data.role === "agent") replies.push(event.data.text);
+  }
+  expect(replies).toEqual(["first", "second"]);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+test("restart recovery owns FIFO head, restores queued prompts, and acks only after durable final", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-recovery-"));
+  createThread("Recovery", dir, "recovery");
+  const user = (id: string, text: string): YorozuEvent => ({
+    id, threadId: "recovery", ts: Date.now(), agentId: "main", kind: "message", data: { role: "user", text },
+  });
+  appendThreadEvent(user("user-1", "install update"), dir);
+  appendThreadEvent(user("user-2", "second prompt"), dir);
+  let finishRecovery!: (text: string) => void;
+  const recovery = new Promise<string>((resolve) => { finishRecovery = resolve; });
+  const runs: string[] = [];
+  const fake = {
+    pendingTurns: () => [{
+      threadId: "recovery", sessionKey: "agent:main:yorozu:recovery", runId: "run-1",
+      startedAt: Date.now(), completionId: "final-1", userEventId: "user-1", awaitsAnnouncement: false, state: "active",
+      taskIds: [], childRunIds: [], input: { text: "install update", attachments: [] },
+    },
+      { threadId: "recovery", sessionKey: "agent:main:yorozu:recovery", runId: "run-2",
+        startedAt: Date.now() + 1, completionId: "openclaw:user-2:final", userEventId: "user-2",
+        awaitsAnnouncement: false, state: "queued", taskIds: [], childRunIds: [],
+        input: { text: "second prompt", attachments: [] } }],
+    resume: vi.fn(async () => recovery),
+    admitUserTurn: vi.fn((turn: { text: string; attachments?: unknown[] }, accept: (stored: unknown) => void) => {
+      const stored = { input: { text: turn.text, attachments: turn.attachments ?? [] } };
+      accept(stored);
+      return stored;
+    }),
+    run: vi.fn(async ({ text }: { text: string }) => { runs.push(text); return `done: ${text}`; }),
+    acknowledge: vi.fn((threadId: string, completionId: string) => {
+      expect(readThreadEvents(threadId, dir).some((event) => event.id === completionId)).toBe(true);
+    }),
+    listModels: vi.fn(async () => []),
+    setArchived: vi.fn(async () => {}),
+  } as unknown as OpenClawRunner;
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, openclawRunner: fake, log: () => {} });
+  socket = await connectLocal(localSocketPath(dir));
+  const events = reader(socket);
+  await events.nextOf("thread_list");
+  socket.write(`${JSON.stringify(user("user-3", "third prompt"))}\n`);
+  await new Promise((done) => setTimeout(done, 20));
+  expect(runs).toEqual([]);
+
+  finishRecovery("update finished");
+  await vi.waitFor(() => expect(runs).toEqual(["second prompt", "third prompt"]));
+  expect(fake.acknowledge).toHaveBeenCalledWith("recovery", "final-1");
+  const history = readThreadEvents("recovery", dir);
+  expect(history.filter((event) => event.id === "final-1")).toHaveLength(1);
+  expect(history.filter((event) => event.kind === "message" && event.data.role === "agent" && event.data.done)).toHaveLength(3);
+});
+
+test("restart restores queued durable ledger head without an active run", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-inbox-gap-"));
+  createThread("Gap", dir, "gap");
+  appendThreadEvent({
+    id: "gap-user", threadId: "gap", ts: Date.now(), agentId: "main", kind: "message",
+    data: { role: "user", text: "survive marker gap" },
+  }, dir);
+  const run = vi.fn(async ({ text }: { text: string }) => `done: ${text}`);
+  const fake = {
+    pendingTurns: () => [{ threadId: "gap", sessionKey: "agent:main:yorozu:gap", runId: "gap-run",
+      startedAt: Date.now(), completionId: "openclaw:gap-user:final", userEventId: "gap-user",
+      awaitsAnnouncement: false, taskIds: [], childRunIds: [], state: "queued",
+      input: { text: "survive marker gap", attachments: [] } }], admitUserTurn: vi.fn((_: unknown, accept: (stored: unknown) => void) => { accept({}); return {
+        input: { text: "survive marker gap", attachments: [] },
+      }; }), run, acknowledge: vi.fn(), listModels: vi.fn(async () => []),
+    setArchived: vi.fn(async () => {}),
+  } as unknown as OpenClawRunner;
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, openclawRunner: fake, log: () => {} });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledWith(expect.objectContaining({
+    text: "survive marker gap", userEventId: "gap-user",
+  })));
+  await vi.waitFor(() => expect(readThreadEvents("gap", dir).some((event) =>
+    event.kind === "message" && event.data.role === "agent" && event.data.done)).toBe(true));
+});
+
+test("startup reconciles transcript independently before acknowledging existing thread final", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-final-reconcile-"));
+  createThread("Final", dir, "final");
+  const final: YorozuEvent = {
+    id: "final-id", threadId: "final", ts: Date.now(), agentId: "main", kind: "message",
+    data: { role: "agent", text: "durable", done: true },
+  };
+  appendThreadEvent(final, dir);
+  const acknowledge = vi.fn();
+  const fake = {
+    pendingTurns: () => [{
+      threadId: "final", sessionKey: "agent:main:yorozu:final", runId: "run-final",
+      startedAt: Date.now(), completionId: "final-id", awaitsAnnouncement: false, taskIds: [],
+      childRunIds: [], input: { text: "update", attachments: [] }, state: "active",
+    }],
+    resume: vi.fn(), run: vi.fn(), acknowledge, admitUserTurn: vi.fn(), listModels: vi.fn(async () => []),
+    setArchived: vi.fn(async () => {}),
+  } as unknown as OpenClawRunner;
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, openclawRunner: fake, log: () => {} });
+  await vi.waitFor(() => expect(acknowledge).toHaveBeenCalledWith("final", "final-id"));
+  expect(readTranscripts(new Date(0), transcriptDir(dir)).filter((event) => event.id === "final-id")).toHaveLength(1);
 });
 
 test("the socket is readable only by its owner and goes away with the sidecar", async () => {
