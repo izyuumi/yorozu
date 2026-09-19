@@ -305,7 +305,7 @@ public struct MessageBubble: View {
 
     private var bubbleMaxWidth: CGFloat {
         #if os(iOS)
-            300
+            isUser ? 300 : .infinity
         #else
             isUser ? 520 : LayoutMetrics.readingWidth
         #endif
