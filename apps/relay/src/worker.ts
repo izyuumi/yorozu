@@ -122,6 +122,12 @@ type PushRecord = {
    * until the budget allows it. Per device, because the throttling Apple does is per app install.
    */
   backgroundAt?: number;
+  /**
+   * Whether this token is reachable through sandbox APNs — an Xcode-signed build — rather than
+   * production. Learnt from Apple's answer to the first push and kept so the next goes straight
+   * there; forgotten with the token, since a new one may be from either.
+   */
+  sandbox?: boolean;
 };
 
 export class Room implements DurableObject {
@@ -151,7 +157,11 @@ export class Room implements DurableObject {
   }
 
   webSocketMessage(ws: WebSocket, data: string | ArrayBuffer): Promise<void> {
-    const done = this.tail.then(() => this.handle(ws, data)).catch(() => {});
+    // Logged rather than swallowed: a throw in here is a frame that went nowhere, and the
+    // socket is left open, so this line is the only sign of it anywhere.
+    const done = this.tail
+      .then(() => this.handle(ws, data))
+      .catch((error: unknown) => log("error", { role: roleOf(ws), error: String(error) }));
     this.tail = done;
     return done;
   }
@@ -325,12 +335,25 @@ export class Room implements DurableObject {
     }
   }
 
-  /** A failed APNs request costs this device's attempt, never the rest of the room's fan-out. */
-  private async push(request: apns.ApnsRequest, now: number): Promise<number | null> {
+  /**
+   * Sends where the device was last reached, and to the other environment if Apple says the
+   * token is not from this one. A failed APNs request costs this device's attempt, never the
+   * rest of the room's fan-out.
+   */
+  private async push(
+    request: apns.ApnsRequest,
+    now: number,
+    sandbox = false,
+  ): Promise<{ code: number; sandbox: boolean } | null> {
     try {
-      const code = await apns.send(this.env, request, now);
-      if (code < 200 || code >= 300) log("apns", { pushType: request.pushType, code });
-      return code;
+      let result = await apns.send(this.env, request, now, sandbox);
+      if (apns.misaddressed(result)) {
+        sandbox = !sandbox;
+        result = await apns.send(this.env, request, now, sandbox);
+      }
+      const { status: code, reason } = result;
+      if (code < 200 || code >= 300) log("apns", { pushType: request.pushType, code, reason, sandbox });
+      return { code, sandbox };
     } catch (error) {
       log("apns", { pushType: request.pushType, error: String(error) });
       return null;
@@ -361,9 +384,10 @@ export class Room implements DurableObject {
     );
     const storage = this.state.storage;
 
-    for (const [key, record] of await storage.list<PushRecord>({ prefix: pushPrefix })) {
+    for (const [key, stored] of await storage.list<PushRecord>({ prefix: pushPrefix })) {
+      let record = stored;
       const deviceKey = key.slice(pushPrefix.length);
-      const code = await this.push({
+      const alert = await this.push({
         token: record.deviceToken,
         payload: alertPayload(
           notify.class,
@@ -373,13 +397,18 @@ export class Room implements DurableObject {
           notify.actions === true,
         ),
         pushType: "alert",
-      }, now);
-      if (code === null) continue;
+      }, now, record.sandbox ?? false);
+      if (alert === null) continue;
       // Apple no longer knows this token: the app was deleted or reinstalled. Keeping the
       // registration would only fail again on the next turn, so the device is forgotten.
-      if (apns.gone(code)) {
+      if (apns.gone(alert.code)) {
         await storage.delete(key);
         continue;
+      }
+      // Which environment answered is worth keeping: it saves the refused request next time.
+      if (alert.sandbox !== (record.sandbox ?? false)) {
+        record = { ...record, sandbox: alert.sandbox };
+        await storage.put(key, record);
       }
 
       // And, for news the phone is now behind on, a silent one behind the visible one: it
@@ -401,9 +430,9 @@ export class Room implements DurableObject {
           // A background push is explicitly not urgent, and Apple rejects one that claims
           // to be: 5 is what "deliver when it suits you" is spelled as.
           priority: 5,
-        }, now);
+        }, now, record.sandbox ?? false);
         if (silent === null) continue;
-        if (apns.gone(silent)) {
+        if (apns.gone(silent.code)) {
           await storage.delete(key);
           continue;
         }
@@ -570,10 +599,11 @@ export class Room implements DurableObject {
         // Merged rather than written over: a phone re-registers its token on every launch, and
         // that must not hand it a fresh background budget it has already spent.
         const record = await storage.get<PushRecord>(key);
-        await storage.put(key, {
-          ...record,
-          deviceToken: push.deviceToken,
-        } satisfies PushRecord);
+        const next: PushRecord = { ...record, deviceToken: push.deviceToken };
+        // A new token may be from either environment — the phone moved from an Xcode build to
+        // TestFlight, or back — so what was learnt about the old one does not carry over.
+        if (record?.deviceToken !== push.deviceToken) delete next.sandbox;
+        await storage.put(key, next);
         return;
       }
 

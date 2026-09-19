@@ -15,8 +15,16 @@ import type { Message } from "./provider.js";
 /** How much of a thread's log is replayed to the model as context. */
 export const HISTORY_LIMIT = 40;
 
-/** Cap on one `sync_delta`, for a device that is far behind or brand new. */
+/** Cap on one thread's share of a `sync_delta`, for a device that is far behind or brand new. */
 export const SYNC_LIMIT = 200;
+
+/**
+ * Most event JSON one `sync_delta` carries. The frame is sealed and base64url'd on top of this,
+ * and the hosted relay refuses a WebSocket message over 1 MiB — which closed the Mac's socket,
+ * and a phone that then reconnected asked for the same page again. Never empty: an event
+ * bigger than this still travels, alone.
+ */
+export const SYNC_PAGE_BYTES = 512 * 1024;
 
 export interface ThreadRecord {
   id: string;

@@ -78,6 +78,7 @@ import {
   setThreadEffort,
   setThreadModel,
   SYNC_LIMIT,
+  SYNC_PAGE_BYTES,
   threadEffort,
   threadHistory,
   threadModel,
@@ -554,18 +555,32 @@ export function serve(options: ServeOptions = {}): Sidecar {
     pushDevices();
   };
 
-  /** Everything the device has not seen, across every live thread, in one frame. */
+  /**
+   * What the device has not seen, across every live thread, in one frame — up to a page. A
+   * page is cut where the next event would take it past `SYNC_PAGE_BYTES`, and `more` tells
+   * the phone to ask again: its `lastSeen` has moved to the end of what it got, so the next
+   * page carries on from there, and the threads this one never reached.
+   */
   const syncDelta = (lastSeen: Record<string, string>, pairedAt = 0): YorozuEvent => {
-    const pages = listThreads(dir)
-      .filter((thread) => !thread.archived)
-      .map((thread) => eventsAfter(thread.id, lastSeen?.[thread.id], dir, pairedAt));
+    const events: YorozuEvent[] = [];
+    let bytes = 0;
+    let more = false;
+    threads: for (const thread of listThreads(dir).filter((thread) => !thread.archived)) {
+      const page = eventsAfter(thread.id, lastSeen?.[thread.id], dir, pairedAt);
+      if (page.length === SYNC_LIMIT) more = true;
+      for (const event of page) {
+        const size = Buffer.byteLength(JSON.stringify(event));
+        if (events.length > 0 && bytes + size > SYNC_PAGE_BYTES) {
+          more = true;
+          break threads;
+        }
+        events.push(event);
+        bytes += size;
+      }
+    }
     return control({
       kind: "sync_delta",
-      data: {
-        events: pages.flat(),
-        workingThreadIds: [...running.keys()],
-        ...(pages.some((events) => events.length === SYNC_LIMIT) ? { more: true } : {}),
-      },
+      data: { events, workingThreadIds: [...running.keys()], ...(more ? { more: true } : {}) },
     });
   };
 

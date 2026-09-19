@@ -14,12 +14,18 @@ export interface ApnsEnv {
   APNS_TEAM_ID?: string;
   /** The .p8 itself, PEM, as a Wrangler secret. Never logged, never returned. */
   APNS_KEY_P8?: string;
-  /** Overridden only by tests; TestFlight and the App Store are both production APNs. */
+  /** Overridden only by tests. */
   APNS_HOST?: string;
+  APNS_SANDBOX_HOST?: string;
   APNS_TOPIC?: string;
 }
 
 export const DEFAULT_HOST = "api.push.apple.com";
+/**
+ * Where a token from an Xcode-signed build is reachable. TestFlight and the App Store are both
+ * production; a phone cannot tell the relay which it is, so the relay finds out — see `send`.
+ */
+export const SANDBOX_HOST = "api.sandbox.push.apple.com";
 export const DEFAULT_TOPIC = "to.yumi.yorozu.ios";
 /** Apple rejects a token older than an hour and throttles re-minting, so it is cached well inside that. */
 export const TOKEN_TTL_MS = 50 * 60_000;
@@ -90,16 +96,20 @@ export interface ApnsRequest {
   priority?: number;
 }
 
+export type ApnsResult = { status: number; reason?: string };
+
 /**
  * Sends one push and reports the status. A token Apple no longer knows — the app was deleted
- * or reinstalled — comes back 410, which is the caller's cue to forget it.
+ * or reinstalled — comes back 410, which is the caller's cue to forget it. A token from the
+ * other environment comes back 400 `BadDeviceToken`, which is the cue to try there instead.
  */
 export async function send(
   env: ApnsEnv,
   request: ApnsRequest,
   now: number = Date.now(),
-): Promise<number> {
-  const host = env.APNS_HOST ?? DEFAULT_HOST;
+  sandbox = false,
+): Promise<ApnsResult> {
+  const host = sandbox ? (env.APNS_SANDBOX_HOST ?? SANDBOX_HOST) : (env.APNS_HOST ?? DEFAULT_HOST);
   const response = await fetch(`https://${host}/3/device/${request.token}`, {
     method: "POST",
     headers: {
@@ -111,8 +121,15 @@ export async function send(
     },
     body: JSON.stringify(request.payload),
   });
-  return response.status;
+  if (response.ok) return { status: response.status };
+  // Apple explains a refusal as `{"reason":"..."}`; anything else is just its status.
+  const body = (await response.json().catch(() => null)) as { reason?: string } | null;
+  return { status: response.status, ...(body?.reason ? { reason: body.reason } : {}) };
 }
 
 /** Whether a status means the token is dead and should be dropped rather than retried. */
 export const gone = (status: number): boolean => status === 410;
+
+/** A token Apple calls invalid, which for a real one means it belongs to the other environment. */
+export const misaddressed = ({ status, reason }: ApnsResult): boolean =>
+  status === 400 && reason === "BadDeviceToken";
