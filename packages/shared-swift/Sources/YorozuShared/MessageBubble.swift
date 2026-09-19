@@ -192,12 +192,11 @@ public struct MessageBubble: View {
     @ViewBuilder private var selectionSheet: some View {
         #if os(iOS)
             NavigationStack {
-                ScrollView {
-                    MarkdownText(data.text)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                }
+                // One text view, not one `Text` per Markdown block: SwiftUI selection stops at
+                // each view's edge, so a reply drawn block by block could only be selected a
+                // paragraph at a time. UITextView selects across the whole thing.
+                SelectableText(.chatDocument(data.text))
+                    .padding(.horizontal)
                 .navigationTitle("Select text")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -541,3 +540,37 @@ extension MessageAttachment {
         ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file)
     }
 }
+
+#if os(iOS)
+    /// A read-only UITextView, which is the one text control on iOS that lets a selection run
+    /// across paragraphs, code and lists alike. SwiftUI's `Text` selects within itself only.
+    struct SelectableText: UIViewRepresentable {
+        let text: AttributedString
+
+        init(_ text: AttributedString) { self.text = text }
+
+        func makeUIView(context: Context) -> UITextView {
+            let view = UITextView()
+            view.isEditable = false
+            view.isSelectable = true
+            view.isScrollEnabled = true
+            view.alwaysBounceVertical = true
+            view.backgroundColor = .clear
+            view.textContainerInset = UIEdgeInsets(top: 12, left: 0, bottom: 12, right: 0)
+            view.textContainer.lineFragmentPadding = 0
+            view.adjustsFontForContentSizeCategory = true
+            return view
+        }
+
+        func updateUIView(_ view: UITextView, context: Context) {
+            let styled = NSMutableAttributedString(text)
+            // Anything the Markdown pass left unstyled reads as body text in the label colour;
+            // an attributed string with no font at all would draw at UIKit's 12-point default.
+            styled.enumerateAttribute(.font, in: NSRange(location: 0, length: styled.length)) { font, range, _ in
+                if font == nil { styled.addAttribute(.font, value: UIFont.preferredFont(forTextStyle: .body), range: range) }
+            }
+            styled.addAttribute(.foregroundColor, value: UIColor.label, range: NSRange(location: 0, length: styled.length))
+            view.attributedText = styled
+        }
+    }
+#endif
