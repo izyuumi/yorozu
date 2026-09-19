@@ -30,6 +30,7 @@ struct DevicesView: View {
             List(model.devices) { device in
                 HStack(spacing: 8) {
                     Image(systemName: device.via == .local ? "laptopcomputer" : "iphone")
+                        .accessibilityLabel(device.via == .local ? "Mac" : "Phone")
                     VStack(alignment: .leading, spacing: 2) {
                         Text(device.shortId).font(.system(.body, design: .monospaced))
                         Text(subtitle(device)).font(.caption).foregroundStyle(.secondary)
@@ -68,6 +69,8 @@ struct DevicesView: View {
                 existingDeviceIDs: Set(model.devices.filter(removable).map(\.pub)),
                 done: { pairing = false }
             )
+            // Esc closes a sheet on the Mac; a sheet with no Cancel button has to say so itself.
+            .onExitCommand { pairing = false }
         }
         .confirmationDialog(
             "Remove this device?",

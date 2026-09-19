@@ -50,6 +50,7 @@ struct RulesView: View {
                         }
                         .buttonStyle(.borderless)
                         .help("Revoke this rule")
+                        .accessibilityLabel("Revoke rule")
                         .offset(x: 34)
                         .opacity(hoveredRuleID == rule.id ? 1 : 0)
                         .allowsHitTesting(hoveredRuleID == rule.id)
