@@ -763,11 +763,8 @@ public struct ChatView: View {
             var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
             configuration.showsSeparators = false
             configuration.backgroundColor = .clear
-            configuration.leadingSwipeActionsConfigurationProvider = { [weak coordinator = context.coordinator] indexPath in
-                coordinator?.replyActions(at: indexPath, role: .agent)
-            }
             configuration.trailingSwipeActionsConfigurationProvider = { [weak coordinator = context.coordinator] indexPath in
-                coordinator?.replyActions(at: indexPath, role: .user)
+                coordinator?.replyActions(at: indexPath)
             }
             let collectionView = UICollectionView(
                 frame: .zero,
@@ -918,15 +915,11 @@ public struct ChatView: View {
             /// UIKit owns both this horizontal swipe and the timeline's vertical pan, so a
             /// vertical drag begun on a bubble remains a scroll instead of being captured by a
             /// gesture inside that bubble's hosted SwiftUI view.
-            func replyActions(
-                at indexPath: IndexPath,
-                role: MessageData.Role
-            ) -> UISwipeActionsConfiguration? {
+            func replyActions(at indexPath: IndexPath) -> UISwipeActionsConfiguration? {
                 guard let entry = dataSource?.itemIdentifier(for: indexPath),
                       case .row(let id) = entry,
                       case .message(let event) = rowsById[id],
-                      case .message(let message) = event.payload,
-                      message.role == role
+                      case .message(let message) = event.payload
                 else { return nil }
                 let action = UIContextualAction(style: .normal, title: String(localized: "Reply")) {
                     [weak self] _, _, complete in
