@@ -31,7 +31,8 @@ public struct ProgressCardView: View {
                         mark(for: step.state)
                         Text(step.label)
                             .font(.caption)
-                            .foregroundStyle(step.state == .pending ? .tertiary : .secondary)
+                            // The mark says pending; the text stays readable.
+                            .foregroundStyle(.secondary)
                         Spacer(minLength: 0)
                     }
                 }

@@ -108,6 +108,8 @@ private struct CodeBlock: View {
                     Label(copied ? String(localized: "Copied") : String(localized: "Copy"), systemImage: copied ? "checkmark" : "doc.on.doc")
                         .font(.caption)
                         .labelStyle(.iconOnly)
+                        .frame(minWidth: controlTarget, minHeight: controlTarget)
+                        .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(copied ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
@@ -120,7 +122,6 @@ private struct CodeBlock: View {
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.top, 8)
 
             // Wrapping code changes what it means, so it scrolls instead.
             ScrollView(.horizontal, showsIndicators: false) {

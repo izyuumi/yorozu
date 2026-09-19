@@ -117,7 +117,9 @@ public struct MessageBubble: View {
                     .font(.caption2.weight(.semibold))
                     .tracking(0.5)
                     .foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
+                    // Left audible: alignment is the only other thing saying who spoke, and
+                    // VoiceOver cannot hear alignment.
+                    .accessibilityLabel("Yorozu")
             }
             if !data.text.isEmpty || streaming {
                 bubble
@@ -224,6 +226,9 @@ public struct MessageBubble: View {
                             reaction.selected ? AnyShapeStyle(.tint.opacity(0.2)) : AnyShapeStyle(.quaternary),
                             in: .capsule
                         )
+                        // The chip stays small; the target does not.
+                        .frame(minHeight: controlTarget)
+                        .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 .disabled(onReact == nil)
@@ -264,10 +269,12 @@ public struct MessageBubble: View {
                 Text(status == .failed ? "Not sent — tap to retry" : status.label)
             #endif
         } icon: {
+            // The icon carries the red; caption-sized red text is under 4.5:1.
             Image(systemName: status.symbol)
+                .foregroundStyle(status == .failed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
         }
         .font(.caption)
-        .foregroundStyle(status == .failed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+        .foregroundStyle(status == .failed ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
         .padding(.horizontal, 4)
 
         if status == .failed, let onResend {
@@ -292,7 +299,8 @@ public struct MessageBubble: View {
                     .font(.footnote.weight(.medium))
                     .buttonStyle(.plain)
                     .foregroundStyle(.tint)
-                    .frame(minHeight: 28)
+                    .frame(minHeight: controlTarget)
+                    .contentShape(.rect)
                     .accessibilityHint("Shows the rest of this message")
             }
         }
