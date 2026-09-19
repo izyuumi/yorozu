@@ -86,8 +86,8 @@ import {
 import { closeBrowser } from "./tools/browser.js";
 import { askUserTool, questionDesk, reportProgressTool } from "./tools/cards.js";
 import { useProviderSearch } from "./tools/search.js";
-import { OpenClawRunner } from "./openclaw.js";
-import { appendTranscript, transcriptDir } from "./transcripts.js";
+import { OpenClawRunner, type StoredPendingTurn } from "./openclaw.js";
+import { appendTranscript, readTranscripts, transcriptDir } from "./transcripts.js";
 
 const DEFAULT_STATE_DIR = join(homedir(), "Library", "Application Support", "Yorozu");
 const RECONNECT_MS = 2_000;
@@ -250,6 +250,8 @@ export interface ServeOptions {
    * something a test can wait for rather than something only a real half-open socket reaches.
    */
   heartbeat?: { pingMs: number; pongMs: number };
+  /** Test seam for Gateway restart/recovery integration. */
+  openclawRunner?: OpenClawRunner;
 }
 
 export interface Sidecar {
@@ -267,7 +269,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const transcripts = transcriptDir(dir);
   const keys = loadKeys(dir);
   const provider = options.provider;
-  const openclaw = provider ? undefined : new OpenClawRunner({ stateDir: dir });
+  const openclaw = provider ? undefined : options.openclawRunner ?? new OpenClawRunner({ stateDir: dir });
   // `web_search` asks the running chain for native search before it drives a browser.
   if (provider) useProviderSearch(provider);
   const log = options.log ?? ((line: string) => void stdout.write(`${line}\n`));
@@ -288,6 +290,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     .join("\n\n");
   /** One controller per running turn, so an `interrupt` cancels every tree at once. */
   const running = new Map<string, AbortController>();
+  const turnQueues = new Map<string, Promise<void>>();
+  const admittedTurns = new Map<string, Promise<void>>();
   /** One ceiling across user turns and background-result turns. */
   const delegationCapacity = new DelegationCapacity();
 
@@ -382,6 +386,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
       appendTranscript(event, transcripts);
       appendThreadEvent(event, dir);
     }
+    broadcast(event);
+  }
+
+  /** Final event owns recovery marker: persist once, then acknowledge, then publish. */
+  function finalizeOpenClaw(event: YorozuEvent): void {
+    if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === event.id)) appendTranscript(event, transcripts);
+    if (!readThreadEvents(event.threadId, dir).some((known) => known.id === event.id)) appendThreadEvent(event, dir);
+    openclaw!.acknowledge(event.threadId, event.id);
     broadcast(event);
   }
 
@@ -566,13 +578,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
     text: string,
     recorded = false,
     attachments: ReturnType<typeof messageAttachments> = [],
+    userEventId?: string,
   ): Promise<void> {
     // A turn the phone did not send — a due job, a background delegation — is still part of
     // the thread, so it is recorded as the user message it stands in for.
     if (!recorded) {
+      userEventId = randomUUID();
       appendThreadEvent(
         {
-          id: randomUUID(),
+          id: userEventId,
           threadId,
           ts: Date.now(),
           agentId: MAIN_AGENT,
@@ -587,7 +601,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // replaces that message in place and a dropped frame still converges. Only the finished
     // reply goes through `emit`, so the transcript keeps one line per turn rather than one
     // per delta.
-    const id = randomUUID();
+    const id = openclaw && userEventId ? `openclaw:` + userEventId + `:final` : randomUUID();
     // `done` on the finished one only: it is what tells a phone the turn is over, so its
     // composer can stop offering Stop. The deltas under the same id leave it unset.
     const message = (reply: string, done = false): YorozuEvent => ({
@@ -610,15 +624,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
           effort: threadEffort(threadId, dir),
           attachments,
           signal: turn.signal,
+          completionId: id,
+          userEventId,
           onUpdate: (reply) => broadcast(message(reply)),
           onEvent: emit,
         });
         if (turn.signal.aborted) return;
         if (reply === undefined) return;
         const final = message(reply, true);
-        appendTranscript(final, transcripts);
-        appendThreadEvent(final, dir);
-        broadcast(final);
+        finalizeOpenClaw(final);
         const untitled = listThreads(dir).find((thread) => thread.id === threadId)?.title === "";
         const title = text.trim().split(/\s+/).slice(0, 5).join(" ");
         if (untitled && title && renameThread(threadId, cleanTitle(title), dir)) broadcast(threadList());
@@ -736,6 +750,43 @@ export function serve(options: ServeOptions = {}): Sidecar {
     );
   }
 
+  /** Same-thread turns are FIFO. Different threads still run concurrently. */
+  function enqueueTurn(
+    threadId: string,
+    text: string,
+    recorded = false,
+    attachments: ReturnType<typeof messageAttachments> = [],
+    userEventId?: string,
+    acceptedEvent?: YorozuEvent,
+  ): Promise<void> {
+    if (openclaw) {
+      userEventId ??= randomUUID();
+      const event = acceptedEvent ?? { id: userEventId, threadId, ts: Date.now(), agentId: MAIN_AGENT,
+        kind: "message" as const, data: { role: "user" as const, text, ...(attachments.length ? { attachments } : {}) } };
+      const stored = openclaw.admitUserTurn({ threadId, text, model: threadModel(threadId, dir),
+        effort: threadEffort(threadId, dir), attachments, userEventId,
+        completionId: `openclaw:` + userEventId + `:final` }, () => {
+        if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === event.id)) appendTranscript(event, transcripts);
+        if (!readThreadEvents(threadId, dir).some((known) => known.id === event.id)) appendThreadEvent(event, dir);
+      }, () => readThreadEvents(threadId, dir).some((known) => known.id === event.id));
+      if (!stored) return Promise.resolve();
+      text = stored.input.text;
+      attachments = stored.input.attachments;
+      recorded = true;
+    }
+    const admitted = userEventId ? admittedTurns.get(userEventId) : undefined;
+    if (admitted) return admitted;
+    const previous = turnQueues.get(threadId) ?? Promise.resolve();
+    const next = previous.then(() => runTurn(threadId, text, recorded, attachments, userEventId));
+    turnQueues.set(threadId, next);
+    if (userEventId) admittedTurns.set(userEventId, next);
+    void next.finally(() => {
+      if (turnQueues.get(threadId) === next) turnQueues.delete(threadId);
+      if (userEventId && admittedTurns.get(userEventId) === next) admittedTurns.delete(userEventId);
+    }).catch(() => {});
+    return next;
+  }
+
   /**
    * Names a thread from its opening exchange, once. Only a thread whose title is still empty is
    * titled, which is also what keeps a rename the user typed: that title is not empty, so no
@@ -827,14 +878,17 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // The relay replays a buffered frame to every registration until it is acked, and a phone
     // retries a send it never saw land. A message this thread already holds is the same
     // message again: not a second turn, and not a second line in the log.
-    if (
+    const duplicateMessage =
       event.kind === "message" &&
-      readThreadEvents(event.threadId, dir).some((known) => known.id === event.id)
-    ) {
+      readThreadEvents(event.threadId, dir).some((known) => known.id === event.id);
+    if (duplicateMessage && !(openclaw && event.data.role === "user")) {
       return state("duplicate-message");
     }
-    appendTranscript(event, transcripts);
-    appendThreadEvent(event, dir);
+    // OpenClaw user messages cross one admission boundary below: ledger first, logs second.
+    if (!(openclaw && event.kind === "message" && event.data.role === "user")) {
+      appendTranscript(event, transcripts);
+      appendThreadEvent(event, dir);
+    }
 
     switch (event.kind) {
       case "reaction":
@@ -918,14 +972,20 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
 
     if (event.kind !== "message" || event.data.role !== "user") return;
-    // The sender already drew this optimistically; every other client needs the same event.
-    // Upsert-by-id makes echoing it to the sender harmless and keeps all devices convergent.
-    broadcast(event);
     // A plain "yes" while a card is up answers the card rather than starting a turn.
     const [oldest] = pending.values();
     const typed = oldest && typedAnswer(event.data.text, oldest.card);
-    if (typed) return oldest.settle(typed);
-    runTurn(event.threadId, event.data.text, true, messageAttachments(event.data)).catch((e: unknown) => {
+    if (typed) {
+      if (openclaw) {
+        appendTranscript(event, transcripts);
+        appendThreadEvent(event, dir);
+      }
+      return oldest.settle(typed);
+    }
+    const queued = enqueueTurn(event.threadId, event.data.text, true, messageAttachments(event.data), event.id, event);
+    // Admission is durable now. Echoing by id is harmless and converges all clients.
+    broadcast(event);
+    queued.catch((e: unknown) => {
       state(`agent-error ${String(e)}`);
       // A thrown turn has no final message event, so announce its terminal state explicitly.
       notifyRelay({
@@ -1203,10 +1263,62 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   connect();
 
+  // App replacement kills this process, not OpenClaw's run. Recovery owns queue head until
+  // its deterministic final is durable; later persisted user messages are then replayed FIFO.
+  const resumeOpenClaw = async (stored: StoredPendingTurn): Promise<void> => {
+    const { threadId, completionId } = stored;
+    const known = readThreadEvents(threadId, dir);
+    const durableFinal = known.find((event) => event.id === completionId);
+    if (durableFinal) {
+      finalizeOpenClaw(durableFinal);
+      return;
+    }
+    const turn = new AbortController();
+    running.set(threadId, turn);
+    const message = (text: string, done = false): YorozuEvent => ({
+      id: completionId, threadId, ts: Date.now(), agentId: MAIN_AGENT, kind: "message",
+      data: { role: "agent", text, ...(done ? { done: true } : {}) },
+    });
+    try {
+      while (!turn.signal.aborted) {
+        try {
+          const reply = await openclaw!.resume({
+            threadId,
+            signal: turn.signal,
+            seenEventIds: readThreadEvents(threadId, dir).map((event) => event.id),
+            onUpdate: (text) => broadcast(message(text)),
+            onEvent: emit,
+          });
+          if (turn.signal.aborted || reply === undefined) return;
+          finalizeOpenClaw(message(reply, true));
+          return;
+        } catch (error) {
+          state(`openclaw-resume-error ${String(error)}`);
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+      }
+    } finally {
+      if (running.get(threadId) === turn) running.delete(threadId);
+    }
+  };
+
+  for (const stored of openclaw?.pendingTurns() ?? []) {
+    if (stored.state !== "queued") {
+      const recovery = resumeOpenClaw(stored);
+      turnQueues.set(stored.threadId, recovery);
+      if (stored.userEventId) admittedTurns.set(stored.userEventId, recovery);
+      void recovery.finally(() => {
+        if (stored.userEventId && admittedTurns.get(stored.userEventId) === recovery) admittedTurns.delete(stored.userEventId);
+      }).catch(() => {});
+    } else {
+      void enqueueTurn(stored.threadId, stored.input.text, true, stored.input.attachments, stored.userEventId);
+    }
+  }
+
   // No heartbeat: the runner only wakes to ask which jobs are due.
   const scheduler = startScheduler(
     (job) =>
-      void runTurn(job.threadId, job.instruction).catch((e: unknown) =>
+      void enqueueTurn(job.threadId, job.instruction).catch((e: unknown) =>
         state(`job-error ${job.id} ${String(e)}`),
       ),
     { dir },
