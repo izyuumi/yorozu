@@ -291,7 +291,9 @@ public struct MessageBubble: View {
             if let quote = parts.quote {
                 QuoteStrip(text: quote)
             }
-            text
+            // Never shorter than the text: a hosted cell on the phone can propose less height
+            // than a long reply needs, and `Text` answers that by cutting lines with "…".
+            text.fixedSize(horizontal: false, vertical: true)
             if truncated {
                 // A button, not a tap target on the text: "Read more" is the one thing in a
                 // bubble VoiceOver has to be able to find and activate.
@@ -357,12 +359,7 @@ public struct MessageBubble: View {
 
     @ViewBuilder private var text: some View {
         let body = truncated ? readerExcerpt(parts.body) : parts.body
-        if isUser {
-            // Users type prose, not Markdown: rendering their own `*` back at them as
-            // italics would be the app editing what they said. The one thing applied is
-            // the search highlight, which is the app answering a question they asked.
-            Text(AttributedString(body).highlighting(highlight)).textSelection(.enabled)
-        } else if streaming {
+        if streaming {
             // Reparsing and laying out the whole accumulated Markdown on every delta exceeds a
             // frame budget on long answers. The finished event renders the same text below.
             Text(AttributedString(body).highlighting(highlight))

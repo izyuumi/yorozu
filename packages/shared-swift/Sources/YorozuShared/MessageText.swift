@@ -14,26 +14,27 @@ let readerLineLimit = 30
 
 /// Whether a message is long enough to be worth offering "Read more" rather than drawn whole.
 public func needsReader(_ text: String) -> Bool {
-    text.count > readerCharacterLimit || text.components(separatedBy: .newlines).count > readerLineLimit
+    readerExcerpt(text) != text
 }
 
-/// What the bubble draws in place of a long message: the opening of it, cut on a line and then
-/// on a word, with an ellipsis so the cut is visible rather than looking like the end.
+/// What the bubble draws in place of a long message: its opening lines. The cut lands only
+/// between lines, never inside one — a line that is on screen is on screen whole, and the
+/// "Read more" button under it is what says there is more, so no ellipsis is written into the
+/// text. A single line is never cut, however long, since half a line is worse than a long one.
 ///
-/// The cut can leave an unclosed fence or a half-written `**`, which is fine — that is the
-/// normal state of a streaming reply and the parser and the inline renderer both already
-/// expect it.
+/// The cut can leave an unclosed fence, which is fine — that is the normal state of a
+/// streaming reply and the parser already expects it.
 public func readerExcerpt(_ text: String) -> String {
-    guard needsReader(text) else { return text }
-    var excerpt = text.components(separatedBy: .newlines).prefix(readerLineLimit).joined(separator: "\n")
-    if excerpt.count > readerCharacterLimit {
-        let cut = excerpt.index(excerpt.startIndex, offsetBy: readerCharacterLimit)
-        // Back up to the last space, so the excerpt does not end mid-word — unless the whole
-        // thing is one unbroken run of characters, in which case the hard cut is all there is.
-        let space = excerpt[excerpt.startIndex..<cut].lastIndex(of: " ")
-        excerpt = String(excerpt[excerpt.startIndex..<(space ?? cut)])
+    let lines = text.components(separatedBy: .newlines)
+    var kept: [String] = []
+    var count = 0
+    for line in lines.prefix(readerLineLimit) {
+        count += line.count + 1
+        if count > readerCharacterLimit, !kept.isEmpty { break }
+        kept.append(line)
     }
-    return excerpt.trimmingCharacters(in: .whitespacesAndNewlines) + "…"
+    guard kept.count < lines.count else { return text }
+    return kept.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 /// A reply with what it is replying to, as one message. The quote goes in as a Markdown
