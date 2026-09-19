@@ -9,14 +9,16 @@ public enum LayoutMetrics {
     public static let stack: CGFloat = 12
     public static let gutter: CGFloat = 16
     public static let section: CGFloat = 24
+    /// The widest a line of prose may run, on any platform: a 13" iPad in landscape is as wide
+    /// as a Mac window, and a line that long is not readable. A phone never reaches either cap.
+    public static let readingWidth: CGFloat = 700
+    public static let composerWidth: CGFloat = 640
 
     #if os(macOS)
         public static let cardPadding: CGFloat = 12
         public static let controlRadius: CGFloat = 6
         public static let cardRadius: CGFloat = 10
         public static let bubbleRadius: CGFloat = 10
-        public static let readingWidth: CGFloat = 700
-        public static let composerWidth: CGFloat = 640
         public static let sidebarMinWidth: CGFloat = 220
         public static let sidebarIdealWidth: CGFloat = 240
         public static let sidebarMaxWidth: CGFloat = 260

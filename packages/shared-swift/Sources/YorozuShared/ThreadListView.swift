@@ -1,5 +1,9 @@
 import SwiftUI
 
+#if os(iOS)
+    import UIKit
+#endif
+
 /// Screenshot-only list state. Empty in production.
 @MainActor public enum ThreadListShowcase {
     public static var query = ""
@@ -398,6 +402,26 @@ public struct ThreadListView<Destination: View>: View {
     @State private var query = ThreadListShowcase.query
     /// The archive opens closed: it is where threads go to stop being in the way.
     @State private var showArchived = false
+    #if os(iOS)
+        @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
+
+    /// An iPad with room for two columns draws the list beside the chat, as the Mac does,
+    /// rather than pushing the chat over it. A phone — and an iPad squeezed into Slide Over or
+    /// a third of the screen — keeps the stack, so the same `path` drives both.
+    private var splitLayout: Bool {
+        #if os(iOS)
+            UIDevice.current.userInterfaceIdiom == .pad && sizeClass == .regular
+        #else
+            false
+        #endif
+    }
+
+    /// The split view's selection is the top of the stack, so opening a thread from a
+    /// notification or a share lands in the detail column the same way it lands on the stack.
+    private var selection: Binding<String?> {
+        Binding(get: { path.last }, set: { path = $0.map { [$0] } ?? [] })
+    }
 
     public init(
         threads: [ThreadSummary],
@@ -454,88 +478,123 @@ public struct ThreadListView<Destination: View>: View {
     }
 
     public var body: some View {
-        NavigationStack(path: $path) {
-            let groups = groups
-            List {
-                if searchNeedle.isEmpty {
-                    if !groups.pinned.isEmpty {
-                        Section("Pinned") { rows(groups.pinned) }
-                    }
-                    // Today, Yesterday, This week, Earlier: the headings are the only thing telling
-                    // a thread from this morning apart from one from last month at a glance.
-                    ForEach(groups.sections) { section in
-                        Section(section.title) { rows(section.threads) }
-                    }
-                    if !groups.archived.isEmpty {
-                        Section { archive(groups.archived) }
+        Group {
+            #if os(iOS)
+                if splitLayout {
+                    NavigationSplitView {
+                        list
+                    } detail: {
+                        NavigationStack { detail }
                     }
                 } else {
-                    if !threadResults.isEmpty {
-                        Section("Threads") { rows(threadResults) }
-                    }
-                    if !messageResults.isEmpty {
-                        Section("Messages") {
-                            rows(messageResults) { searchExcerpt(in: messageText($0.id), matching: searchNeedle) }
-                        }
+                    stack
+                }
+            #else
+                stack
+            #endif
+        }
+        .renameAlert($renaming, onRename: onRename)
+    }
+
+    private var stack: some View {
+        NavigationStack(path: $path) {
+            list
+                .navigationDestination(for: String.self) { id in
+                    if let thread = threads.first(where: { $0.id == id }) {
+                        destination(thread)
                     }
                 }
-            }
-            .listStyle(.plain)
-            .contentMargins(.vertical, 4)
-            .animation(.default, value: threads)
-            .overlay { empty(groups) }
-            // A search modifier on the root navigation stack otherwise follows pushed chats:
-            // pulling a transcript down reveals "Search threads" above the conversation.
-            .threadListSearch(text: $query, enabled: path.isEmpty)
-            .refreshable { await onRefresh?() }
-            .navigationTitle("Threads")
-            .toolbar {
-                if let onSettings {
-                    ToolbarItem(placement: .navigation) {
-                        Button(action: onSettings) {
-                            ZStack(alignment: .bottomTrailing) {
-                                Image(systemName: "gearshape")
-                                if let connection {
-                                    Circle()
-                                        .fill(connection.tint)
-                                        .frame(width: 8, height: 8)
-                                        .overlay(Circle().stroke(.background, lineWidth: 1.5))
-                                }
-                            }
-                        }
-                        .accessibilityLabel("Settings")
-                        .accessibilityValue(connection.map { "Mac connection: \($0.label)" } ?? "")
-                    }
+        }
+    }
+
+    /// The detail column is never blank: with nothing chosen it says so, and says what to do.
+    @ViewBuilder private var detail: some View {
+        if let id = path.last, let thread = threads.first(where: { $0.id == id }) {
+            destination(thread)
+        } else {
+            ContentUnavailableView(
+                "No thread selected",
+                systemImage: "bubble.left.and.bubble.right",
+                description: Text("Choose a thread, or start a new one.")
+            )
+        }
+    }
+
+    private var list: some View {
+        let groups = groups
+        return List(selection: splitLayout ? selection : nil) {
+            if searchNeedle.isEmpty {
+                if !groups.pinned.isEmpty {
+                    Section("Pinned") { rows(groups.pinned) }
                 }
-                #if os(iOS)
-                    ToolbarItem(placement: .primaryAction) { newThreadButton }
-                    if threads.contains(where: \.isUnread), let onReadAll {
-                        ToolbarItem(placement: .primaryAction) {
-                            Button("Mark all as read", systemImage: "envelope.open", action: onReadAll)
-                        }
+                // Today, Yesterday, This week, Earlier: the headings are the only thing telling
+                // a thread from this morning apart from one from last month at a glance.
+                ForEach(groups.sections) { section in
+                    Section(section.title) { rows(section.threads) }
+                }
+                if !groups.archived.isEmpty {
+                    Section { archive(groups.archived) }
+                }
+            } else {
+                if !threadResults.isEmpty {
+                    Section("Threads") { rows(threadResults) }
+                }
+                if !messageResults.isEmpty {
+                    Section("Messages") {
+                        rows(messageResults) { searchExcerpt(in: messageText($0.id), matching: searchNeedle) }
                     }
-                #endif
-                #if os(macOS)
-                    ToolbarItem(placement: .primaryAction) { newThreadButton }
-                #endif
-            }
-            .navigationDestination(for: String.self) { id in
-                if let thread = threads.first(where: { $0.id == id }) {
-                    destination(thread)
                 }
             }
         }
-        .renameAlert($renaming, onRename: onRename)
+        .listStyle(.plain)
+        .contentMargins(.vertical, 4)
+        .animation(.default, value: threads)
+        .overlay { empty(groups) }
+        // A search modifier on the root navigation stack otherwise follows pushed chats:
+        // pulling a transcript down reveals "Search threads" above the conversation.
+        .threadListSearch(text: $query, enabled: splitLayout || path.isEmpty)
+        .refreshable { await onRefresh?() }
+        .navigationTitle("Threads")
+        .toolbar {
+            if let onSettings {
+                ToolbarItem(placement: .navigation) {
+                    Button(action: onSettings) {
+                        ZStack(alignment: .bottomTrailing) {
+                            Image(systemName: "gearshape")
+                            if let connection {
+                                Circle()
+                                    .fill(connection.tint)
+                                    .frame(width: 8, height: 8)
+                                    .overlay(Circle().stroke(.background, lineWidth: 1.5))
+                            }
+                        }
+                    }
+                    .accessibilityLabel("Settings")
+                    .accessibilityValue(connection.map { "Mac connection: \($0.label)" } ?? "")
+                }
+            }
+            #if os(iOS)
+                ToolbarItem(placement: .primaryAction) { newThreadButton }
+                if threads.contains(where: \.isUnread), let onReadAll {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("Mark all as read", systemImage: "envelope.open", action: onReadAll)
+                    }
+                }
+            #endif
+            #if os(macOS)
+                ToolbarItem(placement: .primaryAction) { newThreadButton }
+            #endif
+        }
     }
 
     /// Native toolbar button on both platforms. Keeping it in the bar leaves the final thread
     /// and the always-visible search field unobstructed.
     @ViewBuilder private var newThreadButton: some View {
-        #if os(iOS)
-            Button("New thread", systemImage: "square.and.pencil", action: onCreate)
-        #else
-            Button("New thread", systemImage: "square.and.pencil", action: onCreate)
-        #endif
+        Button("New thread", systemImage: "square.and.pencil", action: onCreate)
+            // ⌘N on an iPad keyboard; the Mac's File menu carries its own — see ``ThreadCommands``.
+            #if os(iOS)
+                .keyboardShortcut("n")
+            #endif
     }
 
     /// The archive: shut by default, and the only place a thread comes back from.
