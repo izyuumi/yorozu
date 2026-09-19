@@ -216,6 +216,19 @@ extension AttributedString {
             attributed[range].font = .body.monospaced()
             attributed[range].backgroundColor = .secondary.opacity(0.15)
         }
+        // Markdown only links what is written as a link; a bare URL or address is prose to it.
+        // People paste those, so the detector marks the ones the parser left alone.
+        let plain = String(attributed.characters)
+        let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+        for match in detector?.matches(in: plain, range: NSRange(plain.startIndex..., in: plain)) ?? [] {
+            guard let url = match.url, let range = Range(match.range, in: attributed),
+                  attributed[range].runs.allSatisfy({ $0.link == nil }) else { continue }
+            attributed[range].link = url
+        }
+        // Underlined, not only tinted: in the user's bubble the tint is the text colour.
+        for range in attributed.runs.filter({ $0.link != nil }).map(\.range) {
+            attributed[range].underlineStyle = .single
+        }
         return attributed.highlighting(highlight)
     }
 }

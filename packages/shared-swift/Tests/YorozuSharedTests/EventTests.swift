@@ -122,6 +122,7 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
                 DeviceInfo(pub: "local-1", via: .local, lastSeen: 1_757_640_000_001, online: true),
             ]))
         case .deviceRemove: .deviceRemove(DeviceRemoveData(pub: "k1"))
+        case .receipt: .receipt(ReceiptData(eventId: "e0"))
         }
     let event = YorozuEvent(
         id: "e1",
@@ -194,6 +195,9 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     // Whitespace is what a paste out of Messages brings with it.
     #expect(try QrPayload.decode("  \(code)\n").roomId == "r")
     #expect(try QrPayload.decode("yorozu://pair?v=1&relay=ws://r&key=AAA&token=t").roomId == nil)
+    // The pairing secret rides along when the Mac minted one, and is checked like the keys.
+    #expect(try QrPayload.decode("\(code)&secret=s3cr3t").secret == "s3cr3t")
+    #expect(throws: (any Error).self) { try QrPayload.decode("\(code)&secret=not%20base64!") }
 
     #expect(throws: (any Error).self) { try QrPayload.decode("yorozu://pair?v=1&relay=ws://r&token=t") }
     #expect(throws: (any Error).self) { try QrPayload.decode("yorozu://pair?v=1&key=AAA&token=t") }

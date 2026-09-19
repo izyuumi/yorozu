@@ -11,12 +11,48 @@ import {
   newBucket,
   NOTIFY_BODY,
   NOTIFY_CLASSES,
+  parseEnvelope,
   parseFrame,
+  parseFrames,
   parseJoin,
   parseNotify,
   parsePush,
   parseRegister,
+  safeReason,
 } from "./protocol.js";
+
+test("an envelope is a JSON object, and nothing else that parses", () => {
+  expect(parseEnvelope('{"type":"ping"}')).toEqual({ type: "ping" });
+  expect(parseEnvelope("null")).toBeNull();
+  expect(parseEnvelope("42")).toBeNull();
+  expect(parseEnvelope('"frame"')).toBeNull();
+  expect(parseEnvelope('[{"type":"ping"}]')).toBeNull();
+  expect(parseEnvelope("{not json")).toBeNull();
+  expect(parseEnvelope("")).toBeNull();
+});
+
+test("a frame batch is one to MAX_DEVICES signed frames, or nothing", () => {
+  expect(parseFrames({ payload: "p", sig: "s" })).toEqual([{ payload: "p", sig: "s" }]);
+  expect(parseFrames({ payload: "p" })).toBeNull();
+  const frame = { payload: "p", sig: "s" };
+  expect(parseFrames({ frames: [frame, frame] })).toEqual([frame, frame]);
+  expect(parseFrames({ frames: [] })).toBeNull();
+  expect(parseFrames({ frames: "nope" })).toBeNull();
+  expect(parseFrames({ frames: [frame, { payload: "p" }] })).toBeNull();
+  expect(parseFrames({ frames: [frame, null] })).toBeNull();
+  expect(parseFrames({ frames: Array(MAX_DEVICES).fill(frame) })).toHaveLength(MAX_DEVICES);
+  expect(parseFrames({ frames: Array(MAX_DEVICES + 1).fill(frame) })).toBeNull();
+  // Extra keys on a batched entry do not survive onto the wire.
+  expect(parseFrames({ frames: [{ ...frame, seq: 9 }] })).toEqual([frame]);
+});
+
+test("a peer's close reason is cut and stripped before it is logged", () => {
+  expect(safeReason("replaced")).toBe("replaced");
+  expect(safeReason("a\nb\r\u0000c\u001fd\u007fe")).toBe("abcde");
+  expect(safeReason("x".repeat(100))).toHaveLength(64);
+  // Stripped first, then cut: control characters do not count toward the budget.
+  expect(safeReason("\n".repeat(64) + "kept")).toBe("kept");
+});
 
 test("the bucket allows a one-second burst and then refuses", () => {
   const bucket = newBucket(0);

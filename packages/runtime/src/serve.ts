@@ -7,8 +7,8 @@
  * per pairing payload, a `QR <string>` line to draw and a `PAIR <string>` line to copy —
  * both the same pairing string. `MINT` on stdin asks the relay for a fresh join token.
  */
-import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { argv, env, stdin, stdout } from "node:process";
@@ -18,6 +18,7 @@ import {
   fromBase64Url,
   generateKeypair,
   generateSigningKeypair,
+  helloProof,
   attachmentsWithinLimits,
   messageAttachments,
   open,
@@ -166,13 +167,15 @@ const restore = (stored: StoredKey): Keypair => ({
   publicKey: fromBase64Url(stored.pub),
 });
 
-/** Keys outlive restarts: the room and every paired phone are pinned to them. */
+/**
+ * Keys outlive restarts: the room and every paired phone are pinned to them. So a fresh pair
+ * is minted only when there is no file at all. A file that is there but will not read — a
+ * permissions slip, a half-written save, a corrupt disk — throws instead of quietly becoming a
+ * new identity that strands every paired phone.
+ */
 export function loadKeys(dir: string): Keys {
   const file = join(dir, "keys.json");
-  try {
-    const stored = JSON.parse(readFileSync(file, "utf8")) as Record<keyof Keys, StoredKey>;
-    return { session: restore(stored.session), signing: restore(stored.signing) };
-  } catch {
+  if (!existsSync(file)) {
     const keys: Keys = { session: generateKeypair(), signing: generateSigningKeypair() };
     mkdirSync(dir, { recursive: true });
     writeFileSync(file, JSON.stringify({ session: store(keys.session), signing: store(keys.signing) }), {
@@ -180,6 +183,12 @@ export function loadKeys(dir: string): Keys {
     });
     return keys;
   }
+  const stored = JSON.parse(readFileSync(file, "utf8")) as Record<keyof Keys, StoredKey>;
+  const keys = { session: restore(stored.session), signing: restore(stored.signing) };
+  if (keys.session.privateKey.length !== 32 || keys.signing.privateKey.length !== 32) {
+    throw new Error(`${file} does not hold a usable key pair; fix or remove it to pair again`);
+  }
+  return keys;
 }
 
 /**
@@ -219,9 +228,14 @@ export function loadDevices(file: string): DeviceRecord[] {
 /**
  * Frame bodies, base64url JSON inside the relay's opaque `payload`. `hello` is the phone
  * announcing its X25519 key; everything after it is sealed.
+ *
+ * A first `hello` carries `proof`, `helloProof` over the pairing secret the QR carried and both
+ * keys. That is what makes enrolment end-to-end: the relay checks the frame signature against
+ * the socket's key, but only the runtime knows the secret, so only a phone that read the QR can
+ * introduce a key pair. A device already on file may say `hello` again without one.
  */
 type FrameBody =
-  | { t: "hello"; pub: string; spub?: string }
+  | { t: "hello"; pub: string; spub?: string; proof?: string }
   | { t: "box"; n: string; c: string };
 
 /**
@@ -353,6 +367,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
   let socket: WebSocket | null = null;
   let retry: NodeJS.Timeout | null = null;
   let stopped = false;
+  /**
+   * Secrets behind the QRs on screen, newest last. A phone's first `hello` proves it holds one
+   * of them, and pairing spends them all: a QR is for one phone, and the next one is drawn fresh.
+   */
+  const pairingSecrets = new Set<string>();
+  const PAIRING_SECRETS = 4;
   /** Seals and sends to one paired device. Replaced per connection, a no-op while there is none. */
   let sendTo: (device: string, event: YorozuEvent) => void = () => {};
 
@@ -399,7 +419,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
   }
 
   /** Cards on screen somewhere, waiting to be answered, by action ID. */
-  const pending = new Map<string, { card: ApprovalCardData; settle: (result: AskResult) => void }>();
+  const pending = new Map<
+    string,
+    { card: ApprovalCardData; threadId: string; settle: (result: AskResult) => void }
+  >();
   /** Whether each pending card may be answered from a notification button. */
   const quickActions = new Map<string, boolean>();
 
@@ -411,6 +434,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   function ask(action: Action, context?: { threadId: string; agentId: string }): Promise<AskResult> {
     const actionId = randomUUID();
     const card = cardFor(actionId, action);
+    const threadId = context?.threadId ?? currentThread(dir);
     // Judged here, where the action is, and read by `notifyRelay` when the card goes out.
     quickActions.set(actionId, quickApprovable(action, loadSettings(dir), dir));
     return new Promise<AskResult>((resolve) => {
@@ -422,6 +446,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       timer.unref?.();
       pending.set(actionId, {
         card,
+        threadId,
         settle: (result) => {
           clearTimeout(timer);
           pending.delete(actionId);
@@ -431,7 +456,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       });
       emit({
         id: randomUUID(),
-        threadId: context?.threadId ?? currentThread(dir),
+        threadId,
         ts: Date.now(),
         agentId: context?.agentId ?? MAIN_AGENT,
         kind: "approval_card",
@@ -886,17 +911,43 @@ export function serve(options: ServeOptions = {}): Sidecar {
     archiveUpdates.set(threadId, update);
   }
 
+  /**
+   * Ids of the last commands taken from devices. The relay replays a buffered frame to every
+   * registration until it is acked, and a phone re-sends anything it holds no receipt for; the
+   * second copy of a command must not apply twice — a `rule_update` restoring a rule since
+   * revoked, a `thread_archive` undoing an unarchive. Messages are also checked against the
+   * thread log, which outlives a restart; for the rest this window is what there is.
+   */
+  const seenCommands = new Set<string>();
+  const SEEN_COMMANDS = 2_000;
+  const alreadySeen = (id: string): boolean => {
+    if (seenCommands.has(id)) return true;
+    seenCommands.add(id);
+    if (seenCommands.size > SEEN_COMMANDS) {
+      const [oldest] = seenCommands;
+      seenCommands.delete(oldest!);
+    }
+    return false;
+  };
+
   function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0): void {
     if (event.kind === "message" && !attachmentsWithinLimits(messageAttachments(event.data))) {
       return state("rejected-oversized-attachments");
     }
-    // The relay replays a buffered frame to every registration until it is acked, and a phone
-    // retries a send it never saw land. A message this thread already holds is the same
-    // message again: not a second turn, and not a second line in the log.
+    // Every command is receipted, the second copy included: a device that was never told the
+    // first one landed is still waiting to hear so, and only a receipt lets it stop re-sending.
+    const receipt = (): void => reply(control({ kind: "receipt", data: { eventId: event.id } }));
+    if (alreadySeen(event.id)) {
+      receipt();
+      return state("duplicate-command");
+    }
+    // A message this thread already holds is the same message again: not a second turn, and
+    // not a second line in the log.
     const duplicateMessage =
       event.kind === "message" &&
       readThreadEvents(event.threadId, dir).some((known) => known.id === event.id);
     if (duplicateMessage && !(openclaw && event.data.role === "user")) {
+      receipt();
       return state("duplicate-message");
     }
     // OpenClaw user messages cross one admission boundary below: ledger first, logs second.
@@ -904,6 +955,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       appendTranscript(event, transcripts);
       appendThreadEvent(event, dir);
     }
+    receipt();
 
     switch (event.kind) {
       case "reaction":
@@ -916,11 +968,21 @@ export function serve(options: ServeOptions = {}): Sidecar {
         for (const { settle } of [...pending.values()]) settle({ answer: "no" });
         questions.cancelAll();
         return;
-      case "approval_answer":
+      case "approval_answer": {
+        // A lock-screen button is honoured only for a card this runtime judged answerable
+        // from one. The relay chose which buttons the push drew, and a relay that put Allow
+        // under a purchase card must not be able to move money with it.
+        if (event.data.source === "notification" && quickActions.get(event.data.actionId) !== true) {
+          return state("notification-answer-refused");
+        }
         pending.get(event.data.actionId)?.settle({
           answer: event.data.answer,
           ...(event.data.rule ? { rule: event.data.rule } : {}),
         });
+        return;
+      }
+      case "receipt":
+        // Emitted by the runtime, never accepted from a device.
         return;
       // Rules are the user's own standing decisions, so saving and revoking are theirs to do
       // from either device. Both answer everyone, so a second screen sees the same list.
@@ -987,8 +1049,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
 
     if (event.kind !== "message" || event.data.role !== "user") return;
-    // A plain "yes" while a card is up answers the card rather than starting a turn.
-    const [oldest] = pending.values();
+    // A plain "yes" while a card is up in this thread answers the card rather than starting a
+    // turn. Only this thread's: a "yes" typed into another chat is a message there, not an
+    // answer to whatever happens to be the oldest card anywhere.
+    const oldest = [...pending.values()].find((card) => card.threadId === event.threadId);
     const typed = oldest && typedAnswer(event.data.text, oldest.card);
     if (typed) {
       if (openclaw) {
@@ -1054,6 +1118,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const ws = new WebSocket(dial);
     socket = ws;
     let room: string | null = null;
+    /** Set once a replayed frame on this socket threw; nothing after it is acked. */
+    let ackBlocked = false;
 
     const sendFrame = (body: FrameBody): void => {
       const payload = toBase64Url(Buffer.from(JSON.stringify(body)));
@@ -1156,7 +1222,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (typeof payload !== "string") return;
       const body = JSON.parse(Buffer.from(payload, "base64url").toString()) as FrameBody;
       if (body.t === "hello") {
+        if (typeof body.pub !== "string" || body.pub === "") return state("hello-refused");
         const known = devices.get(body.pub);
+        // A key pair not on file gets in only with proof it read a QR this Mac drew. The
+        // relay verified the frame's signature, but the relay could have signed it itself.
+        if (!known) {
+          const proved =
+            typeof body.proof === "string" &&
+            typeof body.spub === "string" &&
+            [...pairingSecrets].some((secret) => helloProof(secret, body.pub, body.spub!) === body.proof);
+          if (!proved) return state("hello-refused");
+          pairingSecrets.clear();
+        }
         remember({
           pub: body.pub,
           ...(body.spub ? { signingPub: body.spub } : known?.record.signingPub
@@ -1243,23 +1320,40 @@ export function serve(options: ServeOptions = {}): Sidecar {
             for (const held of latestPerThread(heldNotifies.splice(0))) notifyRelay(held);
             return ws.send(JSON.stringify({ type: "mint" }));
           case "token": {
+            // One secret per QR, and only the last few QRs are honoured: the token is relay
+            // state, the secret is ours, and the two are shown together.
+            const secret = toBase64Url(randomBytes(32));
+            pairingSecrets.add(secret);
+            if (pairingSecrets.size > PAIRING_SECRETS) {
+              const [oldest] = pairingSecrets;
+              pairingSecrets.delete(oldest!);
+            }
             const pairing = encodePairingString({
               v: 1,
               relayUrl,
               macPubkey: toBase64Url(keys.session.publicKey),
               token: String(msg.token),
               ...(room ? { roomId: room } : {}),
+              secret,
             });
             // The same string twice: one line the Mac draws as a QR, one it offers to copy.
             log(`QR ${pairing}`);
             return log(`PAIR ${pairing}`);
           }
           case "frame":
-            onFrame(msg.payload);
             // A replayed frame carries the relay's buffer sequence; acking it is what lets the
-            // relay let go. Sent after handling, so a crash in between means a replay rather
-            // than a loss. Live frames carry no `seq` and need no ack.
-            if (typeof msg.seq === "number") ws.send(JSON.stringify({ type: "ack", seq: msg.seq }));
+            // relay let go. The ack is cumulative, so it is sent only once every frame up to
+            // this one has been handled: a frame that threw is left for the next replay
+            // rather than deleted by the ack of the one after it. Live frames carry no `seq`.
+            try {
+              onFrame(msg.payload);
+            } catch (e) {
+              if (typeof msg.seq === "number") ackBlocked = true;
+              throw e;
+            }
+            if (typeof msg.seq === "number" && !ackBlocked) {
+              ws.send(JSON.stringify({ type: "ack", seq: msg.seq }));
+            }
             return;
         }
       } catch (e) {

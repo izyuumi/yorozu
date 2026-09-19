@@ -132,3 +132,12 @@ export const fromBase64Url = (text: string): Uint8Array =>
  */
 export const threadRef = (threadId: string): string =>
   createHash("sha256").update(threadId).digest("base64url").slice(0, 8);
+
+/**
+ * What a phone puts in its first `hello` to prove it read the QR: a hash over the QR's secret
+ * and both keys it is announcing. The relay sees the proof and the keys, never the secret, and
+ * a proof for one pair of keys says nothing about any other — so a relay cannot enrol keys of
+ * its own, and cannot reuse a proof it saw. Mirrored in Crypto.swift.
+ */
+export const helloProof = (secret: string, pub: string, spub: string): string =>
+  createHash("sha256").update(`${secret}.${pub}.${spub}`).digest("base64url");

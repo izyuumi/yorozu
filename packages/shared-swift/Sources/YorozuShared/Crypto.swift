@@ -79,6 +79,14 @@ public enum YorozuCrypto {
         String(Data(SHA256.hash(data: Data(threadId.utf8))).base64URLEncodedString().prefix(8))
     }
 
+    /// What the first `hello` carries to prove this phone read the QR: a hash over the QR's
+    /// secret and both announced keys. The relay sees the proof and the keys, never the secret,
+    /// and a proof for one pair of keys says nothing about any other. Mirrors `helloProof` in
+    /// packages/shared/src/crypto.ts.
+    public static func helloProof(secret: String, pub: String, spub: String) -> String {
+        Data(SHA256.hash(data: Data("\(secret).\(pub).\(spub)".utf8))).base64URLEncodedString()
+    }
+
     public static func signFrame(priv: Data, data: Data) throws -> Data {
         try Curve25519.Signing.PrivateKey(rawRepresentation: priv).signature(for: data)
     }

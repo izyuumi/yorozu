@@ -25,9 +25,11 @@ import {
   CLOSE_RATE_LIMIT,
   dropCount,
   evictions,
+  frameWire,
   newBucket,
   parseDevices,
-  parseFrame,
+  parseEnvelope,
+  parseFrames,
   parseJoin,
   parseNotify,
   parsePush,
@@ -35,6 +37,7 @@ import {
   parseRevoke,
   PING,
   PONG,
+  safeReason,
   TOKEN_TTL_MS,
   type Bucket,
   type Notify,
@@ -130,8 +133,15 @@ type PushRecord = {
   sandbox?: boolean;
 };
 
+/** One-time join tokens: `t:<token>` -> expiry epoch ms. */
+const tokenPrefix = "t:";
+
 export class Room implements DurableObject {
-  private bucket: Bucket = newBucket(Date.now());
+  /**
+   * One bucket per socket, in memory: a phone that floods closes itself and nobody else. A
+   * socket woken from hibernation starts a fresh one, which is a full burst it was owed anyway.
+   */
+  private buckets = new WeakMap<WebSocket, Bucket>();
   /** Verification is async, so messages are chained to keep frames strictly in order. */
   private tail: Promise<unknown> = Promise.resolve();
   private keys = new Map<string, Promise<CryptoKey>>();
@@ -168,7 +178,7 @@ export class Room implements DurableObject {
 
   webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): void {
     const conn = ws.deserializeAttachment() as Conn | null;
-    log("close", { role: conn?.role ?? null, code, reason, wasClean });
+    log("close", { role: conn?.role ?? null, code, reason: safeReason(reason), wasClean });
     // A re-registering Mac closes its own stale socket: only go offline if none is left.
     if (conn?.role === "mac" && !this.sockets("mac").some((other) => other !== ws)) {
       this.notifyOwner(false);
@@ -185,12 +195,27 @@ export class Room implements DurableObject {
     ws.close(code, reason);
   }
 
-  /** The buffer's TTL, swept once rather than per entry. */
+  /** The buffer's TTL and the join tokens' expiry, swept once rather than per entry. */
   async alarm(): Promise<void> {
     const now = Date.now();
+    const storage = this.state.storage;
     await this.trim(now);
-    const remaining = await this.state.storage.list({ prefix: "b:", limit: 1 });
-    if (remaining.size > 0) await this.state.storage.setAlarm(now + BUFFER_TTL_MS);
+    const tokens = await storage.list<number>({ prefix: tokenPrefix });
+    const expired = [...tokens].filter(([, expiresAt]) => now > expiresAt).map(([key]) => key);
+    if (expired.length > 0) await storage.delete(expired);
+    // Whichever comes first: the buffer's next sweep, or the earliest token still live.
+    const remaining = await storage.list({ prefix: "b:", limit: 1 });
+    const next = Math.min(
+      remaining.size > 0 ? now + BUFFER_TTL_MS : Infinity,
+      ...[...tokens.values()].filter((expiresAt) => expiresAt >= now),
+    );
+    if (next !== Infinity) await storage.setAlarm(next);
+  }
+
+  /** Brings the alarm forward if `at` is sooner than whatever is already scheduled. */
+  private async alarmBy(at: number): Promise<void> {
+    const scheduled = await this.state.storage.getAlarm();
+    if (scheduled === null || scheduled > at) await this.state.storage.setAlarm(at);
   }
 
   private sockets(role: "mac" | "phone"): WebSocket[] {
@@ -275,7 +300,7 @@ export class Room implements DurableObject {
     await this.trim(now);
     // Scheduled from the oldest entry, not the newest, so the sweep cannot be deferred
     // indefinitely by a phone that keeps sending.
-    if ((await storage.getAlarm()) === null) await storage.setAlarm(now + BUFFER_TTL_MS);
+    await this.alarmBy(now + BUFFER_TTL_MS);
   }
 
   /**
@@ -368,9 +393,9 @@ export class Room implements DurableObject {
    * suppresses presentation while foregrounded; only the silent catch-up push can be skipped
    * for a phone whose socket is still live.
    *
-   * Awaited rather than left to run behind the socket: frames are handled in order on this
-   * object, and a turn produces a handful of these at most — the running commentary is not
-   * notified at all, so only a turn arriving somewhere reaches here.
+   * Runs detached from the socket's message chain (see the `notify` case) and one device at a
+   * time in parallel, so a slow Apple costs neither the next frame nor the other phones. The
+   * fan-out is bounded by MAX_DEVICES, which is as many push records as a room can hold.
    */
   private async wake(notify: Notify, now: number): Promise<void> {
     // No Apple key configured — a self-hosted room, or one deployed before the secrets were
@@ -382,62 +407,75 @@ export class Room implements DurableObject {
         .map((ws) => (ws.deserializeAttachment() as Conn | null)?.key)
         .filter((key): key is string => key !== null && key !== undefined),
     );
+    const records = await this.state.storage.list<PushRecord>({ prefix: pushPrefix });
+    await Promise.all(
+      [...records].map(([key, record]) => this.wakeDevice(key, record, notify, now, watching)),
+    );
+  }
+
+  private async wakeDevice(
+    key: string,
+    record: PushRecord,
+    notify: Notify,
+    now: number,
+    watching: ReadonlySet<string>,
+  ): Promise<void> {
     const storage = this.state.storage;
+    const deviceKey = key.slice(pushPrefix.length);
+    const alert = await this.push({
+      token: record.deviceToken,
+      payload: alertPayload(
+        notify.class,
+        notify.threadRef,
+        notify.eventRef,
+        notify.previews?.[deviceKey],
+        notify.actions === true,
+      ),
+      pushType: "alert",
+    }, now, record.sandbox ?? false);
+    if (alert === null) return;
+    // Apple no longer knows this token: the app was deleted or reinstalled. Keeping the
+    // registration would only fail again on the next turn, so the device is forgotten.
+    if (apns.gone(alert.code)) {
+      await storage.delete(key);
+      return;
+    }
+    // Which environment answered is worth keeping: it saves the refused request next time.
+    if (alert.sandbox !== (record.sandbox ?? false)) {
+      record = { ...record, sandbox: alert.sandbox };
+      await storage.put(key, record);
+    }
 
-    for (const [key, stored] of await storage.list<PushRecord>({ prefix: pushPrefix })) {
-      let record = stored;
-      const deviceKey = key.slice(pushPrefix.length);
-      const alert = await this.push({
-        token: record.deviceToken,
-        payload: alertPayload(
-          notify.class,
-          notify.threadRef,
-          notify.eventRef,
-          notify.previews?.[key.slice(pushPrefix.length)],
-          notify.actions === true,
-        ),
-        pushType: "alert",
-      }, now, record.sandbox ?? false);
-      if (alert === null) continue;
-      // Apple no longer knows this token: the app was deleted or reinstalled. Keeping the
-      // registration would only fail again on the next turn, so the device is forgotten.
-      if (apns.gone(alert.code)) {
-        await storage.delete(key);
-        continue;
-      }
-      // Which environment answered is worth keeping: it saves the refused request next time.
-      if (alert.sandbox !== (record.sandbox ?? false)) {
-        record = { ...record, sandbox: alert.sandbox };
-        await storage.put(key, record);
-      }
-
-      // And, for news the phone is now behind on, a silent one behind the visible one: it
-      // wakes the app for a few seconds so it can drain the sync over its own socket and
-      // leave the thread cache true, rather than waiting for a tap.
-      //
-      // Rate limited because iOS is: an app woken more often than the budget allows is
-      // simply woken less often afterwards, which would cost the wake-ups worth having. The
-      // alert above has already gone out regardless.
-      if (
-        !watching.has(deviceKey) &&
-        BACKGROUND_CLASSES.includes(notify.class) &&
-        now - (record.backgroundAt ?? 0) >= BACKGROUND_INTERVAL_MS
-      ) {
-        const silent = await this.push({
-          token: record.deviceToken,
-          payload: backgroundPayload(),
-          pushType: "background",
-          // A background push is explicitly not urgent, and Apple rejects one that claims
-          // to be: 5 is what "deliver when it suits you" is spelled as.
-          priority: 5,
-        }, now, record.sandbox ?? false);
-        if (silent === null) continue;
-        if (apns.gone(silent.code)) {
-          await storage.delete(key);
-          continue;
-        }
-        await storage.put(key, { ...record, backgroundAt: now } satisfies PushRecord);
-      }
+    // And, for news the phone is now behind on, a silent one behind the visible one: it
+    // wakes the app for a few seconds so it can drain the sync over its own socket and
+    // leave the thread cache true, rather than waiting for a tap.
+    //
+    // Rate limited because iOS is: an app woken more often than the budget allows is
+    // simply woken less often afterwards, which would cost the wake-ups worth having. The
+    // alert above has already gone out regardless. The budget is spent only on a push Apple
+    // accepted: a timeout or a 5xx did not wake anything, so it must not cost the next one.
+    if (
+      watching.has(deviceKey) ||
+      !BACKGROUND_CLASSES.includes(notify.class) ||
+      now - (record.backgroundAt ?? 0) < BACKGROUND_INTERVAL_MS
+    ) {
+      return;
+    }
+    const silent = await this.push({
+      token: record.deviceToken,
+      payload: backgroundPayload(),
+      pushType: "background",
+      // A background push is explicitly not urgent, and Apple rejects one that claims
+      // to be: 5 is what "deliver when it suits you" is spelled as.
+      priority: 5,
+    }, now, record.sandbox ?? false);
+    if (silent === null) return;
+    if (apns.gone(silent.code)) {
+      await storage.delete(key);
+      return;
+    }
+    if (silent.code >= 200 && silent.code < 300) {
+      await storage.put(key, { ...record, backgroundAt: now } satisfies PushRecord);
     }
   }
 
@@ -448,12 +486,8 @@ export class Room implements DurableObject {
     const storage = this.state.storage;
 
     // Only the envelope is parsed; `payload` is forwarded byte-for-byte.
-    let msg: Record<string, unknown>;
-    try {
-      msg = JSON.parse(raw);
-    } catch {
-      return this.drop(ws, CLOSE_PROTOCOL, "bad json");
-    }
+    const msg = parseEnvelope(raw);
+    if (!msg) return this.drop(ws, CLOSE_PROTOCOL, "bad json");
 
     switch (msg.type) {
       case "register": {
@@ -513,7 +547,10 @@ export class Room implements DurableObject {
         if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
         const token = randomToken();
         const expiresAt = now + TOKEN_TTL_MS;
-        await storage.put(`t:${token}`, expiresAt);
+        await storage.put(tokenPrefix + token, expiresAt);
+        // Swept by the alarm once it expires, so a token nobody redeemed does not sit in
+        // storage until the next one happens to be looked up.
+        await this.alarmBy(expiresAt);
         ws.send(JSON.stringify({ type: "token", token, expiresAt }));
         return;
       }
@@ -570,17 +607,17 @@ export class Room implements DurableObject {
           }
           await storage.put(devicePrefix + phonePubkey, now);
         } else {
-          const expiresAt = await storage.get<number>(`t:${token}`);
+          const expiresAt = await storage.get<number>(tokenPrefix + token);
           if (expiresAt === undefined) return this.drop(ws, CLOSE_PROTOCOL, "unknown token");
           if (now > expiresAt) {
-            await storage.delete(`t:${token}`);
+            await storage.delete(tokenPrefix + token);
             return this.drop(ws, CLOSE_PROTOCOL, "expired token");
           }
           // Verified before burning, so a bad signature cannot consume the token.
           if (!(await this.verify(token, sig, phonePubkey))) {
             return this.drop(ws, CLOSE_BAD_SIGNATURE, "bad join signature");
           }
-          await storage.delete(`t:${token}`);
+          await storage.delete(tokenPrefix + token);
           await this.remember(phonePubkey, now);
         }
         ws.serializeAttachment({ ...conn, role: "phone", key: phonePubkey } satisfies Conn);
@@ -613,17 +650,32 @@ export class Room implements DurableObject {
         if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
         const notify = parseNotify(msg);
         if (!notify) return this.drop(ws, CLOSE_PROTOCOL, "bad notify");
-        return await this.wake(notify, now);
+        // Detached from the message chain: Apple answering slowly must not hold up the next
+        // frame. `waitUntil` keeps the object alive for it; the catch is the only place a
+        // failure would otherwise be seen.
+        const woken = this.wake(notify, now).catch((error: unknown) =>
+          log("error", { role: "mac", error: String(error) }),
+        );
+        this.state.waitUntil(woken);
+        return;
       }
 
       case "frame": {
         if (!conn.role || !conn.key) return this.drop(ws, CLOSE_PROTOCOL, "not joined");
-        const frame = parseFrame(msg);
-        if (!frame) return this.drop(ws, CLOSE_BAD_SIGNATURE, "unsigned frame");
-        if (!(await this.verify(frame.payload, frame.sig, conn.key))) {
-          return this.drop(ws, CLOSE_BAD_SIGNATURE, "bad frame signature");
+        const frames = parseFrames(msg);
+        if (!frames) return this.drop(ws, CLOSE_BAD_SIGNATURE, "unsigned frame");
+        // Only the Mac fans out; a phone batching would be a 16x discount on its bucket.
+        if (msg.frames !== undefined && conn.role === "phone") {
+          return this.drop(ws, CLOSE_PROTOCOL, "batch from phone");
         }
-        if (!allowFrame(this.bucket, now)) return this.drop(ws, CLOSE_RATE_LIMIT, "rate limit");
+        for (const frame of frames) {
+          if (!(await this.verify(frame.payload, frame.sig, conn.key))) {
+            return this.drop(ws, CLOSE_BAD_SIGNATURE, "bad frame signature");
+          }
+        }
+        let bucket = this.buckets.get(ws);
+        if (!bucket) this.buckets.set(ws, (bucket = newBucket(now)));
+        if (!allowFrame(bucket, now)) return this.drop(ws, CLOSE_RATE_LIMIT, "rate limit");
 
         if (conn.role === "phone") {
           const mac = this.mac();
@@ -631,8 +683,10 @@ export class Room implements DurableObject {
           else await this.buffer(raw, now);
         } else {
           // Not buffered: a phone that is away catches up by asking the Mac on its next join,
-          // which holds the whole history. The relay is only ever the fast path down.
-          for (const phone of this.sockets("phone")) send(phone, raw);
+          // which holds the whole history. The relay is only ever the fast path down. A batch
+          // is unpacked here: each phone sees plain frames, never the batch.
+          const wires = msg.frames === undefined ? [raw] : frames.map(frameWire);
+          for (const phone of this.sockets("phone")) for (const wire of wires) send(phone, wire);
         }
         return;
       }

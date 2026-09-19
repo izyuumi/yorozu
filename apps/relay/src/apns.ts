@@ -9,6 +9,8 @@
  * put anything else in one.
  */
 
+import { APNS_TIMEOUT_MS } from "./protocol.js";
+
 export interface ApnsEnv {
   APNS_KEY_ID?: string;
   APNS_TEAM_ID?: string;
@@ -110,8 +112,11 @@ export async function send(
   sandbox = false,
 ): Promise<ApnsResult> {
   const host = sandbox ? (env.APNS_SANDBOX_HOST ?? SANDBOX_HOST) : (env.APNS_HOST ?? DEFAULT_HOST);
+  // Bounded: a hung Apple connection is a failed push, never a room stuck behind it. An
+  // abort throws, which the caller already treats as a non-410 failure.
   const response = await fetch(`https://${host}/3/device/${request.token}`, {
     method: "POST",
+    signal: AbortSignal.timeout(APNS_TIMEOUT_MS),
     headers: {
       authorization: `bearer ${await authToken(env, now)}`,
       "apns-topic": env.APNS_TOPIC ?? DEFAULT_TOPIC,

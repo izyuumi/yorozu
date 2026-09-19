@@ -42,6 +42,16 @@ import Testing
     #expect(!YorozuCrypto.verifyFrame(pub: other.publicKey, data: frame, signature: signature))
 }
 
+/// Fixed vectors, byte-identical in crypto.test.ts: the relay routes on `threadRef` and the
+/// runtime checks `helloProof`, so both languages must agree on them to the character.
+@Test func referencesAndProofsAreSpelledTheSameInBothLanguages() {
+    #expect(YorozuCrypto.threadRef("home") == "TqFAWIFQ")
+    #expect(
+        YorozuCrypto.helloProof(secret: "secret", pub: "pub", spub: "spub")
+            == "MFvwTalbqCws08QSHDUcxRUlQi2EJlN53U9I-hoq_U0"
+    )
+}
+
 @Test func base64UrlRoundTripsRawKeys() {
     let key = YorozuCrypto.generateKeypair().publicKey
     #expect(Data(base64URLEncoded: key.base64URLEncodedString()) == key)

@@ -36,7 +36,11 @@ export const CLOSE_PROTOCOL = 4001;
 export const CLOSE_BAD_SIGNATURE = 4003;
 export const CLOSE_RATE_LIMIT = 4029;
 
-/** Token bucket, per room: sustained FRAMES_PER_SEC with a one-second burst. */
+/**
+ * Token bucket, per socket: sustained FRAMES_PER_SEC with a one-second burst. Per socket
+ * rather than per room so one phone flooding closes that phone and nobody else; a Mac's
+ * fan-out to every paired phone travels as one `frames` batch and costs one token.
+ */
 export type Bucket = { tokens: number; refilledAt: number };
 
 export function newBucket(now: number): Bucket {
@@ -82,6 +86,13 @@ export type Register = { pubkey: string; nonceSig: string };
  */
 export type Join = { roomId: string; phonePubkey: string; sig: string; token?: string };
 export type Frame = { payload: string; sig: string };
+/**
+ * A frame batch: `{type:"frame", frames:[{payload,sig},...]}`, at most MAX_DEVICES entries.
+ * The Mac seals one event once per paired phone; sent this way the copies cost one rate-limit
+ * token instead of one each. Every entry is verified against the socket's key and forwarded
+ * as a plain single `frame`, so the receiving end never sees the batch.
+ */
+export type Frames = { frames: Frame[] };
 /** The Mac dropping a paired device: it is forgotten, and its sockets are closed. */
 export type Revoke = { pubkey: string };
 /**
@@ -110,6 +121,52 @@ export const parseJoin = (msg: Record<string, unknown>): Join | null => {
 
 export const parseFrame = (msg: Record<string, unknown>): Frame | null =>
   strings(msg, "payload", "sig");
+
+/** One frame or a batch of them; null when neither shape holds. */
+export const parseFrames = (msg: Record<string, unknown>, cap = MAX_DEVICES): Frame[] | null => {
+  if (msg.frames === undefined) {
+    const frame = parseFrame(msg);
+    return frame ? [frame] : null;
+  }
+  if (!Array.isArray(msg.frames) || msg.frames.length === 0 || msg.frames.length > cap) return null;
+  const frames: Frame[] = [];
+  for (const entry of msg.frames) {
+    const frame = isEnvelope(entry) ? parseFrame(entry) : null;
+    if (!frame) return null;
+    frames.push({ payload: frame.payload, sig: frame.sig });
+  }
+  return frames;
+};
+
+/** What a single forwarded frame looks like on the wire, whether or not it arrived batched. */
+export const frameWire = ({ payload, sig }: Frame): string =>
+  JSON.stringify({ type: "frame", payload, sig });
+
+/**
+ * The envelope must be a JSON object: `null`, a number, a string or an array parse fine and
+ * then have no `type`, and a relay that reads `msg.type` off `null` throws instead of closing.
+ */
+export const isEnvelope = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+export const parseEnvelope = (raw: string): Record<string, unknown> | null => {
+  try {
+    const value: unknown = JSON.parse(raw);
+    return isEnvelope(value) ? value : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * A close reason is peer-controlled text headed for a log line: cut to 64 characters with
+ * control characters stripped, so a peer cannot forge or split log entries.
+ */
+export const safeReason = (reason: string): string =>
+  reason.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 64);
+
+/** How long an APNs request may take before it is given up as a failure. */
+export const APNS_TIMEOUT_MS = 5_000;
 
 export const parseRevoke = (msg: Record<string, unknown>): Revoke | null =>
   strings(msg, "pubkey");

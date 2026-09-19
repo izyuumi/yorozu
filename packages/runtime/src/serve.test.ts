@@ -9,6 +9,7 @@ import {
   deriveSessionKey,
   fromBase64Url,
   generateKeypair,
+  helloProof,
   open,
   seal,
   threadRef,
@@ -25,7 +26,7 @@ import { createConnection } from "node:net";
 import { afterEach, expect, test, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import { openaiCompat } from "./provider.js";
-import { loadDevices, serve, typedAnswer, type Sidecar } from "./serve.js";
+import { loadDevices, loadKeys, serve, typedAnswer, type Sidecar } from "./serve.js";
 import { OpenClawRunner, type OpenClawTurn } from "./openclaw.js";
 import { localSocketPath } from "./local.js";
 import { SYNC_PAGE_BYTES, appendThreadEvent, createThread, listThreads, readThreadEvents } from "./threads.js";
@@ -51,6 +52,29 @@ const sse = (text: string) =>
 const frameBody = (payload: string) => JSON.parse(Buffer.from(payload, "base64url").toString());
 
 const encodeBody = (body: unknown) => toBase64Url(Buffer.from(JSON.stringify(body)));
+
+/**
+ * A first `hello`: both keys, and proof the phone read the QR — the Mac enrols nothing without
+ * it, however well the relay signed the frame.
+ */
+const hello = (qr: QrPayload, pub: string, spub: string, secret = qr.secret!) =>
+  encodeBody({ t: "hello", pub, spub, proof: helloProof(secret, pub, spub) });
+
+/**
+ * The next event sealed for this phone that is not a receipt. Every command is receipted
+ * before it is answered, and a test reading frames one at a time is after the answer.
+ */
+async function nextEvent(
+  client: { next: () => Promise<{ payload: string }> },
+  sessionKey: Uint8Array,
+): Promise<YorozuEvent> {
+  for (;;) {
+    const body = frameBody((await client.next()).payload);
+    const plain = open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c));
+    const event = JSON.parse(Buffer.from(plain).toString()) as YorozuEvent;
+    if (event.kind !== "receipt") return event;
+  }
+}
 
 test("a sealed message from a phone round-trips through the agent loop", async () => {
   relay = await startRelay(0);
@@ -82,10 +106,16 @@ test("a sealed message from a phone round-trips through the agent loop", async (
   const { phone, keys } = await connectPhone(relay.port, qr.roomId!, qr.token);
   expect(await phone.next()).toMatchObject({ type: "joined" });
 
-  // The phone announces its X25519 key in the clear, then everything is sealed.
+  // The phone announces its X25519 key in the clear, then everything is sealed. Without proof
+  // it read the QR the runtime enrols nothing: the relay signed that frame just as well.
   const phoneKeys = generateKeypair();
   const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
-  phone.frame(encodeBody({ t: "hello", pub: toBase64Url(phoneKeys.publicKey) }), keys);
+  phone.frame(encodeBody({ t: "hello", pub: toBase64Url(phoneKeys.publicKey), spub: keys.pub }), keys);
+  await vi.waitFor(() => expect(lines).toContain("STATE hello-refused"));
+  phone.frame(hello(qr, toBase64Url(phoneKeys.publicKey), keys.pub, "not-the-secret"), keys);
+  await vi.waitFor(() => expect(lines.filter((l) => l === "STATE hello-refused")).toHaveLength(2));
+  expect(lines).not.toContain("STATE paired");
+  phone.frame(hello(qr, toBase64Url(phoneKeys.publicKey), keys.pub), keys);
   await vi.waitFor(() => expect(lines).toContain("STATE paired"));
 
   const sent: YorozuEvent = {
@@ -102,11 +132,7 @@ test("a sealed message from a phone round-trips through the agent loop", async (
     keys,
   );
 
-  const openNext = async (): Promise<YorozuEvent> => {
-    const body = frameBody((await phone.next()).payload);
-    const plain = open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c));
-    return JSON.parse(Buffer.from(plain).toString()) as YorozuEvent;
-  };
+  const openNext = (): Promise<YorozuEvent> => nextEvent(phone, sessionKey);
 
   // Pairing is greeted with the thread list — empty, on a state dir nothing has happened in —
   // and the agent's reply follows it.
@@ -135,7 +161,7 @@ test("a sealed message from a phone round-trips through the agent loop", async (
     encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }),
     keys,
   );
-  await vi.waitFor(() => expect(lines).toContain("STATE duplicate-message"));
+  await vi.waitFor(() => expect(lines).toContain("STATE duplicate-command"));
   expect(fetchMock).toHaveBeenCalledTimes(1);
   expect(readThreadEvents("t1", stateDir).filter((e) => e.id === "e1")).toHaveLength(1);
 });
@@ -168,7 +194,7 @@ test.each([false, true])("a phone rejoins without hello and preserves a safe cut
   const phoneKeys = generateKeypair();
   const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
   const pub = toBase64Url(phoneKeys.publicKey);
-  phone.frame(encodeBody({ t: "hello", pub }), keys);
+  phone.frame(hello(qr, pub, keys.pub), keys);
   // The `hello` is what writes the phone into `devices.json`.
   await vi.waitFor(() =>
     expect(loadDevices(join(stateDir, "devices.json")).map((device) => device.pub)).toEqual([pub]),
@@ -193,8 +219,7 @@ test.each([false, true])("a phone rejoins without hello and preserves a safe cut
   if (!legacy) expect(restoredPairedAt).toBe(originalPairedAt);
   const sync = seal(sessionKey, Buffer.from(JSON.stringify({ id: "sync", threadId: "", ts: Date.now(), agentId: "phone", kind: "sync_request", data: { lastSeen: {} } })));
   again.frame(encodeBody({ t: "box", n: toBase64Url(sync.nonce), c: toBase64Url(sync.ciphertext) }), keys);
-  const syncBody = frameBody((await again.next()).payload);
-  expect(JSON.parse(Buffer.from(open(sessionKey, fromBase64Url(syncBody.n), fromBase64Url(syncBody.c))).toString())).toMatchObject({ kind: "sync_delta", data: { events: [] } });
+  expect(await nextEvent(again, sessionKey)).toMatchObject({ kind: "sync_delta", data: { events: [] } });
 
   const sent: YorozuEvent = {
     id: "e2",
@@ -207,16 +232,12 @@ test.each([false, true])("a phone rejoins without hello and preserves a safe cut
   const box = seal(sessionKey, Buffer.from(JSON.stringify(sent)));
   again.frame(encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }), keys);
 
-  let body = frameBody((await again.next()).payload);
-  let plain = open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c));
-  expect(JSON.parse(Buffer.from(plain).toString())).toMatchObject({
+  expect(await nextEvent(again, sessionKey)).toMatchObject({
     threadId: "home",
     kind: "message",
     data: { role: "user", text: "ping" },
   });
-  body = frameBody((await again.next()).payload);
-  plain = open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c));
-  expect(JSON.parse(Buffer.from(plain).toString())).toMatchObject({
+  expect(await nextEvent(again, sessionKey)).toMatchObject({
     threadId: "home",
     kind: "message",
     data: { role: "agent", text: "pong" },
@@ -251,10 +272,34 @@ function cardOf(events: YorozuEvent[]): ApprovalCardData {
   return last.data;
 }
 
+/** A turn in which the model messages a person, which is `send-message`: never quick. */
+const sendMessageTurn = (to: string) =>
+  new Response(
+    `data: ${JSON.stringify({
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              { index: 0, id: "call_1", function: { name: "mail_send", arguments: JSON.stringify({ to, subject: "hi", body: "hi" }) } },
+            ],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+    })}\n\n` + "data: [DONE]\n\n",
+    { headers: { "content-type": "text/event-stream" } },
+  );
+
+/** Every `STATE` the sidecar under `pairedPhone` logged. */
+let states: string[] = [];
+/** Sends an event exactly as given, id included, so a replay can be the same event twice. */
+let sendRaw: (event: YorozuEvent) => void = () => {};
+
 /** A paired phone plus the session key, so a test can talk sealed events both ways. */
 async function pairedPhone(responses: (() => Response)[], openclaw = false) {
   relay = await startRelay(0);
   const dir = mkdtempSync(join(tmpdir(), "yorozu-approval-serve-"));
+  states = [];
 
   let qrLine!: (line: string) => void;
   const qrPrinted = new Promise<string>((resolve) => (qrLine = resolve));
@@ -270,6 +315,7 @@ async function pairedPhone(responses: (() => Response)[], openclaw = false) {
     }),
     log: (line) => {
       if (line.startsWith("QR ")) qrLine(line.slice(3));
+      if (line.startsWith("STATE ")) states.push(line.slice(6));
     },
   });
 
@@ -279,16 +325,16 @@ async function pairedPhone(responses: (() => Response)[], openclaw = false) {
 
   const phoneKeys = generateKeypair();
   const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
-  phone.frame(encodeBody({ t: "hello", pub: toBase64Url(phoneKeys.publicKey) }), keys);
+  phone.frame(hello(qr, toBase64Url(phoneKeys.publicKey), keys.pub), keys);
 
+  sendRaw = (full: YorozuEvent): void => {
+    const box = seal(sessionKey, Buffer.from(JSON.stringify(full)));
+    phone.frame(encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }), keys);
+  };
   const send = (
     event: Omit<YorozuEvent, "id" | "threadId" | "ts" | "agentId">,
     threadId = "t1",
-  ): void => {
-    const full = { id: randomUUID(), threadId, ts: Date.now(), agentId: "phone", ...event };
-    const box = seal(sessionKey, Buffer.from(JSON.stringify(full as YorozuEvent)));
-    phone.frame(encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }), keys);
-  };
+  ): void => sendRaw({ id: randomUUID(), threadId, ts: Date.now(), agentId: "phone", ...event } as YorozuEvent);
 
   /** Everything the sidecar sends, up to and including the first event `done` accepts. */
   async function eventsUntil(done: (event: YorozuEvent) => boolean): Promise<YorozuEvent[]> {
@@ -704,10 +750,64 @@ test("discuss leaves the action pending and the card comes back", async () => {
   // A fresh action ID: the pending action was re-presented, not resumed.
   expect(cardOf(second).actionId).not.toBe(firstId);
 
-  // A typed "no" answers the card just as the button would.
+  // A typed "no" in another thread is a message there, not an answer to this card.
+  send({ kind: "message", data: { role: "user", text: "no" } }, "t2");
+  await eventsUntil((event) => event.threadId === "t2" && event.kind === "message");
+  // A typed "no" in the card's thread answers it just as the button would.
   send({ kind: "message", data: { role: "user", text: "no" } });
   const tail = await eventsUntil(isReply);
   expect(tail.at(-1)).toMatchObject({ data: { role: "agent", text: "Understood, I will skip it." } });
+});
+
+test("a lock-screen answer is honoured only for a card the runtime judged quick", async () => {
+  const cmd = "echo yorozu-quick";
+  const { send, eventsUntil, isReply } = await pairedPhone([
+    // A message to a person: never quick, whatever buttons a relay put under it.
+    () => sendMessageTurn("bob"),
+    () => sse("Not sent."),
+    // A local command below every floor: quick.
+    () => shellTurn(cmd),
+    () => sse("Done."),
+  ]);
+
+  send({ kind: "message", data: { role: "user", text: "tell bob" } });
+  const external = cardOf(await eventsUntil((event) => event.kind === "approval_card"));
+  expect(external.actionClass).toBe("send-message");
+  send({ kind: "approval_answer", data: { actionId: external.actionId, answer: "yes", source: "notification" } });
+  // Refused: the card is still up, so the same answer from the card itself settles it.
+  await vi.waitFor(() => expect(states).toContain("notification-answer-refused"));
+  send({ kind: "approval_answer", data: { actionId: external.actionId, answer: "no" } });
+  await eventsUntil(isReply);
+
+  send({ kind: "message", data: { role: "user", text: "run it" } });
+  const local = cardOf(await eventsUntil((event) => event.kind === "approval_card"));
+  send({ kind: "approval_answer", data: { actionId: local.actionId, answer: "yes", source: "notification" } });
+  const tail = await eventsUntil(isReply);
+  expect(tail.filter((event) => event.kind === "tool_result")).toHaveLength(1);
+});
+
+test("a replayed command applies once, and every copy is receipted", async () => {
+  const { dir, send, eventsUntil } = await pairedPhone([]);
+  const saved = {
+    id: "rule-1",
+    actionClass: "send-message",
+    decision: "always" as const,
+    scope: { recipient: { mode: "exact" as const, value: "bob@example.com" } },
+  };
+  const update: YorozuEvent = {
+    id: "cmd-1", threadId: "", ts: Date.now(), agentId: "phone", kind: "rule_update", data: { rule: saved },
+  };
+  sendRaw(update);
+  const first = await eventsUntil((event) => event.kind === "rule_list");
+  expect(first.find((event) => event.kind === "receipt")).toMatchObject({ data: { eventId: "cmd-1" } });
+
+  // Revoked in between: a replay of the update must not bring the rule back.
+  send({ kind: "rule_delete", data: { ruleId: "rule-1" } });
+  await eventsUntil((event) => event.kind === "rule_list");
+  sendRaw(update);
+  const again = await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === "cmd-1");
+  expect(again.filter((event) => event.kind === "rule_list")).toEqual([]);
+  expect(listRules(dir)).toEqual([]);
 });
 
 /** Pairing burns a token, so the sidecar prints one QR per device that can still join. */
@@ -735,7 +835,7 @@ async function pairPhone(port: number, qr: QrPayload) {
   expect(await phone.next()).toMatchObject({ type: "joined" });
   const identity = generateKeypair();
   const sessionKey = deriveSessionKey(identity.privateKey, fromBase64Url(qr.macPubkey));
-  phone.frame(encodeBody({ t: "hello", pub: toBase64Url(identity.publicKey) }), keys);
+  phone.frame(hello(qr, toBase64Url(identity.publicKey), keys.pub), keys);
 
   return {
     send(threadId: string, payload: EventPayload, ts = Date.now()): void {
@@ -1007,7 +1107,7 @@ test("a revoked device is forgotten here and at the relay", async () => {
   const phoneKeys = generateKeypair();
   const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
   const pub = toBase64Url(phoneKeys.publicKey);
-  phone.frame(encodeBody({ t: "hello", pub, spub: keys.pub }), keys);
+  phone.frame(hello(qr, pub, keys.pub), keys);
   const devicesFile = join(stateDir, "devices.json");
   await vi.waitFor(() =>
     expect(loadDevices(devicesFile)).toMatchObject([{ pub, signingPub: keys.pub }]),
@@ -1203,6 +1303,16 @@ test("a second sidecar on the same state dir is the same Mac: same keys, same ro
   expect(loadDevices(join(stateDir, "devices.json"))).toEqual([paired]);
 });
 
+test("a keys file that will not read is an error, never a new identity", async () => {
+  // A corrupt or unreadable file is not a missing one: minting fresh keys here would give this
+  // Mac a new room and silently unpair every phone. Only an absent file is a first run.
+  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-keys-"));
+  writeFileSync(join(stateDir, "keys.json"), "{not json");
+  expect(() => loadKeys(stateDir)).toThrow();
+  writeFileSync(join(stateDir, "keys.json"), JSON.stringify({ session: { priv: "AA", pub: "AA" }, signing: { priv: "AA", pub: "AA" } }));
+  expect(() => loadKeys(stateDir)).toThrow(/usable key pair/);
+});
+
 test("the Mac tells the relay what class of thing happened, and nothing about it", async () => {
   // A relay that plays enough of the protocol to pair a phone and to record the cleartext
   // side-channel beside the sealed frames. The real relays take `notify` and say nothing back,
@@ -1264,10 +1374,7 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
 
   const phoneKeys = generateKeypair();
   const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
-  phone.frame(
-    encodeBody({ t: "hello", pub: toBase64Url(phoneKeys.publicKey), spub: keys.pub }),
-    keys,
-  );
+  phone.frame(hello(qr, toBase64Url(phoneKeys.publicKey), keys.pub), keys);
 
   const sent: YorozuEvent = {
     id: "e1",
@@ -1421,10 +1528,7 @@ test("a replayed frame is acked once handled, and a turn that ends offline is an
   expect(await phone.next()).toMatchObject({ type: "joined" });
   const phoneKeys = generateKeypair();
   const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
-  phone.frame(
-    encodeBody({ t: "hello", pub: toBase64Url(phoneKeys.publicKey), spub: keys.pub }),
-    keys,
-  );
+  phone.frame(hello(qr, toBase64Url(phoneKeys.publicKey), keys.pub), keys);
   await vi.waitFor(() => expect(lines).toContain("STATE paired"));
 
   const ask = (id: string, text: string): void => {
