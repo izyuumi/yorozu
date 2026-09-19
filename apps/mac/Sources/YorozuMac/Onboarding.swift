@@ -80,7 +80,9 @@ struct OnboardingView: View {
                 Spacer()
                 Button("New code") { Sidecar.shared.newCode() }
                 Button("Skip for now") { step = .hostPermissions }
-                Button("Continue") { step = .hostPermissions }.buttonStyle(.borderedProminent)
+                Button("Continue") { step = .hostPermissions }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
             }
         }
     }
@@ -100,6 +102,7 @@ struct OnboardingView: View {
                 }
             }
             .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.defaultAction)
             .disabled(pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             if session.relay != nil && session.model.state != .paired && session.model.failure == nil {
                 ProgressView("Connecting…")
@@ -122,7 +125,9 @@ struct OnboardingView: View {
             HStack {
                 Button("Back") { step = .hostPair }
                 Spacer()
-                Button("Finish", action: onFinish).buttonStyle(.borderedProminent)
+                Button("Finish", action: onFinish)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
             }
         }
     }
@@ -135,7 +140,10 @@ struct OnboardingView: View {
             Text("This Mac is ready to use Yorozu through your host Mac.")
                 .foregroundStyle(.secondary).multilineTextAlignment(.center)
             Spacer()
-            Button("Open Yorozu", action: onFinish).buttonStyle(.borderedProminent).controlSize(.large)
+            Button("Open Yorozu", action: onFinish)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .keyboardShortcut(.defaultAction)
         }
         .frame(maxWidth: .infinity)
     }
@@ -187,7 +195,7 @@ enum OnboardingWindow {
         if window == nil {
             let panel = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 520, height: 520),
-                styleMask: [.titled, .closable], backing: .buffered, defer: false
+                styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false
             )
             panel.title = "Yorozu Setup"
             panel.isReleasedWhenClosed = false
