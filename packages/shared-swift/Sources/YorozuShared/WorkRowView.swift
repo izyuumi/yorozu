@@ -38,6 +38,7 @@ public struct WorkRowView: View {
                         .contentTransition(.numericText())
                     Spacer(minLength: 0)
                 }
+                .frame(minHeight: controlTarget)
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)

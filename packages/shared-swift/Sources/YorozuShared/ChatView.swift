@@ -607,7 +607,8 @@ public struct ChatView: View {
                 }
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 10)
-                .frame(height: 32)
+                // A minimum, not a height: a fixed 32 clips the label at accessibility sizes.
+                .frame(minHeight: 32)
                 .background(Color.primary.opacity(0.06), in: Capsule())
             }
             .buttonStyle(.plain)

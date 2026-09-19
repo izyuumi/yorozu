@@ -41,7 +41,12 @@ struct PairingFlowView: View {
                 .frame(minHeight: 44)
             if connecting { ProgressView("Connecting…") }
             if let error = error ?? externalError {
-                Text(error).font(.footnote).foregroundStyle(.red)
+                // Red carries the icon, not the words: red footnote text is under 4.5:1.
+                Label { Text(error) } icon: {
+                    Image(systemName: "exclamationmark.circle").foregroundStyle(.red)
+                }
+                .font(.footnote)
+                .multilineTextAlignment(.leading)
             }
         }
         .padding(.horizontal, 24)
@@ -82,8 +87,11 @@ struct PairView: View {
                     Text("Paste the code shown in Yorozu on your host Mac.")
                 }
                 if let error {
-                    Section { Label(error, systemImage: "exclamationmark.circle") }
-                        .foregroundStyle(.red)
+                    Section {
+                        Label { Text(error) } icon: {
+                            Image(systemName: "exclamationmark.circle").foregroundStyle(.red)
+                        }
+                    }
                 }
             }
             .navigationTitle("Pair with your Mac")

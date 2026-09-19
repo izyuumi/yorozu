@@ -45,6 +45,7 @@ public struct ToolGroupView: View {
                             .foregroundStyle(.secondary)
                         Spacer(minLength: 0)
                     }
+                    .frame(minHeight: controlTarget)
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
@@ -131,7 +132,7 @@ public struct ToolRowView: View {
             if let duration = activity.duration {
                 Text(duration, format: .units(allowed: [.seconds, .milliseconds], width: .narrow))
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
             }
             status
         }
@@ -174,10 +175,12 @@ public struct ToolRowView: View {
                         .font(.caption)
                         .buttonStyle(.plain)
                         .foregroundStyle(.tint)
+                        .frame(minHeight: controlTarget)
+                        .contentShape(.rect)
                     }
                 }
             } else if !activity.running {
-                Text("No output.").font(.caption).foregroundStyle(.tertiary)
+                Text("No output.").font(.caption).foregroundStyle(.secondary)
             }
         }
         .padding(LayoutMetrics.inner)
@@ -244,7 +247,7 @@ public struct DiffView: View {
         switch kind {
         case .added: AnyShapeStyle(.green)
         case .removed: AnyShapeStyle(.red)
-        case .meta: AnyShapeStyle(.tertiary)
+        case .meta: AnyShapeStyle(.secondary)
         case .context: AnyShapeStyle(.secondary)
         }
     }
