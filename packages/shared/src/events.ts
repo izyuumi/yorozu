@@ -435,6 +435,27 @@ export interface ModelListData {
 }
 
 /**
+ * One folder a coding agent's thread can be started in, named the way a picker draws it. Only
+ * the folder itself travels: what is inside it never leaves the Mac.
+ */
+export interface ProjectFolder {
+  /** Absolute path on the Mac. What `thread_create` carries back as `cwd`. */
+  path: string;
+  /** The folder's own name, e.g. "yorozu". */
+  name: string;
+  /** Epoch milliseconds a thread was last started in it. Absent for a folder never used. */
+  lastUsed?: number;
+}
+
+/**
+ * The Mac's known project folders, recents first, pushed alongside `thread_list` so a phone can
+ * offer them the moment a coding agent is chosen. Sent by a device with an empty list to ask.
+ */
+export interface ProjectListData {
+  projects: ProjectFolder[];
+}
+
+/**
  * The user pressed stop: cancel the turn running in `threadId` and every agent it
  * delegated to. Carries nothing of its own.
  */
@@ -510,6 +531,7 @@ export type EventPayload =
   | { kind: "thread_set_model"; data: ThreadSetModelData }
   | { kind: "thread_set_effort"; data: ThreadSetEffortData }
   | { kind: "model_list"; data: ModelListData }
+  | { kind: "project_list"; data: ProjectListData }
   | { kind: "interrupt"; data: InterruptData }
   | { kind: "sync_request"; data: SyncRequestData }
   | { kind: "sync_delta"; data: SyncDeltaData }

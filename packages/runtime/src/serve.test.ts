@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startRelay, type Relay } from "@yorozu/relay";
@@ -35,6 +35,12 @@ import { readTranscripts, transcriptDir } from "./transcripts.js";
 
 let relay: Relay;
 let sidecar: Sidecar;
+
+/** The Mac's project folders, for every test here: one root with one folder a coding agent may open. */
+const projectsRoot = mkdtempSync(join(tmpdir(), "yorozu-serve-projects-"));
+mkdirSync(join(projectsRoot, "proj"));
+process.env.YOROZU_PROJECTS_DIR = projectsRoot;
+const proj = join(projectsRoot, "proj");
 
 afterEach(async () => {
   await sidecar?.close();
@@ -141,6 +147,8 @@ test("a sealed message from a phone round-trips through the agent loop", async (
   // And what a thread can be put on, so the phone's model picker has names. Empty here: the
   // provider is injected by the test, so there is no providers.json to publish.
   expect(await openNext()).toMatchObject({ kind: "model_list", data: { models: [] } });
+  // And where a coding agent could be started: the test's own projects root, one folder in it.
+  expect(await openNext()).toMatchObject({ kind: "project_list", data: { projects: [{ name: "proj" }] } });
   // Pairing changed who the devices are, so the new list follows it.
   expect(await openNext()).toMatchObject({ kind: "device_list" });
   expect(await openNext()).toMatchObject({
@@ -418,14 +426,20 @@ test("a thread is answered by the agent it was created for, and an unknown agent
   expect(refused).toMatchObject({ threadId: "bad", data: { text: expect.stringMatching(/unknown agent "hermes"/) } });
   expect(listThreads(dir).map((thread) => thread.id)).toEqual([]);
   expect(states).toContain('thread-create-error unknown agent "hermes"');
+  // Nor is a folder the picker never offered: a path typed into a frame is not a folder this
+  // Mac agreed to open an agent in.
+  send({ kind: "thread_create", data: { agent: "claude-code", cwd: "/etc" } }, "bad2");
+  const refusedFolder = (await eventsUntil((event) => event.kind === "thought")).at(-1)!;
+  expect(refusedFolder).toMatchObject({ threadId: "bad2", data: { text: expect.stringMatching(/not one of this Mac's project folders/) } });
+  expect(listThreads(dir).map((thread) => thread.id)).toEqual([]);
 
   // The list carries who answers each thread; a plain thread says nothing, as it always has.
-  send({ kind: "thread_create", data: { agent: "claude-code", cwd: "/tmp/proj" } }, "cc");
+  send({ kind: "thread_create", data: { agent: "claude-code", cwd: proj } }, "cc");
   send({ kind: "thread_create", data: {} }, "t1");
   const threads = (await eventsUntil((event) =>
     event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"),
   )).at(-1)! as YorozuEvent & { kind: "thread_list" };
-  expect(threads.data.threads.find((thread) => thread.id === "cc")).toMatchObject({ agent: "claude-code", cwd: "/tmp/proj" });
+  expect(threads.data.threads.find((thread) => thread.id === "cc")).toMatchObject({ agent: "claude-code", cwd: proj });
   expect(threads.data.threads.find((thread) => thread.id === "t1")).not.toHaveProperty("agent");
 
   // A turn in the native thread never reaches OpenClaw: its own backend answers, and where no
@@ -478,21 +492,21 @@ test("a claude-code thread runs, resumes and stops its own native session, never
     }),
   };
   const { dir, send, eventsUntil } = await pairedPhone([], true, { nativeRunners: { "claude-code": runner } });
-  send({ kind: "thread_create", data: { agent: "claude-code", cwd: "/tmp/proj" } }, "cc");
+  send({ kind: "thread_create", data: { agent: "claude-code", cwd: proj } }, "cc");
   await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "cc"));
 
   // First prompt: a new session in the thread's folder; the streamed delta and the final both reach the phone.
   send({ kind: "message", data: { role: "user", text: "fix the tests" } }, "cc");
   const first = await eventsUntil((event) => event.kind === "message" && event.data.done === true);
   expect(first.filter((event) => event.kind === "message" && event.data.role === "agent").map((event) => (event as { data: { text: string } }).data.text)).toEqual(["working", "reply 1"]);
-  expect(turns[0]).toMatchObject({ threadId: "cc", cwd: "/tmp/proj", text: "fix the tests" });
+  expect(turns[0]).toMatchObject({ threadId: "cc", cwd: proj, text: "fix the tests" });
   expect(turns[0]).not.toHaveProperty("sessionId");
   expect(listThreads(dir).find((thread) => thread.id === "cc")).toMatchObject({ nativeSessionId: "s-1", title: "fix the tests" });
 
   // Second prompt resumes it, still in the same folder.
   send({ kind: "message", data: { role: "user", text: "and lint" } }, "cc");
   await eventsUntil((event) => event.kind === "message" && event.data.done === true);
-  expect(turns[1]).toMatchObject({ cwd: "/tmp/proj", sessionId: "s-1" });
+  expect(turns[1]).toMatchObject({ cwd: proj, sessionId: "s-1" });
 
   // Stop aborts the running turn; nothing is said, and the session is still the one to resume.
   send({ kind: "message", data: { role: "user", text: "long job" } }, "cc");

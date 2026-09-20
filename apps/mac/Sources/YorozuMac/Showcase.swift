@@ -61,6 +61,10 @@ enum Showcase {
             break
         case "threads":
             model.previewThreads()
+        // The new-thread picker open on its folder step, as the phone's `new-thread` scene.
+        case "new-thread":
+            model.previewThreads()
+            NewThreadShowcase.agent = .claudeCode
         case "queued":
             model.previewThreads()
             model.previewQueued(in: model.threads[0].id)

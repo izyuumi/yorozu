@@ -90,6 +90,7 @@ import {
   threadSummaries,
 } from "./threads.js";
 import { claudeCodeRunner, type NativeAgentRunner } from "./native.js";
+import { isProjectFolder, listProjects } from "./projects.js";
 import { closeBrowser } from "./tools/browser.js";
 import { askUserTool, questionDesk, reportProgressTool } from "./tools/cards.js";
 import { useProviderSearch } from "./tools/search.js";
@@ -554,6 +555,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
       kind: "model_list",
       data: { models: provider ? modelOptions(loadProviders(dir)) : openclawModels },
     });
+
+  /**
+   * Where a coding agent's thread can be started. Sent with the thread list, like the models:
+   * the picker is one tap from the agent choice, and asking then would draw an empty list first.
+   */
+  const projectList = (): YorozuEvent => control({ kind: "project_list", data: { projects: listProjects(undefined, dir) } });
 
   let openclawModels: ModelOption[] = [];
   void openclaw?.listModels().then((models) => {
@@ -1079,6 +1086,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
       case "thread_create":
         // The device minted the id: the message it typed follows straight after this frame.
         try {
+          // A coding agent runs where the picker offered, and nowhere else: a path typed into a
+          // frame by hand is not a folder this Mac agreed to open an agent in.
+          const cwd = event.data.cwd?.trim();
+          if (event.data.agent && event.data.agent !== "yorozu" && cwd && !isProjectFolder(cwd)) {
+            throw new Error(`"${cwd}" is not one of this Mac's project folders`);
+          }
           createThread(event.data.title, dir, event.threadId || undefined, event.data);
         } catch (error) {
           // An agent this runtime does not know: no thread is made, and the device that asked
@@ -1091,7 +1104,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
             kind: "thought", data: { text: `Could not create this thread: ${reason}.` },
           });
         }
-        return broadcast(threadList());
+        broadcast(threadList());
+        // A folder just started in is a recent now.
+        if (event.data.cwd) broadcast(projectList());
+        return;
       case "thread_rename":
         renameThread(event.threadId, event.data.title, dir);
         return broadcast(threadList());
@@ -1110,7 +1126,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return;
       case "thread_list":
         reply(threadList());
-        return reply(modelList());
+        reply(modelList());
+        return reply(projectList());
+      case "project_list":
+        return reply(projectList());
       case "thread_set_model":
         setThreadModel(event.threadId, event.data.model ?? null, dir);
         return broadcast(threadList());
@@ -1166,6 +1185,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       state("local-connected");
       send(threadList());
       send(modelList());
+      send(projectList());
       pushDevices();
     },
     onEvent: (device, event) => {
@@ -1324,6 +1344,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         // A phone that has just paired needs the thread list before it can ask for anything.
         sendTo(body.pub, threadList());
         sendTo(body.pub, modelList());
+        sendTo(body.pub, projectList());
         // And every device's list of devices has just gained one.
         pushDevices();
         // Join tokens are one-time, so the one in the printed QR has just been burnt: mint the

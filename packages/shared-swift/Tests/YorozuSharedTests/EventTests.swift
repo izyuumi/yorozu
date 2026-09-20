@@ -110,6 +110,11 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
                 ModelOption(id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude"),
                 ModelOption(id: "local/", label: "LM Studio", providerLabel: "LM Studio"),
             ]))
+        case .projectList:
+            .projectList(ProjectListData(projects: [
+                ProjectFolder(path: "/Users/yumi/Projects/yorozu", name: "yorozu", lastUsed: 1_757_640_000_000),
+                ProjectFolder(path: "/Users/yumi/Projects/tappa", name: "tappa"),
+            ]))
         case .interrupt: .interrupt(InterruptData())
         case .syncRequest: .syncRequest(SyncRequestData(lastSeen: ["home": "e9"]))
         case .syncDelta:
