@@ -36,6 +36,7 @@ export const SYNC_LIMIT = 200;
 export const SYNC_PAGE_BYTES = 512 * 1024;
 
 export interface ThreadRecord {
+  bypass?: boolean;
   id: string;
   /** Empty until the runtime auto-titles the thread or the user renames it. */
   title: string;
@@ -192,6 +193,9 @@ export function renameThread(id: string, title: string, dir = stateDir()): boole
 export const archiveThread = (id: string, dir = stateDir(), archived = true): boolean =>
   setFlag(id, dir, "archived", archived);
 
+export const setThreadBypass = (id: string, bypass: boolean, dir = stateDir()): boolean =>
+  threadAgent(id, dir) !== "yorozu" && setFlag(id, dir, "bypass", bypass);
+
 /** Pins a thread to the top of the list, or unpins it. False when nothing changed. */
 export const pinThread = (id: string, pinned: boolean, dir = stateDir()): boolean =>
   setFlag(id, dir, "pinned", pinned);
@@ -293,7 +297,7 @@ export function setThreadSession(id: string, sessionId: string | undefined, dir 
  * both flags are toggles a second device may already have set, and an idempotent frame should
  * not rewrite the file or claim it changed anything.
  */
-function setFlag(id: string, dir: string, flag: "archived" | "pinned", value: boolean): boolean {
+function setFlag(id: string, dir: string, flag: "archived" | "pinned" | "bypass", value: boolean): boolean {
   const threads = listThreads(dir);
   const thread = threads.find((candidate) => candidate.id === id);
   if (!thread || (thread[flag] ?? false) === value) return false;
@@ -339,6 +343,7 @@ export const threadSummaries = (dir = stateDir(), minTs = 0): ThreadSummary[] =>
       pinned: thread.pinned ?? false,
       ...(thread.model ? { model: thread.model } : {}),
       ...(thread.effort ? { effort: thread.effort } : {}),
+      ...(thread.agent ? { bypass: thread.bypass ?? false } : {}),
       // Absent on a yorozu thread: that is the default, and what older phones already assume.
       ...(thread.agent && THREAD_AGENTS.includes(thread.agent) ? { agent: thread.agent } : {}),
       ...(thread.agent && thread.cwd ? { cwd: thread.cwd } : {}),

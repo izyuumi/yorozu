@@ -105,6 +105,7 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         case .threadPin: .threadPin(ThreadPinData(pinned: true))
         case .threadRead: .threadRead(ThreadReadData(at: 1_757_640_000_000, reset: true))
         case .threadSetModel: .threadSetModel(ThreadSetModelData(model: "claude/claude-opus-5"))
+        case .threadSetBypass: .threadSetBypass(ThreadSetBypassData(bypass: true))
         case .threadSetEffort: .threadSetEffort(ThreadSetEffortData(effort: .high))
         case .modelList:
             .modelList(ModelListData(models: [
