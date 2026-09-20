@@ -34,6 +34,7 @@ import {
   type Keypair,
   type ModelOption,
   type ProgressCardData,
+  type ThreadAgent,
   type YorozuEvent,
 } from "@yorozu/shared";
 import WebSocket from "ws";
@@ -78,14 +79,17 @@ import {
   renameThread,
   setThreadEffort,
   setThreadModel,
+  setThreadSession,
   SYNC_LIMIT,
   SYNC_PAGE_BYTES,
   threadAgent,
   threadEffort,
   threadHistory,
+  threadHome,
   threadModel,
   threadSummaries,
 } from "./threads.js";
+import { claudeCodeRunner, type NativeAgentRunner } from "./native.js";
 import { closeBrowser } from "./tools/browser.js";
 import { askUserTool, questionDesk, reportProgressTool } from "./tools/cards.js";
 import { useProviderSearch } from "./tools/search.js";
@@ -268,6 +272,11 @@ export interface ServeOptions {
   heartbeat?: { pingMs: number; pongMs: number };
   /** Test seam for Gateway restart/recovery integration. */
   openclawRunner?: OpenClawRunner;
+  /**
+   * The native coding agents, by thread agent kind. Defaults to Claude Code through the Agent
+   * SDK; a kind with no runner answers that it is not available. Test seam for a fake SDK.
+   */
+  nativeRunners?: Partial<Record<Exclude<ThreadAgent, "yorozu">, NativeAgentRunner>>;
 }
 
 export interface Sidecar {
@@ -292,6 +301,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * whichever backend the rest of the runtime is on.
    */
   const viaOpenClaw = (threadId: string): boolean => openclaw !== undefined && threadAgent(threadId, dir) === "yorozu";
+  const nativeRunners = options.nativeRunners ?? { "claude-code": claudeCodeRunner() };
   // `web_search` asks the running chain for native search before it drives a browser.
   if (provider) useProviderSearch(provider);
   const log = options.log ?? ((line: string) => void stdout.write(`${line}\n`));
@@ -661,14 +671,49 @@ export function serve(options: ServeOptions = {}): Sidecar {
       data: { role: "agent", text: reply, ...(done ? { done: true } : {}) },
     });
 
-    // A native agent's thread is answered by that agent alone. None is wired in yet, so the
-    // answer is that — finished, so the composer is not left offering Stop for a turn nobody
-    // is running. The bridge for each lands in its own change.
+    // A native agent's thread is answered by that agent alone: its own session, in the
+    // thread's folder, with its own tools. Yorozu's dispatch and approval gate are not here.
     if (agent !== "yorozu") {
-      const final = message(`${agent} is not available in this build yet.`, true);
-      appendTranscript(final, transcripts);
-      appendThreadEvent(final, dir);
-      return broadcast(final);
+      const runner = nativeRunners[agent];
+      const finish = (reply: string): void => {
+        const final = message(reply, true);
+        appendTranscript(final, transcripts);
+        appendThreadEvent(final, dir);
+        broadcast(final);
+      };
+      // Finished, so the composer is not left offering Stop for a turn nobody is running.
+      if (!runner) return finish(`${agent} is not available in this build yet.`);
+      const turn = new AbortController();
+      if (!running.has(threadId)) running.set(threadId, turn);
+      try {
+        const home = threadHome(threadId, dir);
+        const done = await runner.run({
+          threadId,
+          text,
+          ...home,
+          model: threadModel(threadId, dir),
+          effort: threadEffort(threadId, dir),
+          signal: turn.signal,
+          onUpdate: (reply) => broadcast(message(reply)),
+        });
+        // Stored even after a stop: the session outlives the turn, and the next prompt resumes it.
+        if (done.sessionId && done.sessionId !== home.sessionId) setThreadSession(threadId, done.sessionId, dir);
+        // An interrupted turn says nothing: the user already knows they stopped it.
+        if (turn.signal.aborted) return;
+        finish(done.text);
+        const untitled = listThreads(dir).find((thread) => thread.id === threadId)?.title === "";
+        const title = text.trim().split(/\s+/).slice(0, 5).join(" ");
+        if (untitled && title && renameThread(threadId, cleanTitle(title), dir)) broadcast(threadList());
+      } catch (error) {
+        // The agent could not run at all — not installed, not logged in, crashed. Said in the
+        // thread, finished, so the composer is not left offering Stop for a dead turn.
+        if (turn.signal.aborted) return;
+        state(`native-error ${error instanceof Error ? error.message : String(error)}`);
+        finish(`${agent} could not answer: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        if (running.get(threadId) === turn) running.delete(threadId);
+      }
+      return;
     }
 
     if (openclaw) {

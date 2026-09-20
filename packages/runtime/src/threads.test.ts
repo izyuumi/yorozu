@@ -17,9 +17,11 @@ import {
   renameThread,
   setThreadEffort,
   setThreadModel,
+  setThreadSession,
   threadAgent,
   threadEffort,
   threadHistory,
+  threadHome,
   threadModel,
   threadSummaries,
   threadsDir,
@@ -160,6 +162,18 @@ test("a thread declares its agent at creation, and a thread from before the fiel
   index[0]!.agent = "hermes";
   writeFileSync(join(dir, "threads.json"), JSON.stringify(index));
   expect(threadAgent(index[0]!.id as string, dir)).toBe("yorozu");
+});
+
+test("a native thread remembers its agent's session, and never tells the phone", () => {
+  const native = createThread("Fix", dir, "cc", { agent: "claude-code", cwd: "/tmp/proj" });
+  expect(threadHome(native.id, dir)).toEqual({ cwd: "/tmp/proj" });
+  expect(setThreadSession(native.id, "s-1", dir)).toBe(true);
+  expect(setThreadSession(native.id, "s-1", dir)).toBe(false);
+  expect(setThreadSession("nope", "s-1", dir)).toBe(false);
+  expect(threadHome(native.id, dir)).toEqual({ cwd: "/tmp/proj", sessionId: "s-1" });
+  expect(JSON.stringify(threadSummaries(dir))).not.toContain("s-1");
+  expect(setThreadSession(native.id, undefined, dir)).toBe(true);
+  expect(threadHome(native.id, dir)).toEqual({ cwd: "/tmp/proj" });
 });
 
 test("a thread is created unnamed and renamed in place", () => {

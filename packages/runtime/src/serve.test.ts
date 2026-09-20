@@ -26,7 +26,8 @@ import { createConnection } from "node:net";
 import { afterEach, expect, test, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import { openaiCompat } from "./provider.js";
-import { loadDevices, loadKeys, serve, typedAnswer, type Sidecar } from "./serve.js";
+import { loadDevices, loadKeys, serve, typedAnswer, type ServeOptions, type Sidecar } from "./serve.js";
+import type { NativeAgentRunner, NativeTurn } from "./native.js";
 import { OpenClawRunner, type OpenClawTurn } from "./openclaw.js";
 import { localSocketPath } from "./local.js";
 import { SYNC_PAGE_BYTES, appendThreadEvent, createThread, listThreads, readThreadEvents } from "./threads.js";
@@ -296,7 +297,7 @@ let states: string[] = [];
 let sendRaw: (event: YorozuEvent) => void = () => {};
 
 /** A paired phone plus the session key, so a test can talk sealed events both ways. */
-async function pairedPhone(responses: (() => Response)[], openclaw = false) {
+async function pairedPhone(responses: (() => Response)[], openclaw = false, extra: Partial<ServeOptions> = {}) {
   relay = await startRelay(0);
   const dir = mkdtempSync(join(tmpdir(), "yorozu-approval-serve-"));
   states = [];
@@ -306,6 +307,7 @@ async function pairedPhone(responses: (() => Response)[], openclaw = false) {
   const queue = [...responses];
 
   sidecar = serve({
+    ...extra,
     relayUrl: `ws://127.0.0.1:${relay.port}`,
     stateDir: dir,
     provider: openclaw ? undefined : openaiCompat({
@@ -408,7 +410,7 @@ test("a thread is answered by the agent it was created for, and an unknown agent
   vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
   const run = vi.spyOn(OpenClawRunner.prototype, "run").mockResolvedValue("from openclaw");
   const archive = vi.spyOn(OpenClawRunner.prototype, "setArchived").mockResolvedValue(undefined);
-  const { dir, send, eventsUntil } = await pairedPhone([], true);
+  const { dir, send, eventsUntil } = await pairedPhone([], true, { nativeRunners: {} });
 
   // Nobody answers a thread for an agent that does not exist, and no thread is made for it.
   send({ kind: "thread_create", data: { agent: "hermes" as never } }, "bad");
@@ -426,8 +428,8 @@ test("a thread is answered by the agent it was created for, and an unknown agent
   expect(threads.data.threads.find((thread) => thread.id === "cc")).toMatchObject({ agent: "claude-code", cwd: "/tmp/proj" });
   expect(threads.data.threads.find((thread) => thread.id === "t1")).not.toHaveProperty("agent");
 
-  // A turn in the native thread never reaches OpenClaw: its own backend answers, and until one
-  // exists the answer is that it does not, as a finished reply so the composer is not left waiting.
+  // A turn in the native thread never reaches OpenClaw: its own backend answers, and where no
+  // runner is wired the answer is that it is not, finished, so the composer is not left waiting.
   send({ kind: "message", data: { role: "user", text: "fix the tests" } }, "cc");
   const reply = (await eventsUntil((event) => event.kind === "message" && event.data.done === true)).at(-1)!;
   expect(reply).toMatchObject({ threadId: "cc", data: { role: "agent", text: expect.stringMatching(/claude-code.*not available/i) } });
@@ -452,6 +454,69 @@ test("a thread is answered by the agent it was created for, and an unknown agent
   expect(run).toHaveBeenCalledTimes(1);
   send({ kind: "thread_archive", data: { archived: true } }, "t1");
   await vi.waitFor(() => expect(archive).toHaveBeenCalledWith("t1", true));
+});
+
+test("a claude-code thread runs, resumes and stops its own native session, never OpenClaw's", async () => {
+  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
+  const openclawRun = vi.spyOn(OpenClawRunner.prototype, "run").mockResolvedValue("from openclaw");
+  const turns: NativeTurn[] = [];
+  let release!: () => void;
+  const runner: NativeAgentRunner = {
+    run: vi.fn(async (turn: NativeTurn) => {
+      turns.push(turn);
+      if (turn.text === "break") throw new Error("claude is not logged in");
+      if (turns.length < 3) {
+        turn.onUpdate?.("working");
+        return { text: `reply ${turns.length}`, sessionId: "s-1" };
+      }
+      // The third turn hangs until stopped, the way a long job would.
+      await new Promise<void>((resolve) => {
+        release = resolve;
+        turn.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return { text: "", sessionId: "s-1" };
+    }),
+  };
+  const { dir, send, eventsUntil } = await pairedPhone([], true, { nativeRunners: { "claude-code": runner } });
+  send({ kind: "thread_create", data: { agent: "claude-code", cwd: "/tmp/proj" } }, "cc");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "cc"));
+
+  // First prompt: a new session in the thread's folder; the streamed delta and the final both reach the phone.
+  send({ kind: "message", data: { role: "user", text: "fix the tests" } }, "cc");
+  const first = await eventsUntil((event) => event.kind === "message" && event.data.done === true);
+  expect(first.filter((event) => event.kind === "message" && event.data.role === "agent").map((event) => (event as { data: { text: string } }).data.text)).toEqual(["working", "reply 1"]);
+  expect(turns[0]).toMatchObject({ threadId: "cc", cwd: "/tmp/proj", text: "fix the tests" });
+  expect(turns[0]).not.toHaveProperty("sessionId");
+  expect(listThreads(dir).find((thread) => thread.id === "cc")).toMatchObject({ nativeSessionId: "s-1", title: "fix the tests" });
+
+  // Second prompt resumes it, still in the same folder.
+  send({ kind: "message", data: { role: "user", text: "and lint" } }, "cc");
+  await eventsUntil((event) => event.kind === "message" && event.data.done === true);
+  expect(turns[1]).toMatchObject({ cwd: "/tmp/proj", sessionId: "s-1" });
+
+  // Stop aborts the running turn; nothing is said, and the session is still the one to resume.
+  send({ kind: "message", data: { role: "user", text: "long job" } }, "cc");
+  await vi.waitFor(() => expect(turns).toHaveLength(3));
+  send({ kind: "sync_request", data: { lastSeen: {} } });
+  const busy = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)! as YorozuEvent & { kind: "sync_delta" };
+  expect(busy.data.workingThreadIds).toEqual(["cc"]);
+  send({ kind: "interrupt", data: {} }, "cc");
+  await vi.waitFor(() => expect(turns[2]!.signal.aborted).toBe(true));
+  send({ kind: "sync_request", data: { lastSeen: {} } });
+  const idle = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)! as YorozuEvent & { kind: "sync_delta" };
+  expect(idle.data.workingThreadIds).toEqual([]);
+  expect(readThreadEvents("cc", dir).filter((event) => event.kind === "message" && event.data.role === "agent")).toHaveLength(2);
+  expect(listThreads(dir).find((thread) => thread.id === "cc")?.nativeSessionId).toBe("s-1");
+  expect(openclawRun).not.toHaveBeenCalled();
+  // The session id is the Mac's alone.
+  expect(JSON.stringify(first)).not.toContain("s-1");
+  void release;
+
+  // An agent that cannot run at all still finishes the turn, with the reason in the thread.
+  send({ kind: "message", data: { role: "user", text: "break" } }, "cc");
+  const failed = (await eventsUntil((event) => event.kind === "message" && event.data.done === true)).at(-1)!;
+  expect(failed).toMatchObject({ data: { text: expect.stringMatching(/claude-code could not answer: claude is not logged in/) } });
+  expect(states).toContain("native-error claude is not logged in");
 });
 
 test("client archive and restore reach OpenClaw in order before the canonical list changes", async () => {
