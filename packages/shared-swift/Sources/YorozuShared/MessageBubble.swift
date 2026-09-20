@@ -36,8 +36,7 @@ extension Image {
 ///
 /// Long-pressing one offers Copy, Reply, Listen, Retry and Delete; on the Mac the same menu is
 /// the right-click, and on the phone a bubble swiped towards the middle of the screen is
-/// replied to. A message too long to read in passing is shown as its opening, with "Read more"
-/// unfolding the rest in place.
+/// replied to. Every message is always shown in full.
 public struct MessageBubble: View {
     /// The event id, which is what says whether this is the bubble being read aloud.
     private let id: String
@@ -55,9 +54,6 @@ public struct MessageBubble: View {
     private let reactions: [MessageReaction]
     private let onReact: ((String) -> Void)?
 
-    /// Set by "Read more", which unfolds a long message where it stands. One way: Signal has no
-    /// collapse either, and a message you asked to see is not something to take away again.
-    @State private var expanded = ChatShowcase.expanded
     /// Mac only: whether the pointer is over this message, which is what shows its actions.
     @State private var hovering = false
     /// iPhone only: the custom message menu otherwise wins the long press that selects text.
@@ -96,10 +92,6 @@ public struct MessageBubble: View {
     private var parts: (quote: String?, body: String) {
         isUser ? splitQuote(data.text) : (nil, data.text)
     }
-
-    /// Long messages are cut until "Read more" unfolds them — but never while they are still
-    /// arriving, since truncating a streaming reply hides the part that is moving.
-    private var truncated: Bool { !streaming && !expanded && needsReader(parts.body) }
 
     private var speaking: Bool { Speaker.shared.speakingId == id && !id.isEmpty }
 
@@ -177,9 +169,6 @@ public struct MessageBubble: View {
                     Speaker.shared.speak(parts.body, id: id)
                 }
             }
-        }
-        if truncated {
-            Button("Read full message", systemImage: "text.alignleft") { expand() }
         }
         if let onRetry {
             Button("Retry", systemImage: "arrow.clockwise", action: onRetry)
@@ -294,17 +283,6 @@ public struct MessageBubble: View {
             // Never shorter than the text: a hosted cell on the phone can propose less height
             // than a long reply needs, and `Text` answers that by cutting lines with "…".
             text.fixedSize(horizontal: false, vertical: true)
-            if truncated {
-                // A button, not a tap target on the text: "Read more" is the one thing in a
-                // bubble VoiceOver has to be able to find and activate.
-                Button("Read more") { expand() }
-                    .font(.footnote.weight(.medium))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.tint)
-                    .frame(minHeight: controlTarget)
-                    .contentShape(.rect)
-                    .accessibilityHint("Shows the rest of this message")
-            }
         }
         .padding(.horizontal, isUser ? LayoutMetrics.stack : 0)
         .padding(.vertical, isUser ? LayoutMetrics.inner : 0)
@@ -352,15 +330,8 @@ public struct MessageBubble: View {
         #endif
     }
 
-    /// Unfolds the rest of the message where it stands. The bubble grows downwards from its own
-    /// top edge, so what is being read stays where it was and the thread does not jump — which
-    /// is the whole reason this is not a sheet any more.
-    private func expand() {
-        withAnimation(.easeOut(duration: 0.2)) { expanded = true }
-    }
-
     @ViewBuilder private var text: some View {
-        let body = truncated ? readerExcerpt(parts.body) : parts.body
+        let body = parts.body
         if streaming {
             // Reparsing and laying out the whole accumulated Markdown on every delta exceeds a
             // frame budget on long answers. The finished event renders the same text below.

@@ -47,6 +47,11 @@ import Testing
     #expect(markdownBlocks("* a\n+ b") == [.list(ordered: false, items: ["a", "b"])])
     #expect(markdownBlocks("1. first\n2. second") == [.list(ordered: true, items: ["first", "second"])])
     #expect(markdownBlocks("1) first") == [.list(ordered: true, items: ["first"])])
+    // Blank lines are legal between ordered items and must not restart every row at 1.
+    #expect(
+        markdownBlocks("1. first\n\n2. second\n\n3. third")
+            == [.list(ordered: true, items: ["first", "second", "third"])]
+    )
     // Bullets and numbers are two lists, not one with a confused marker.
     #expect(
         markdownBlocks("- a\n1. b")
