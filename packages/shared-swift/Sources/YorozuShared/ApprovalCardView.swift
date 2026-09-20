@@ -56,7 +56,14 @@ public struct ApprovalCardView: View {
             if answered {
                 outcome
             } else {
-                choices
+                if card.nativeAgent != nil {
+                    HStack {
+                        choice(.yes, "Allow", prominent: true)
+                        choice(.no, "Don't allow", prominent: false)
+                    }
+                } else {
+                    choices
+                }
             }
         }
         .padding(LayoutMetrics.cardPadding)
@@ -97,7 +104,7 @@ public struct ApprovalCardView: View {
                 .foregroundStyle(.tint)
                 .frame(width: 28, height: 28)
                 .background(.tint.opacity(0.14), in: Circle())
-            Text(answered ? String(localized: "Approval") : String(localized: "Yorozu wants to"))
+            Text(answered ? String(localized: "Approval") : (card.nativeAgent?.label ?? String(localized: "Yorozu wants to")))
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)

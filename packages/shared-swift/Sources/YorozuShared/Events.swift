@@ -504,6 +504,7 @@ public struct ApprovalRule: Codable, Equatable, Sendable, Identifiable {
 
 /// Pending external action awaiting an answer. See ``ApprovalAnswerData`` for the choices.
 public struct ApprovalCardData: Codable, Equatable, Sendable {
+    public var nativeAgent: ThreadAgent?
     public var actionId: String
     /// e.g. "send-message", "purchase", "delete-file".
     public var actionClass: String
@@ -526,7 +527,8 @@ public struct ApprovalCardData: Codable, Equatable, Sendable {
         scope: ApprovalScope? = nil,
         items: [BatchItem]? = nil,
         mustConfirm: Bool? = nil,
-        suggestedRule: ApprovalRule? = nil
+        suggestedRule: ApprovalRule? = nil,
+        nativeAgent: ThreadAgent? = nil
     ) {
         self.actionId = actionId
         self.actionClass = actionClass
@@ -535,6 +537,7 @@ public struct ApprovalCardData: Codable, Equatable, Sendable {
         self.scope = scope
         self.items = items
         self.mustConfirm = mustConfirm
+        self.nativeAgent = nativeAgent
         self.suggestedRule = suggestedRule
     }
 }

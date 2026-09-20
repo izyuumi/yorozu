@@ -205,6 +205,8 @@ export interface ApprovalRule {
 
 /** Pending external action awaiting an answer. See `ApprovalAnswerData` for the choices. */
 export interface ApprovalCardData {
+  /** Native SDK request: only this invocation may be allowed, never a Yorozu rule. */
+  nativeAgent?: Exclude<ThreadAgent, "yorozu">;
   actionId: string;
   /** e.g. "send-message", "purchase", "delete-file". */
   actionClass: string;

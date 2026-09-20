@@ -1765,3 +1765,24 @@ test("a sync page stops short of the relay's frame limit, and the rest follows o
   expect(roles(rest)).toEqual(["user", "agent"]);
   expect(rest.kind === "sync_delta" && rest.data.more).toBeUndefined();
 });
+
+test.each(["yes", "no"] as const)("native approval %s round-trips through encrypted relay including lockscreen answers", async (answer) => {
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    const allowed = await turn.approve!("Bash", { command: "pwd" }, turn.signal);
+    const response = await turn.ask!("Which?", ["A", "B"], turn.signal);
+    return { text: `${allowed}:${response}`, sessionId: "sdk-session" };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { "claude-code": runner } });
+  send({ kind: "thread_create", data: { agent: "claude-code", cwd: proj } }, "native");
+  send({ kind: "approval_settings", data: { yolo: true } });
+  send({ kind: "message", data: { role: "user", text: "work" } }, "native");
+  const approval = (await eventsUntil((e) => e.kind === "approval_card")).at(-1)!;
+  if (approval.kind !== "approval_card") throw new Error("missing approval");
+  send({ kind: "approval_answer", data: { actionId: approval.data.actionId, answer, source: "notification" } }, "native");
+  const question = (await eventsUntil((e) => e.kind === "question_card")).at(-1)!;
+  if (question.kind !== "question_card") throw new Error("missing question");
+  send({ kind: "question_answer", data: { questionId: question.data.questionId, answer: "Custom" } }, "native");
+  expect((await eventsUntil((e) => e.kind === "message" && e.data.done === true)).at(-1)).toMatchObject({ data: { text: `${answer === "yes"}:Custom` } });
+  expect(listRules(dir)).toEqual([]);
+  expect(readThreadEvents("native", dir).some((e) => e.kind === "rule_proposal")).toBe(false);
+});

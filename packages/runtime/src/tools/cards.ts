@@ -36,7 +36,7 @@ export interface QuestionDesk {
   /** The user answered. Unknown ids are a no-op: a card answered twice, or after it expired. */
   answer(questionId: string, answer: string): void;
   /** Everything still waiting gives up, so an interrupt does not leave a turn parked on a card. */
-  cancelAll(): void;
+  cancelAll(threadId?: string): void;
 }
 
 /**
@@ -49,18 +49,22 @@ export function questionDesk(
   timeoutMs = QUESTION_TIMEOUT_MS,
 ): QuestionDesk {
   const waiting = new Map<string, (answer: string) => void>();
+  const threads = new Map<string, string | undefined>();
   return {
     ask: (question, options, allowOther, context) => {
       const questionId = randomUUID();
+      threads.set(questionId, context?.threadId);
       return new Promise<string>((resolve) => {
         const timer = setTimeout(() => {
           waiting.delete(questionId);
+          threads.delete(questionId);
           resolve(NO_ANSWER);
         }, timeoutMs);
         timer.unref?.();
         waiting.set(questionId, (answer) => {
           clearTimeout(timer);
           waiting.delete(questionId);
+          threads.delete(questionId);
           resolve(answer);
         });
         raise(
@@ -70,8 +74,8 @@ export function questionDesk(
       });
     },
     answer: (questionId, answer) => waiting.get(questionId)?.(answer),
-    cancelAll: () => {
-      for (const settle of [...waiting.values()]) settle(NO_ANSWER);
+    cancelAll: (threadId) => {
+      for (const [id, settle] of [...waiting]) if (!threadId || threads.get(id) === threadId) settle(NO_ANSWER);
     },
   };
 }
