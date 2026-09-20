@@ -126,3 +126,53 @@ Claude’s [PreToolUse decision hook](https://code.claude.com/docs/en/hooks#pret
 ## Release hold
 
 All four #12 criteria remain unchecked. Before later release authorization, physical iPhone must validate create-thread/folder selection, live reply and resumption, native permission Allow/Deny from the lockscreen, model/effort and bypass sync with Mac, interrupted-turn Continue/Dismiss, large-result retrieval after reconnect, and sustained scrolling/typing under streaming. Check VoiceOver, Reduce Motion and keyboard/IME behavior on device. These are limitations of current evidence, not silent acceptance waivers.
+
+
+## Project-analysis follow-up — 2026-09-20
+
+Thread metadata now fails closed on unreadable, malformed, structurally invalid or duplicate-ID
+indexes. Tests verify creating another thread cannot overwrite the damaged original. An absent
+file retains first-run behavior. Recovery requires repairing/restoring the original index;
+reconstructing it from message logs would lose native agent/session/cwd metadata.
+
+The injected provider loop is isolated in `packages/runtime/src/legacy.ts`. Production startup
+neither installs legacy agent files nor starts the old scheduler; a regression covers both
+production and explicit-provider modes. A Node module-load check also confirmed importing the
+built sidecar does not load the legacy loop, provider registry, chain, delegation or scheduler.
+Native agent dependencies remain required by production coding threads.
+
+Sync retains byte offsets for 16 recently accessed logs, without caching message bodies. First
+read or a changed file rebuilds that log's index; subsequent pages seek directly to their cursor.
+Tests cover UTF-8 boundaries, repeated IDs, malformed tails, appends, truncation, same-size writes,
+file replacement and deletion. The 5,000-event regression verifies later pages parse only returned
+events. `node scripts/benchmark-sync.mjs` compared a complete 10,000-event / 11,507,780-byte drain:
+previous full scans **935 ms**, indexed seeks including initial indexing **73 ms** (12.8× on this
+machine). This is a synthetic fixture, not a device latency guarantee. Cold indexing remains
+synchronous and metadata grows with event count; a disk index is the next step if that ceiling
+becomes material.
+
+Relay deployment config now explicitly uses the **2026-03-10** baseline already exercised by
+its installed Vitest pool. Config loading checks the pool's actual nested workerd version and
+rejects unsupported dates instead of silently falling back. This changes the behavior selected
+by the next deployment, not the currently hosted Worker; no deployment ran. Old dates remain
+supported according to [Cloudflare's compatibility-date contract](https://developers.cloudflare.com/workers/configuration/compatibility-dates/).
+A conformance assertion now selects its own close code, avoiding late close logs from an earlier
+case. No dependency upgrades were needed.
+
+CI now runs Mac tests and actual composer keyboard interactions on iPhone and iPad simulators.
+The two existing keyboard tests passed on **iPhone Duo**, **iPhone 17 Pro**, and **iPad Pro 11-inch
+(M5)**. These execute keyboard visibility, model/effort selection, draft retention, continued
+input, and unfocused menu behavior. Local logs: `/tmp/yorozu-analysis-ui-tests.log`,
+`/tmp/yorozu-fix-ci-ui.log`, `/tmp/yorozu-fix-ipad-ui.log`.
+
+Physical-device checks remain pending. `xcrun devicectl list devices` showed only simulated
+devices. Live agent sessions, physical lockscreen/APNs approval, VoiceOver, hardware keyboard/IME,
+and sustained device interaction are not certified by simulator tests. Release/PAIOS criteria
+above remain unchanged; no release or PAIOS modification was performed.
+
+Final automated checks for this follow-up: all three TypeScript builds passed; shared **29**,
+relay **95**, runtime **567** tests passed (one existing opt-in browser integration skipped).
+Runtime was rerun after making its fallback-auth test independent of the developer's real Claude
+login. Shared Swift **165** and Mac **7** tests passed. Logs: `/tmp/yorozu-final-build.log`,
+`/tmp/yorozu-final-tests.log` (shared/relay results), `/tmp/yorozu-final-runtime.log`,
+`/tmp/yorozu-final-shared-swift.log`, `/tmp/yorozu-final-mac-swift.log`.

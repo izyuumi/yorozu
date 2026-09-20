@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { YorozuEvent } from "@yorozu/shared";
-import { beforeEach, expect, test } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import {
   appendThreadEvent,
   archiveThread,
@@ -466,4 +466,59 @@ test("restart reconciles a committed final reply and retires dead native prompts
   expect(preview.data.output.isWellFormed()).toBe(true);
   expect(preview.data.output.length).toBe(4095);
   expect(fullToolResult("t", "unicode", dir)).toEqual(event);
+});
+
+
+test.each(['{broken', '{}', '[null]', '[{"id":"t"}]'])("a damaged index (%s) cannot be replaced by a new thread", (contents) => {
+  const file = join(dir, "threads.json");
+  writeFileSync(file, contents);
+  expect(() => createThread("New", dir)).toThrow(/thread index/i);
+  expect(readFileSync(file, "utf8")).toBe(contents);
+});
+
+test("an unreadable index is not a first run", () => {
+  const file = join(dir, "threads.json");
+  mkdirSync(file);
+  expect(() => listThreads(dir)).toThrow(/thread index/i);
+  rmSync(file, { recursive: true });
+  expect(listThreads(dir)).toEqual([]);
+});
+
+test("sync seeks through long history without reparsing it for each page", () => {
+  mkdirSync(threadsDir(dir));
+  const events = Array.from({ length: 5000 }, (_, n) => message(`e${n}`, "日本語🙂".repeat(40)));
+  writeFileSync(join(threadsDir(dir), "home.jsonl"), events.map((event) => JSON.stringify(event)).join("\n") + "\n");
+  let page = eventsAfter(HOME, undefined, dir);
+  const parse = vi.spyOn(JSON, "parse");
+  try {
+    let count = page.length;
+    while (page.length) {
+      page = eventsAfter(HOME, page.at(-1)!.id, dir);
+      count += page.length;
+    }
+    expect(count).toBe(events.length);
+    expect(parse.mock.calls.length).toBe(events.length - SYNC_LIMIT);
+  } finally { parse.mockRestore(); }
+});
+
+test("sync handles repeated ids, large UTF-8 lines, broken tails and changed files", () => {
+  mkdirSync(threadsDir(dir));
+  const file = join(threadsDir(dir), "home.jsonl");
+  const large = message("e2", "日本語🙂".repeat(20000));
+  const initial = [message("e1", "first"), large, message("e1", "last"), message("e3", "tail")];
+  writeFileSync(file, initial.map((event) => JSON.stringify(event)).join("\n") + "\n{broken");
+  expect(eventsAfter(HOME, undefined, dir)).toEqual(initial);
+  expect(eventsAfter(HOME, "e1", dir)).toEqual([initial[3]]);
+  appendFileSync(file, "\n" + JSON.stringify(message("e4", "appended")) + "\n");
+  expect(eventsAfter(HOME, "e3", dir).map((event) => event.id)).toEqual(["e4"]);
+  const replacement = JSON.stringify(message("e5", "rewritten")) + "\n";
+  writeFileSync(file, replacement);
+  expect(eventsAfter(HOME, "e4", dir).map((event) => event.id)).toEqual(["e5"]);
+  writeFileSync(file + ".new", replacement.replace('e5', 'e6'));
+  renameSync(file + ".new", file);
+  expect(eventsAfter(HOME, "e5", dir).map((event) => event.id)).toEqual(["e6"]);
+  writeFileSync(file, replacement.replace('e5', 'e7'));
+  expect(eventsAfter(HOME, "e6", dir).map((event) => event.id)).toEqual(["e7"]);
+  rmSync(file);
+  expect(eventsAfter(HOME, "e7", dir)).toEqual([]);
 });

@@ -1,6 +1,19 @@
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { generateKeyPairSync } from "node:crypto";
 import { defineWorkersProject } from "@cloudflare/vitest-pool-workers/config";
 import { defineConfig } from "vitest/config";
+
+// Resolve the pool's runtime, not Wrangler's newer, independent installation.
+const require = createRequire(import.meta.url);
+const poolRequire = createRequire(require.resolve("@cloudflare/vitest-pool-workers/config"));
+const miniflareRequire = createRequire(poolRequire.resolve("miniflare"));
+const supported = miniflareRequire("workerd").compatibilityDate as string;
+const configured = readFileSync(new URL("./wrangler.toml", import.meta.url), "utf8")
+  .match(/^compatibility_date\s*=\s*"(\d{4}-\d{2}-\d{2})"/m)?.[1];
+if (!configured || !supported || configured > supported) {
+  throw new Error(`Relay compatibility date ${configured} exceeds test workerd ${supported}; update the test pool before changing deployment behavior.`);
+}
 
 /**
  * A throwaway Apple auth key for the push tests. The relay only ever signs a JWT with it and a

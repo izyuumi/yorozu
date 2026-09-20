@@ -20,8 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # `swift test` already builds this package; a separate build compiled it twice.
-      - run: swift test --package-path packages/shared-swift
-      - run: swift build --package-path apps/mac
+      - run: env -u SDKROOT swift test --package-path packages/shared-swift
+      - run: env -u SDKROOT swift test --package-path apps/mac
 
   ios:
     runs-on: [self-hosted, macOS, ARM64, yorozu]
@@ -36,4 +36,13 @@ jobs:
             -scheme YorozuIOS \
             -destination 'generic/platform=iOS Simulator' \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Composer keyboard interactions
+        run: |
+          env -u SDKROOT xcodebuild test \
+            -workspace apps/ios/Yorozu.xcworkspace \
+            -scheme YorozuKeyboardUITests \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' \
+            -parallel-testing-enabled NO \
             CODE_SIGNING_ALLOWED=NO
