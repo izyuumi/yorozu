@@ -61,15 +61,14 @@ public struct NewThreadPicker: View {
                     Button {
                         if candidate.needsFolder { agent = candidate } else { start(candidate, nil) }
                     } label: {
-                        Label {
+                        HStack(spacing: 10) {
+                            AgentMarkView(candidate)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(candidate.label)
                                 Text(describe(candidate))
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                             }
-                        } icon: {
-                            Image(systemName: candidate.symbol ?? "bubble.left.and.bubble.right")
                         }
                     }
                     .accessibilityHint(candidate.needsFolder ? "Then choose a folder" : "")

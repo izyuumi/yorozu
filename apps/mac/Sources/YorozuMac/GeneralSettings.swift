@@ -1,5 +1,6 @@
 import SwiftUI
 import YorozuKeepalive
+import YorozuShared
 
 /// Yorozu transport and app lifecycle. Agent, model, tool, browser, and credential settings
 /// belong to OpenClaw and intentionally do not appear here.
@@ -72,6 +73,13 @@ struct GeneralView: View {
                 .foregroundStyle(.secondary)
             AutomaticUpdatesToggle()
             CheckForUpdatesButton()
+            Divider()
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Provider marks").font(.headline)
+                Text(ProviderMarkAttribution.notice)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

@@ -225,12 +225,10 @@ struct ThreadRow: View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    // A coding agent's thread wears its glyph; Yorozu's rows are as they were.
-                    if let agent = thread.agent, let symbol = agent.symbol {
-                        Image(systemName: symbol)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel(agent.label)
+                    // A coding agent's thread wears its provider mark; Yorozu's rows are as they
+                    // were. Codex pairs OpenAI's mark with text because no Codex mark is published.
+                    if let agent = thread.agent, agent != .yorozu {
+                        AgentIdentifierView(agent)
                     }
                     highlightedText(thread.displayTitle)
                         .font(.body.weight(thread.isUnread ? .semibold : .regular))

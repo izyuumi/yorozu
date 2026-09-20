@@ -85,6 +85,11 @@ struct SettingsView: View {
                     LabeledContent("Version", value: Self.version)
                     Link("Source on GitHub", destination: Self.repo)
                 }
+                Section("Provider marks") {
+                    Text(ProviderMarkAttribution.notice)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
                 Section {
                     Button("Unpair", role: .destructive) { confirmingUnpair = true }
                 }
