@@ -22,7 +22,7 @@ final class KeyboardChooserTests: XCTestCase {
         openShot.name = "Chooser open with keyboard"
         openShot.lifetime = .keepAlways
         add(openShot)
-        app.buttons["Default"].tap()
+        app.buttons["Auto"].tap()
         XCTAssertTrue(app.keyboards.firstMatch.exists, "Model selection must preserve keyboard")
         panel.swipeUp()
         XCTAssertTrue(app.keyboards.firstMatch.exists, "Scrolling choices must preserve keyboard")
