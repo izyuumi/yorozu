@@ -6,7 +6,7 @@ import YorozuShared
 private extension ConnectionState {
     var tint: Color {
         switch self {
-        case .connected: .green
+        case .connected: YorozuPalette.sage
         case .offline: .orange
         case .reconnecting: .secondary
         }
@@ -36,7 +36,9 @@ struct SettingsView: View {
     /// the build number on the xcodebuild command line, so the bundle is the only thing that knows.
     private static var version: String {
         let info = Bundle.main.infoDictionary
-        let short = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let short = info?["YorozuVersionLabel"] as? String
+            ?? info?["CFBundleShortVersionString"] as? String
+            ?? "?"
         let build = info?["CFBundleVersion"] as? String ?? "?"
         return "\(short) (\(build))"
     }

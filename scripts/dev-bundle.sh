@@ -1,14 +1,18 @@
 #!/bin/sh
 # Wrap the `swift build` product in a minimal .app bundle and ad-hoc sign it.
 #
-# TCC keys grants by bundle ID and code signature. A bare `swift run` binary has neither, so
-# every rebuild looks like a new app and every permission has to be granted again. Running
-# the app out of this bundle gives it a stable identity (to.yumi.yorozu) and grants stick.
+# TCC keys grants by bundle ID and code signature. A bare `swift run` binary has neither. This
+# beta bundle deliberately defaults to an identity separate from the installed stable app; callers
+# can override it when they explicitly need the long-lived development identity.
 set -eu
 cd "$(dirname "$0")/.."
 
 CONFIG=${CONFIG:-debug}
 APP=${APP:-apps/mac/.build/Yorozu.app}
+BUNDLE_ID=${BUNDLE_ID:-to.yumi.yorozu.beta}
+DISPLAY_NAME=${DISPLAY_NAME:-Yorozu Beta}
+SHORT_VERSION=${SHORT_VERSION:-0.2.0}
+VERSION_LABEL=${VERSION_LABEL:-0.2.0-beta}
 
 swift build --package-path apps/mac -c "$CONFIG"
 BIN="$(swift build --package-path apps/mac -c "$CONFIG" --show-bin-path)/YorozuMac"
@@ -45,18 +49,19 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key><string>Yorozu</string>
-  <key>CFBundleIdentifier</key><string>to.yumi.yorozu</string>
-  <key>CFBundleName</key><string>Yorozu</string>
+  <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
+  <key>CFBundleName</key><string>$DISPLAY_NAME</string>
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleIconFile</key><string>Yorozu</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1</string>
+  <key>CFBundleShortVersionString</key><string>$SHORT_VERSION</string>
   <key>CFBundleVersion</key><string>1</string>
+  <key>YorozuVersionLabel</key><string>$VERSION_LABEL</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>LSUIElement</key><true/>
   <key>CFBundleURLTypes</key>
   <array><dict>
-    <key>CFBundleURLName</key><string>to.yumi.yorozu.pair</string>
+    <key>CFBundleURLName</key><string>$BUNDLE_ID.pair</string>
     <key>CFBundleURLSchemes</key><array><string>yorozu</string></array>
   </dict></array>
 $USAGE
@@ -64,5 +69,5 @@ $USAGE
 </plist>
 PLIST
 
-codesign --force --sign - --identifier to.yumi.yorozu "$APP"
+codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
 echo "$APP"

@@ -105,13 +105,17 @@ public struct MessageBubble: View {
                 AttachmentsView(attachments: data.attachments)
             }
             if (!data.text.isEmpty || streaming), !isUser {
-                Text("YOROZU")
-                    .font(.caption2.weight(.semibold))
-                    .tracking(0.5)
-                    .foregroundStyle(.tertiary)
-                    // Left audible: alignment is the only other thing saying who spoke, and
-                    // VoiceOver cannot hear alignment.
-                    .accessibilityLabel("Yorozu")
+                HStack(spacing: 6) {
+                    YorozuMark(dimension: 13)
+                    Text("YOROZU")
+                        .font(.caption2.weight(.semibold))
+                        .tracking(0.8)
+                }
+                .foregroundStyle(YorozuPalette.ink.opacity(0.62))
+                // Left audible: alignment is the only other thing saying who spoke, and
+                // VoiceOver cannot hear alignment.
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Yorozu")
             }
             if !data.text.isEmpty || streaming {
                 bubble
@@ -291,9 +295,10 @@ public struct MessageBubble: View {
             // the trailing control lane so the menu never covers selectable text.
             .padding(.trailing, isUser ? 0 : controlTarget + LayoutMetrics.tight)
         #endif
-        .foregroundStyle(isUser ? AnyShapeStyle(Color.white) : AnyShapeStyle(Color.primary))
-        // Links draw in the tint, and the user bubble is filled with it: accent on accent.
-        .tint(isUser ? Color.white : nil)
+        .fontDesign(isUser ? .default : .serif)
+        .foregroundStyle(isUser ? AnyShapeStyle(Color.white) : AnyShapeStyle(YorozuPalette.ink))
+        // Links draw in the tint, and the user capsule is filled with it: accent on accent.
+        .tint(isUser ? Color.white : YorozuPalette.vermilion)
         .background(isUser ? bubbleBackground : AnyShapeStyle(.clear),
                     in: RoundedRectangle(cornerRadius: LayoutMetrics.bubbleRadius, style: .continuous))
         // The message's actions as a control of their own, because on the Mac the context
@@ -313,13 +318,7 @@ public struct MessageBubble: View {
     }
 
     private var bubbleBackground: AnyShapeStyle {
-        #if os(iOS)
-            isUser
-                ? AnyShapeStyle(Color.accentColor)
-                : AnyShapeStyle(Color(uiColor: .secondarySystemBackground))
-        #else
-            isUser ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary)
-        #endif
+        AnyShapeStyle(isUser ? YorozuPalette.vermilion : YorozuPalette.paper)
     }
 
     private var bubbleMaxWidth: CGFloat {

@@ -9,8 +9,8 @@ import SwiftUI
 /// Who should answer a new thread, and — for a coding agent — where. Two steps at most, and a
 /// recent folder is two taps from the `+`: the agent, then the folder at the top of its list.
 ///
-/// A Yorozu thread is one tap and asks nothing else, exactly as `+` always was. The Mac shows
-/// this as a popover from the compose button; the phone as a sheet. Both call `onStart` with a
+/// A Yorozu thread is one tap and asks nothing else. Both apps show this as a sheet from
+/// their new-thread buttons and keyboard shortcuts. Both call `onStart` with a
 /// draft's worth of answer and close themselves.
 public struct NewThreadPicker: View {
     private let projects: [ProjectFolder]

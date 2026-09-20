@@ -18,6 +18,7 @@ export CI=true
 # what makes an update an update. Same derivation as scripts/build-ios.sh.
 VERSION=${VERSION:-$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//' || true)}
 VERSION=${VERSION:-0.1.0}
+VERSION_LABEL=${VERSION_LABEL:-$VERSION}
 BUILD=${BUILD:-$(git rev-list --count HEAD)}
 DIST=${DIST:-dist}
 IDENTITY=${IDENTITY:-"Developer ID Application: Yumi Izumi (AN5KM8QGEF)"}
@@ -120,6 +121,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$BUILD</string>
+  <key>YorozuVersionLabel</key><string>$VERSION_LABEL</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>LSUIElement</key><true/>

@@ -81,6 +81,8 @@ struct ChatWindowView: View {
         // A floor rather than a fixed size: the window is resizable now, and the chat has to
         // stay legible at the narrowest a window is worth having.
         .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
+        .background(YorozuPalette.canvas)
+        .yorozuTint()
         // Selecting something else is what discards a draft nothing was ever sent in, and what
         // tells the model which thread is being read — a reply landing in the open thread is
         // read on arrival, and one landing anywhere else raises a dot in the sidebar.
@@ -113,7 +115,10 @@ struct ChatWindowView: View {
                 Divider()
                 Button("Quit Yorozu") { NSApp.terminate(nil) }
             } label: {
-                Label("Yorozu", systemImage: "gearshape")
+                HStack(spacing: 6) {
+                    YorozuMark(dimension: 15)
+                    Text("Yorozu")
+                }
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -123,7 +128,7 @@ struct ChatWindowView: View {
             } icon: {
                 Image(systemName: model.state == .paired ? "circle.fill" : "circle.dotted")
                     .font(.system(size: 7))
-                    .foregroundStyle(model.state == .paired ? .green : .secondary)
+                    .foregroundStyle(model.state == .paired ? YorozuPalette.sage : Color.secondary)
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -132,7 +137,7 @@ struct ChatWindowView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(.bar)
+        .background(YorozuPalette.paper)
     }
 
     private var connectionLabel: String {
@@ -201,7 +206,7 @@ struct SettingsView: View {
             .frame(maxWidth: 680, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .background(.background)
+        .background(YorozuPalette.canvas)
     }
 
     @ViewBuilder private var selectedView: some View {

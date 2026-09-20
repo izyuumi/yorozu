@@ -10,7 +10,7 @@ import SwiftUI
 public struct ChatView: View {
     public let model: ChatModel
     public let thread: ThreadSummary
-    private let onCreate: (() -> Void)?
+    private let onCreate: ((ThreadAgent, String?) -> Void)?
     private let resumeRequest: UUID?
     private let notificationClass: String?
     private let notificationEventRef: String?
@@ -35,6 +35,7 @@ public struct ChatView: View {
     /// The message being replied to, quoted above the field until it is sent or dismissed.
     @State private var replyQuote: String?
     @State private var searching = false
+    @State private var choosingAgent = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var search = ""
     /// Which hit the arrows are on. Reset whenever the term changes.
@@ -55,7 +56,7 @@ public struct ChatView: View {
         notificationEventRef: String? = nil,
         lastReadAt: Double? = nil,
         notificationSyncRevision: Int? = nil,
-        onCreate: (() -> Void)? = nil,
+        onCreate: ((ThreadAgent, String?) -> Void)? = nil,
         offlineNotice: String = "Mac offline — what you send waits on this phone until it's back."
     ) {
         self.model = model
@@ -140,8 +141,19 @@ public struct ChatView: View {
             composer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(YorozuPalette.canvas.ignoresSafeArea())
+        .yorozuTint()
         // A truncated tool result in this thread's trace asks the Mac for the rest through here.
         .environment(\.fetchToolResult) { model.requestToolResult($0, in: thread.id) }
+        .sheet(isPresented: $choosingAgent) {
+            if let onCreate {
+                NewThreadPicker(projects: model.projects, onStart: onCreate)
+                    .presentationDetents([.medium, .large])
+            }
+        }
+        .onChange(of: model.state, initial: true) { _, state in
+            if state == .paired { model.requestApprovalSettings() }
+        }
         .navigationTitle(thread.displayTitle)
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -157,21 +169,41 @@ public struct ChatView: View {
                 ToolbarItem(placement: .primaryAction) {
                     Menu("Thread settings", systemImage: "ellipsis.circle") {
                         Toggle("Bypass tool approvals", isOn: Binding(
-                            get: { thread.bypass == true },
+                            get: { model.yoloMode },
                             set: { model.setBypass(thread, $0) }
                         ))
-                        Text("Applies to the next turn in this thread.")
+                        Text("Syncs with YOLO mode for all agents. Applies on the next turn.")
                     }
                 }
             }
             #if os(iOS)
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 7) {
+                        YorozuMark(dimension: 20)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(thread.displayTitle)
+                                .font(.subheadline.weight(.semibold))
+                                .lineLimit(1)
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(model.ownerOnline ? YorozuPalette.sage : Color.secondary)
+                                    .frame(width: 5, height: 5)
+                                Text(thread.agent?.label ?? "Yorozu")
+                                    .lineLimit(1)
+                            }
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                }
                 // One group, not two `.primaryAction` items: iOS folds a second primary action
                 // into a "…" overflow menu, which is exactly the button this replaced.
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
                         .keyboardShortcut("f")
-                    if let onCreate {
-                        Button("New session", systemImage: "square.and.pencil", action: onCreate)
+                    if onCreate != nil {
+                        Button("New session", systemImage: "square.and.pencil") { choosingAgent = true }
                     }
                 }
             #endif
@@ -556,8 +588,8 @@ public struct ChatView: View {
         .overlay {
             RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous)
                 .strokeBorder(
-                    generating ? Color.accentColor.opacity(0.55) : Color.secondary.opacity(0.25),
-                    lineWidth: generating ? 1.5 : 1
+                    generating ? YorozuPalette.vermilion.opacity(0.72) : YorozuPalette.rule.opacity(0.82),
+                    lineWidth: generating ? 1.5 : 0.8
                 )
             .allowsHitTesting(false)
             .accessibilityHidden(true)
@@ -622,13 +654,7 @@ public struct ChatView: View {
     }
 
 
-    private var fieldBackground: Color {
-        #if os(iOS)
-            Color(.secondarySystemGroupedBackground)
-        #else
-            Color(nsColor: .textBackgroundColor)
-        #endif
-    }
+    private var fieldBackground: Color { YorozuPalette.paper }
 
     /// Stop stays beside the composer while a turn runs. Send never changes jobs: another
     /// message steers that active turn, which is why replacing it with Stop made steering
@@ -661,7 +687,7 @@ public struct ChatView: View {
                 .font(.body.weight(.bold))
                 .foregroundStyle(canSend ? Color.white : Color.secondary)
                 .frame(width: sendCircle, height: sendCircle)
-                .background(canSend ? Color.accentColor : Color.clear, in: Circle())
+                .background(canSend ? YorozuPalette.vermilion : Color.clear, in: Circle())
                 .overlay(Circle().strokeBorder(.separator, lineWidth: canSend ? 0 : 1.5))
         }
         .buttonStyle(.plain)
@@ -1162,7 +1188,8 @@ private struct SearchHitBar: View {
 private struct ThinkingRow: View {
     var body: some View {
         HStack(spacing: 8) {
-            ProgressView().controlSize(.small)
+            YorozuMark(dimension: 16)
+            ProgressView().controlSize(.small).tint(YorozuPalette.vermilion)
             Text("Thinking…").font(.caption).foregroundStyle(.secondary)
             Spacer(minLength: 0)
         }
@@ -1193,12 +1220,20 @@ private struct ScrollToBottomPill: View {
 /// composer is already the action, so suggestion pills only repeat it and dominate the screen.
 private struct EmptyThreadView: View {
     var body: some View {
-        ContentUnavailableView(
-            "Start the conversation",
-            systemImage: "bubble.left.and.bubble.right",
-            description: Text("Ask for anything your Mac can do — files, mail, calendars, or the browser.")
-        )
-        .padding()
+        VStack(spacing: LayoutMetrics.stack) {
+            YorozuMark(dimension: 42)
+            Text("Start the conversation")
+                .font(.title3.weight(.semibold))
+                .fontDesign(.serif)
+                .foregroundStyle(YorozuPalette.ink)
+            Text("Ask for anything your Mac can do — files, mail, calendars, or the browser.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 360)
+        }
+        .padding(LayoutMetrics.section)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -1212,7 +1247,7 @@ private struct WorkingBezel: View {
     var body: some View {
         RoundedRectangle(cornerRadius: 22, style: .continuous)
             .strokeBorder(
-                Color.blue.opacity(active ? (bright || reduceMotion ? 0.9 : 0.3) : 0),
+                YorozuPalette.vermilion.opacity(active ? (bright || reduceMotion ? 0.9 : 0.3) : 0),
                 lineWidth: 2
             )
             .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: bright)
@@ -1233,7 +1268,7 @@ private struct Banner: View {
             .font(.footnote)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(8)
-            .background(.quaternary)
+            .background(YorozuPalette.stone.opacity(0.6))
     }
 }
 

@@ -64,6 +64,7 @@ enum ApprovalSettings {
 /// The onboarding step and Mac editor for the two floors and global YOLO bypass.
 struct ApprovalFloorView: View {
     @State private var floor = ApprovalSettings.load()
+    @State private var session = MacChatSession.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -84,7 +85,17 @@ struct ApprovalFloorView: View {
             }
             Toggle("Confirm deletes outside Yorozu's own folder", isOn: $floor.confirmIrreversibleDeletes)
         }
-        .onChange(of: floor) { ApprovalSettings.save(floor) }
+        .onAppear {
+            floor = ApprovalSettings.load()
+            session.model.requestApprovalSettings()
+        }
+        .onChange(of: session.model.yoloMode) { _, enabled in floor.yolo = enabled }
+        .onChange(of: floor) { old, new in
+            ApprovalSettings.save(new)
+            if old.yolo != new.yolo && session.model.yoloMode != new.yolo {
+                session.model.setYoloMode(new.yolo)
+            }
+        }
     }
 }
 

@@ -72,7 +72,10 @@ public struct ApprovalCardView: View {
         .frame(maxWidth: 560, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(cardBackground, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous).strokeBorder(.separator))
+        .overlay(
+            RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous)
+                .strokeBorder(YorozuPalette.rule.opacity(0.85), lineWidth: 0.8)
+        )
         .onAppear {
             appeared = true
             // Screenshot only, and inert otherwise — see ``ChatShowcase``.
@@ -98,9 +101,9 @@ public struct ApprovalCardView: View {
         HStack(spacing: LayoutMetrics.inner) {
             Image(systemName: "hand.raised.fill")
                 .font(.body.weight(.semibold))
-                .foregroundStyle(.tint)
+                .foregroundStyle(YorozuPalette.vermilion)
                 .frame(width: 28, height: 28)
-                .background(.tint.opacity(0.14), in: Circle())
+                .background(YorozuPalette.vermilion.opacity(0.12), in: Circle())
             Text(answered ? String(localized: "Approval") : (card.nativeAgent?.label ?? String(localized: "Yorozu wants to")))
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
@@ -367,13 +370,7 @@ public struct ApprovalCardView: View {
         return String(localized: "“Allow for this task” lasts until this task is done. A rule lasts until you revoke it.")
     }
 
-    private var cardBackground: Color {
-        #if os(iOS)
-            Color(.secondarySystemGroupedBackground)
-        #else
-            Color(nsColor: .controlBackgroundColor)
-        #endif
-    }
+    private var cardBackground: Color { YorozuPalette.paper }
 
     // MARK: Wording
 

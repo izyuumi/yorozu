@@ -215,6 +215,7 @@ struct ThreadRow: View {
     var working = false
     var preview: String? = nil
     var highlightQuery = ""
+    var selected = false
 
     @ScaledMetric(relativeTo: .body) private var dot = 9
 
@@ -279,7 +280,16 @@ struct ThreadRow: View {
                     .accessibilityLabel("Unread")
             }
         }
-        .padding(.vertical, 2)
+        .padding(.horizontal, LayoutMetrics.stack)
+        .padding(.vertical, 10)
+        .background(
+            selected ? Color.clear : YorozuPalette.paper,
+            in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous)
+                .strokeBorder(selected ? Color.clear : YorozuPalette.rule.opacity(0.64), lineWidth: 0.75)
+        }
         // VoiceOver hears the agent and repo once, up front, rather than as a glyph mid-row.
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilitySummary)
@@ -336,7 +346,7 @@ public enum ConnectionState: Equatable, Sendable {
 
     var tint: Color {
         switch self {
-        case .connected: .green
+        case .connected: YorozuPalette.sage
         case .reconnecting: .secondary
         case .offline: .red
         }
@@ -591,14 +601,16 @@ public struct ThreadListView<Destination: View>: View {
             }
         }
         .listStyle(.plain)
-        .contentMargins(.vertical, 4)
+        .scrollContentBackground(.hidden)
+        .background(YorozuPalette.canvas)
+        .contentMargins(.vertical, LayoutMetrics.inner)
         .animation(.default, value: threads)
         .overlay { empty(groups) }
         // A search modifier on the root navigation stack otherwise follows pushed chats:
         // pulling a transcript down reveals "Search threads" above the conversation.
         .threadListSearch(text: $query, enabled: splitLayout || path.isEmpty)
         .refreshable { await onRefresh?() }
-        .navigationTitle("Threads")
+        .navigationTitle("Yorozu")
         .toolbar {
             if let onSettings {
                 ToolbarItem(placement: .navigation) {
@@ -669,6 +681,9 @@ public struct ThreadListView<Destination: View>: View {
                     highlightQuery: searchNeedle
                 )
             }
+            .listRowInsets(EdgeInsets(top: 3, leading: 12, bottom: 3, trailing: 12))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
             .swipeActions(edge: .leading) {
                 if thread.archived {
                     Button("Restore", systemImage: "tray.and.arrow.up") { onArchive(thread, false) }
@@ -836,17 +851,20 @@ public struct ThreadSidebar: View {
                 Section { archive(groups.archived) }
             }
         }
+        .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        .background(YorozuPalette.canvas)
         .animation(.default, value: threads)
         .overlay { empty(groups) }
         // In the sidebar itself rather than in the toolbar: the chat next to it has a search
         // field of its own, and two searchable views in one window fight over the toolbar.
         .searchable(text: $query, placement: .sidebar, prompt: "Search threads")
-        .navigationTitle("Threads")
+        .navigationTitle("Yorozu")
         .toolbar {
             // The same compose glyph the phone's list and every Mac mail or notes app use. It
-            // asks who should answer, in a popover off the button rather than a sheet.
+            // asks who should answer in the same modal as the keyboard shortcut.
             Button("New thread", systemImage: "square.and.pencil") { choosingAgent = true }
-                .popover(isPresented: $choosingAgent, arrowEdge: .bottom) {
+                .sheet(isPresented: $choosingAgent) {
                     NewThreadPicker(projects: projects, onStart: onCreate)
                 }
         }
@@ -854,8 +872,8 @@ public struct ThreadSidebar: View {
         #if os(macOS)
             // What the Mac's File menu acts on. Published from here because a new thread is the
             // list's business and outlives whichever one is open — see ``ThreadCommands``.
-            // ⌘N keeps meaning a Yorozu thread, as it always did; the button is where to choose.
-            .focusedSceneValue(\.threadCommands, ThreadCommands(newThread: { onCreate(.yorozu, nil) }))
+            // ⌘N uses the same agent picker as the compose button.
+            .focusedSceneValue(\.threadCommands, ThreadCommands(newThread: { choosingAgent = true }))
             // Delete on a selected row puts it away, as it does in every Mac list. Archiving
             // rather than deleting, because that is the only removal this list has — and it
             // is undone from the Archived section rather than with ⌘Z.
@@ -878,7 +896,11 @@ public struct ThreadSidebar: View {
     @ViewBuilder private func rows(_ threads: [ThreadSummary]) -> some View {
         ForEach(threads) { thread in
             HStack(spacing: LayoutMetrics.tight) {
-                ThreadRow(thread: thread, working: workingThreads.contains(thread.id))
+                ThreadRow(
+                    thread: thread,
+                    working: workingThreads.contains(thread.id),
+                    selected: selection == thread.id
+                )
                 Menu { menu(thread) } label: {
                     Image(systemName: "ellipsis")
                         .frame(width: 20, height: 20)
@@ -891,6 +913,9 @@ public struct ThreadSidebar: View {
                 .accessibilityLabel("Thread actions")
             }
             .tag(thread.id)
+            .listRowInsets(EdgeInsets(top: 3, leading: 8, bottom: 3, trailing: 8))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
             .contentShape(.rect)
             .onHover { hoveredThreadID = $0 ? thread.id : nil }
             .contextMenu { menu(thread) }

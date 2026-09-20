@@ -73,7 +73,6 @@ import {
   readThreadEvents,
   renameThread,
   setThreadEffort,
-  setThreadBypass,
   setNativeTurn,
   recoverNativeTurns,
   setThreadModel,
@@ -525,8 +524,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
     ...payload,
   });
 
-  const threadList = (): YorozuEvent =>
-    control({ kind: "thread_list", data: { threads: threadSummaries(dir) } });
+  const threadList = (minTs = 0): YorozuEvent => {
+    const { yolo } = loadSettings(dir);
+    return control({ kind: "thread_list", data: { threads: threadSummaries(dir, minTs).map((thread) =>
+      thread.agent && thread.agent !== "yorozu" ? { ...thread, bypass: yolo } : thread) } });
+  };
 
   /**
    * What a thread can be put on, by name. Sent with the thread list rather than on request: a
@@ -691,7 +693,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           threadId,
           text,
           ...home,
-          bypass: listThreads(dir).find((thread) => thread.id === threadId)?.bypass ?? false,
+          bypass: loadSettings(dir).yolo,
           model: threadModel(threadId, dir),
           effort: threadEffort(threadId, dir),
           signal: turn.signal,
@@ -939,6 +941,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           kind: "approval_settings",
           data: { yolo: changed ? event.data.yolo! : settings.yolo },
         });
+        if (changed) broadcast(threadList());
         return changed ? broadcast(current) : reply(current);
       }
       case "rule_proposal":
@@ -1021,7 +1024,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return;
       }
       case "thread_set_bypass":
-        if (typeof event.data.bypass === "boolean") setThreadBypass(event.threadId, event.data.bypass, dir);
+        // Older clients use a thread command; approval bypass is now global.
+        if (threadAgent(event.threadId, dir) !== "yorozu" && typeof event.data.bypass === "boolean") {
+          saveSettings({ ...loadSettings(dir), yolo: event.data.bypass }, dir);
+          broadcast(control({ kind: "approval_settings", data: { yolo: event.data.bypass } }));
+        }
         return broadcast(threadList());
       case "thread_set_model": {
         const agent = threadAgent(event.threadId, dir);
@@ -1198,7 +1205,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (!key || ws.readyState !== WebSocket.OPEN) return;
       const cutoff = known.record.pairedAt ?? 0;
       if (event.threadId && event.ts < cutoff) return;
-      if (event.kind === "thread_list") event = { ...event, data: { threads: threadSummaries(dir, cutoff) } };
+      if (event.kind === "thread_list") event = { ...threadList(cutoff), id: event.id, ts: event.ts };
       const box = seal(key, Buffer.from(JSON.stringify(event)));
       sendFrame({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) });
     };

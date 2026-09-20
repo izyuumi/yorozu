@@ -84,9 +84,8 @@ public struct DelegationCardView: View {
                 }
             }
         }
-        .padding(LayoutMetrics.inner)
+        .yorozuPaperCard(padding: LayoutMetrics.inner)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
         .buttonStyle(.plain)
         .accessibilityHint(expanded ? String(localized: "Hides the trace") : String(localized: "Shows the trace"))
     }
