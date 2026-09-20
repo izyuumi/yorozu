@@ -8,6 +8,7 @@ import {
   archiveThread,
   createThread,
   eventsAfter,
+  fullToolResult,
   HISTORY_LIMIT,
   SYNC_LIMIT,
   listThreads,
@@ -18,6 +19,7 @@ import {
   setThreadEffort,
   setThreadModel,
   setThreadSession,
+  stashToolResult,
   threadAgent,
   threadEffort,
   threadHistory,
@@ -174,6 +176,23 @@ test("a native thread remembers its agent's session, and never tells the phone",
   expect(JSON.stringify(threadSummaries(dir))).not.toContain("s-1");
   expect(setThreadSession(native.id, undefined, dir)).toBe(true);
   expect(threadHome(native.id, dir)).toEqual({ cwd: "/tmp/proj" });
+});
+
+test("a long tool result travels as its head, and the whole of it is kept for the asking", () => {
+  const result = (output: string): YorozuEvent & { kind: "tool_result" } => ({
+    id: "r1", threadId: "cc", ts: 1, agentId: "main", kind: "tool_result", data: { callId: "call/1", ok: true, output },
+  });
+  // At the cap it fits, whole and unflagged; one past it, the head goes and the flag is set.
+  const fits = result("x".repeat(20));
+  expect(stashToolResult(fits, dir, 20)).toBe(fits);
+  expect(fullToolResult("cc", "call/1", dir)).toBeUndefined();
+
+  const long = result("y".repeat(21));
+  const sent = stashToolResult(long, dir, 20);
+  expect(sent).toEqual({ ...long, data: { callId: "call/1", ok: true, output: "y".repeat(20), truncated: true } });
+  expect(fullToolResult("cc", "call/1", dir)).toEqual(long);
+  expect(fullToolResult("cc", "other", dir)).toBeUndefined();
+  expect(fullToolResult("elsewhere", "call/1", dir)).toBeUndefined();
 });
 
 test("a thread is created unnamed and renamed in place", () => {

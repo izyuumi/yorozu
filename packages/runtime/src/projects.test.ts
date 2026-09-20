@@ -31,6 +31,10 @@ test("projects are the folders under the root, recents first, and nothing inside
   expect(isProjectFolder(join(root, "notes.txt"), root)).toBe(false);
   expect(isProjectFolder("/etc", root)).toBe(false);
   expect(isProjectFolder(root, root)).toBe(false);
+  // Neither the parent, a hidden folder, nor a trailing slash is a folder the picker offered.
+  expect(isProjectFolder(join(root, ".."), root)).toBe(false);
+  expect(isProjectFolder(join(root, ".hidden"), root)).toBe(false);
+  expect(isProjectFolder(`${join(root, "alpha")}/`, root)).toBe(false);
 
   // No root at all is an empty list, not a crash.
   expect(listProjects(join(root, "missing"), dir)).toEqual([]);

@@ -309,6 +309,12 @@ public final class ChatModel {
         messageReactionsByMessage(in: events[threadId] ?? [], selectedBy: device)
     }
 
+    /// Asks the Mac for the whole of a truncated tool result. The answer is the same
+    /// `tool_result` event, whole, under the id already in the thread, so it lands in place.
+    public func requestToolResult(_ callId: String, in threadId: String) {
+        emit(.toolResultRequest(ToolResultRequestData(callId: callId)), in: threadId)
+    }
+
     public func react(to messageId: String, with emoji: String, in threadId: String) {
         let remove = reactions(to: messageId, in: threadId).contains { $0.emoji == emoji && $0.selected }
         let reaction = event(.reaction(ReactionData(messageId: messageId, emoji: emoji, remove: remove)), in: threadId)

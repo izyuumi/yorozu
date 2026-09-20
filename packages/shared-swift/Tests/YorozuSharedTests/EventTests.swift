@@ -87,6 +87,7 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
                     percent: 50
                 )
             )
+        case .toolResultRequest: .toolResultRequest(ToolResultRequestData(callId: "c1"))
         case .threadCreate: .threadCreate(ThreadCreateData(title: "Groceries"))
         case .threadList:
             .threadList(ThreadListData(threads: [

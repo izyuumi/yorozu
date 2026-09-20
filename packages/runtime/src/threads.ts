@@ -11,6 +11,7 @@ import { join } from "node:path";
 import {
   messageAttachments,
   THREAD_AGENTS,
+  TOOL_RESULT_PREVIEW_CHARS,
   type EventKind,
   type ReasoningEffort,
   type ThreadAgent,
@@ -365,6 +366,38 @@ const hasLog = (threadId: string, dir: string): boolean => {
     return false;
   }
 };
+
+/**
+ * A tool result too long to travel whole. The head goes in the log and to the phones, flagged;
+ * the whole event is kept beside the log, so `tool_result_request` can answer with it under the
+ * same id. Returns the event to log and send — the original when it fits.
+ */
+export function stashToolResult(
+  event: YorozuEvent & { kind: "tool_result" },
+  dir = stateDir(),
+  limit = TOOL_RESULT_PREVIEW_CHARS,
+): YorozuEvent & { kind: "tool_result" } {
+  if (event.data.output.length <= limit) return event;
+  mkdirSync(threadsDir(dir), { recursive: true });
+  writeFileSync(resultFile(event.threadId, event.data.callId, dir), JSON.stringify(event));
+  return { ...event, data: { ...event.data, output: event.data.output.slice(0, limit), truncated: true } };
+}
+
+/** The whole of a stashed tool result, or undefined when none was kept for that call. */
+export function fullToolResult(
+  threadId: string,
+  callId: string,
+  dir = stateDir(),
+): (YorozuEvent & { kind: "tool_result" }) | undefined {
+  try {
+    return JSON.parse(readFileSync(resultFile(threadId, callId, dir), "utf8")) as YorozuEvent & { kind: "tool_result" };
+  } catch {
+    return undefined;
+  }
+}
+
+const resultFile = (threadId: string, callId: string, dir: string): string =>
+  threadFile(threadId, `.result-${callId.replace(/[^\w.-]/g, "_")}.json`, dir);
 
 /** Appends to the thread's log. Control events (sync, thread admin) are not history. */
 export function appendThreadEvent(event: YorozuEvent, dir = stateDir()): void {

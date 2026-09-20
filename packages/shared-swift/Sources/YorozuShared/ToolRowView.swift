@@ -71,6 +71,12 @@ public struct ToolGroupView: View {
     }
 }
 
+extension EnvironmentValues {
+    /// Asks the Mac for the whole of a truncated tool result, by call id. Set by the chat view,
+    /// which is the one place that has a model to ask through.
+    @Entry public var fetchToolResult: ((String) -> Void)? = nil
+}
+
 /// One tool call: the compact line, and what it did behind it.
 public struct ToolRowView: View {
     private let activity: ToolActivity
@@ -82,6 +88,10 @@ public struct ToolRowView: View {
     private static let previewLines = 12
     /// Tall enough to read a stack trace in, short enough that the row is still a row.
     private static let maxOutputHeight: CGFloat = 260
+    /// How to ask the Mac for the rest of a truncated result. Nil where nothing can ask — a
+    /// preview, an export — and the row then says the output was cut and leaves it there.
+    @Environment(\.fetchToolResult) private var fetchToolResult
+    @State private var fetching = false
 
     public init(activity: ToolActivity, expanded: Bool = false) {
         self.activity = activity
@@ -177,6 +187,33 @@ public struct ToolRowView: View {
                         .foregroundStyle(.tint)
                         .frame(minHeight: controlTarget)
                         .contentShape(.rect)
+                    }
+                }
+                // The Mac kept the rest: one tap asks for it, and the row redraws whole when
+                // it lands under the same event id.
+                if activity.truncated {
+                    if let fetchToolResult {
+                        Button {
+                            fetching = true
+                            fetchToolResult(activity.callId)
+                        } label: {
+                            HStack(spacing: LayoutMetrics.tight) {
+                                if fetching { ProgressView().controlSize(.mini) }
+                                Text(fetching ? "Fetching the rest…" : "Output was cut · Show full output")
+                            }
+                        }
+                        .font(.caption)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.tint)
+                        .frame(minHeight: controlTarget)
+                        .contentShape(.rect)
+                        .disabled(fetching)
+                        .accessibilityLabel("Show full output")
+                        .accessibilityHint("Fetches the rest of the output from the Mac")
+                    } else {
+                        Text("Output was cut; the rest is on the Mac.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
             } else if !activity.running {
