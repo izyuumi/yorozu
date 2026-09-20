@@ -308,6 +308,10 @@ public struct ChatView: View {
                     AnyView(rowView(row, reactions: reactions).environment(\.searchHighlight, search))
                 }
             )
+            // A thread change must create a fresh native timeline. Reusing the previous
+            // coordinator preserves its old scroll position instead of opening at the newest
+            // message.
+            .id(thread.id)
             .onChange(of: ChangeStamp(events: events)) { _, _ in noteReplyStart() }
             .overlay(alignment: .bottom) {
                 if showJumpToLatest, search.isEmpty {
@@ -360,11 +364,7 @@ public struct ChatView: View {
             }
             // A thread opens on its newest message, like every other chat: the anchor does it
             // during layout, so there is no jump from the top to watch on the way in.
-            #if os(macOS)
-                .defaultScrollAnchor(.top)
-            #else
-                .defaultScrollAnchor(.bottom)
-            #endif
+            .defaultScrollAnchor(.bottom)
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 // `visibleRect` is in content coordinates, which is what makes this reliable:
                 // a thread shorter than the screen sits under a content inset and reports a
