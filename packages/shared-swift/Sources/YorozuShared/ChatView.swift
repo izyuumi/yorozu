@@ -564,7 +564,7 @@ public struct ChatView: View {
         private var runSettingsButton: some View {
             Button { choosingRunSettings = true } label: {
                 HStack(spacing: 4) {
-                    Text(composerModelLabel)
+                    Text(composerChipLabel)
                         .font(.subheadline.weight(.medium))
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
@@ -606,23 +606,32 @@ public struct ChatView: View {
                         Divider()
                         ScrollView {
                             VStack(alignment: .leading, spacing: 16) {
-                                Text("Model").font(.headline)
-                                runSettingChoice("Default", selected: thread.model == nil) {
-                                    modelBinding.wrappedValue = nil
-                                }
-                                ForEach(model.models) { option in
-                                    runSettingChoice(option.menuLabel, selected: thread.model == option.id) {
-                                        modelBinding.wrappedValue = option.id
+                                // Effort is an ordered scale, so it gets the platform's ordinal
+                                // control: one row, every option visible, no scrolling to compare.
+                                Text("Effort").font(.headline)
+                                Picker("Effort", selection: effortBinding) {
+                                    Text("Default").tag(ReasoningEffort?.none)
+                                    ForEach(ReasoningEffort.allCases) { effort in
+                                        Text(effort.label).tag(Optional(effort))
                                     }
                                 }
+                                .pickerStyle(.segmented)
                                 Divider()
-                                Text("Effort").font(.headline)
-                                runSettingChoice("Default effort", selected: thread.effort == nil) {
-                                    effortBinding.wrappedValue = nil
+                                Text("Model").font(.headline)
+                                runSettingChoice("Auto", selected: thread.model == nil) {
+                                    modelBinding.wrappedValue = nil
                                 }
-                                ForEach(ReasoningEffort.allCases) { effort in
-                                    runSettingChoice(effort.label, selected: thread.effort == effort) {
-                                        effortBinding.wrappedValue = effort
+                                // Grouped under the provider so rows carry only the model's own
+                                // name; the provider header is what tells look-alikes apart.
+                                ForEach(providers, id: \.self) { provider in
+                                    Text(provider)
+                                        .font(.footnote.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                        .padding(.top, 4)
+                                    ForEach(model.models.filter { $0.providerLabel == provider }) { option in
+                                        runSettingChoice(option.label, selected: thread.model == option.id) {
+                                            modelBinding.wrappedValue = option.id
+                                        }
                                     }
                                 }
                             }
@@ -660,9 +669,24 @@ public struct ChatView: View {
             .accessibilityAddTraits(selected ? [.isSelected] : [])
         }
 
+        /// Provider order as the Mac published it; no re-sorting behind the user's back.
+        private var providers: [String] {
+            var seen: [String] = []
+            for option in model.models where !seen.contains(option.providerLabel) {
+                seen.append(option.providerLabel)
+            }
+            return seen
+        }
+
         private var composerModelLabel: String {
             guard let spec = thread.model else { return "Auto" }
             return model.models.first(where: { $0.id == spec })?.label ?? spec.split(separator: "/").last.map(String.init) ?? spec
+        }
+
+        /// The chip names an effort only once it differs from the agent's own default.
+        private var composerChipLabel: String {
+            guard let effort = thread.effort else { return composerModelLabel }
+            return "\(composerModelLabel) · \(effort.label)"
         }
 
         private var runSettingsAccessibilityValue: String {
