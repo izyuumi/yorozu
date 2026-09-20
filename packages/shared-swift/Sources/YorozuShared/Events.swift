@@ -722,14 +722,18 @@ public enum ThreadAgent: String, Codable, Equatable, Sendable, CaseIterable, Ide
         }
     }
 
-    /// The small glyph a row wears. Nil for Yorozu: its rows are drawn as they always were.
-    public var symbol: String? {
+    /// The provider-owned mark used only to identify who answers a thread.
+    public var mark: AgentMark {
         switch self {
-        case .yorozu: nil
-        case .claudeCode: "chevron.left.forwardslash.chevron.right"
-        case .codex: "terminal"
+        case .yorozu: .yorozu
+        case .claudeCode: .claude
+        case .codex: .openAI
         }
     }
+
+    /// OpenAI does not distribute a Codex product mark, so its company mark stays paired with
+    /// the product name anywhere the surrounding UI does not already say “Codex”.
+    public var markRequiresProductName: Bool { self == .codex }
 
     /// Whether the agent needs a folder to work in. Yorozu works everywhere; the coding agents
     /// each run in one project.
