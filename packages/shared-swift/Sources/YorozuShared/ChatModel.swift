@@ -315,9 +315,6 @@ public final class ChatModel {
             if let effort = draft.effort {
                 deliver(event(.threadSetEffort(ThreadSetEffortData(effort: effort)), in: threadId), queue: queue)
             }
-            if let bypass = draft.bypass {
-                deliver(event(.threadSetBypass(ThreadSetBypassData(bypass: bypass)), in: threadId), queue: queue)
-            }
             self.draft = nil
             synced.insert(draft, at: 0)
         }
@@ -552,9 +549,7 @@ public final class ChatModel {
 
     public func setBypass(_ thread: ThreadSummary, _ bypass: Bool) {
         guard thread.agent?.needsFolder == true else { return }
-        if draft?.id == thread.id { draft?.bypass = bypass; return }
-        set(thread.id) { $0.bypass = bypass }
-        emit(.threadSetBypass(ThreadSetBypassData(bypass: bypass)), in: thread.id)
+        setYoloMode(bypass)
     }
 
     /// Sets how much reasoning this thread requests, or returns it to the provider default.

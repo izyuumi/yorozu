@@ -3,7 +3,7 @@
 # scripts/build-mac.sh; this one is shorter because Xcode does the parts that script has
 # to do by hand — signing, packaging, and the upload itself.
 #
-#   VERSION=0.1.0 ./scripts/build-ios.sh
+#   VERSION=0.2.0 VERSION_LABEL=0.2.0-beta ./scripts/build-ios.sh
 #
 # Signing is automatic (see apps/ios/Project.swift): given -allowProvisioningUpdates and
 # an App Store Connect key, xcodebuild issues the distribution certificate and the App
@@ -14,8 +14,11 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-# The latest v* tag, as in scripts/build-mac.sh; there is no version to type anywhere.
-VERSION=${VERSION:-$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//' || true)}
+# App Store marketing versions are numeric, while a prerelease tag can carry a suffix.
+# Keep the owner-visible label intact but strip that suffix only where Apple requires it.
+TAG_VERSION=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//' || true)
+VERSION_LABEL=${VERSION_LABEL:-${TAG_VERSION:-0.1.0}}
+VERSION=${VERSION:-${TAG_VERSION%%-*}}
 VERSION=${VERSION:-0.1.0}
 # The build number has to rise with every upload and never repeat. The commit count does
 # both, needs no file to bump, and is the same number on any checkout of that commit.
@@ -65,7 +68,8 @@ env -u SDKROOT xcodebuild archive \
   -authenticationKeyPath "$ASC_KEY_PATH" \
   -authenticationKeyID "$ASC_KEY_ID" \
   -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-  MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD"
+  MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" \
+  YOROZU_VERSION_LABEL="$VERSION_LABEL"
 
 env -u SDKROOT xcodebuild -exportArchive \
   -archivePath "$ARCHIVE" -exportOptionsPlist "$OPTIONS" -exportPath "$DIST/export" \
@@ -74,4 +78,4 @@ env -u SDKROOT xcodebuild -exportArchive \
   -authenticationKeyID "$ASC_KEY_ID" \
   -authenticationKeyIssuerID "$ASC_ISSUER_ID"
 
-echo "uploaded $VERSION ($BUILD) to TestFlight; it appears once processing finishes"
+echo "uploaded $VERSION_LABEL as App Store version $VERSION ($BUILD) to TestFlight; it appears once processing finishes"

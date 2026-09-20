@@ -68,9 +68,18 @@ struct GeneralView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } }
+            LabeledContent("Version", value: versionLabel)
+                .foregroundStyle(.secondary)
             AutomaticUpdatesToggle()
             CheckForUpdatesButton()
         }
+    }
+
+    private var versionLabel: String {
+        let info = Bundle.main.infoDictionary
+        return info?["YorozuVersionLabel"] as? String
+            ?? info?["CFBundleShortVersionString"] as? String
+            ?? "Development"
     }
 }
 

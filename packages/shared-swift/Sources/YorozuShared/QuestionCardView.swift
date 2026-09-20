@@ -53,9 +53,8 @@ public struct QuestionCardView: View {
                 if card.offersFreeText { freeText }
             }
         }
-        .padding(LayoutMetrics.cardPadding)
+        .yorozuPaperCard()
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
     }
 
     private var freeText: some View {

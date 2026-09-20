@@ -1,8 +1,7 @@
 import SwiftUI
 
-/// The progress card: a long job saying where it has got to. Nothing to answer and nothing to
-/// tap — it is the one card that is only ever read, which is why it is the quietest of them.
-/// Re-reported under the same id, so it moves in place rather than a new one appearing.
+/// A numbered activity ledger for long-running work. It keeps every state explicit in text and
+/// shape, so vermilion and sage add hierarchy without becoming the only status signal.
 public struct ProgressCardView: View {
     public let card: ProgressCardData
 
@@ -11,70 +10,139 @@ public struct ProgressCardView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
-            HStack(spacing: LayoutMetrics.inner) {
-                Text(card.title)
-                    .font(.subheadline.weight(.semibold))
-                Spacer(minLength: 8)
-                if card.running {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: failed ? "exclamationmark.triangle" : "checkmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(failed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-                }
-            }
-            bar
-            VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
-                ForEach(card.steps) { step in
-                    HStack(alignment: .firstTextBaseline, spacing: LayoutMetrics.inner) {
-                        mark(for: step.state)
-                        Text(step.label)
-                            .font(.caption)
-                            // The mark says pending; the text stays readable.
-                            .foregroundStyle(.secondary)
-                        Spacer(minLength: 0)
-                    }
+        VStack(alignment: .leading, spacing: LayoutMetrics.stack) {
+            header
+            if let fraction = card.fraction { progress(fraction) }
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(card.steps.indices), id: \.self) { index in
+                    step(card.steps[index], number: index + 1, isLast: index == card.steps.indices.last)
                 }
             }
         }
-        .padding(LayoutMetrics.cardPadding)
+        .yorozuPaperCard()
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(card.title)
         .accessibilityValue(spoken)
     }
 
-    private var failed: Bool { card.steps.contains { $0.state == .failed } }
+    private var header: some View {
+        HStack(alignment: .center, spacing: LayoutMetrics.inner) {
+            YorozuMark(dimension: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("ACTIVITY")
+                    .font(.caption2.weight(.semibold))
+                    .tracking(0.9)
+                    .foregroundStyle(YorozuPalette.vermilion)
+                Text(card.title)
+                    .font(.headline)
+                    .foregroundStyle(YorozuPalette.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: LayoutMetrics.inner)
+            if card.running {
+                ProgressView().controlSize(.small).tint(YorozuPalette.vermilion)
+            } else {
+                Label(failed ? String(localized: "Failed") : String(localized: "Done"),
+                      systemImage: failed ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    .labelStyle(.iconOnly)
+                    .foregroundStyle(failed ? AnyShapeStyle(.red) : AnyShapeStyle(YorozuPalette.sage))
+            }
+        }
+    }
 
-    /// Thin, and only drawn when the card can say how far along it is: a bar that means
-    /// nothing is worse than no bar.
-    @ViewBuilder private var bar: some View {
-        if let fraction = card.fraction {
+    private func progress(_ fraction: Double) -> some View {
+        VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
+            HStack {
+                Text("Progress").font(.caption).foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Text(fraction, format: .percent.precision(.fractionLength(0)))
+                    .font(.caption.monospacedDigit().weight(.medium))
+                    .foregroundStyle(YorozuPalette.ink)
+            }
             ProgressView(value: fraction)
                 .progressViewStyle(.linear)
-                .tint(failed ? .red : .accentColor)
-                .scaleEffect(x: 1, y: 0.6, anchor: .center)
+                .tint(failed ? .red : YorozuPalette.vermilion)
                 .animation(.snappy, value: fraction)
         }
     }
 
-    /// The step's own state, at a glance: a spinner only for the one actually being worked on.
-    @ViewBuilder private func mark(for state: ProgressStep.State) -> some View {
+    private func step(_ step: ProgressStep, number: Int, isLast: Bool) -> some View {
+        HStack(alignment: .top, spacing: LayoutMetrics.stack) {
+            VStack(spacing: 0) {
+                numberMark(number, state: step.state)
+                if !isLast {
+                    Rectangle()
+                        .fill(YorozuPalette.rule)
+                        .frame(width: 1, height: 16)
+                        .accessibilityHidden(true)
+                }
+            }
+            HStack(alignment: .firstTextBaseline, spacing: LayoutMetrics.inner) {
+                Text(step.label)
+                    .font(.subheadline)
+                    .foregroundStyle(step.state == .pending ? AnyShapeStyle(.secondary) : AnyShapeStyle(YorozuPalette.ink))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Text(stateLabel(step.state))
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(stateColour(step.state))
+            }
+            .padding(.top, 2)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Step \(number), \(step.label), \(stateLabel(step.state))")
+    }
+
+    private func numberMark(_ number: Int, state: ProgressStep.State) -> some View {
+        Text(number.formatted(.number.precision(.integerLength(2))))
+            .font(.caption2.monospacedDigit().weight(.semibold))
+            .foregroundStyle(markForeground(state))
+            .frame(width: 26, height: 26)
+            .background(markBackground(state), in: Circle())
+            .overlay(Circle().strokeBorder(markBorder(state), lineWidth: 1))
+    }
+
+    private func stateLabel(_ state: ProgressStep.State) -> String {
         switch state {
-        case .pending:
-            Image(systemName: "circle").font(.caption2).foregroundStyle(.tertiary)
-        case .running:
-            ProgressView().controlSize(.mini)
-        case .done:
-            Image(systemName: "checkmark.circle.fill").font(.caption2).foregroundStyle(.secondary)
-        case .failed:
-            Image(systemName: "xmark.circle.fill").font(.caption2).foregroundStyle(.red)
+        case .pending: String(localized: "Waiting")
+        case .running: String(localized: "Current")
+        case .done: String(localized: "Done")
+        case .failed: String(localized: "Failed")
         }
     }
 
-    /// What VoiceOver reads instead of a bar it cannot see: the steps settled out of the total.
+    private func stateColour(_ state: ProgressStep.State) -> AnyShapeStyle {
+        switch state {
+        case .pending: AnyShapeStyle(.secondary)
+        case .running: AnyShapeStyle(YorozuPalette.vermilion)
+        case .done: AnyShapeStyle(YorozuPalette.sage)
+        case .failed: AnyShapeStyle(.red)
+        }
+    }
+
+    private func markForeground(_ state: ProgressStep.State) -> AnyShapeStyle {
+        switch state {
+        case .running, .done, .failed: AnyShapeStyle(Color.white)
+        case .pending: AnyShapeStyle(.secondary)
+        }
+    }
+
+    private func markBackground(_ state: ProgressStep.State) -> AnyShapeStyle {
+        switch state {
+        case .pending: AnyShapeStyle(Color.clear)
+        case .running: AnyShapeStyle(YorozuPalette.vermilion)
+        case .done: AnyShapeStyle(YorozuPalette.sage)
+        case .failed: AnyShapeStyle(Color.red)
+        }
+    }
+
+    private func markBorder(_ state: ProgressStep.State) -> Color {
+        state == .pending ? YorozuPalette.rule : .clear
+    }
+
+    private var failed: Bool { card.steps.contains { $0.state == .failed } }
+
     private var spoken: String {
         let done = card.steps.filter { $0.state == .done }.count
         return card.running

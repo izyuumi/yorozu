@@ -17,8 +17,9 @@ func signing(_ extra: SettingsDictionary = [:]) -> Settings {
         base: [
             "DEVELOPMENT_TEAM": "AN5KM8QGEF",
             "CODE_SIGN_STYLE": "Automatic",
-            "MARKETING_VERSION": "0.1.0",
+            "MARKETING_VERSION": "0.2.0",
             "CURRENT_PROJECT_VERSION": "1",
+            "YOROZU_VERSION_LABEL": "0.2.0-beta",
         ].merging(extra) { _, new in new }
     )
 }
@@ -30,6 +31,7 @@ func signing(_ extra: SettingsDictionary = [:]) -> Settings {
 let version: [String: Plist.Value] = [
     "CFBundleShortVersionString": "$(MARKETING_VERSION)",
     "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+    "YorozuVersionLabel": "$(YOROZU_VERSION_LABEL)",
 ]
 
 let project = Project(

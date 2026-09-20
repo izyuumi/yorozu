@@ -917,21 +917,24 @@ func finalStreamedReplyFollowsToolHistory(finalTimestamp: Int) async throws {
 }
 
 @MainActor
-@Test func nativeBypassOnADraftPrecedesItsFirstPromptAndOrdinaryThreadsIgnoreIt() async throws {
+@Test func nativeBypassChangesGlobalYoloWithoutSavingADraftOverride() async throws {
     let transport = FakeTransport()
     let model = await connected(transport)
+    let before = await sent(by: transport, atLeast: pairingSends).count
     let draft = model.newDraft(agent: .claudeCode, cwd: "/tmp/project")
     model.setBypass(draft, true)
-    #expect(model.draft?.bypass == true)
-    let before = await sent(by: transport, atLeast: pairingSends).count
+    #expect(model.yoloMode)
+    #expect(model.draft?.bypass == nil)
+    let settings = await sent(by: transport, atLeast: before + 1)
+    #expect(settings.last?.payload == .approvalSettings(ApprovalSettingsData(yolo: true)))
     model.send("hi", in: draft.id)
     let created = await sent(by: transport, atLeast: before + 3)
-    #expect(created.dropFirst(before).map(\.payload.kind) == [.threadCreate, .threadSetBypass, .message])
+    #expect(created.dropFirst(before).map(\.payload.kind) == [.approvalSettings, .threadCreate, .message])
+    model.setBypass(ThreadSummary(id: "cx", title: "", archived: false, lastActivity: 1, agent: .codex), false)
+    #expect(!model.yoloMode)
     let ordinary = model.newDraft()
     model.setBypass(ordinary, true)
-    #expect(model.draft?.bypass == nil)
-    let encoded = try JSONEncoder().encode(ThreadSummary(id: "cc", title: "", archived: false, lastActivity: 1, agent: .claudeCode, bypass: true))
-    #expect(try JSONDecoder().decode(ThreadSummary.self, from: encoded).bypass == true)
+    #expect(!model.yoloMode)
 }
 
 @MainActor

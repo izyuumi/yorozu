@@ -461,8 +461,8 @@ struct RootView: View {
                     notificationEventRef: notification?.eventRef,
                     lastReadAt: notification?.lastReadAt,
                     notificationSyncRevision: notification?.syncRevision
-                ) {
-                    path = [model.newDraft().id]
+                ) { agent, cwd in
+                    path = [model.newDraft(agent: agent, cwd: cwd).id]
                 }
             }
             // Unpairing lives in Settings behind a confirmation now, which is the only place it

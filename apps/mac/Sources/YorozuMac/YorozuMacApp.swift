@@ -160,12 +160,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev"
             Log.write("launch: build \(version) at \(Bundle.main.bundlePath)")
-            // Whatever the last quit left behind, this Mac is up now and wants supervising.
-            Watchdog.clearPause()
-            // Re-registered rather than only written once: an update moves the bundle, and an
-            // agent pointing at the old path supervises nothing.
-            if Watchdog.isEnabled { Watchdog.install() }
-            LoginItem.enableByDefaultOnce()
+            let ephemeral = ProcessInfo.processInfo.arguments.contains("-yorozuShowcase")
+                || ProcessInfo.processInfo.environment["YOROZU_EPHEMERAL_RUN"] == "1"
+            if ephemeral {
+                // Screenshot/showcase bundles must never become login items or supervise
+                // themselves. They are deliberately disposable and may live under /tmp.
+                Watchdog.remove()
+                LoginItem.set(false)
+            } else {
+                // Whatever the last quit left behind, this Mac is up now and wants supervising.
+                Watchdog.clearPause()
+                // Re-registered rather than only written once: an update moves the bundle, and an
+                // agent pointing at the old path supervises nothing.
+                if Watchdog.isEnabled { Watchdog.install() }
+                LoginItem.enableByDefaultOnce()
+            }
             Task { await Permission.logAll() }
             // Starts Sparkle here rather than when Settings is first opened: the whole point of
             // an automatic update is that nobody had to go looking for it.

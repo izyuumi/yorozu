@@ -8,20 +8,34 @@ import SwiftUI
 /// below it on its own, which is what keeps a long turn from reading as a stack.
 public struct WorkRowView: View {
     private let work: TurnWork
-    @State private var expanded = false
+    @State private var expanded: Bool
 
     public init(work: TurnWork) {
         self.work = work
+        _expanded = State(initialValue: false)
     }
 
-    public var body: some View {
+    @ViewBuilder public var body: some View {
+        if let liveProgress {
+            ProgressCardView(card: liveProgress)
+        } else {
+            activity
+        }
+    }
+
+    private var activity: some View {
         DisclosureGroup(isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
+                Divider().overlay(YorozuPalette.rule)
                 ForEach(work.entries) { entry in
                     switch entry {
                     case .thought(let event):
                         if case .thought(let data) = event.payload {
-                            Text(data.text).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                            Text(data.text)
+                                .font(.callout)
+                                .fontDesign(.serif)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
                         }
                     case .tools(let activities): ToolGroupView(activities: activities)
                     case .delegation(let card): DelegationCardView(card: card)
@@ -30,14 +44,39 @@ public struct WorkRowView: View {
                     }
                 }
             }
+            .padding(.top, LayoutMetrics.inner)
         } label: {
             HStack(spacing: LayoutMetrics.inner) {
-                if work.running { ProgressView().controlSize(.small) }
-                Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                YorozuMark(dimension: 20)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(work.running ? "IN PROGRESS" : "ACTIVITY")
+                        .font(.caption2.weight(.semibold))
+                        .tracking(0.8)
+                        .foregroundStyle(work.running ? YorozuPalette.vermilion : YorozuPalette.sage)
+                    Text(summary)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(YorozuPalette.ink)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: LayoutMetrics.inner)
+                if work.running { ProgressView().controlSize(.small).tint(YorozuPalette.vermilion) }
             }
             .frame(minHeight: controlTarget)
             .accessibilityLabel(summary)
         }
+        .buttonStyle(.plain)
+        .yorozuPaperCard(padding: LayoutMetrics.stack)
+    }
+
+    /// A live structured progress report is already the best summary of the work. Showing the
+    /// generic disclosure above it repeats the same status and nests paper cards three deep.
+    private var liveProgress: ProgressCardData? {
+        work.entries.reversed().compactMap { entry in
+            guard case .progress(let event) = entry,
+                  case .progressCard(let card) = event.payload,
+                  card.running else { return nil }
+            return card
+        }.first
     }
 
     /// Live: what is happening now. Settled: how much happened and how long it took — or, for
