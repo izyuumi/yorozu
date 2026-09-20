@@ -58,6 +58,11 @@ export interface ThreadRecord {
   /** A native agent's working directory, chosen at creation. Absent on a `yorozu` thread. */
   cwd?: string;
   /**
+   * The native agent's own session id, from the thread's last turn, so the next one resumes
+   * it. Never leaves the Mac. Absent until the agent has answered once.
+   */
+  nativeSessionId?: string;
+  /**
    * When the thread was last read, on any device, epoch milliseconds. Absent means never.
    *
    * Read state lives here rather than on each device: a phone could only ever answer "did a
@@ -260,6 +265,26 @@ export const threadEffort = (id: string, dir = stateDir()): ReasoningEffort | un
 export function threadAgent(id: string, dir = stateDir()): ThreadAgent {
   const agent = listThreads(dir).find((thread) => thread.id === id)?.agent;
   return agent && THREAD_AGENTS.includes(agent) ? agent : "yorozu";
+}
+
+/** The folder and native session a native agent's next turn picks up from. */
+export function threadHome(id: string, dir = stateDir()): { cwd?: string; sessionId?: string } {
+  const thread = listThreads(dir).find((candidate) => candidate.id === id);
+  return {
+    ...(thread?.cwd ? { cwd: thread.cwd } : {}),
+    ...(thread?.nativeSessionId ? { sessionId: thread.nativeSessionId } : {}),
+  };
+}
+
+/** Records the native session the thread's next turn resumes. False when nothing changed. */
+export function setThreadSession(id: string, sessionId: string | undefined, dir = stateDir()): boolean {
+  const threads = listThreads(dir);
+  const thread = threads.find((candidate) => candidate.id === id);
+  if (!thread || thread.nativeSessionId === sessionId) return false;
+  if (sessionId) thread.nativeSessionId = sessionId;
+  else delete thread.nativeSessionId;
+  saveThreads(threads, dir);
+  return true;
 }
 
 /**
