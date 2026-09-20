@@ -115,6 +115,17 @@ public func markdownBlocks(_ text: String) -> [MarkdownBlock] {
                     // starting a paragraph that would break the list in two.
                     items[items.count - 1] += " " + item
                     index += 1
+                } else if item.isEmpty {
+                    // Markdown permits a blank line between list items. Keep looking only when
+                    // the next non-empty line is another item of this list's kind; otherwise
+                    // the blank really ends the list. This prevents every spaced ordered item
+                    // from becoming a separate one-item list rendered as “1.”.
+                    var next = index + 1
+                    while next < lines.count, lines[next].trimmingCharacters(in: .whitespaces).isEmpty { next += 1 }
+                    guard next < lines.count else { break }
+                    let candidate = lines[next].trimmingCharacters(in: .whitespaces)
+                    guard listMarker(candidate) != nil, (orderedMarker(candidate) != nil) == ordered else { break }
+                    index = next
                 } else {
                     break
                 }

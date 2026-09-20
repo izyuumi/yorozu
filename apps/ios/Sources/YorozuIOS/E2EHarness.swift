@@ -173,7 +173,7 @@ final class E2EHarness {
                 ChatShowcase.search = "invoice"
             case "reply":
                 ChatShowcase.quote = "The April invoice is still open: it was issued on the second and the terms on it are thirty days."
-            // The long reply held open, as the `plain` scene's "Read more" leaves it.
+            // The long reply is always shown in full.
             case "expanded":
                 ChatShowcase.expanded = true
             default:
