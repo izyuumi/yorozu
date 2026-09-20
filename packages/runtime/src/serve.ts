@@ -80,6 +80,7 @@ import {
   setThreadModel,
   SYNC_LIMIT,
   SYNC_PAGE_BYTES,
+  threadAgent,
   threadEffort,
   threadHistory,
   threadModel,
@@ -285,6 +286,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const keys = loadKeys(dir);
   const provider = options.provider;
   const openclaw = provider ? undefined : options.openclawRunner ?? new OpenClawRunner({ stateDir: dir });
+  /**
+   * Whether this thread's turns, stops and archives go through the OpenClaw bridge. Only a
+   * `yorozu` thread does; a native agent's thread is its own session and never Gateway's,
+   * whichever backend the rest of the runtime is on.
+   */
+  const viaOpenClaw = (threadId: string): boolean => openclaw !== undefined && threadAgent(threadId, dir) === "yorozu";
   // `web_search` asks the running chain for native search before it drives a browser.
   if (provider) useProviderSearch(provider);
   const log = options.log ?? ((line: string) => void stdout.write(`${line}\n`));
@@ -641,7 +648,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // replaces that message in place and a dropped frame still converges. Only the finished
     // reply goes through `emit`, so the transcript keeps one line per turn rather than one
     // per delta.
-    const id = openclaw && userEventId ? `openclaw:` + userEventId + `:final` : randomUUID();
+    const agent = threadAgent(threadId, dir);
+    const id = agent === "yorozu" && openclaw && userEventId ? `openclaw:` + userEventId + `:final` : randomUUID();
     // `done` on the finished one only: it is what tells a phone the turn is over, so its
     // composer can stop offering Stop. The deltas under the same id leave it unset.
     const message = (reply: string, done = false): YorozuEvent => ({
@@ -652,6 +660,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
       kind: "message",
       data: { role: "agent", text: reply, ...(done ? { done: true } : {}) },
     });
+
+    // A native agent's thread is answered by that agent alone. None is wired in yet, so the
+    // answer is that — finished, so the composer is not left offering Stop for a turn nobody
+    // is running. The bridge for each lands in its own change.
+    if (agent !== "yorozu") {
+      const final = message(`${agent} is not available in this build yet.`, true);
+      appendTranscript(final, transcripts);
+      appendThreadEvent(final, dir);
+      return broadcast(final);
+    }
 
     if (openclaw) {
       const turn = new AbortController();
@@ -799,11 +817,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
     userEventId?: string,
     acceptedEvent?: YorozuEvent,
   ): Promise<void> {
-    if (openclaw) {
+    if (viaOpenClaw(threadId)) {
       userEventId ??= randomUUID();
       const event = acceptedEvent ?? { id: userEventId, threadId, ts: Date.now(), agentId: MAIN_AGENT,
         kind: "message" as const, data: { role: "user" as const, text, ...(attachments.length ? { attachments } : {}) } };
-      const stored = openclaw.admitUserTurn({ threadId, text, model: threadModel(threadId, dir),
+      const stored = openclaw!.admitUserTurn({ threadId, text, model: threadModel(threadId, dir),
         effort: threadEffort(threadId, dir), attachments, userEventId,
         completionId: `openclaw:` + userEventId + `:final` }, () => {
         if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === event.id)) appendTranscript(event, transcripts);
@@ -885,7 +903,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   function updateArchive(event: YorozuEvent & { kind: "thread_archive" }, reply: Send): void {
     const threadId = event.threadId;
     const archived = event.data.archived ?? true;
-    if (!openclaw) {
+    if (!viaOpenClaw(threadId)) {
       archiveThread(threadId, dir, archived);
       return broadcast(threadList());
     }
@@ -895,7 +913,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const update = previous.then(async () => {
       if (!listThreads(dir).some((thread) => thread.id === threadId)) return;
       try {
-        await openclaw.setArchived(threadId, archived);
+        await openclaw!.setArchived(threadId, archived);
         archiveThread(threadId, dir, archived);
       } catch (error) {
         state(`archive-error ${String(error)}`);
@@ -946,12 +964,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const duplicateMessage =
       event.kind === "message" &&
       readThreadEvents(event.threadId, dir).some((known) => known.id === event.id);
-    if (duplicateMessage && !(openclaw && event.data.role === "user")) {
+    // A user message bound for OpenClaw crosses one admission boundary below: ledger first,
+    // logs second. Every other message — a native agent's thread included — is logged here.
+    const admitted = event.kind === "message" && event.data.role === "user" && viaOpenClaw(event.threadId);
+    if (duplicateMessage && !admitted) {
       receipt();
       return state("duplicate-message");
     }
-    // OpenClaw user messages cross one admission boundary below: ledger first, logs second.
-    if (!(openclaw && event.kind === "message" && event.data.role === "user")) {
+    if (!admitted) {
       appendTranscript(event, transcripts);
       appendThreadEvent(event, dir);
     }
@@ -1013,7 +1033,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
       // Thread admin is answered to every device, so a second phone sees the same list.
       case "thread_create":
         // The device minted the id: the message it typed follows straight after this frame.
-        createThread(event.data.title, dir, event.threadId || undefined);
+        try {
+          createThread(event.data.title, dir, event.threadId || undefined, event.data);
+        } catch (error) {
+          // An agent this runtime does not know: no thread is made, and the device that asked
+          // is told why in the thread it is looking at, since the message it sends next has
+          // nowhere to land.
+          const reason = error instanceof Error ? error.message : String(error);
+          state(`thread-create-error ${reason}`);
+          return reply({
+            id: randomUUID(), threadId: event.threadId, ts: Date.now(), agentId: MAIN_AGENT,
+            kind: "thought", data: { text: `Could not create this thread: ${reason}.` },
+          });
+        }
         return broadcast(threadList());
       case "thread_rename":
         renameThread(event.threadId, event.data.title, dir);
@@ -1055,7 +1087,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const oldest = [...pending.values()].find((card) => card.threadId === event.threadId);
     const typed = oldest && typedAnswer(event.data.text, oldest.card);
     if (typed) {
-      if (openclaw) {
+      if (admitted) {
         appendTranscript(event, transcripts);
         appendThreadEvent(event, dir);
       }

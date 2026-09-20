@@ -8,7 +8,15 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { messageAttachments, type EventKind, type ReasoningEffort, type ThreadSummary, type YorozuEvent } from "@yorozu/shared";
+import {
+  messageAttachments,
+  THREAD_AGENTS,
+  type EventKind,
+  type ReasoningEffort,
+  type ThreadAgent,
+  type ThreadSummary,
+  type YorozuEvent,
+} from "@yorozu/shared";
 import { stateDir } from "./memory.js";
 import type { Message } from "./provider.js";
 
@@ -42,6 +50,13 @@ export interface ThreadRecord {
   model?: string;
   /** Requested reasoning depth. Absent leaves the provider default in charge. */
   effort?: ReasoningEffort;
+  /**
+   * Which agent answers this thread, fixed for its life. Absent — every thread from before the
+   * field, and every ordinary one since — means `yorozu`. See `threadAgent`.
+   */
+  agent?: Exclude<ThreadAgent, "yorozu">;
+  /** A native agent's working directory, chosen at creation. Absent on a `yorozu` thread. */
+  cwd?: string;
   /**
    * When the thread was last read, on any device, epoch milliseconds. Absent means never.
    *
@@ -126,14 +141,24 @@ export const currentThread = (dir = stateDir()): string =>
  * sent straight after the `thread_create` and has to land in the thread it was typed in. An id
  * that already exists is returned as it stands rather than duplicated.
  */
-export function createThread(title?: string, dir = stateDir(), id: string = randomUUID()): ThreadRecord {
+export function createThread(
+  title?: string,
+  dir = stateDir(),
+  id: string = randomUUID(),
+  home: { agent?: ThreadAgent; cwd?: string } = {},
+): ThreadRecord {
+  const agent = home.agent ?? "yorozu";
+  if (!THREAD_AGENTS.includes(agent)) throw new Error(`unknown agent "${String(agent)}"`);
   const existing = listThreads(dir).find((thread) => thread.id === id);
   if (existing) return existing;
+  const cwd = home.cwd?.trim();
   const thread: ThreadRecord = {
     id,
     title: title?.trim() ?? "",
     createdAt: new Date().toISOString(),
     archived: false,
+    // Only a native agent has a home of its own; a `yorozu` thread is the default, unspelled.
+    ...(agent !== "yorozu" ? { agent, ...(cwd ? { cwd } : {}) } : {}),
   };
   saveThreads([...listThreads(dir), thread], dir);
   return thread;
@@ -228,6 +253,16 @@ export const threadEffort = (id: string, dir = stateDir()): ReasoningEffort | un
   listThreads(dir).find((thread) => thread.id === id)?.effort;
 
 /**
+ * Who answers `id`. A thread with no agent field, a thread that does not exist, and a record
+ * naming an agent this runtime does not know all read as `yorozu`: today's behaviour, and the
+ * only one that can never be the wrong one to fall back on.
+ */
+export function threadAgent(id: string, dir = stateDir()): ThreadAgent {
+  const agent = listThreads(dir).find((thread) => thread.id === id)?.agent;
+  return agent && THREAD_AGENTS.includes(agent) ? agent : "yorozu";
+}
+
+/**
  * Sets one boolean on one thread and writes the index back, but only when the value is new:
  * both flags are toggles a second device may already have set, and an idempotent frame should
  * not rewrite the file or claim it changed anything.
@@ -278,6 +313,9 @@ export const threadSummaries = (dir = stateDir(), minTs = 0): ThreadSummary[] =>
       pinned: thread.pinned ?? false,
       ...(thread.model ? { model: thread.model } : {}),
       ...(thread.effort ? { effort: thread.effort } : {}),
+      // Absent on a yorozu thread: that is the default, and what older phones already assume.
+      ...(thread.agent && THREAD_AGENTS.includes(thread.agent) ? { agent: thread.agent } : {}),
+      ...(thread.agent && thread.cwd ? { cwd: thread.cwd } : {}),
       // The two the dot is drawn from. Absent rather than 0 when there is nothing to say, so a
       // thread nobody has read and nobody has been answered in is not permanently bold.
       ...(thread.lastReadAt === undefined ? {} : { lastReadAt: thread.lastReadAt }),

@@ -665,9 +665,27 @@ public struct ProgressCardData: Codable, Equatable, Sendable {
     public var running: Bool { steps.contains { $0.state == .pending || $0.state == .running } }
 }
 
+/// Who answers a thread. `yorozu` is today's loop; the other two are native CLI coding agents,
+/// each thread one of their sessions. Absent on the wire means `yorozu`.
+public enum ThreadAgent: String, Codable, Equatable, Sendable, CaseIterable, Identifiable {
+    case yorozu
+    case claudeCode = "claude-code"
+    case codex
+
+    public var id: Self { self }
+}
+
 public struct ThreadCreateData: Codable, Equatable, Sendable {
     public var title: String?
-    public init(title: String? = nil) { self.title = title }
+    /// Which agent answers the thread, for its whole life. Nil means `yorozu`.
+    public var agent: ThreadAgent?
+    /// The working directory a native agent runs in, fixed at creation. Only they have one.
+    public var cwd: String?
+    public init(title: String? = nil, agent: ThreadAgent? = nil, cwd: String? = nil) {
+        self.title = title
+        self.agent = agent
+        self.cwd = cwd
+    }
 }
 
 /// Portable reasoning levels supported by both subscription CLI providers. Nil on a thread
@@ -702,6 +720,11 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     public var model: String?
     /// How much reasoning each turn requests. Nil means the provider's default.
     public var effort: ReasoningEffort?
+    /// Which agent answers this thread. Nil means `yorozu`, which is also what a runtime older
+    /// than the field is saying by leaving it out — and an agent this build does not know.
+    public var agent: ThreadAgent?
+    /// A native agent's working directory. Nil on a `yorozu` thread.
+    public var cwd: String?
     /// When the thread was last read, on any device, epoch milliseconds. The runtime owns it,
     /// so reading on the phone clears the dot on the Mac too. Nil means never.
     public var lastReadAt: Double?
@@ -717,6 +740,8 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         pinned: Bool = false,
         model: String? = nil,
         effort: ReasoningEffort? = nil,
+        agent: ThreadAgent? = nil,
+        cwd: String? = nil,
         lastReadAt: Double? = nil,
         lastAgentAt: Double? = nil
     ) {
@@ -728,6 +753,8 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         self.pinned = pinned
         self.model = model
         self.effort = effort
+        self.agent = agent
+        self.cwd = cwd
         self.lastReadAt = lastReadAt
         self.lastAgentAt = lastAgentAt
     }
@@ -744,6 +771,10 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
         model = try c.decodeIfPresent(String.self, forKey: .model)
         effort = try c.decodeIfPresent(ReasoningEffort.self, forKey: .effort)
+        // An agent a newer runtime knows and this build does not is not a thread that fails to
+        // list: it is drawn as an ordinary one.
+        agent = ThreadAgent(rawValue: try c.decodeIfPresent(String.self, forKey: .agent) ?? "")
+        cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
         lastReadAt = try c.decodeIfPresent(Double.self, forKey: .lastReadAt)
         lastAgentAt = try c.decodeIfPresent(Double.self, forKey: .lastAgentAt)
     }
