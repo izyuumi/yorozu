@@ -760,6 +760,50 @@ private func summary(
 }
 
 @MainActor
+@Test(arguments: [0, 4, 5])
+func finalStreamedReplyFollowsToolHistory(finalTimestamp: Int) async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    let stream = YorozuEvent(id: "reply", threadId: "home", ts: finalTimestamp == 0 ? 0 : 2, agentId: "main",
+                            payload: .message(MessageData(role: .agent, text: "Checking")))
+    let call = YorozuEvent(id: "call", threadId: "home", ts: finalTimestamp == 0 ? 0 : 3, agentId: "main",
+                          payload: .toolCall(ToolCallData(callId: "c1", name: "shell", args: [:])))
+    let result = YorozuEvent(id: "result", threadId: "home", ts: finalTimestamp == 0 ? 0 : 4, agentId: "main",
+                            payload: .toolResult(ToolResultData(callId: "c1", ok: true, output: "ok")))
+    let final = YorozuEvent(id: "reply", threadId: "home", ts: finalTimestamp, agentId: "main",
+                           payload: .message(MessageData(role: .agent, text: "Finished", done: true)))
+    for item in [stream, call, result] { await transport.yield(.event(item)) }
+    #expect(await eventually { model.events["home"]?.count == 3 })
+    await transport.yield(.event(final))
+    #expect(await eventually { model.events["home"]?.contains(final) == true })
+    #expect(model.timeline("home").rows(generating: false).map(\.id) == ["work-call", "reply"])
+    #expect(model.events["home"]?.map(\.id) == ["call", "result", "reply"])
+
+    // A reconnect replay must preserve the corrected position without duplicating rows.
+    await transport.yield(.event(event("sync", .syncDelta(SyncDeltaData(events: [call, result, final])))))
+    await transport.yield(.event(event("marker", .thought(ThoughtData(text: "other thread")), thread: "other")))
+    #expect(await eventually { model.events["other"]?.count == 1 })
+    #expect(model.timeline("home").rows(generating: false).map(\.id) == ["work-call", "reply"])
+}
+
+@MainActor
+@Test func cachedFinalReplyReturnsBelowEarlierToolHistory() {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: SymmetricKey(size: .bits256))
+    cache.save(threads: [ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 5)])
+    let final = YorozuEvent(id: "reply", threadId: "home", ts: 5, agentId: "main",
+                           payload: .message(MessageData(role: .agent, text: "Finished", done: true)))
+    let call = YorozuEvent(id: "call", threadId: "home", ts: 3, agentId: "main",
+                          payload: .toolCall(ToolCallData(callId: "c1", name: "shell", args: [:])))
+    let result = YorozuEvent(id: "result", threadId: "home", ts: 4, agentId: "main",
+                            payload: .toolResult(ToolResultData(callId: "c1", ok: true, output: "ok")))
+    cache.save(events: [final, call, result], threadId: "home")
+    let model = ChatModel(transport: FakeTransport(), cache: cache)
+    #expect(model.timeline("home").rows(generating: false).map(\.id) == ["work-call", "reply"])
+}
+
+@MainActor
 @Test func lateSyncEventReturnsToWireOrderInsteadOfArrivalOrder() async throws {
     let transport = FakeTransport()
     let model = ChatModel(transport: transport, device: "phone")
