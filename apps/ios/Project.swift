@@ -37,6 +37,17 @@ let project = Project(
     packages: [.local(path: "../../packages/shared-swift")],
     targets: [
         .target(
+            name: "YorozuKeyboardUITests",
+            destinations: .iOS,
+            product: .uiTests,
+            bundleId: "to.yumi.yorozu.keyboard-tests",
+            deploymentTargets: .iOS("18.0"),
+            infoPlist: .default,
+            sources: ["Tests/KeyboardUITests/**"],
+            dependencies: [.target(name: "YorozuIOS")],
+            settings: signing()
+        ),
+        .target(
             name: "YorozuIOS",
             destinations: .iOS,
             product: .app,

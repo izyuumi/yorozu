@@ -111,12 +111,21 @@ public struct ChatView: View {
             if let failure = model.failure {
                 Banner(text: failure, systemImage: "exclamationmark.triangle")
             }
-            if rows.isEmpty {
-                EmptyThreadView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                messages
+            Group {
+                if rows.isEmpty {
+                    EmptyThreadView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    messages
+                }
             }
+            #if os(iOS)
+                .overlay(alignment: .bottom) {
+                    if choosingRunSettings {
+                        runSettingsOverlay
+                    }
+                }
+            #endif
             composer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -196,31 +205,8 @@ public struct ChatView: View {
         }
     }
 
-    /// The thread's model as the menu offers it: Default, then every spec the Mac published,
-    /// with a tick against the one in force. Inline, so it draws as a list of choices rather
-    /// than as a submenu of a submenu.
-    @ViewBuilder private var modelPicker: some View {
-        Picker("Model", selection: modelBinding) {
-            Text("Default").tag(String?.none)
-            ForEach(model.models) { option in
-                Text(option.menuLabel).tag(String?.some(option.id))
-            }
-        }
-        .pickerStyle(.inline)
-    }
-
     private var modelBinding: Binding<String?> {
         Binding(get: { thread.model }, set: { model.setModel(thread, $0) })
-    }
-
-    @ViewBuilder private var effortPicker: some View {
-        Picker("Effort", selection: effortBinding) {
-            Text("Default").tag(ReasoningEffort?.none)
-            ForEach(ReasoningEffort.allCases) { effort in
-                Text(effort.label).tag(ReasoningEffort?.some(effort))
-            }
-        }
-        .pickerStyle(.inline)
     }
 
     private var effortBinding: Binding<ReasoningEffort?> {
@@ -595,23 +581,83 @@ public struct ChatView: View {
             .hoverHighlight()
             .accessibilityLabel("Model and effort")
             .accessibilityValue(runSettingsAccessibilityValue)
-            // On the button, so the iPad popover points at what opened it.
-            .runSettings(isPresented: $choosingRunSettings) {
-                NavigationStack {
-                    Form {
-                        Section("Model") { modelPicker }
-                        Section("Effort") { effortPicker }
-                    }
-                    .navigationTitle("Run settings")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
+        }
+
+        /// Remain in the composer's hosting hierarchy: presenting a sheet/popover resigns
+        /// its text input before the chooser is usable. Never dismiss or re-request focus.
+        /// The transcript provides the available space *above* the keyboard and composer;
+        /// scrolling the choices must not interactively dismiss that keyboard either.
+        private var runSettingsOverlay: some View {
+            GeometryReader { geometry in
+                ZStack(alignment: .bottom) {
+                    Color.black.opacity(0.12)
+                        .contentShape(Rectangle())
+                        .onTapGesture { choosingRunSettings = false }
+                        .accessibilityLabel("Dismiss run settings")
+                        .accessibilityAddTraits(.isButton)
+                    VStack(spacing: 0) {
+                        HStack {
+                            Text("Run settings").font(.headline)
+                            Spacer()
                             Button("Done") { choosingRunSettings = false }
+                                .frame(minHeight: 44)
                         }
+                        .padding(.horizontal, 16)
+                        Divider()
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 16) {
+                                Text("Model").font(.headline)
+                                runSettingChoice("Default", selected: thread.model == nil) {
+                                    modelBinding.wrappedValue = nil
+                                }
+                                ForEach(model.models) { option in
+                                    runSettingChoice(option.menuLabel, selected: thread.model == option.id) {
+                                        modelBinding.wrappedValue = option.id
+                                    }
+                                }
+                                Divider()
+                                Text("Effort").font(.headline)
+                                runSettingChoice("Default effort", selected: thread.effort == nil) {
+                                    effortBinding.wrappedValue = nil
+                                }
+                                ForEach(ReasoningEffort.allCases) { effort in
+                                    runSettingChoice(effort.label, selected: thread.effort == effort) {
+                                        effortBinding.wrappedValue = effort
+                                    }
+                                }
+                            }
+                            .padding(16)
+                        }
+                        .scrollDismissesKeyboard(.never)
                     }
+                    .frame(maxWidth: 420)
+                    .frame(height: min(420, max(0, geometry.size.height - 8)))
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .shadow(radius: 8, y: 2)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("runSettingsPanel")
+                    .accessibilityAction(.escape) { choosingRunSettings = false }
                 }
-                .presentationDetents([.medium, .large])
             }
+        }
+
+        private func runSettingChoice(
+            _ label: String, selected: Bool, action: @escaping () -> Void
+        ) -> some View {
+            Button(action: action) {
+                HStack {
+                    Text(label).multilineTextAlignment(.leading)
+                    Spacer(minLength: 8)
+                    if selected { Image(systemName: "checkmark") }
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(selected ? [.isSelected] : [])
         }
 
         private var composerModelLabel: String {
@@ -1025,26 +1071,6 @@ extension View {
             hoverEffect(.highlight)
         #else
             self
-        #endif
-    }
-
-    /// The run settings, over the button that opens them: an anchored popover on iPad, where a
-    /// full sheet for two pickers is the pattern the HIG warns against, and the same half-height
-    /// sheet as before on the phone.
-    @ViewBuilder fileprivate func runSettings<Content: View>(
-        isPresented: Binding<Bool>,
-        @ViewBuilder content: @escaping () -> Content
-    ) -> some View {
-        #if os(iOS)
-            if UIDevice.current.userInterfaceIdiom == .pad {
-                popover(isPresented: isPresented, arrowEdge: .bottom) {
-                    content().frame(minWidth: 320, minHeight: 360)
-                }
-            } else {
-                sheet(isPresented: isPresented, content: content)
-            }
-        #else
-            sheet(isPresented: isPresented, content: content)
         #endif
     }
 
