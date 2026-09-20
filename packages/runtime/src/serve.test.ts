@@ -551,7 +551,7 @@ test("a claude-code thread runs, resumes and stops its own native session, never
   expect(replayedCut.data.output).toHaveLength(4096);
   expect(openclawRun).not.toHaveBeenCalled();
   // The session id is the Mac's alone.
-  expect(JSON.stringify(first)).not.toContain("s-1");
+  expect(JSON.stringify(first)).not.toContain(JSON.stringify("s-1"));
   void release;
 
   // An agent that cannot run at all still finishes the turn, with the reason in the thread.
@@ -1785,4 +1785,26 @@ test.each(["yes", "no"] as const)("native approval %s round-trips through encryp
   expect((await eventsUntil((e) => e.kind === "message" && e.data.done === true)).at(-1)).toMatchObject({ data: { text: `${answer === "yes"}:Custom` } });
   expect(listRules(dir)).toEqual([]);
   expect(readThreadEvents("native", dir).some((e) => e.kind === "rule_proposal")).toBe(false);
+});
+
+test("native bypass persists and syncs, applies on later turns and never changes global YOLO", async () => {
+  const turns: NativeTurn[] = [];
+  const runner: NativeAgentRunner = { run: async (turn) => { turns.push(turn); return { text: "ok", sessionId: "s" }; } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { "claude-code": runner } });
+  send({ kind: "thread_create", data: { agent: "claude-code", cwd: proj } }, "cc");
+  for (const bypass of [true, false]) {
+    send({ kind: "thread_set_bypass", data: { bypass } }, "cc");
+    const list = (await eventsUntil((e) => e.kind === "thread_list" && e.data.threads.some((t) => t.id === "cc" && t.bypass === bypass))).at(-1)!;
+    expect(listThreads(dir).find((t) => t.id === "cc")?.bypass).toBe(bypass);
+    expect(JSON.stringify(list)).toContain(`"bypass":${bypass}`);
+    send({ kind: "message", data: { role: "user", text: "go" } }, "cc");
+    await eventsUntil((e) => e.kind === "message" && e.data.done === true);
+    expect(turns.at(-1)?.bypass).toBe(bypass);
+  }
+  send({ kind: "approval_settings", data: {} });
+  expect((await eventsUntil((e) => e.kind === "approval_settings")).at(-1)).toMatchObject({ data: { yolo: false } });
+  send({ kind: "thread_create", data: {} }, "normal");
+  send({ kind: "thread_set_bypass", data: { bypass: true } }, "normal");
+  await eventsUntil((e) => e.kind === "receipt");
+  expect(listThreads(dir).find((t) => t.id === "normal")?.bypass).toBeUndefined();
 });

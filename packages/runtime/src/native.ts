@@ -18,6 +18,7 @@ export interface NativeTurn {
   text: string;
   /** The agent's own session id from the thread's last turn; absent starts a new session. */
   sessionId?: string;
+  bypass?: boolean;
   model?: string;
   effort?: ReasoningEffort;
   signal: AbortSignal;
@@ -80,6 +81,8 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
           ...(turn.model ? { model: turn.model } : {}),
           ...(turn.effort ? { effort: turn.effort } : {}),
           includePartialMessages: true,
+          permissionMode: turn.bypass ? "bypassPermissions" : "default",
+          allowDangerouslySkipPermissions: turn.bypass === true,
           canUseTool: async (toolName, input, options) => {
             const signal = AbortSignal.any([turn.signal, options.signal]);
             const deny = { behavior: "deny" as const, message: "User declined or request cancelled." };
@@ -96,6 +99,7 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
               }
               return { behavior: "allow", updatedInput: { ...input, answers } };
             }
+            if (turn.bypass) return { behavior: "allow", updatedInput: input };
             return await turn.approve?.(toolName, input, signal) && !signal.aborted
               ? { behavior: "allow", updatedInput: input }
               : deny;

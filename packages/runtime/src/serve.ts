@@ -79,6 +79,7 @@ import {
   readThreadEvents,
   renameThread,
   setThreadEffort,
+  setThreadBypass,
   setThreadModel,
   setThreadSession,
   stashToolResult,
@@ -703,6 +704,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           threadId,
           text,
           ...home,
+          bypass: listThreads(dir).find((thread) => thread.id === threadId)?.bypass ?? false,
           model: threadModel(threadId, dir),
           effort: threadEffort(threadId, dir),
           signal: turn.signal,
@@ -1151,6 +1153,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return reply(projectList());
       case "project_list":
         return reply(projectList());
+      case "thread_set_bypass":
+        if (typeof event.data.bypass === "boolean") setThreadBypass(event.threadId, event.data.bypass, dir);
+        return broadcast(threadList());
       case "thread_set_model":
         setThreadModel(event.threadId, event.data.model ?? null, dir);
         return broadcast(threadList());

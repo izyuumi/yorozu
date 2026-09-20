@@ -53,6 +53,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadRead = "thread_read"
         case threadSetModel = "thread_set_model"
         case threadSetEffort = "thread_set_effort"
+        case threadSetBypass = "thread_set_bypass"
         case modelList = "model_list"
         case projectList = "project_list"
         case interrupt
@@ -88,6 +89,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadRead(ThreadReadData)
         case threadSetModel(ThreadSetModelData)
         case threadSetEffort(ThreadSetEffortData)
+        case threadSetBypass(ThreadSetBypassData)
         case modelList(ModelListData)
         case projectList(ProjectListData)
         case interrupt(InterruptData)
@@ -123,6 +125,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadRead: .threadRead
             case .threadSetModel: .threadSetModel
             case .threadSetEffort: .threadSetEffort
+            case .threadSetBypass: .threadSetBypass
             case .modelList: .modelList
             case .projectList: .projectList
             case .interrupt: .interrupt
@@ -170,6 +173,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadPin: payload = .threadPin(try c.decode(ThreadPinData.self, forKey: .data))
         case .threadRead: payload = .threadRead(try c.decode(ThreadReadData.self, forKey: .data))
         case .threadSetModel: payload = .threadSetModel(try c.decode(ThreadSetModelData.self, forKey: .data))
+        case .threadSetBypass: payload = .threadSetBypass(try c.decode(ThreadSetBypassData.self, forKey: .data))
         case .threadSetEffort: payload = .threadSetEffort(try c.decode(ThreadSetEffortData.self, forKey: .data))
         case .modelList: payload = .modelList(try c.decode(ModelListData.self, forKey: .data))
         case .projectList: payload = .projectList(try c.decode(ProjectListData.self, forKey: .data))
@@ -214,6 +218,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadPin(let d): try c.encode(d, forKey: .data)
         case .threadRead(let d): try c.encode(d, forKey: .data)
         case .threadSetModel(let d): try c.encode(d, forKey: .data)
+        case .threadSetBypass(let d): try c.encode(d, forKey: .data)
         case .threadSetEffort(let d): try c.encode(d, forKey: .data)
         case .modelList(let d): try c.encode(d, forKey: .data)
         case .projectList(let d): try c.encode(d, forKey: .data)
@@ -776,6 +781,7 @@ public struct ThreadRenameData: Codable, Equatable, Sendable {
 }
 
 public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
+    public var bypass: Bool?
     public var id: String
     /// Empty until the runtime auto-titles the thread or the user renames it.
     public var title: String
@@ -815,7 +821,8 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         agent: ThreadAgent? = nil,
         cwd: String? = nil,
         lastReadAt: Double? = nil,
-        lastAgentAt: Double? = nil
+        lastAgentAt: Double? = nil,
+        bypass: Bool? = nil
     ) {
         self.id = id
         self.title = title
@@ -829,6 +836,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         self.cwd = cwd
         self.lastReadAt = lastReadAt
         self.lastAgentAt = lastAgentAt
+        self.bypass = bypass
     }
 
     /// Hand-written only to tolerate a runtime older than the last two fields: both were added
@@ -847,6 +855,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         // list: it is drawn as an ordinary one.
         agent = ThreadAgent(rawValue: try c.decodeIfPresent(String.self, forKey: .agent) ?? "")
         cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
+        bypass = try c.decodeIfPresent(Bool.self, forKey: .bypass)
         lastReadAt = try c.decodeIfPresent(Double.self, forKey: .lastReadAt)
         lastAgentAt = try c.decodeIfPresent(Double.self, forKey: .lastAgentAt)
     }
@@ -1123,4 +1132,9 @@ public struct QrPayload: Codable, Equatable, Sendable {
             secret: try query["secret"].flatMap { $0.isEmpty ? nil : $0 }.map(base64Url)
         )
     }
+}
+
+public struct ThreadSetBypassData: Codable, Equatable, Sendable {
+    public var bypass: Bool
+    public init(bypass: Bool) { self.bypass = bypass }
 }

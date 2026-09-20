@@ -142,6 +142,17 @@ public struct ChatView: View {
             .navigationSubtitle(macModelCaption)
         #endif
         .toolbar {
+            if thread.agent?.needsFolder == true {
+                ToolbarItem(placement: .primaryAction) {
+                    Menu("Thread settings", systemImage: "ellipsis.circle") {
+                        Toggle("Bypass tool approvals", isOn: Binding(
+                            get: { thread.bypass == true },
+                            set: { model.setBypass(thread, $0) }
+                        ))
+                        Text("Applies to the next turn in this thread.")
+                    }
+                }
+            }
             #if os(iOS)
                 // One group, not two `.primaryAction` items: iOS folds a second primary action
                 // into a "…" overflow menu, which is exactly the button this replaced.

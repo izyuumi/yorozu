@@ -871,3 +871,21 @@ private func summary(
     #expect(events.last?.payload == .approvalSettings(ApprovalSettingsData(yolo: false)))
     #expect(model.yoloMode == false)
 }
+
+@MainActor
+@Test func nativeBypassOnADraftPrecedesItsFirstPromptAndOrdinaryThreadsIgnoreIt() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    let draft = model.newDraft(agent: .claudeCode, cwd: "/tmp/project")
+    model.setBypass(draft, true)
+    #expect(model.draft?.bypass == true)
+    let before = await sent(by: transport, atLeast: pairingSends).count
+    model.send("hi", in: draft.id)
+    let created = await sent(by: transport, atLeast: before + 3)
+    #expect(created.dropFirst(before).map(\.payload.kind) == [.threadCreate, .threadSetBypass, .message])
+    let ordinary = model.newDraft()
+    model.setBypass(ordinary, true)
+    #expect(model.draft?.bypass == nil)
+    let encoded = try JSONEncoder().encode(ThreadSummary(id: "cc", title: "", archived: false, lastActivity: 1, agent: .claudeCode, bypass: true))
+    #expect(try JSONDecoder().decode(ThreadSummary.self, from: encoded).bypass == true)
+}

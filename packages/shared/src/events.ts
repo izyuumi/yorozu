@@ -344,6 +344,7 @@ export interface ThreadRenameData {
 }
 
 export interface ThreadSummary {
+  bypass?: boolean;
   id: string;
   title: string;
   archived: boolean;
@@ -550,6 +551,7 @@ export type EventPayload =
   | { kind: "thread_read"; data: ThreadReadData }
   | { kind: "thread_set_model"; data: ThreadSetModelData }
   | { kind: "thread_set_effort"; data: ThreadSetEffortData }
+  | { kind: "thread_set_bypass"; data: { bypass: boolean } }
   | { kind: "model_list"; data: ModelListData }
   | { kind: "project_list"; data: ProjectListData }
   | { kind: "interrupt"; data: InterruptData }

@@ -195,3 +195,17 @@ test.each(["approval", "question"])("abort pending %s clears only that request",
   other.abort();
   expect(await separate).toBe(false);
 });
+
+test("bypass toggles on and off in one resumed session, while questions still need answers", async () => {
+  const { query, calls } = fakeQuery([result("s-bypass", "ok")]);
+  const runner = claudeCodeRunner(query);
+  const approve = vi.fn().mockResolvedValue(false);
+  for (const bypass of [false, true, false]) {
+    await runner.run({ threadId: "cc", sessionId: "s-bypass", text: "work", bypass, approve, signal: new AbortController().signal });
+    const options = calls.at(-1)! as unknown as Options;
+    expect(options.permissionMode).toBe(bypass ? "bypassPermissions" : "default");
+    const decision = await options.canUseTool!("Bash", {}, { signal: new AbortController().signal, toolUseID: "t" });
+    expect(decision?.behavior).toBe(bypass ? "allow" : "deny");
+  }
+  expect(approve).toHaveBeenCalledTimes(2);
+});
