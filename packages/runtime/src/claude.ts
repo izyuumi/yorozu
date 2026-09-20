@@ -7,6 +7,7 @@
  * See docs/spec-v1.html section 2.
  */
 
+import { claudeEffort } from "./native.js";
 import { createSdkMcpServer, query } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import {
@@ -140,7 +141,7 @@ export function claudeCli(config: ClaudeCliConfig = {}): Provider {
         prompt: renderTranscript(messages),
         options: {
           ...(config.model ? { model: config.model } : {}),
-          ...(providerOptions?.effort ? { effort: providerOptions.effort } : {}),
+          ...(claudeEffort(providerOptions?.effort) ? { effort: claudeEffort(providerOptions?.effort) } : {}),
           ...(system ? { systemPrompt: system } : {}),
           // None of Claude Code's own tools and none of the user's settings files:
           // this is Yorozu's loop, not a coding session.
