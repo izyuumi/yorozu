@@ -15,63 +15,29 @@ public struct WorkRowView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
-            Button {
-                withAnimation(.snappy) { expanded.toggle() }
-            } label: {
-                HStack(spacing: LayoutMetrics.inner) {
-                    if work.running {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                        Image(systemName: work.failed > 0 ? "exclamationmark.triangle" : "checkmark.circle")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Text(summary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .contentTransition(.numericText())
-                    Spacer(minLength: 0)
-                }
-                .frame(minHeight: controlTarget)
-                .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(summary)
-            .accessibilityHint(expanded ? String(localized: "Hides the work") : String(localized: "Shows the work"))
-
-            if expanded {
-                VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
-                    ForEach(work.entries) { entry in
-                        switch entry {
-                        case .thought(let event):
-                            if case .thought(let data) = event.payload {
-                                Text(data.text)
-                                    .font(.callout)
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled)
-                            }
-                        case .tools(let activities):
-                            ToolGroupView(activities: activities)
-                        case .delegation(let card):
-                            DelegationCardView(card: card)
-                        case .progress(let event):
-                            if case .progressCard(let card) = event.payload {
-                                ProgressCardView(card: card)
-                            }
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
+                ForEach(work.entries) { entry in
+                    switch entry {
+                    case .thought(let event):
+                        if case .thought(let data) = event.payload {
+                            Text(data.text).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                         }
+                    case .tools(let activities): ToolGroupView(activities: activities)
+                    case .delegation(let card): DelegationCardView(card: card)
+                    case .progress(let event):
+                        if case .progressCard(let card) = event.payload { ProgressCardView(card: card) }
                     }
                 }
-                .padding(.leading, LayoutMetrics.gutter)
-                .transition(.opacity.combined(with: .move(edge: .top)))
             }
+        } label: {
+            HStack(spacing: LayoutMetrics.inner) {
+                if work.running { ProgressView().controlSize(.small) }
+                Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            .frame(minHeight: controlTarget)
+            .accessibilityLabel(summary)
         }
-        .animation(.snappy, value: work.status)
     }
 
     /// Live: what is happening now. Settled: how much happened and how long it took — or, for
