@@ -474,7 +474,7 @@ test("a thread is answered by the agent it was created for, and an unknown agent
   await vi.waitFor(() => expect(archive).toHaveBeenCalledWith("t1", true));
 });
 
-test("a claude-code thread runs, resumes and stops its own native session, never OpenClaw's", async () => {
+test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stops its own native session, never OpenClaw's", async (agent) => {
   vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
   const openclawRun = vi.spyOn(OpenClawRunner.prototype, "run").mockResolvedValue("from openclaw");
   const turns: NativeTurn[] = [];
@@ -500,8 +500,8 @@ test("a claude-code thread runs, resumes and stops its own native session, never
       return { text: "", sessionId: "s-1" };
     }),
   };
-  const { dir, send, eventsUntil } = await pairedPhone([], true, { nativeRunners: { "claude-code": runner } });
-  send({ kind: "thread_create", data: { agent: "claude-code", cwd: proj } }, "cc");
+  const { dir, send, eventsUntil } = await pairedPhone([], true, { nativeRunners: { [agent]: runner } });
+  send({ kind: "thread_create", data: { agent, cwd: proj } }, "cc");
   await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "cc"));
 
   // First prompt: a new session in the thread's folder; the streamed delta and the final both reach the phone.
@@ -512,9 +512,9 @@ test("a claude-code thread runs, resumes and stops its own native session, never
   // The trace rode along as the events the work row draws, under ids stable per step, and the
   // long result went out as its first 4 KB, flagged. The whole of it stayed on the Mac.
   expect(first.filter((event) => ["thought", "tool_call", "tool_result"].includes(event.kind)).map((event) => [event.id, event.kind])).toEqual([
-    ["claude-code:cc:u1:thinking", "thought"],
-    ["claude-code:cc:call:toolu_1", "tool_call"],
-    ["claude-code:cc:result:toolu_1", "tool_result"],
+    [`${agent}:cc:u1:thinking`, "thought"],
+    [`${agent}:cc:call:toolu_1`, "tool_call"],
+    [`${agent}:cc:result:toolu_1`, "tool_result"],
   ]);
   const cut = first.find((event) => event.kind === "tool_result") as YorozuEvent & { kind: "tool_result" };
   expect(cut.data).toEqual({ callId: "toolu_1", ok: true, output: "L".repeat(4096), truncated: true });
@@ -561,7 +561,7 @@ test("a claude-code thread runs, resumes and stops its own native session, never
   // An agent that cannot run at all still finishes the turn, with the reason in the thread.
   send({ kind: "message", data: { role: "user", text: "break" } }, "cc");
   const failed = (await eventsUntil((event) => event.kind === "message" && event.data.done === true)).at(-1)!;
-  expect(failed).toMatchObject({ data: { text: expect.stringMatching(/claude-code could not answer: claude is not logged in/) } });
+  expect(failed).toMatchObject({ data: { text: expect.stringMatching(/could not answer: claude is not logged in/) } });
   expect(states).toContain("native-error claude is not logged in");
 });
 
@@ -1770,14 +1770,14 @@ test("a sync page stops short of the relay's frame limit, and the rest follows o
   expect(rest.kind === "sync_delta" && rest.data.more).toBeUndefined();
 });
 
-test.each(["yes", "no"] as const)("native approval %s round-trips through encrypted relay including lockscreen answers", async (answer) => {
+test.each([["claude-code", "yes"], ["claude-code", "no"], ["codex", "yes"], ["codex", "no"]] as const)("%s native approval %s round-trips through encrypted relay including lockscreen answers", async (agent, answer) => {
   const runner: NativeAgentRunner = { run: async (turn) => {
     const allowed = await turn.approve!("Bash", { command: "pwd" }, turn.signal);
     const response = await turn.ask!("Which?", ["A", "B"], turn.signal);
     return { text: `${allowed}:${response}`, sessionId: "sdk-session" };
   } };
-  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { "claude-code": runner } });
-  send({ kind: "thread_create", data: { agent: "claude-code", cwd: proj } }, "native");
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { [agent]: runner } });
+  send({ kind: "thread_create", data: { agent, cwd: proj } }, "native");
   send({ kind: "approval_settings", data: { yolo: true } });
   send({ kind: "message", data: { role: "user", text: "work" } }, "native");
   const approval = (await eventsUntil((e) => e.kind === "approval_card")).at(-1)!;
@@ -1791,11 +1791,11 @@ test.each(["yes", "no"] as const)("native approval %s round-trips through encryp
   expect(readThreadEvents("native", dir).some((e) => e.kind === "rule_proposal")).toBe(false);
 });
 
-test("native bypass persists and syncs, applies on later turns and never changes global YOLO", async () => {
+test.each(["claude-code", "codex"] as const)("%s native bypass persists and syncs, applies on later turns and never changes global YOLO", async (agent) => {
   const turns: NativeTurn[] = [];
   const runner: NativeAgentRunner = { run: async (turn) => { turns.push(turn); return { text: "ok", sessionId: "s" }; } };
-  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { "claude-code": runner } });
-  send({ kind: "thread_create", data: { agent: "claude-code", cwd: proj } }, "cc");
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { [agent]: runner } });
+  send({ kind: "thread_create", data: { agent, cwd: proj } }, "cc");
   for (const bypass of [true, false]) {
     send({ kind: "thread_set_bypass", data: { bypass } }, "cc");
     const list = (await eventsUntil((e) => e.kind === "thread_list" && e.data.threads.some((t) => t.id === "cc" && t.bypass === bypass))).at(-1)!;
@@ -1813,13 +1813,15 @@ test("native bypass persists and syncs, applies on later turns and never changes
   expect(listThreads(dir).find((t) => t.id === "normal")?.bypass).toBeUndefined();
 });
 
-test.each(["continue", "dismiss"] as const)("startup never replays native turns; %s is an explicit recoverable command", async (action) => {
+test.each([
+  ["claude-code", "continue"], ["claude-code", "dismiss"], ["codex", "continue"], ["codex", "dismiss"],
+] as const)("startup never replays %s turns; %s is an explicit recoverable command", async (agent, action) => {
   const dir = mkdtempSync(join(tmpdir(), "yorozu-native-restart-"));
-  createThread("Work", dir, "cc", { agent: "claude-code", cwd: proj });
+  createThread("Work", dir, "cc", { agent, cwd: proj });
   setThreadSession("cc", "native-before-crash", dir);
   setNativeTurn("cc", { id: "crashed-turn", state: "running" }, dir);
   const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "continued", sessionId: "native-before-crash" });
-  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { "claude-code": { run } } });
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { [agent]: { run } } });
   const startup = (await eventsUntil((e) => e.kind === "thread_list")).at(-1)!;
   expect(startup).toMatchObject({ data: { threads: [expect.objectContaining({ interruptedTurnId: "crashed-turn" })] } });
   expect(run).not.toHaveBeenCalled();
@@ -1845,6 +1847,7 @@ test.each(["continue", "dismiss"] as const)("startup never replays native turns;
 test("native session and running marker reach disk before completion, and survive sidecar shutdown", async () => {
   let started!: NativeTurn;
   const run: NativeAgentRunner["run"] = async (turn) => {
+    expect(started).toBeUndefined(); // queued turn must never start after shutdown
     started = turn;
     turn.onSession!("early-session");
     await new Promise<void>((resolve) => turn.signal.addEventListener("abort", () => resolve(), { once: true }));
@@ -1855,6 +1858,8 @@ test("native session and running marker reach disk before completion, and surviv
   send({ kind: "message", data: { role: "user", text: "work" } }, "cc");
   await vi.waitFor(() => expect(started).toBeDefined());
   expect(listThreads(dir)[0]).toMatchObject({ nativeSessionId: "early-session", nativeTurn: { state: "running" } });
+  send({ kind: "message", data: { role: "user", text: "queued" } }, "cc");
+  await vi.waitFor(() => expect(readThreadEvents("cc", dir).filter((e) => e.kind === "message" && e.data.role === "user")).toHaveLength(2));
   await sidecar.close();
   expect(started.signal.aborted).toBe(true);
   expect(listThreads(dir)[0]?.nativeTurn?.state).toBe("running");
@@ -1878,4 +1883,74 @@ test("agent models publish separately; selections persist and reject another age
   send({ kind: "message", data: { role: "user", text: "again" } }, "cc");
   await eventsUntil((e) => e.kind === "message" && e.data.done === true);
   expect(run).toHaveBeenLastCalledWith(expect.objectContaining({ model: "opus", effort: "max", sessionId: "s-model" }));
+});
+
+test("interrupted turn before native session creation cannot silently Continue into a new session", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-native-preinit-"));
+  createThread("Work", dir, "cc", { agent: "claude-code", cwd: proj });
+  setNativeTurn("cc", { id: "crash", state: "running" }, dir);
+  const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "new" });
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { "claude-code": { run } } });
+  expect((await eventsUntil((e) => e.kind === "thread_list")).at(-1)).toMatchObject({ data: { threads: [expect.objectContaining({ canResume: false })] } });
+  send({ kind: "thread_recover", data: { turnId: "crash", action: "continue" } }, "cc");
+  send({ kind: "thread_list", data: { threads: [] } });
+  await eventsUntil((e) => e.kind === "thread_list");
+  expect(run).not.toHaveBeenCalled();
+  expect(listThreads(dir)[0]?.nativeTurn?.state).toBe("interrupted");
+  send({ kind: "thread_recover", data: { turnId: "crash", action: "dismiss" } }, "cc");
+  await eventsUntil((e) => e.kind === "thread_list" && !e.data.threads[0]?.interruptedTurnId);
+});
+
+test.each(["claude-code", "codex"] as const)("%s full results larger than relay ceiling pull in bounded Unicode-safe chunks after sync", async (agent) => {
+  const output = "界🙂".repeat(300000);
+  const run: NativeAgentRunner["run"] = async (turn) => {
+    turn.onActivity!("result:large", { kind: "tool_result", data: { callId: "large", ok: true, output } });
+    return { text: "done" };
+  };
+  const { send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { [agent]: { run } } });
+  send({ kind: "thread_create", data: { agent, cwd: proj } }, "cc");
+  send({ kind: "message", data: { role: "user", text: "read" } }, "cc");
+  await eventsUntil((e) => e.kind === "message" && e.data.done === true);
+  send({ kind: "sync_request", data: { lastSeen: {} } });
+  await eventsUntil((e) => e.kind === "sync_delta");
+  let offset: number | undefined = 0;
+  let joined = "";
+  while (offset !== undefined) {
+    send({ kind: "tool_result_request", data: { callId: "large", offset } }, "cc");
+    const part = (await eventsUntil((e) => e.kind === "tool_result")).at(-1)!;
+    if (part.kind !== "tool_result") throw new Error("missing result");
+    expect(part.data.chunkOffset).toBe(offset);
+    expect(Buffer.byteLength(JSON.stringify(part)) * 4 / 3 + 4096).toBeLessThan(1024 * 1024);
+    expect(part.data.output.isWellFormed()).toBe(true);
+    joined += part.data.output;
+    offset = part.data.nextOffset;
+  }
+  expect(joined).toBe(output);
+});
+
+test.each(["claude-code", "codex"] as const)("%s threads run concurrently with independent cancellation and sessions", async (agent) => {
+  const turns = new Map<string, NativeTurn>();
+  const releases = new Map<string, () => void>();
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    turns.set(turn.threadId, turn);
+    turn.onSession!(`session-${turn.threadId}`);
+    await new Promise<void>((resolve) => {
+      releases.set(turn.threadId, resolve);
+      turn.signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    return { text: turn.signal.aborted ? "" : "done", sessionId: `session-${turn.threadId}` };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { [agent]: runner } });
+  for (const id of ["one", "two", "three"]) {
+    send({ kind: "thread_create", data: { agent, cwd: proj } }, id);
+    send({ kind: "message", data: { role: "user", text: "work" } }, id);
+  }
+  await vi.waitFor(() => expect(turns.size).toBe(3));
+  send({ kind: "interrupt", data: {} }, "one");
+  await vi.waitFor(() => expect(turns.get("one")!.signal.aborted).toBe(true));
+  expect(turns.get("two")!.signal.aborted).toBe(false);
+  expect(turns.get("three")!.signal.aborted).toBe(false);
+  releases.get("two")!(); releases.get("three")!();
+  await eventsUntil((e) => e.kind === "message" && e.threadId === "three" && e.data.done === true);
+  expect(listThreads(dir).map((t) => t.nativeSessionId).sort()).toEqual(["session-one", "session-three", "session-two"]);
 });

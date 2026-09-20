@@ -221,3 +221,16 @@ test("Claude publishes SDK models and passes selected model/effort on each resum
     expect(calls.at(-1)).toMatchObject({ model: "opus", effort, resume: "s-model" });
   }
 });
+
+test.each([true, false])("Claude questions use PreToolUse even when permission callback is skipped (bypass=%s)", async (bypass) => {
+  const { query, calls } = fakeQuery([]);
+  const ask = vi.fn().mockResolvedValueOnce("A").mockResolvedValueOnce("custom");
+  await claudeCodeRunner(query).run({ threadId: "cc", text: "go", bypass, ask, signal: new AbortController().signal });
+  const hooks = calls[0]!.hooks as { PreToolUse: { hooks: Function[] }[] };
+  const input = { questions: [{ question: "Pick", options: [{ label: "A" }] }, { question: "Name", options: [] }] };
+  const answer = await hooks.PreToolUse[0]!.hooks[0]!({ hook_event_name: "PreToolUse", tool_input: input }, "id", { signal: new AbortController().signal });
+  expect(answer.hookSpecificOutput).toEqual({ hookEventName: "PreToolUse", permissionDecision: "allow", updatedInput: { ...input, answers: { Pick: "A", Name: "custom" } } });
+  const stopped = new AbortController(); stopped.abort();
+  expect((await hooks.PreToolUse[0]!.hooks[0]!({ hook_event_name: "PreToolUse", tool_input: input }, "id", { signal: stopped.signal })).hookSpecificOutput.permissionDecision).toBe("deny");
+  expect(ask).toHaveBeenCalledTimes(2);
+});

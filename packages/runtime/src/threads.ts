@@ -347,7 +347,7 @@ export const threadSummaries = (dir = stateDir(), minTs = 0): ThreadSummary[] =>
       ...(thread.model ? { model: thread.model } : {}),
       ...(thread.effort ? { effort: thread.effort } : {}),
       ...(thread.agent ? { bypass: thread.bypass ?? false } : {}),
-      ...(thread.nativeTurn?.state === "interrupted" ? { interruptedTurnId: thread.nativeTurn.id } : {}),
+      ...(thread.nativeTurn?.state === "interrupted" ? { interruptedTurnId: thread.nativeTurn.id, canResume: !!thread.nativeSessionId } : {}),
       // Absent on a yorozu thread: that is the default, and what older phones already assume.
       ...(thread.agent && THREAD_AGENTS.includes(thread.agent) ? { agent: thread.agent } : {}),
       ...(thread.agent && thread.cwd ? { cwd: thread.cwd } : {}),
@@ -389,7 +389,8 @@ export function stashToolResult(
   if (event.data.output.length <= limit) return event;
   mkdirSync(threadsDir(dir), { recursive: true });
   writeFileSync(resultFile(event.threadId, event.data.callId, dir), JSON.stringify(event));
-  return { ...event, data: { ...event.data, output: event.data.output.slice(0, limit), truncated: true } };
+  const end = /[\uD800-\uDBFF]/.test(event.data.output[limit - 1]!) ? limit - 1 : limit;
+  return { ...event, data: { ...event.data, output: event.data.output.slice(0, end), truncated: true } };
 }
 
 /** The whole of a stashed tool result, or undefined when none was kept for that call. */

@@ -907,3 +907,59 @@ private func summary(
     #expect(model.efforts(for: plain) == [.low, .medium, .high])
     #expect(model.efforts(for: claude) == [.low, .max])
 }
+
+@MainActor @Test func remoteAndCachedAnswersRetireNativeCards() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: SymmetricKey(size: .bits256))
+    cache.save(threads: [ThreadSummary(id: "t", title: "", archived: false, lastActivity: 1)])
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    model.start()
+    let approval = YorozuEvent(id: "a", threadId: "t", ts: 1, agentId: "phone2", payload: .approvalAnswer(ApprovalAnswerData(actionId: "action", answer: .no)))
+    let question = YorozuEvent(id: "q", threadId: "t", ts: 2, agentId: "phone2", payload: .questionAnswer(QuestionAnswerData(questionId: "question", answer: "custom")))
+    await transport.yield(.event(approval))
+    await transport.yield(.event(event("sync", .syncDelta(SyncDeltaData(events: [question])))))
+    #expect(await eventually { model.answered.contains("action") && model.answeredQuestions.contains("question") })
+    let restored = ChatModel(transport: FakeTransport(), cache: cache)
+    #expect(restored.choices["action"] == .no)
+    #expect(restored.questionChoices["question"] == "custom")
+    model.close()
+}
+
+@MainActor @Test func fullToolResultChunksReplacePreviewOnlyWhenCompleteAndCanRestart() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    let preview = YorozuEvent(id: "result", threadId: "t", ts: 1, agentId: "main", payload: .toolResult(ToolResultData(callId: "call", ok: true, output: "preview", truncated: true)))
+    await transport.yield(.event(preview))
+    #expect(await eventually { model.events["t"] == [preview] })
+    let text = String(repeating: "界🙂", count: 300000)
+    let first = String(text.prefix(300000)), second = String(text.dropFirst(300000))
+    let offset = first.utf16.count
+    model.requestToolResult("call", in: "t")
+    var part = preview
+    part.payload = .toolResult(ToolResultData(callId: "call", ok: true, output: first, chunkOffset: 0, nextOffset: offset))
+    await transport.yield(.event(part))
+    let requests = await sent(by: transport, atLeast: pairingSends + 2)
+    #expect(requests.contains { if case .toolResultRequest(let data) = $0.payload { return data.offset == offset }; return false })
+    #expect(model.events["t"] == [preview])
+    // Reconnect/retry begins at zero, discarding the abandoned partial fetch.
+    model.requestToolResult("call", in: "t")
+    await transport.yield(.event(part))
+    part.payload = .toolResult(ToolResultData(callId: "call", ok: true, output: second, chunkOffset: offset))
+    await transport.yield(.event(part))
+    #expect(await eventually { if case .toolResult(let data) = model.events["t"]?.first?.payload { return data.output == text && data.truncated == nil && data.chunkOffset == nil }; return false })
+}
+
+@MainActor @Test func completedSmallFullResultIsNotRequestedAgainOnReconnect() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    model.requestToolResult("small", in: "t")
+    _ = await sent(by: transport, atLeast: pairingSends + 1)
+    let full = YorozuEvent(id: "small", threadId: "t", ts: 1, agentId: "main", payload: .toolResult(ToolResultData(callId: "small", ok: true, output: String(repeating: "x", count: 5000))))
+    await transport.yield(.event(full))
+    #expect(await eventually { model.events["t"] == [full] })
+    await transport.yield(.state(.paired))
+    let requests = await sent(by: transport, atLeast: pairingSends * 2 + 1)
+    #expect(requests.filter { $0.payload.kind == .toolResultRequest }.count == 1)
+}
