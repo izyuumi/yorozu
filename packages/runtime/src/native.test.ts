@@ -58,6 +58,45 @@ test("streamed deltas redraw the whole reply so far", async () => {
   expect(done.text).toBe("hello");
 });
 
+test("thoughts, tool calls and results become the trace the work row draws; subagents stay inside", async () => {
+  const { query } = fakeQuery([
+    init("s-5"),
+    { type: "assistant", session_id: "s-5", uuid: "u1", parent_tool_use_id: null, message: { content: [
+      { type: "thinking", thinking: "look at the tests first" },
+      { type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "pnpm test" } },
+    ] } },
+    { type: "user", session_id: "s-5", parent_tool_use_id: null, message: { role: "user", content: [
+      { type: "tool_result", tool_use_id: "toolu_1", content: [{ type: "text", text: "3 passed" }, { type: "image" }] },
+    ] } },
+    // A subagent's own call and result: part of the Task, not the row.
+    { type: "assistant", session_id: "s-5", uuid: "u2", parent_tool_use_id: "toolu_task", message: { content: [
+      { type: "tool_use", id: "toolu_inner", name: "Read", input: {} },
+    ] } },
+    { type: "user", session_id: "s-5", parent_tool_use_id: "toolu_task", message: { role: "user", content: [
+      { type: "tool_result", tool_use_id: "toolu_inner", content: "secret" },
+    ] } },
+    { type: "assistant", session_id: "s-5", uuid: "u3", parent_tool_use_id: null, message: { content: [
+      { type: "tool_use", id: "toolu_2", name: "Edit", input: { file_path: "a.ts", old_string: "x" } },
+    ] } },
+    { type: "user", session_id: "s-5", parent_tool_use_id: null, message: { role: "user", content: [
+      { type: "tool_result", tool_use_id: "toolu_2", is_error: true, content: "old_string not found" },
+    ] } },
+    said("s-5", "Fixed."),
+    result("s-5", "Fixed."),
+  ]);
+  const activity: [string, unknown][] = [];
+  const done = await claudeCodeRunner(query).run({ threadId: "cc", text: "fix", signal: new AbortController().signal, onActivity: (id, payload) => activity.push([id, payload]) });
+  expect(done.text).toBe("Fixed.");
+  expect(activity).toEqual([
+    ["u1:thinking", { kind: "thought", data: { text: "look at the tests first" } }],
+    ["call:toolu_1", { kind: "tool_call", data: { callId: "toolu_1", name: "Bash", args: { command: "pnpm test" } } }],
+    ["result:toolu_1", { kind: "tool_result", data: { callId: "toolu_1", ok: true, output: "3 passed\n[image]" } }],
+    ["call:toolu_2", { kind: "tool_call", data: { callId: "toolu_2", name: "Edit", args: { file_path: "a.ts", old_string: "x" } } }],
+    ["result:toolu_2", { kind: "tool_result", data: { callId: "toolu_2", ok: false, output: "old_string not found" } }],
+  ]);
+  expect(JSON.stringify(activity)).not.toContain("secret");
+});
+
 test("stop aborts the SDK query, says nothing, and keeps the session resumable", async () => {
   const turn = new AbortController();
   const { query, calls } = fakeQuery((options) => {

@@ -72,6 +72,7 @@ import {
   createThread,
   currentThread,
   eventsAfter,
+  fullToolResult,
   listThreads,
   markThreadRead,
   pinThread,
@@ -80,6 +81,7 @@ import {
   setThreadEffort,
   setThreadModel,
   setThreadSession,
+  stashToolResult,
   SYNC_LIMIT,
   SYNC_PAGE_BYTES,
   threadAgent,
@@ -702,6 +704,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
           effort: threadEffort(threadId, dir),
           signal: turn.signal,
           onUpdate: (reply) => broadcast(message(reply)),
+          // The agent's trace, under ids stable per step, so a replayed step is one row. A
+          // long result goes out as its head, flagged; the whole stays here for the asking.
+          onActivity: (key, payload) => {
+            const event: YorozuEvent = { id: `${agent}:${threadId}:${key}`, threadId, ts: Date.now(), agentId: MAIN_AGENT, ...payload };
+            emit(event.kind === "tool_result" ? stashToolResult(event, dir) : event);
+          },
         });
         // Stored even after a stop: the session outlives the turn, and the next prompt resumes it.
         if (done.sessionId && done.sessionId !== home.sessionId) setThreadSession(threadId, done.sessionId, dir);
@@ -1082,6 +1090,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
       case "question_answer":
         questions.answer(event.data.questionId, event.data.answer);
         return;
+      // The rest of a truncated tool result, to the one device that asked, under the id it
+      // already holds so it lands in place. Nothing to say when none was kept.
+      case "tool_result_request": {
+        const full = fullToolResult(event.threadId, event.data.callId, dir);
+        return full ? reply(full) : state("tool-result-missing");
+      }
       // Thread admin is answered to every device, so a second phone sees the same list.
       case "thread_create":
         // The device minted the id: the message it typed follows straight after this frame.

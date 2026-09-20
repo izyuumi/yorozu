@@ -4,7 +4,7 @@
  * listed — never what is inside them.
  */
 
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ProjectFolder } from "@yorozu/shared";
@@ -42,12 +42,18 @@ export function listProjects(root = projectsRoot(), dir = stateDir()): ProjectFo
     .sort((a, b) => (b.lastUsed ?? 0) - (a.lastUsed ?? 0) || a.name.localeCompare(b.name));
 }
 
-/** Whether `cwd` is a folder the picker would have offered: under the root and a directory. */
+/**
+ * Whether `cwd` is a folder the picker would have offered — exactly one of `listProjects`, so
+ * `..`, a dot-folder, a nested path or a trailing slash are all refused the same way.
+ */
 export function isProjectFolder(cwd: string, root = projectsRoot()): boolean {
-  if (!cwd.startsWith(`${root}/`) || cwd.slice(root.length + 1).includes("/")) return false;
+  let names: string[] = [];
   try {
-    return statSync(cwd).isDirectory();
+    names = readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+      .map((entry) => entry.name);
   } catch {
     return false;
   }
+  return names.some((name) => join(root, name) === cwd);
 }

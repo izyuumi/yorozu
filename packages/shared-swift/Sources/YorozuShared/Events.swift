@@ -44,6 +44,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case questionCard = "question_card"
         case questionAnswer = "question_answer"
         case progressCard = "progress_card"
+        case toolResultRequest = "tool_result_request"
         case threadCreate = "thread_create"
         case threadList = "thread_list"
         case threadArchive = "thread_archive"
@@ -78,6 +79,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case questionCard(QuestionCardData)
         case questionAnswer(QuestionAnswerData)
         case progressCard(ProgressCardData)
+        case toolResultRequest(ToolResultRequestData)
         case threadCreate(ThreadCreateData)
         case threadList(ThreadListData)
         case threadArchive(ThreadArchiveData)
@@ -112,6 +114,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .questionCard: .questionCard
             case .questionAnswer: .questionAnswer
             case .progressCard: .progressCard
+            case .toolResultRequest: .toolResultRequest
             case .threadCreate: .threadCreate
             case .threadList: .threadList
             case .threadArchive: .threadArchive
@@ -159,6 +162,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .questionCard: payload = .questionCard(try c.decode(QuestionCardData.self, forKey: .data))
         case .questionAnswer: payload = .questionAnswer(try c.decode(QuestionAnswerData.self, forKey: .data))
         case .progressCard: payload = .progressCard(try c.decode(ProgressCardData.self, forKey: .data))
+        case .toolResultRequest: payload = .toolResultRequest(try c.decode(ToolResultRequestData.self, forKey: .data))
         case .threadCreate: payload = .threadCreate(try c.decode(ThreadCreateData.self, forKey: .data))
         case .threadList: payload = .threadList(try c.decode(ThreadListData.self, forKey: .data))
         case .threadArchive: payload = .threadArchive(try c.decode(ThreadArchiveData.self, forKey: .data))
@@ -202,6 +206,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .questionCard(let d): try c.encode(d, forKey: .data)
         case .questionAnswer(let d): try c.encode(d, forKey: .data)
         case .progressCard(let d): try c.encode(d, forKey: .data)
+        case .toolResultRequest(let d): try c.encode(d, forKey: .data)
         case .threadCreate(let d): try c.encode(d, forKey: .data)
         case .threadList(let d): try c.encode(d, forKey: .data)
         case .threadArchive(let d): try c.encode(d, forKey: .data)
@@ -358,11 +363,22 @@ public struct ToolResultData: Codable, Equatable, Sendable {
     public var callId: String
     public var ok: Bool
     public var output: String
-    public init(callId: String, ok: Bool, output: String) {
+    /// True when ``output`` is only the head of what the tool printed. The rest is on the Mac,
+    /// one ``ToolResultRequestData`` away. Nil means this is all there was.
+    public var truncated: Bool?
+    public init(callId: String, ok: Bool, output: String, truncated: Bool? = nil) {
         self.callId = callId
         self.ok = ok
         self.output = output
+        self.truncated = truncated
     }
+}
+
+/// A device asking for the whole of a truncated tool result. Answered to that device alone with
+/// the full `tool_result` under the id it already holds, so it replaces the short one in place.
+public struct ToolResultRequestData: Codable, Equatable, Sendable {
+    public var callId: String
+    public init(callId: String) { self.callId = callId }
 }
 
 /// What an action commits, field by field: the concrete payload rather than the tool mechanics

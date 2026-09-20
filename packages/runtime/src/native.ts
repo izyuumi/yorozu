@@ -9,7 +9,7 @@
  */
 
 import { query as sdkQuery, type Options, type Query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { ReasoningEffort } from "@yorozu/shared";
+import type { EventPayload, ReasoningEffort } from "@yorozu/shared";
 
 export interface NativeTurn {
   threadId: string;
@@ -23,6 +23,23 @@ export interface NativeTurn {
   signal: AbortSignal;
   /** Every delta re-sends the whole reply so far, the way the phone redraws it. */
   onUpdate?: (text: string) => void;
+  /**
+   * What the agent did along the way — thoughts, tool calls, results — as the trace events the
+   * work row already draws. `id` is stable per thing, so a replay does not double it up.
+   */
+  onActivity?: (id: string, payload: EventPayload) => void;
+}
+
+/** A tool result's content as one string: text blocks joined, anything else named. */
+function resultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((block) => {
+      const item = block as { type?: string; text?: string };
+      return item.type === "text" ? item.text ?? "" : `[${item.type ?? "block"}]`;
+    })
+    .join("\n");
 }
 
 export interface NativeTurnResult {
@@ -85,11 +102,32 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
               streamed = "";
             }
           } else if (message.type === "assistant") {
+            // Subagents' own traffic stays inside their Task; the row is the main agent's.
+            if (message.parent_tool_use_id) continue;
             const spoken = message.message.content
               .filter((block) => block.type === "text")
               .map((block) => block.text)
               .join("");
             if (spoken) text = spoken;
+            for (const block of message.message.content) {
+              if (block.type === "thinking" && block.thinking) {
+                turn.onActivity?.(`${message.uuid}:thinking`, { kind: "thought", data: { text: block.thinking } });
+              } else if (block.type === "tool_use") {
+                const input = block.input && typeof block.input === "object" ? (block.input as Record<string, unknown>) : {};
+                turn.onActivity?.(`call:${block.id}`, { kind: "tool_call", data: { callId: block.id, name: block.name, args: input } });
+              }
+            }
+          } else if (message.type === "user") {
+            if (message.parent_tool_use_id) continue;
+            const content = message.message.content;
+            if (!Array.isArray(content)) continue;
+            for (const block of content) {
+              if (block.type !== "tool_result") continue;
+              turn.onActivity?.(`result:${block.tool_use_id}`, {
+                kind: "tool_result",
+                data: { callId: block.tool_use_id, ok: block.is_error !== true, output: resultText(block.content) },
+              });
+            }
           } else if (message.type === "result") {
             if (message.subtype === "success") text = message.result || text;
             else if (!turn.signal.aborted) text = text || `Claude Code stopped: ${message.subtype.replace(/^error_/, "").replace(/_/g, " ")}.`;

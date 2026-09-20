@@ -98,7 +98,24 @@ export interface ToolResultData {
   callId: string;
   ok: boolean;
   output: string;
+  /**
+   * Set when `output` is only the head of what the tool printed. The whole of it stays on the
+   * Mac; `tool_result_request` fetches it. Absent means this is all there was.
+   */
+  truncated?: boolean;
 }
+
+/**
+ * A device asking for the whole of a truncated tool result in `threadId` from the base fields.
+ * Answered, to that device alone, with the full `tool_result` under the event id it already
+ * holds, so it replaces the truncated one in place.
+ */
+export interface ToolResultRequestData {
+  callId: string;
+}
+
+/** Past this many characters a tool result travels truncated. About 4 KB. */
+export const TOOL_RESULT_PREVIEW_CHARS = 4096;
 
 /**
  * The fields of an action beyond its class, describing what it actually commits rather than the
@@ -522,6 +539,7 @@ export type EventPayload =
   | { kind: "question_card"; data: QuestionCardData }
   | { kind: "question_answer"; data: QuestionAnswerData }
   | { kind: "progress_card"; data: ProgressCardData }
+  | { kind: "tool_result_request"; data: ToolResultRequestData }
   | { kind: "thread_create"; data: ThreadCreateData }
   | { kind: "thread_list"; data: ThreadListData }
   | { kind: "thread_archive"; data: ThreadArchiveData }

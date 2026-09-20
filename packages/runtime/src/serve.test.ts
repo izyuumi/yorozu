@@ -481,6 +481,11 @@ test("a claude-code thread runs, resumes and stops its own native session, never
       if (turn.text === "break") throw new Error("claude is not logged in");
       if (turns.length < 3) {
         turn.onUpdate?.("working");
+        if (turns.length === 1) {
+          turn.onActivity?.("u1:thinking", { kind: "thought", data: { text: "reading the failing test" } });
+          turn.onActivity?.("call:toolu_1", { kind: "tool_call", data: { callId: "toolu_1", name: "Bash", args: { command: "cat big.log" } } });
+          turn.onActivity?.("result:toolu_1", { kind: "tool_result", data: { callId: "toolu_1", ok: true, output: "L".repeat(5000) } });
+        }
         return { text: `reply ${turns.length}`, sessionId: "s-1" };
       }
       // The third turn hangs until stopped, the way a long job would.
@@ -500,6 +505,23 @@ test("a claude-code thread runs, resumes and stops its own native session, never
   const first = await eventsUntil((event) => event.kind === "message" && event.data.done === true);
   expect(first.filter((event) => event.kind === "message" && event.data.role === "agent").map((event) => (event as { data: { text: string } }).data.text)).toEqual(["working", "reply 1"]);
   expect(turns[0]).toMatchObject({ threadId: "cc", cwd: proj, text: "fix the tests" });
+  // The trace rode along as the events the work row draws, under ids stable per step, and the
+  // long result went out as its first 4 KB, flagged. The whole of it stayed on the Mac.
+  expect(first.filter((event) => ["thought", "tool_call", "tool_result"].includes(event.kind)).map((event) => [event.id, event.kind])).toEqual([
+    ["claude-code:cc:u1:thinking", "thought"],
+    ["claude-code:cc:call:toolu_1", "tool_call"],
+    ["claude-code:cc:result:toolu_1", "tool_result"],
+  ]);
+  const cut = first.find((event) => event.kind === "tool_result") as YorozuEvent & { kind: "tool_result" };
+  expect(cut.data).toEqual({ callId: "toolu_1", ok: true, output: "L".repeat(4096), truncated: true });
+  expect(readThreadEvents("cc", dir).find((event) => event.kind === "tool_result")).toEqual(cut);
+  // One tap asks for the rest: the same event, whole, to this device alone.
+  send({ kind: "tool_result_request", data: { callId: "toolu_1" } }, "cc");
+  const whole = (await eventsUntil((event) => event.kind === "tool_result")).at(-1) as YorozuEvent & { kind: "tool_result" };
+  expect(whole.id).toBe(cut.id);
+  expect(whole.data).toEqual({ callId: "toolu_1", ok: true, output: "L".repeat(5000) });
+  send({ kind: "tool_result_request", data: { callId: "nope" } }, "cc");
+  await vi.waitFor(() => expect(states).toContain("tool-result-missing"));
   expect(turns[0]).not.toHaveProperty("sessionId");
   expect(listThreads(dir).find((thread) => thread.id === "cc")).toMatchObject({ nativeSessionId: "s-1", title: "fix the tests" });
 
@@ -521,6 +543,12 @@ test("a claude-code thread runs, resumes and stops its own native session, never
   expect(idle.data.workingThreadIds).toEqual([]);
   expect(readThreadEvents("cc", dir).filter((event) => event.kind === "message" && event.data.role === "agent")).toHaveLength(2);
   expect(listThreads(dir).find((thread) => thread.id === "cc")?.nativeSessionId).toBe("s-1");
+  // A reconnecting phone's sync carries the truncated head, and the request still answers whole.
+  send({ kind: "sync_request", data: { lastSeen: {} } });
+  const replayed = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1) as YorozuEvent & { kind: "sync_delta" };
+  const replayedCut = replayed.data.events.find((event) => event.kind === "tool_result") as YorozuEvent & { kind: "tool_result" };
+  expect(replayedCut.data.truncated).toBe(true);
+  expect(replayedCut.data.output).toHaveLength(4096);
   expect(openclawRun).not.toHaveBeenCalled();
   // The session id is the Mac's alone.
   expect(JSON.stringify(first)).not.toContain("s-1");

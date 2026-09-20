@@ -28,6 +28,10 @@ test("deltas, delegated finals and tool traffic wake nobody", () => {
   expect(notifyFor(event({ kind: "tool_call", data: { callId: "c", name: "n", args: {} } })))
     .toBeNull();
   expect(notifyFor(event({ kind: "thought", data: { text: "hm" } }))).toBeNull();
+  // A tool result, cut or whole, is never a notification: nothing of it reaches a lock screen.
+  const cut = event({ kind: "tool_result", data: { callId: "c", ok: true, output: "x".repeat(4096), truncated: true } });
+  expect(notifyFor(cut)).toBeNull();
+  expect(notificationPreview(cut)).toBeNull();
 });
 
 test("cards are the class worth interrupting someone for, and a stop is a failure", () => {

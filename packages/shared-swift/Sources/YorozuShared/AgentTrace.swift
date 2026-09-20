@@ -406,6 +406,8 @@ public struct ToolActivity: Identifiable, Equatable, Sendable {
     public var finishedAt: Int?
     public var output: String?
     public var ok: Bool
+    /// Whether ``output`` is only the head of the result, the rest being on the Mac.
+    public var truncated: Bool
 
     public var id: String { callId }
     public var running: Bool { finishedAt == nil }
@@ -417,7 +419,8 @@ public struct ToolActivity: Identifiable, Equatable, Sendable {
         startedAt: Int,
         finishedAt: Int? = nil,
         output: String? = nil,
-        ok: Bool = true
+        ok: Bool = true,
+        truncated: Bool = false
     ) {
         self.callId = callId
         self.name = name
@@ -426,6 +429,7 @@ public struct ToolActivity: Identifiable, Equatable, Sendable {
         self.finishedAt = finishedAt
         self.output = output
         self.ok = ok
+        self.truncated = truncated
     }
 
     /// How long the tool took. Nil while it is still running, and never negative: the two
@@ -438,6 +442,17 @@ public struct ToolActivity: Identifiable, Equatable, Sendable {
 
     /// SF Symbol for the tool's family, so a trace is skimmable without reading the names.
     public var symbol: String {
+        // Claude Code's and Codex's own tools, by the names they give them.
+        switch name {
+        case "Bash": return "terminal"
+        case "Read", "Write", "Edit", "MultiEdit", "NotebookEdit": return "doc"
+        case "Glob", "Grep": return "magnifyingglass"
+        case "WebFetch", "WebSearch": return "globe"
+        case "Task", "Agent": return "person.badge.clock"
+        case "TodoWrite": return "list.bullet"
+        case "AskUserQuestion": return "questionmark.bubble"
+        default: break
+        }
         if name.hasPrefix("browser") || name == "fetch" || name == "web_search" { return "globe" }
         if name.hasPrefix("fs_") { return "doc" }
         if name.hasPrefix("calendar") || name.hasPrefix("reminders") { return "calendar" }
@@ -480,6 +495,7 @@ public func toolActivities(from events: [YorozuEvent]) -> [ToolActivity] {
             activities[at].finishedAt = event.ts
             activities[at].output = data.output
             activities[at].ok = data.ok
+            activities[at].truncated = data.truncated == true
         default:
             continue
         }

@@ -37,6 +37,29 @@ private let result = YorozuEvent.Payload.toolResult(
     ToolResultData(callId: "c1", ok: true, output: "README.md")
 )
 
+/// A result the Mac cut carries the flag through to the row, and the whole one, arriving later
+/// under the same id, replaces it. Claude Code's tool names get glyphs of their own.
+@Test func aTruncatedResultIsFlaggedUntilTheWholeOneReplacesIt() throws {
+    let cut = event(.toolResult(ToolResultData(callId: "c1", ok: true, output: "head", truncated: true)), id: "r1")
+    let whole = event(.toolResult(ToolResultData(callId: "c1", ok: true, output: "head and tail")), id: "r1")
+    let bash = event(.toolCall(ToolCallData(callId: "c1", name: "Bash", args: ["command": .string("cat log")])), id: "k1")
+
+    let short = toolActivities(from: [bash, cut])
+    #expect(short.map(\.truncated) == [true])
+    #expect(short[0].output == "head")
+    #expect(short[0].symbol == "terminal")
+
+    let full = toolActivities(from: [bash, whole])
+    #expect(full.map(\.truncated) == [false])
+    #expect(full[0].output == "head and tail")
+
+    #expect(ToolActivity(callId: "x", name: "Edit", args: [:], startedAt: 0).symbol == "doc")
+    #expect(ToolActivity(callId: "x", name: "Grep", args: [:], startedAt: 0).symbol == "magnifyingglass")
+    // An older runtime's result, with no flag at all, is whole.
+    let legacy = try JSONDecoder().decode(ToolResultData.self, from: Data(#"{"callId":"c","ok":true,"output":"o"}"#.utf8))
+    #expect(legacy.truncated == nil)
+}
+
 @Test func aDelegationBecomesOneCardThatClosesOnItsLastMessage() {
     let events = [
         event(ask("when am I free?"), id: "ask", agent: "phone"),

@@ -129,6 +129,8 @@ public struct ChatView: View {
             composer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // A truncated tool result in this thread's trace asks the Mac for the rest through here.
+        .environment(\.fetchToolResult) { model.requestToolResult($0, in: thread.id) }
         .navigationTitle(thread.displayTitle)
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
