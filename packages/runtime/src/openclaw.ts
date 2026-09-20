@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { GatewayClient, type DeviceIdentity, type GatewayClientHostDeps } from "@openclaw/gateway-client";
 import type { EventFrame } from "@openclaw/gateway-protocol/frame-guards";
-import type { EventPayload, MessageAttachment, ModelOption, ReasoningEffort, YorozuEvent } from "@yorozu/shared";
+import { ATTACHMENT_MAX_BYTES, type EventPayload, type MessageAttachment, type ModelOption, type ReasoningEffort, type YorozuEvent } from "@yorozu/shared";
 
 const DEFAULT_GATEWAY_URL = "ws://127.0.0.1:18789";
 
@@ -75,6 +75,8 @@ export interface OpenClawRunnerOptions {
   spawnProcess?: typeof spawn;
   clientFactory?: (options: ConstructorParameters<typeof GatewayClient>[0]) => Gateway;
   recoveryDelayMs?: number;
+  /** Fetches Gateway-hosted media; the Gateway signs the URL, so no auth header is needed. */
+  fetch?: typeof fetch;
 }
 
 /** Thin Gateway bridge. OpenClaw owns sessions, tools, credentials, and policy. */
@@ -85,6 +87,8 @@ export class OpenClawRunner {
   readonly #pendingFile: string;
   readonly #clientFactory: NonNullable<OpenClawRunnerOptions["clientFactory"]>;
   readonly #recoveryDelayMs: number;
+  readonly #fetch: typeof fetch;
+  #httpBase = DEFAULT_GATEWAY_URL.replace(/^ws/, "http");
   readonly #pending = new Set<PendingTurn>();
   #client?: Gateway;
   #connecting?: Promise<Gateway>;
@@ -96,6 +100,7 @@ export class OpenClawRunner {
     this.#pendingFile = join(options.stateDir ?? process.env.YOROZU_STATE_DIR ?? ".", "openclaw-pending.json");
     this.#clientFactory = options.clientFactory ?? ((clientOptions) => new GatewayClient(clientOptions));
     this.#recoveryDelayMs = options.recoveryDelayMs ?? 250;
+    this.#fetch = options.fetch ?? fetch;
   }
 
   async listModels(): Promise<ModelOption[]> {
@@ -283,7 +288,7 @@ export class OpenClawRunner {
         }
         this.restoreHistory(pending, history.messages ?? []);
         const final = correlatedFinal(history.messages ?? [], pending);
-        if (final.found) { pending.resolve(final.text); return; }
+        if (final.found) { await this.finish(client, pending, final.text, history.messages); return; }
         const accepted = history.inputReceipts?.some((receipt) => receipt.runId === pending.runId);
         if (resend && !accepted) {
           const result = await resend();
@@ -384,6 +389,7 @@ export class OpenClawRunner {
         this.writeStoredAuth(stored);
       },
     };
+    this.#httpBase = (setup?.url ?? DEFAULT_GATEWAY_URL).replace(/^ws/, "http");
     const client = this.#clientFactory({
       url: setup?.url ?? DEFAULT_GATEWAY_URL,
       bootstrapToken: setup?.bootstrapToken,
@@ -484,7 +490,7 @@ export class OpenClawRunner {
       if (pending.text) pending.onUpdate?.(pending.text);
     } else if (payload.state === "final") {
       const text = messageText(payload.message) || pending.text;
-      if (!pending.awaitsAnnouncement || announcementMatches(runId, pending.childRunIds)) pending.resolve(text);
+      if (!pending.awaitsAnnouncement || announcementMatches(runId, pending.childRunIds)) void this.finish(this.#client, pending, text);
       else if (text) pending.onUpdate?.(text);
     } else if (payload.state === "aborted") {
       pending.resolve("");
@@ -492,6 +498,44 @@ export class OpenClawRunner {
       const detail = typeof payload.errorMessage === "string" ? payload.errorMessage : "unknown error";
       pending.resolve("OpenClaw turn failed: " + detail);
     }
+  }
+
+  /**
+   * Images the agent sent (message tool, image generation) live only in the transcript as
+   * Gateway-hosted blocks: the final chat event carries text alone. Each becomes its own
+   * inline agent message before the text final, so a relay client shows it like a user photo.
+   * Fetch failures drop the image rather than the turn.
+   */
+  private async finish(client: Gateway | undefined, pending: PendingTurn, text: string, messages?: unknown[]): Promise<void> {
+    if (client && pending.onEvent) try {
+      messages ??= (await client.request<History>("chat.history", {
+        sessionKey: pending.sessionKey, limit: 1000, inputRunIds: [pending.runId],
+      })).messages ?? [];
+      for (const value of messages) {
+        const message = record(value);
+        if (message.role !== "assistant" || string(record(message.__openclaw).runId ?? message.runId) !== pending.runId) continue;
+        for (const blockValue of Array.isArray(message.content) ? message.content : []) {
+          const block = record(blockValue);
+          const artifactId = string(block.artifactId);
+          if (block.type !== "image" || !artifactId || pending.seen.has(`openclaw:${pending.runId}:image:${artifactId}`)) continue;
+          const attachment = await this.fetchImage(client, pending.sessionKey, artifactId, string(block.mimeType), string(block.alt));
+          if (attachment) this.activity(pending, `image:${artifactId}`, { kind: "message", data: { role: "agent", text: "", attachments: [attachment] } });
+        }
+      }
+    } catch {
+      // Text still answers the turn.
+    }
+    pending.resolve(text);
+  }
+
+  private async fetchImage(client: Gateway, sessionKey: string, artifactId: string, mime: string, name: string): Promise<MessageAttachment | undefined> {
+    const { url } = await client.request<{ url?: string }>("artifacts.download", { sessionKey, artifactId });
+    if (!url) return undefined;
+    const response = await this.#fetch(new URL(url, this.#httpBase));
+    if (!response.ok) return undefined;
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.byteLength > ATTACHMENT_MAX_BYTES) return undefined;
+    return { name: name || artifactId, mime: response.headers.get("content-type")?.split(";")[0] || mime || "image/*", data: bytes.toString("base64") };
   }
 
   private activity(pending: PendingTurn, key: string, payload: EventPayload, agentId = "main"): void {
