@@ -91,6 +91,7 @@ import {
   threadModel,
   threadSummaries,
 } from "./threads.js";
+import { NativeCards } from "./native-cards.js";
 import { claudeCodeRunner, type NativeAgentRunner } from "./native.js";
 import { isProjectFolder, listProjects } from "./projects.js";
 import { closeBrowser } from "./tools/browser.js";
@@ -438,6 +439,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     broadcast(event);
   }
 
+  const nativeCards = new NativeCards(emit);
+
   /** Cards on screen somewhere, waiting to be answered, by action ID. */
   const pending = new Map<
     string,
@@ -703,6 +706,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
           model: threadModel(threadId, dir),
           effort: threadEffort(threadId, dir),
           signal: turn.signal,
+          approve: (tool, input, signal) => nativeCards.approve(threadId, agent, tool, input, signal),
+          ask: (question, options, signal) => nativeCards.ask(threadId, question, options, signal),
           onUpdate: (reply) => broadcast(message(reply)),
           // The agent's trace, under ids stable per step, so a replayed step is one row. A
           // long result goes out as its head, flagged; the whole stays here for the asking.
@@ -1045,10 +1050,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
         running.get(event.threadId)?.abort();
         running.delete(event.threadId);
         // A turn parked on a card would never notice the abort otherwise.
-        for (const { settle } of [...pending.values()]) settle({ answer: "no" });
-        questions.cancelAll();
+        for (const card of [...pending.values()]) if (card.threadId === event.threadId) card.settle({ answer: "no" });
+        questions.cancelAll(event.threadId);
         return;
       case "approval_answer": {
+        if (nativeCards.answer(event)) return;
         // A lock-screen button is honoured only for a card this runtime judged answerable
         // from one. The relay chose which buttons the push drew, and a relay that put Allow
         // under a purchase card must not be able to move money with it.
@@ -1088,6 +1094,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         // Emitted by the runtime, never accepted from a device: a proposal is not a decision.
         return;
       case "question_answer":
+        if (nativeCards.answer(event)) return;
         questions.answer(event.data.questionId, event.data.answer);
         return;
       // The rest of a truncated tool result, to the one device that asked, under the id it
@@ -1280,7 +1287,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       // external. One bit for the relay; the action itself stays in the sealed frame.
       const actions =
         event.kind === "approval_card" &&
-        quickActions.get(event.data.actionId) === true;
+        (quickActions.get(event.data.actionId) === true || nativeCards.quickApprovable(event.data.actionId));
       // Thread and event ids travel only as short one-way references. The latter lets a tap
       // select the exact encrypted card after sync without teaching the relay what it contains.
       ws.send(

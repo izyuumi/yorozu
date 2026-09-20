@@ -133,3 +133,65 @@ test("a failure the agent reports is the reply; a transport failure is thrown", 
   await expect(claudeCodeRunner(broken.query).run({ threadId: "cc", text: "x", signal: new AbortController().signal }))
     .rejects.toThrow("claude is not installed");
 });
+
+// Exercise the SDK callback through the same card desk used by the sidecar.
+import { NativeCards } from "./native-cards.js";
+import type { YorozuEvent } from "@yorozu/shared";
+import type { Options, Query } from "@anthropic-ai/claude-agent-sdk";
+
+test.each(["yes", "no"] as const)("native SDK permission %s holds the turn and returns to the SDK", async (answer) => {
+  const events: YorozuEvent[] = [];
+  const cards = new NativeCards((event) => events.push(event));
+  let decision: unknown;
+  const query: QueryFn = ({ options }) => Object.assign((async function* () {
+    yield init("permission-session");
+    decision = await options!.canUseTool!("Bash", { command: "pwd" }, { signal: new AbortController().signal, toolUseID: "tool" });
+    yield result("permission-session", "finished");
+  })(), { close() {} }) as Query;
+  const finished = vi.fn();
+  const running = claudeCodeRunner(query).run({ threadId: "cc", text: "run", signal: new AbortController().signal,
+    approve: (tool, input, signal) => cards.approve("cc", "claude-code", tool, input, signal),
+  }).then(finished);
+  await vi.waitFor(() => expect(events).toHaveLength(1));
+  expect(finished).not.toHaveBeenCalled();
+  const card = events[0]!;
+  if (card.kind !== "approval_card") throw new Error("missing card");
+  expect(card.data).toMatchObject({ nativeAgent: "claude-code", actionClass: "Bash" });
+  expect(card.data.suggestedRule).toBeUndefined();
+  expect(cards.quickApprovable(card.data.actionId)).toBe(true);
+  const reply: YorozuEvent = { ...card, kind: "approval_answer", data: { actionId: card.data.actionId, answer, source: "notification" } };
+  expect(cards.answer({ ...reply, threadId: "other" })).toBe(false);
+  expect(cards.answer(reply)).toBe(true);
+  await running;
+  expect(decision).toMatchObject({ behavior: answer === "yes" ? "allow" : "deny" });
+  expect(finished).toHaveBeenCalledWith({ text: "finished", sessionId: "permission-session" });
+  expect(cards.answer(reply)).toBe(false);
+});
+
+test.each(["Option A", "My own answer"])("SDK question accepts %s", async (answer) => {
+  let options!: Options;
+  const fake = fakeQuery([]);
+  const query: QueryFn = (params) => { options = params.options!; return fake.query(params); };
+  const ask = vi.fn().mockResolvedValue(answer);
+  await claudeCodeRunner(query).run({ threadId: "cc", text: "ask", signal: new AbortController().signal, ask });
+  const input = { questions: [{ question: "Which?", options: [{ label: "Option A" }, { label: "Option B" }] }] };
+  expect(await options.canUseTool!("AskUserQuestion", input, { signal: new AbortController().signal, toolUseID: "q" }))
+    .toEqual({ behavior: "allow", updatedInput: { ...input, answers: { "Which?": answer } } });
+  expect(ask).toHaveBeenCalledWith("Which?", ["Option A", "Option B"], expect.any(AbortSignal));
+});
+
+test.each(["approval", "question"])("abort pending %s clears only that request", async (kind) => {
+  const events: YorozuEvent[] = [];
+  const cards = new NativeCards((event) => events.push(event));
+  const abort = new AbortController();
+  const other = new AbortController();
+  const request = kind === "approval" ? cards.approve("cc", "claude-code", "Bash", {}, abort.signal) : cards.ask("cc", "Which?", ["A"], abort.signal);
+  const separate = cards.approve("other", "claude-code", "Edit", {}, other.signal);
+  abort.abort();
+  expect(await request).toBe(kind === "approval" ? false : undefined);
+  const card = events[1]!;
+  if (card.kind !== "approval_card") throw new Error("missing card");
+  expect(cards.quickApprovable(card.data.actionId)).toBe(true);
+  other.abort();
+  expect(await separate).toBe(false);
+});

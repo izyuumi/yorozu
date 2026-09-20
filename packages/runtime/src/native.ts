@@ -28,6 +28,8 @@ export interface NativeTurn {
    * work row already draws. `id` is stable per thing, so a replay does not double it up.
    */
   onActivity?: (id: string, payload: EventPayload) => void;
+  approve?: (tool: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<boolean>;
+  ask?: (question: string, options: string[], signal: AbortSignal) => Promise<string | undefined>;
 }
 
 /** A tool result's content as one string: text blocks joined, anything else named. */
@@ -59,8 +61,7 @@ export type QueryFn = (params: { prompt: string; options?: Options }) => Query;
  * Claude Code through the Agent SDK. The CLI's own tools, settings and permission model apply
  * — this is a coding session, not Yorozu's loop — and `resume` carries the thread's session.
  *
- * Permission prompts are not passed through yet: a tool the CLI would ask about is refused,
- * and the reply says so. That passthrough is its own change.
+ * Permission decisions and questions are relayed without Yorozu action classification.
  */
 export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
   return {
@@ -79,10 +80,26 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
           ...(turn.model ? { model: turn.model } : {}),
           ...(turn.effort ? { effort: turn.effort } : {}),
           includePartialMessages: true,
-          canUseTool: async (toolName) => ({
-            behavior: "deny",
-            message: `Yorozu cannot yet relay a permission prompt for ${toolName}; approvals passthrough is a later change.`,
-          }),
+          canUseTool: async (toolName, input, options) => {
+            const signal = AbortSignal.any([turn.signal, options.signal]);
+            const deny = { behavior: "deny" as const, message: "User declined or request cancelled." };
+            if (signal.aborted) return deny;
+            if (toolName === "AskUserQuestion") {
+              const answers: Record<string, string> = {};
+              if (!Array.isArray(input.questions) || !input.questions.length) return deny;
+              for (const item of input.questions) {
+                if (!item || typeof item.question !== "string" || !Array.isArray(item.options)) return deny;
+                const labels = item.options.map((option: { label?: unknown }) => option?.label).filter((label: unknown): label is string => typeof label === "string");
+                const answer = await turn.ask?.(item.question, labels, signal);
+                if (answer === undefined || signal.aborted) return deny;
+                answers[item.question] = answer;
+              }
+              return { behavior: "allow", updatedInput: { ...input, answers } };
+            }
+            return await turn.approve?.(toolName, input, signal) && !signal.aborted
+              ? { behavior: "allow", updatedInput: input }
+              : deny;
+          },
         },
       });
 
