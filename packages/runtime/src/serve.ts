@@ -28,6 +28,7 @@ import {
   signFrame,
   threadRef,
   toBase64Url,
+  REASONING_EFFORTS,
   type ApprovalCardData,
   type DeviceInfo,
   type EventPayload,
@@ -559,11 +560,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * phone's model picker is one tap away from the thread it is about, and asking for the list
    * at that point would draw an empty menu first.
    */
+  const agentModels: Partial<Record<Exclude<ThreadAgent, "yorozu">, ModelOption[]>> = {};
   const modelList = (): YorozuEvent =>
     control({
       kind: "model_list",
-      data: { models: provider ? modelOptions(loadProviders(dir)) : openclawModels },
+      data: { models: provider ? modelOptions(loadProviders(dir)) : openclawModels, agentModels },
     });
+
+  for (const agent of ["claude-code", "codex"] as const) {
+    void nativeRunners[agent]?.models?.().then((models) => {
+      agentModels[agent] = models;
+      if (!stopped) broadcast(modelList());
+    }).catch(() => state(`native-model-list-unavailable ${agent}`));
+  }
 
   /**
    * Where a coding agent's thread can be started. Sent with the thread list, like the models:
@@ -1175,12 +1184,24 @@ export function serve(options: ServeOptions = {}): Sidecar {
       case "thread_set_bypass":
         if (typeof event.data.bypass === "boolean") setThreadBypass(event.threadId, event.data.bypass, dir);
         return broadcast(threadList());
-      case "thread_set_model":
-        setThreadModel(event.threadId, event.data.model ?? null, dir);
+      case "thread_set_model": {
+        const agent = threadAgent(event.threadId, dir);
+        const model = event.data.model;
+        if (model != null && typeof model !== "string") return;
+        if (agent !== "yorozu" && model && !agentModels[agent]?.some((m) => m.id === model)) return;
+        if (setThreadModel(event.threadId, model ?? null, dir) && agent !== "yorozu") setThreadEffort(event.threadId, null, dir);
         return broadcast(threadList());
-      case "thread_set_effort":
-        setThreadEffort(event.threadId, event.data.effort ?? null, dir);
+      }
+      case "thread_set_effort": {
+        const agent = threadAgent(event.threadId, dir);
+        const effort = event.data.effort;
+        if (effort != null && !REASONING_EFFORTS.includes(effort)) return;
+        const choices = agent === "yorozu" ? ["low", "medium", "high"] :
+          (agentModels[agent]?.find((m) => m.id === threadModel(event.threadId, dir)) ?? agentModels[agent]?.[0])?.efforts ?? [];
+        if (effort && !choices.includes(effort)) return;
+        setThreadEffort(event.threadId, effort ?? null, dir);
         return broadcast(threadList());
+      }
       case "device_list":
         return reply(deviceList());
       case "device_remove":

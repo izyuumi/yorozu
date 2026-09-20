@@ -57,6 +57,18 @@ public final class ChatModel {
     /// Every model a thread can be put on, as the Mac has it configured. Arrives with the
     /// thread list; empty until then, which is a picker that offers only Default.
     public private(set) var models: [ModelOption] = []
+    public private(set) var agentModels: [String: [ModelOption]] = [:]
+
+    public func models(for thread: ThreadSummary) -> [ModelOption] {
+        guard let agent = thread.agent, agent != .yorozu else { return models }
+        return agentModels[agent.rawValue] ?? []
+    }
+
+    public func efforts(for thread: ThreadSummary) -> [ReasoningEffort] {
+        guard thread.agent?.needsFolder == true else { return [.low, .medium, .high] }
+        let models = models(for: thread)
+        return (models.first { $0.id == thread.model } ?? models.first)?.efforts ?? []
+    }
     /// Where a coding agent's thread can be started, recents first, as the Mac last listed
     /// them. Arrives with the thread list; empty until then.
     public private(set) var projects: [ProjectFolder] = []
@@ -473,9 +485,10 @@ public final class ChatModel {
     public func setModel(_ thread: ThreadSummary, _ model: String?) {
         guard draft?.id != thread.id else {
             draft?.model = model
+            if thread.agent?.needsFolder == true { draft?.effort = nil }
             return
         }
-        set(thread.id) { $0.model = model }
+        set(thread.id) { $0.model = model; if thread.agent?.needsFolder == true { $0.effort = nil } }
         emit(.threadSetModel(ThreadSetModelData(model: model)), in: thread.id)
     }
 
@@ -743,6 +756,7 @@ public final class ChatModel {
             // What the model picker offers, sent with every thread list. Not a thread's event.
             case .modelList(let data):
                 models = data.models
+                agentModels = data.agentModels ?? [:]
             // And where a coding agent can be started, the same way.
             case .projectList(let data):
                 projects = data.projects

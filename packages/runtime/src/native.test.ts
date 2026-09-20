@@ -209,3 +209,15 @@ test("bypass toggles on and off in one resumed session, while questions still ne
   }
   expect(approve).toHaveBeenCalledTimes(2);
 });
+
+test("Claude publishes SDK models and passes selected model/effort on each resumed turn", async () => {
+  const { query, calls } = fakeQuery([result("s-model", "ok")]);
+  const models = vi.fn().mockResolvedValue([{ value: "opus", displayName: "Opus", supportedEffortLevels: ["low", "high", "max"] }]);
+  const catalogQuery: QueryFn = (params) => Object.assign(query(params), { supportedModels: models });
+  const runner = claudeCodeRunner(catalogQuery);
+  expect(await runner.models!()).toEqual([{ id: "opus", label: "Opus", providerLabel: "Claude Code", efforts: ["low", "high", "max"] }]);
+  for (const effort of ["low", "max"] as const) {
+    await runner.run({ threadId: "cc", text: "go", sessionId: "s-model", model: "opus", effort, signal: new AbortController().signal });
+    expect(calls.at(-1)).toMatchObject({ model: "opus", effort, resume: "s-model" });
+  }
+});

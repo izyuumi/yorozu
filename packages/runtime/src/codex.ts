@@ -10,7 +10,7 @@
  * See docs/spec-v1.html section 2.
  */
 
-import { Codex, type ThreadEvent } from "@openai/codex-sdk";
+import { Codex, type ThreadEvent, type ModelReasoningEffort } from "@openai/codex-sdk";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket as NetSocket } from "node:net";
 import { tmpdir } from "node:os";
@@ -124,7 +124,7 @@ export function codexCli(config: CodexCliConfig = {}): Provider {
   async function start(
     messages: Message[],
     tools: ToolDef[],
-    effort?: "low" | "medium" | "high",
+    effort?: ModelReasoningEffort,
     signal?: AbortSignal,
   ): Promise<Session> {
     const socket = await listen();

@@ -9,7 +9,7 @@
  */
 
 import { query as sdkQuery, type Options, type Query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { EventPayload, ReasoningEffort } from "@yorozu/shared";
+import type { EventPayload, ModelOption, ReasoningEffort } from "@yorozu/shared";
 
 export interface NativeTurn {
   threadId: string;
@@ -54,10 +54,14 @@ export interface NativeTurnResult {
 }
 
 export interface NativeAgentRunner {
+  models?(): Promise<ModelOption[]>;
   run(turn: NativeTurn): Promise<NativeTurnResult>;
 }
 
-export type QueryFn = (params: { prompt: string; options?: Options }) => Query;
+export type QueryFn = typeof sdkQuery;
+
+export const claudeEffort = (effort?: ReasoningEffort): Options["effort"] =>
+  effort && ["low", "medium", "high", "xhigh", "max"].includes(effort) ? effort as Options["effort"] : undefined;
 
 /**
  * Claude Code through the Agent SDK. The CLI's own tools, settings and permission model apply
@@ -67,6 +71,16 @@ export type QueryFn = (params: { prompt: string; options?: Options }) => Query;
  */
 export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
   return {
+    async models() {
+      // No prompt is submitted while asking the CLI for its own catalog.
+      const session = query({ prompt: (async function* () {})(), options: { tools: [] } });
+      try {
+        return (await session.supportedModels()).map((model) => ({
+          id: model.value, label: model.displayName, providerLabel: "Claude Code",
+          efforts: model.supportedEffortLevels ?? [],
+        }));
+      } finally { session.close(); }
+    },
     async run(turn) {
       const abort = new AbortController();
       const onAbort = (): void => abort.abort();
@@ -80,7 +94,7 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
           ...(turn.cwd ? { cwd: turn.cwd } : {}),
           ...(turn.sessionId ? { resume: turn.sessionId } : {}),
           ...(turn.model ? { model: turn.model } : {}),
-          ...(turn.effort ? { effort: turn.effort } : {}),
+          ...(claudeEffort(turn.effort) ? { effort: claudeEffort(turn.effort) } : {}),
           includePartialMessages: true,
           permissionMode: turn.bypass ? "bypassPermissions" : "default",
           allowDangerouslySkipPermissions: turn.bypass === true,

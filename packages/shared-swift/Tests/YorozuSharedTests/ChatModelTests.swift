@@ -889,3 +889,21 @@ private func summary(
     let encoded = try JSONEncoder().encode(ThreadSummary(id: "cc", title: "", archived: false, lastActivity: 1, agent: .claudeCode, bypass: true))
     #expect(try JSONDecoder().decode(ThreadSummary.self, from: encoded).bypass == true)
 }
+
+@MainActor
+@Test func modelAndEffortChoicesBelongToTheThreadsAgent() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    let ordinary = ModelOption(id: "provider/model", label: "Model", providerLabel: "Provider")
+    let native = ModelOption(id: "opus", label: "Opus", providerLabel: "Claude Code", efforts: [.low, .max])
+    await transport.yield(.event(event("models", .modelList(ModelListData(models: [ordinary], agentModels: ["claude-code": [native]])))))
+    #expect(await eventually { model.agentModels["claude-code"] == [native] })
+    let plain = ThreadSummary(id: "plain", title: "", archived: false, lastActivity: 1)
+    let claude = ThreadSummary(id: "cc", title: "", archived: false, lastActivity: 1, agent: .claudeCode)
+    let codex = ThreadSummary(id: "cx", title: "", archived: false, lastActivity: 1, agent: .codex)
+    #expect(model.models(for: plain) == [ordinary])
+    #expect(model.models(for: claude) == [native])
+    #expect(model.models(for: codex).isEmpty)
+    #expect(model.efforts(for: plain) == [.low, .medium, .high])
+    #expect(model.efforts(for: claude) == [.low, .max])
+}

@@ -773,7 +773,7 @@ public struct ThreadCreateData: Codable, Equatable, Sendable {
 /// Portable reasoning levels supported by both subscription CLI providers. Nil on a thread
 /// leaves the provider's own default in charge.
 public enum ReasoningEffort: String, Codable, Equatable, Sendable, CaseIterable, Identifiable {
-    case low, medium, high
+    case minimal, low, medium, high, xhigh, max, ultra, persistent
 
     public var id: Self { self }
     public var label: String { rawValue.capitalized }
@@ -943,6 +943,7 @@ public struct ThreadSetEffortData: Codable, Equatable, Sendable {
 
 /// One model a thread can be put on, named the way a picker draws it.
 public struct ModelOption: Codable, Equatable, Sendable, Identifiable {
+    public var efforts: [ReasoningEffort]?
     /// The `<providerId>/<model>` spec. What ``ThreadSetModelData`` carries.
     public var id: String
     /// The model's own name, e.g. "claude-opus-5".
@@ -950,7 +951,8 @@ public struct ModelOption: Codable, Equatable, Sendable, Identifiable {
     /// The provider entry it belongs to, e.g. "Claude". What a menu groups on.
     public var providerLabel: String
 
-    public init(id: String, label: String, providerLabel: String) {
+    public init(id: String, label: String, providerLabel: String, efforts: [ReasoningEffort]? = nil) {
+        self.efforts = efforts
         self.id = id
         self.label = label
         self.providerLabel = providerLabel
@@ -965,7 +967,11 @@ public struct ModelOption: Codable, Equatable, Sendable, Identifiable {
 /// so a picker one tap from a thread has real names before it is opened.
 public struct ModelListData: Codable, Equatable, Sendable {
     public var models: [ModelOption]
-    public init(models: [ModelOption]) { self.models = models }
+    public var agentModels: [String: [ModelOption]]?
+    public init(models: [ModelOption], agentModels: [String: [ModelOption]]? = nil) {
+        self.models = models
+        self.agentModels = agentModels
+    }
 }
 
 /// The user pressed stop: cancel the turn running in `threadId` and every agent it

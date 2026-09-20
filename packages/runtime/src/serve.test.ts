@@ -26,12 +26,14 @@ import { createConnection } from "node:net";
 import { afterEach, expect, test, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import { openaiCompat } from "./provider.js";
-import { loadDevices, loadKeys, serve, typedAnswer, type ServeOptions, type Sidecar } from "./serve.js";
+import { loadDevices, loadKeys, serve as startSidecar, typedAnswer, type ServeOptions, type Sidecar } from "./serve.js";
 import type { NativeAgentRunner, NativeTurn } from "./native.js";
 import { OpenClawRunner, type OpenClawTurn } from "./openclaw.js";
 import { localSocketPath } from "./local.js";
 import { SYNC_PAGE_BYTES, setNativeTurn, setThreadSession, appendThreadEvent, createThread, listThreads, readThreadEvents } from "./threads.js";
 import { readTranscripts, transcriptDir } from "./transcripts.js";
+
+const serve = (options: ServeOptions): Sidecar => startSidecar({ nativeRunners: {}, ...options });
 
 let relay: Relay;
 let sidecar: Sidecar;
@@ -459,7 +461,9 @@ test("a thread is answered by the agent it was created for, and an unknown agent
   const archived = (await eventsUntil((event) =>
     event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "cc" && thread.archived),
   )).at(-1)! as YorozuEvent & { kind: "thread_list" };
-  expect(archived.data.threads.find((thread) => thread.id === "cc")).toMatchObject({ model: "claude/claude-opus-5", effort: "high" });
+  // A provider spec is not a native SDK model; unavailable agents publish no effort choices.
+  expect(archived.data.threads.find((thread) => thread.id === "cc")?.model).toBeUndefined();
+  expect(archived.data.threads.find((thread) => thread.id === "cc")?.effort).toBeUndefined();
   expect(archive).not.toHaveBeenCalled();
 
   // While the plain thread still goes where it always went.
@@ -1854,4 +1858,24 @@ test("native session and running marker reach disk before completion, and surviv
   await sidecar.close();
   expect(started.signal.aborted).toBe(true);
   expect(listThreads(dir)[0]?.nativeTurn?.state).toBe("running");
+});
+
+test("agent models publish separately; selections persist and reject another agent's models", async () => {
+  const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "ok", sessionId: "s-model" });
+  const models = [{ id: "opus", label: "Opus", providerLabel: "Claude Code", efforts: ["low", "max"] as const }];
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { "claude-code": { run, models: async () => models.map((m) => ({ ...m, efforts: [...m.efforts] })) } } });
+  const list = (await eventsUntil((e) => e.kind === "model_list" && !!e.data.agentModels?.["claude-code"])).at(-1)!;
+  expect(list).toMatchObject({ data: { agentModels: { "claude-code": models } } });
+  send({ kind: "thread_create", data: { agent: "claude-code", cwd: proj } }, "cc");
+  send({ kind: "thread_set_model", data: { model: "opus" } }, "cc");
+  send({ kind: "thread_set_effort", data: { effort: "max" } }, "cc");
+  send({ kind: "message", data: { role: "user", text: "go" } }, "cc");
+  await eventsUntil((e) => e.kind === "message" && e.data.done === true);
+  expect(run).toHaveBeenLastCalledWith(expect.objectContaining({ model: "opus", effort: "max" }));
+  expect(listThreads(dir)[0]).toMatchObject({ model: "opus", effort: "max" });
+  send({ kind: "thread_set_model", data: { model: "other-provider/model" } }, "cc");
+  send({ kind: "thread_set_effort", data: { effort: "ultra" } }, "cc");
+  send({ kind: "message", data: { role: "user", text: "again" } }, "cc");
+  await eventsUntil((e) => e.kind === "message" && e.data.done === true);
+  expect(run).toHaveBeenLastCalledWith(expect.objectContaining({ model: "opus", effort: "max", sessionId: "s-model" }));
 });

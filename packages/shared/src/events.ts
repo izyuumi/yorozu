@@ -429,7 +429,8 @@ export interface ThreadSetModelData {
   model?: string | null;
 }
 
-export type ReasoningEffort = "low" | "medium" | "high";
+export const REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"] as const;
+export type ReasoningEffort = typeof REASONING_EFFORTS[number];
 
 /** Sets one thread's reasoning effort. Null or absent resets to the provider default. */
 export interface ThreadSetEffortData {
@@ -438,6 +439,7 @@ export interface ThreadSetEffortData {
 
 /** One model a thread can be set to, named the way a picker wants to draw it. */
 export interface ModelOption {
+  efforts?: ReasoningEffort[];
   /** The `<providerId>/<model>` spec. What `thread_set_model` carries. */
   id: string;
   /** The model's own name, e.g. "claude-opus-5". */
@@ -452,6 +454,7 @@ export interface ModelOption {
  * the providers themselves, and their keys, never leave the Mac.
  */
 export interface ModelListData {
+  agentModels?: Partial<Record<Exclude<ThreadAgent, "yorozu">, ModelOption[]>>;
   models: ModelOption[];
 }
 

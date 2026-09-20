@@ -216,7 +216,7 @@ public struct ChatView: View {
                     exportTitle: thread.displayTitle,
                     exportMarkdown: { threadMarkdown(thread: thread, events: events) },
                     stop: generating ? { model.interrupt(in: thread.id) } : nil,
-                    models: model.models,
+                    models: model.models(for: thread),
                     model: thread.model,
                     setModel: { model.setModel(thread, $0) }
                 )
@@ -246,9 +246,9 @@ public struct ChatView: View {
     /// thread is still running on a concrete first model; hiding that identity made the shipped
     /// toolbar materially different from the design and forced a menu open to discover it.
     private var macModelCaption: String {
-        let spec = thread.model ?? model.models.first?.id
+        let spec = thread.model ?? model.models(for: thread).first?.id
         guard let spec, !spec.isEmpty else { return "" }
-        if let option = model.models.first(where: { $0.id == spec }) {
+        if let option = model.models(for: thread).first(where: { $0.id == spec }) {
             return option.menuLabel
         }
         let parts = spec.split(separator: "/", maxSplits: 1).map(String.init)
@@ -538,6 +538,24 @@ public struct ChatView: View {
             #else
                 HStack(alignment: .bottom, spacing: 4) {
                     attachButton
+                    Menu {
+                        Picker("Model", selection: modelBinding) {
+                            Text("Auto").tag(String?.none)
+                            ForEach(model.models(for: thread)) { option in
+                                Text(option.label).tag(Optional(option.id))
+                            }
+                        }
+                        Picker("Effort", selection: effortBinding) {
+                            Text("Default").tag(ReasoningEffort?.none)
+                            ForEach(model.efforts(for: thread)) { effort in
+                                Text(effort.label).tag(Optional(effort))
+                            }
+                        }
+                    } label: {
+                        Text(macModelCaption).lineLimit(1)
+                    }
+                    .accessibilityLabel("Model and effort")
+                    .accessibilityValue("\(macModelCaption), \(thread.effort?.label ?? "Default effort")")
                     TextField("Message Yorozu", text: draft, axis: .vertical)
                         .textFieldStyle(.plain)
                         .font(.body)
@@ -640,7 +658,7 @@ public struct ChatView: View {
                                 Text("Effort").font(.headline)
                                 Picker("Effort", selection: effortBinding) {
                                     Text("Default").tag(ReasoningEffort?.none)
-                                    ForEach(ReasoningEffort.allCases) { effort in
+                                    ForEach(model.efforts(for: thread)) { effort in
                                         Text(effort.label).tag(Optional(effort))
                                     }
                                 }
@@ -657,7 +675,7 @@ public struct ChatView: View {
                                         .font(.footnote.weight(.semibold))
                                         .foregroundStyle(.secondary)
                                         .padding(.top, 4)
-                                    ForEach(model.models.filter { $0.providerLabel == provider }) { option in
+                                    ForEach(model.models(for: thread).filter { $0.providerLabel == provider }) { option in
                                         runSettingChoice(option.label, selected: thread.model == option.id) {
                                             modelBinding.wrappedValue = option.id
                                         }
@@ -701,7 +719,7 @@ public struct ChatView: View {
         /// Provider order as the Mac published it; no re-sorting behind the user's back.
         private var providers: [String] {
             var seen: [String] = []
-            for option in model.models where !seen.contains(option.providerLabel) {
+            for option in model.models(for: thread) where !seen.contains(option.providerLabel) {
                 seen.append(option.providerLabel)
             }
             return seen
@@ -709,7 +727,7 @@ public struct ChatView: View {
 
         private var composerModelLabel: String {
             guard let spec = thread.model else { return "Auto" }
-            return model.models.first(where: { $0.id == spec })?.label ?? spec.split(separator: "/").last.map(String.init) ?? spec
+            return model.models(for: thread).first(where: { $0.id == spec })?.label ?? spec.split(separator: "/").last.map(String.init) ?? spec
         }
 
         /// The chip names an effort only once it differs from the agent's own default.
