@@ -17,6 +17,7 @@ import {
   renameThread,
   setThreadEffort,
   setThreadModel,
+  threadAgent,
   threadEffort,
   threadHistory,
   threadModel,
@@ -130,6 +131,35 @@ test("a thread is created under the id the device minted, once", () => {
   // A repeated frame — a reconnect, a second device — is not a second thread.
   expect(createThread("Groceries", dir, "draft-1").title).toBe("Groceries");
   expect(listThreads(dir)).toHaveLength(1);
+});
+
+test("a thread declares its agent at creation, and a thread from before the field is yorozu's", () => {
+  const plain = createThread("Groceries", dir, "draft-1");
+  expect(plain.agent).toBeUndefined();
+  expect(threadAgent(plain.id, dir)).toBe("yorozu");
+  expect(threadSummaries(dir)[0]).not.toHaveProperty("agent");
+
+  const native = createThread("Fix the tests", dir, "draft-2", { agent: "claude-code", cwd: "/tmp/proj" });
+  expect(native).toMatchObject({ agent: "claude-code", cwd: "/tmp/proj" });
+  expect(threadAgent(native.id, dir)).toBe("claude-code");
+  expect(threadSummaries(dir).find((t) => t.id === "draft-2")).toMatchObject({ agent: "claude-code", cwd: "/tmp/proj" });
+
+  // An explicit `yorozu` is the default spelled out, and a cwd on it means nothing.
+  const explicit = createThread(undefined, dir, "draft-3", { agent: "yorozu", cwd: "/tmp/proj" });
+  expect(explicit).not.toHaveProperty("agent");
+  expect(explicit).not.toHaveProperty("cwd");
+
+  // A repeated frame with a different agent does not re-home an existing thread.
+  expect(createThread("Groceries", dir, "draft-1", { agent: "codex" }).agent).toBeUndefined();
+
+  expect(() => createThread("x", dir, "draft-4", { agent: "hermes" as never })).toThrow(/unknown agent "hermes"/);
+  expect(listThreads(dir).map((t) => t.id).sort()).toEqual(["draft-1", "draft-2", "draft-3"]);
+
+  // On disk, a record hand-edited to an agent the runtime no longer knows still loads — as yorozu's.
+  const index = JSON.parse(readFileSync(join(dir, "threads.json"), "utf8")) as Record<string, unknown>[];
+  index[0]!.agent = "hermes";
+  writeFileSync(join(dir, "threads.json"), JSON.stringify(index));
+  expect(threadAgent(index[0]!.id as string, dir)).toBe("yorozu");
 });
 
 test("a thread is created unnamed and renamed in place", () => {

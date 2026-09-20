@@ -404,6 +404,56 @@ test("OpenClaw activity reaches Mac and encrypted phone live, then replays durin
   }
 });
 
+test("a thread is answered by the agent it was created for, and an unknown agent is refused", async () => {
+  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
+  const run = vi.spyOn(OpenClawRunner.prototype, "run").mockResolvedValue("from openclaw");
+  const archive = vi.spyOn(OpenClawRunner.prototype, "setArchived").mockResolvedValue(undefined);
+  const { dir, send, eventsUntil } = await pairedPhone([], true);
+
+  // Nobody answers a thread for an agent that does not exist, and no thread is made for it.
+  send({ kind: "thread_create", data: { agent: "hermes" as never } }, "bad");
+  const refused = (await eventsUntil((event) => event.kind === "thought")).at(-1)!;
+  expect(refused).toMatchObject({ threadId: "bad", data: { text: expect.stringMatching(/unknown agent "hermes"/) } });
+  expect(listThreads(dir).map((thread) => thread.id)).toEqual([]);
+  expect(states).toContain('thread-create-error unknown agent "hermes"');
+
+  // The list carries who answers each thread; a plain thread says nothing, as it always has.
+  send({ kind: "thread_create", data: { agent: "claude-code", cwd: "/tmp/proj" } }, "cc");
+  send({ kind: "thread_create", data: {} }, "t1");
+  const threads = (await eventsUntil((event) =>
+    event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"),
+  )).at(-1)! as YorozuEvent & { kind: "thread_list" };
+  expect(threads.data.threads.find((thread) => thread.id === "cc")).toMatchObject({ agent: "claude-code", cwd: "/tmp/proj" });
+  expect(threads.data.threads.find((thread) => thread.id === "t1")).not.toHaveProperty("agent");
+
+  // A turn in the native thread never reaches OpenClaw: its own backend answers, and until one
+  // exists the answer is that it does not, as a finished reply so the composer is not left waiting.
+  send({ kind: "message", data: { role: "user", text: "fix the tests" } }, "cc");
+  const reply = (await eventsUntil((event) => event.kind === "message" && event.data.done === true)).at(-1)!;
+  expect(reply).toMatchObject({ threadId: "cc", data: { role: "agent", text: expect.stringMatching(/claude-code.*not available/i) } });
+  expect(run).not.toHaveBeenCalled();
+  expect(readThreadEvents("cc", dir).map((event) => event.kind)).toEqual(["message", "message"]);
+
+  // Stop, archive, model and effort all go to the thread's own agent too: none of them is
+  // OpenClaw's business here, and archiving does not wait on a Gateway that never saw the thread.
+  send({ kind: "interrupt", data: {} }, "cc");
+  send({ kind: "thread_set_model", data: { model: "claude/claude-opus-5" } }, "cc");
+  send({ kind: "thread_set_effort", data: { effort: "high" } }, "cc");
+  send({ kind: "thread_archive", data: { archived: true } }, "cc");
+  const archived = (await eventsUntil((event) =>
+    event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "cc" && thread.archived),
+  )).at(-1)! as YorozuEvent & { kind: "thread_list" };
+  expect(archived.data.threads.find((thread) => thread.id === "cc")).toMatchObject({ model: "claude/claude-opus-5", effort: "high" });
+  expect(archive).not.toHaveBeenCalled();
+
+  // While the plain thread still goes where it always went.
+  send({ kind: "message", data: { role: "user", text: "hello" } }, "t1");
+  await eventsUntil((event) => event.kind === "message" && event.data.done === true && event.threadId === "t1");
+  expect(run).toHaveBeenCalledTimes(1);
+  send({ kind: "thread_archive", data: { archived: true } }, "t1");
+  await vi.waitFor(() => expect(archive).toHaveBeenCalledWith("t1", true));
+});
+
 test("client archive and restore reach OpenClaw in order before the canonical list changes", async () => {
   vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
   let finishArchive!: () => void;

@@ -267,6 +267,30 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     #expect(old.lastActivityDate == Date(timeIntervalSince1970: 0.001))
 }
 
+/// A thread names the agent that answers it the way the runtime spells it; a plain thread
+/// leaves both new fields out, and an agent this build has never heard of reads as none.
+@Test func aThreadCarriesItsAgentAndWorkingDirectory() throws {
+    let native = ThreadSummary(id: "cc", title: "Fix the tests", archived: false, lastActivity: 1, agent: .claudeCode, cwd: "/tmp/proj")
+    let encoded = try JSONEncoder().encode(native)
+    #expect(try JSONDecoder().decode(ThreadSummary.self, from: encoded) == native)
+    let json = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+    #expect(json?["agent"] as? String == "claude-code")
+    #expect(json?["cwd"] as? String == "/tmp/proj")
+
+    let plain = try JSONEncoder().encode(ThreadSummary(id: "t1", title: "", archived: false, lastActivity: 1))
+    let plainJSON = try JSONSerialization.jsonObject(with: plain) as? [String: Any]
+    #expect(plainJSON?["agent"] == nil)
+    #expect(plainJSON?["cwd"] == nil)
+
+    let future = Data(#"{"id":"t1","title":"","archived":false,"lastActivity":1,"agent":"hermes"}"#.utf8)
+    #expect(try JSONDecoder().decode(ThreadSummary.self, from: future).agent == nil)
+
+    let create = try JSONEncoder().encode(ThreadCreateData(agent: .codex, cwd: "/tmp/proj"))
+    let createJSON = try JSONSerialization.jsonObject(with: create) as? [String: Any]
+    #expect(createJSON?["agent"] as? String == "codex")
+    #expect(try JSONDecoder().decode(ThreadCreateData.self, from: Data("{}".utf8)) == ThreadCreateData())
+}
+
 /// `{}` is what a phone older than unarchiving sends, and it still means archive.
 @Test func archivingCarriesAnOptionalFlag() throws {
     let legacy = try JSONDecoder().decode(ThreadArchiveData.self, from: Data("{}".utf8))

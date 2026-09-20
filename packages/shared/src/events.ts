@@ -303,8 +303,20 @@ export interface ProgressCardData {
   percent?: number;
 }
 
+/**
+ * Who answers a thread. `yorozu` is today's loop and the OpenClaw bridge; the other two are
+ * native CLI coding agents, each thread one of their sessions. Absent on the wire means `yorozu`,
+ * which is what every thread from before the field is.
+ */
+export const THREAD_AGENTS = ["yorozu", "claude-code", "codex"] as const;
+export type ThreadAgent = (typeof THREAD_AGENTS)[number];
+
 export interface ThreadCreateData {
   title?: string;
+  /** Which agent answers the thread, for its whole life. Absent means `yorozu`. */
+  agent?: ThreadAgent;
+  /** The working directory a native agent runs in, fixed at creation. Only they have one. */
+  cwd?: string;
 }
 
 /** Renames `threadId` from the base fields. A title the user chose: auto-titling leaves it alone. */
@@ -332,6 +344,10 @@ export interface ThreadSummary {
   model?: string;
   /** Requested reasoning depth. Absent means the provider's own default. */
   effort?: ReasoningEffort;
+  /** Which agent answers this thread. Absent means `yorozu` — see `ThreadCreateData`. */
+  agent?: ThreadAgent;
+  /** A native agent's working directory. Absent on a `yorozu` thread. */
+  cwd?: string;
   /**
    * When the thread was last read, on any device, epoch milliseconds. The runtime owns it — see
    * `thread_read` — so reading on the phone clears the dot on the Mac too. Absent means never.
