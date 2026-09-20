@@ -169,7 +169,9 @@ public final class ChatModel {
         synced = cache.threads()
         outbox = Outbox.pruned(cache.outbox())
         for thread in synced {
-            let events = cache.events(threadId: thread.id)
+            // Older clients replaced streamed replies in place, leaving their final
+            // timestamp ahead of the tool history below them in the saved array.
+            let events = cache.events(threadId: thread.id).sorted { $0.ts < $1.ts }
             timeline(thread.id).events = events
             for event in events { applyAnswerState(event) }
         }
@@ -1251,6 +1253,14 @@ public final class ChatModel {
         if let index = thread.firstIndex(where: { $0.id == event.id }) {
             guard thread[index] != event else { return }
             thread[index] = event
+            if case .message(let data) = event.payload, data.role == .agent {
+                // One reply ID spans commentary, tool use and the final answer. Its latest
+                // revision belongs at its latest timestamp, not at the first delta's slot.
+                // Insert after ties too: a tool result and final can share a millisecond.
+                thread.remove(at: index)
+                let position = thread.lastIndex(where: { $0.ts <= event.ts }).map { $0 + 1 } ?? 0
+                thread.insert(event, at: position)
+            }
         } else {
             // A reconnect sync can race a live relay frame. Put the older synced event back
             // where its runtime timestamp belongs instead of preserving network arrival order.
