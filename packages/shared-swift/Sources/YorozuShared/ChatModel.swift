@@ -134,7 +134,10 @@ public final class ChatModel {
         guard let cache else { return }
         synced = cache.threads()
         outbox = Outbox.pruned(cache.outbox())
-        for thread in synced { events[thread.id] = cache.events(threadId: thread.id) }
+        for thread in synced {
+            events[thread.id] = cache.events(threadId: thread.id)
+            for event in events[thread.id] ?? [] { applyAnswerState(event) }
+        }
     }
 
     /// Connects and applies updates until the transport ends. Calling it twice does nothing.
@@ -326,7 +329,18 @@ public final class ChatModel {
 
     /// Asks the Mac for the whole of a truncated tool result. The answer is the same
     /// `tool_result` event, whole, under the id already in the thread, so it lands in place.
+    @ObservationIgnored private var resultChunks: [String: (offset: Int, output: String)] = [:]
+
+    private func resumeResultRequests() {
+        for (key, partial) in resultChunks {
+            let ids = key.split(separator: "\0", maxSplits: 1).map(String.init)
+            guard ids.count == 2 else { continue }
+            emit(.toolResultRequest(ToolResultRequestData(callId: ids[1], offset: partial.offset)), in: ids[0])
+        }
+    }
+
     public func requestToolResult(_ callId: String, in threadId: String) {
+        resultChunks[threadId + "\0" + callId] = (0, "")
         emit(.toolResultRequest(ToolResultRequestData(callId: callId)), in: threadId)
     }
 
@@ -715,11 +729,13 @@ public final class ChatModel {
                 requestSync()
                 requestDevices()
                 requestRules()
+                resumeResultRequests()
                 onPaired?()
                 flush()
             }
         case .ownerOnline(let online):
             ownerOnline = online
+            if online { resumeResultRequests() }
             // The Mac waking up is the other half of "there is somewhere to send to".
             if online { flush() }
         case .event(let event):
@@ -1157,7 +1173,43 @@ public final class ChatModel {
         and put the payment in front of you then rather than doing it quietly.
         """
 
-    private func upsert(_ event: YorozuEvent) {
+    private func applyAnswerState(_ event: YorozuEvent) {
+        switch event.payload {
+        case .approvalAnswer(let data):
+            answered.insert(data.actionId)
+            choices[data.actionId] = data.answer
+        case .questionAnswer(let data):
+            answeredQuestions.insert(data.questionId)
+            questionChoices[data.questionId] = data.answer
+        default: break
+        }
+    }
+
+    private func upsert(_ incoming: YorozuEvent) {
+        var event = incoming
+        if case .toolResult(var data) = event.payload, let offset = data.chunkOffset {
+            let key = event.threadId + "\0" + data.callId
+            guard var partial = resultChunks[key], partial.offset == offset else { return }
+            partial.output += data.output
+            if let next = data.nextOffset {
+                guard next > offset else { return }
+                partial.offset = next
+                resultChunks[key] = partial
+                emit(.toolResultRequest(ToolResultRequestData(callId: data.callId, offset: next)), in: event.threadId)
+                return
+            }
+            data.output = partial.output
+            data.chunkOffset = nil
+            data.nextOffset = nil
+            data.truncated = nil
+            resultChunks.removeValue(forKey: key)
+            event.payload = .toolResult(data)
+        }
+        if case .toolResult(let data) = event.payload, data.truncated != true, data.chunkOffset == nil {
+            resultChunks.removeValue(forKey: event.threadId + "\0" + data.callId)
+        }
+        applyAnswerState(event)
+
         var thread = events[event.threadId] ?? []
         if let index = thread.firstIndex(where: { $0.id == event.id }) {
             thread[index] = event

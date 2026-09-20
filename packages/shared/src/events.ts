@@ -103,6 +103,9 @@ export interface ToolResultData {
    * Mac; `tool_result_request` fetches it. Absent means this is all there was.
    */
   truncated?: boolean;
+  /** UTF-16 offsets for pull-based chunks that fit encrypted relay frames. */
+  chunkOffset?: number;
+  nextOffset?: number;
 }
 
 /**
@@ -112,6 +115,7 @@ export interface ToolResultData {
  */
 export interface ToolResultRequestData {
   callId: string;
+  offset?: number;
 }
 
 /** Past this many characters a tool result travels truncated. About 4 KB. */
@@ -345,6 +349,7 @@ export interface ThreadRenameData {
 
 export interface ThreadSummary {
   interruptedTurnId?: string;
+  canResume?: boolean;
   bypass?: boolean;
   id: string;
   title: string;

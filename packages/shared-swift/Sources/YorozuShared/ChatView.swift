@@ -114,10 +114,12 @@ public struct ChatView: View {
             if thread.interruptedTurnId != nil {
                 VStack(alignment: .leading) {
                     Label("Turn interrupted", systemImage: "pause.circle")
-                    Text("The Mac restarted. Continue when you're ready.").font(.callout)
+                    Text(thread.canResume == false ? "Interrupted before the agent created a session. Dismiss, then send your request again." : "The Mac restarted. Continue when you're ready.").font(.callout)
                     HStack {
-                        Button("Continue") { model.recover(thread, action: .continue) }
-                            .buttonStyle(.borderedProminent)
+                        if thread.canResume != false {
+                            Button("Continue") { model.recover(thread, action: .continue) }
+                                .buttonStyle(.borderedProminent)
+                        }
                         Button("Dismiss") { model.recover(thread, action: .dismiss) }
                             .buttonStyle(.bordered)
                     }
@@ -246,6 +248,7 @@ public struct ChatView: View {
     /// thread is still running on a concrete first model; hiding that identity made the shipped
     /// toolbar materially different from the design and forced a menu open to discover it.
     private var macModelCaption: String {
+        if thread.agent?.needsFolder == true && thread.model == nil { return "Auto" }
         let spec = thread.model ?? model.models(for: thread).first?.id
         guard let spec, !spec.isEmpty else { return "" }
         if let option = model.models(for: thread).first(where: { $0.id == spec }) {

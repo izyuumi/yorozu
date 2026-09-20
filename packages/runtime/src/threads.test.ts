@@ -457,3 +457,13 @@ test("restart reconciles a committed final reply and retires dead native prompts
   recoverNativeTurns(dir);
   expect(readThreadEvents("cc", dir)).toHaveLength(3);
 });
+
+ test("tool previews never split a surrogate pair before Swift decodes them", () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-unicode-"));
+  const event = { id: "unicode", threadId: "t", ts: 1, agentId: "main", kind: "tool_result" as const,
+    data: { callId: "unicode", ok: true, output: "a" + "🙂".repeat(3000) } };
+  const preview = stashToolResult(event, dir);
+  expect(preview.data.output.isWellFormed()).toBe(true);
+  expect(preview.data.output.length).toBe(4095);
+  expect(fullToolResult("t", "unicode", dir)).toEqual(event);
+});

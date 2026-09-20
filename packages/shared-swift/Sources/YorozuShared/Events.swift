@@ -375,12 +375,16 @@ public struct ToolResultData: Codable, Equatable, Sendable {
     public var output: String
     /// True when ``output`` is only the head of what the tool printed. The rest is on the Mac,
     /// one ``ToolResultRequestData`` away. Nil means this is all there was.
+    public var chunkOffset: Int?
+    public var nextOffset: Int?
     public var truncated: Bool?
-    public init(callId: String, ok: Bool, output: String, truncated: Bool? = nil) {
+    public init(callId: String, ok: Bool, output: String, truncated: Bool? = nil, chunkOffset: Int? = nil, nextOffset: Int? = nil) {
         self.callId = callId
         self.ok = ok
         self.output = output
         self.truncated = truncated
+        self.chunkOffset = chunkOffset
+        self.nextOffset = nextOffset
     }
 }
 
@@ -388,7 +392,8 @@ public struct ToolResultData: Codable, Equatable, Sendable {
 /// the full `tool_result` under the id it already holds, so it replaces the short one in place.
 public struct ToolResultRequestData: Codable, Equatable, Sendable {
     public var callId: String
-    public init(callId: String) { self.callId = callId }
+    public var offset: Int?
+    public init(callId: String, offset: Int? = nil) { self.callId = callId; self.offset = offset }
 }
 
 /// What an action commits, field by field: the concrete payload rather than the tool mechanics
@@ -786,6 +791,7 @@ public struct ThreadRenameData: Codable, Equatable, Sendable {
 }
 
 public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
+    public var canResume: Bool?
     public var interruptedTurnId: String?
     public var bypass: Bool?
     public var id: String
@@ -864,6 +870,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         agent = ThreadAgent(rawValue: try c.decodeIfPresent(String.self, forKey: .agent) ?? "")
         cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
         bypass = try c.decodeIfPresent(Bool.self, forKey: .bypass)
+        canResume = try c.decodeIfPresent(Bool.self, forKey: .canResume)
         interruptedTurnId = try c.decodeIfPresent(String.self, forKey: .interruptedTurnId)
         lastReadAt = try c.decodeIfPresent(Double.self, forKey: .lastReadAt)
         lastAgentAt = try c.decodeIfPresent(Double.self, forKey: .lastAgentAt)

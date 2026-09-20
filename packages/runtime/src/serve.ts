@@ -95,6 +95,7 @@ import {
   threadModel,
   threadSummaries,
 } from "./threads.js";
+import { codexNativeRunner } from "./codex-native.js";
 import { NativeCards } from "./native-cards.js";
 import { claudeCodeRunner, type NativeAgentRunner } from "./native.js";
 import { isProjectFolder, listProjects } from "./projects.js";
@@ -310,7 +311,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * whichever backend the rest of the runtime is on.
    */
   const viaOpenClaw = (threadId: string): boolean => openclaw !== undefined && threadAgent(threadId, dir) === "yorozu";
-  const nativeRunners = options.nativeRunners ?? { "claude-code": claudeCodeRunner() };
+  const nativeRunners = options.nativeRunners ?? { "claude-code": claudeCodeRunner(), codex: codexNativeRunner() };
   // `web_search` asks the running chain for native search before it drives a browser.
   if (provider) useProviderSearch(provider);
   const log = options.log ?? ((line: string) => void stdout.write(`${line}\n`));
@@ -921,7 +922,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const admitted = userEventId ? admittedTurns.get(userEventId) : undefined;
     if (admitted) return admitted;
     const previous = turnQueues.get(threadId) ?? Promise.resolve();
-    const next = previous.then(() => runTurn(threadId, text, recorded, attachments, userEventId));
+    const next = previous.then(() => stopped ? undefined : runTurn(threadId, text, recorded, attachments, userEventId));
     turnQueues.set(threadId, next);
     if (userEventId) admittedTurns.set(userEventId, next);
     void next.finally(() => {
@@ -1122,7 +1123,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
       // already holds so it lands in place. Nothing to say when none was kept.
       case "tool_result_request": {
         const full = fullToolResult(event.threadId, event.data.callId, dir);
-        return full ? reply(full) : state("tool-result-missing");
+        if (!full || full.kind !== "tool_result") return state("tool-result-missing");
+        const offset = event.data.offset ?? 0;
+        if (!Number.isSafeInteger(offset) || offset < 0 || offset > full.data.output.length) return;
+        if (full.data.output.length <= 65536 && offset === 0) return reply(full);
+        let end = Math.min(offset + 65536, full.data.output.length);
+        // Never cut a surrogate pair: Swift decodes each chunk independently.
+        if (end < full.data.output.length && /[\uD800-\uDBFF]/.test(full.data.output[end - 1]!)) end--;
+        return reply({ ...full, data: { ...full.data, output: full.data.output.slice(offset, end),
+          chunkOffset: offset, ...(end < full.data.output.length ? { nextOffset: end } : {}) } });
       }
       // Thread admin is answered to every device, so a second phone sees the same list.
       case "thread_create":
@@ -1176,6 +1185,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         const thread = listThreads(dir).find((t) => t.id === event.threadId);
         if (thread?.nativeTurn?.state !== "interrupted" || thread.nativeTurn.id !== event.data.turnId) return;
         if (event.data.action !== "continue" && event.data.action !== "dismiss") return;
+        if (event.data.action === "continue" && !thread.nativeSessionId) return;
         setNativeTurn(event.threadId, undefined, dir);
         broadcast(threadList());
         if (event.data.action === "continue") void enqueueTurn(event.threadId, "Continue the interrupted turn.");

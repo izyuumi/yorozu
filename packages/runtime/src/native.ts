@@ -87,6 +87,20 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
       if (turn.signal.aborted) onAbort();
       else turn.signal.addEventListener("abort", onAbort, { once: true });
 
+      const answerQuestions = async (input: Record<string, unknown>, signal: AbortSignal) => {
+        const answers: Record<string, string> = {};
+        if (!Array.isArray(input.questions) || !input.questions.length || signal.aborted) return;
+        for (const item of input.questions) {
+          if (!item || typeof item.question !== "string" || !Array.isArray(item.options)) return;
+          const labels = item.options.map((option: { label?: unknown }) => option?.label)
+            .filter((label: unknown): label is string => typeof label === "string");
+          const answer = await turn.ask?.(item.question, labels, signal);
+          if (answer === undefined || signal.aborted) return;
+          answers[item.question] = answer;
+        }
+        return { ...input, answers };
+      };
+
       const session = query({
         prompt: turn.text,
         options: {
@@ -98,21 +112,22 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
           includePartialMessages: true,
           permissionMode: turn.bypass ? "bypassPermissions" : "default",
           allowDangerouslySkipPermissions: turn.bypass === true,
+          hooks: { PreToolUse: [{ matcher: "AskUserQuestion", timeout: 86400, hooks: [async (input, _id, options) => {
+            if (input.hook_event_name !== "PreToolUse") return {};
+            if (!input.tool_input || typeof input.tool_input !== "object" || Array.isArray(input.tool_input)) return {};
+            const updatedInput = await answerQuestions(input.tool_input as Record<string, unknown>, AbortSignal.any([turn.signal, options.signal]));
+            return { hookSpecificOutput: { hookEventName: "PreToolUse",
+              permissionDecision: updatedInput ? "allow" : "deny", ...(updatedInput ? { updatedInput } : {}) } };
+          }] }] },
           canUseTool: async (toolName, input, options) => {
             const signal = AbortSignal.any([turn.signal, options.signal]);
             const deny = { behavior: "deny" as const, message: "User declined or request cancelled." };
             if (signal.aborted) return deny;
             if (toolName === "AskUserQuestion") {
-              const answers: Record<string, string> = {};
-              if (!Array.isArray(input.questions) || !input.questions.length) return deny;
-              for (const item of input.questions) {
-                if (!item || typeof item.question !== "string" || !Array.isArray(item.options)) return deny;
-                const labels = item.options.map((option: { label?: unknown }) => option?.label).filter((label: unknown): label is string => typeof label === "string");
-                const answer = await turn.ask?.(item.question, labels, signal);
-                if (answer === undefined || signal.aborted) return deny;
-                answers[item.question] = answer;
-              }
-              return { behavior: "allow", updatedInput: { ...input, answers } };
+              // PreToolUse already supplied answers even when permission checks are bypassed.
+              if (input.answers && typeof input.answers === "object") return { behavior: "allow", updatedInput: input };
+              const updatedInput = await answerQuestions(input, signal);
+              return updatedInput ? { behavior: "allow", updatedInput } : deny;
             }
             if (turn.bypass) return { behavior: "allow", updatedInput: input };
             return await turn.approve?.(toolName, input, signal) && !signal.aborted
