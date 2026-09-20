@@ -54,6 +54,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadSetModel = "thread_set_model"
         case threadSetEffort = "thread_set_effort"
         case threadSetBypass = "thread_set_bypass"
+        case threadRecover = "thread_recover"
         case modelList = "model_list"
         case projectList = "project_list"
         case interrupt
@@ -90,6 +91,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadSetModel(ThreadSetModelData)
         case threadSetEffort(ThreadSetEffortData)
         case threadSetBypass(ThreadSetBypassData)
+        case threadRecover(ThreadRecoverData)
         case modelList(ModelListData)
         case projectList(ProjectListData)
         case interrupt(InterruptData)
@@ -126,6 +128,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadSetModel: .threadSetModel
             case .threadSetEffort: .threadSetEffort
             case .threadSetBypass: .threadSetBypass
+            case .threadRecover: .threadRecover
             case .modelList: .modelList
             case .projectList: .projectList
             case .interrupt: .interrupt
@@ -173,6 +176,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadPin: payload = .threadPin(try c.decode(ThreadPinData.self, forKey: .data))
         case .threadRead: payload = .threadRead(try c.decode(ThreadReadData.self, forKey: .data))
         case .threadSetModel: payload = .threadSetModel(try c.decode(ThreadSetModelData.self, forKey: .data))
+        case .threadRecover: payload = .threadRecover(try c.decode(ThreadRecoverData.self, forKey: .data))
         case .threadSetBypass: payload = .threadSetBypass(try c.decode(ThreadSetBypassData.self, forKey: .data))
         case .threadSetEffort: payload = .threadSetEffort(try c.decode(ThreadSetEffortData.self, forKey: .data))
         case .modelList: payload = .modelList(try c.decode(ModelListData.self, forKey: .data))
@@ -218,6 +222,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadPin(let d): try c.encode(d, forKey: .data)
         case .threadRead(let d): try c.encode(d, forKey: .data)
         case .threadSetModel(let d): try c.encode(d, forKey: .data)
+        case .threadRecover(let d): try c.encode(d, forKey: .data)
         case .threadSetBypass(let d): try c.encode(d, forKey: .data)
         case .threadSetEffort(let d): try c.encode(d, forKey: .data)
         case .modelList(let d): try c.encode(d, forKey: .data)
@@ -781,6 +786,7 @@ public struct ThreadRenameData: Codable, Equatable, Sendable {
 }
 
 public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
+    public var interruptedTurnId: String?
     public var bypass: Bool?
     public var id: String
     /// Empty until the runtime auto-titles the thread or the user renames it.
@@ -822,7 +828,8 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         cwd: String? = nil,
         lastReadAt: Double? = nil,
         lastAgentAt: Double? = nil,
-        bypass: Bool? = nil
+        bypass: Bool? = nil,
+        interruptedTurnId: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -837,6 +844,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         self.lastReadAt = lastReadAt
         self.lastAgentAt = lastAgentAt
         self.bypass = bypass
+        self.interruptedTurnId = interruptedTurnId
     }
 
     /// Hand-written only to tolerate a runtime older than the last two fields: both were added
@@ -856,6 +864,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         agent = ThreadAgent(rawValue: try c.decodeIfPresent(String.self, forKey: .agent) ?? "")
         cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
         bypass = try c.decodeIfPresent(Bool.self, forKey: .bypass)
+        interruptedTurnId = try c.decodeIfPresent(String.self, forKey: .interruptedTurnId)
         lastReadAt = try c.decodeIfPresent(Double.self, forKey: .lastReadAt)
         lastAgentAt = try c.decodeIfPresent(Double.self, forKey: .lastAgentAt)
     }
@@ -1137,4 +1146,11 @@ public struct QrPayload: Codable, Equatable, Sendable {
 public struct ThreadSetBypassData: Codable, Equatable, Sendable {
     public var bypass: Bool
     public init(bypass: Bool) { self.bypass = bypass }
+}
+
+public struct ThreadRecoverData: Codable, Equatable, Sendable {
+    public enum Action: String, Codable, Sendable { case `continue`, dismiss }
+    public var turnId: String
+    public var action: Action
+    public init(turnId: String, action: Action) { self.turnId = turnId; self.action = action }
 }

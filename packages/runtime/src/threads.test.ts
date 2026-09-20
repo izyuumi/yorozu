@@ -442,3 +442,18 @@ test("read state is the runtime's, and only moves forward unless it is reset", (
   expect(markThreadRead(thread.id, 1, dir, true)).toBe(true);
   expect(threadSummaries(dir)[0]!.lastReadAt).toBe(1);
 });
+
+import { recoverNativeTurns, setNativeTurn } from "./threads.js";
+
+test("restart reconciles a committed final reply and retires dead native prompts", () => {
+  createThread("Work", dir, "cc", { agent: "claude-code" });
+  setNativeTurn("cc", { id: "final", state: "running" }, dir);
+  const base = { threadId: "cc", ts: 1, agentId: "main" };
+  appendThreadEvent({ ...base, id: "card", kind: "approval_card", data: { actionId: "a", nativeAgent: "claude-code", actionClass: "Bash", target: "pwd" } }, dir);
+  appendThreadEvent({ ...base, id: "final", kind: "message", data: { role: "agent", text: "done", done: true } }, dir);
+  recoverNativeTurns(dir);
+  expect(listThreads(dir)[0]?.nativeTurn).toBeUndefined();
+  expect(readThreadEvents("cc", dir).at(-1)).toMatchObject({ kind: "approval_answer", data: { actionId: "a", answer: "no" } });
+  recoverNativeTurns(dir);
+  expect(readThreadEvents("cc", dir)).toHaveLength(3);
+});
