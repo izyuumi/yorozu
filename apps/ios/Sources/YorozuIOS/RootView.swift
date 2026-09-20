@@ -345,7 +345,14 @@ struct RootView: View {
                 // Hang up before iOS suspends the app with the socket half-open: the relay
                 // would go on counting a frozen socket as a phone that is watching, and so
                 // not worth a silent wake-up. See ``ChatModel/suspend()``.
-                if phase == .background { session.model?.suspend() }
+                if phase == .background, let model = session.model {
+                    model.suspend()
+                    let task = UIApplication.shared.beginBackgroundTask(withName: "Save offline history")
+                    Task {
+                        await model.flushCache()
+                        if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
+                    }
+                }
                 guard phase == .active else { return }
                 // A background drain hangs up so the OS can suspend the app cleanly, so
                 // coming back may be a fresh dial rather than a reconnect. `start()` does

@@ -35,7 +35,7 @@ public struct ChatView: View {
     /// The message being replied to, quoted above the field until it is sent or dismissed.
     @State private var replyQuote: String?
     @State private var searching = false
-    @State private var choosingRunSettings = ChatShowcase.modelMenu
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var search = ""
     /// Which hit the arrows are on. Reset whenever the term changes.
     @State private var hit = 0
@@ -69,9 +69,9 @@ public struct ChatView: View {
         self.offlineNotice = offlineNotice
     }
 
-    private var events: [YorozuEvent] { model.events[thread.id] ?? [] }
+    private var events: [YorozuEvent] { model.timeline(thread.id).events }
 
-    private var rows: [ChatRow] { chatRows(from: events, generating: generating) }
+    private var rows: [ChatRow] { model.timeline(thread.id).rows(generating: generating) }
 
     /// Waiting with nothing drawn yet: the turn has started, no token has landed, and there is
     /// no live work row saying what is happening either. Only then is "Thinking…" worth a line.
@@ -137,13 +137,6 @@ public struct ChatView: View {
                     messages
                 }
             }
-            #if os(iOS)
-                .overlay(alignment: .bottom) {
-                    if choosingRunSettings {
-                        runSettingsOverlay
-                    }
-                }
-            #endif
             composer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -325,7 +318,7 @@ public struct ChatView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            .animation(.snappy, value: showJumpToLatest)
+            .animation(reduceMotion ? nil : .snappy, value: showJumpToLatest)
             .safeAreaInset(edge: .top, spacing: 0) {
                 if !search.isEmpty {
                     SearchHitBar(index: hit, total: hits.count) { step in
@@ -340,7 +333,7 @@ public struct ChatView: View {
                 requestCurrentHit()
             }
             .onChange(of: hit) { _, _ in requestCurrentHit() }
-            .animation(.snappy, value: search.isEmpty)
+            .animation(reduceMotion ? nil : .snappy, value: search.isEmpty)
         }
 
         private func requestCurrentHit() {
@@ -407,13 +400,13 @@ public struct ChatView: View {
                 // pill offering to jump somewhere else would be arguing with them.
                 if showJumpToLatest, search.isEmpty {
                     ScrollToBottomPill {
-                        withAnimation { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
+                        withAnimation(reduceMotion ? nil : .default) { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
                     }
                     .padding(.bottom, 8)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            .animation(.snappy, value: showJumpToLatest)
+            .animation(reduceMotion ? nil : .snappy, value: showJumpToLatest)
             .safeAreaInset(edge: .top, spacing: 0) {
                 if !search.isEmpty {
                     SearchHitBar(index: hit, total: hits.count) { step in
@@ -429,7 +422,7 @@ public struct ChatView: View {
                 scrollToHit(proxy)
             }
             .onChange(of: hit) { _, _ in scrollToHit(proxy) }
-            .animation(.snappy, value: search.isEmpty)
+            .animation(reduceMotion ? nil : .snappy, value: search.isEmpty)
         }
     }
 
@@ -492,7 +485,7 @@ public struct ChatView: View {
     /// Puts the current hit in the middle of the screen, where a hit being read wants to be.
     private func scrollToHit(_ proxy: ScrollViewProxy) {
         guard hits.indices.contains(hit) else { return }
-        withAnimation { proxy.scrollTo(hits[hit].eventId, anchor: .center) }
+        withAnimation(reduceMotion ? nil : .default) { proxy.scrollTo(hits[hit].eventId, anchor: .center) }
     }
 
     private var composer: some View {
@@ -541,24 +534,7 @@ public struct ChatView: View {
             #else
                 HStack(alignment: .bottom, spacing: 4) {
                     attachButton
-                    Menu {
-                        Picker("Model", selection: modelBinding) {
-                            Text("Auto").tag(String?.none)
-                            ForEach(model.models(for: thread)) { option in
-                                Text(option.label).tag(Optional(option.id))
-                            }
-                        }
-                        Picker("Effort", selection: effortBinding) {
-                            Text("Default").tag(ReasoningEffort?.none)
-                            ForEach(model.efforts(for: thread)) { effort in
-                                Text(effort.label).tag(Optional(effort))
-                            }
-                        }
-                    } label: {
-                        Text(macModelCaption).lineLimit(1)
-                    }
-                    .accessibilityLabel("Model and effort")
-                    .accessibilityValue("\(macModelCaption), \(thread.effort?.label ?? "Default effort")")
+                    runSettingsButton
                     TextField("Message Yorozu", text: draft, axis: .vertical)
                         .textFieldStyle(.plain)
                         .font(.body)
@@ -586,9 +562,6 @@ public struct ChatView: View {
             .allowsHitTesting(false)
             .accessibilityHidden(true)
         }
-        .animation(.easeOut(duration: 0.18), value: attachments.wrappedValue.count)
-        .animation(.easeOut(duration: 0.18), value: generating)
-        .animation(.easeOut(duration: 0.18), value: replyQuote != nil)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .compactQuietComposerLayout()
@@ -610,140 +583,44 @@ public struct ChatView: View {
         .disabled(generating)
     }
 
-    #if os(iOS)
-        private var runSettingsButton: some View {
-            Button { choosingRunSettings = true } label: {
-                HStack(spacing: 4) {
-                    Text(composerChipLabel)
-                        .font(.subheadline.weight(.medium))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.caption2.weight(.semibold))
+    private var runSettingsButton: some View {
+        Menu {
+            Picker("Model", selection: modelBinding) {
+                Text("Auto").tag(String?.none)
+                ForEach(model.models(for: thread)) { option in
+                    Text(option.menuLabel).tag(Optional(option.id))
                 }
-                .foregroundStyle(.primary)
-                .padding(.horizontal, 10)
-                // A minimum, not a height: a fixed 32 clips the label at accessibility sizes.
-                .frame(minHeight: 32)
-                .background(Color.primary.opacity(0.06), in: Capsule())
             }
-            .buttonStyle(.plain)
+            Picker("Effort", selection: effortBinding) {
+                Text("Default").tag(ReasoningEffort?.none)
+                ForEach(model.efforts(for: thread)) { effort in
+                    Text(effort.label).tag(Optional(effort))
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(composerChipLabel).font(.subheadline).lineLimit(1)
+                Image(systemName: "chevron.down").font(.caption2)
+            }
+            .padding(.horizontal, 8)
             .frame(minHeight: controlTarget)
-            .hoverHighlight()
-            .accessibilityLabel("Model and effort")
-            .accessibilityValue(runSettingsAccessibilityValue)
         }
+        .menuStyle(.borderlessButton)
+        .accessibilityIdentifier("runSettingsMenu")
+        .accessibilityLabel("Model and effort")
+        .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? "Default effort")")
+    }
 
-        /// Remain in the composer's hosting hierarchy: presenting a sheet/popover resigns
-        /// its text input before the chooser is usable. Never dismiss or re-request focus.
-        /// The transcript provides the available space *above* the keyboard and composer;
-        /// scrolling the choices must not interactively dismiss that keyboard either.
-        private var runSettingsOverlay: some View {
-            GeometryReader { geometry in
-                ZStack(alignment: .bottom) {
-                    Color.black.opacity(0.12)
-                        .contentShape(Rectangle())
-                        .onTapGesture { choosingRunSettings = false }
-                        .accessibilityLabel("Dismiss run settings")
-                        .accessibilityAddTraits(.isButton)
-                    VStack(spacing: 0) {
-                        HStack {
-                            Text("Run settings").font(.headline)
-                            Spacer()
-                            Button("Done") { choosingRunSettings = false }
-                                .frame(minHeight: 44)
-                        }
-                        .padding(.horizontal, 16)
-                        Divider()
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 16) {
-                                // Effort is an ordered scale, so it gets the platform's ordinal
-                                // control: one row, every option visible, no scrolling to compare.
-                                Text("Effort").font(.headline)
-                                Picker("Effort", selection: effortBinding) {
-                                    Text("Default").tag(ReasoningEffort?.none)
-                                    ForEach(model.efforts(for: thread)) { effort in
-                                        Text(effort.label).tag(Optional(effort))
-                                    }
-                                }
-                                .pickerStyle(.segmented)
-                                Divider()
-                                Text("Model").font(.headline)
-                                runSettingChoice("Auto", selected: thread.model == nil) {
-                                    modelBinding.wrappedValue = nil
-                                }
-                                // Grouped under the provider so rows carry only the model's own
-                                // name; the provider header is what tells look-alikes apart.
-                                ForEach(providers, id: \.self) { provider in
-                                    Text(provider)
-                                        .font(.footnote.weight(.semibold))
-                                        .foregroundStyle(.secondary)
-                                        .padding(.top, 4)
-                                    ForEach(model.models(for: thread).filter { $0.providerLabel == provider }) { option in
-                                        runSettingChoice(option.label, selected: thread.model == option.id) {
-                                            modelBinding.wrappedValue = option.id
-                                        }
-                                    }
-                                }
-                            }
-                            .padding(16)
-                        }
-                        .scrollDismissesKeyboard(.never)
-                    }
-                    .frame(maxWidth: 420)
-                    .frame(height: min(420, max(0, geometry.size.height - 8)))
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .shadow(radius: 8, y: 2)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 4)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier("runSettingsPanel")
-                    .accessibilityAction(.escape) { choosingRunSettings = false }
-                }
-            }
-        }
+    private var composerModelLabel: String {
+        guard let spec = thread.model else { return "Auto" }
+        return model.models(for: thread).first(where: { $0.id == spec })?.label ?? spec
+    }
 
-        private func runSettingChoice(
-            _ label: String, selected: Bool, action: @escaping () -> Void
-        ) -> some View {
-            Button(action: action) {
-                HStack {
-                    Text(label).multilineTextAlignment(.leading)
-                    Spacer(minLength: 8)
-                    if selected { Image(systemName: "checkmark") }
-                }
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityAddTraits(selected ? [.isSelected] : [])
-        }
+    private var composerChipLabel: String {
+        guard let effort = thread.effort else { return composerModelLabel }
+        return "\(composerModelLabel) · \(effort.label)"
+    }
 
-        /// Provider order as the Mac published it; no re-sorting behind the user's back.
-        private var providers: [String] {
-            var seen: [String] = []
-            for option in model.models(for: thread) where !seen.contains(option.providerLabel) {
-                seen.append(option.providerLabel)
-            }
-            return seen
-        }
-
-        private var composerModelLabel: String {
-            guard let spec = thread.model else { return "Auto" }
-            return model.models(for: thread).first(where: { $0.id == spec })?.label ?? spec.split(separator: "/").last.map(String.init) ?? spec
-        }
-
-        /// The chip names an effort only once it differs from the agent's own default.
-        private var composerChipLabel: String {
-            guard let effort = thread.effort else { return composerModelLabel }
-            return "\(composerModelLabel) · \(effort.label)"
-        }
-
-        private var runSettingsAccessibilityValue: String {
-            let effort = thread.effort?.label ?? "Default effort"
-            return "\(composerModelLabel), \(effort)"
-        }
-    #endif
 
     private var fieldBackground: Color {
         #if os(iOS)
@@ -793,7 +670,6 @@ public struct ChatView: View {
         .disabled(!canSend)
         .macKey(.return)
         .accessibilityLabel("Send")
-        .animation(.easeOut(duration: 0.15), value: canSend)
     }
 
     private var canSend: Bool {
@@ -954,11 +830,16 @@ public struct ChatView: View {
                 previousRows = rowsById
                 previousPresentation = parent.presentation
 
+                let previousEntries = dataSource?.snapshot().itemIdentifiers ?? []
+                guard !changed.isEmpty || entries != previousEntries else {
+                    applyRequest(collectionView)
+                    return
+                }
                 var snapshot = NSDiffableDataSourceSnapshot<Int, Entry>()
                 snapshot.appendSections([0])
                 snapshot.appendItems(entries)
-                let existing = Set(dataSource?.snapshot().itemIdentifiers ?? [])
-                snapshot.reconfigureItems(changed.filter { existing.contains($0) && entries.contains($0) })
+                let existing = Set(previousEntries)
+                snapshot.reconfigureItems(changed.filter { existing.contains($0) })
                 dataSource?.apply(snapshot, animatingDifferences: false) { [weak self, weak collectionView] in
                     guard let self, let collectionView else { return }
                     collectionView.layoutIfNeeded()
@@ -988,13 +869,13 @@ public struct ChatView: View {
                 }
                 switch request.target {
                 case .latest:
-                    scrollToLatest(collectionView, animated: true)
+                    scrollToLatest(collectionView, animated: !UIAccessibility.isReduceMotionEnabled)
                 case .event(let id):
                     guard let index = dataSource?.snapshot().indexOfItem(.row(id)) else { return }
                     collectionView.scrollToItem(
                         at: IndexPath(item: index, section: 0),
                         at: .centeredVertically,
-                        animated: true
+                        animated: !UIAccessibility.isReduceMotionEnabled
                     )
                 }
             }

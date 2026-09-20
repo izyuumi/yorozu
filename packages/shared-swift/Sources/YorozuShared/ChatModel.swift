@@ -23,7 +23,20 @@ public final class ChatModel {
     /// "events have not arrived yet" from "refresh finished and there is no message anchor".
     public private(set) var syncRevision = 0
     /// Events per thread id, oldest first.
-    public private(set) var events: [String: [YorozuEvent]] = [:]
+    public var events: [String: [YorozuEvent]] {
+        _ = timelineRevision
+        return timelines.mapValues(\.events)
+    }
+    private var timelineRevision = 0
+    @ObservationIgnored private var timelines: [String: ThreadTimeline] = [:]
+
+    func timeline(_ id: String) -> ThreadTimeline {
+        if let timeline = timelines[id] { return timeline }
+        let timeline = ThreadTimeline()
+        timelines[id] = timeline
+        timelineRevision = timelines.count
+        return timeline
+    }
     public private(set) var state: TransportState = .connecting
     /// Starts pessimistic: the transport tells us the truth when it connects.
     public private(set) var ownerOnline = false
@@ -110,6 +123,27 @@ public final class ChatModel {
 
     private let transport: any ChatTransport
     private let cache: ThreadCache?
+    @ObservationIgnored private var cacheWrite: Task<Void, Never>?
+
+    private func persistEvents(in ids: Set<String>) {
+        guard cache != nil else { return }
+        persist(events: Dictionary(uniqueKeysWithValues: ids.map { ($0, timeline($0).events) }))
+    }
+
+    private func persist(threads: [ThreadSummary]? = nil, events: [String: [YorozuEvent]] = [:]) {
+        guard let cache else { return }
+        let previous = cacheWrite
+        // Value snapshots are sealed and written on a worker, in order. The outbox keeps its
+        // separate synchronous durability boundary: unsent user input must never be lost.
+        cacheWrite = Task.detached(priority: .utility) {
+            await previous?.value
+            if let threads { cache.save(threads: threads) }
+            for (id, events) in events { cache.save(events: events, threadId: id) }
+        }
+    }
+
+    /// Await before finishing a background fetch. A completed sync includes its offline copy.
+    public func flushCache() async { await cacheWrite?.value }
     /// What this client tags the events it emits with.
     private let device: String
     private var started = false
@@ -135,8 +169,9 @@ public final class ChatModel {
         synced = cache.threads()
         outbox = Outbox.pruned(cache.outbox())
         for thread in synced {
-            events[thread.id] = cache.events(threadId: thread.id)
-            for event in events[thread.id] ?? [] { applyAnswerState(event) }
+            let events = cache.events(threadId: thread.id)
+            timeline(thread.id).events = events
+            for event in events { applyAnswerState(event) }
         }
     }
 
@@ -192,6 +227,7 @@ public final class ChatModel {
         while deltas == before, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(50))
         }
+        await flushCache()
         suspend()
         return deltas > before
     }
@@ -225,6 +261,7 @@ public final class ChatModel {
         self.answer(card.actionId, in: threadId, answer, source: .notification)
         // The send is queued behind everything before it; wait for the queue to drain.
         await emitter?.value
+        await flushCache()
         return true
     }
 
@@ -320,11 +357,11 @@ public final class ChatModel {
     }
 
     public func reactions(to messageId: String, in threadId: String) -> [MessageReaction] {
-        messageReactions(in: events[threadId] ?? [], to: messageId, selectedBy: device)
+        messageReactions(in: timeline(threadId).events, to: messageId, selectedBy: device)
     }
 
     public func reactions(in threadId: String) -> [String: [MessageReaction]] {
-        messageReactionsByMessage(in: events[threadId] ?? [], selectedBy: device)
+        messageReactionsByMessage(in: timeline(threadId).events, selectedBy: device)
     }
 
     /// Asks the Mac for the whole of a truncated tool result. The answer is the same
@@ -419,10 +456,10 @@ public final class ChatModel {
     /// Forgets one event on this device only: it stays in the runtime's thread log, and a
     /// device that syncs from scratch will see it again. Tidying a transcript, not deleting.
     public func delete(_ eventId: String, in threadId: String) {
-        guard var thread = events[threadId] else { return }
+        var thread = timeline(threadId).events
         thread.removeAll { $0.id == eventId }
-        events[threadId] = thread
-        cache?.save(events: thread, threadId: threadId)
+        timeline(threadId).events = thread
+        persistEvents(in: [threadId])
     }
 
     /// A thread that exists only on this device until its first message: nothing is sent until
@@ -754,10 +791,11 @@ public final class ChatModel {
                     return merged
                 }
                 listed = true
-                cache?.save(threads: synced)
+                persist(threads: synced)
                 onThreads?()
             case .syncDelta(let data):
-                for event in data.events { upsert(event) }
+                for event in data.events { upsert(event, persist: false) }
+                persistEvents(in: Set(data.events.map(\.threadId)))
                 if let workingThreadIds = data.workingThreadIds {
                     generating = Set(workingThreadIds)
                 }
@@ -1185,7 +1223,7 @@ public final class ChatModel {
         }
     }
 
-    private func upsert(_ incoming: YorozuEvent) {
+    private func upsert(_ incoming: YorozuEvent, persist: Bool = true) {
         var event = incoming
         if case .toolResult(var data) = event.payload, let offset = data.chunkOffset {
             let key = event.threadId + "\0" + data.callId
@@ -1209,9 +1247,9 @@ public final class ChatModel {
             resultChunks.removeValue(forKey: event.threadId + "\0" + data.callId)
         }
         applyAnswerState(event)
-
-        var thread = events[event.threadId] ?? []
+        var thread = timeline(event.threadId).events
         if let index = thread.firstIndex(where: { $0.id == event.id }) {
+            guard thread[index] != event else { return }
             thread[index] = event
         } else {
             // A reconnect sync can race a live relay frame. Put the older synced event back
@@ -1220,7 +1258,7 @@ public final class ChatModel {
             let index = thread.lastIndex(where: { $0.ts <= event.ts }).map { $0 + 1 } ?? 0
             thread.insert(event, at: index)
         }
-        events[event.threadId] = thread
+        timeline(event.threadId).events = thread
         // The agent's last message ends the turn, whether it streamed or arrived whole.
         if case .message(let data) = event.payload, data.role == .agent, data.done == true,
             event.parentAgentId == nil
@@ -1231,7 +1269,7 @@ public final class ChatModel {
         // long reply is a stutter, and the finished message lands here with `done` anyway.
         if case .message(let data) = event.payload, data.role == .agent, data.done != true {
         } else {
-            cache?.save(events: thread, threadId: event.threadId)
+            if persist { persistEvents(in: [event.threadId]) }
         }
         // Nothing is raised here: the dot is the runtime's answer, not this device's guess.
         // What a reply landing in the thread somebody is actually reading does is report it
@@ -1245,7 +1283,7 @@ public final class ChatModel {
     /// A thread as a Markdown transcript, from whatever this device holds of it. See
     /// ``threadMarkdown(thread:events:now:locale:timeZone:)``.
     public func markdown(of thread: ThreadSummary) -> String {
-        threadMarkdown(thread: thread, events: events[thread.id] ?? [])
+        threadMarkdown(thread: thread, events: timeline(thread.id).events)
     }
 
     /// The thread's title as a list would draw it, for anything that has only an id. Falls back

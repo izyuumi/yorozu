@@ -10,7 +10,7 @@ env -u SDKROOT xcodebuild test \
 
 Also run on an iPad simulator. These tests use the debug offline chat showcase: no pairing,
 account, network, or real message. Keep the simulator software keyboard enabled. Assertions
-cover keyboard presence while the panel opens, model/effort changes and scrolling, draft
-preservation and continued typing after Done, and no keyboard appearing when initially unfocused.
-A retained screenshot shows the panel and keyboard together. Real-device keyboard/IME and
+cover keyboard presence while the native menu opens, model/effort changes, draft
+preservation and continued typing after selection, and no keyboard appearing when initially unfocused.
+A retained screenshot shows the native menu and keyboard together. Real-device keyboard/IME and
 hardware-keyboard behavior still require device validation; these are not proven by compilation.

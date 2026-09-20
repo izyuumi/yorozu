@@ -8,6 +8,7 @@ let package = Package(
     targets: [
         .target(name: "YorozuShared"),
         .executableTarget(name: "YorozuFixtureGen", dependencies: ["YorozuShared"]),
+        .executableTarget(name: "YorozuUIHarness", dependencies: ["YorozuShared"]),
         .testTarget(name: "YorozuSharedTests", dependencies: ["YorozuShared"]),
     ]
 )

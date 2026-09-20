@@ -22,7 +22,6 @@ public struct ApprovalCardView: View {
     @State private var editingRule: ApprovalRule?
     @State private var itemsExpanded = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorScheme) private var colorScheme
 
     public init(
         card: ApprovalCardData,
@@ -74,10 +73,8 @@ public struct ApprovalCardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(cardBackground, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous).strokeBorder(.separator))
-        .opacity(appeared ? 1 : 0)
-        .offset(y: appeared || reduceMotion ? 0 : 12)
         .onAppear {
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { appeared = true }
+            appeared = true
             // Screenshot only, and inert otherwise — see ``ChatShowcase``.
             if ChatShowcase.ruleEditor, !answered { editingRule = card.suggestedRule }
         }
@@ -267,12 +264,9 @@ public struct ApprovalCardView: View {
                     editingRule = suggestion
                 } label: {
                     Text(alwaysTitle)
-                        .foregroundStyle(quietButtonForeground)
                         .frame(maxWidth: .infinity, minHeight: controlTarget)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(quietButtonTint)
-                .foregroundStyle(quietButtonForeground)
+                .buttonStyle(.bordered)
                 .buttonBorderShape(.roundedRectangle(radius: LayoutMetrics.controlRadius))
                 .accessibilityHint("Opens a rule you can widen before saving")
             }
@@ -306,19 +300,14 @@ public struct ApprovalCardView: View {
         }
     }
 
-    private func choice(_ value: ApprovalAnswerData.Answer, _ title: String, prominent: Bool) -> some View {
-        Button {
-            answer(value, nil)
-        } label: {
+    @ViewBuilder private func choice(_ value: ApprovalAnswerData.Answer, _ title: String, prominent: Bool) -> some View {
+        let button = Button { answer(value, nil) } label: {
             Text(title)
                 .font(.body.weight(prominent ? .semibold : .regular))
-                .foregroundStyle(prominent ? Color.white : quietButtonForeground)
                 .frame(maxWidth: .infinity, minHeight: controlTarget)
         }
-        .buttonStyle(.borderedProminent)
-        .tint(prominent ? Color.accentColor : quietButtonTint)
-        .foregroundStyle(prominent ? Color.white : quietButtonForeground)
-        .buttonBorderShape(.roundedRectangle(radius: LayoutMetrics.controlRadius))
+        if prominent { button.buttonStyle(.borderedProminent) }
+        else { button.buttonStyle(.bordered) }
     }
 
     private var outcome: some View {
@@ -383,22 +372,6 @@ public struct ApprovalCardView: View {
             Color(.secondarySystemGroupedBackground)
         #else
             Color(nsColor: .controlBackgroundColor)
-        #endif
-    }
-
-    private var quietButtonTint: Color {
-        #if os(iOS)
-            Color(.tertiarySystemFill)
-        #else
-            Color(nsColor: .quaternaryLabelColor)
-        #endif
-    }
-
-    private var quietButtonForeground: Color {
-        #if os(macOS)
-            colorScheme == .dark ? .white : .primary
-        #else
-            .primary
         #endif
     }
 

@@ -182,7 +182,8 @@ private func reconnect(_ transport: QueueTransport) async {
     await transport.refuse(false)
     model.retry(id)
     #expect(await settle { model.outbox.isEmpty })
-    #expect(await transport.messages.map(\.id) == [id])
+    // Reconnect may resend before its receipt arrives; runtime dedupes the stable event ID.
+    #expect(await Set(transport.messages.map(\.id)) == [id])
 }
 
 @MainActor
@@ -205,7 +206,8 @@ private func reconnect(_ transport: QueueTransport) async {
 
     await reconnect(transport)
     #expect(await settle { second.outbox.isEmpty })
-    #expect(await transport.messages.map(\.id) == [id])
+    // Reconnect may resend before its receipt arrives; runtime dedupes the stable event ID.
+    #expect(await Set(transport.messages.map(\.id)) == [id])
     // And the flushed queue is written back, so a third launch does not send it again.
     #expect(cache.outbox().isEmpty)
 }

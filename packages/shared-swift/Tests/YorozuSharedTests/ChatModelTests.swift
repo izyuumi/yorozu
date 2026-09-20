@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 
@@ -111,8 +112,7 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
     model.requestSync()
     model.requestDevices()
 
-    try? await Task.sleep(for: .milliseconds(50))
-    #expect(await transport.started == [.syncRequest])
+    #expect(await started(by: transport, atLeast: 1) == [.syncRequest])
     await transport.releaseFirst()
     #expect(await started(by: transport, atLeast: 2) == [.syncRequest, .deviceList])
     await transport.releaseFirst()
@@ -908,6 +908,47 @@ private func summary(
     #expect(model.efforts(for: claude) == [.low, .max])
 }
 
+@MainActor
+@Test func cachedSyncPageDoesNotBlockTheMainActorForAFrameBurst() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: SymmetricKey(size: .bits256))
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    model.start()
+    let page = (0..<200).map { i in
+        YorozuEvent(id: "perf-\(i)", threadId: "perf", ts: i, agentId: "main",
+            payload: .toolResult(ToolResultData(callId: "call-\(i)", ok: true, output: String(repeating: "x", count: 4096))))
+    }
+    var pageStart: ContinuousClock.Instant?
+    var elapsed: Duration = .zero
+    model.onEvent = { event in
+        if event.id == "perf-0" { pageStart = .now }
+        if event.id == "perf-199", let pageStart { elapsed = pageStart.duration(to: .now) }
+    }
+    await transport.yield(.event(event("page", .syncDelta(SyncDeltaData(events: page)))))
+    #expect(await eventually { model.events["perf"]?.count == 200 })
+    #expect(pageStart != nil)
+    print("PERF sync-page-200x4KB main-actor elapsed=\(elapsed)")
+    #expect(elapsed < .milliseconds(150))
+    await model.flushCache()
+    #expect(cache.events(threadId: "perf") == page)
+    model.close()
+}
+
+@MainActor
+@Test func backgroundThreadEventsDoNotInvalidateTheOpenThreadsReactions() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    await confirmation("unrelated thread invalidation", expectedCount: 0) { changed in
+        withObservationTracking {
+            _ = model.reactions(in: "selected")
+        } onChange: { changed() }
+        await transport.yield(.event(YorozuEvent(id: "background", threadId: "other", ts: 1, agentId: "main", payload: .thought(ThoughtData(text: "working")))))
+        #expect(await eventually { model.events["other"]?.count == 1 })
+    }
+}
+
 @MainActor @Test func remoteAndCachedAnswersRetireNativeCards() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -921,6 +962,7 @@ private func summary(
     await transport.yield(.event(approval))
     await transport.yield(.event(event("sync", .syncDelta(SyncDeltaData(events: [question])))))
     #expect(await eventually { model.answered.contains("action") && model.answeredQuestions.contains("question") })
+    await model.flushCache()
     let restored = ChatModel(transport: FakeTransport(), cache: cache)
     #expect(restored.choices["action"] == .no)
     #expect(restored.questionChoices["question"] == "custom")
