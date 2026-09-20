@@ -243,6 +243,36 @@ func messageReactionsByMessage(
 /// - Parameter generating: whether a turn is running in this thread. The last work row is
 ///   live while it is, and settled once it is not; the events alone cannot say which.
 public func chatRows(from events: [YorozuEvent], generating: Bool = false) -> [ChatRow] {
+    // A final reply is the turn's terminator, even when a reconnect replays tool activity
+    // after that reply reached this client. Keep user-message boundaries intact, but render
+    // each completed main-agent reply after every other event in its turn.
+    var ordered: [YorozuEvent] = []
+    var turn: [YorozuEvent] = []
+    func closeTurn() {
+        ordered.append(contentsOf: turn.filter { event in
+            guard event.parentAgentId == nil,
+                case .message(let data) = event.payload
+            else { return true }
+            return data.role != .agent || data.done != true
+        })
+        ordered.append(contentsOf: turn.filter { event in
+            guard event.parentAgentId == nil,
+                case .message(let data) = event.payload
+            else { return false }
+            return data.role == .agent && data.done == true
+        })
+        turn.removeAll(keepingCapacity: true)
+    }
+    for event in events {
+        if case .message(let data) = event.payload, data.role == .user {
+            closeTurn()
+            ordered.append(event)
+        } else {
+            turn.append(event)
+        }
+    }
+    closeTurn()
+
     // Progress revisions keep unique transport IDs, so an offline client's cursor cannot
     // skip an update. Only the newest revision of each card belongs in the timeline.
     var latestProgress: [String: String] = [:]
@@ -285,7 +315,7 @@ public func chatRows(from events: [YorozuEvent], generating: Bool = false) -> [C
         work = nil
     }
 
-    for event in events {
+    for event in ordered {
         if case .thought(let data) = event.payload,
             event.parentAgentId == nil,
             data.transient == true

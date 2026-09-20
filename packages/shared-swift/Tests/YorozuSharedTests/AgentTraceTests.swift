@@ -419,6 +419,30 @@ private func toolResult(_ id: String, ok: Bool = true, output: String = "", at t
     #expect(!chatRows(from: events, generating: true).contains { if case .work(let w) = $0 { w.running } else { false } })
 }
 
+@Test func aFinalReplyRendersAfterToolHistoryThatArrivesLater() {
+    let events = [
+        event(ask("tidy up"), id: "u1", agent: "phone"),
+        event(reply("Tidied.", done: true), id: "m1"),
+        toolCall("c1", "shell", args: ["cmd": .string("ls")]),
+        toolResult("c1", output: "README.md"),
+    ]
+
+    #expect(chatRows(from: events).map(\.id) == ["u1", "work-call-c1", "m1"])
+}
+
+@Test func aLateToolReplayDoesNotMoveWorkAcrossTheNextUserMessage() {
+    let events = [
+        event(ask("first"), id: "u1", agent: "phone"),
+        event(reply("First done.", done: true), id: "m1"),
+        toolCall("c1", "shell"),
+        toolResult("c1"),
+        event(ask("second"), id: "u2", agent: "phone"),
+        event(reply("Second done.", done: true), id: "m2"),
+    ]
+
+    #expect(chatRows(from: events).map(\.id) == ["u1", "work-call-c1", "m1", "u2", "m2"])
+}
+
 @Test func aRunningTurnsLastWorkRowIsLiveAndSaysWhatIsHappeningNow() {
     let partial = [
         event(ask("tidy up"), id: "u1", agent: "phone"),
