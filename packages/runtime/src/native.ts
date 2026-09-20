@@ -29,6 +29,7 @@ export interface NativeTurn {
    * work row already draws. `id` is stable per thing, so a replay does not double it up.
    */
   onActivity?: (id: string, payload: EventPayload) => void;
+  onSession?: (sessionId: string) => void;
   approve?: (tool: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<boolean>;
   ask?: (question: string, options: string[], signal: AbortSignal) => Promise<string | undefined>;
 }
@@ -112,7 +113,10 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
       let sessionId = turn.sessionId;
       try {
         for await (const message of session as AsyncIterable<SDKMessage>) {
-          if ("session_id" in message && message.session_id) sessionId = message.session_id;
+          if ("session_id" in message && message.session_id && message.session_id !== sessionId) {
+            sessionId = message.session_id;
+            turn.onSession?.(sessionId);
+          }
           if (message.type === "stream_event") {
             const event = message.event;
             if (event.type === "content_block_delta" && event.delta.type === "text_delta") {

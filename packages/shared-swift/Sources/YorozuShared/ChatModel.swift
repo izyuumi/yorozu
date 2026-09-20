@@ -479,6 +479,11 @@ public final class ChatModel {
         emit(.threadSetModel(ThreadSetModelData(model: model)), in: thread.id)
     }
 
+    public func recover(_ thread: ThreadSummary, action: ThreadRecoverData.Action) {
+        guard let turnId = thread.interruptedTurnId else { return }
+        emit(.threadRecover(ThreadRecoverData(turnId: turnId, action: action)), in: thread.id)
+    }
+
     public func setBypass(_ thread: ThreadSummary, _ bypass: Bool) {
         guard thread.agent?.needsFolder == true else { return }
         if draft?.id == thread.id { draft?.bypass = bypass; return }

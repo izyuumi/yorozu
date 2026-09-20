@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   messageAttachments,
@@ -37,6 +37,7 @@ export const SYNC_PAGE_BYTES = 512 * 1024;
 
 export interface ThreadRecord {
   bypass?: boolean;
+  nativeTurn?: { id: string; state: "running" | "interrupted" };
   id: string;
   /** Empty until the runtime auto-titles the thread or the user renames it. */
   title: string;
@@ -94,7 +95,9 @@ const indexFile = (dir: string): string => join(dir, "threads.json");
 
 function saveThreads(threads: ThreadRecord[], dir: string): void {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(indexFile(dir), `${JSON.stringify(threads, null, 2)}\n`);
+  const temporary = indexFile(dir) + ".tmp";
+  writeFileSync(temporary, `${JSON.stringify(threads, null, 2)}\n`, { flush: true });
+  renameSync(temporary, indexFile(dir));
 }
 
 /**
@@ -344,6 +347,7 @@ export const threadSummaries = (dir = stateDir(), minTs = 0): ThreadSummary[] =>
       ...(thread.model ? { model: thread.model } : {}),
       ...(thread.effort ? { effort: thread.effort } : {}),
       ...(thread.agent ? { bypass: thread.bypass ?? false } : {}),
+      ...(thread.nativeTurn?.state === "interrupted" ? { interruptedTurnId: thread.nativeTurn.id } : {}),
       // Absent on a yorozu thread: that is the default, and what older phones already assume.
       ...(thread.agent && THREAD_AGENTS.includes(thread.agent) ? { agent: thread.agent } : {}),
       ...(thread.agent && thread.cwd ? { cwd: thread.cwd } : {}),
@@ -482,3 +486,38 @@ export function threadMessages(threadId: string, dir = stateDir(), vision = fals
  */
 export const threadHistory = (threadId: string, dir = stateDir(), vision = false): Message[] =>
   threadMessages(threadId, dir, vision).slice(-HISTORY_LIMIT);
+
+/** Written before launching the SDK. Recovery never replays a prompt automatically. */
+export function setNativeTurn(id: string, turn: ThreadRecord["nativeTurn"], dir = stateDir()): void {
+  const threads = listThreads(dir);
+  const thread = threads.find((t) => t.id === id);
+  if (!thread || !thread.agent) return;
+  if (turn) thread.nativeTurn = turn;
+  else delete thread.nativeTurn;
+  saveThreads(threads, dir);
+}
+
+export function recoverNativeTurns(dir = stateDir()): void {
+  const threads = listThreads(dir);
+  let changed = false;
+  for (const thread of threads) {
+    if (thread.agent && thread.nativeTurn?.state === "running") {
+      const events = readThreadEvents(thread.id, dir);
+      const finished = events.some((event) => event.id === thread.nativeTurn!.id && event.kind === "message" && event.data.done);
+      if (finished) delete thread.nativeTurn;
+      else thread.nativeTurn.state = "interrupted";
+      // SDK callbacks died with the process: historical cards must not keep live buttons.
+      const answered = new Set(events.flatMap((e) => e.kind === "approval_answer" ? [e.data.actionId] : e.kind === "question_answer" ? [e.data.questionId] : []));
+      for (const event of events) {
+        const base = { id: randomUUID(), threadId: thread.id, ts: Date.now(), agentId: "main" };
+        if (event.kind === "approval_card" && event.data.nativeAgent && !answered.has(event.data.actionId)) {
+          appendThreadEvent({ ...base, kind: "approval_answer", data: { actionId: event.data.actionId, answer: "no" } }, dir);
+        } else if (event.kind === "question_card" && !answered.has(event.data.questionId)) {
+          appendThreadEvent({ ...base, kind: "question_answer", data: { questionId: event.data.questionId, answer: "Interrupted" } }, dir);
+        }
+      }
+      changed = true;
+    }
+  }
+  if (changed) saveThreads(threads, dir);
+}

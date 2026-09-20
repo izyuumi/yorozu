@@ -344,6 +344,7 @@ export interface ThreadRenameData {
 }
 
 export interface ThreadSummary {
+  interruptedTurnId?: string;
   bypass?: boolean;
   id: string;
   title: string;
@@ -552,6 +553,7 @@ export type EventPayload =
   | { kind: "thread_set_model"; data: ThreadSetModelData }
   | { kind: "thread_set_effort"; data: ThreadSetEffortData }
   | { kind: "thread_set_bypass"; data: { bypass: boolean } }
+  | { kind: "thread_recover"; data: { turnId: string; action: "continue" | "dismiss" } }
   | { kind: "model_list"; data: ModelListData }
   | { kind: "project_list"; data: ProjectListData }
   | { kind: "interrupt"; data: InterruptData }

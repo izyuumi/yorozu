@@ -80,6 +80,8 @@ import {
   renameThread,
   setThreadEffort,
   setThreadBypass,
+  setNativeTurn,
+  recoverNativeTurns,
   setThreadModel,
   setThreadSession,
   stashToolResult,
@@ -297,6 +299,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // publish the choice so an explicit `stateDir` moves the whole runtime, not just the keys.
   env.YOROZU_STATE_DIR = dir;
   const transcripts = transcriptDir(dir);
+  recoverNativeTurns(dir);
   const keys = loadKeys(dir);
   const provider = options.provider;
   const openclaw = provider ? undefined : options.openclawRunner ?? new OpenClawRunner({ stateDir: dir });
@@ -698,6 +701,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (!runner) return finish(`${agent} is not available in this build yet.`);
       const turn = new AbortController();
       if (!running.has(threadId)) running.set(threadId, turn);
+      setNativeTurn(threadId, { id, state: "running" }, dir);
+      broadcast(threadList());
       try {
         const home = threadHome(threadId, dir);
         const done = await runner.run({
@@ -708,6 +713,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           model: threadModel(threadId, dir),
           effort: threadEffort(threadId, dir),
           signal: turn.signal,
+          onSession: (sessionId) => { setThreadSession(threadId, sessionId, dir); },
           approve: (tool, input, signal) => nativeCards.approve(threadId, agent, tool, input, signal),
           ask: (question, options, signal) => nativeCards.ask(threadId, question, options, signal),
           onUpdate: (reply) => broadcast(message(reply)),
@@ -734,6 +740,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
         finish(`${agent} could not answer: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
         if (running.get(threadId) === turn) running.delete(threadId);
+        if (!stopped) {
+          setNativeTurn(threadId, undefined, dir);
+          broadcast(threadList());
+        }
       }
       return;
     }
@@ -1153,6 +1163,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return reply(projectList());
       case "project_list":
         return reply(projectList());
+      case "thread_recover": {
+        const thread = listThreads(dir).find((t) => t.id === event.threadId);
+        if (thread?.nativeTurn?.state !== "interrupted" || thread.nativeTurn.id !== event.data.turnId) return;
+        if (event.data.action !== "continue" && event.data.action !== "dismiss") return;
+        setNativeTurn(event.threadId, undefined, dir);
+        broadcast(threadList());
+        if (event.data.action === "continue") void enqueueTurn(event.threadId, "Continue the interrupted turn.");
+        return;
+      }
       case "thread_set_bypass":
         if (typeof event.data.bypass === "boolean") setThreadBypass(event.threadId, event.data.bypass, dir);
         return broadcast(threadList());
@@ -1563,6 +1582,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     close: async () => {
       stopped = true;
+      for (const turn of running.values()) turn.abort();
       scheduler.stop();
       if (retry) clearTimeout(retry);
       await local.close();

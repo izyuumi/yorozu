@@ -111,6 +111,22 @@ public struct ChatView: View {
             if let failure = model.failure {
                 Banner(text: failure, systemImage: "exclamationmark.triangle")
             }
+            if thread.interruptedTurnId != nil {
+                VStack(alignment: .leading) {
+                    Label("Turn interrupted", systemImage: "pause.circle")
+                    Text("The Mac restarted. Continue when you're ready.").font(.callout)
+                    HStack {
+                        Button("Continue") { model.recover(thread, action: .continue) }
+                            .buttonStyle(.borderedProminent)
+                        Button("Dismiss") { model.recover(thread, action: .dismiss) }
+                            .buttonStyle(.bordered)
+                    }
+                    .disabled(!model.ownerOnline)
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .contain)
+            }
             Group {
                 if rows.isEmpty {
                     EmptyThreadView()

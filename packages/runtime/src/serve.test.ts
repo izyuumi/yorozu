@@ -30,7 +30,7 @@ import { loadDevices, loadKeys, serve, typedAnswer, type ServeOptions, type Side
 import type { NativeAgentRunner, NativeTurn } from "./native.js";
 import { OpenClawRunner, type OpenClawTurn } from "./openclaw.js";
 import { localSocketPath } from "./local.js";
-import { SYNC_PAGE_BYTES, appendThreadEvent, createThread, listThreads, readThreadEvents } from "./threads.js";
+import { SYNC_PAGE_BYTES, setNativeTurn, setThreadSession, appendThreadEvent, createThread, listThreads, readThreadEvents } from "./threads.js";
 import { readTranscripts, transcriptDir } from "./transcripts.js";
 
 let relay: Relay;
@@ -307,7 +307,7 @@ let sendRaw: (event: YorozuEvent) => void = () => {};
 /** A paired phone plus the session key, so a test can talk sealed events both ways. */
 async function pairedPhone(responses: (() => Response)[], openclaw = false, extra: Partial<ServeOptions> = {}) {
   relay = await startRelay(0);
-  const dir = mkdtempSync(join(tmpdir(), "yorozu-approval-serve-"));
+  const dir = extra.stateDir ?? mkdtempSync(join(tmpdir(), "yorozu-approval-serve-"));
   states = [];
 
   let qrLine!: (line: string) => void;
@@ -1807,4 +1807,51 @@ test("native bypass persists and syncs, applies on later turns and never changes
   send({ kind: "thread_set_bypass", data: { bypass: true } }, "normal");
   await eventsUntil((e) => e.kind === "receipt");
   expect(listThreads(dir).find((t) => t.id === "normal")?.bypass).toBeUndefined();
+});
+
+test.each(["continue", "dismiss"] as const)("startup never replays native turns; %s is an explicit recoverable command", async (action) => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-native-restart-"));
+  createThread("Work", dir, "cc", { agent: "claude-code", cwd: proj });
+  setThreadSession("cc", "native-before-crash", dir);
+  setNativeTurn("cc", { id: "crashed-turn", state: "running" }, dir);
+  const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "continued", sessionId: "native-before-crash" });
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { "claude-code": { run } } });
+  const startup = (await eventsUntil((e) => e.kind === "thread_list")).at(-1)!;
+  expect(startup).toMatchObject({ data: { threads: [expect.objectContaining({ interruptedTurnId: "crashed-turn" })] } });
+  expect(run).not.toHaveBeenCalled();
+  send({ kind: "thread_recover", data: { turnId: "crashed-turn", action } }, "cc");
+  await eventsUntil((e) => e.kind === "thread_list" && e.data.threads.every((t) => !t.interruptedTurnId));
+  if (action === "continue") {
+    await eventsUntil((e) => e.kind === "message" && e.data.done === true);
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ text: "Continue the interrupted turn.", sessionId: "native-before-crash", cwd: proj }));
+    // A second device's stale Continue must not start another turn.
+    send({ kind: "thread_recover", data: { turnId: "crashed-turn", action } }, "cc");
+    send({ kind: "thread_list", data: { threads: [] } });
+    await eventsUntil((e) => e.kind === "thread_list");
+    expect(run).toHaveBeenCalledTimes(1);
+  } else {
+    expect(run).not.toHaveBeenCalled();
+    send({ kind: "message", data: { role: "user", text: "New plan" } }, "cc");
+    await eventsUntil((e) => e.kind === "message" && e.data.done === true);
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ text: "New plan", sessionId: "native-before-crash" }));
+  }
+  expect(listThreads(dir)[0]?.nativeTurn).toBeUndefined();
+});
+
+test("native session and running marker reach disk before completion, and survive sidecar shutdown", async () => {
+  let started!: NativeTurn;
+  const run: NativeAgentRunner["run"] = async (turn) => {
+    started = turn;
+    turn.onSession!("early-session");
+    await new Promise<void>((resolve) => turn.signal.addEventListener("abort", () => resolve(), { once: true }));
+    return { text: "", sessionId: "early-session" };
+  };
+  const { dir, send } = await pairedPhone([], false, { nativeRunners: { "claude-code": { run } } });
+  send({ kind: "thread_create", data: { agent: "claude-code", cwd: proj } }, "cc");
+  send({ kind: "message", data: { role: "user", text: "work" } }, "cc");
+  await vi.waitFor(() => expect(started).toBeDefined());
+  expect(listThreads(dir)[0]).toMatchObject({ nativeSessionId: "early-session", nativeTurn: { state: "running" } });
+  await sidecar.close();
+  expect(started.signal.aborted).toBe(true);
+  expect(listThreads(dir)[0]?.nativeTurn?.state).toBe("running");
 });
