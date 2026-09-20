@@ -443,9 +443,10 @@ export function conformance(relay: Adapter) {
     try {
       const { mac } = await paired();
       // Long, and carrying what would split or forge a log line.
-      mac.close(1000, "x".repeat(60) + "\n\u0000injected");
+      // A distinct code excludes late close logs from earlier conformance cases.
+      mac.close(4099, "x".repeat(60) + "\n\u0000injected");
       const line = await vi.waitFor(() => {
-        const found = log.mock.calls.map(([l]) => String(l)).find((l) => l.includes('"ev":"close"'));
+        const found = log.mock.calls.map(([l]) => String(l)).find((l) => l.includes('"ev":"close"') && l.includes('"code":4099'));
         expect(found).toBeDefined();
         return found!;
       });

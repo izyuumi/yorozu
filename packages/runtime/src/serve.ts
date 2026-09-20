@@ -39,7 +39,7 @@ import {
   type YorozuEvent,
 } from "@yorozu/shared";
 import WebSocket from "ws";
-import { agentsDir, installAgents, loadAgent, MAIN_AGENT } from "./agents.js";
+import { MAIN_AGENT } from "./agents.js";
 import {
   cardFor,
   deleteRule,
@@ -49,22 +49,15 @@ import {
   narrowestRule,
   quickApprovable,
   saveSettings,
-  TaskGrants,
   type Action,
   type AskResult,
   type Rule,
 } from "./approval.js";
-import { autoAssign, revertAssign, setAssignCron, type AssignMode } from "./assign.js";
-import { chainFromEnv, chainWithPrimary } from "./chain.js";
-import { DelegationCapacity, delegateTool } from "./delegate.js";
-import { defaultTools, eventPayload, runAgent, type TurnContext } from "./index.js";
+import type { AssignMode } from "./assign.js";
+import type { TurnContext } from "./index.js";
+import type { createLegacyRunner } from "./legacy.js";
 import { localSocketPath, startLocalChannel, type Send } from "./local.js";
 import type { Provider } from "./provider.js";
-import { probe } from "./probe.js";
-import { listEntryModels, loadProviders, modelOptions } from "./providers.js";
-import { startScheduler } from "./scheduler.js";
-import { listSkills, skillsDir, skillsPrompt } from "./skills.js";
-import { contextFor, updateSummary } from "./summary.js";
 // Mirrors PING in apps/relay/src/protocol.ts; the shipped runtime must not depend on the relay package.
 const PING = JSON.stringify({ type: "ping" });
 import {
@@ -90,7 +83,6 @@ import {
   SYNC_PAGE_BYTES,
   threadAgent,
   threadEffort,
-  threadHistory,
   threadHome,
   threadModel,
   threadSummaries,
@@ -99,9 +91,7 @@ import { codexNativeRunner } from "./codex-native.js";
 import { NativeCards } from "./native-cards.js";
 import { claudeCodeRunner, type NativeAgentRunner } from "./native.js";
 import { isProjectFolder, listProjects } from "./projects.js";
-import { closeBrowser } from "./tools/browser.js";
-import { askUserTool, questionDesk, reportProgressTool } from "./tools/cards.js";
-import { useProviderSearch } from "./tools/search.js";
+import { questionDesk } from "./tools/cards.js";
 import { OpenClawRunner, type StoredPendingTurn } from "./openclaw.js";
 import { appendTranscript, readTranscripts, transcriptDir } from "./transcripts.js";
 
@@ -118,12 +108,6 @@ const PING_MS = 30_000;
 const PONG_MS = 10_000;
 /** An unanswered card is not a yes: it expires into a refusal rather than hanging the turn. */
 const APPROVAL_TIMEOUT_MS = 10 * 60_000;
-/** A title is a nicety: past this the thread keeps its placeholder rather than the phone waiting. */
-const TITLE_TIMEOUT_MS = 5_000;
-const TITLE_SYSTEM =
-  "Reply with a 3-5 word title for this conversation, no quotes, no trailing period";
-/** How much of the opening exchange the titler is shown. */
-const TITLE_CONTEXT_CHARS = 500;
 /**
  * How long a device counts as online for. The relay tells us nothing about a phone's socket —
  * only the phone is told about ours — so "online" here means "has said something recently",
@@ -159,8 +143,6 @@ export function typedAnswer(text: string, card: ApprovalCardData): AskResult | n
   if (/^(no|n|nope|stop|never)\b/.test(typed)) return { answer: "no" };
   return null;
 }
-/** Only reached if the user deleted agents/main.md: the bundled one is installed on startup. */
-const SYSTEM = "You are Yorozu, a personal assistant running on the user's Mac.";
 
 export interface Keys {
   /** X25519, for the session key agreement with each phone. */
@@ -312,8 +294,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
    */
   const viaOpenClaw = (threadId: string): boolean => openclaw !== undefined && threadAgent(threadId, dir) === "yorozu";
   const nativeRunners = options.nativeRunners ?? { "claude-code": claudeCodeRunner(), codex: codexNativeRunner() };
-  // `web_search` asks the running chain for native search before it drives a browser.
-  if (provider) useProviderSearch(provider);
   const log = options.log ?? ((line: string) => void stdout.write(`${line}\n`));
   const heartbeat = options.heartbeat ?? { pingMs: PING_MS, pongMs: PONG_MS };
   const state = (name: string) => log(`STATE ${name}`);
@@ -323,19 +303,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // for a caller-supplied provider: that one is the caller's business.
   if (!options.provider) state("openclaw");
 
-  // The main agent is a file like every specialist; the skills on disk are listed into its
-  // prompt once, at startup, and their bodies load on demand through the `skill` tool.
-  const agents = installAgents(agentsDir(dir));
-  const main = loadAgent(MAIN_AGENT, agents) ?? { name: MAIN_AGENT, prompt: SYSTEM };
-  const system = [main.prompt, skillsPrompt(listSkills(skillsDir(dir)))]
-    .filter(Boolean)
-    .join("\n\n");
   /** One controller per running turn, so an `interrupt` cancels every tree at once. */
   const running = new Map<string, AbortController>();
   const turnQueues = new Map<string, Promise<void>>();
   const admittedTurns = new Map<string, Promise<void>>();
-  /** One ceiling across user turns and background-result turns. */
-  const delegationCapacity = new DelegationCapacity();
+  let legacy: ReturnType<typeof createLegacyRunner> | undefined;
 
   /**
    * Session key per paired device, keyed by the X25519 public key it announced. Several
@@ -565,7 +537,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const modelList = (): YorozuEvent =>
     control({
       kind: "model_list",
-      data: { models: provider ? modelOptions(loadProviders(dir)) : openclawModels, agentModels },
+      data: { models: provider ? legacy?.models() ?? [] : openclawModels, agentModels },
     });
 
   for (const agent of ["claude-code", "codex"] as const) {
@@ -788,111 +760,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     if (!provider) throw new Error("no execution backend");
 
-    // A thread put on a model of its own leads with it and keeps the configured chain behind
-    // it, so one unreachable provider is a slower turn rather than a thread that cannot answer.
-    // Resolved per turn: the picker may have been used since the last one. A spec naming a
-    // provider the user has since deleted cannot be built at all — that thread falls all the
-    // way back to the default chain, because an answer from the wrong model beats none.
-    const spec = threadModel(threadId, dir);
-    const effort = threadEffort(threadId, dir);
-    let turnProvider = provider;
-    if (spec) {
-      try {
-        turnProvider = chainWithPrimary(spec, provider, dir);
-      } catch (e) {
-        state(`model-error ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
-
     const turn = new AbortController();
     if (!running.has(threadId)) running.set(threadId, turn);
-    let reply = "";
-    /**
-     * What the deltas have already put on the wire. Streaming runs one delta behind on
-     * purpose: the frame carrying the whole reply is the finished one, which is sent below
-     * whatever happens, so sending a delta identical to it first would put the same reply on
-     * the socket twice — which is exactly what a non-streaming provider did, one text event
-     * and then the final, two identical agent messages for one turn.
-     */
-    let sent = "";
-    let sentAt = 0;
     try {
-      // Built per turn: `delegate` carries this turn's abort signal down to its children.
-      // One per turn, shared with everything this turn delegates to, and dropped with the
-      // turn: that is exactly the life "Allow for this task" promises.
-      const grants = new TaskGrants();
-      const tools = [
-        ...defaultTools,
-        // Both draw on the paired devices, so they only exist where there is somebody to draw
-        // for: a turn, rather than the tool list the CLI shares.
-        askUserTool(questions.ask),
-        reportProgressTool(reportProgress),
-        delegateTool({
-          provider: turnProvider,
-          tools: [...defaultTools, reportProgressTool(reportProgress)],
-          main,
-          emit,
-          turn: runTurn,
-          ask,
-          grants,
-          onProposal: proposeRule,
-          dir: agents,
-          signal: turn.signal,
-          ...(effort ? { effort } : {}),
-          capacity: delegationCapacity,
-        }),
-      ];
-      for await (const event of runAgent({
-        provider: turnProvider,
-        system,
-        // The rolling summary of what has scrolled out, then the recent window.
-        messages: contextFor(threadId, dir, turnProvider.vision === true),
-        tools,
-        context: { threadId, agentId: MAIN_AGENT },
-        ask,
-        grants,
-        onProposal: proposeRule,
-        signal: turn.signal,
-        ...(effort ? { effort } : {}),
-      })) {
-        if (event.type === "text") {
-          // Every delta carries the whole reply, so per token it is sealed, signed and
-          // redrawn in full; a long reply stutters. A frame every ~80ms reads the same.
-          if (reply !== sent && Date.now() - sentAt >= 80) {
-            broadcast(message(reply));
-            sent = reply;
-            sentAt = Date.now();
-          }
-          reply += event.text;
-        } else if (event.type === "final") {
-          reply = event.text;
-        } else {
-          // The main agent's own tool calls and results, tagged like a specialist's so the
-          // phone can draw the same trace for both. Its own id: only the reply streams.
-          const payload = eventPayload(event);
-          if (payload) {
-            emit({ id: randomUUID(), threadId, ts: Date.now(), agentId: MAIN_AGENT, ...payload });
-          }
-        }
-      }
+      const backend = await legacyReady;
+      if (!backend || stopped || turn.signal.aborted) return;
+      await backend.run(threadId, turn.signal,
+        (text) => broadcast(message(text)), (text) => emit(message(text, true)));
     } finally {
       if (running.get(threadId) === turn) running.delete(threadId);
     }
-    // An interrupted turn says nothing: the user already knows they stopped it.
-    if (turn.signal.aborted) return;
-    // The finished reply is always logged, and always sent: unlike the deltas it carries
-    // `done`, so even a reply whose text matches the last delta exactly is still news.
-    const final = message(reply, true);
-    appendTranscript(final, transcripts);
-    appendThreadEvent(final, dir);
-    broadcast(final);
-    // Deliberately not awaited: titling is a second completion and must never delay a reply.
-    void autoTitle(threadId).catch((e: unknown) => state(`title-error ${String(e)}`));
-    // Nor is the summary: it is only ever needed by the *next* turn, and a thread that has not
-    // outgrown its window does no work here at all. A failure leaves the summary as it was.
-    void updateSummary(threadId, turnProvider, dir).catch((e: unknown) =>
-      state(`summary-error ${String(e)}`),
-    );
   }
 
   /** Same-thread turns are FIFO. Different threads still run concurrently. */
@@ -930,54 +807,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (userEventId && admittedTurns.get(userEventId) === next) admittedTurns.delete(userEventId);
     }).catch(() => {});
     return next;
-  }
-
-  /**
-   * Names a thread from its opening exchange, once. Only a thread whose title is still empty is
-   * titled, which is also what keeps a rename the user typed: that title is not empty, so no
-   * later turn overwrites it.
-   */
-  async function autoTitle(threadId: string): Promise<void> {
-    if (!provider) return;
-    const untitled = (): boolean =>
-      listThreads(dir).find((thread) => thread.id === threadId)?.title === "";
-    if (!untitled()) return;
-
-    const history = threadHistory(threadId, dir);
-    const opening = [
-      history.find((m) => m.role === "user")?.content,
-      history.find((m) => m.role === "assistant")?.content,
-    ]
-      .filter(Boolean)
-      .join("\n\n")
-      .slice(0, TITLE_CONTEXT_CHARS);
-    if (!opening) return;
-
-    const ask = async (): Promise<string> => {
-      let text = "";
-      for await (const event of provider.stream(
-        [
-          { role: "system", content: TITLE_SYSTEM },
-          { role: "user", content: opening },
-        ],
-        [],
-      )) {
-        if (event.type === "text") text += event.text;
-      }
-      return text;
-    };
-    const title = cleanTitle(
-      await Promise.race([
-        ask(),
-        new Promise<string>((resolve) => {
-          setTimeout(() => resolve(""), TITLE_TIMEOUT_MS).unref?.();
-        }),
-      ]),
-    );
-
-    // Re-checked: a rename may have landed while the titler was thinking.
-    if (!title || !untitled()) return;
-    if (renameThread(threadId, title, dir)) broadcast(threadList());
   }
 
   /**
@@ -1598,14 +1427,17 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
   }
 
-  // No heartbeat: the runner only wakes to ask which jobs are due.
-  const scheduler = startScheduler(
-    (job) =>
-      void enqueueTurn(job.threadId, job.instruction).catch((e: unknown) =>
-        state(`job-error ${job.id} ${String(e)}`),
-      ),
-    { dir },
-  );
+  // Production never installs legacy agents or starts its scheduler. Initialization remains
+  // async so importing the sidecar does not load the old provider/tool graph.
+  const legacyReady = provider ? import("./legacy.js").then(({ createLegacyRunner }) => {
+    if (stopped) return undefined;
+    legacy = createLegacyRunner({ provider, dir, emit, ask, askUser: questions.ask,
+      reportProgress, proposeRule, turn: runTurn, enqueue: enqueueTurn, state,
+      changed: () => broadcast(threadList()), cleanTitle });
+    if (legacy.models().length) broadcast(modelList());
+    return legacy;
+  }) : undefined;
+  void legacyReady?.catch((error: unknown) => state(`legacy-init-error ${String(error)}`));
 
   return {
     mint: () => {
@@ -1614,11 +1446,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
     close: async () => {
       stopped = true;
       for (const turn of running.values()) turn.abort();
-      scheduler.stop();
       if (retry) clearTimeout(retry);
       await local.close();
-      // Whatever the agent opened in the browser goes away with the sidecar.
-      await closeBrowser();
+      await legacyReady?.catch(() => undefined);
+      await legacy?.close();
       return new Promise<void>((done) => {
         const ws = socket;
         if (!ws || ws.readyState === WebSocket.CLOSED) return done();
@@ -1635,25 +1466,25 @@ if (import.meta.main) {
   const mode = (name?: string): AssignMode => (name === "research" ? "research" : "catalog");
   switch (command) {
     case "probe":
-      stdout.write(`${JSON.stringify(await probe())}\n`);
+      stdout.write(`${JSON.stringify(await (await import("./probe.js")).probe())}\n`);
       break;
     // The model list of one `openai-compat` entry, one id per line, for the Settings picker.
     case "models":
-      stdout.write(`${(await listEntryModels(argument ?? "")).join("\n")}\n`);
+      stdout.write(`${(await (await import("./providers.js")).listEntryModels(argument ?? "")).join("\n")}\n`);
       break;
     case "assign":
-      stdout.write(await autoAssign({ mode: mode(argument) }));
+      stdout.write(await (await import("./assign.js")).autoAssign({ mode: mode(argument) }));
       break;
     case "assign-revert":
-      stdout.write(`${revertAssign()}\n`);
+      stdout.write(`${(await import("./assign.js")).revertAssign()}\n`);
       break;
     case "assign-cron":
-      stdout.write(`${setAssignCron(argument ?? "", mode(extra))}\n`);
+      stdout.write(`${(await import("./assign.js")).setAssignCron(argument ?? "", mode(extra))}\n`);
       break;
     default: {
       // Test rigs can pin a deterministic provider instead of talking to the live OpenClaw
       // gateway. Ordinary launches have no argument and keep OpenClaw as their backend.
-      const sidecar = serve(command === "--direct-provider" ? { provider: chainFromEnv() } : {});
+      const sidecar = serve(command === "--direct-provider" ? { provider: (await import("./chain.js")).chainFromEnv() } : {});
       // The Mac app's "New code" button, and the only thing stdin is for. Skipped on a
       // terminal: reading one from a backgrounded shell job earns a SIGTTIN, and a person
       // running the sidecar by hand has no button to press anyway.

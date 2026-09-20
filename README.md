@@ -69,6 +69,9 @@ the shipped app will point it at the bundled runtime. The sidecar is killed when
 The sections below document modules retained for tests and explicit callers that pass
 `ServeOptions.provider`. Shipped Yorozu does not activate them. OpenClaw owns memory, provider
 credentials, model availability, skills, scheduling, approval policy, and browser/tool settings.
+The legacy loop lives in `packages/runtime/src/legacy.ts` and loads only for an explicit
+`ServeOptions.provider` or `--direct-provider`. Ordinary launches do not install its agent files
+or start its scheduler. Legacy modules remain supported for injected tests/development callers.
 
 ### Legacy memory
 
@@ -380,9 +383,12 @@ account.
 ## Threads
 
 A thread is an append-only log: `<YOROZU_STATE_DIR>/threads/<id>.jsonl`, one event per line,
-with `threads.json` beside it as the index (`id`, `title`, `createdAt`, `archived`). `home` is
-seeded on first run, is pinned, and never archives — `archiveThread("home")` refuses, and a
-hand-edited index claiming otherwise is repaired on the next read. Only conversation events are
+with `threads.json` beside it as the index, including native-agent working directories and
+session IDs. Threads are created on demand. A legacy `home` with history becomes an ordinary,
+archivable thread; an empty one is removed during migration. An absent index is a first run.
+An unreadable, malformed or structurally invalid index stops the operation and stays untouched:
+restore it from backup or repair the original file before restarting. Logs alone cannot recover
+native session metadata safely. Only conversation events are
 logged (`message`, `thought`, `tool_call`, `tool_result`, `approval_card`, `approval_answer`,
 `question_card`, `question_answer`, `progress_card`);
 sync and thread admin are control traffic and leave no trace.
@@ -426,7 +432,11 @@ leaves the thread untitled. Only an empty title is filled in, which is also the 
 that a title the user typed with Rename is never overwritten. `sync_request` carries `lastSeen`, a last-held
 event id per thread, and is answered with one `sync_delta` holding everything after those ids
 across *every* live thread — capped at 200 events each, and an id the log no longer has means the
-tail rather than nothing.
+start rather than nothing. Sync builds an in-memory byte-offset index on the first read of a
+log, then seeks directly to each page without re-parsing prior messages. File changes invalidate
+the index. Metadata for 16 recently synced logs is retained; message bodies are not cached.
+`pnpm --filter @yorozu/runtime build && node scripts/benchmark-sync.mjs` compares a full drain
+against the previous full-log scan using a temporary 10,000-event fixture.
 
 ### Several phones at once
 

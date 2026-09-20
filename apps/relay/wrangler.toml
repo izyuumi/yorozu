@@ -1,6 +1,7 @@
 name = "yorozu-relay"
 main = "src/worker.ts"
-compatibility_date = "2026-08-15"
+# Match the workerd baseline bundled by our Vitest pool; config rejects unsupported dates.
+compatibility_date = "2026-03-10"
 
 # relay.yumi.to is a custom domain on the yumi.to zone: Cloudflare terminates TLS and
 # `wss://relay.yumi.to` reaches the Worker directly, no route pattern needed.

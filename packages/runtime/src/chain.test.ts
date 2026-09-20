@@ -101,15 +101,26 @@ test("a thread's own model leads, with the default chain behind it", async () =>
     { type: "done", reason: "stop" },
   ]);
 
-  // The spec resolves against providers.json, as a chain entry does.
-  const chain = chainWithPrimary("work/claude-opus-5", fallback, state);
-  expect(typeof chain.stream).toBe("function");
-  // And the default chain really is behind it: green there is green for the thread, which is
-  // what keeps a thread on an unreachable model usable.
-  expect(await chain.auth()).toEqual({ ok: true });
+  // Exercise fallback without probing the developer's real CLI/login state.
+  const primary = vi.spyOn(await import("./claude.js"), "claudeCli").mockReturnValue({
+    ...provider([]), auth: async () => ({ ok: false, reason: "test primary unavailable" }),
+  });
+  const fallbackAuth = vi.spyOn(fallback, "auth");
+  try {
+    // The spec resolves against providers.json, as a chain entry does.
+    const chain = chainWithPrimary("work/claude-opus-5", fallback, state);
+    expect(typeof chain.stream).toBe("function");
+    // And the default chain really is behind it: green there is green for the thread, which is
+    // what keeps a thread on an unreachable model usable.
+    expect(await chain.auth()).toEqual({ ok: true });
 
-  // A spec naming a provider that has since been deleted cannot be built at all, and says so.
-  expect(() => chainWithPrimary("gone/x", fallback, state)).toThrow("unknown provider");
+    // A spec naming a provider that has since been deleted cannot be built at all, and says so.
+    expect(() => chainWithPrimary("gone/x", fallback, state)).toThrow("unknown provider");
+    expect(fallbackAuth).toHaveBeenCalledOnce();
+  } finally {
+    primary.mockRestore();
+    fallbackAuth.mockRestore();
+  }
 });
 
 test("the chain is read from the environment, primary first", async () => {

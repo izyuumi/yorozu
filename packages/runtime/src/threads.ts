@@ -20,6 +20,7 @@ import {
 } from "@yorozu/shared";
 import { stateDir } from "./memory.js";
 import type { Message } from "./provider.js";
+import { syncPage } from "./thread-sync.js";
 
 /** How much of a thread's log is replayed to the model as context. */
 export const HISTORY_LIMIT = 40;
@@ -113,20 +114,43 @@ const lastActivity = (thread: ThreadRecord, dir: string): number => {
   }
 };
 
+/** Validate persisted metadata before any caller can rewrite the index. */
+function validThread(value: unknown): value is ThreadRecord {
+  if (!value || typeof value !== "object") return false;
+  const t = value as Record<string, unknown>;
+  const turn = t.nativeTurn as ThreadRecord["nativeTurn"];
+  return typeof t.id === "string" && t.id.length > 0 && typeof t.title === "string"
+    && typeof t.createdAt === "string" && Number.isFinite(Date.parse(t.createdAt))
+    && typeof t.archived === "boolean"
+    && ["model", "effort", "agent", "cwd", "nativeSessionId"].every((key) => t[key] === undefined || typeof t[key] === "string")
+    && ["pinned", "bypass"].every((key) => t[key] === undefined || typeof t[key] === "boolean")
+    && (t.lastReadAt === undefined || typeof t.lastReadAt === "number" && Number.isFinite(t.lastReadAt))
+    && (turn === undefined || !!turn && typeof turn === "object"
+      && typeof turn.id === "string" && ["running", "interrupted"].includes(turn.state));
+}
+
 /**
- * Every live and archived thread, most recently active first. A missing, broken or hand-edited
- * index reads as empty rather than throwing.
- *
- * Migration: Yorozu used to pin a thread called `home` that could not be archived. It is an
- * ordinary thread now if anything was ever said in it, and gone if nothing was.
+ * Every live and archived thread, most recently active first. Only an absent index
+ * is a first run. Corruption stops writes: logs cannot reconstruct native session ids,
+ * working directories or approval bypass, so guessing metadata would silently change agents.
+ * The original index stays untouched for repair or restoration from backup.
  */
 export function listThreads(dir = stateDir()): ThreadRecord[] {
-  let stored: ThreadRecord[] = [];
+  let stored: ThreadRecord[];
   try {
-    const parsed: unknown = JSON.parse(readFileSync(indexFile(dir), "utf8"));
-    if (Array.isArray(parsed)) stored = parsed as ThreadRecord[];
-  } catch {
-    // First run, or a file someone broke by hand.
+    let raw: string;
+    try {
+      raw = readFileSync(indexFile(dir), "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      return [];
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed) || !parsed.every(validThread)
+      || new Set(parsed.map((t) => t.id)).size !== parsed.length) throw new Error("invalid thread metadata");
+    stored = parsed;
+  } catch (cause) {
+    throw new Error(`Cannot read thread index ${indexFile(dir)}; restore or repair it before continuing`, { cause });
   }
   const threads = stored.flatMap((thread) =>
     thread.id !== "home"
@@ -443,11 +467,7 @@ export function eventsAfter(
   dir = stateDir(),
   minTs = 0,
 ): YorozuEvent[] {
-  const events = readThreadEvents(threadId, dir);
-  const at = afterEventId ? events.findLastIndex((event) => event.id === afterEventId) : -1;
-  return (at >= 0 ? events.slice(at + 1) : events)
-    .filter((event) => event.ts >= minTs)
-    .slice(0, SYNC_LIMIT);
+  return syncPage(logFile(threadId, dir), afterEventId, minTs, SYNC_LIMIT);
 }
 
 /**

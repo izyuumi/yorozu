@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startRelay, type Relay } from "@yorozu/relay";
@@ -28,6 +28,7 @@ import { WebSocketServer } from "ws";
 import { openaiCompat } from "./provider.js";
 import { loadDevices, loadKeys, serve as startSidecar, typedAnswer, type ServeOptions, type Sidecar } from "./serve.js";
 import type { NativeAgentRunner, NativeTurn } from "./native.js";
+import * as schedulerModule from "./scheduler.js";
 import { OpenClawRunner, type OpenClawTurn } from "./openclaw.js";
 import { localSocketPath } from "./local.js";
 import { SYNC_PAGE_BYTES, setNativeTurn, setThreadSession, appendThreadEvent, createThread, listThreads, readThreadEvents } from "./threads.js";
@@ -1953,4 +1954,14 @@ test.each(["claude-code", "codex"] as const)("%s threads run concurrently with i
   releases.get("two")!(); releases.get("three")!();
   await eventsUntil((e) => e.kind === "message" && e.threadId === "three" && e.data.done === true);
   expect(listThreads(dir).map((t) => t.nativeSessionId).sort()).toEqual(["session-one", "session-three", "session-two"]);
+});
+
+
+test.each([true, false])("legacy setup runs only with an injected provider (OpenClaw=%s)", async (openclaw) => {
+  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
+  const scheduler = vi.spyOn(schedulerModule, "startScheduler");
+  const { dir } = await pairedPhone([], openclaw);
+  if (!openclaw) await vi.waitFor(() => expect(scheduler).toHaveBeenCalledTimes(1));
+  else expect(scheduler).not.toHaveBeenCalled();
+  expect(existsSync(join(dir, "agents", "main.md"))).toBe(!openclaw);
 });
