@@ -595,6 +595,42 @@ private func summary(
     // An untitled thread is searchable by the placeholder it is actually drawn with.
     let untitled = ThreadSummary(id: "t2", title: "", archived: false, lastActivity: 0)
     #expect(threadMatches(untitled, query: "new chat"))
+
+    // And by who answers it and where, so "claude" is a filter and "yorozu" finds the repo's.
+    let coding = ThreadSummary(id: "cc", title: "Fix tests", archived: false, lastActivity: 0, agent: .claudeCode, cwd: "/Users/yumi/Projects/yorozu")
+    #expect(coding.repoName == "yorozu")
+    #expect(threadMatches(coding, query: "claude"))
+    #expect(threadMatches(coding, query: "yorozu"))
+    #expect(!threadMatches(coding, query: "codex"))
+    #expect(threadMatches(thread, query: "yorozu"))
+    #expect(!threadMatches(thread, query: "claude"))
+}
+
+@MainActor
+@Test func aCodingDraftCarriesItsAgentAndFolderIntoTheThreadItCreates() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    let before = await sent(by: transport, atLeast: pairingSends).count
+
+    // A Yorozu draft says nothing new on the wire, exactly as before there was anyone else.
+    let plain = model.newDraft()
+    #expect(plain.agent == nil && plain.cwd == nil)
+    let coding = model.newDraft(agent: .claudeCode, cwd: "/Users/yumi/Projects/yorozu")
+    #expect(coding.agent == .claudeCode)
+    #expect(coding.repoName == "yorozu")
+    #expect(model.threads.map(\.id) == [coding.id])
+
+    model.send("fix the tests", in: coding.id)
+    let sent = await sent(by: transport, atLeast: before + 2)
+    guard case .threadCreate(let create) = sent[before].payload else {
+        Issue.record("expected thread_create first, got \(sent[before].payload.kind)")
+        return
+    }
+    #expect(create == ThreadCreateData(title: nil, agent: .claudeCode, cwd: "/Users/yumi/Projects/yorozu"))
+
+    // The folder list rides in like the model list, and the picker reads it.
+    await transport.yield(.event(event("p1", .projectList(ProjectListData(projects: [ProjectFolder(path: "/Users/yumi/Projects/yorozu", name: "yorozu", lastUsed: 1)])))))
+    #expect(await eventually { model.projects.map(\.name) == ["yorozu"] })
 }
 
 @MainActor

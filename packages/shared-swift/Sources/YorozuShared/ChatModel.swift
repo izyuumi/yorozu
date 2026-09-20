@@ -57,6 +57,9 @@ public final class ChatModel {
     /// Every model a thread can be put on, as the Mac has it configured. Arrives with the
     /// thread list; empty until then, which is a picker that offers only Default.
     public private(set) var models: [ModelOption] = []
+    /// Where a coding agent's thread can be started, recents first, as the Mac last listed
+    /// them. Arrives with the thread list; empty until then.
+    public private(set) var projects: [ProjectFolder] = []
     /// Messages typed with nowhere to send them, oldest first. Persisted, so a phone closed on
     /// the underground still has them when it comes back up. See ``OutboxItem``.
     public private(set) var outbox: [OutboxItem] = []
@@ -243,8 +246,10 @@ public final class ChatModel {
         if let draft, draft.id == threadId {
             // A draft becomes real with its first message. The id is ours, so the message below
             // lands in the thread this `thread_create` is about to mint on the other end.
+            // A draft for a coding agent carries who answers it and where; a Yorozu draft says
+            // nothing, as every draft did before there was anyone else to ask.
             deliver(
-                event(.threadCreate(ThreadCreateData(title: nil)), in: threadId),
+                event(.threadCreate(ThreadCreateData(title: nil, agent: draft.agent, cwd: draft.cwd)), in: threadId),
                 queue: queue
             )
             // A model chosen in a chat that had not been sent in yet is held on the draft,
@@ -388,12 +393,14 @@ public final class ChatModel {
     /// A thread that exists only on this device until its first message: nothing is sent until
     /// then, so backing out of it leaves nothing behind. Replaces any draft still unsent.
     @discardableResult
-    public func newDraft() -> ThreadSummary {
+    public func newDraft(agent: ThreadAgent = .yorozu, cwd: String? = nil) -> ThreadSummary {
         let thread = ThreadSummary(
             id: UUID().uuidString,
             title: "",
             archived: false,
-            lastActivity: Date().timeIntervalSince1970 * 1000
+            lastActivity: Date().timeIntervalSince1970 * 1000,
+            agent: agent == .yorozu ? nil : agent,
+            cwd: agent == .yorozu ? nil : cwd
         )
         draft = thread
         return thread
@@ -715,6 +722,9 @@ public final class ChatModel {
             // What the model picker offers, sent with every thread list. Not a thread's event.
             case .modelList(let data):
                 models = data.models
+            // And where a coding agent can be started, the same way.
+            case .projectList(let data):
+                projects = data.projects
             // About the devices rather than in a thread, like the thread list above it.
             case .deviceList(let data):
                 devices = data.devices
@@ -796,13 +806,27 @@ public final class ChatModel {
                 pinned: pinned
             )
         }
+        var coding = thread("Fix the flaky relay test", "Done: the timeout was the test's, not the relay's.", 0.1)
+        coding.agent = .claudeCode
+        coding.cwd = "/Users/yumi/Projects/yorozu"
+        var codex = thread("Tidy the icon script", "Rewrote icon-render.sh to take a size.", 2.3)
+        codex.agent = .codex
+        codex.cwd = "/Users/yumi/Projects/tappa"
         synced = [
             thread("Weeknight dinners", "Roast chicken, then stock on Sunday.", 0.02, pinned: true),
             thread("Invoices", "Found the July one in Downloads.", 0.05),
+            coding,
             thread("Kyoto in April", "Booked the 9:05 to Kyoto.", 0.2),
             thread("Standup notes", "Summarised yesterday's thread.", 1.1),
+            codex,
             thread("Bike service", "Rescheduled for Thursday.", 3.2),
             thread("Tax return", "Filed — the receipt is in Documents.", 40),
+        ]
+        projects = [
+            ProjectFolder(path: "/Users/yumi/Projects/yorozu", name: "yorozu", lastUsed: now - 0.1 * day),
+            ProjectFolder(path: "/Users/yumi/Projects/tappa", name: "tappa", lastUsed: now - 2.3 * day),
+            ProjectFolder(path: "/Users/yumi/Projects/browsify", name: "browsify"),
+            ProjectFolder(path: "/Users/yumi/Projects/localtypist", name: "localtypist"),
         ]
         listed = true
     }

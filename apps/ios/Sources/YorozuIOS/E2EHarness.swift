@@ -67,6 +67,11 @@ final class E2EHarness {
             break
         case "threads":
             model.previewThreads()
+        // The new-thread sheet open on its folder step: the two taps a coding thread costs.
+        case "new-thread":
+            model.previewThreads()
+            NewThreadShowcase.agent = .claudeCode
+            model.onThreads = { [weak model] in model?.previewThreads() }
         case "chat":
             let seed = { [weak model] in
                 model?.previewThreads()

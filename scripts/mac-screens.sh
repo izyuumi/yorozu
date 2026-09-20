@@ -31,6 +31,7 @@ HEIGHT=${HEIGHT:-620}
 # of screenshots line up.
 SCENES=(
   "43-mac-threads      -yorozuShowcase threads"
+  "55-mac-new-thread   -yorozuShowcase new-thread"
   "43-mac-chat         -yorozuShowcase threads -yorozuScene plain"
   "43-mac-search       -yorozuShowcase threads -yorozuScene search"
   "43-mac-reply        -yorozuShowcase threads -yorozuScene reply"

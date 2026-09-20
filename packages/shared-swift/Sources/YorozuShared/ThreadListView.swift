@@ -122,6 +122,9 @@ public func threadMatches(
     guard !needle.isEmpty else { return true }
     if thread.displayTitle.localizedCaseInsensitiveContains(needle) { return true }
     if thread.lastMessage?.localizedCaseInsensitiveContains(needle) == true { return true }
+    // Who answers it and where: "claude" finds every Claude Code thread, "yorozu" the repo's.
+    if (thread.agent ?? .yorozu).label.localizedCaseInsensitiveContains(needle) { return true }
+    if thread.repoName?.localizedCaseInsensitiveContains(needle) == true { return true }
     return body().localizedCaseInsensitiveContains(needle)
 }
 
@@ -221,6 +224,13 @@ struct ThreadRow: View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    // A coding agent's thread wears its glyph; Yorozu's rows are as they were.
+                    if let agent = thread.agent, let symbol = agent.symbol {
+                        Image(systemName: symbol)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel(agent.label)
+                    }
                     highlightedText(thread.displayTitle)
                         .font(.body.weight(thread.isUnread ? .semibold : .regular))
                         // An untitled thread is one the runtime has not named yet, so its
@@ -254,6 +264,12 @@ struct ThreadRow: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                } else if let repo = thread.repoName {
+                    // Nothing said yet: the repo is the one thing worth a second line.
+                    Text(repo)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
             if thread.isUnread {
@@ -264,6 +280,22 @@ struct ThreadRow: View {
             }
         }
         .padding(.vertical, 2)
+        // VoiceOver hears the agent and repo once, up front, rather than as a glyph mid-row.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilitySummary)
+    }
+
+    /// "Claude Code, yorozu: Fix the flaky test. Done: …" — and just the title for Yorozu's own.
+    private var accessibilitySummary: String {
+        var parts: [String] = []
+        if let agent = thread.agent, agent != .yorozu {
+            parts.append([agent.label, thread.repoName].compactMap { $0 }.joined(separator: ", "))
+        }
+        parts.append(thread.displayTitle)
+        if working { parts.append(String(localized: "Working")) }
+        else if let preview = preview ?? thread.lastMessage, !preview.isEmpty { parts.append(preview) }
+        if thread.isUnread { parts.append(String(localized: "Unread")) }
+        return parts.joined(separator: ". ")
     }
 
     /// Search uses the same compact row, with the matching token carrying the only emphasis.
@@ -391,7 +423,10 @@ public struct ThreadListView<Destination: View>: View {
     private let workingThreads: Set<String>
     private let connection: ConnectionState?
     @Binding private var path: [String]
-    private let onCreate: () -> Void
+    /// Where a coding agent can be started. Empty means the picker offers Yorozu alone.
+    private let projects: [ProjectFolder]
+    /// Starts a thread for the chosen agent, in the chosen folder when it needs one.
+    private let onCreate: (ThreadAgent, String?) -> Void
     private let onRename: (ThreadSummary, String) -> Void
     private let onArchive: (ThreadSummary, Bool) -> Void
     private let onPin: (ThreadSummary, Bool) -> Void
@@ -408,6 +443,7 @@ public struct ThreadListView<Destination: View>: View {
     @State private var query = ThreadListShowcase.query
     /// The archive opens closed: it is where threads go to stop being in the way.
     @State private var showArchived = false
+    @State private var choosingAgent = NewThreadShowcase.agent != nil
     #if os(iOS)
         @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -434,7 +470,8 @@ public struct ThreadListView<Destination: View>: View {
         workingThreads: Set<String> = [],
         connection: ConnectionState? = nil,
         path: Binding<[String]>,
-        onCreate: @escaping () -> Void,
+        projects: [ProjectFolder] = [],
+        onCreate: @escaping (ThreadAgent, String?) -> Void,
         onRename: @escaping (ThreadSummary, String) -> Void,
         onArchive: @escaping (ThreadSummary, Bool) -> Void,
         onPin: @escaping (ThreadSummary, Bool) -> Void = { _, _ in },
@@ -450,6 +487,7 @@ public struct ThreadListView<Destination: View>: View {
         self.workingThreads = workingThreads
         self.connection = connection
         self._path = path
+        self.projects = projects
         self.onCreate = onCreate
         self.onRename = onRename
         self.onArchive = onArchive
@@ -594,13 +632,18 @@ public struct ThreadListView<Destination: View>: View {
     }
 
     /// Native toolbar button on both platforms. Keeping it in the bar leaves the final thread
-    /// and the always-visible search field unobstructed.
+    /// and the always-visible search field unobstructed. It asks who should answer — one tap
+    /// for Yorozu, two for a coding agent in a recent folder.
     @ViewBuilder private var newThreadButton: some View {
-        Button("New thread", systemImage: "square.and.pencil", action: onCreate)
+        Button("New thread", systemImage: "square.and.pencil") { choosingAgent = true }
             // ⌘N on an iPad keyboard; the Mac's File menu carries its own — see ``ThreadCommands``.
             #if os(iOS)
                 .keyboardShortcut("n")
             #endif
+            .sheet(isPresented: $choosingAgent) {
+                NewThreadPicker(projects: projects, onStart: onCreate)
+                    .presentationDetents([.medium, .large])
+            }
     }
 
     /// The archive: shut by default, and the only place a thread comes back from.
@@ -731,7 +774,10 @@ public struct ThreadSidebar: View {
     private let threads: [ThreadSummary]
     private let workingThreads: Set<String>
     @Binding private var selection: String?
-    private let onCreate: () -> Void
+    /// Where a coding agent can be started. Empty means the picker offers Yorozu alone.
+    private let projects: [ProjectFolder]
+    /// Starts a thread for the chosen agent, in the chosen folder when it needs one.
+    private let onCreate: (ThreadAgent, String?) -> Void
     private let onRename: (ThreadSummary, String) -> Void
     private let onArchive: (ThreadSummary, Bool) -> Void
     private let onPin: (ThreadSummary, Bool) -> Void
@@ -745,12 +791,14 @@ public struct ThreadSidebar: View {
     @State private var hoveredThreadID: String?
     /// The archive opens closed: it is where threads go to stop being in the way.
     @State private var showArchived = false
+    @State private var choosingAgent = NewThreadShowcase.agent != nil
 
     public init(
         threads: [ThreadSummary],
         workingThreads: Set<String> = [],
         selection: Binding<String?>,
-        onCreate: @escaping () -> Void,
+        projects: [ProjectFolder] = [],
+        onCreate: @escaping (ThreadAgent, String?) -> Void,
         onRename: @escaping (ThreadSummary, String) -> Void,
         onArchive: @escaping (ThreadSummary, Bool) -> Void,
         onPin: @escaping (ThreadSummary, Bool) -> Void = { _, _ in },
@@ -761,6 +809,7 @@ public struct ThreadSidebar: View {
         self.threads = threads
         self.workingThreads = workingThreads
         self._selection = selection
+        self.projects = projects
         self.onCreate = onCreate
         self.onRename = onRename
         self.onArchive = onArchive
@@ -794,14 +843,19 @@ public struct ThreadSidebar: View {
         .searchable(text: $query, placement: .sidebar, prompt: "Search threads")
         .navigationTitle("Threads")
         .toolbar {
-            // The same compose glyph the phone's list and every Mac mail or notes app use.
-            Button("New thread", systemImage: "square.and.pencil", action: onCreate)
+            // The same compose glyph the phone's list and every Mac mail or notes app use. It
+            // asks who should answer, in a popover off the button rather than a sheet.
+            Button("New thread", systemImage: "square.and.pencil") { choosingAgent = true }
+                .popover(isPresented: $choosingAgent, arrowEdge: .bottom) {
+                    NewThreadPicker(projects: projects, onStart: onCreate)
+                }
         }
         .renameAlert($renaming, onRename: onRename)
         #if os(macOS)
             // What the Mac's File menu acts on. Published from here because a new thread is the
             // list's business and outlives whichever one is open — see ``ThreadCommands``.
-            .focusedSceneValue(\.threadCommands, ThreadCommands(newThread: onCreate))
+            // ⌘N keeps meaning a Yorozu thread, as it always did; the button is where to choose.
+            .focusedSceneValue(\.threadCommands, ThreadCommands(newThread: { onCreate(.yorozu, nil) }))
             // Delete on a selected row puts it away, as it does in every Mac list. Archiving
             // rather than deleting, because that is the only removal this list has — and it
             // is undone from the Archived section rather than with ⌘Z.

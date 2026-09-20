@@ -53,6 +53,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadSetModel = "thread_set_model"
         case threadSetEffort = "thread_set_effort"
         case modelList = "model_list"
+        case projectList = "project_list"
         case interrupt
         case syncRequest = "sync_request"
         case syncDelta = "sync_delta"
@@ -86,6 +87,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadSetModel(ThreadSetModelData)
         case threadSetEffort(ThreadSetEffortData)
         case modelList(ModelListData)
+        case projectList(ProjectListData)
         case interrupt(InterruptData)
         case syncRequest(SyncRequestData)
         case syncDelta(SyncDeltaData)
@@ -119,6 +121,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadSetModel: .threadSetModel
             case .threadSetEffort: .threadSetEffort
             case .modelList: .modelList
+            case .projectList: .projectList
             case .interrupt: .interrupt
             case .syncRequest: .syncRequest
             case .syncDelta: .syncDelta
@@ -165,6 +168,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadSetModel: payload = .threadSetModel(try c.decode(ThreadSetModelData.self, forKey: .data))
         case .threadSetEffort: payload = .threadSetEffort(try c.decode(ThreadSetEffortData.self, forKey: .data))
         case .modelList: payload = .modelList(try c.decode(ModelListData.self, forKey: .data))
+        case .projectList: payload = .projectList(try c.decode(ProjectListData.self, forKey: .data))
         case .interrupt: payload = .interrupt(try c.decode(InterruptData.self, forKey: .data))
         case .syncRequest: payload = .syncRequest(try c.decode(SyncRequestData.self, forKey: .data))
         case .syncDelta: payload = .syncDelta(try c.decode(SyncDeltaData.self, forKey: .data))
@@ -207,6 +211,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadSetModel(let d): try c.encode(d, forKey: .data)
         case .threadSetEffort(let d): try c.encode(d, forKey: .data)
         case .modelList(let d): try c.encode(d, forKey: .data)
+        case .projectList(let d): try c.encode(d, forKey: .data)
         case .interrupt(let d): try c.encode(d, forKey: .data)
         case .syncRequest(let d): try c.encode(d, forKey: .data)
         case .syncDelta(let d): try c.encode(d, forKey: .data)
@@ -673,6 +678,54 @@ public enum ThreadAgent: String, Codable, Equatable, Sendable, CaseIterable, Ide
     case codex
 
     public var id: Self { self }
+
+    /// What a picker and a row call it.
+    public var label: String {
+        switch self {
+        case .yorozu: "Yorozu"
+        case .claudeCode: "Claude Code"
+        case .codex: "Codex"
+        }
+    }
+
+    /// The small glyph a row wears. Nil for Yorozu: its rows are drawn as they always were.
+    public var symbol: String? {
+        switch self {
+        case .yorozu: nil
+        case .claudeCode: "chevron.left.forwardslash.chevron.right"
+        case .codex: "terminal"
+        }
+    }
+
+    /// Whether the agent needs a folder to work in. Yorozu works everywhere; the coding agents
+    /// each run in one project.
+    public var needsFolder: Bool { self != .yorozu }
+}
+
+/// One folder a coding agent's thread can be started in. Only the folder itself is here: what
+/// is inside it never leaves the Mac.
+public struct ProjectFolder: Codable, Equatable, Sendable, Identifiable {
+    /// Absolute path on the Mac. What `thread_create` carries back as `cwd`.
+    public var path: String
+    /// The folder's own name, e.g. "yorozu".
+    public var name: String
+    /// Epoch milliseconds a thread was last started in it. Nil for a folder never used.
+    public var lastUsed: Double?
+
+    public var id: String { path }
+
+    public init(path: String, name: String, lastUsed: Double? = nil) {
+        self.path = path
+        self.name = name
+        self.lastUsed = lastUsed
+    }
+}
+
+/// The Mac's known project folders, recents first. Pushed with the thread list; a device sends
+/// an empty one to ask.
+public struct ProjectListData: Codable, Equatable, Sendable {
+    public var projects: [ProjectFolder]
+    public init(projects: [ProjectFolder]) { self.projects = projects }
 }
 
 public struct ThreadCreateData: Codable, Equatable, Sendable {
@@ -781,6 +834,13 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
 
     /// What a list draws: an untitled thread is one the runtime has not named yet.
     public var displayTitle: String { title.isEmpty ? "New chat" : title }
+
+    /// The last path component of ``cwd``: the repo a coding agent's row is subtitled with.
+    public var repoName: String? {
+        guard let cwd else { return nil }
+        let name = cwd.split(separator: "/").last.map(String.init) ?? cwd
+        return name.isEmpty ? nil : name
+    }
 
     /// Whether the agent has said something here since anyone last read it. The one definition
     /// of unread — what every dot, bold title and app badge on both platforms is drawn from.
