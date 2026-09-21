@@ -1,6 +1,6 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, expect, test, vi } from "vitest";
-import { MAX_DEVICES, NOTIFY_BODY } from "./protocol.js";
+import { MAX_DEVICES, NOTIFY_BODY, type Notify } from "./protocol.js";
 import * as apns from "./apns.js";
 import type { Env } from "./worker.js";
 import { conformance } from "./conformance.test.js";
@@ -307,6 +307,13 @@ const record = async (room: string, pubkey: string): Promise<any> => {
   );
 };
 
+// Keep the wake's completion observable while real socket messages change its registration.
+const wake = (name: string) => runInDurableObject(room(name), (instance) =>
+  (instance as unknown as { wake(notify: Notify, now: number): Promise<void> }).wake(
+    { class: "reply", threadRef: "Ab3-_x9Z" }, Date.now(),
+  ),
+);
+
 test("a phone registers where it can be woken, and revoking it takes the token with it", async () => {
   const { mac, phone, keys, room } = await paired();
 
@@ -322,6 +329,19 @@ test("a phone registers where it can be woken, and revoking it takes the token w
   mac.send({ type: "revoke", pubkey: keys.pub });
   expect(await phone.closed()).toBe(4001);
   expect(await record(room, keys.pub)).toBeUndefined();
+});
+
+test("evicting the oldest device removes its push registration and socket", async () => {
+  const { mac, phone, keys, room: name } = await paired();
+  await runInDurableObject(room(name), async (_instance, state) => {
+    await state.storage.put(`p:${keys.pub}`, 0);
+    for (let i = 1; i < MAX_DEVICES; i++) await state.storage.put(`p:known-${i}`, i);
+  });
+
+  const next = await connectPhone(name, await mintToken(mac));
+  expect(await next.phone.next()).toMatchObject({ type: "joined" });
+  expect(await record(name, keys.pub)).toBeUndefined();
+  expect(await phone.closed()).toBe(4001);
 });
 
 test("only a joined phone may register, and only the mac may notify", async () => {
@@ -486,6 +506,71 @@ test("an APNs request that never answers does not delay the next frame", async (
   // The frame lands while the push is still outstanding: the wake ran off the chain.
   expect(await phone.next()).toMatchObject({ type: "frame", payload: "cmlnaHQtYmVoaW5k" });
   expect(pending).toHaveLength(1);
+});
+
+test.each([200, 410])("an old APNs response (%i) cannot change a replacement token", async (status) => {
+  const { mac, phone, keys, room: name } = await paired();
+  let complete!: (response: Response) => void;
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+    if (String(input).startsWith("https://apns.test/")) {
+      return new Response(JSON.stringify({ reason: "BadDeviceToken" }), { status: 400 });
+    }
+    return new Promise<Response>((resolve) => { complete = resolve; });
+  });
+  const pending = wake(name);
+  await vi.waitFor(() => expect(complete).toBeTypeOf("function"));
+  phone.send({ type: "push", deviceToken: "replacement-token" });
+  await settled(phone);
+  complete(new Response(null, { status }));
+  await pending;
+
+  expect(await record(name, keys.pub)).toEqual({ deviceToken: "replacement-token" });
+  await macSettled(mac);
+});
+
+test("a background response cannot restore a revoked registration", async () => {
+  const { mac, phone, keys, room: name } = await paired();
+  phone.close();
+  await macSettled(mac);
+  let complete!: (response: Response) => void;
+  vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (new Headers(init?.headers).get("apns-push-type") === "background") {
+      return new Promise<Response>((resolve) => { complete = resolve; });
+    }
+    return new Response(null, { status: 200 });
+  });
+  const pending = wake(name);
+  await vi.waitFor(() => expect(complete).toBeTypeOf("function"));
+  mac.send({ type: "revoke", pubkey: keys.pub });
+  await macSettled(mac);
+  expect(await record(name, keys.pub)).toBeUndefined();
+  complete(new Response(null, { status: 200 }));
+  await pending;
+
+  expect(await record(name, keys.pub)).toBeUndefined();
+});
+
+test("overlapping notifications share one in-flight background wake", async () => {
+  const { mac, phone, room: name } = await paired();
+  phone.close();
+  await macSettled(mac);
+  let complete!: (response: Response) => void;
+  const pushes: string[] = [];
+  vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const kind = new Headers(init?.headers).get("apns-push-type")!;
+    pushes.push(kind);
+    if (kind === "background" && !complete) {
+      return new Promise<Response>((resolve) => { complete = resolve; });
+    }
+    return new Response(null, { status: 200 });
+  });
+  const pending = wake(name);
+  await vi.waitFor(() => expect(complete).toBeTypeOf("function"));
+  await wake(name);
+  complete(new Response(null, { status: 200 }));
+  await pending;
+
+  expect(pushes).toEqual(["alert", "background", "alert"]);
 });
 
 test("the silent-push budget is spent only when apple accepted the push", async () => {

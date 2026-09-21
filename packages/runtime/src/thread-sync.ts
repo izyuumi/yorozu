@@ -1,8 +1,9 @@
 /** Byte offsets let sync pages seek into JSONL without retaining message/attachment bodies. */
+import { createHash } from "node:crypto";
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import type { YorozuEvent } from "@yorozu/shared";
 
-interface Index { stamp: string; after: Map<string, number> }
+interface Index { stamp: string; after: Map<string, number>; cursors: Map<number, string> }
 // ponytail: retain metadata for 16 recently synced logs; use a disk index if many active
 // threads or millions of event ids make rebuilding/metadata memory significant.
 const indexes = new Map<string, Index>();
@@ -49,22 +50,31 @@ export function syncPage(file: string, afterId: string | undefined, minTs: numbe
     const stamp = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
     let index = indexes.get(file);
     if (index?.stamp !== stamp) {
-      index = { stamp, after: new Map() };
-      // Last occurrence wins: progress cards legitimately reuse their event id.
+      index = { stamp, after: new Map(), cursors: new Map() };
+      const prefix = createHash("sha256");
       for (const line of lines(fd, 0, Number(stat.size))) {
+        prefix.update(line.text).update("\n");
         const event = parse(line.text);
-        if (event) index.after.set(event.id, line.end);
+        if (event) {
+          // Legacy ids keep their old semantics. New cursors identify each occurrence,
+          // survive appends, and become unknown if anything before them was rewritten.
+          index.after.set(event.id, line.end);
+          index.cursors.set(line.end, prefix.copy().digest("base64url"));
+        }
       }
     }
     indexes.delete(file);
     indexes.set(file, index);
     if (indexes.size > 16) indexes.delete(indexes.keys().next().value!);
     const page: YorozuEvent[] = [];
-    const start = afterId ? index.after.get(afterId) ?? 0 : 0;
+    const cursor = afterId?.match(/^sync:(\d+):([A-Za-z0-9_-]{43})$/);
+    const offset = Number(cursor?.[1]);
+    const start = cursor && index.cursors.get(offset) === cursor[2]
+      ? offset : afterId ? index.after.get(afterId) ?? 0 : 0;
     for (const line of lines(fd, start, Number(stat.size))) {
       const event = parse(line.text);
       if (!event || event.ts < minTs) continue;
-      page.push(event);
+      page.push({ ...event, syncCursor: `sync:${line.end}:${index.cursors.get(line.end)!}` });
       if (page.length === limit) break;
     }
     return page;

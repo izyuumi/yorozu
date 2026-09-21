@@ -145,6 +145,8 @@ export class Room implements DurableObject {
   /** Verification is async, so messages are chained to keep frames strictly in order. */
   private tail: Promise<unknown> = Promise.resolve();
   private keys = new Map<string, Promise<CryptoKey>>();
+  /** An outstanding silent push reserves its device's budget until Apple answers. */
+  private backgroundPending = new Set<string>();
 
   constructor(
     private readonly state: DurableObjectState,
@@ -339,7 +341,7 @@ export class Room implements DurableObject {
       ([key, at]): [string, number] => [key.slice(devicePrefix.length), at],
     );
     const drop = evictions(known, pubkey);
-    if (drop.length > 0) await this.state.storage.delete(drop.map((key) => devicePrefix + key));
+    await this.forget(drop);
     await this.state.storage.put(devicePrefix + pubkey, now);
   }
 
@@ -385,6 +387,32 @@ export class Room implements DurableObject {
     }
   }
 
+  /** APNs may answer after a token rotates or its device is revoked. Only update that token. */
+  private async recordPush(
+    key: string,
+    token: string,
+    result: { code: number; sandbox: boolean },
+    backgroundAt?: number,
+  ): Promise<PushRecord | undefined> {
+    return this.state.storage.transaction(async (storage) => {
+      const current = await storage.get<PushRecord>(key);
+      if (current?.deviceToken !== token) return;
+      if (apns.gone(result.code)) {
+        await storage.delete(key);
+        return;
+      }
+      if (result.code >= 200 && result.code < 300) {
+        const changed = result.sandbox !== (current.sandbox ?? false);
+        if (changed) current.sandbox = result.sandbox;
+        if (backgroundAt !== undefined) {
+          current.backgroundAt = Math.max(current.backgroundAt ?? 0, backgroundAt);
+        }
+        if (changed || backgroundAt !== undefined) await storage.put(key, current);
+      }
+      return current;
+    });
+  }
+
   /**
    * Alerts every paired device; background catch-up only wakes devices not already watching.
    *
@@ -420,7 +448,6 @@ export class Room implements DurableObject {
     now: number,
     watching: ReadonlySet<string>,
   ): Promise<void> {
-    const storage = this.state.storage;
     const deviceKey = key.slice(pushPrefix.length);
     const alert = await this.push({
       token: record.deviceToken,
@@ -434,48 +461,27 @@ export class Room implements DurableObject {
       pushType: "alert",
     }, now, record.sandbox ?? false);
     if (alert === null) return;
-    // Apple no longer knows this token: the app was deleted or reinstalled. Keeping the
-    // registration would only fail again on the next turn, so the device is forgotten.
-    if (apns.gone(alert.code)) {
-      await storage.delete(key);
-      return;
-    }
-    // Which environment answered is worth keeping: it saves the refused request next time.
-    if (alert.sandbox !== (record.sandbox ?? false)) {
-      record = { ...record, sandbox: alert.sandbox };
-      await storage.put(key, record);
-    }
 
-    // And, for news the phone is now behind on, a silent one behind the visible one: it
-    // wakes the app for a few seconds so it can drain the sync over its own socket and
-    // leave the thread cache true, rather than waiting for a tap.
-    //
-    // Rate limited because iOS is: an app woken more often than the budget allows is
-    // simply woken less often afterwards, which would cost the wake-ups worth having. The
-    // alert above has already gone out regardless. The budget is spent only on a push Apple
-    // accepted: a timeout or a 5xx did not wake anything, so it must not cost the next one.
-    if (
-      watching.has(deviceKey) ||
-      !BACKGROUND_CLASSES.includes(notify.class) ||
-      now - (record.backgroundAt ?? 0) < BACKGROUND_INTERVAL_MS
-    ) {
-      return;
-    }
-    const silent = await this.push({
-      token: record.deviceToken,
-      payload: backgroundPayload(),
-      pushType: "background",
-      // A background push is explicitly not urgent, and Apple rejects one that claims
-      // to be: 5 is what "deliver when it suits you" is spelled as.
-      priority: 5,
-    }, now, record.sandbox ?? false);
-    if (silent === null) return;
-    if (apns.gone(silent.code)) {
-      await storage.delete(key);
-      return;
-    }
-    if (silent.code >= 200 && silent.code < 300) {
-      await storage.put(key, { ...record, backgroundAt: now } satisfies PushRecord);
+    // Reserve before refreshing the stored budget: overlapping alerts must not each spend
+    // the same minute while Apple is answering. Frames and alerts remain independent.
+    const background = !watching.has(deviceKey)
+      && BACKGROUND_CLASSES.includes(notify.class)
+      && !this.backgroundPending.has(key);
+    if (background) this.backgroundPending.add(key);
+    try {
+      const current = await this.recordPush(key, record.deviceToken, alert);
+      if (!current || !background || now - (current.backgroundAt ?? 0) < BACKGROUND_INTERVAL_MS) return;
+      const silent = await this.push({
+        token: current.deviceToken,
+        payload: backgroundPayload(),
+        pushType: "background",
+        // Apple rejects an urgent background push.
+        priority: 5,
+      }, now, current.sandbox ?? false);
+      // Only an accepted push spends the budget; failures leave the next wake eligible.
+      if (silent) await this.recordPush(key, current.deviceToken, silent, now);
+    } finally {
+      if (background) this.backgroundPending.delete(key);
     }
   }
 

@@ -15,6 +15,8 @@ export interface EventBase {
   agentId: string;
   /** Set when the emitting agent was delegated to by another. */
   parentAgentId?: string;
+  /** Opaque log position supplied by sync; event ids can repeat for updated cards. */
+  syncCursor?: string;
 }
 
 /**
@@ -490,7 +492,7 @@ export interface ProjectListData {
  */
 export type InterruptData = Record<string, never>;
 
-/** Last event id the device already holds, per thread. */
+/** Last sync cursor the device already holds, per thread. Event ids support older peers. */
 export interface SyncRequestData {
   lastSeen: Record<string, string>;
 }

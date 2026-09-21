@@ -2,7 +2,7 @@ import Foundation
 
 /// Wire events exchanged between Mac, phone and relay. See docs/spec-v1.html sections 3, 7, 8.
 ///
-/// JSON shape is `{ id, threadId, ts, agentId, parentAgentId?, kind, data }`, identical to
+/// JSON shape is `{ id, threadId, ts, agentId, parentAgentId?, syncCursor?, kind, data }`, identical to
 /// `YorozuEvent` in packages/shared/src/events.ts.
 public struct YorozuEvent: Codable, Equatable, Sendable {
     public var id: String
@@ -12,6 +12,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
     public var agentId: String
     /// Set when the emitting agent was delegated to by another.
     public var parentAgentId: String?
+    /// Opaque log position supplied by sync; event ids can repeat for updated cards.
+    public var syncCursor: String?
     public var payload: Payload
 
     public init(
@@ -20,6 +22,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         ts: Int,
         agentId: String,
         parentAgentId: String? = nil,
+        syncCursor: String? = nil,
         payload: Payload
     ) {
         self.id = id
@@ -27,6 +30,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         self.ts = ts
         self.agentId = agentId
         self.parentAgentId = parentAgentId
+        self.syncCursor = syncCursor
         self.payload = payload
     }
 
@@ -142,7 +146,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, threadId, ts, agentId, parentAgentId, kind, data
+        case id, threadId, ts, agentId, parentAgentId, syncCursor, kind, data
     }
 
     public init(from decoder: Decoder) throws {
@@ -152,6 +156,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         ts = try c.decode(Int.self, forKey: .ts)
         agentId = try c.decode(String.self, forKey: .agentId)
         parentAgentId = try c.decodeIfPresent(String.self, forKey: .parentAgentId)
+        syncCursor = try c.decodeIfPresent(String.self, forKey: .syncCursor)
         switch try c.decode(Kind.self, forKey: .kind) {
         case .message: payload = .message(try c.decode(MessageData.self, forKey: .data))
         case .reaction: payload = .reaction(try c.decode(ReactionData.self, forKey: .data))
@@ -197,6 +202,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         try c.encode(ts, forKey: .ts)
         try c.encode(agentId, forKey: .agentId)
         try c.encodeIfPresent(parentAgentId, forKey: .parentAgentId)
+        try c.encodeIfPresent(syncCursor, forKey: .syncCursor)
         try c.encode(payload.kind, forKey: .kind)
         switch payload {
         case .message(let d): try c.encode(d, forKey: .data)

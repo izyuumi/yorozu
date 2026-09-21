@@ -122,6 +122,21 @@ private func eventually(_ condition: @Sendable () async -> Bool) async -> Bool {
     #expect(model.events["home"]?.count == 2)
 }
 
+@MainActor
+@Test func aBackgroundDrainKeepsTheSocketWhenTheAppComesForward() async throws {
+    let transport = DrainTransport()
+    let model = ChatModel(transport: transport)
+    async let drained = model.drain(timeout: .seconds(10))
+    #expect(await eventually { await transport.asked() })
+
+    model.foreground = true
+    await transport.deliver(delta([reply("m1", "there you are")]))
+    #expect(await drained)
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(await transport.closes == 0)
+    model.suspend()
+}
+
 private func card(_ id: String, actionId: String, thread: String = "home") -> YorozuEvent {
     YorozuEvent(
         id: id,
@@ -171,6 +186,23 @@ private func card(_ id: String, actionId: String, thread: String = "home") -> Yo
     #expect(!answered)
     #expect(await transport.sent.allSatisfy { $0.payload.kind != .approvalAnswer })
     #expect(await eventually { await transport.closes == 1 })
+}
+
+@MainActor
+@Test func aNotificationAnswerKeepsTheSocketWhenTheAppComesForward() async throws {
+    let transport = DrainTransport()
+    let model = ChatModel(transport: transport)
+    async let answered = model.answerFromNotification(
+        eventRef: YorozuCrypto.threadRef("card-1"), .yes, timeout: .seconds(10)
+    )
+    #expect(await eventually { await transport.asked() })
+
+    model.foreground = true
+    await transport.deliver(delta([card("card-1", actionId: "a-1")]))
+    #expect(await answered)
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(await transport.closes == 0)
+    model.suspend()
 }
 
 @MainActor

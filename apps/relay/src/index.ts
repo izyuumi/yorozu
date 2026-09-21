@@ -103,12 +103,6 @@ function sweepTokens(room: Room, now: number): void {
   for (const [token, expiresAt] of room.tokens) if (now > expiresAt) room.tokens.delete(token);
 }
 
-/** Records a phone as a device this room knows. Capped, oldest evicted first. */
-function remember(room: Room, pubkey: string, now: number): void {
-  for (const key of evictions([...room.devices], pubkey)) room.devices.delete(key);
-  room.devices.set(pubkey, now);
-}
-
 function trimBuffer(room: Room, now: number): void {
   const drop = dropCount(room.buffer, now);
   if (drop > 0) {
@@ -175,6 +169,12 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
       const key = phoneKeys.get(phone);
       if (key && gone.has(key)) phone.close(CLOSE_PROTOCOL, "revoked");
     }
+  };
+
+  /** Records a phone as a device this room knows. Capped, oldest evicted first. */
+  const remember = (room: Room, pubkey: string, now: number): void => {
+    forget(room, evictions([...room.devices], pubkey));
+    room.devices.set(pubkey, now);
   };
 
   const dropRoomIfIdle = (id: string, room: Room): void => {

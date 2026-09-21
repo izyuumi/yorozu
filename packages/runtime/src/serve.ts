@@ -363,6 +363,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const locals = new Map<string, Send>();
 
   let socket: WebSocket | null = null;
+  // OPEN only means transport connected; the relay accepts application traffic after register.
+  let relayReady = false;
   let retry: NodeJS.Timeout | null = null;
   let stopped = false;
   /**
@@ -386,6 +388,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   /** Asks the relay to forget a device, so a revoked phone cannot rejoin against the nonce. */
   let revokeAtRelay: (signingPub: string) => void = () => {};
+  const heldRevokes = new Set<string>();
 
   /**
    * Tells the relay that something happened and, for replies, supplies one opaque preview box
@@ -1115,6 +1118,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   });
 
   function connect(): void {
+    relayReady = false;
     state("connecting");
     // The room ID is only carried in `register`, which is too late for a relay that has to
     // route the socket before reading it, so it also goes in the URL. It is the hash of our
@@ -1146,7 +1150,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
      * the key in, and the announces resume.
      */
     announceDevices = (): void => {
-      if (ws.readyState !== WebSocket.OPEN) return;
+      if (!relayReady || ws.readyState !== WebSocket.OPEN) return;
       const records = [...devices.values()].map(({ record }) => record);
       if (records.some(({ signingPub }) => signingPub === undefined)) return;
       ws.send(JSON.stringify({ type: "devices", devices: records.map((r) => r.signingPub) }));
@@ -1160,7 +1164,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       // The socket is down. The frame did not go out either, but the phone will catch up on
       // its own by asking for a sync — what it cannot do on its own is find out that it
       // should look. So the wake-up is held for the next registration rather than dropped.
-      if (ws.readyState !== WebSocket.OPEN) {
+      if (!relayReady || ws.readyState !== WebSocket.OPEN) {
         heldNotifies.push(event);
         return;
       }
@@ -1194,15 +1198,17 @@ export function serve(options: ServeOptions = {}): Sidecar {
     };
 
     revokeAtRelay = (signingPub: string): void => {
-      if (ws.readyState === WebSocket.OPEN) {
+      if (relayReady && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "revoke", pubkey: signingPub }));
+      } else {
+        heldRevokes.add(signingPub);
       }
     };
 
     sendTo = (device: string, event: YorozuEvent): void => {
       const known = devices.get(device);
       const key = known?.key;
-      if (!key || ws.readyState !== WebSocket.OPEN) return;
+      if (!key || !relayReady || ws.readyState !== WebSocket.OPEN) return;
       const cutoff = known.record.pairedAt ?? 0;
       if (event.threadId && event.ts < cutoff) return;
       if (event.kind === "thread_list") event = { ...threadList(cutoff), id: event.id, ts: event.ts };
@@ -1323,8 +1329,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
             );
           case "registered":
             room = String(msg.roomId);
+            relayReady = true;
             state("registered");
             announceDevices();
+            // Announcements preserve live phone sockets, so explicit removals must follow
+            // them and reach the relay before any held notification can wake that device.
+            for (const pubkey of heldRevokes) revokeAtRelay(pubkey);
+            heldRevokes.clear();
             // One wake-up per thread that finished while we were away: the phone's sync picks
             // up every event in that thread, so the class of the last one is what matters.
             for (const held of latestPerThread(heldNotifies.splice(0))) notifyRelay(held);
@@ -1374,6 +1385,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     ws.on("error", (e) => state(`error ${e.message}`));
 
     ws.on("close", () => {
+      relayReady = false;
       stopHeartbeat();
       state("disconnected");
       if (!stopped) retry = setTimeout(connect, RECONNECT_MS);
@@ -1448,7 +1460,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   return {
     mint: () => {
-      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "mint" }));
+      if (relayReady && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "mint" }));
     },
     close: async () => {
       stopped = true;

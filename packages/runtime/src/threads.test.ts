@@ -247,6 +247,46 @@ test("sync pages advance through a long thread without dropping searchable histo
   expect(eventsAfter(HOME, first.at(-1)!.id, dir).map((event) => event.id)).toEqual([`e${SYNC_LIMIT}`]);
 });
 
+test("sync keeps messages between repeated progress cards across page boundaries", () => {
+  const card: YorozuEvent = {
+    id: "progress", threadId: HOME, ts: 1, agentId: "main", kind: "progress_card",
+    data: { cardId: "progress", title: "Working", steps: [{ label: "Task", state: "running" }] },
+  };
+  const messages = Array.from({ length: SYNC_LIMIT - 1 }, (_, n) => message(`e${n}`, `m${n}`));
+  for (const event of [...messages, card, message("e200", "must not disappear"), { ...card, ts: 2 }]) {
+    appendThreadEvent(event, dir);
+  }
+  const first = eventsAfter(HOME, undefined, dir);
+  const second = eventsAfter(HOME, first.at(-1)!.syncCursor ?? first.at(-1)!.id, dir);
+  expect([...first, ...second].map((event) => event.id)).toContain("e200");
+});
+
+test("sync cursors keep their position when the same card is updated after a page", () => {
+  const card: YorozuEvent = {
+    id: "progress", threadId: HOME, ts: 1, agentId: "main", kind: "progress_card",
+    data: { cardId: "progress", title: "Working", steps: [{ label: "Task", state: "running" }] },
+  };
+  appendThreadEvent(card, dir);
+  const first = eventsAfter(HOME, undefined, dir);
+  appendThreadEvent(message("e2", "must not disappear"), dir);
+  appendThreadEvent(card, dir);
+  const second = eventsAfter(HOME, first[0]!.syncCursor ?? first[0]!.id, dir);
+  expect(second.map((event) => event.id)).toEqual(["e2", "progress"]);
+  expect(second.at(-1)!.syncCursor).not.toBe(first[0]!.syncCursor);
+  expect(eventsAfter(HOME, second.at(-1)!.syncCursor, dir)).toEqual([]);
+});
+
+test("sync rejects cursors whose log prefix was rewritten", () => {
+  appendThreadEvent(message("e1", "first"), dir);
+  appendThreadEvent(message("e2", "last"), dir);
+  const cursor = eventsAfter(HOME, undefined, dir).at(-1)!.syncCursor;
+  expect(cursor).toBeTypeOf("string");
+  // Same file, same byte offsets and same final event: the earlier content changed.
+  const file = join(threadsDir(dir), "home.jsonl");
+  writeFileSync(file, readFileSync(file, "utf8").replace("first", "other"));
+  expect(eventsAfter(HOME, cursor, dir).map((event) => event.id)).toEqual(["e1", "e2"]);
+});
+
 test("pairing cutoff is applied before the sync page limit", () => {
   for (let n = 0; n < SYNC_LIMIT + 10; n++) appendThreadEvent(message(`e${n}`, `old ${n}`), dir);
   appendThreadEvent({ ...message("e1000", "new"), ts: 1_000 }, dir);
@@ -493,7 +533,7 @@ test("sync seeks through long history without reparsing it for each page", () =>
   try {
     let count = page.length;
     while (page.length) {
-      page = eventsAfter(HOME, page.at(-1)!.id, dir);
+      page = eventsAfter(HOME, page.at(-1)!.syncCursor, dir);
       count += page.length;
     }
     expect(count).toBe(events.length);
@@ -507,8 +547,8 @@ test("sync handles repeated ids, large UTF-8 lines, broken tails and changed fil
   const large = message("e2", "日本語🙂".repeat(20000));
   const initial = [message("e1", "first"), large, message("e1", "last"), message("e3", "tail")];
   writeFileSync(file, initial.map((event) => JSON.stringify(event)).join("\n") + "\n{broken");
-  expect(eventsAfter(HOME, undefined, dir)).toEqual(initial);
-  expect(eventsAfter(HOME, "e1", dir)).toEqual([initial[3]]);
+  expect(eventsAfter(HOME, undefined, dir)).toMatchObject(initial);
+  expect(eventsAfter(HOME, "e1", dir)).toMatchObject([initial[3]]);
   appendFileSync(file, "\n" + JSON.stringify(message("e4", "appended")) + "\n");
   expect(eventsAfter(HOME, "e3", dir).map((event) => event.id)).toEqual(["e4"]);
   const replacement = JSON.stringify(message("e5", "rewritten")) + "\n";
