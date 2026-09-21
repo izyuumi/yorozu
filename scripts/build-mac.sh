@@ -52,6 +52,10 @@ cp "$BIN/YorozuMac" "$APP/Contents/MacOS/Yorozu"
 # Accessibility and Screen Recording on that, and the helper is what needs them.
 cp "$BIN/yorozu-native" "$APP/Contents/MacOS/yorozu-native"
 cp -R "$BIN/Sparkle.framework" "$APP/Contents/Frameworks/"
+# SwiftPM keeps processed package assets in a companion bundle. The generated Bundle.module
+# accessor looks for it under the app's resourceURL; omitting it makes the first provider mark
+# render trap even though the executable itself built and signed successfully.
+cp -R "$BIN/YorozuShared_YorozuShared.bundle" "$APP/Contents/Resources/"
 
 # The icon. Xcode compiles apps/ios/Resources/AppIcon.icon straight into an asset catalog
 # for iOS, but this bundle is assembled by hand and has no catalog, so it takes the .icns
