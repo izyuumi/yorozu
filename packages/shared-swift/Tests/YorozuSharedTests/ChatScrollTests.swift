@@ -3,13 +3,42 @@ import Testing
 
 @testable import YorozuShared
 
-@Test func manualScrollingAlwaysWinsOverStreamingAutoFollow() {
-    #expect(followsNewest(atBottom: true, phase: .idle))
-    #expect(followsNewest(atBottom: true, phase: .animating))
-    #expect(!followsNewest(atBottom: true, phase: .tracking))
-    #expect(!followsNewest(atBottom: true, phase: .interacting))
-    #expect(!followsNewest(atBottom: true, phase: .decelerating))
-    #expect(!followsNewest(atBottom: false, phase: .idle))
+@Test func openingFollowSurvivesAsyncReplayAndLayoutGrowth() {
+    var intent = NewestScrollIntent()
+
+    #expect(intent.shouldPinLatest(during: .idle))
+    intent.observe(atBottom: true, phase: .idle)
+    // Sync replay or a self-sizing row can grow the content after the first layout. Geometry is
+    // no longer at the bottom, but nobody asked to leave the newest content.
+    intent.observe(atBottom: false, phase: .idle)
+    #expect(intent.shouldPinLatest(during: .idle))
+}
+
+@Test func manualScrollingAlwaysWinsOverAsyncAutoFollow() {
+    var intent = NewestScrollIntent()
+
+    intent.observe(atBottom: true, phase: .tracking)
+    #expect(!intent.shouldPinLatest(during: .tracking))
+    #expect(!intent.shouldPinLatest(during: .interacting))
+    #expect(!intent.shouldPinLatest(during: .decelerating))
+
+    // More replay or another layout pass must not undo a reader's drag.
+    intent.observe(atBottom: false, phase: .idle)
+    #expect(!intent.shouldPinLatest(during: .idle))
+
+    // Deliberately returning to the bottom opts back in to normal streaming follow.
+    intent.observe(atBottom: true, phase: .idle)
+    #expect(intent.shouldPinLatest(during: .idle))
+}
+
+@Test func targetedNavigationIsNotOverriddenByOpeningFollow() {
+    var intent = NewestScrollIntent()
+
+    intent.targetEvent()
+    #expect(!intent.shouldPinLatest(during: .idle))
+
+    intent.followLatest()
+    #expect(intent.shouldPinLatest(during: .idle))
 }
 
 @Test func jumpToLatestNeedsMoreThanOneViewportOfDistance() {

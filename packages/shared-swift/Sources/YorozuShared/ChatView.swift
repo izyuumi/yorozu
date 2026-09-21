@@ -21,12 +21,15 @@ public struct ChatView: View {
     /// running yet.
     public let offlineNotice: String
 
-    /// Whether the reader is already at the newest message. Only then does a new one scroll the
-    /// thread — pulling someone away from what they were reading is the thing to avoid.
+    /// Whether geometry currently reaches the newest message. Reader intent is tracked
+    /// separately because async row growth can make this false without any manual scroll.
     @State private var atBottom = true
     /// The shortcut stays out of the way until the reader is over one viewport from the end.
     @State private var showJumpToLatest = false
     @State private var scrollPhase = ScrollPhase.idle
+    /// Geometry can move away from the bottom because replay arrived or a self-sizing row grew,
+    /// not because the reader scrolled. Keep that layout fact separate from the reader's intent.
+    @State private var newestScroll = NewestScrollIntent()
     /// Bumped on every send, so the haptic fires per send rather than per keystroke.
     @State private var sends = 0
     /// Id of the reply whose first token just landed, which is the moment worth a tap.
@@ -212,6 +215,14 @@ public struct ChatView: View {
         // a permanent search field would be one more thing to read past — and on iOS 26 it
         // would be one more bar under the composer, which already owns the bottom of a chat.
         .threadSearch(text: $search, presented: $searching)
+        // The Mac reuses this detail view while its sidebar selection changes. A new thread is
+        // a new opening intent even when the surrounding `ChatView` value keeps its state.
+        .onChange(of: thread.id, initial: true) { _, _ in
+            atBottom = true
+            showJumpToLatest = false
+            scrollPhase = .idle
+            newestScroll = NewestScrollIntent()
+        }
         // A reply being read aloud follows the thread it is in: walking away stops it, which is
         // the same thing every other app that talks does. Leaving a thread is the trigger on
         // both platforms; the view going away is only the phone's, where it means the chat was
@@ -292,7 +303,9 @@ public struct ChatView: View {
         #if os(iOS)
             nativeMessages(reactions: reactions)
         #else
-            swiftUIMessages(reactions: reactions)
+            // The split-view detail is reused across selections. Recreate the scroll container
+            // so its default bottom anchor belongs to this thread, not the previous one.
+            swiftUIMessages(reactions: reactions).id(thread.id)
         #endif
     }
 
@@ -406,6 +419,18 @@ public struct ChatView: View {
                 geometry.visibleRect.maxY >= geometry.contentSize.height - 40
             } action: { _, isAtBottom in
                 atBottom = isAtBottom
+                newestScroll.observe(atBottom: isAtBottom, phase: scrollPhase)
+            }
+            // Rows can gain height after their first layout (sync replay, streaming Markdown,
+            // images and link previews). Keep the newest edge pinned while that is still what
+            // the reader asked to see; `atBottom` alone cannot distinguish growth from a drag.
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentSize.height
+            } action: { oldHeight, newHeight in
+                guard oldHeight != newHeight,
+                      newestScroll.shouldPinLatest(during: scrollPhase)
+                else { return }
+                proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
             }
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 showsJumpToLatest(
@@ -420,18 +445,22 @@ public struct ChatView: View {
             // the last event grows in place, so its id alone would never change.
             .onChange(of: ChangeStamp(events: events)) { _, _ in
                 noteReplyStart()
-                guard followsNewest(atBottom: atBottom, phase: scrollPhase) else { return }
+                guard newestScroll.shouldPinLatest(during: scrollPhase) else { return }
                 // Streaming frames arrive faster than a scroll animation can finish. Starting
                 // another animation for each one makes the viewport repeatedly retarget and
                 // visibly hitch; following the growing edge needs no transition.
                 proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
             }
-            .onScrollPhaseChange { _, phase in scrollPhase = phase }
+            .onScrollPhaseChange { _, phase in
+                scrollPhase = phase
+                newestScroll.observe(atBottom: atBottom, phase: phase)
+            }
             .overlay(alignment: .bottom) {
                 // Not while searching: the arrows are already moving the thread about, and a
                 // pill offering to jump somewhere else would be arguing with them.
                 if showJumpToLatest, search.isEmpty {
                     ScrollToBottomPill {
+                        newestScroll.followLatest()
                         withAnimation(reduceMotion ? nil : .default) { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
                     }
                     .padding(.bottom, 8)
@@ -517,6 +546,7 @@ public struct ChatView: View {
     /// Puts the current hit in the middle of the screen, where a hit being read wants to be.
     private func scrollToHit(_ proxy: ScrollViewProxy) {
         guard hits.indices.contains(hit) else { return }
+        newestScroll.targetEvent()
         withAnimation(reduceMotion ? nil : .default) { proxy.scrollTo(hits[hit].eventId, anchor: .center) }
     }
 
@@ -715,6 +745,7 @@ public struct ChatView: View {
         sends += 1
         // Sending is always a jump to the end: it is your own message, and you meant it.
         atBottom = true
+        newestScroll.followLatest()
     }
 
     /// Sends the same thing again, as a new message. The original stays where it is — a
@@ -723,6 +754,7 @@ public struct ChatView: View {
         model.send(data.text, in: thread.id, attachments: data.attachments)
         sends += 1
         atBottom = true
+        newestScroll.followLatest()
     }
 
     /// Fires the reply haptic once per reply, on the event that first carries agent text.
@@ -758,6 +790,18 @@ public struct ChatView: View {
         let reactions: [String: [MessageReaction]]
     }
 
+    /// Reports every UIKit layout pass. A diffable snapshot can finish before hosted SwiftUI
+    /// cells publish their final self-sized heights, so snapshot completion alone is not a safe
+    /// "initial scroll finished" boundary.
+    private final class TimelineCollectionView: UICollectionView {
+        var didLayout: (() -> Void)?
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            didLayout?()
+        }
+    }
+
     /// Signal-style native timeline for iOS. Diffable updates touch only changed visible rows;
     /// UIKit owns gesture arbitration and scroll continuity instead of rebuilding one SwiftUI
     /// scroll tree as a reply grows.
@@ -787,7 +831,7 @@ public struct ChatView: View {
             configuration.trailingSwipeActionsConfigurationProvider = { [weak coordinator = context.coordinator] indexPath in
                 coordinator?.replyActions(at: indexPath)
             }
-            let collectionView = UICollectionView(
+            let collectionView = TimelineCollectionView(
                 frame: .zero,
                 collectionViewLayout: UICollectionViewCompositionalLayout.list(using: configuration)
             )
@@ -812,7 +856,9 @@ public struct ChatView: View {
             private var previousPresentation: TimelinePresentation?
             private var lastRequest: UUID?
             private var lastNotificationRequest: TimelineRequest?
-            private var didInitialScroll = false
+            private var newestScroll = NewestScrollIntent()
+            private var animatingToLatest = false
+            private var animatingToEvent = false
 
             init(_ parent: IOSChatTimeline) { self.parent = parent }
 
@@ -842,6 +888,16 @@ public struct ChatView: View {
                         item: entry
                     )
                 }
+                if let timeline = collectionView as? TimelineCollectionView {
+                    timeline.didLayout = { [weak self, weak timeline] in
+                        guard let self, let timeline else { return }
+                        self.pinLatestIfNeeded(timeline)
+                        Task { @MainActor [weak self, weak timeline] in
+                            guard let self, let timeline else { return }
+                            self.reportBottom(timeline)
+                        }
+                    }
+                }
             }
 
             func update(_ collectionView: UICollectionView) {
@@ -849,8 +905,6 @@ public struct ChatView: View {
                 var entries = parent.rows.map { Entry.row($0.id) }
                 if parent.generating, parent.streamingId == nil { entries.append(.thinking) }
 
-                let shouldFollow = isAtBottom(collectionView) && !collectionView.isTracking
-                    && !collectionView.isDragging && !collectionView.isDecelerating
                 var changed = parent.rows.compactMap { previousRows[$0.id] == $0 ? nil : Entry.row($0.id) }
                 if previousPresentation != parent.presentation { changed = entries }
                 previousRows = rowsById
@@ -869,10 +923,7 @@ public struct ChatView: View {
                 dataSource?.apply(snapshot, animatingDifferences: false) { [weak self, weak collectionView] in
                     guard let self, let collectionView else { return }
                     collectionView.layoutIfNeeded()
-                    if !self.didInitialScroll || shouldFollow {
-                        self.scrollToLatest(collectionView, animated: false)
-                        self.didInitialScroll = true
-                    }
+                    self.pinLatestIfNeeded(collectionView)
                     self.applyRequest(collectionView)
                     self.reportBottom(collectionView)
                 }
@@ -895,25 +946,45 @@ public struct ChatView: View {
                 }
                 switch request.target {
                 case .latest:
+                    newestScroll.followLatest()
+                    animatingToEvent = false
                     scrollToLatest(collectionView, animated: !UIAccessibility.isReduceMotionEnabled)
                 case .event(let id):
                     guard let index = dataSource?.snapshot().indexOfItem(.row(id)) else { return }
+                    let animated = !UIAccessibility.isReduceMotionEnabled
+                    newestScroll.targetEvent()
+                    animatingToLatest = false
+                    animatingToEvent = animated
                     collectionView.scrollToItem(
                         at: IndexPath(item: index, section: 0),
                         at: .centeredVertically,
-                        animated: !UIAccessibility.isReduceMotionEnabled
+                        animated: animated
                     )
+                    if !animated { animatingToEvent = false }
                 }
             }
 
             private func scrollToLatest(_ collectionView: UICollectionView, animated: Bool) {
                 let count = collectionView.numberOfItems(inSection: 0)
                 guard count > 0 else { return }
+                animatingToLatest = animated && !isAtBottom(collectionView)
                 collectionView.scrollToItem(
                     at: IndexPath(item: count - 1, section: 0),
                     at: .bottom,
                     animated: animated
                 )
+            }
+
+            private func pinLatestIfNeeded(_ collectionView: UICollectionView) {
+                let phase: ScrollPhase = collectionView.isTracking || collectionView.isDragging
+                    ? .interacting
+                    : collectionView.isDecelerating ? .decelerating
+                    : animatingToLatest ? .animating : .idle
+                guard !animatingToLatest, !animatingToEvent,
+                      newestScroll.shouldPinLatest(during: phase),
+                      !isAtBottom(collectionView)
+                else { return }
+                scrollToLatest(collectionView, animated: false)
             }
 
             private func isAtBottom(_ scrollView: UIScrollView) -> Bool {
@@ -923,6 +994,15 @@ public struct ChatView: View {
 
             private func reportBottom(_ scrollView: UIScrollView) {
                 let value = isAtBottom(scrollView)
+                let phase: ScrollPhase = scrollView.isTracking || scrollView.isDragging
+                    ? .interacting
+                    : scrollView.isDecelerating ? .decelerating
+                    : animatingToLatest ? .animating : .idle
+                if animatingToEvent {
+                    newestScroll.targetEvent()
+                } else {
+                    newestScroll.observe(atBottom: value, phase: phase)
+                }
                 if parent.atBottom != value { parent.atBottom = value }
                 let show = showsJumpToLatest(
                     contentHeight: scrollView.contentSize.height,
@@ -934,11 +1014,32 @@ public struct ChatView: View {
             }
 
             func scrollViewDidScroll(_ scrollView: UIScrollView) { reportBottom(scrollView) }
-            func scrollViewWillBeginDragging(_ scrollView: UIScrollView) { reportBottom(scrollView) }
-            func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
+            func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+                animatingToLatest = false
+                animatingToEvent = false
+                newestScroll.observe(atBottom: isAtBottom(scrollView), phase: .tracking)
                 reportBottom(scrollView)
             }
-            func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { reportBottom(scrollView) }
+            func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
+                reportBottom(scrollView)
+                if !willDecelerate, let collectionView = scrollView as? UICollectionView {
+                    pinLatestIfNeeded(collectionView)
+                }
+            }
+            func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+                reportBottom(scrollView)
+                if let collectionView = scrollView as? UICollectionView {
+                    pinLatestIfNeeded(collectionView)
+                }
+            }
+            func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+                animatingToLatest = false
+                animatingToEvent = false
+                reportBottom(scrollView)
+                if let collectionView = scrollView as? UICollectionView {
+                    pinLatestIfNeeded(collectionView)
+                }
+            }
 
             /// UIKit owns both this horizontal swipe and the timeline's vertical pan, so a
             /// vertical drag begun on a bubble remains a scroll instead of being captured by a
@@ -1003,11 +1104,32 @@ func notificationRefreshFinished(initialRevision: Int?, currentRevision: Int) ->
     return currentRevision > initialRevision
 }
 
-func followsNewest(atBottom: Bool, phase: ScrollPhase) -> Bool {
-    guard atBottom else { return false }
-    return switch phase {
-    case .tracking, .interacting, .decelerating: false
-    case .idle, .animating: true
+/// Whether layout changes should keep the viewport on the newest content. `atBottom` is an
+/// observation, not intent: replay or self-sizing can make it false without any reader input.
+/// Only an actual interaction or an exact navigation target opts out; reaching/jumping to the
+/// bottom opts back in.
+struct NewestScrollIntent {
+    private(set) var followsLatest = true
+
+    mutating func observe(atBottom: Bool, phase: ScrollPhase) {
+        switch phase {
+        case .tracking, .interacting:
+            followsLatest = false
+        case .idle, .animating, .decelerating:
+            if atBottom { followsLatest = true }
+        }
+    }
+
+    mutating func followLatest() { followsLatest = true }
+
+    mutating func targetEvent() { followsLatest = false }
+
+    func shouldPinLatest(during phase: ScrollPhase) -> Bool {
+        guard followsLatest else { return false }
+        return switch phase {
+        case .tracking, .interacting, .decelerating: false
+        case .idle, .animating: true
+        }
     }
 }
 
