@@ -1394,6 +1394,63 @@ test("announces the paired list to the relay as soon as it has registered", asyn
   await new Promise<void>((done) => fake.close(() => done()));
 });
 
+test("an open relay socket holds notifications until registration completes", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-registering-"));
+  createThread("Home", stateDir, "early-thread");
+  const identity = generateKeypair();
+  const removed = toBase64Url(generateKeypair().publicKey);
+  writeFileSync(join(stateDir, "devices.json"), JSON.stringify([
+    { pub: toBase64Url(identity.publicKey), signingPub: "phone", pairedAt: 1, lastSeen: 1 },
+    { pub: removed, signingPub: "removed-phone", pairedAt: 1, lastSeen: 1 },
+  ]));
+  const seen: Record<string, unknown>[] = [];
+  const fake = new WebSocketServer({ port: 0 });
+  let macSocket!: import("ws").WebSocket;
+  fake.on("connection", (ws) => {
+    macSocket = ws;
+    ws.send(JSON.stringify({ type: "nonce", nonce: "n" }));
+    ws.on("message", (data) => seen.push(JSON.parse(data.toString())));
+  });
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${(fake.address() as AddressInfo).port}`,
+    stateDir,
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: async () => sse("answered before registration") }),
+    log: () => {},
+  });
+  const local = createConnection(localSocketPath(stateDir));
+  local.on("data", () => {});
+  try {
+    await vi.waitFor(() => expect(seen.some((msg) => msg.type === "register")).toBe(true));
+    local.write(JSON.stringify({ id: "early-turn", threadId: "early-thread", ts: Date.now(), agentId: "mac", kind: "message", data: { role: "user", text: "hello" } }) + "\n");
+    await vi.waitFor(() => expect(readThreadEvents("early-thread", stateDir).some((event) => event.kind === "message" && event.data.done)).toBe(true));
+    local.write(JSON.stringify({ id: "remove-during-handshake", threadId: "", ts: Date.now(), agentId: "mac", kind: "device_remove", data: { pub: removed } }) + "\n");
+    await vi.waitFor(() => expect(loadDevices(join(stateDir, "devices.json"))).toHaveLength(1));
+    sidecar.mint();
+    // Only authentication may cross an open but unregistered socket. A notify here is lost.
+    expect(seen.map((msg) => msg.type)).toEqual(["register"]);
+    macSocket.send(JSON.stringify({ type: "registered", roomId: "r" }));
+    await vi.waitFor(() => expect(seen.filter((msg) => msg.type === "notify")).toHaveLength(1));
+    expect(seen.find((msg) => msg.type === "revoke")).toEqual({ type: "revoke", pubkey: "removed-phone" });
+    expect(seen.findIndex((msg) => msg.type === "revoke")).toBeLessThan(seen.findIndex((msg) => msg.type === "notify"));
+    expect(seen.find((msg) => msg.type === "notify")).toMatchObject({ class: "reply", threadRef: threadRef("early-thread") });
+
+    const sessionKey = deriveSessionKey(identity.privateKey, loadKeys(stateDir).session.publicKey);
+    const request = seal(sessionKey, Buffer.from(JSON.stringify({ id: "catch-up", threadId: "", ts: Date.now(), agentId: "phone", kind: "sync_request", data: { lastSeen: {} } })));
+    macSocket.send(JSON.stringify({ type: "frame", payload: encodeBody({ t: "box", n: toBase64Url(request.nonce), c: toBase64Url(request.ciphertext) }) }));
+    await vi.waitFor(() => {
+      const events = seen.filter((msg) => msg.type === "frame").map((msg) => {
+        const body = frameBody(msg.payload as string);
+        return JSON.parse(Buffer.from(open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c))).toString()) as YorozuEvent;
+      });
+      expect(events.find((event) => event.kind === "sync_delta")).toMatchObject({ data: { events: expect.arrayContaining([expect.objectContaining({ kind: "message", data: { role: "agent", text: "answered before registration", done: true } })]) } });
+    });
+  } finally {
+    local.destroy();
+    await sidecar.close();
+    await new Promise<void>((done) => fake.close(() => done()));
+  }
+});
+
 test("a paired device the relay knows no name for holds the announce back", async () => {
   // The list replaces the relay's whole set, so an incomplete one would unpair the device it
   // cannot name — a record kept from before the signing key was. Nothing is sent instead.

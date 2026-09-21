@@ -12,6 +12,11 @@ public struct ThreadCache: Sendable {
     public let directory: URL
     private let key: SymmetricKey
 
+    private struct Snapshot: Codable {
+        var events: [YorozuEvent]
+        var lastSeen: String?
+    }
+
     public init(directory: URL, key: SymmetricKey) {
         self.directory = directory
         self.key = key
@@ -41,18 +46,21 @@ public struct ThreadCache: Sendable {
     }
 
     public func events(threadId: String) -> [YorozuEvent] {
-        read([YorozuEvent].self, from: name(threadId)) ?? []
+        read(Snapshot.self, from: name(threadId))?.events
+            ?? read([YorozuEvent].self, from: name(threadId)) ?? []
     }
 
-    public func save(events: [YorozuEvent], threadId: String) {
-        write(events, to: name(threadId))
+    public func save(events: [YorozuEvent], threadId: String, lastSeen: String? = nil) {
+        // Keep the replay cursor and the events it covers in one atomic encrypted write.
+        write(Snapshot(events: events, lastSeen: lastSeen), to: name(threadId))
     }
 
-    /// Last event id held per thread: exactly what `sync_request` carries.
+    /// Last replayed event per thread. A newer live or optimistic event does not prove that
+    /// all history before it arrived. Legacy arrays have no checkpoint and safely replay once.
     public func lastSeen() -> [String: String] {
         var seen: [String: String] = [:]
         for thread in threads() {
-            if let last = events(threadId: thread.id).last { seen[thread.id] = last.id }
+            if let last = read(Snapshot.self, from: name(thread.id))?.lastSeen { seen[thread.id] = last }
         }
         return seen
     }

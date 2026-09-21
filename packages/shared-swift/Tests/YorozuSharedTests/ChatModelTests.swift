@@ -820,6 +820,59 @@ func finalStreamedReplyFollowsToolHistory(finalTimestamp: Int) async throws {
 }
 
 @MainActor
+@Test func liveEventsCannotMoveSyncPastUnseenPages() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    _ = await sent(by: transport, atLeast: pairingSends)
+    let live = YorozuEvent(id: "live", threadId: "home", ts: 100, agentId: "main",
+                          payload: .message(MessageData(role: .agent, text: "Newest reply", done: true)))
+    let older = event("older", .thought(ThoughtData(text: "First page")))
+    await transport.yield(.event(live))
+    await transport.yield(.event(event("page", .syncDelta(SyncDeltaData(events: [older], more: true)))))
+
+    let requests = await sent(by: transport, atLeast: pairingSends + 1)
+    let next = try #require(requests.last)
+    guard case .syncRequest(let data) = next.payload else {
+        Issue.record("The next sync page was not requested")
+        return
+    }
+    #expect(data.lastSeen == ["home": "older"])
+    #expect(model.events["home"]?.map(\.id) == ["older", "live"])
+}
+
+@MainActor
+@Test func interruptedSyncRestoresItsCursorWithoutSkippingCachedLiveEvents() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: SymmetricKey(size: .bits256))
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    model.start()
+    await transport.yield(.event(event("threads", .threadList(ThreadListData(threads: [
+        ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 100),
+    ])))))
+    let live = YorozuEvent(id: "live", threadId: "home", ts: 100, agentId: "main",
+                          payload: .message(MessageData(role: .agent, text: "Newest reply", done: true)))
+    await transport.yield(.event(live))
+    var older = event("older", .thought(ThoughtData(text: "First page")))
+    older.syncCursor = "replay-position-1"
+    await transport.yield(.event(event("page", .syncDelta(SyncDeltaData(events: [older], more: true)))))
+    #expect(await eventually { model.events["home"]?.count == 2 })
+    await model.flushCache()
+
+    let resumedTransport = FakeTransport()
+    let resumed = ChatModel(transport: resumedTransport, cache: cache)
+    resumed.requestSync()
+    let requests = await sent(by: resumedTransport, atLeast: 1)
+    let next = try #require(requests.first)
+    guard case .syncRequest(let data) = next.payload else {
+        Issue.record("The resumed sync was not requested")
+        return
+    }
+    #expect(data.lastSeen == ["home": "replay-position-1"])
+}
+
+@MainActor
 @Test func theModelsOnOfferComeFromTheRuntimeAndPickingOneSetsTheThread() async throws {
     let transport = FakeTransport()
     let model = await connected(transport)

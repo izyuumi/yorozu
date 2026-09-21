@@ -30,14 +30,27 @@ private func message(_ id: String, _ text: String, thread: String = "home") -> Y
         ThreadSummary(id: "t2", title: "Groceries", archived: false, lastActivity: 2),
     ]
     cache.save(threads: threads)
-    cache.save(events: [message("e1", "hi"), message("e2", "there")], threadId: "home")
-    cache.save(events: [message("e3", "milk", thread: "t2")], threadId: "t2")
+    cache.save(events: [message("e1", "hi"), message("e2", "there")], threadId: "home", lastSeen: "e2")
+    cache.save(events: [message("e3", "milk", thread: "t2")], threadId: "t2", lastSeen: "e3")
 
     #expect(cache.threads() == threads)
     #expect(cache.events(threadId: "home").map(\.id) == ["e1", "e2"])
     #expect(cache.lastSeen() == ["home": "e2", "t2": "e3"])
     // A reader built fresh over the same files sees the same thing: nothing is held in memory.
     #expect(ThreadCache(directory: cache.directory, key: key).events(threadId: "t2").count == 1)
+}
+
+@Test func legacyCacheEventsRemainReadableButCannotSkipReplay() throws {
+    let key = SymmetricKey(size: .bits256)
+    let cache = temporaryCache(key: key)
+    defer { try? FileManager.default.removeItem(at: cache.directory) }
+    cache.save(threads: [ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)])
+    let events = [message("live", "New reply")]
+    let data = try AES.GCM.seal(JSONEncoder().encode(events), using: key).combined!
+    try data.write(to: cache.directory.appendingPathComponent("thread-home.bin"), options: .atomic)
+
+    #expect(cache.events(threadId: "home") == events)
+    #expect(cache.lastSeen().isEmpty)
 }
 
 @Test func theCacheIsEncryptedAtRestAndUnreadableWithAnotherKey() throws {

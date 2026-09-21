@@ -124,6 +124,9 @@ public final class ChatModel {
     private let transport: any ChatTransport
     private let cache: ThreadCache?
     @ObservationIgnored private var cacheWrite: Task<Void, Never>?
+    /// Replay progress follows the runtime's log order, independently of live events and
+    /// the timeline's timestamp order. Advancing from either can skip unseen sync pages.
+    private var syncLastSeen: [String: String] = [:]
 
     private func persistEvents(in ids: Set<String>) {
         guard cache != nil else { return }
@@ -133,12 +136,15 @@ public final class ChatModel {
     private func persist(threads: [ThreadSummary]? = nil, events: [String: [YorozuEvent]] = [:]) {
         guard let cache else { return }
         let previous = cacheWrite
+        let lastSeen = syncLastSeen
         // Value snapshots are sealed and written on a worker, in order. The outbox keeps its
         // separate synchronous durability boundary: unsent user input must never be lost.
         cacheWrite = Task.detached(priority: .utility) {
             await previous?.value
             if let threads { cache.save(threads: threads) }
-            for (id, events) in events { cache.save(events: events, threadId: id) }
+            for (id, events) in events {
+                cache.save(events: events, threadId: id, lastSeen: lastSeen[id])
+            }
         }
     }
 
@@ -167,6 +173,7 @@ public final class ChatModel {
         self.device = device
         guard let cache else { return }
         synced = cache.threads()
+        syncLastSeen = cache.lastSeen()
         outbox = Outbox.pruned(cache.outbox())
         for thread in synced {
             // Older clients replaced streamed replies in place, leaving their final
@@ -230,7 +237,9 @@ public final class ChatModel {
             try? await Task.sleep(for: .milliseconds(50))
         }
         await flushCache()
-        suspend()
+        // A push can wake us in the background and finish after the user opens the app.
+        // The foreground now owns this socket and still needs to receive live events.
+        if !foreground { suspend() }
         return deltas > before
     }
 
@@ -256,7 +265,7 @@ public final class ChatModel {
         while approvalCard(eventRef: eventRef) == nil, deltas == before, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(50))
         }
-        defer { suspend() }
+        defer { if !foreground { suspend() } }
         guard state == .paired, let (threadId, card) = approvalCard(eventRef: eventRef) else { return false }
         // Tagged as a button press: the runtime honours one only for a card it judged answerable
         // from the lock screen, whatever buttons the push happened to draw.
@@ -734,7 +743,7 @@ public final class ChatModel {
     /// Asks for everything each thread has gained since the last event we hold.
     public func requestSync() {
         emit(
-            .syncRequest(SyncRequestData(lastSeen: events.compactMapValues { $0.last?.id })),
+            .syncRequest(SyncRequestData(lastSeen: syncLastSeen)),
             in: ""
         )
     }
@@ -791,7 +800,10 @@ public final class ChatModel {
                 persist(threads: synced)
                 onThreads?()
             case .syncDelta(let data):
-                for event in data.events { upsert(event, persist: false) }
+                for event in data.events {
+                    upsert(event, persist: false)
+                    syncLastSeen[event.threadId] = event.syncCursor ?? event.id
+                }
                 persistEvents(in: Set(data.events.map(\.threadId)))
                 if let workingThreadIds = data.workingThreadIds {
                     generating = Set(workingThreadIds)

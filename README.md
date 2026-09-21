@@ -429,10 +429,14 @@ the same provider — "reply with a 3-5 word title", shown the opening exchange 
 characters — then writes the answer into `threads.json` and broadcasts a fresh `thread_list`. It
 is never awaited and gives up after 5s, so a slow or broken titler costs the reply nothing and
 leaves the thread untitled. Only an empty title is filled in, which is also the whole of the rule
-that a title the user typed with Rename is never overwritten. `sync_request` carries `lastSeen`, a last-held
-event id per thread, and is answered with one `sync_delta` holding everything after those ids
-across *every* live thread — capped at 200 events each, and an id the log no longer has means the
-start rather than nothing. Sync builds an in-memory byte-offset index on the first read of a
+that a title the user typed with Rename is never overwritten. `sync_request` carries `lastSeen`, a replay
+cursor per thread, and is answered with one `sync_delta` holding everything after those cursors
+across *every* live thread — capped at 200 events each. Replayed events include an opaque
+`syncCursor` identifying their exact log occurrence, so updates that reuse a progress card's ID
+cannot skip intervening history. Older clients and runtimes can still exchange event IDs.
+Phones advance their cursor only from replayed events and save it with the encrypted history;
+live replies and unsent messages cannot move it past unseen pages. An invalid cursor replays from
+the start. Sync builds an in-memory byte-offset index on the first read of a
 log, then seeks directly to each page without re-parsing prior messages. File changes invalidate
 the index. Metadata for 16 recently synced logs is retained; message bodies are not cached.
 `pnpm --filter @yorozu/runtime build && node scripts/benchmark-sync.mjs` compares a full drain
