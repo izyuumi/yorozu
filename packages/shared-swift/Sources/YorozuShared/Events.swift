@@ -722,10 +722,6 @@ public enum ThreadAgent: String, Codable, Equatable, Sendable, CaseIterable, Ide
         }
     }
 
-    /// OpenAI does not distribute a Codex product mark, so its company mark stays paired with
-    /// the product name anywhere the surrounding UI does not already say “Codex”.
-    public var markRequiresProductName: Bool { self == .codex }
-
     /// Whether the agent needs a folder to work in. Yorozu works everywhere; the coding agents
     /// each run in one project.
     public var needsFolder: Bool { self != .yorozu }

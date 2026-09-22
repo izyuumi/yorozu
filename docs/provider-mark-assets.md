@@ -17,7 +17,8 @@ color, aspect-ratio, or view-box edits and are rendered with original colors.
 
 OpenAI's Codex page, official `openai/codex` repository, and official brand download did not
 publish a separate distributable Codex product icon when inspected on 2026-09-21. Yorozu therefore
-uses the official OpenAI Blossom paired with visible `Codex` text, rather than inventing a mark.
+uses the official OpenAI Blossom on its own, rather than inventing a mark. The agent's name is
+kept for VoiceOver (`AgentIdentifierView`'s accessibility label).
 
 - Assets: `OpenAIBlossom.imageset/OpenAIBlossom-Black.svg` and
   `OpenAIBlossom.imageset/OpenAIBlossom-White.svg`
