@@ -10,9 +10,9 @@ set -eu
 cd "$(dirname "$0")/.."
 
 DIST=${DIST:-dist}
-# Public downloads: one rolling release in a source-less public repo. yorozu.yumi.to/mac,
+# Public downloads: the rolling `mac` release of this public repo. yorozu.yumi.to/mac,
 # /appcast.xml and /download/* redirect there (apps/web/public/_redirects).
-PUBLIC=${PUBLIC:-izyuumi/yorozu-releases}
+PUBLIC=${PUBLIC:-izyuumi/yorozu}
 
 ./scripts/build-mac.sh
 ./scripts/appcast.sh

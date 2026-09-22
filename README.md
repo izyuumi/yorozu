@@ -1139,9 +1139,9 @@ git tag -a v0.2.0 -m v0.2.0
 ```
 
 It builds, notarizes, signs the appcast, and uploads the DMGs the appcast offers, a stable
-`Yorozu.dmg` and `appcast.xml` to the rolling `mac` release of the public
-`izyuumi/yorozu-releases` repo, which `yorozu.yumi.to/mac`, `/appcast.xml` and `/download/*`
-redirect to. It also uploads everything to that tag's private GitHub release with `--clobber`.
+`Yorozu.dmg` and `appcast.xml` to this repo's rolling `mac` release, which
+`yorozu.yumi.to/mac`, `/appcast.xml` and `/download/*` redirect to. It also uploads everything
+to that version tag's GitHub release with `--clobber`.
 `.github/workflows/release.yml` runs the same chain on a `v*` tag (with `fetch-depth: 0`, or
 the commit count would be 1).
 
