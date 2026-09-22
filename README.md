@@ -1141,9 +1141,8 @@ git tag -a v0.2.0 -m v0.2.0
 It builds, notarizes, signs the appcast, and uploads the DMGs the appcast offers, a stable
 `Yorozu.dmg` and `appcast.xml` to this repo's rolling `mac` release, which
 `yorozu.yumi.to/mac`, `/appcast.xml` and `/download/*` redirect to. It also uploads everything
-to that version tag's GitHub release with `--clobber`.
-`.github/workflows/release.yml` runs the same chain on a `v*` tag (with `fetch-depth: 0`, or
-the commit count would be 1).
+to that version tag's GitHub release with `--clobber`. Releases run locally, where the
+Developer ID identity, the notary profile and the Sparkle key live; CI holds no signing secrets.
 
 ## TestFlight
 
@@ -1172,8 +1171,8 @@ The build number is `git rev-list --count HEAD`. It has to rise with every uploa
 repeat, and the commit count does both without a file to bump and without differing between
 two checkouts of the same commit.
 
-`.github/workflows/testflight.yml` runs the whole thing on a `v*` tag from
-`ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8`.
+It runs locally with `ASC_KEY_ID` and `ASC_ISSUER_ID` set; the key itself is read from
+`~/.appstoreconnect/private_keys/AuthKey_<ASC_KEY_ID>.p8`.
 
 ### The app record has to be made by hand, once
 
