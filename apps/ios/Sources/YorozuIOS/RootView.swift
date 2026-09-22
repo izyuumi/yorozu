@@ -3,6 +3,54 @@ import UIKit
 import UserNotifications
 import YorozuShared
 
+/// Local transport for reviewer demo mode. It answers only typed messages and keeps all state
+/// in memory, so it cannot reach a paired Mac or its cache.
+private actor DemoTransport: ChatTransport {
+    private var continuation: AsyncStream<TransportUpdate>.Continuation?
+
+    func connect() -> AsyncStream<TransportUpdate> {
+        let (stream, continuation) = AsyncStream<TransportUpdate>.makeStream()
+        self.continuation = continuation
+        continuation.yield(.ownerOnline(true))
+        continuation.yield(.state(.paired))
+        continuation.onTermination = { [weak self] _ in Task { await self?.disconnected() } }
+        return stream
+    }
+
+    func send(_ event: YorozuEvent) async throws {
+        continuation?.yield(.event(YorozuEvent(
+            id: UUID().uuidString,
+            threadId: event.threadId,
+            ts: Int(Date().timeIntervalSince1970 * 1000),
+            agentId: "main",
+            payload: .receipt(ReceiptData(eventId: event.id))
+        )))
+        guard case .message(let message) = event.payload, message.role == .user else { return }
+        let continuation = continuation
+        Task {
+            try? await Task.sleep(for: .milliseconds(800))
+            continuation?.yield(.event(YorozuEvent(
+                id: UUID().uuidString,
+                threadId: event.threadId,
+                ts: Int(Date().timeIntervalSince1970 * 1000),
+                agentId: "main",
+                payload: .message(MessageData(
+                    role: .agent,
+                    text: "This is a demo, so no agent is connected. Pair Yorozu with the free Mac app at yorozu.yumi.to to talk to OpenClaw, Claude Code or Codex on your own Mac.",
+                    done: true
+                ))
+            )))
+        }
+    }
+
+    func close() {
+        continuation?.finish()
+        continuation = nil
+    }
+
+    private func disconnected() { continuation = nil }
+}
+
 #if DEBUG
 /// Local transport for deterministic showcase screenshots. Production never enters this path.
 private actor ShowcaseTransport: ChatTransport {
@@ -50,6 +98,7 @@ final class Session {
     private(set) var model: ChatModel?
     private(set) var failure: String?
     private(set) var isPairing = false
+    private(set) var isDemo = false
     /// What the thread list's navigation stack starts out holding, decided the moment the model
     /// exists rather than after the list has drawn. The cache is read synchronously in
     /// ``ChatModel``'s initialiser, so the answer is already known here — and knowing it here is
@@ -81,6 +130,11 @@ final class Session {
 
     private init() {
         #if DEBUG
+        // Screenshot and QA entry into the reviewer demo, without tapping the pairing screen.
+        if launchArgument("yorozuDemo") != nil {
+            startDemo()
+            return
+        }
         if launchArgument("yorozuShowcase") != nil || launchArgument("yorozuScene") != nil {
             let model = ChatModel(transport: ShowcaseTransport())
             E2EHarness.attach(to: model)
@@ -118,12 +172,52 @@ final class Session {
         }
     }
 
+    /// Builds a throwaway model over the local demo transport. Its nil cache is intentional:
+    /// nothing shown here can read from or write to a real pairing's encrypted history.
+    func startDemo() {
+        model?.close()
+        model = nil
+        relay = nil
+        failure = nil
+        isPairing = false
+        isDemo = true
+        openPath = []
+        notificationOpen = nil
+        pendingThreadRef = nil
+        pendingNotificationClass = nil
+        pendingEventRef = nil
+
+        let model = ChatModel(transport: DemoTransport(), cache: nil)
+        model.previewThreads()
+        model.previewChat(in: "Invoices")
+        model.previewApproval(in: "Fix the flaky relay test")
+        model.previewProgress(in: "Tidy the icon script")
+        model.previewQuestion(in: "Kyoto in April")
+        model.start()
+        self.model = model
+    }
+
+    /// Leaving demo only drops volatile state; it must not alter a real pairing or its cache.
+    func exitDemo() {
+        guard isDemo else { return }
+        model?.close()
+        model = nil
+        failure = nil
+        isPairing = false
+        isDemo = false
+        openPath = []
+        notificationOpen = nil
+        pendingThreadRef = nil
+        pendingNotificationClass = nil
+        pendingEventRef = nil
+    }
+
     /// Asks for notifications, once, at the moment they start to make sense: something is paired,
     /// so there is now something that could need to wake you.
     func requestNotifications() {
         // Never during a screenshot run: the permission alert is modal, so it — and not the
         // thread underneath it — would be the picture.
-        guard launchArgument("yorozuShowcase") == nil, launchArgument("yorozuScene") == nil else { return }
+        guard !isDemo, launchArgument("yorozuShowcase") == nil, launchArgument("yorozuScene") == nil else { return }
         Task {
             _ = try? await UNUserNotificationCenter.current()
                 .requestAuthorization(options: [.alert, .sound, .badge])
@@ -136,6 +230,7 @@ final class Session {
     /// The device token, on its way to the relay. Held too, so a later pairing can register it
     /// without waiting on iOS to reissue one — it only does that when the token changes.
     func registerPush(deviceToken: String) {
+        guard !isDemo else { return }
         self.deviceToken = deviceToken
         guard let relay else { return }
         Task { await relay.registerPush(deviceToken: deviceToken) }
@@ -147,6 +242,7 @@ final class Session {
         relay = nil
         failure = nil
         isPairing = false
+        isDemo = false
         pushFailure = nil
         deviceToken = nil
         openPath = []
@@ -172,7 +268,7 @@ final class Session {
     /// confirmed by the person who made it. Nothing is drained before there is a model to send
     /// it with — the files simply wait for the next foreground.
     func drainShares() {
-        guard let model, let directory = ShareBox.directory() else { return }
+        guard !isDemo, let model, let directory = ShareBox.directory() else { return }
         for payload in ShareBox.takeAll(in: directory) {
             let thread = payload.threadId.flatMap { id in model.threads.first { $0.id == id } }
                 ?? model.newDraft()
@@ -408,6 +504,7 @@ struct RootView: View {
         } else if let pairingScene = launchArgument("yorozuShowcase"), pairingScene.hasPrefix("pairing") {
             PairingFlowView(
                 onPair: { _ in String(localized: "Not a Yorozu pairing code.") },
+                onDemo: {},
                 externalError: pairingScene == "pairing-error" ? String(localized: "Not a Yorozu pairing code.") : nil
             )
         } else if let model = session.model, !session.isPairing {
@@ -465,6 +562,19 @@ struct RootView: View {
                     path = [model.newDraft(agent: agent, cwd: cwd).id]
                 }
             }
+            .overlay(alignment: .topTrailing) {
+                if session.isDemo && path.isEmpty {
+                    Text("Demo")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.thinMaterial, in: .capsule)
+                        .padding(.top, 8)
+                        .padding(.trailing, 72)
+                        .accessibilityLabel("Demo")
+                }
+            }
             // Unpairing lives in Settings behind a confirmation now, which is the only place it
             // belongs: it is not something to do by mistyping a tap in a chat.
             .sheet(isPresented: $settings) {
@@ -477,6 +587,8 @@ struct RootView: View {
                     relayUrl: stored?.pairing.relayUrl ?? "—",
                     pairedAt: stored?.pairedAt,
                     onUnpair: session.unpair,
+                    isDemo: session.isDemo,
+                    onExitDemo: session.exitDemo,
                     model: model
                 )
             }
@@ -503,6 +615,7 @@ struct RootView: View {
     private var pairingContent: some View {
         PairingFlowView(
             onPair: pair,
+            onDemo: session.startDemo,
             externalError: session.failure ?? session.model?.failure.map { _ in
                 String(localized: "Couldn’t connect. Generate a new pairing code and try again.")
             },

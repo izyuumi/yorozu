@@ -42,6 +42,30 @@
       }
     },
 
+    "Demo" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Demostración" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "デモ" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "데모" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "演示" } }
+      }
+    },
+    "Exit demo" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Salir de la demostración" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "デモを終了" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "데모 나가기" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "退出演示" } }
+      }
+    },
+    "Try the demo" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Probar la demostración" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "デモを試す" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "데모 사용해 보기" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "试用演示" } }
+      }
+    },
     "•" : {
       "extractionState" : "stale",
       "localizations" : {

@@ -80,7 +80,13 @@ let project = Project(
                 ],
             ]) { a, _ in a }),
             sources: ["Sources/YorozuIOS/**"],
-            resources: ["Resources/**"],
+            resources: [
+                "Resources/AppIcon.icon",
+                "Resources/Assets.xcassets",
+                "Resources/InfoPlist.xcstrings",
+                "Resources/Localizable.xcstrings",
+                "Resources/YorozuIOS/PrivacyInfo.xcprivacy",
+            ],
             entitlements: .dictionary([
                 "com.apple.security.application-groups": [.string(appGroup)],
                 "keychain-access-groups": [.string(notificationKeychainGroup)],
@@ -141,7 +147,10 @@ let project = Project(
                 ],
             ]) { a, _ in a }),
             sources: ["Sources/YorozuShare/**"],
-            resources: ["Resources/Localizable.xcstrings"],
+            resources: [
+                "Resources/Localizable.xcstrings",
+                "Resources/YorozuShare/PrivacyInfo.xcprivacy",
+            ],
             entitlements: .dictionary(["com.apple.security.application-groups": [.string(appGroup)]]),
             dependencies: [.package(product: "YorozuShared")],
             settings: signing()

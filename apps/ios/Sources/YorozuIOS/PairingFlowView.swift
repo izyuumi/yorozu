@@ -6,6 +6,7 @@ import SwiftUI
 /// regenerates it from the same artwork.
 struct PairingFlowView: View {
     let onPair: (String) -> String?
+    let onDemo: () -> Void
     var externalError: String?
     var connecting = false
 
@@ -38,6 +39,10 @@ struct PairingFlowView: View {
                 .controlSize(.large)
                 .frame(maxWidth: .infinity)
             Button("Enter code manually") { enteringCode = true }
+                .frame(minHeight: 44)
+            Button("Try the demo", action: onDemo)
+                .buttonStyle(.bordered)
+                .foregroundStyle(.secondary)
                 .frame(minHeight: 44)
             if connecting { ProgressView("Connecting…") }
             if let error = error ?? externalError {
