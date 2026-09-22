@@ -219,6 +219,7 @@ struct ThreadRow: View {
     var chevron = false
 
     @ScaledMetric(relativeTo: .body) private var dot = 9
+    @ScaledMetric(relativeTo: .body) private var mark = 16
 
     var body: some View {
         // Drawn from the thread's own two timestamps, which the runtime owns: reading on the
@@ -226,11 +227,9 @@ struct ThreadRow: View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    // A coding agent's thread wears its provider mark; Yorozu's rows are as they
-                    // were. Codex pairs OpenAI's mark with text because no Codex mark is published.
-                    if let agent = thread.agent, agent != .yorozu {
-                        AgentIdentifierView(agent)
-                    }
+                    // Every thread wears its agent's mark, Yorozu's own knot included. Codex pairs
+                    // OpenAI's mark with text because no Codex mark is published.
+                    AgentIdentifierView(thread.agent ?? .yorozu, size: mark)
                     highlightedText(thread.displayTitle)
                         .font(.body.weight(thread.isUnread ? .semibold : .regular))
                         // An untitled thread is one the runtime has not named yet, so its
