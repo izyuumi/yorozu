@@ -86,21 +86,26 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
 
 @MainActor
 @Test func connectionPresentationFreezesInBackgroundAndDelaysDisconnection() async throws {
+    // Delays are long next to the short "not yet" checks, and the final change is polled for,
+    // so a slow CI VM that oversleeps cannot flip either kind of expectation.
+    let delay = Duration.milliseconds(300)
     let presentation = ConnectionPresentation(.connected)
 
-    presentation.update(.reconnecting, active: false, delay: .milliseconds(30))
-    try await Task.sleep(for: .milliseconds(40))
+    presentation.update(.reconnecting, active: false, delay: delay)
+    try await Task.sleep(for: .milliseconds(400))
     #expect(presentation.state == .connected)
 
-    presentation.update(.reconnecting, active: true, delay: .milliseconds(30))
-    try await Task.sleep(for: .milliseconds(10))
+    presentation.update(.reconnecting, active: true, delay: delay)
+    try await Task.sleep(for: .milliseconds(20))
     #expect(presentation.state == .connected)
-    presentation.update(.connected, active: true, delay: .milliseconds(30))
-    try await Task.sleep(for: .milliseconds(30))
+    presentation.update(.connected, active: true, delay: delay)
+    try await Task.sleep(for: .milliseconds(400))
     #expect(presentation.state == .connected)
 
-    presentation.update(.offline, active: true, delay: .milliseconds(30))
-    try await Task.sleep(for: .milliseconds(40))
+    presentation.update(.offline, active: true, delay: delay)
+    for _ in 0..<100 where presentation.state != .offline {
+        try await Task.sleep(for: .milliseconds(30))
+    }
     #expect(presentation.state == .offline)
 }
 
