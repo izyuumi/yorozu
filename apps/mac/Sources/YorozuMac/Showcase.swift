@@ -64,7 +64,7 @@ enum Showcase {
         // The new-thread picker open on its folder step, as the phone's `new-thread` scene.
         case "new-thread":
             model.previewThreads()
-            NewThreadShowcase.agent = ProcessInfo.processInfo.environment["PICKER_ROOT"] == nil ? .claudeCode : nil
+            NewThreadShowcase.agent = .claudeCode
         case "queued":
             model.previewThreads()
             model.previewQueued(in: model.threads[0].id)

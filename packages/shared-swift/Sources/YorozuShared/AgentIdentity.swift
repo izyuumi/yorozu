@@ -12,34 +12,35 @@ public enum AgentMark: String, Equatable, Sendable {
 /// black/white Blossom with the clear space built into the distributed asset.
 public struct AgentMarkView: View {
     private let agent: ThreadAgent
+    private let size: CGFloat
 
-    public init(_ agent: ThreadAgent) {
+    /// `size` is the drawn glyph, the same for every mark, so rows line up whichever agent owns them.
+    public init(_ agent: ThreadAgent, size: CGFloat = 16) {
         self.agent = agent
+        self.size = size
     }
 
     public var body: some View {
         Group {
             switch agent.mark {
             case .yorozu:
-                Image(systemName: "bubble.left.and.bubble.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                YorozuMark(dimension: size)
             case .claude:
                 Image("ClaudeMark", bundle: .module)
                     .resizable()
                     .renderingMode(.original)
                     .scaledToFit()
-                    .frame(width: 16, height: 16)
             case .openAI:
+                // The official file carries clear space: the Blossom fills about half its canvas,
+                // so the canvas is drawn at twice the size and left to overflow the frame.
                 Image("OpenAIBlossom", bundle: .module)
                     .resizable()
                     .renderingMode(.original)
                     .scaledToFit()
-                    // The official file includes prescribed clear space around the Blossom.
-                    .frame(width: 24, height: 24)
+                    .frame(width: size * 2, height: size * 2)
             }
         }
-        .frame(width: 24, height: 24)
+        .frame(width: size, height: size)
         .accessibilityHidden(true)
     }
 }
@@ -48,14 +49,18 @@ public struct AgentMarkView: View {
 /// paired with its product name because OpenAI does not publish a separate Codex product icon.
 public struct AgentIdentifierView: View {
     private let agent: ThreadAgent
+    private let size: CGFloat
 
-    public init(_ agent: ThreadAgent) {
+    public init(_ agent: ThreadAgent, size: CGFloat = 16) {
         self.agent = agent
+        self.size = size
     }
 
     public var body: some View {
-        HStack(spacing: 2) {
-            AgentMarkView(agent)
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            AgentMarkView(agent, size: size)
+                // Sit the mark on the text's baseline the way a capital does, not above it.
+                .alignmentGuide(.firstTextBaseline) { $0.height * 0.8 }
             if agent.markRequiresProductName {
                 Text(agent.label)
                     .font(.caption2.weight(.medium))
