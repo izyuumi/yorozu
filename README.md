@@ -38,8 +38,7 @@ Pairing: the code carries the Mac's X25519 key, the room ID and a one-time token
 string — `yorozu://pair?v=1&relay=<urlencoded>&key=<base64url>&token=<base64url>&room=<base64url>`.
 The QR encodes that same string, so one parser (`decodePairingString` in `packages/shared`,
 `QrPayload.decode` in `packages/shared-swift`) serves the scanner, the paste field and the
-`yorozu://` link a phone opens when it is tapped in Messages. The older JSON form still decodes,
-so a phone paired before this stays paired.
+`yorozu://` link a phone opens when it is tapped in Messages.
 
 The phone joins the room, announces its own X25519 key in one cleartext `hello` frame, and every
 frame after that is ChaCha20-Poly1305 sealed under the derived session key. The relay checks the

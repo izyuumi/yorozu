@@ -724,7 +724,7 @@ private func summary(
         Issue.record("not a message")
         return
     }
-    #expect(data.attachment?.name == "p.png")
+    #expect(data.attachments.first?.name == "p.png")
     #expect(data.text == "")
 
     // And an empty composer sends nothing at all.

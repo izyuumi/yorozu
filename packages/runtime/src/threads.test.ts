@@ -383,7 +383,7 @@ test("an attachment reaches a vision model as bytes and a text-only one as its n
       ts: 1,
       agentId: "phone",
       kind: "message",
-      data: { role: "user", text: "what is this?", attachment },
+      data: { role: "user", text: "what is this?", attachments: [attachment] },
     },
     dir,
   );
@@ -405,7 +405,7 @@ test("a non-image attachment is named rather than sent, vision or not", () => {
       agentId: "phone",
       kind: "message",
       // No text at all: the note is then the whole message, so the turn is not empty.
-      data: { role: "user", text: "", attachment: { name: "q3.pdf", mime: "application/pdf", data: "aGk=" } },
+      data: { role: "user", text: "", attachments: [{ name: "q3.pdf", mime: "application/pdf", data: "aGk=" }] },
     },
     dir,
   );

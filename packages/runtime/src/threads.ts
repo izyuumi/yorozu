@@ -9,7 +9,6 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  messageAttachments,
   THREAD_AGENTS,
   TOOL_RESULT_PREVIEW_CHARS,
   type EventKind,
@@ -481,7 +480,7 @@ export function threadMessages(threadId: string, dir = stateDir(), vision = fals
     .filter((event) => event.kind === "message")
     .map((event) => {
       const role = event.data.role === "user" ? ("user" as const) : ("assistant" as const);
-      const attachments = messageAttachments(event.data);
+      const attachments = event.data.attachments ?? [];
       if (attachments.length === 0) return { role, content: event.data.text };
       // A model that can see gets the bytes. One that cannot is told what came with the
       // message, because the text alone often does not stand up on its own — "what is wrong

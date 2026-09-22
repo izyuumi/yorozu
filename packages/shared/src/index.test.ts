@@ -4,7 +4,6 @@ import {
   decodeQrPayload,
   decodePairingString,
   encodePairingString,
-  messageAttachments,
   type EventKind,
   type QrPayload,
   type YorozuEvent,
@@ -217,6 +216,7 @@ test("pairing strings round-trip and untrusted input is rejected", () => {
   expect(decodePairingString(code)).toEqual(qr);
   // The QR carries the same string, so one parser serves the scanner and the paste field.
   expect(decodeQrPayload(code)).toEqual(qr);
+  expect(() => decodeQrPayload(JSON.stringify(qr))).toThrow();
   const { roomId, ...noRoom } = qr;
   expect(decodePairingString(encodePairingString(noRoom))).toEqual(noRoom);
   // The pairing secret rides along when the Mac minted one, and is checked like the keys.
@@ -233,16 +233,7 @@ test("pairing strings round-trip and untrusted input is rejected", () => {
   expect(() => decodePairingString("nonsense")).toThrow();
 });
 
-test("the JSON QR form older codes carried still decodes", () => {
-  const qr: QrPayload = { v: 1, relayUrl: "wss://relay.yumi.to", macPubkey: "AAA", token: "t" };
-  expect(decodeQrPayload(JSON.stringify(qr))).toEqual(qr);
-  expect(() => decodeQrPayload(JSON.stringify({ ...qr, roomId: 1 }))).toThrow();
-  expect(() => decodeQrPayload('{"v":2}')).toThrow();
-  expect(() => decodeQrPayload("null")).toThrow();
-  expect(() => decodeQrPayload("not json")).toThrow();
-});
-
-test("a message can carry one attachment, and the cap is the same 5 MB Swift enforces", () => {
+test("a message can carry attachments, and the cap is the same 5 MB Swift enforces", () => {
   const event: YorozuEvent = {
     ...base,
     agentId: "phone",
@@ -250,19 +241,20 @@ test("a message can carry one attachment, and the cap is the same 5 MB Swift enf
     data: {
       role: "user",
       text: "what is this?",
-      attachment: { name: "receipt.png", mime: "image/png", data: "aGk=" },
+      attachments: [{ name: "receipt.png", mime: "image/png", data: "aGk=" }],
     },
   };
   if (event.kind !== "message") throw new Error("unreachable");
-  expect(event.data.attachment?.name).toBe("receipt.png");
+  expect(event.data.attachments?.[0]?.name).toBe("receipt.png");
   // The wire shape is the JSON both languages write, so it round-trips unchanged.
   expect(JSON.parse(JSON.stringify(event))).toEqual(event);
   expect(ATTACHMENT_MAX_BYTES).toBe(5 * 1024 * 1024);
 });
 
-test("current messages carry multiple mixed attachments and legacy messages still read", () => {
+test("messages carry multiple mixed attachments", () => {
   const image = { name: "one.png", mime: "image/png", data: "MQ==" };
   const pdf = { name: "two.pdf", mime: "application/pdf", data: "Mg==" };
-  expect(messageAttachments({ role: "user", text: "", attachments: [image, pdf] })).toEqual([image, pdf]);
-  expect(messageAttachments({ role: "user", text: "", attachment: image })).toEqual([image]);
+  const event: YorozuEvent = { ...base, kind: "message", data: { role: "user", text: "", attachments: [image, pdf] } };
+  if (event.kind !== "message") throw new Error("unreachable");
+  expect(event.data.attachments).toEqual([image, pdf]);
 });

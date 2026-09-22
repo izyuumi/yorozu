@@ -57,7 +57,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadRead = "thread_read"
         case threadSetModel = "thread_set_model"
         case threadSetEffort = "thread_set_effort"
-        case threadSetBypass = "thread_set_bypass"
         case threadRecover = "thread_recover"
         case modelList = "model_list"
         case projectList = "project_list"
@@ -93,7 +92,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadRead(ThreadReadData)
         case threadSetModel(ThreadSetModelData)
         case threadSetEffort(ThreadSetEffortData)
-        case threadSetBypass(ThreadSetBypassData)
         case threadRecover(ThreadRecoverData)
         case modelList(ModelListData)
         case projectList(ProjectListData)
@@ -129,7 +127,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadRead: .threadRead
             case .threadSetModel: .threadSetModel
             case .threadSetEffort: .threadSetEffort
-            case .threadSetBypass: .threadSetBypass
             case .threadRecover: .threadRecover
             case .modelList: .modelList
             case .projectList: .projectList
@@ -179,7 +176,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadRead: payload = .threadRead(try c.decode(ThreadReadData.self, forKey: .data))
         case .threadSetModel: payload = .threadSetModel(try c.decode(ThreadSetModelData.self, forKey: .data))
         case .threadRecover: payload = .threadRecover(try c.decode(ThreadRecoverData.self, forKey: .data))
-        case .threadSetBypass: payload = .threadSetBypass(try c.decode(ThreadSetBypassData.self, forKey: .data))
         case .threadSetEffort: payload = .threadSetEffort(try c.decode(ThreadSetEffortData.self, forKey: .data))
         case .modelList: payload = .modelList(try c.decode(ModelListData.self, forKey: .data))
         case .projectList: payload = .projectList(try c.decode(ProjectListData.self, forKey: .data))
@@ -225,7 +221,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadRead(let d): try c.encode(d, forKey: .data)
         case .threadSetModel(let d): try c.encode(d, forKey: .data)
         case .threadRecover(let d): try c.encode(d, forKey: .data)
-        case .threadSetBypass(let d): try c.encode(d, forKey: .data)
         case .threadSetEffort(let d): try c.encode(d, forKey: .data)
         case .modelList(let d): try c.encode(d, forKey: .data)
         case .projectList(let d): try c.encode(d, forKey: .data)
@@ -296,32 +291,27 @@ public struct MessageData: Codable, Equatable, Sendable {
     public var done: Bool?
     /// Photos and files the user sent with this message. Only set on a `user` message.
     public var attachments: [MessageAttachment]
-    /// Source compatibility for callers that still handle one attachment.
-    public var attachment: MessageAttachment? { attachments.first }
 
     public init(
         role: Role,
         text: String,
         done: Bool? = nil,
-        attachment: MessageAttachment? = nil,
         attachments: [MessageAttachment] = []
     ) {
         self.role = role
         self.text = text
         self.done = done
-        self.attachments = attachments.isEmpty ? attachment.map { [$0] } ?? [] : attachments
+        self.attachments = attachments
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, done, attachment, attachments }
+    private enum CodingKeys: String, CodingKey { case role, text, done, attachments }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         role = try c.decode(Role.self, forKey: .role)
         text = try c.decode(String.self, forKey: .text)
         done = try c.decodeIfPresent(Bool.self, forKey: .done)
-        attachments = try c.decodeIfPresent([MessageAttachment].self, forKey: .attachments)
-            ?? c.decodeIfPresent(MessageAttachment.self, forKey: .attachment).map { [$0] }
-            ?? []
+        attachments = try c.decodeIfPresent([MessageAttachment].self, forKey: .attachments) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -330,8 +320,6 @@ public struct MessageData: Codable, Equatable, Sendable {
         try c.encode(text, forKey: .text)
         try c.encodeIfPresent(done, forKey: .done)
         guard !attachments.isEmpty else { return }
-        // The first item keeps older Yorozu clients useful; current clients prefer the array.
-        try c.encode(attachments[0], forKey: .attachment)
         try c.encode(attachments, forKey: .attachments)
     }
 }
@@ -1098,20 +1086,28 @@ public struct QrPayload: Codable, Equatable, Sendable {
     }
 
     public func encoded() throws -> String {
-        String(decoding: try JSONEncoder().encode(self), as: UTF8.self)
+        guard v == 1 else { throw YorozuCrypto.CryptoError.malformed("not a Yorozu v1 pairing string") }
+        var components = URLComponents()
+        components.scheme = "yorozu"
+        components.host = "pair"
+        components.queryItems = [
+            URLQueryItem(name: "v", value: "1"),
+            URLQueryItem(name: "relay", value: relayUrl),
+            URLQueryItem(name: "key", value: macPubkey),
+            URLQueryItem(name: "token", value: token),
+        ] + (roomId.map { [URLQueryItem(name: "room", value: $0)] } ?? [])
+            + (secret.map { [URLQueryItem(name: "secret", value: $0)] } ?? [])
+        guard let string = components.string else {
+            throw YorozuCrypto.CryptoError.malformed("not a Yorozu v1 pairing string")
+        }
+        return string
     }
 
-    /// The one parser for every way a pairing arrives: the QR, a pasted string, a tapped
-    /// `yorozu://` link, or the JSON form older codes carried. Throws on anything that is
-    /// not a v1 payload.
+    /// The one parser for every way a pairing arrives: the QR, a pasted string, or a tapped
+    /// `yorozu://` link. Throws on anything that is not a v1 pairing string.
     public static func decode(_ text: String) throws -> QrPayload {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.hasPrefix("yorozu:") { return try decodePairingString(text) }
-        let payload = try JSONDecoder().decode(QrPayload.self, from: Data(text.utf8))
-        guard payload.v == 1 else {
-            throw YorozuCrypto.CryptoError.malformed("not a Yorozu v1 QR payload")
-        }
-        return payload
+        return try decodePairingString(text)
     }
 
     /// `yorozu://pair?v=1&relay=<urlencoded>&key=<base64url>&token=<base64url>`, the compact
@@ -1132,7 +1128,10 @@ public struct QrPayload: Codable, Equatable, Sendable {
             }
             return value
         }
-        let items = URLComponents(string: text)?.queryItems ?? []
+        guard let components = URLComponents(string: text), components.scheme == "yorozu", components.host == "pair" else {
+            throw malformed()
+        }
+        let items = components.queryItems ?? []
         let query = Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
         guard query["v"] == "1", let relayUrl = query["relay"], !relayUrl.isEmpty else {
             throw malformed()
@@ -1145,11 +1144,6 @@ public struct QrPayload: Codable, Equatable, Sendable {
             secret: try query["secret"].flatMap { $0.isEmpty ? nil : $0 }.map(base64Url)
         )
     }
-}
-
-public struct ThreadSetBypassData: Codable, Equatable, Sendable {
-    public var bypass: Bool
-    public init(bypass: Bool) { self.bypass = bypass }
 }
 
 public struct ThreadRecoverData: Codable, Equatable, Sendable {
