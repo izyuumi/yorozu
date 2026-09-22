@@ -1,0 +1,8 @@
+// yorozu.yumi.to: static assets only, no Worker script. Deploy from the repo root with
+//   apps/relay/node_modules/.bin/wrangler deploy --config apps/web/wrangler.jsonc
+{
+  "name": "yorozu-web",
+  "compatibility_date": "2026-03-10",
+  "assets": { "directory": "./public", "html_handling": "auto-trailing-slash" },
+  "routes": [{ "pattern": "yorozu.yumi.to", "custom_domain": true }]
+}

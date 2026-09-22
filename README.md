@@ -1003,8 +1003,7 @@ transport in is not fixed — every event carries its own ids and the runtime ma
 
 The fresh-Mac walkthrough, in the order spec section 10 asks for:
 
-1. Download the newest `Yorozu-<version>-<build>.dmg` from https://dl.yumi.to/ (or the private
-   GitHub Releases page).
+1. Download the newest DMG from https://yorozu.yumi.to/mac.
 2. Open it and drag **Yorozu** onto the Applications shortcut beside it. Eject the disk image
    and launch Yorozu from Applications — it is a menu bar app, so it appears as an icon in the
    status bar rather than a window in the Dock.
@@ -1139,8 +1138,10 @@ git tag -a v0.2.0 -m v0.2.0
 ./scripts/release.sh
 ```
 
-It builds, notarizes, signs the appcast, copies the DMG and `appcast.xml` into `dist/dl` —
-what `dl.yumi.to` serves — and uploads both to that tag's GitHub release with `--clobber`.
+It builds, notarizes, signs the appcast, and uploads the DMGs the appcast offers, a stable
+`Yorozu.dmg` and `appcast.xml` to the rolling `mac` release of the public
+`izyuumi/yorozu-releases` repo, which `yorozu.yumi.to/mac`, `/appcast.xml` and `/download/*`
+redirect to. It also uploads everything to that tag's private GitHub release with `--clobber`.
 `.github/workflows/release.yml` runs the same chain on a `v*` tag (with `fetch-depth: 0`, or
 the commit count would be 1).
 

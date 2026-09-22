@@ -10,15 +10,21 @@ set -eu
 cd "$(dirname "$0")/.."
 
 DIST=${DIST:-dist}
-# What dl.yumi.to actually serves: a static server over this directory behind a cloudflared
-# tunnel. Overridable because a git worktree has a dist/ of its own that nothing serves.
-DL=${DL:-$DIST/dl}
+# Public downloads: one rolling release in a source-less public repo. yorozu.yumi.to/mac,
+# /appcast.xml and /download/* redirect there (apps/web/public/_redirects).
+PUBLIC=${PUBLIC:-izyuumi/yorozu-releases}
 
 ./scripts/build-mac.sh
 ./scripts/appcast.sh
 
-mkdir -p "$DL"
-cp "$DIST"/Yorozu-*.dmg "$DIST/appcast.xml" "$DL/"
+# Only the DMGs the appcast offers, not every old build in dist/, plus Yorozu.dmg: a stable
+# name for /mac, always the build just made.
+DMGS=$(grep -o 'download/Yorozu-[^"]*\.dmg' "$DIST/appcast.xml" | sed "s#^download/#$DIST/#")
+STABLE=$(mktemp -d "$DIST/stable.XXXXXX")/Yorozu.dmg
+ln "$(ls -t "$DIST"/Yorozu-*.dmg | head -1)" "$STABLE"
+# shellcheck disable=SC2086 # one path per DMG, none with spaces
+gh release upload mac --repo "$PUBLIC" $DMGS "$STABLE" "$DIST/appcast.xml" --clobber
+rm -rf "$(dirname "$STABLE")"
 
 TAG=$(git describe --tags --abbrev=0 --match 'v*')
 gh release upload "$TAG" "$DIST"/Yorozu-*.dmg "$DIST/appcast.xml" --clobber
