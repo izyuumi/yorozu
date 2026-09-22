@@ -55,7 +55,6 @@ test("sync_delta nests events", () => {
 test("every spec'd kind exists", () => {
   const kinds: EventKind[] = [
     "message",
-    "reaction",
     "thought",
     "tool_call",
     "tool_result",
@@ -77,7 +76,7 @@ test("every spec'd kind exists", () => {
     "device_remove",
     "receipt",
   ];
-  expect(kinds).toHaveLength(22);
+  expect(kinds).toHaveLength(21);
 });
 
 test("a thread summary carries what a list row draws", () => {

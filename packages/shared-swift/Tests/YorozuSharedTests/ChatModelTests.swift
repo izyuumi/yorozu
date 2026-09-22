@@ -137,21 +137,6 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
 }
 
 @MainActor
-@Test func reactingIsOptimisticAndTappingAgainRemovesIt() async {
-    let transport = FakeTransport()
-    let model = await connected(transport)
-
-    model.react(to: "m1", with: "👍", in: "home")
-    #expect(model.reactions(to: "m1", in: "home") == [MessageReaction(emoji: "👍", count: 1, selected: true)])
-    model.react(to: "m1", with: "👍", in: "home")
-    #expect(model.reactions(to: "m1", in: "home").isEmpty)
-
-    let emitted = await sent(by: transport, atLeast: pairingSends + 2).filter { if case .reaction = $0.payload { true } else { false } }
-    #expect(emitted.count == 2)
-    if case .reaction(let last) = emitted.last?.payload { #expect(last.remove == true) }
-}
-
-@MainActor
 @Test func theModelAppliesWhatTheTransportYieldsWhateverTransportItIs() async throws {
     let transport = FakeTransport()
     let model = ChatModel(transport: transport, device: "mac")
@@ -1037,12 +1022,12 @@ func finalStreamedReplyFollowsToolHistory(finalTimestamp: Int) async throws {
 }
 
 @MainActor
-@Test func backgroundThreadEventsDoNotInvalidateTheOpenThreadsReactions() async {
+@Test func backgroundThreadEventsDoNotInvalidateTheOpenThreadsTimeline() async {
     let transport = FakeTransport()
     let model = await connected(transport)
     await confirmation("unrelated thread invalidation", expectedCount: 0) { changed in
         withObservationTracking {
-            _ = model.reactions(in: "selected")
+            _ = model.timeline("selected").events
         } onChange: { changed() }
         await transport.yield(.event(YorozuEvent(id: "background", threadId: "other", ts: 1, agentId: "main", payload: .thought(ThoughtData(text: "working")))))
         #expect(await eventually { model.events["other"]?.count == 1 })

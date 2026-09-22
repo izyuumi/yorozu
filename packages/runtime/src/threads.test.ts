@@ -214,19 +214,15 @@ test("events append per thread and only history kinds are logged", () => {
     dir,
   );
   appendThreadEvent(
-    { id: "r1", threadId: HOME, ts: 2, agentId: "phone", kind: "reaction", data: { messageId: "e1", emoji: "👍" } },
-    dir,
-  );
-  appendThreadEvent(
     { id: "e3", threadId: HOME, ts: 3, agentId: "main", kind: "sync_request", data: { lastSeen: {} } },
     dir,
   );
   appendThreadEvent(message("e4", "other", "t2"), dir);
 
-  expect(readThreadEvents(HOME, dir).map((e) => e.id)).toEqual(["e1", "e2", "r1"]);
+  expect(readThreadEvents(HOME, dir).map((e) => e.id)).toEqual(["e1", "e2"]);
   expect(readThreadEvents("t2", dir).map((e) => e.id)).toEqual(["e4"]);
   expect(readThreadEvents("never-written", dir)).toEqual([]);
-  expect(readFileSync(join(threadsDir(dir), "home.jsonl"), "utf8").split("\n")).toHaveLength(4);
+  expect(readFileSync(join(threadsDir(dir), "home.jsonl"), "utf8").split("\n")).toHaveLength(3);
 });
 
 test("a delta is everything after the last-seen id, from the start when it is unknown", () => {

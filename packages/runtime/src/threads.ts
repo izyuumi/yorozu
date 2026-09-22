@@ -79,7 +79,6 @@ export interface ThreadRecord {
 /** Kinds that belong to a thread's history. Control traffic is not logged. */
 const LOGGED: ReadonlySet<EventKind> = new Set<EventKind>([
   "message",
-  "reaction",
   "thought",
   "tool_call",
   "tool_result",
@@ -448,7 +447,9 @@ export function readThreadEvents(threadId: string, dir = stateDir()): YorozuEven
   for (const line of readFileSync(file, "utf8").split("\n")) {
     if (!line.trim()) continue;
     try {
-      events.push(JSON.parse(line) as YorozuEvent);
+      const event = JSON.parse(line) as YorozuEvent;
+      // Kinds this build no longer knows (old reactions) stay in the file and out of the sync.
+      if (LOGGED.has(event.kind)) events.push(event);
     } catch {
       // A half-written last line must not lose the thread.
     }

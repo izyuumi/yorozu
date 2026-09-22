@@ -45,7 +45,6 @@ SCENES=(
   "38-approval-card  -yorozuShowcase approval"
   "39-search         -yorozuShowcase threads -yorozuScene search"
   "54-thread-search  -yorozuShowcase threads -yorozuScene thread-search"
-  "39-reply          -yorozuShowcase threads -yorozuScene reply"
   "40-queued         -yorozuShowcase queued"
   "40-link-preview   -yorozuShowcase link"
   "42-model-menu     -yorozuShowcase model"

@@ -34,9 +34,9 @@ extension Image {
 /// One message in a thread. The user's is drawn as they typed it — plain text, right-aligned,
 /// tinted — and the agent's is rendered Markdown, because that is what models reply in.
 ///
-/// Long-pressing one offers Copy, Reply, Listen, Retry and Delete; on the Mac the same menu is
-/// the right-click, and on the phone a bubble swiped towards the middle of the screen is
-/// replied to. Every message is always shown in full.
+/// On the Mac, right-click or the hover control offers Copy, Listen, Retry and Delete. On the
+/// phone a long press selects text, as it does everywhere else on iOS. Every message is always
+/// shown in full.
 public struct MessageBubble: View {
     /// The event id, which is what says whether this is the bubble being read aloud.
     private let id: String
@@ -47,17 +47,11 @@ public struct MessageBubble: View {
     private let status: OutboxStatus?
     private let onRetry: (() -> Void)?
     private let onDelete: (() -> Void)?
-    /// Called with this message's text when the reader wants to quote it.
-    private let onReply: ((String) -> Void)?
     /// Sends the queued message again, for a message the outbox has given up on.
     private let onResend: (() -> Void)?
-    private let reactions: [MessageReaction]
-    private let onReact: ((String) -> Void)?
 
     /// Mac only: whether the pointer is over this message, which is what shows its actions.
     @State private var hovering = false
-    /// iPhone only: the custom message menu otherwise wins the long press that selects text.
-    @State private var selecting = false
     /// Set by the thread's search field; every hit inside this bubble is drawn highlighted.
     @Environment(\.searchHighlight) private var highlight
 
@@ -68,10 +62,7 @@ public struct MessageBubble: View {
         status: OutboxStatus? = nil,
         onRetry: (() -> Void)? = nil,
         onDelete: (() -> Void)? = nil,
-        onReply: ((String) -> Void)? = nil,
-        onResend: (() -> Void)? = nil,
-        reactions: [MessageReaction] = [],
-        onReact: ((String) -> Void)? = nil
+        onResend: (() -> Void)? = nil
     ) {
         self.id = id
         self.data = data
@@ -79,19 +70,10 @@ public struct MessageBubble: View {
         self.status = status
         self.onRetry = onRetry
         self.onDelete = onDelete
-        self.onReply = onReply
         self.onResend = onResend
-        self.reactions = reactions
-        self.onReact = onReact
     }
 
     private var isUser: Bool { data.role == .user }
-
-    /// A quoted reply is one message with a blockquote at the top, so the two halves are split
-    /// back apart to be drawn. Only for what the user sent: an agent's `>` is its own prose.
-    private var parts: (quote: String?, body: String) {
-        isUser ? splitQuote(data.text) : (nil, data.text)
-    }
 
     private var speaking: Bool { Speaker.shared.speakingId == id && !id.isEmpty }
 
@@ -128,16 +110,15 @@ public struct MessageBubble: View {
             if speaking {
                 SpeakingChip().transition(.scale(scale: 0.9).combined(with: .opacity))
             }
-            if !reactions.isEmpty { reactionChips }
             if let status {
                 caption(status)
             }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .animation(.easeOut(duration: 0.18), value: speaking)
-        .contextMenu { actions }
-        .sheet(isPresented: $selecting) { selectionSheet }
         #if os(macOS)
+            // Mac only: on the phone the long press belongs to text selection.
+            .contextMenu { actions }
             // An explicit shape, so the whole row tracks the pointer and not only the parts
             // of it something is drawn in.
             .contentShape(.rect)
@@ -148,29 +129,14 @@ public struct MessageBubble: View {
     /// Everything that can be done to one message. Shared by the context menu and, on the Mac,
     /// by the hover control — the two are the same list, not two lists that have to agree.
     @ViewBuilder private var actions: some View {
-        if let onReact {
-            Menu("React", systemImage: "face.smiling") {
-                ForEach(["👍", "❤️", "😂", "😮", "😢", "🙏"], id: \.self) { emoji in
-                    Button(emoji) { onReact(emoji) }
-                }
-            }
-        }
         Button("Copy", systemImage: "doc.on.doc") { copyToPasteboard(data.text) }
-        #if os(iOS)
-            if !isUser, !data.text.isEmpty {
-                Button("Select", systemImage: "text.cursor") { selecting = true }
-            }
-        #endif
-        if let onReply {
-            Button("Reply", systemImage: "arrowshape.turn.up.left") { onReply(parts.body) }
-        }
         if !isUser, !id.isEmpty {
             // One utterance at a time, so this is a toggle rather than a second voice.
             Button(speaking ? String(localized: "Stop") : String(localized: "Listen"), systemImage: speaking ? "stop" : "speaker.wave.2") {
                 if speaking {
                     Speaker.shared.stop()
                 } else {
-                    Speaker.shared.speak(parts.body, id: id)
+                    Speaker.shared.speak(data.text, id: id)
                 }
             }
         }
@@ -181,53 +147,6 @@ public struct MessageBubble: View {
             // Local only, which the menu says outright: the word "Delete" on its own
             // would promise something this button cannot do.
             Button("Remove from this device", systemImage: "trash", role: .destructive, action: onDelete)
-        }
-    }
-
-    @ViewBuilder private var selectionSheet: some View {
-        #if os(iOS)
-            NavigationStack {
-                // One text view, not one `Text` per Markdown block: SwiftUI selection stops at
-                // each view's edge, so a reply drawn block by block could only be selected a
-                // paragraph at a time. UITextView selects across the whole thing.
-                SelectableText(.chatDocument(data.text))
-                    .padding(.horizontal)
-                .navigationTitle("Select text")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { selecting = false }
-                    }
-                }
-            }
-        #else
-            EmptyView()
-        #endif
-    }
-
-    private var reactionChips: some View {
-        HStack(spacing: 4) {
-            ForEach(reactions) { reaction in
-                Button {
-                    onReact?(reaction.emoji)
-                } label: {
-                    Text(reaction.count > 1 ? "\(reaction.emoji) \(reaction.count)" : reaction.emoji)
-                        .font(.caption)
-                        .padding(.horizontal, 7)
-                        .frame(minHeight: 28)
-                        .background(
-                            reaction.selected ? AnyShapeStyle(.tint.opacity(0.2)) : AnyShapeStyle(.quaternary),
-                            in: .capsule
-                        )
-                        // The chip stays small; the target does not.
-                        .frame(minHeight: controlTarget)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .disabled(onReact == nil)
-                .accessibilityLabel("\(reaction.emoji), \(reaction.count) reaction\(reaction.count == 1 ? "" : "s")")
-                .accessibilityHint(reaction.selected ? String(localized: "Removes your reaction") : String(localized: "Adds this reaction"))
-            }
         }
     }
 
@@ -281,9 +200,6 @@ public struct MessageBubble: View {
 
     private var bubble: some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
-            if let quote = parts.quote {
-                QuoteStrip(text: quote)
-            }
             // Never shorter than the text: a hosted cell on the phone can propose less height
             // than a long reply needs, and `Text` answers that by cutting lines with "…".
             text.fixedSize(horizontal: false, vertical: true)
@@ -304,7 +220,7 @@ public struct MessageBubble: View {
         // The message's actions as a control of their own, because on the Mac the context
         // menu never opens: the text is selectable, selectable text brings AppKit's own
         // contextual menu — Look Up, Translate, Copy, Font — and that menu wins over this
-        // view's. Reply, Listen, Read full message and Remove had no way in at all.
+        // view's. Listen, Read full message and Remove had no way in at all.
         //
         // Here rather than on the row, and above the frame below rather than under it: this
         // is the bubble's own outline, and the frame below is only as wide as a bubble may
@@ -330,7 +246,7 @@ public struct MessageBubble: View {
     }
 
     @ViewBuilder private var text: some View {
-        let body = parts.body
+        let body = data.text
         if streaming {
             // Reparsing and laying out the whole accumulated Markdown on every delta exceeds a
             // frame budget on long answers. The finished event renders the same text below.
@@ -339,25 +255,6 @@ public struct MessageBubble: View {
         } else {
             MarkdownText(body).textSelection(.enabled)
         }
-    }
-}
-
-/// The message being replied to, above the reply: a rule down the side and the text quieted,
-/// which is what a blockquote has looked like since email.
-struct QuoteStrip: View {
-    let text: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Capsule().fill(.tint.opacity(0.5)).frame(width: 3)
-            Text(text)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .lineLimit(6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .fixedSize(horizontal: false, vertical: true)
-        .accessibilityLabel("In reply to: \(text)")
     }
 }
 
@@ -517,37 +414,3 @@ extension MessageAttachment {
         ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file)
     }
 }
-
-#if os(iOS)
-    /// A read-only UITextView, which is the one text control on iOS that lets a selection run
-    /// across paragraphs, code and lists alike. SwiftUI's `Text` selects within itself only.
-    struct SelectableText: UIViewRepresentable {
-        let text: AttributedString
-
-        init(_ text: AttributedString) { self.text = text }
-
-        func makeUIView(context: Context) -> UITextView {
-            let view = UITextView()
-            view.isEditable = false
-            view.isSelectable = true
-            view.isScrollEnabled = true
-            view.alwaysBounceVertical = true
-            view.backgroundColor = .clear
-            view.textContainerInset = UIEdgeInsets(top: 12, left: 0, bottom: 12, right: 0)
-            view.textContainer.lineFragmentPadding = 0
-            view.adjustsFontForContentSizeCategory = true
-            return view
-        }
-
-        func updateUIView(_ view: UITextView, context: Context) {
-            let styled = NSMutableAttributedString(text)
-            // Anything the Markdown pass left unstyled reads as body text in the label colour;
-            // an attributed string with no font at all would draw at UIKit's 12-point default.
-            styled.enumerateAttribute(.font, in: NSRange(location: 0, length: styled.length)) { font, range, _ in
-                if font == nil { styled.addAttribute(.font, value: UIFont.preferredFont(forTextStyle: .body), range: range) }
-            }
-            styled.addAttribute(.foregroundColor, value: UIColor.label, range: NSRange(location: 0, length: styled.length))
-            view.attributedText = styled
-        }
-    }
-#endif

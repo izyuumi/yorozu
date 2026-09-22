@@ -899,9 +899,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
     receipt();
 
     switch (event.kind) {
-      case "reaction":
-        // Stored above, then echoed to every device so the same chips appear everywhere.
-        return broadcast(event);
       case "interrupt":
         running.get(event.threadId)?.abort();
         running.delete(event.threadId);

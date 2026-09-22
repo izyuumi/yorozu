@@ -57,13 +57,6 @@ export interface MessageData {
   attachments?: MessageAttachment[];
 }
 
-/** Latest reaction from one client wins; `remove` clears that client's matching emoji. */
-export interface ReactionData {
-  messageId: string;
-  emoji: string;
-  remove?: boolean;
-}
-
 /** Reads current and legacy message shapes without duplicating the first attachment. */
 export const messageAttachments = (data: MessageData): MessageAttachment[] =>
   data.attachments ?? (data.attachment ? [data.attachment] : []);
@@ -539,7 +532,6 @@ export interface DeviceRemoveData {
 /** Kind tag paired with its payload. Discriminates on `kind`. */
 export type EventPayload =
   | { kind: "message"; data: MessageData }
-  | { kind: "reaction"; data: ReactionData }
   | { kind: "thought"; data: ThoughtData }
   | { kind: "tool_call"; data: ToolCallData }
   | { kind: "tool_result"; data: ToolResultData }
