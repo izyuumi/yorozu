@@ -27,7 +27,10 @@ gh release upload mac --repo "$PUBLIC" $DMGS "$STABLE" "$DIST/appcast.xml" --clo
 rm -rf "$(dirname "$STABLE")"
 
 TAG=$(git describe --tags --abbrev=0 --match 'v*')
-gh release upload "$TAG" "$DIST"/Yorozu-*.dmg "$DIST/appcast.xml" --clobber
+gh release view "$TAG" --repo "$PUBLIC" >/dev/null 2>&1 \
+  || gh release create "$TAG" --repo "$PUBLIC" --title "Yorozu ${TAG#v}" --notes "Download: https://yorozu.yumi.to/mac" --latest
+# shellcheck disable=SC2086 # one path per DMG, none with spaces
+gh release upload "$TAG" --repo "$PUBLIC" $DMGS "$DIST/appcast.xml" --clobber
 
 # The build number is what Sparkle compares, so it is what says whether this went anywhere.
 grep -m1 '<sparkle:version>' "$DIST/appcast.xml"
