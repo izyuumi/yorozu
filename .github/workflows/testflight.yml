@@ -6,12 +6,15 @@ on:
 
 jobs:
   ios:
-    runs-on: [self-hosted, macOS, ARM64, yorozu]
+    runs-on: macos-latest
     steps:
       # fetch-depth: 0 because the build number is the commit count and the marketing
       # version is the latest tag.
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
+      # The hosted image's default Xcode can lag; this project needs the newest stable.
+      - uses: maxim-lukyanov/setup-xcode@v1
+        with: { xcode-version: latest-stable }
       - run: command -v tuist >/dev/null || brew install --cask tuist
       # No certificate secret: signing is automatic, and the same key that authenticates
       # the upload is what lets xcodebuild issue the certificate and profile it needs.

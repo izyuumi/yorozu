@@ -1,9 +1,12 @@
 name: CI
 on: [push, pull_request]
 
+# GitHub-hosted runners only: this repo is public, and a self-hosted runner would run any fork's
+# pull request on the maintainer's Mac.
+
 jobs:
   node:
-    runs-on: [self-hosted, macOS, ARM64, yorozu]
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -16,17 +19,23 @@ jobs:
       - run: pnpm -r test
 
   swift:
-    runs-on: [self-hosted, macOS, ARM64, yorozu]
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      # The hosted image's default Xcode can lag; this project needs the newest stable.
+      - uses: maxim-lukyanov/setup-xcode@v1
+        with: { xcode-version: latest-stable }
       # `swift test` already builds this package; a separate build compiled it twice.
       - run: env -u SDKROOT swift test --package-path packages/shared-swift
       - run: env -u SDKROOT swift test --package-path apps/mac
 
   ios:
-    runs-on: [self-hosted, macOS, ARM64, yorozu]
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      # The hosted image's default Xcode can lag; this project needs the newest stable.
+      - uses: maxim-lukyanov/setup-xcode@v1
+        with: { xcode-version: latest-stable }
       # The Xcode project is generated, not checked in; see apps/ios/Project.swift.
       - run: command -v tuist >/dev/null || brew install --cask tuist
       - run: tuist generate --no-open --path apps/ios
