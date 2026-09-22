@@ -20,7 +20,6 @@ import {
   generateSigningKeypair,
   helloProof,
   attachmentsWithinLimits,
-  messageAttachments,
   open,
   seal,
   notifyFor,
@@ -34,6 +33,7 @@ import {
   type EventPayload,
   type Keypair,
   type ModelOption,
+  type MessageAttachment,
   type ProgressCardData,
   type ThreadAgent,
   type YorozuEvent,
@@ -637,7 +637,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     threadId: string,
     text: string,
     recorded = false,
-    attachments: ReturnType<typeof messageAttachments> = [],
+    attachments: MessageAttachment[] = [],
     userEventId?: string,
   ): Promise<void> {
     // A turn the phone did not send — a due job, a background delegation — is still part of
@@ -782,7 +782,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     threadId: string,
     text: string,
     recorded = false,
-    attachments: ReturnType<typeof messageAttachments> = [],
+    attachments: MessageAttachment[] = [],
     userEventId?: string,
     acceptedEvent?: YorozuEvent,
   ): Promise<void> {
@@ -870,7 +870,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   };
 
   function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0): void {
-    if (event.kind === "message" && !attachmentsWithinLimits(messageAttachments(event.data))) {
+    if (event.kind === "message" && !attachmentsWithinLimits(event.data.attachments ?? [])) {
       return state("rejected-oversized-attachments");
     }
     // Every command is receipted, the second copy included: a device that was never told the
@@ -1023,13 +1023,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (event.data.action === "continue") void enqueueTurn(event.threadId, "Continue the interrupted turn.");
         return;
       }
-      case "thread_set_bypass":
-        // Older clients use a thread command; approval bypass is now global.
-        if (threadAgent(event.threadId, dir) !== "yorozu" && typeof event.data.bypass === "boolean") {
-          saveSettings({ ...loadSettings(dir), yolo: event.data.bypass }, dir);
-          broadcast(control({ kind: "approval_settings", data: { yolo: event.data.bypass } }));
-        }
-        return broadcast(threadList());
       case "thread_set_model": {
         const agent = threadAgent(event.threadId, dir);
         const model = event.data.model;
@@ -1069,7 +1062,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       return oldest.settle(typed);
     }
-    const queued = enqueueTurn(event.threadId, event.data.text, true, messageAttachments(event.data), event.id, event);
+    const queued = enqueueTurn(event.threadId, event.data.text, true, event.data.attachments ?? [], event.id, event);
     // Admission is durable now. Echoing by id is harmless and converges all clients.
     broadcast(event);
     queued.catch((e: unknown) => {

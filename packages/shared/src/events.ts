@@ -51,15 +51,9 @@ export interface MessageData {
    * A flag rather than a kind of its own: the final message is already the thing that ends a turn.
    */
   done?: boolean;
-  /** Legacy first attachment, retained while older clients remain in circulation. */
-  attachment?: MessageAttachment;
-  /** Photos and files sent together. Current clients prefer this over `attachment`. */
+  /** Photos and files sent together. */
   attachments?: MessageAttachment[];
 }
-
-/** Reads current and legacy message shapes without duplicating the first attachment. */
-export const messageAttachments = (data: MessageData): MessageAttachment[] =>
-  data.attachments ?? (data.attachment ? [data.attachment] : []);
 
 export function attachmentBytes(attachment: MessageAttachment): number {
   const padding = attachment.data.endsWith("==") ? 2 : attachment.data.endsWith("=") ? 1 : 0;
@@ -556,7 +550,6 @@ export type EventPayload =
   | { kind: "thread_read"; data: ThreadReadData }
   | { kind: "thread_set_model"; data: ThreadSetModelData }
   | { kind: "thread_set_effort"; data: ThreadSetEffortData }
-  | { kind: "thread_set_bypass"; data: { bypass: boolean } }
   | { kind: "thread_recover"; data: { turnId: string; action: "continue" | "dismiss" } }
   | { kind: "model_list"; data: ModelListData }
   | { kind: "project_list"; data: ProjectListData }
@@ -615,7 +608,11 @@ const BASE64URL = /^[A-Za-z0-9_-]+$/;
 
 /** Parses an untrusted pairing string. Throws on anything that is not a v1 payload. */
 export function decodePairingString(text: string): QrPayload {
-  const query = new URL(text.trim()).searchParams;
+  const url = new URL(text.trim());
+  if (url.protocol !== "yorozu:" || url.hostname !== "pair") {
+    throw new Error("not a Yorozu v1 pairing string");
+  }
+  const query = url.searchParams;
   const relayUrl = query.get("relay") ?? "";
   const macPubkey = query.get("key") ?? "";
   const token = query.get("token") ?? "";
@@ -634,24 +631,7 @@ export function decodePairingString(text: string): QrPayload {
   return { v: 1, relayUrl, macPubkey, token, ...(roomId ? { roomId } : {}), ...(secret ? { secret } : {}) };
 }
 
-/**
- * Parses an untrusted QR string: the pairing string above, or the JSON form older phones
- * were paired with. Throws on anything that is neither.
- */
+/** Parses an untrusted v1 pairing string. */
 export function decodeQrPayload(text: string): QrPayload {
-  if (text.trimStart().startsWith("yorozu:")) return decodePairingString(text);
-  const p: unknown = JSON.parse(text);
-  if (
-    typeof p !== "object" ||
-    p === null ||
-    (p as QrPayload).v !== 1 ||
-    typeof (p as QrPayload).relayUrl !== "string" ||
-    typeof (p as QrPayload).macPubkey !== "string" ||
-    typeof (p as QrPayload).token !== "string" ||
-    !["string", "undefined"].includes(typeof (p as QrPayload).roomId) ||
-    !["string", "undefined"].includes(typeof (p as QrPayload).secret)
-  ) {
-    throw new Error("not a Yorozu v1 QR payload");
-  }
-  return p as QrPayload;
+  return decodePairingString(text);
 }

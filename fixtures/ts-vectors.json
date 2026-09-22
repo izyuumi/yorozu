@@ -1,15 +1,15 @@
 {
   "source": "ts",
-  "alicePriv": "-FVR64swFVMRIf6p0b2m-DF8NnZBmFj06p-QR0_eTF4",
-  "alicePub": "Fpg61LZe2T1yuwcNWCP-_nkcqcNEifjX2if_j5QzfCE",
-  "bobPriv": "EGT9_l05-IzU5Ru_99i_0Mj4HijkusMkKmgpbhrcG0U",
-  "bobPub": "_i07pStFHV4ayT84ShNM2SKxM8YPn24Z_NvkBGp7WDg",
-  "sessionKey": "S8Gh_ARjOyipwYGdmHipBe8m7bdApvZ7VOqqhp4StT8",
-  "nonce": "-w2OG8jBS5xTDaNg",
+  "alicePriv": "-Es9Ed8PrS_LdZD8f8CyswaI6pN3Vhv-a-LsxO7YQGE",
+  "alicePub": "I59uMWFAfozpGSHQJ9MwAguHQr8-GKqbJhg1AKX96m0",
+  "bobPriv": "kP2SCyFK-ya75FVDwa4gx6J6FlZwsLWBFQxQaspn5ls",
+  "bobPub": "ZKzyj-ZNk1YwbV3Ax60S_Ic24JL_gNtfWDxlvSHYQlM",
+  "sessionKey": "fcQkRQGfPZ-pas_BJlBbqxkTRK3kCnEF19yS9l0_Un0",
+  "nonce": "pNyPuAxblNd-qjLZ",
   "plaintext": "eW9yb3p1IGNyb3NzLWxhbmd1YWdlIHZlY3Rvcg",
-  "ciphertext": "LF4lt7-bN6XZadegj7njr_CVhuxqjdYYr9sjy0IZZMQI67FcEyI9Nx-UZmg",
-  "signPriv": "d0czXGmHB5EQFXe6ldzaHk4g5IDFFHG0v6mMVJ2Qpt8",
-  "signPub": "q7tchvt8pUxNLONVyUR0qgh8phf5mZ1w97L6iMGiias",
-  "signature": "P9e61Jqp8chqBcP0cP_Ng6dcz4VKsJVoyHFrY3eOssr8OMMSPvUDWITc_lPR8D2dr4O9p0GCb1Cuzyi1-8xIDQ",
-  "qr": "{\"v\":1,\"relayUrl\":\"wss://relay.yumi.to\",\"macPubkey\":\"Fpg61LZe2T1yuwcNWCP-_nkcqcNEifjX2if_j5QzfCE\",\"token\":\"f6pQNY2UGDOdkCJSrqDszw\"}"
+  "ciphertext": "SlURF6rrv1lojOwD24NOJ0_V0m9RMnqRVFzjSPfxk_x6kHR-1-d6a5udwIs",
+  "signPriv": "K0X88d_de-N8_t4x6mZZRano2eVuh7ENdEKZj4vjXx4",
+  "signPub": "0SPNTp8qHPWHls3uM8ZpHln34eBhPLuMEC7GAAD67vE",
+  "signature": "xpmh-o2wTP2xEYUSbzDL2XBvvD8_unXUhkPFXXhM3yFBRgoVMERGL1Rqv-dC9rTPpTbVY4QDy-DckeSTXOL5Aw",
+  "qr": "yorozu://pair?v=1&relay=wss%3A%2F%2Frelay.yumi.to&key=I59uMWFAfozpGSHQJ9MwAguHQr8-GKqbJhg1AKX96m0&token=arngUqE9zhc_nfaeua5lBg"
 }

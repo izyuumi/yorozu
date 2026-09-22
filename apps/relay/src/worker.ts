@@ -319,10 +319,6 @@ export class Room implements DurableObject {
     for (const [, entry] of entries) {
       send(mac, JSON.stringify({ ...(JSON.parse(entry.raw) as object), seq: entry.seq }));
     }
-    // Entries buffered before frames carried a sequence cannot be acked, so they are let go
-    // on send as they always were rather than replayed until their TTL.
-    const legacy = entries.filter(([, entry]) => entry.seq === undefined).map(([key]) => key);
-    if (legacy.length > 0) await this.state.storage.delete(legacy);
   }
 
   /** The Mac has handled everything up to `seq`; those entries are done with. */

@@ -29,7 +29,7 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
                 MessageData(
                     role: .user,
                     text: "hi",
-                    attachment: MessageAttachment(name: "receipt.png", mime: "image/png", data: "aGk=")
+                    attachments: [MessageAttachment(name: "receipt.png", mime: "image/png", data: "aGk=")]
                 )
             )
         case .thought: .thought(ThoughtData(text: "checking the catalog"))
@@ -105,7 +105,6 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         case .threadRead: .threadRead(ThreadReadData(at: 1_757_640_000_000, reset: true))
         case .threadSetModel: .threadSetModel(ThreadSetModelData(model: "claude/claude-opus-5"))
         case .threadRecover: .threadRecover(ThreadRecoverData(turnId: "turn", action: .continue))
-        case .threadSetBypass: .threadSetBypass(ThreadSetBypassData(bypass: true))
         case .threadSetEffort: .threadSetEffort(ThreadSetEffortData(effort: .high))
         case .modelList:
             .modelList(ModelListData(models: [
@@ -182,16 +181,6 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     #expect((plainJson?["data"] as? [String: Any])?["done"] == nil)
 }
 
-@Test func qrPayloadsRoundTripAndUntrustedInputIsRejected() throws {
-    let qr = QrPayload(relayUrl: "wss://relay.yumi.to", macPubkey: "AAA", token: "t", roomId: "r")
-    #expect(try QrPayload.decode(qr.encoded()) == qr)
-    // Payloads minted before rooms were carried in the QR still decode.
-    let legacy = QrPayload(relayUrl: "wss://relay.yumi.to", macPubkey: "AAA", token: "t")
-    #expect(try QrPayload.decode(legacy.encoded()).roomId == nil)
-    #expect(throws: (any Error).self) { try QrPayload.decode(#"{"v":2,"relayUrl":"","macPubkey":"","token":""}"#) }
-    #expect(throws: (any Error).self) { try QrPayload.decode("not json") }
-}
-
 @Test func pairingStringsAreParsedWhereverTheyCameFrom() throws {
     // What TypeScript's `encodePairingString` writes, percent-encoding and all.
     let code = "yorozu://pair?v=1&relay=ws%3A%2F%2F127.0.0.1%3A8791&key=AAA&token=t-_&room=r"
@@ -199,6 +188,8 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         try QrPayload.decode(code)
             == QrPayload(relayUrl: "ws://127.0.0.1:8791", macPubkey: "AAA", token: "t-_", roomId: "r")
     )
+    #expect(throws: (any Error).self) { try QrPayload.decode(#"{"v":1,"relayUrl":"ws://r","macPubkey":"AAA","token":"t"}"#) }
+    #expect(try QrPayload.decode(QrPayload(relayUrl: "ws://127.0.0.1:8791", macPubkey: "AAA", token: "t-_", roomId: "r").encoded()).roomId == "r")
     // Whitespace is what a paste out of Messages brings with it.
     #expect(try QrPayload.decode("  \(code)\n").roomId == "r")
     #expect(try QrPayload.decode("yorozu://pair?v=1&relay=ws://r&key=AAA&token=t").roomId == nil)
@@ -333,17 +324,14 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
             MessageData(
                 role: .user,
                 text: "what is this?",
-                attachment: MessageAttachment(name: "receipt.png", mime: "image/png", data: "aGk=")
+                attachments: [MessageAttachment(name: "receipt.png", mime: "image/png", data: "aGk=")]
             )
         )
     )
     let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(event)) as? [String: Any]
     let data = try #require(json?["data"] as? [String: Any])
-    let attachment = try #require(data["attachment"] as? [String: Any])
     let attachments = try #require(data["attachments"] as? [[String: Any]])
-    #expect(attachment["name"] as? String == "receipt.png")
-    #expect(attachment["mime"] as? String == "image/png")
-    #expect(attachment["data"] as? String == "aGk=")
+    #expect(attachments.first?["data"] as? String == "aGk=")
     #expect(attachments.count == 1)
 
     // A message without one says nothing about attachments, so the key stays absent on the wire.
@@ -352,11 +340,7 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         payload: .message(MessageData(role: .user, text: "hi"))
     )
     let plainJson = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plain)) as? [String: Any]
-    #expect((plainJson?["data"] as? [String: Any])?["attachment"] == nil)
     #expect((plainJson?["data"] as? [String: Any])?["attachments"] == nil)
-
-    let legacy = Data(#"{"role":"user","text":"","attachment":{"name":"old.pdf","mime":"application/pdf","data":"aGk="}}"#.utf8)
-    #expect(try JSONDecoder().decode(MessageData.self, from: legacy).attachments.map(\.name) == ["old.pdf"])
 }
 
 /// The wire spells the three grants out, and the declaration order is the card's button order:

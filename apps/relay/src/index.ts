@@ -138,9 +138,6 @@ function drainBuffer(room: Room, mac: WebSocket, now: number): void {
   for (const entry of room.buffer) {
     mac.send(JSON.stringify({ ...(JSON.parse(entry.raw) as object), seq: entry.seq }));
   }
-  // Entries without a sequence cannot be acked, so they are let go on send. Every entry this
-  // relay writes has one; the rule is here so both relays drain alike.
-  room.buffer = room.buffer.filter((entry) => entry.seq !== undefined);
 }
 
 function ackBuffer(room: Room, seq: number): void {
