@@ -59,6 +59,20 @@ struct GeneralView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            // The one approval setting Yorozu itself still owns: the global bypass the
+            // native agents read. Same toggle as the phone's; the runtime stores it.
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("YOLO mode — skip all approvals", isOn: Binding(
+                    get: { session.model.yoloMode },
+                    set: { session.model.setYoloMode($0) }
+                ))
+                if session.model.yoloMode {
+                    Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+            .onAppear { session.model.requestApprovalSettings() }
             if session.role == .host { KeepaliveView() }
             if session.role == .host { VStack(alignment: .leading, spacing: 4) {
                 Toggle("Never sleep", isOn: Binding(

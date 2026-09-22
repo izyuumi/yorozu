@@ -102,7 +102,7 @@ struct ChatWindowView: View {
         .background(WindowNumberReporter())
     }
 
-    /// Pairing, providers, browser, models and the wizard all moved into the Settings scene when
+    /// Pairing, permissions and the wizard all moved into the Settings scene when
     /// the window became the chat; this is the way back to them, plus the sidecar's state.
     private var gear: some View {
         HStack(spacing: 8) {
@@ -154,7 +154,7 @@ struct ChatWindowView: View {
 /// menu both find them.
 struct SettingsView: View {
     private enum SettingsSection: String, CaseIterable, Identifiable {
-        case general, devices, permissions, providers, approvals, rules
+        case general, devices, permissions
 
         var id: Self { self }
         var presentation: (title: String, symbol: String) {
@@ -162,9 +162,6 @@ struct SettingsView: View {
             case .general: ("General", "gearshape")
             case .devices: ("Devices", "iphone.and.arrow.forward")
             case .permissions: ("Permissions", "lock.shield")
-            case .providers: ("Providers", "point.3.connected.trianglepath.dotted")
-            case .approvals: ("Approvals", "hand.raised")
-            case .rules: ("Rules", "checklist")
             }
         }
     }
@@ -214,14 +211,6 @@ struct SettingsView: View {
         case .general: GeneralView()
         case .devices: DevicesView(sidecar: sidecar)
         case .permissions: PermissionsView(showsTitle: false)
-        case .providers:
-            ProvidersView()
-            Divider().padding(.vertical, 4)
-            ModelsView()
-            Divider().padding(.vertical, 4)
-            BrowserView()
-        case .approvals: ApprovalFloorView()
-        case .rules: RulesView()
         }
     }
 }

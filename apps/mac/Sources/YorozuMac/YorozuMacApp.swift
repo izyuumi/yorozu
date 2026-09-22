@@ -38,15 +38,33 @@ final class Sidecar: ObservableObject {
         spawn(generation: generation)
     }
 
+    /// The runtime bundled by `scripts/build-mac.sh` when there is one, else the dev
+    /// default: `swift run` from `apps/mac` leaves the repo layout reachable. Quoted
+    /// because the command is run through `/bin/sh` and an .app can sit in a path with
+    /// spaces. Override either with YOROZU_RUNTIME_CMD.
+    private static let defaultCommand: String = {
+        let dev = "node ../../packages/runtime/dist/serve.js"
+        guard let resources = Bundle.main.resourceURL else { return dev }
+        let node = resources.appendingPathComponent("node").path
+        let serve = resources.appendingPathComponent("runtime/dist/serve.js").path
+        guard FileManager.default.isExecutableFile(atPath: node),
+              FileManager.default.isReadableFile(atPath: serve)
+        else { return dev }
+        return "'\(node)' '\(serve)'"
+    }()
+
     private func spawn(generation: Int) {
         let command = ProcessInfo.processInfo.environment["YOROZU_RUNTIME_CMD"]
-            ?? RuntimeCommand.defaultCommand
+            ?? Self.defaultCommand
         let output = Pipe()
         let process = Process()
         input = Pipe()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", command]
         var environment = ProcessInfo.processInfo.environment
+        // The relay chosen in General; an explicit YOROZU_RELAY_URL in the app's own
+        // environment still wins, for dev runs.
+        if environment[RelaySettings.key] == nil { environment[RelaySettings.key] = RelaySettings.url }
         // The native tool host, if this build is bundled: quoted because the runtime runs the
         // command through /bin/sh, and an .app can sit in a path with spaces in it.
         if environment["YOROZU_NATIVE_CMD"] == nil,
