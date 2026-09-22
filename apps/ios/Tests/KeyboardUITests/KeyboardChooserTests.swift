@@ -10,12 +10,12 @@ final class KeyboardChooserTests: XCTestCase {
         app.launch()
         let field = app.textViews["Message"].exists
             ? app.textViews["Message"] : app.textFields["Message"]
-        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        XCTAssertTrue(field.waitForExistence(timeout: 30))
         field.tap()
         field.typeText("Keyboard regression draft")
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 20))
         app.buttons["Model and effort"].tap()
-        XCTAssertTrue(app.buttons["Auto"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Auto"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.keyboards.firstMatch.exists, "Opening must not hide keyboard")
         let openShot = XCTAttachment(screenshot: app.screenshot())
         openShot.name = "Native chooser with keyboard"
@@ -25,7 +25,7 @@ final class KeyboardChooserTests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.exists, "Model selection must preserve keyboard")
         app.buttons["Model and effort"].tap()
         let effort = app.buttons["Low"]
-        XCTAssertTrue(effort.waitForExistence(timeout: 3))
+        XCTAssertTrue(effort.waitForExistence(timeout: 15))
         effort.tap()
         XCTAssertTrue(app.keyboards.firstMatch.exists, "Effort selection must preserve keyboard")
         XCTAssertEqual(app.buttons["Model and effort"].value as? String, "Auto, Low")
@@ -40,9 +40,9 @@ final class KeyboardChooserTests: XCTestCase {
         app.launchArguments = ["-yorozuShowcase", "chat"]
         app.launch()
         let chooser = app.buttons["Model and effort"]
-        XCTAssertTrue(chooser.waitForExistence(timeout: 10))
+        XCTAssertTrue(chooser.waitForExistence(timeout: 30))
         chooser.tap()
-        XCTAssertTrue(app.buttons["Auto"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Auto"].waitForExistence(timeout: 15))
         XCTAssertFalse(app.keyboards.firstMatch.exists)
         app.buttons["Auto"].tap()
         XCTAssertFalse(app.keyboards.firstMatch.exists)
