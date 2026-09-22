@@ -3,9 +3,8 @@ import Testing
 
 @testable import YorozuShared
 
-/// When a message stops being a bubble and becomes a document, and how a quoted reply is
-/// written down and read back. Both are plain string rules, which is what makes them testable
-/// away from the view that asks them.
+/// When a message stops being a bubble and becomes a document: a plain string rule, which is
+/// what makes it testable away from the view that asks it.
 
 @Test func aMessageIsOnlyLongEnoughToReadElsewhereWhenItIsReallyLong() {
     #expect(!needsReader("short"))
@@ -38,31 +37,4 @@ import Testing
     let single = String(repeating: "z", count: 2000)
     #expect(readerExcerpt(single) == single)
     #expect(!needsReader(single))
-}
-
-@Test func aQuotedReplyIsOneMessageWithABlockquoteOnTop() {
-    #expect(quotedMessage(quoting: "the invoice", body: "which one?") == "> the invoice\n\nwhich one?")
-    // Every line of the quote is quoted, and a blank line inside it stays inside it — with no
-    // trailing space, which `> ` on an empty line would leave in every reply ever sent.
-    #expect(quotedMessage(quoting: "one\n\ntwo", body: "ok") == "> one\n>\n> two\n\nok")
-    // A quote with nothing typed yet is still a message: the quote alone.
-    #expect(quotedMessage(quoting: "just this", body: "   ") == "> just this")
-}
-
-@Test func splittingAQuoteGivesBackWhatWentIn() {
-    let message = quotedMessage(quoting: "the invoice\nfrom March", body: "which one?")
-    let parts = splitQuote(message)
-    #expect(parts.quote == "the invoice\nfrom March")
-    #expect(parts.body == "which one?")
-    // Prose that never had a quote comes back whole and unclaimed.
-    let plain = splitQuote("nothing quoted here\n> not leading")
-    #expect(plain.quote == nil)
-    #expect(plain.body == "nothing quoted here\n> not leading")
-}
-
-@Test func theChipShowsOneLineOfWhateverIsBeingQuoted() {
-    #expect(snippet("  many   spaces\nand a line break ") == "many spaces and a line break")
-    let long = snippet(String(repeating: "word ", count: 100), limit: 20)
-    #expect(long.count == 20)
-    #expect(long.hasSuffix("…"))
 }

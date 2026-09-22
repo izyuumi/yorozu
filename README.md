@@ -478,7 +478,7 @@ before the relay is even reachable.
 
 ### Outbox
 
-Every message, reaction and archive request goes through the outbox (`Outbox` in
+Every message and archive request goes through the outbox (`Outbox` in
 `packages/shared-swift`), link or no link, and leaves it only when the runtime's `receipt` names
 its id: a socket that accepted a send is not a runtime that received it, and iOS can leave a
 socket half-open with the Mac long gone. With the Mac asleep, or before the relay has paired the

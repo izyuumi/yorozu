@@ -35,7 +35,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
     }
 
     public enum Kind: String, Codable, Sendable, CaseIterable {
-        case message, reaction, thought
+        case message, thought
         case toolCall = "tool_call"
         case toolResult = "tool_result"
         case approvalCard = "approval_card"
@@ -71,7 +71,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
 
     public enum Payload: Equatable, Sendable {
         case message(MessageData)
-        case reaction(ReactionData)
         case thought(ThoughtData)
         case toolCall(ToolCallData)
         case toolResult(ToolResultData)
@@ -108,7 +107,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         public var kind: Kind {
             switch self {
             case .message: .message
-            case .reaction: .reaction
             case .thought: .thought
             case .toolCall: .toolCall
             case .toolResult: .toolResult
@@ -159,7 +157,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         syncCursor = try c.decodeIfPresent(String.self, forKey: .syncCursor)
         switch try c.decode(Kind.self, forKey: .kind) {
         case .message: payload = .message(try c.decode(MessageData.self, forKey: .data))
-        case .reaction: payload = .reaction(try c.decode(ReactionData.self, forKey: .data))
         case .thought: payload = .thought(try c.decode(ThoughtData.self, forKey: .data))
         case .toolCall: payload = .toolCall(try c.decode(ToolCallData.self, forKey: .data))
         case .toolResult: payload = .toolResult(try c.decode(ToolResultData.self, forKey: .data))
@@ -206,7 +203,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         try c.encode(payload.kind, forKey: .kind)
         switch payload {
         case .message(let d): try c.encode(d, forKey: .data)
-        case .reaction(let d): try c.encode(d, forKey: .data)
         case .thought(let d): try c.encode(d, forKey: .data)
         case .toolCall(let d): try c.encode(d, forKey: .data)
         case .toolResult(let d): try c.encode(d, forKey: .data)
@@ -337,20 +333,6 @@ public struct MessageData: Codable, Equatable, Sendable {
         // The first item keeps older Yorozu clients useful; current clients prefer the array.
         try c.encode(attachments[0], forKey: .attachment)
         try c.encode(attachments, forKey: .attachments)
-    }
-}
-
-/// A reaction targets an immutable message. Latest event from one device wins; `remove` clears
-/// that device's matching emoji while preserving reactions from other devices.
-public struct ReactionData: Codable, Equatable, Sendable {
-    public var messageId: String
-    public var emoji: String
-    public var remove: Bool?
-
-    public init(messageId: String, emoji: String, remove: Bool? = nil) {
-        self.messageId = messageId
-        self.emoji = emoji
-        self.remove = remove
     }
 }
 

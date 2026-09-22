@@ -122,29 +122,6 @@ private let result = YorozuEvent.Payload.toolResult(
     )
 }
 
-@Test func reactionsCollapsePerDeviceAndRemovalKeepsOtherDevices() {
-    let reactions = [
-        event(.reaction(ReactionData(messageId: "m1", emoji: "👍")), id: "r1", agent: "phone"),
-        event(.reaction(ReactionData(messageId: "m1", emoji: "👍")), id: "r2", agent: "mac"),
-        event(.reaction(ReactionData(messageId: "m1", emoji: "👍", remove: true)), id: "r3", agent: "phone"),
-        event(.reaction(ReactionData(messageId: "m1", emoji: "❤️")), id: "r4", agent: "phone"),
-        event(.reaction(ReactionData(messageId: "else", emoji: "😂")), id: "r5", agent: "watch"),
-    ]
-
-    #expect(messageReactions(in: reactions, to: "m1", selectedBy: "phone") == [
-        MessageReaction(emoji: "👍", count: 1, selected: false),
-        MessageReaction(emoji: "❤️", count: 1, selected: true),
-    ])
-    #expect(messageReactionsByMessage(in: reactions, selectedBy: "phone") == [
-        "m1": [
-            MessageReaction(emoji: "👍", count: 1, selected: false),
-            MessageReaction(emoji: "❤️", count: 1, selected: true),
-        ],
-        "else": [MessageReaction(emoji: "😂", count: 1, selected: false)],
-    ])
-    #expect(chatRows(from: reactions).isEmpty)
-}
-
 @Test func theMainAgentsOwnToolUseIsItsTrace() {
     let events = [
         event(ask("hi"), id: "ask", agent: "phone"),

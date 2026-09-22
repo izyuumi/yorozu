@@ -1102,18 +1102,10 @@ test("two phones pair at once and see the same threads, events and deltas", asyn
   first.send(chat, { kind: "sync_request", data: { lastSeen: { [chat]: "nope" } } });
   expect((await first.next("sync_delta")).kind).toBe("sync_delta");
 
-  first.send(chat, { kind: "reaction", data: { messageId: "reply", emoji: "👍" } });
-  for (const phone of [first, second]) {
-    expect(await phone.next("reaction")).toMatchObject({
-      threadId: chat,
-      data: { messageId: "reply", emoji: "👍" },
-    });
-  }
-
   // Any thread archives now, for every device at once.
   first.send(chat, { kind: "thread_archive", data: {} });
   expect(await second.next("thread_list")).toMatchObject({
-    data: { threads: [{ id: chat, archived: true }, { id: groceries, archived: false }] },
+    data: { threads: [{ id: groceries, archived: false }, { id: chat, archived: true }] },
   });
 
   // Read state is the runtime's: the phone that read the thread says so, and the *other* phone

@@ -216,6 +216,7 @@ struct ThreadRow: View {
     var preview: String? = nil
     var highlightQuery = ""
     var selected = false
+    var chevron = false
 
     @ScaledMetric(relativeTo: .body) private var dot = 9
 
@@ -276,6 +277,12 @@ struct ThreadRow: View {
                     .fill(.tint)
                     .frame(width: dot, height: dot)
                     .accessibilityLabel("Unread")
+            }
+            if chevron {
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
             }
         }
         .padding(.horizontal, LayoutMetrics.stack)
@@ -664,6 +671,9 @@ public struct ThreadListView<Destination: View>: View {
         } label: {
             Label(title, systemImage: "archivebox").font(.subheadline)
         }
+        // Match the thread rows: the list draws on the canvas, not the system row fill.
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 
     @ViewBuilder private func rows(
@@ -671,13 +681,22 @@ public struct ThreadListView<Destination: View>: View {
         preview: @escaping (ThreadSummary) -> String? = { _ in nil }
     ) -> some View {
         ForEach(threads) { thread in
-            NavigationLink(value: thread.id) {
-                ThreadRow(
-                    thread: thread,
-                    working: workingThreads.contains(thread.id),
-                    preview: preview(thread),
-                    highlightQuery: searchNeedle
-                )
+            let row = ThreadRow(
+                thread: thread,
+                working: workingThreads.contains(thread.id),
+                preview: preview(thread),
+                highlightQuery: searchNeedle,
+                chevron: !splitLayout
+            )
+            Group {
+                if splitLayout {
+                    // The sidebar marks the open thread by selection, not a chevron.
+                    NavigationLink(value: thread.id) { row }
+                } else {
+                    // The list's own chevron sits outside the card; a hidden link keeps the
+                    // row tappable while the card draws its chevron inside.
+                    row.background { NavigationLink(value: thread.id) { EmptyView() }.opacity(0) }
+                }
             }
             .listRowInsets(EdgeInsets(top: 3, leading: 12, bottom: 3, trailing: 12))
             .listRowSeparator(.hidden)

@@ -35,8 +35,6 @@ public struct ChatView: View {
     /// Id of the reply whose first token just landed, which is the moment worth a tap.
     @State private var replyStarted: String?
     @State private var attachmentTooLarge = false
-    /// The message being replied to, quoted above the field until it is sent or dismissed.
-    @State private var replyQuote: String?
     @State private var searching = false
     @State private var choosingAgent = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -242,7 +240,7 @@ public struct ChatView: View {
         // window and the thread list settle, and a plain `.task` left the seeded state on
         // whichever copy ran first rather than on the one on screen.
         .task(id: thread.id) {
-            ChatShowcase.apply(search: $search, searching: $searching, quote: $replyQuote)
+            ChatShowcase.apply(search: $search, searching: $searching)
         }
         // What the Mac's Edit, Thread and Chat menus act on. The same four things the toolbar
         // and the composer offer, published where a menu built by the scene can reach them.
@@ -299,18 +297,17 @@ public struct ChatView: View {
     }
 
     @ViewBuilder private var messages: some View {
-        let reactions = model.reactions(in: thread.id)
         #if os(iOS)
-            nativeMessages(reactions: reactions)
+            nativeMessages
         #else
             // The split-view detail is reused across selections. Recreate the scroll container
             // so its default bottom anchor belongs to this thread, not the previous one.
-            swiftUIMessages(reactions: reactions).id(thread.id)
+            swiftUIMessages.id(thread.id)
         #endif
     }
 
     #if os(iOS)
-        private func nativeMessages(reactions: [String: [MessageReaction]]) -> some View {
+        private var nativeMessages: some View {
             let notificationRequest = resumeRequest.flatMap { id -> TimelineRequest? in
                 // A cold notification can resolve its thread before that thread's refreshed
                 // events arrive. Keep the request pending until the unread assistant bubble
@@ -343,14 +340,12 @@ public struct ChatView: View {
                     answeredQuestions: model.answeredQuestions,
                     questionChoices: model.questionChoices,
                     handledProposals: model.handledProposals,
-                    choices: model.choices,
-                    reactions: reactions
+                    choices: model.choices
                 ),
                 atBottom: $atBottom,
                 showJumpToLatest: $showJumpToLatest,
-                onReply: { replyQuote = $0 },
                 content: { row in
-                    AnyView(rowView(row, reactions: reactions).environment(\.searchHighlight, search))
+                    AnyView(rowView(row).environment(\.searchHighlight, search))
                 }
             )
             // A thread change must create a fresh native timeline. Reusing the previous
@@ -391,14 +386,14 @@ public struct ChatView: View {
         }
     #endif
 
-    private func swiftUIMessages(reactions: [String: [MessageReaction]]) -> some View {
+    private var swiftUIMessages: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     // A delegation collapses to one card where it started and what the
                     // specialist did is behind it; the main agent's own tool use is shown
                     // here, grouped, where it happened.
-                    ForEach(rows) { row in rowView(row, reactions: reactions) }
+                    ForEach(rows) { row in rowView(row) }
                     if thinking { ThinkingRow() }
                     Color.clear.frame(height: 1).id(Self.bottomAnchor)
                 }
@@ -487,10 +482,7 @@ public struct ChatView: View {
         }
     }
 
-    @ViewBuilder private func rowView(
-        _ row: ChatRow,
-        reactions: [String: [MessageReaction]]
-    ) -> some View {
+    @ViewBuilder private func rowView(_ row: ChatRow) -> some View {
         switch row {
         case .work(let work):
             WorkRowView(work: work).id(work.id)
@@ -503,10 +495,7 @@ public struct ChatView: View {
                     status: model.outboxStatus(of: event.id),
                     onRetry: data.role == .user ? { retry(data) } : nil,
                     onDelete: { model.delete(event.id, in: thread.id) },
-                    onReply: { replyQuote = $0 },
-                    onResend: { model.retry(event.id) },
-                    reactions: reactions[event.id] ?? [],
-                    onReact: { model.react(to: event.id, with: $0, in: thread.id) }
+                    onResend: { model.retry(event.id) }
                 )
                 .id(event.id)
             }
@@ -560,12 +549,6 @@ public struct ChatView: View {
                     attachments.wrappedValue.remove(at: index)
                 }
                 .padding(.top, 8)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
-            if let quote = replyQuote {
-                ReplyChip(text: quote) { replyQuote = nil }
-                    .padding(.horizontal, 8)
-                    .padding(.top, 8)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             #if os(iOS)
@@ -735,12 +718,6 @@ public struct ChatView: View {
 
     private func send() {
         guard canSend else { return }
-        // The quote goes into the message itself, as a blockquote, so a reply is one ordinary
-        // message and no client, cache or runtime has to learn a new field for it.
-        if let quote = replyQuote {
-            draft.wrappedValue = quotedMessage(quoting: quote, body: draft.wrappedValue)
-            replyQuote = nil
-        }
         model.send(in: thread)
         sends += 1
         // Sending is always a jump to the end: it is your own message, and you meant it.
@@ -787,7 +764,6 @@ public struct ChatView: View {
         let questionChoices: [String: String]
         let handledProposals: Set<String>
         let choices: [String: ApprovalAnswerData.Answer]
-        let reactions: [String: [MessageReaction]]
     }
 
     /// Reports every UIKit layout pass. A diffable snapshot can finish before hosted SwiftUI
@@ -814,7 +790,6 @@ public struct ChatView: View {
         let presentation: TimelinePresentation
         @Binding var atBottom: Bool
         @Binding var showJumpToLatest: Bool
-        let onReply: (String) -> Void
         let content: (ChatRow) -> AnyView
 
         private enum Entry: Hashable {
@@ -828,9 +803,6 @@ public struct ChatView: View {
             var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
             configuration.showsSeparators = false
             configuration.backgroundColor = .clear
-            configuration.trailingSwipeActionsConfigurationProvider = { [weak coordinator = context.coordinator] indexPath in
-                coordinator?.replyActions(at: indexPath)
-            }
             let collectionView = TimelineCollectionView(
                 frame: .zero,
                 collectionViewLayout: UICollectionViewCompositionalLayout.list(using: configuration)
@@ -1040,27 +1012,6 @@ public struct ChatView: View {
                     pinLatestIfNeeded(collectionView)
                 }
             }
-
-            /// UIKit owns both this horizontal swipe and the timeline's vertical pan, so a
-            /// vertical drag begun on a bubble remains a scroll instead of being captured by a
-            /// gesture inside that bubble's hosted SwiftUI view.
-            func replyActions(at indexPath: IndexPath) -> UISwipeActionsConfiguration? {
-                guard let entry = dataSource?.itemIdentifier(for: indexPath),
-                      case .row(let id) = entry,
-                      case .message(let event) = rowsById[id],
-                      case .message(let message) = event.payload
-                else { return nil }
-                let action = UIContextualAction(style: .normal, title: String(localized: "Reply")) {
-                    [weak self] _, _, complete in
-                    self?.parent.onReply(splitQuote(message.text).body)
-                    complete(true)
-                }
-                action.image = UIImage(systemName: "arrowshape.turn.up.left")
-                action.backgroundColor = .tintColor
-                let configuration = UISwipeActionsConfiguration(actions: [action])
-                configuration.performsFirstActionWithFullSwipe = true
-                return configuration
-            }
         }
     }
 #endif
@@ -1219,8 +1170,6 @@ public enum ChatShowcase {
     public static var imageViewer = false
     /// A term, which opens the search field over the transcript with it already typed.
     public static var search: String?
-    /// A message, which puts its quote chip above the field.
-    public static var quote: String?
     /// Draws the "…" menu's Model choices as a popover over the toolbar. A screenshot needs
     /// them on screen and nothing on a simulator can open a real menu; the contents are the
     /// menu's own, not a copy of them.
@@ -1236,36 +1185,10 @@ public enum ChatShowcase {
     /// nothing on a simulator taps a button on demand, and the sheet is the part worth showing.
     public static var ruleEditor = false
 
-    static func apply(
-        search term: Binding<String>,
-        searching: Binding<Bool>,
-        quote chip: Binding<String?>
-    ) {
+    static func apply(search term: Binding<String>, searching: Binding<Bool>) {
         if let search {
             term.wrappedValue = search
             searching.wrappedValue = true
-        }
-        if let quote { chip.wrappedValue = quote }
-    }
-}
-
-/// What is being replied to, inside the composer surface above the field: the quote itself, and
-/// the way out of it. Dismissable, because changing your mind about a reply is not a mistake.
-private struct ReplyChip: View {
-    let text: String
-    let onDismiss: () -> Void
-
-    var body: some View {
-        HStack(spacing: 8) {
-            QuoteStrip(text: snippet(text))
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: controlTarget, height: controlTarget)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Remove quote")
         }
     }
 }

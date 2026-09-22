@@ -364,14 +364,6 @@ public final class ChatModel {
         flush()
     }
 
-    public func reactions(to messageId: String, in threadId: String) -> [MessageReaction] {
-        messageReactions(in: timeline(threadId).events, to: messageId, selectedBy: device)
-    }
-
-    public func reactions(in threadId: String) -> [String: [MessageReaction]] {
-        messageReactionsByMessage(in: timeline(threadId).events, selectedBy: device)
-    }
-
     /// Asks the Mac for the whole of a truncated tool result. The answer is the same
     /// `tool_result` event, whole, under the id already in the thread, so it lands in place.
     @ObservationIgnored private var resultChunks: [String: (offset: Int, output: String)] = [:]
@@ -387,13 +379,6 @@ public final class ChatModel {
     public func requestToolResult(_ callId: String, in threadId: String) {
         resultChunks[threadId + "\0" + callId] = (0, "")
         emit(.toolResultRequest(ToolResultRequestData(callId: callId)), in: threadId)
-    }
-
-    public func react(to messageId: String, with emoji: String, in threadId: String) {
-        let remove = reactions(to: messageId, in: threadId).contains { $0.emoji == emoji && $0.selected }
-        let reaction = event(.reaction(ReactionData(messageId: messageId, emoji: emoji, remove: remove)), in: threadId)
-        upsert(reaction)
-        deliver(reaction, queue: !canDeliver)
     }
 
     /// Every message goes through the outbox, link or no link: it leaves only on the runtime's

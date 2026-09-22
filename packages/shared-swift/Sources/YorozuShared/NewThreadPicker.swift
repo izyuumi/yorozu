@@ -111,7 +111,8 @@ public struct NewThreadPicker: View {
                     .foregroundStyle(YorozuPalette.ink)
                 Text(Self.summary(agent))
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    // Not `.secondary`: inside a Button label it picks up the vermilion tint.
+                    .foregroundStyle(YorozuPalette.ink.opacity(0.62))
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
@@ -173,12 +174,12 @@ public struct NewThreadPicker: View {
                         Text(folder.name).foregroundStyle(YorozuPalette.ink)
                         Text(folder.path)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(YorozuPalette.ink.opacity(0.62))
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
                 } icon: {
-                    Image(systemName: "folder").foregroundStyle(.secondary)
+                    Image(systemName: "folder").foregroundStyle(YorozuPalette.ink.opacity(0.62))
                 }
                 .contentShape(Rectangle())
             }

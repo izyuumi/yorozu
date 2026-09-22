@@ -32,7 +32,6 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
                     attachment: MessageAttachment(name: "receipt.png", mime: "image/png", data: "aGk=")
                 )
             )
-        case .reaction: .reaction(ReactionData(messageId: "m1", emoji: "👍"))
         case .thought: .thought(ThoughtData(text: "checking the catalog"))
         case .toolCall: .toolCall(ToolCallData(callId: "c1", name: "shell", args: ["cmd": .string("ls")]))
         case .toolResult: .toolResult(ToolResultData(callId: "c1", ok: true, output: "README.md"))
