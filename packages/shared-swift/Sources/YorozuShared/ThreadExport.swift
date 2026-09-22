@@ -47,7 +47,7 @@ public func threadMarkdown(
                         "",
                         collapsed(
                             title: card.title,
-                            body: card.steps.map { "- \($0.label) — \($0.state.rawValue)" }
+                            body: (card.note.map { [$0, ""] } ?? []) + card.steps.map { "- \($0.label) — \($0.state.rawValue)" }
                         ),
                     ]
                 }

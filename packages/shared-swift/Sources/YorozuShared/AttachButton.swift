@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 
 #if os(iOS)
     import UIKit
+#else
+    import AppKit
 #endif
 
 struct PastedImage: Transferable {
@@ -157,30 +159,67 @@ struct AttachButton: View {
 
     #if os(iOS)
         private func pasteImage() {
-            guard let image = UIPasteboard.general.images?.first,
-                let data = image.jpegData(compressionQuality: 1)
-            else { return }
-            stage([(name: "pasted.jpg", mime: "image/jpeg", bytes: data)])
+            stage(pasteboardImagePicks())
         }
     #endif
 
-    /// The one funnel every way in goes through: reduce, cap, hand over what survived, and say
-    /// so once if anything did not. One alert for a batch rather than one per file.
     private func stage(_ picks: [(name: String, mime: String, bytes: Data)]) {
-        guard !picks.isEmpty else { return }
-        var staged: [MessageAttachment] = []
-        var refused = picks.count > remaining
-        for pick in picks.prefix(max(0, remaining)) {
-            if let attachment = attachmentForSending(name: pick.name, mime: pick.mime, bytes: pick.bytes) {
-                staged.append(attachment)
-            } else {
-                refused = true
-            }
-        }
-        if !staged.isEmpty { onPick(staged) }
-        if refused { onTooLarge() }
+        stageAttachments(picks, remaining: remaining, onPick: onPick, onTooLarge: onTooLarge)
     }
 }
+
+/// The one funnel every way in goes through: reduce, cap, hand over what survived, and say
+/// so once if anything did not. One alert for a batch rather than one per file.
+func stageAttachments(
+    _ picks: [(name: String, mime: String, bytes: Data)],
+    remaining: Int,
+    onPick: ([MessageAttachment]) -> Void,
+    onTooLarge: () -> Void
+) {
+    guard !picks.isEmpty else { return }
+    var staged: [MessageAttachment] = []
+    var refused = picks.count > remaining
+    for pick in picks.prefix(max(0, remaining)) {
+        if let attachment = attachmentForSending(name: pick.name, mime: pick.mime, bytes: pick.bytes) {
+            staged.append(attachment)
+        } else {
+            refused = true
+        }
+    }
+    if !staged.isEmpty { onPick(staged) }
+    if refused { onTooLarge() }
+}
+
+/// Every image on the pasteboard, ready for ``stageAttachments`` — what the + menu's Paste and
+/// the message field's own Paste (⌘V, or the edit menu) both read.
+#if os(iOS)
+    func pasteboardHasImages() -> Bool { UIPasteboard.general.hasImages }
+
+    func pasteboardImagePicks() -> [(name: String, mime: String, bytes: Data)] {
+        (UIPasteboard.general.images ?? []).compactMap { image in
+            image.jpegData(compressionQuality: 1).map { (name: "pasted.jpg", mime: "image/jpeg", bytes: $0) }
+        }
+    }
+#else
+    func pasteboardHasImages() -> Bool {
+        let board = NSPasteboard.general
+        // Rich text from Pages, Word or a web page often carries a picture of itself beside the
+        // text: that is a text paste. A file copied in Finder has its name as text, and is not.
+        if board.availableType(from: [.string]) != nil, board.availableType(from: [.fileURL]) == nil {
+            return false
+        }
+        return !pasteboardImagePicks().isEmpty
+    }
+
+    func pasteboardImagePicks() -> [(name: String, mime: String, bytes: Data)] {
+        let images = NSPasteboard.general.readObjects(forClasses: [NSImage.self]) as? [NSImage] ?? []
+        return images.compactMap { image in
+            image.tiffRepresentation
+                .flatMap { NSBitmapImageRep(data: $0)?.representation(using: .png, properties: [:]) }
+                .map { (name: "pasted.png", mime: "image/png", bytes: $0) }
+        }
+    }
+#endif
 
 #if os(iOS)
     /// The system camera, which has no SwiftUI form of its own: `UIImagePickerController` is

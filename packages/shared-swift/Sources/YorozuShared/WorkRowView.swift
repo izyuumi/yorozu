@@ -17,7 +17,7 @@ public struct WorkRowView: View {
 
     @ViewBuilder public var body: some View {
         if let liveProgress {
-            ProgressCardView(card: liveProgress)
+            ProgressCardView(card: liveProgress, activity: work.running ? work.activity : nil)
         } else {
             activity
         }

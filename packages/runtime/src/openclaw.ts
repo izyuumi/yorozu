@@ -24,6 +24,8 @@ interface PendingTurn {
   userEventId?: string;
   seen: Set<string>;
   calls: Set<string>;
+  /** The latest `progress_card` narrative, carried onto plan updates that arrive without it. */
+  progressNote?: string;
   tasks: Map<string, string>;
   childRunIds: Set<string>;
   input: StoredTurnInput;
@@ -559,6 +561,13 @@ export class OpenClawRunner {
         this.activity(pending, `call:${rawId}`, { kind: "tool_call", data: {
           callId, name: activityText(data.name).slice(0, 128) || "Tool", args: record(safeActivityValue(data.args)),
         } });
+        // The card comes from the call itself, not only the plan stream: history replay after
+        // a failed or reattached run carries tool calls but never plan events.
+        if (data.name === "progress_card") {
+          const args = record(data.args);
+          if (typeof args.markdown === "string" && args.markdown.trim()) pending.progressNote = activityText(args.markdown.trim());
+          if (Array.isArray(args.plan)) this.progressCard(pending, `progress:${rawId}`, args.plan);
+        }
       }
       if (phase === "result") this.activity(pending, `result:${rawId}`, { kind: "tool_result", data: {
         callId, ok: data.isError !== true,
@@ -572,15 +581,20 @@ export class OpenClawRunner {
       const text = activityText(data.text ?? data.content ?? "");
       if (text) this.activity(pending, key, { kind: "thought", data: { text } });
     } else if (payload.stream === "plan" && Array.isArray(data.steps)) {
-      const cardId = `openclaw-plan:${pending.runId}`;
-      this.activity(pending, key, { kind: "progress_card", data: {
-        cardId, title: "Progress", steps: data.steps.slice(0, 30).map((step) => {
-          const item = record(step);
-          const status = item.status ?? item.state;
-          return { label: activityText(item.step ?? item.label), state: status === "completed" ? "done" : status === "in_progress" ? "running" : status === "failed" ? "failed" : "pending" };
-        }),
-      } });
+      this.progressCard(pending, key, data.steps);
     }
+  }
+
+  private progressCard(pending: PendingTurn, key: string, plan: unknown[]): void {
+    this.activity(pending, key, { kind: "progress_card", data: {
+      cardId: `openclaw-plan:${pending.runId}`, title: "Progress",
+      ...(pending.progressNote ? { note: pending.progressNote } : {}),
+      steps: plan.slice(0, 30).map((step) => {
+        const item = record(step);
+        const status = item.status ?? item.state;
+        return { label: activityText(item.step ?? item.label), state: status === "completed" ? "done" : status === "in_progress" ? "running" : status === "failed" ? "failed" : "pending" };
+      }),
+    } });
   }
 
   private async restoreProgress(client: Gateway, pending: PendingTurn): Promise<void> {
