@@ -1,5 +1,13 @@
 name: CI
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# One run per ref: a newer push cancels the one it supersedes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 # GitHub-hosted runners only: this repo is public, and a self-hosted runner would run any fork's
 # pull request on the maintainer's Mac.
@@ -31,6 +39,8 @@ jobs:
 
   ios:
     runs-on: macos-latest
+    # Simulator UI tests can hang on a hosted runner; fail instead of holding a slot for hours.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       # The hosted image's default Xcode can lag; this project needs the newest stable.
