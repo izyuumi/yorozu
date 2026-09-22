@@ -8,7 +8,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 DIST=${DIST:-dist}
-DOWNLOAD_PREFIX=${DOWNLOAD_PREFIX:-https://dl.yumi.to/}
+DOWNLOAD_PREFIX=${DOWNLOAD_PREFIX:-https://yorozu.yumi.to/download/}
 
 # Shipped inside the Sparkle package, so `swift build` is what installs it.
 TOOL="$(find apps/mac/.build/artifacts -name generate_appcast -type f -perm -u+x 2>/dev/null | head -1)"

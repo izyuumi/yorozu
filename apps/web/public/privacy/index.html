@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Privacy Policy — Yorozu</title>
+  <meta name="description" content="What Yorozu collects, what its relay can see, and what it cannot.">
+  <link rel="canonical" href="https://yorozu.yumi.to/privacy/">
+  <link rel="icon" href="/favicon.png" type="image/png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header>
+    <a class="wordmark" href="/"><img src="/assets/icon.png" alt="" width="34" height="34">Yorozu</a>
+    <nav aria-label="Primary">
+      <a href="/privacy/" aria-current="page">Privacy</a>
+      <a href="/terms/">Terms</a>
+    </nav>
+  </header>
+
+  <main id="main" class="legal">
+    <h1>Privacy Policy</h1>
+    <p class="effective">Effective September 22, 2026</p>
+
+    <p>Yorozu is a Mac app and an iPhone app made by Yumi Izumi ("we"). This policy explains what data Yorozu handles. In short: <strong>we don't run accounts, analytics or advertising, and we can't read your conversations.</strong></p>
+
+    <h2>What stays on your devices</h2>
+    <p>Your messages, threads, files, agent output, pairing keys and settings are stored on your Mac and iPhone. Private keys are stored in the macOS and iOS Keychain. We never receive your Claude, OpenAI, OpenClaw or other provider credentials. Those stay with the tools that use them on your Mac.</p>
+
+    <h2>The relay</h2>
+    <p>Your iPhone reaches your Mac through a relay we operate on Cloudflare at <code>relay.yumi.to</code>. You can also run your own. Everything you send is end-to-end encrypted (X25519 key agreement, ChaCha20-Poly1305) before it reaches the relay, and the relay has no key to decrypt it. The relay does handle:</p>
+    <ul>
+      <li><strong>Encrypted messages</strong>, held for up to 24 hours while the receiving device is offline, then deleted.</li>
+      <li><strong>Public keys</strong> of paired devices and a random room identifier, kept until you unpair the device.</li>
+      <li><strong>One-time pairing tokens</strong>, which expire after 10 minutes.</li>
+      <li><strong>Your iPhone's Apple push token</strong>, so the relay can wake the app, kept until you unpair the device or Apple reports the token is no longer valid.</li>
+      <li><strong>Metadata</strong>: when devices connect, message sizes and timing, and a notification type (reply, approval, done or failed) with an opaque thread reference. Connection logs never contain message content or keys.</li>
+      <li><strong>IP addresses</strong>, which Cloudflare processes to deliver traffic, under <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare's privacy policy</a>.</li>
+    </ul>
+
+    <h2>Notifications</h2>
+    <p>Push notifications are delivered by Apple. The notification Apple carries holds generic text and an encrypted preview that only your iPhone can open.</p>
+
+    <h2>Third-party services you connect</h2>
+    <p>Yorozu sends your requests to software on your Mac: OpenClaw, Claude Code or Codex. Those tools send data to their model providers (for example Anthropic or OpenAI) under their own privacy policies and your agreements with those providers. We are not a party to that and don't receive that data.</p>
+
+    <h2>Updates and downloads</h2>
+    <p>The Mac app checks <code>dl.yumi.to</code> for updates, which reveals your IP address and app version. No system profile is sent. This website uses no cookies, analytics or trackers.</p>
+
+    <h2>Permissions</h2>
+    <p>Yorozu asks for macOS or iOS permissions (such as the camera to scan the pairing code) only for the feature that needs them. Data accessed through permissions is used on your devices and is not sent to us.</p>
+
+    <h2>Children</h2>
+    <p>Yorozu is not directed to children under 13, and we do not knowingly collect their data.</p>
+
+    <h2>Your choices</h2>
+    <p>Unpairing a device deletes its keys and push token from the relay. Deleting the apps removes local data. Because we hold no account or readable content, there is nothing else to export or delete. For questions, email <a href="mailto:mail@yumi.to">mail@yumi.to</a>.</p>
+
+    <h2>Changes</h2>
+    <p>We will post changes here and update the date above.</p>
+  </main>
+
+  <footer>
+    <span>© 2026 Yumi Izumi</span>
+    <nav aria-label="Footer">
+      <a href="/">Home</a>
+      <a href="/terms/">Terms</a>
+      <a href="mailto:mail@yumi.to">Contact</a>
+    </nav>
+  </footer>
+</body>
+</html>

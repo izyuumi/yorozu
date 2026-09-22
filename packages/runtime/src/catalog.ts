@@ -31,7 +31,7 @@ export const CATALOG_URL_ENV = "YOROZU_CATALOG_URL";
 
 /** The asset `.github/workflows/catalog.yml` keeps up to date. */
 export const DEFAULT_CATALOG_URL =
-  "https://dl.yumi.to/models.json";
+  "https://yorozu.yumi.to/models.json";
 
 export const CATALOG_TTL_MS = 24 * 60 * 60 * 1000;
 
