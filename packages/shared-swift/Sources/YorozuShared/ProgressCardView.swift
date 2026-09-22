@@ -4,19 +4,36 @@ import SwiftUI
 /// shape, so vermilion and sage add hierarchy without becoming the only status signal.
 public struct ProgressCardView: View {
     public let card: ProgressCardData
+    /// What the agent is doing between reports, shown while the card runs. The steps only
+    /// move when the agent reports them, which can be minutes apart.
+    public let activity: String?
 
-    public init(card: ProgressCardData) {
+    public init(card: ProgressCardData, activity: String? = nil) {
         self.card = card
+        self.activity = activity
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.stack) {
             header
+            if let note = card.note {
+                MarkdownText(note)
+                    .font(.callout)
+                    .foregroundStyle(YorozuPalette.ink)
+            }
             if let fraction = card.fraction { progress(fraction) }
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(card.steps.indices), id: \.self) { index in
                     step(card.steps[index], number: index + 1, isLast: index == card.steps.indices.last)
                 }
+            }
+            if card.running, let activity {
+                Text(activity)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .contentTransition(.opacity)
+                    .animation(.snappy, value: activity)
             }
         }
         .yorozuPaperCard()

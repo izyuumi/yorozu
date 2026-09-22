@@ -35,6 +35,9 @@ public struct ChatView: View {
     /// Id of the reply whose first token just landed, which is the moment worth a tap.
     @State private var replyStarted: String?
     @State private var attachmentTooLarge = false
+    #if os(macOS)
+        @FocusState private var composerFocused: Bool
+    #endif
     @State private var searching = false
     @State private var choosingAgent = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -552,18 +555,14 @@ public struct ChatView: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             #if os(iOS)
-                TextField("Message Yorozu", text: draft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.body)
-                    .lineLimit(1...6)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 12)
-                    .onKeyPress(.return, phases: .down) { press in
-                        guard !press.modifiers.contains(.shift) else { return .ignored }
-                        send()
-                        return .handled
-                    }
-                    .accessibilityLabel("Message")
+                ComposerTextView(
+                    text: draft,
+                    placeholder: String(localized: "Message Yorozu"),
+                    onSubmit: send,
+                    onPasteImage: generating ? nil : { pasteImages() }
+                )
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
 
                 HStack(alignment: .center, spacing: 4) {
                     attachButton
@@ -588,6 +587,8 @@ public struct ChatView: View {
                         .padding(.vertical, composerPadding)
                         .frame(minHeight: controlTarget)
                         .onSubmit { draft.wrappedValue += "\n" }
+                        .focused($composerFocused)
+                        .background(ImagePasteMonitor(isActive: composerFocused && !generating, onPaste: pasteImages))
                         .accessibilityLabel("Message")
                     if generating {
                         stopButton
@@ -615,17 +616,28 @@ public struct ChatView: View {
     private var attachButton: some View {
         AttachButton(
             remaining: MessageAttachment.maxCount - attachments.wrappedValue.count,
-            onPick: { picked in
-                let combined = attachments.wrappedValue + picked
-                guard combined.count <= MessageAttachment.maxCount,
-                    combined.compactMap(\.bytes).reduce(0, { $0 + $1.count })
-                        <= MessageAttachment.maxTotalBytes
-                else { return attachmentTooLarge = true }
-                attachments.wrappedValue = combined
-            },
+            onPick: addAttachments,
             onTooLarge: { attachmentTooLarge = true }
         )
         .disabled(generating)
+    }
+
+    private func pasteImages() {
+        stageAttachments(
+            pasteboardImagePicks(),
+            remaining: MessageAttachment.maxCount - attachments.wrappedValue.count,
+            onPick: addAttachments,
+            onTooLarge: { attachmentTooLarge = true }
+        )
+    }
+
+    private func addAttachments(_ picked: [MessageAttachment]) {
+        let combined = attachments.wrappedValue + picked
+        guard combined.count <= MessageAttachment.maxCount,
+            combined.compactMap(\.bytes).reduce(0, { $0 + $1.count })
+                <= MessageAttachment.maxTotalBytes
+        else { return attachmentTooLarge = true }
+        attachments.wrappedValue = combined
     }
 
     private var runSettingsButton: some View {
@@ -1136,8 +1148,8 @@ extension View {
     /// AppKit, so this is the one place the keystroke can be caught — and one with no
     /// modifiers leaves Shift-Return to the field, where it still inserts a newline.
     ///
-    /// On iOS it is the `onKeyPress` modifier that works and a key equivalent that would
-    /// double up, so there this does nothing.
+    /// On iOS the composer's own text view catches Return and a key equivalent would double
+    /// up, so there this does nothing.
     @ViewBuilder fileprivate func macKey(_ key: KeyEquivalent) -> some View {
         #if os(macOS)
             keyboardShortcut(key, modifiers: [])

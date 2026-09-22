@@ -319,6 +319,8 @@ export interface ProgressCardData {
   steps: ProgressStep[];
   /** 0–100. Absent when the job cannot say, and the steps are the whole of the progress. */
   percent?: number;
+  /** Where the job has got to, in the agent's own words. Markdown. */
+  note?: string;
 }
 
 /**

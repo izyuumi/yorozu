@@ -146,6 +146,29 @@ describe("OpenClawRunner", () => {
     await result;
   });
 
+  test("progress_card calls raise the card with their narrative, which later plan updates keep", async () => {
+    const gateway = harness();
+    const events: YorozuEvent[] = [];
+    const result = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).run({
+      threadId: "one", text: "release", onEvent: (event) => events.push(event),
+    });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    const sessionKey = "agent:main:yorozu:one";
+    const plan = [{ step: "Test", status: "completed" }, { step: "Ship", status: "in_progress" }];
+    gateway.event({ sessionKey, runId: "run-1", stream: "tool", seq: 1, data: {
+      phase: "start", toolCallId: "p1", name: "progress_card", args: { markdown: "Tests **green**.", plan },
+    } }, "agent");
+    // The plan stream that follows the call has no narrative of its own; it keeps the call's.
+    gateway.event({ sessionKey, runId: "run-1", stream: "plan", seq: 2, data: { steps: plan } }, "agent");
+    const cards = events.filter((event) => event.kind === "progress_card");
+    expect(cards.map((event) => event.data)).toEqual([0, 1].map(() => ({
+      cardId: "openclaw-plan:run-1", title: "Progress", note: "Tests **green**.",
+      steps: [{ label: "Test", state: "done" }, { label: "Ship", state: "running" }],
+    })));
+    gateway.event({ state: "final", sessionKey, runId: "run-1", seq: 3 });
+    await result;
+  });
+
   test("publishes real task-summary completion and ignores previous-turn tasks", async () => {
     const gateway = harness();
     const events: YorozuEvent[] = [];
@@ -542,6 +565,8 @@ describe("OpenClawRunner", () => {
       { role: "user", content: "delegate", __openclaw: { runId: "run-1" } },
       { role: "assistant", content: [
         { type: "toolCall", id: "spawn-1", name: "sessions_spawn", arguments: { task: "work" } },
+        { type: "toolCall", id: "card-1", name: "progress_card",
+          arguments: { markdown: "Spawned.", plan: [{ step: "Spawn", status: "completed" }] } },
       ] },
       { role: "toolResult", toolCallId: "spawn-1", name: "sessions_spawn", content: { status: "accepted" } },
       { role: "assistant", content: "done", stopReason: "stop", __openclaw: { runId: "run-1" } },
@@ -549,7 +574,9 @@ describe("OpenClawRunner", () => {
     const events: YorozuEvent[] = [];
     const replacement = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, recoveryDelayMs: 1 });
     await expect(replacement.resume({ threadId: "history-events", onEvent: (event) => events.push(event) })).resolves.toBe("done");
-    expect(events.map((event) => event.kind)).toEqual(["tool_call", "tool_result"]);
+    expect(events.map((event) => event.kind)).toEqual(["tool_call", "tool_call", "progress_card", "tool_result"]);
+    // History carries no plan stream, so the card's last state comes from the call itself.
+    expect(events[2]!.data).toMatchObject({ note: "Spawned.", steps: [{ label: "Spawn", state: "done" }] });
   });
 
   test("authoritative Gateway rejection terminalizes durably before acknowledgment", async () => {

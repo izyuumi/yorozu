@@ -544,6 +544,9 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     let tolerant = try JSONDecoder().decode(ProgressCardData.self, from: wire)
     #expect(tolerant.steps.first?.state == .pending)
     #expect(tolerant.percent == nil)
+    #expect(tolerant.note == nil)
+    let noted = Data(#"{"cardId":"j","title":"t","steps":[],"note":"Build **204** up"}"#.utf8)
+    #expect(try JSONDecoder().decode(ProgressCardData.self, from: noted).note == "Build **204** up")
 }
 
 

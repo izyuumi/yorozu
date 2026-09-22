@@ -673,11 +673,14 @@ public struct ProgressCardData: Codable, Equatable, Sendable {
     public var steps: [ProgressStep]
     /// 0–100. Nil when the job cannot say, and the steps are the whole of the progress.
     public var percent: Double?
-    public init(cardId: String, title: String, steps: [ProgressStep], percent: Double? = nil) {
+    /// Where the job has got to, in the agent's own words. Markdown.
+    public var note: String?
+    public init(cardId: String, title: String, steps: [ProgressStep], percent: Double? = nil, note: String? = nil) {
         self.cardId = cardId
         self.title = title
         self.steps = steps
         self.percent = percent
+        self.note = note
     }
 
     /// What the bar fills to, 0–1: the reported percentage, or the steps that are finished

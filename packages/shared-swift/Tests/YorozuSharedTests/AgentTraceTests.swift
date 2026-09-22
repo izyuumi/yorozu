@@ -442,6 +442,8 @@ private func toolResult(_ id: String, ok: Bool = true, output: String = "", at t
         return #expect(Bool(false), "expected work")
     }
     #expect(progressing.status == "Sorting the files · 40%")
+    // The card's steps only move when reported, so the live line under it is what ran last.
+    #expect(progressing.activity == "shell")
 
     // Not generating: the same events are a settled row, however unfinished they look.
     guard case .work(let settled) = chatRows(from: partial)[1] else { return #expect(Bool(false), "expected work") }

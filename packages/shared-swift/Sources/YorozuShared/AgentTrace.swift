@@ -142,11 +142,17 @@ public struct TurnWork: Identifiable, Equatable, Sendable {
     /// The one line shown while the work runs: what is happening right now. A progress card's
     /// title wins when there is one, because it was written to be read; otherwise the newest
     /// thought, running tool or running delegation.
-    public var status: String? {
+    public var status: String? { status(includingProgress: true) }
+
+    /// What the agent is doing right now, never a progress card's title: the line a live card
+    /// carries under its steps, which only move when the agent reports them.
+    public var activity: String? { status(includingProgress: false) }
+
+    private func status(includingProgress: Bool) -> String? {
         for entry in entries.reversed() {
             switch entry {
             case .progress(let event):
-                if case .progressCard(let card) = event.payload {
+                if includingProgress, case .progressCard(let card) = event.payload {
                     guard let percent = card.percent else { return card.title }
                     return "\(card.title) · \(Int(percent.rounded()))%"
                 }
