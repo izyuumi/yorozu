@@ -242,6 +242,7 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
             if event.id == "paced-stream" { rendered += 1 }
         }
         let unit = String(repeating: "x", count: chunkWidth)
+        let started = ContinuousClock.now
         for index in 0..<24 {
             await transport.yield(.event(event(
                 "paced-stream",
@@ -256,8 +257,11 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
         })
         // 50 ms batching visibly updates at only 20 Hz. One display-frame slice keeps a streamed
         // reply fluid without returning to one whole-tree invalidation per provider token.
+        // The ceiling is one render per 16 ms slice actually elapsed: a slow CI VM oversleeps
+        // the 8 ms gaps, so fewer chunks share a slice there and a fixed 16 would be flaky.
+        let slices = Int((ContinuousClock.now - started) / .milliseconds(16))
         #expect(rendered >= 8)
-        #expect(rendered <= 16)
+        #expect(rendered <= max(16, slices + 2))
     }
 }
 
