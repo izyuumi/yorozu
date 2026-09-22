@@ -38,6 +38,7 @@ SCENES=(
   "54-pairing-manual   -yorozuShowcase pairing-manual"
   "54-pairing-error    -yorozuShowcase pairing-error"
   "t33-thread-list   -yorozuShowcase threads"
+  "56-demo           -yorozuDemo on"
   "55-new-thread     -yorozuShowcase new-thread"
   "32-chat-empty-state -yorozuShowcase threads -yorozuScene empty"
   "32-chat-markdown  -yorozuShowcase chat"

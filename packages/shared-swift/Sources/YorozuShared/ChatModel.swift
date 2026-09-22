@@ -891,10 +891,10 @@ public final class ChatModel {
         }
         var coding = thread("Fix the flaky relay test", "Done: the timeout was the test's, not the relay's.", 0.1)
         coding.agent = .claudeCode
-        coding.cwd = "/Users/yumi/Projects/yorozu"
+        coding.cwd = "/Users/demo/Projects/yorozu"
         var codex = thread("Tidy the icon script", "Rewrote icon-render.sh to take a size.", 2.3)
         codex.agent = .codex
-        codex.cwd = "/Users/yumi/Projects/tappa"
+        codex.cwd = "/Users/demo/Projects/tappa"
         synced = [
             thread("Weeknight dinners", "Roast chicken, then stock on Sunday.", 0.02, pinned: true),
             thread("Invoices", "Found the July one in Downloads.", 0.05),
@@ -906,10 +906,10 @@ public final class ChatModel {
             thread("Tax return", "Filed — the receipt is in Documents.", 40),
         ]
         projects = [
-            ProjectFolder(path: "/Users/yumi/Projects/yorozu", name: "yorozu", lastUsed: now - 0.1 * day),
-            ProjectFolder(path: "/Users/yumi/Projects/tappa", name: "tappa", lastUsed: now - 2.3 * day),
-            ProjectFolder(path: "/Users/yumi/Projects/browsify", name: "browsify"),
-            ProjectFolder(path: "/Users/yumi/Projects/localtypist", name: "localtypist"),
+            ProjectFolder(path: "/Users/demo/Projects/yorozu", name: "yorozu", lastUsed: now - 0.1 * day),
+            ProjectFolder(path: "/Users/demo/Projects/tappa", name: "tappa", lastUsed: now - 2.3 * day),
+            ProjectFolder(path: "/Users/demo/Projects/browsify", name: "browsify"),
+            ProjectFolder(path: "/Users/demo/Projects/localtypist", name: "localtypist"),
         ]
         listed = true
     }

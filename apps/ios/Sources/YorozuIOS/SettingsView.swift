@@ -23,7 +23,9 @@ struct SettingsView: View {
     let relayUrl: String
     let pairedAt: Date?
     let onUnpair: () -> Void
-    /// The chat model, for the one screen behind here that talks to the Mac: the rules list.
+    let isDemo: Bool
+    let onExitDemo: () -> Void
+    /// The chat model supplies the paired approval setting.
     let model: ChatModel
 
     @Environment(\.dismiss) private var dismiss
@@ -46,38 +48,35 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Mac") {
-                    LabeledContent("Status") {
-                        Text(status.label).foregroundStyle(status.tint)
-                    }
-                    LabeledContent("Relay", value: relayUrl)
-                    if let pairedAt {
-                        LabeledContent("Paired since", value: pairedAt.formatted(date: .abbreviated, time: .shortened))
-                    }
-                }
-                Section {
-                    Toggle(
-                        "YOLO mode",
-                        isOn: Binding(
-                            get: { model.yoloMode },
-                            set: { model.setYoloMode($0) }
-                        )
-                    )
-                    NavigationLink {
-                        RulesListView(model: model)
-                    } label: {
-                        LabeledContent("Rules") {
-                            Text(model.rules.isEmpty ? String(localized: "None") : "\(model.rules.count)")
+                if !isDemo {
+                    Section("Mac") {
+                        LabeledContent("Status") {
+                            Text(status.label).foregroundStyle(status.tint)
+                        }
+                        LabeledContent("Relay", value: relayUrl)
+                        if let pairedAt {
+                            LabeledContent("Paired since", value: pairedAt.formatted(date: .abbreviated, time: .shortened))
                         }
                     }
-                } header: {
-                    Text("Approvals")
-                } footer: {
-                    if model.yoloMode {
-                        Label {
-                            Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
-                        } icon: {
-                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                }
+                if !isDemo {
+                    Section {
+                        Toggle(
+                            "YOLO mode",
+                            isOn: Binding(
+                                get: { model.yoloMode },
+                                set: { model.setYoloMode($0) }
+                            )
+                        )
+                    } header: {
+                        Text("Approvals")
+                    } footer: {
+                        if model.yoloMode {
+                            Label {
+                                Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
+                            } icon: {
+                                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                            }
                         }
                     }
                 }
@@ -91,12 +90,19 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 Section {
-                    Button("Unpair", role: .destructive) { confirmingUnpair = true }
+                    if isDemo {
+                        Button("Exit demo") {
+                            dismiss()
+                            onExitDemo()
+                        }
+                    } else {
+                        Button("Unpair", role: .destructive) { confirmingUnpair = true }
+                    }
                 }
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Settings")
-            .onAppear { model.requestApprovalSettings() }
+            .onAppear { if !isDemo { model.requestApprovalSettings() } }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
@@ -113,59 +119,6 @@ struct SettingsView: View {
             } message: {
                 Text("Yorozu will forget its keys and cached threads. You will need to scan a new pairing code from your Mac.")
             }
-        }
-    }
-}
-
-
-/// The rules the Mac is acting on, as the phone shows them: what each covers and what it has
-/// been doing, and the one thing the phone can do about one — revoke it. Editing a rule is the
-/// Mac's job, because widening a scope is the decision that wants a keyboard and a wide screen.
-///
-/// Read over the wire rather than from a file, unlike the Mac's own Rules tab: rules live on
-/// the Mac, and `rule_list` is how the phone learns about them.
-struct RulesListView: View {
-    let model: ChatModel
-    @State private var confirmingDelete: ApprovalRule?
-
-    var body: some View {
-        List {
-            if model.rules.isEmpty {
-                ContentUnavailableView(
-                    "No rules yet",
-                    systemImage: "checkmark.seal",
-                    description: Text("Choose “Always allow” on an approval card to make one.")
-                )
-            } else {
-                Section {
-                    ForEach(model.rules) { rule in
-                        RuleRowView(rule: rule)
-                            .swipeActions(edge: .trailing) {
-                                Button("Revoke", role: .destructive) { confirmingDelete = rule }
-                            }
-                    }
-                } footer: {
-                    Text("Rules apply to every agent and last until you revoke them. Edit one on the Mac.")
-                }
-            }
-        }
-        .navigationTitle("Rules")
-        .navigationBarTitleDisplayMode(.inline)
-        // The Mac pushes a fresh list after any change, so this is only about opening the screen.
-        .onAppear { model.requestRules() }
-        .refreshable { model.requestRules() }
-        .confirmationDialog(
-            "Revoke this rule?",
-            isPresented: Binding(get: { confirmingDelete != nil }, set: { if !$0 { confirmingDelete = nil } }),
-            presenting: confirmingDelete
-        ) { rule in
-            Button("Revoke", role: .destructive) {
-                model.deleteRule(rule.id)
-                confirmingDelete = nil
-            }
-            Button("Cancel", role: .cancel) { confirmingDelete = nil }
-        } message: { rule in
-            Text("Yorozu will ask again before it does \(rule.summary).")
         }
     }
 }
