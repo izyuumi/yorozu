@@ -45,8 +45,8 @@ public struct AgentMarkView: View {
     }
 }
 
-/// A compact, accessible identity for a coding-agent row. Codex keeps the OpenAI company mark
-/// paired with its product name because OpenAI does not publish a separate Codex product icon.
+/// A compact, accessible identity for a coding-agent row: the mark alone, with the agent's name
+/// for VoiceOver.
 public struct AgentIdentifierView: View {
     private let agent: ThreadAgent
     private let size: CGFloat
@@ -57,17 +57,10 @@ public struct AgentIdentifierView: View {
     }
 
     public var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-            AgentMarkView(agent, size: size)
-                // Sit the mark on the text's baseline the way a capital does, not above it.
-                .alignmentGuide(.firstTextBaseline) { $0.height * 0.8 }
-            if agent.markRequiresProductName {
-                Text(agent.label)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .fixedSize()
+        AgentMarkView(agent, size: size)
+            // Sit the mark on the text's baseline the way a capital does, not above it.
+            .alignmentGuide(.firstTextBaseline) { $0.height * 0.8 }
+            .fixedSize()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(agent.label)
     }

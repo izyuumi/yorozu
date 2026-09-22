@@ -7,12 +7,6 @@ import Testing
     #expect(ThreadAgent.codex.mark == .openAI)
 }
 
-@Test func onlyTheOpenAICompanyMarkRequiresItsProductName() {
-    #expect(!ThreadAgent.yorozu.markRequiresProductName)
-    #expect(!ThreadAgent.claudeCode.markRequiresProductName)
-    #expect(ThreadAgent.codex.markRequiresProductName)
-}
-
 @Test func settingsAttributionNamesBothMarkOwnersAndRejectsEndorsement() {
     let notice = ProviderMarkAttribution.notice
     #expect(notice.contains("Anthropic"))

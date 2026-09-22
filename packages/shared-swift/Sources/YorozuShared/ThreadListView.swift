@@ -227,8 +227,7 @@ struct ThreadRow: View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    // Every thread wears its agent's mark, Yorozu's own knot included. Codex pairs
-                    // OpenAI's mark with text because no Codex mark is published.
+                    // Every thread wears its agent's mark, Yorozu's own knot included.
                     AgentIdentifierView(thread.agent ?? .yorozu, size: mark)
                     highlightedText(thread.displayTitle)
                         .font(.body.weight(thread.isUnread ? .semibold : .regular))
