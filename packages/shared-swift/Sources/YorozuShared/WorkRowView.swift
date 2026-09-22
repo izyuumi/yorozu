@@ -71,7 +71,7 @@ public struct WorkRowView: View {
     /// A live structured progress report is already the best summary of the work. Showing the
     /// generic disclosure above it repeats the same status and nests paper cards three deep.
     private var liveProgress: ProgressCardData? {
-        work.entries.reversed().compactMap { entry in
+        work.entries.reversed().compactMap { entry -> ProgressCardData? in
             guard case .progress(let event) = entry,
                   case .progressCard(let card) = event.payload,
                   card.running else { return nil }
