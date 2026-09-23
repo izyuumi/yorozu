@@ -1,36 +1,80 @@
 #!/bin/sh
-# Cut a release: build the Mac app, notarize it, sign an appcast for it, and publish both.
-#
-# Nothing is bumped by hand — scripts/build-mac.sh derives the marketing version from the
-# latest v* tag and the build number from the commit count, so the only thing a release
-# needs is a tag (and a commit, for a rebuild of the same tag to be newer than the last).
-#
-#   git tag -a v0.2.0 -m v0.2.0 && ./scripts/release.sh
+# Build, notarize, sign the Sparkle appcast, and publish one versioned Mac release.
+# Release Please supplies RELEASE_TAG in CI; local releases use the latest v* tag.
 set -eu
 cd "$(dirname "$0")/.."
 
 DIST=${DIST:-dist}
-# Public downloads: the rolling `mac` release of this public repo. yorozu.yumi.to/mac,
-# /appcast.xml and /download/* redirect there (apps/web/public/_redirects).
 PUBLIC=${PUBLIC:-izyuumi/yorozu}
+TAG=${RELEASE_TAG:-$(git describe --tags --abbrev=0 --match 'v*')}
+case "$TAG" in
+  v[0-9]*) ;;
+  *) echo "release tag must start with v followed by a version: $TAG" >&2; exit 1 ;;
+esac
+# Refuse to replace a newer published version when an old workflow is rerun.
+PUBLISHED_TAGS=$(gh api "repos/$PUBLIC/releases" --paginate --jq '.[] | select(.draft == false) | .tag_name')
+python3 - "$TAG" "$PUBLISHED_TAGS" <<'PY_VERSION'
+import re
+import sys
+
+
+def version(tag):
+    match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", tag)
+    return tuple(map(int, match.groups())) if match else None
+
+
+target = version(sys.argv[1])
+if target is None:
+    sys.exit("release tag must be a stable vMAJOR.MINOR.PATCH version")
+for tag in sys.argv[2].splitlines():
+    previous = version(tag)
+    if previous is not None and previous > target:
+        sys.exit(f"refusing to replace newer published release {tag} with {sys.argv[1]}")
+PY_VERSION
+VERSION=${TAG#v}
+BUILD=${BUILD:-$(git rev-list --count HEAD)}
+export DIST VERSION BUILD
 
 ./scripts/build-mac.sh
 ./scripts/appcast.sh
 
-# Only the DMGs the appcast offers, not every old build in dist/, plus Yorozu.dmg: a stable
-# name for /mac, always the build just made.
-DMGS=$(grep -o 'download/Yorozu-[^"]*\.dmg' "$DIST/appcast.xml" | sed "s#^download/#$DIST/#")
-STABLE=$(mktemp -d "$DIST/stable.XXXXXX")/Yorozu.dmg
-ln "$(ls -t "$DIST"/Yorozu-*.dmg | head -1)" "$STABLE"
-# shellcheck disable=SC2086 # one path per DMG, none with spaces
-gh release upload mac --repo "$PUBLIC" $DMGS "$STABLE" "$DIST/appcast.xml" --clobber
-rm -rf "$(dirname "$STABLE")"
+# Keep every DMG referenced by this feed, including older builds in a local dist/.
+# The stable name always points to this exact build, regardless of file timestamps.
+DMGS=$(grep -o 'download/Yorozu-[^"]*\.dmg' "$DIST/appcast.xml" | sed 's#^download/##')
+STABLE_DIR=$(mktemp -d "$DIST/stable.XXXXXX")
+trap 'rm -rf "$STABLE_DIR"' EXIT
+trap 'exit 1' HUP INT TERM
+ln "$DIST/Yorozu-$VERSION-$BUILD.dmg" "$STABLE_DIR/Yorozu.dmg"
+set --
+while IFS= read -r dmg; do
+  [ -n "$dmg" ] || continue
+  [ -f "$DIST/$dmg" ] || { echo "appcast asset missing: $dmg" >&2; exit 1; }
+  set -- "$@" "$DIST/$dmg"
+done <<EOF_DMGS
+$DMGS
+EOF_DMGS
+[ "$#" -gt 0 ] || { echo "appcast contains no DMGs" >&2; exit 1; }
 
-TAG=$(git describe --tags --abbrev=0 --match 'v*')
+# A new release stays hidden until all downloads are uploaded successfully. Release
+# Please may have already created the release and its changelog; preserve those notes.
 gh release view "$TAG" --repo "$PUBLIC" >/dev/null 2>&1 \
-  || gh release create "$TAG" --repo "$PUBLIC" --title "Yorozu ${TAG#v}" --notes "Download: https://yorozu.yumi.to/mac" --latest
-# shellcheck disable=SC2086 # one path per DMG, none with spaces
-gh release upload "$TAG" --repo "$PUBLIC" $DMGS "$DIST/appcast.xml" --clobber
+  || gh release create "$TAG" --repo "$PUBLIC" --verify-tag --draft \
+    --title "Yorozu $VERSION" --notes "Download: https://yorozu.yumi.to/mac"
+gh release upload "$TAG" --repo "$PUBLIC" "$@" "$STABLE_DIR/Yorozu.dmg" "$DIST/appcast.xml" catalog/models.json --clobber
+gh release edit "$TAG" --repo "$PUBLIC" --draft=false --latest
 
-# The build number is what Sparkle compares, so it is what says whether this went anywhere.
+# Only retire previous releases after publishing every asset. Preserve Git tags for
+# Release Please's version history, and leave unrelated drafts alone. Paginate so the
+# repository converges to one published release even if it has more than 100 releases.
+RELEASES=$(gh api "repos/$PUBLIC/releases" --paginate --jq '.[] | select(.draft == false) | .tag_name')
+while IFS= read -r old_tag; do
+  [ -n "$old_tag" ] || continue
+  [ "$old_tag" = "$TAG" ] && continue
+  echo "Deleting superseded release: $old_tag (keeping its Git tag)"
+  gh release delete "$old_tag" --repo "$PUBLIC" --yes
+done <<EOF_RELEASES
+$RELEASES
+EOF_RELEASES
+
+# The build number is what Sparkle compares.
 grep -m1 '<sparkle:version>' "$DIST/appcast.xml"
