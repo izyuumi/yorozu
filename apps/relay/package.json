@@ -16,7 +16,7 @@
     "@types/node": "^26.5.1",
     "@types/ws": "^8.18.1",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4",
+    "vitest": "^4.1.11",
     "wrangler": "^4.131.0"
   },
   "dependencies": {
