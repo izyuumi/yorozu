@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import WebSocket from "ws";
-import { roomId, signChallenge, startRelay, type Relay } from "./index.js";
+import { AUTH_TIMEOUT_MS, CLOSE_POLICY, ROOM_ID } from "./protocol.js";
+import { clientIp, roomId, signChallenge, startRelay, trustedHops, type Relay } from "./index.js";
 import { client, connectMac, connectPhone, keypair, mintToken, type Client } from "./testing.js";
 import { conformance, type Adapter } from "./conformance.test.js";
 
@@ -60,7 +61,7 @@ conformance(adapter);
 
 test("room id is base64url sha256 of the raw public key", () => {
   const { pub } = keypair();
-  expect(roomId(pub)).toMatch(/^[\w-]{43}$/);
+  expect(roomId(pub)).toMatch(ROOM_ID);
   expect(roomId(pub)).toBe(roomId(pub));
   expect(roomId(pub)).not.toBe(roomId(keypair().pub));
 });
@@ -104,9 +105,9 @@ async function limitedRelay(): Promise<Relay> {
   return server;
 }
 
-function dial(port: number, forwarded?: string) {
+function dial(port: number, forwarded?: string, headers: Record<string, string> = {}) {
   const ws = new WebSocket(`ws://127.0.0.1:${port}`, {
-    headers: forwarded === undefined ? {} : { "X-Forwarded-For": forwarded },
+    headers: forwarded === undefined ? headers : { ...headers, "X-Forwarded-For": forwarded },
   });
   const closed = new Promise<number>((resolve) => ws.once("close", resolve));
   const first = Promise.race([
@@ -136,12 +137,83 @@ test.each([false, true])("forwarded IPs are trusted only with RELAY_TRUST_PROXY 
   vi.stubEnv("RELAY_MAX_CONNS_PER_IP", "1");
   vi.stubEnv("RELAY_TRUST_PROXY", trusted ? "1" : "");
   const server = await limitedRelay();
+  // One trusted hop: the last entry is what the proxy saw, the rest is the client's story.
   expect(await dial(server.port, "192.0.2.1, 192.0.2.10").first).toMatchObject({ type: "nonce" });
-  const other = await dial(server.port, "192.0.2.2, 192.0.2.10").first;
+  const other = await dial(server.port, "192.0.2.2, 192.0.2.11").first;
   if (trusted) expect(other).toMatchObject({ type: "nonce" });
-  else expect(other).toBe(1008);
-  // The proxy chain after the first address cannot buy another slot.
-  expect(await dial(server.port, "192.0.2.1, 192.0.2.99").first).toBe(1008);
+  else expect(other).toBe(CLOSE_POLICY);
+  // A different first entry behind the same last hop is the same client, so no second slot.
+  expect(await dial(server.port, "192.0.2.99, 192.0.2.10").first).toBe(CLOSE_POLICY);
+});
+
+test("a client cannot prepend to X-Forwarded-For to dodge the cap or fill a victim's", async () => {
+  vi.stubEnv("RELAY_MAX_CONNS_PER_IP", "1");
+  vi.stubEnv("RELAY_TRUST_PROXY", "1");
+  const server = await limitedRelay();
+  const victim = "203.0.113.7";
+  const attacker = "198.51.100.9";
+  // Whatever the attacker writes in front, the trusted hop appended its real address last.
+  expect(await dial(server.port, `${victim}, ${attacker}`).first).toMatchObject({ type: "nonce" });
+  expect(await dial(server.port, `10.0.0.1, ${victim}, ${attacker}`).first).toBe(CLOSE_POLICY);
+  // The victim's own slot is untouched by any of that.
+  expect(await dial(server.port, `${attacker}, ${victim}`).first).toMatchObject({ type: "nonce" });
+});
+
+test("RELAY_TRUST_PROXY=N reads the Nth entry from the end, and a short chain is not trusted", async () => {
+  vi.stubEnv("RELAY_MAX_CONNS_PER_IP", "1");
+  vi.stubEnv("RELAY_TRUST_PROXY", "2");
+  const server = await limitedRelay();
+  // Two trusted hops: the second-from-last entry is the client, the last is the inner proxy.
+  expect(await dial(server.port, "192.0.2.1, 192.0.2.50, 192.0.2.60").first).toMatchObject({ type: "nonce" });
+  expect(await dial(server.port, "192.0.2.2, 192.0.2.50, 192.0.2.60").first).toBe(CLOSE_POLICY);
+  expect(await dial(server.port, "192.0.2.3, 192.0.2.51, 192.0.2.60").first).toMatchObject({ type: "nonce" });
+  // Fewer entries than hops: something upstream is misconfigured, so the peer address counts.
+  expect(await dial(server.port, "192.0.2.4").first).toMatchObject({ type: "nonce" });
+  expect(await dial(server.port, "192.0.2.5").first).toBe(CLOSE_POLICY);
+});
+
+test("CF-Connecting-IP is honoured over X-Forwarded-For when a proxy is trusted", async () => {
+  vi.stubEnv("RELAY_MAX_CONNS_PER_IP", "1");
+  vi.stubEnv("RELAY_TRUST_PROXY", "1");
+  const server = await limitedRelay();
+  const cf = { "CF-Connecting-IP": "192.0.2.77" };
+  expect(await dial(server.port, "192.0.2.1", cf).first).toMatchObject({ type: "nonce" });
+  expect(await dial(server.port, "192.0.2.2", cf).first).toBe(CLOSE_POLICY);
+  expect(await dial(server.port, undefined, { "CF-Connecting-IP": "192.0.2.78" }).first).toMatchObject({ type: "nonce" });
+});
+
+test("trusted hop parsing and client address selection", () => {
+  expect(trustedHops(undefined)).toBe(0);
+  expect(trustedHops("")).toBe(0);
+  expect(trustedHops("1")).toBe(1);
+  expect(trustedHops("3")).toBe(3);
+  expect(trustedHops("true")).toBe(1);
+  expect(trustedHops("0")).toBe(1);
+  expect(trustedHops("-2")).toBe(1);
+  const peer = "127.0.0.1";
+  expect(clientIp({ "x-forwarded-for": "1.1.1.1, 2.2.2.2" }, peer, 0)).toBe(peer);
+  expect(clientIp({ "x-forwarded-for": "1.1.1.1, 2.2.2.2" }, peer, 1)).toBe("2.2.2.2");
+  expect(clientIp({ "x-forwarded-for": "1.1.1.1, 2.2.2.2" }, peer, 2)).toBe("1.1.1.1");
+  expect(clientIp({ "x-forwarded-for": "1.1.1.1, 2.2.2.2" }, peer, 3)).toBe(peer);
+  expect(clientIp({ "x-forwarded-for": "1.1.1.1, not-an-ip" }, peer, 1)).toBe(peer);
+  expect(clientIp({ "x-forwarded-for": ["1.1.1.1", "2.2.2.2"] }, peer, 1)).toBe("2.2.2.2");
+  expect(clientIp({ "cf-connecting-ip": "3.3.3.3", "x-forwarded-for": "1.1.1.1" }, peer, 1)).toBe("3.3.3.3");
+  expect(clientIp({ "cf-connecting-ip": "3.3.3.3" }, peer, 0)).toBe(peer);
+  expect(clientIp({}, undefined, 1)).toBe("unknown");
+});
+
+test("a socket that never registers or joins is closed at the auth deadline", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const server = await limitedRelay();
+  const stranger = dial(server.port);
+  expect(await stranger.first).toMatchObject({ type: "nonce" });
+  const keys = keypair();
+  const mac = await connectMac(server.port, keys);
+  await vi.advanceTimersByTimeAsync(AUTH_TIMEOUT_MS);
+  expect(await stranger.closed).toBe(CLOSE_POLICY);
+  // The one that answered in time is still there.
+  mac.send({ type: "ping" });
+  expect(await mac.next()).toEqual({ type: "pong" });
 });
 
 test.each([undefined, "2"])("token cap evicts the oldest mint, including tied timestamps (cap: %s)", async (configured) => {
