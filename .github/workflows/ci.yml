@@ -56,7 +56,16 @@ jobs:
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with: { xcode-version: latest-stable }
       # The Xcode project is generated, not checked in; see apps/ios/Project.swift.
-      - run: command -v tuist >/dev/null || brew install --cask tuist
+      # Homebrew has no versioned Tuist cask; use the same mise pin as TestFlight.
+      - name: Install Tuist 4.209.0
+        env:
+          # mise's aqua backend reads GitHub's releases API; the token keeps shared runner
+          # IPs clear of the anonymous rate limit.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          command -v mise >/dev/null || brew install mise
+          mise use -g tuist@4.209.0
+          mise bin-paths tuist@4.209.0 >> "$GITHUB_PATH"
       - run: tuist generate --no-open --path apps/ios
       - run: |
           xcodebuild build \

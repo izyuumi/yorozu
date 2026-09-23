@@ -1,6 +1,7 @@
 #!/bin/sh
 # Build, notarize, sign the Sparkle appcast, and publish one versioned Mac release.
-# Release Please supplies RELEASE_TAG in CI; local releases use the latest v* tag.
+# Release Please supplies RELEASE_TAG in CI; local releases use the latest v* tag, which
+# must be at HEAD (or ALLOW_UNTAGGED=1 for a local experiment).
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -11,6 +12,14 @@ case "$TAG" in
   v[0-9]*) ;;
   *) echo "release tag must start with v followed by a version: $TAG" >&2; exit 1 ;;
 esac
+# Build only the commit the tag names: in CI the checkout is `ref: RELEASE_TAG`, so this
+# holds by construction; locally it stops a stray HEAD from shipping under an old tag.
+# ALLOW_UNTAGGED=1 is for local experiments only.
+if [ "${ALLOW_UNTAGGED:-0}" != 1 ] && \
+  [ "$(git rev-parse HEAD)" != "$(git rev-parse "$TAG^{commit}")" ]; then
+  echo "release refused: HEAD is not the commit tagged $TAG; check out the tag or set ALLOW_UNTAGGED=1 for a local experiment" >&2
+  exit 1
+fi
 # Refuse to replace a newer published version when an old workflow is rerun.
 PUBLISHED_TAGS=$(gh api "repos/$PUBLIC/releases" --paginate --jq '.[] | select(.draft == false) | .tag_name')
 python3 - "$TAG" "$PUBLISHED_TAGS" <<'PY_VERSION'

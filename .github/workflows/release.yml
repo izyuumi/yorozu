@@ -121,15 +121,19 @@ jobs:
             --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID"
           rm "$RUNNER_TEMP/AuthKey.p8"
 
-      - name: Build, notarize, sign the appcast, publish
+      - name: Prepare Sparkle key
         env:
-          GH_TOKEN: ${{ github.token }}
           SPARKLE_ED_KEY: ${{ secrets.SPARKLE_ED_KEY }}
         run: |
           set -eu
           umask 077
           printf '%s' "$SPARKLE_ED_KEY" > "$RUNNER_TEMP/sparkle.key"
-          SPARKLE_ED_KEY_FILE="$RUNNER_TEMP/sparkle.key" ./scripts/release.sh
+
+      - name: Build, notarize, sign the appcast, publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPARKLE_ED_KEY_FILE: ${{ runner.temp }}/sparkle.key
+        run: ./scripts/release.sh
 
       - name: Forget the secrets
         if: always()

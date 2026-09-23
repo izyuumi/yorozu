@@ -29,17 +29,17 @@ beforeEach(() => {
   // A fresh cache keeps loadCatalog off the network for the whole test.
   writeFileSync(
     catalogCacheFile(dir),
-    JSON.stringify([
-      {
-        id: "claude-cli/claude-opus-5",
-        provider: "anthropic",
+    JSON.stringify(
+      ["claude-cli/claude-opus-5", "claude-cli/claude-sonnet-5", "openai/gpt-4o-mini"].map((id) => ({
+        id,
+        provider: id.startsWith("claude-cli/") ? "anthropic" : "openai",
         inputPer1M: 5,
         outputPer1M: 25,
         contextK: 1000,
         strengths: ["agentic"],
         updated: "2026-09-12",
-      },
-    ]),
+      })),
+    ),
   );
 });
 
@@ -102,6 +102,20 @@ test("an agent the model left out, or already on that model, is not touched", as
   expect(revertAssign(dir)).toBe("nothing to revert");
 });
 
+test("models outside the catalog preserve current and inherited defaults", async () => {
+  const diff = await autoAssign({
+    dir,
+    provider: fixed(JSON.stringify({
+      main: { model: "openai/not-in-the-catalog" },
+      browser: { model: "openai/not-in-the-catalog" },
+    })),
+  });
+  expect(diff).toBe("");
+  expect(readFileSync(join(agents, "main.md"), "utf8")).toBe(MAIN);
+  expect(readFileSync(join(agents, "browser.md"), "utf8")).toBe(BROWSER);
+  expect(revertAssign(dir)).toBe("nothing to revert");
+});
+
 test("a reply with no JSON in it fails loudly rather than writing half the files", async () => {
   await expect(autoAssign({ dir, provider: fixed("I could not decide.") })).rejects.toThrow(
     /no JSON/,
@@ -134,7 +148,7 @@ test("research mode writes the overlay and never the catalog", async () => {
     (JSON.parse(readFileSync(catalogCacheFile(dir), "utf8")) as { id: string }[]).map(
       (entry) => entry.id,
     ),
-  ).toEqual(["claude-cli/claude-opus-5"]);
+  ).toEqual(["claude-cli/claude-opus-5", "claude-cli/claude-sonnet-5", "openai/gpt-4o-mini"]);
 });
 
 test("the cron field creates, updates and removes exactly one job", () => {

@@ -8,9 +8,17 @@
 set -eu
 cd "$(dirname "$0")/.."
 
+# Capture the caller's CI policy before enabling pnpm's non-interactive mode locally.
+NOTARIZATION_REQUIRED=${REQUIRE_NOTARIZATION:-0}
+if [ -n "${CI:-}" ]; then NOTARIZATION_REQUIRED=1; fi
+
 # Every pnpm call here is non-interactive, and pnpm refuses to reconcile a modules
 # directory without a TTY unless it believes it is in CI.
 export CI=true
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  pnpm() { corepack pnpm "$@"; }
+fi
 
 # The version is derived, never typed: the marketing version is the latest v* tag and the
 # build number is the commit count, which rises with every commit, never repeats, and is the
@@ -26,7 +34,7 @@ IDENTITY=${IDENTITY:-"Developer ID Application: Yumi Izumi (AN5KM8QGEF)"}
 # id confuse LaunchServices about which of them `open -a` means, and the watchdog names its
 # LaunchAgent and its pause file after this — see apps/mac Keepalive.swift.
 BUNDLE_ID=${BUNDLE_ID:-to.yumi.yorozu}
-NOTARY_PROFILE=${NOTARY_PROFILE:-yorozu-notary}
+NOTARY_PROFILE=${NOTARY_PROFILE-yorozu-notary}
 FEED_URL=${FEED_URL:-https://yorozu.yumi.to/appcast.xml}
 # The public half of the EdDSA key `generate_keys` put in the login keychain; the private
 # half never leaves it, and scripts/appcast.sh signs each update with it.
@@ -91,7 +99,16 @@ NODE_DIR="node-$NODE_VERSION-$NODE_ARCH"
 mkdir -p "$DIST"
 [ -f "$DIST/$NODE_DIR.tar.gz" ] || \
   curl -fsSL "https://nodejs.org/dist/$NODE_VERSION/$NODE_DIR.tar.gz" -o "$DIST/$NODE_DIR.tar.gz"
-rm -rf "$DIST/$NODE_DIR"
+curl -fsSL "https://nodejs.org/dist/$NODE_VERSION/SHASUMS256.txt" -o "$DIST/SHASUMS256.txt"
+# Check cached downloads too. Match the complete filename, not a similarly named asset.
+grep -F "  $NODE_DIR.tar.gz" "$DIST/SHASUMS256.txt" | \
+  awk -v name="$NODE_DIR.tar.gz" '$2 == name' > "$DIST/node-shasum.txt"
+[ "$(wc -l < "$DIST/node-shasum.txt" | tr -d ' ')" = 1 ] || {
+  echo "missing or ambiguous Node checksum for $NODE_DIR.tar.gz" >&2
+  exit 1
+}
+(cd "$DIST" && shasum -a 256 -c node-shasum.txt)
+rm -rf "${DIST:?}/${NODE_DIR:?}"
 mkdir -p "$DIST/$NODE_DIR"
 tar -xzf "$DIST/$NODE_DIR.tar.gz" -C "$DIST/$NODE_DIR" --strip-components=1
 cp "$DIST/$NODE_DIR/bin/node" "$APP/Contents/Resources/node"
@@ -148,9 +165,36 @@ $USAGE
 </plist>
 PLIST
 
-# Sign inside out: nested code has to be sealed before the bundle that contains it.
-# --deep does exactly that walk, and every binary in here wants the same entitlements.
-codesign --force --deep --timestamp --options runtime \
+# Sign inside out without --deep: nested code has to be sealed before the bundle that
+# contains it, and every binary should get only the entitlements it needs. `find -depth`
+# lists a bundle after its contents; -type f skips the framework's symlinks (Sparkle ->
+# Versions/Current/Sparkle), and a .framework path signs the Versions/Current bundle.
+# Sparkle's helpers and XPC services keep their own sandbox entitlements. The loop body is
+# a subshell: `|| exit 1` makes a failed codesign end the pipeline, and set -e the script.
+find "$APP/Contents" -depth \( -type f -o -type d \) -print | while IFS= read -r code; do
+  case "$code" in
+    "$APP/Contents/Resources/node"|"$APP/Contents/MacOS/yorozu-native"|"$APP/Contents/MacOS/Yorozu") continue ;;
+  esac
+  if [ -f "$code" ]; then
+    case "$(file -b "$code")" in *Mach-O*) ;; *) continue ;; esac
+  else
+    case "$code" in *.framework|*.app|*.xpc) ;; *) continue ;; esac
+  fi
+  case "$code" in
+    "$APP/Contents/Frameworks/Sparkle.framework"|"$APP/Contents/Frameworks/Sparkle.framework/"*)
+      codesign --force --options runtime --timestamp \
+        --preserve-metadata=entitlements,requirements,flags --sign "$IDENTITY" "$code" || exit 1
+      ;;
+    *) codesign --force --options runtime --timestamp --sign "$IDENTITY" "$code" || exit 1 ;;
+  esac
+done
+codesign --force --options runtime --timestamp \
+  --entitlements apps/mac/Node.entitlements --sign "$IDENTITY" "$APP/Contents/Resources/node"
+codesign --force --options runtime --timestamp \
+  --entitlements apps/mac/Yorozu.entitlements --sign "$IDENTITY" "$APP/Contents/MacOS/yorozu-native"
+codesign --force --options runtime --timestamp \
+  --entitlements apps/mac/Yorozu.entitlements --sign "$IDENTITY" "$APP/Contents/MacOS/Yorozu"
+codesign --force --options runtime --timestamp \
   --entitlements apps/mac/Yorozu.entitlements --sign "$IDENTITY" "$APP"
 codesign --verify --deep --strict "$APP"
 
@@ -162,17 +206,24 @@ rm -rf "$STAGE"
 codesign --force --timestamp --sign "$IDENTITY" "$DMG"
 
 # Notarization needs an App Store Connect key stored as a keychain profile; see README.
-# Without one the DMG is still Developer ID signed, which is a worse first-launch story
-# (Gatekeeper asks) but a working one, so a missing profile is skipped, not a failure.
+# Local builds may skip a missing profile; CI and explicit release checks must fail closed.
 # The profile is probed rather than assumed: `submit` with no credentials fails slowly and
 # in the middle of a release build, which is the wrong place to find out.
-if xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
+if [ -n "$NOTARY_PROFILE" ] && xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
   xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
   xcrun stapler staple "$DMG"
 else
+  if [ "$NOTARIZATION_REQUIRED" = 1 ]; then
+    echo "notarization required: profile '$NOTARY_PROFILE' is missing or unusable" >&2
+    exit 1
+  fi
   echo "notarization skipped: no profile"
 fi
 
-spctl --assess --type open --context context:primary-signature -v "$DMG" || true
+if [ "$NOTARIZATION_REQUIRED" = 1 ]; then
+  spctl --assess --type open --context context:primary-signature -v "$DMG"
+else
+  spctl --assess --type open --context context:primary-signature -v "$DMG" || true
+fi
 echo "$DMG"
 echo "version $VERSION build $BUILD"
