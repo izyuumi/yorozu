@@ -690,16 +690,23 @@ export function serve(options: ServeOptions = {}): Sidecar {
       };
       // Finished, so the composer is not left offering Stop for a turn nobody is running.
       if (!runner) return finish(`${agent} is not available in this build yet.`);
+      // No folder, no agent: a thread from before folders were required, or one whose folder
+      // has since left `~/Projects`, would otherwise run the agent wherever this sidecar sits.
+      const home = threadHome(threadId, dir);
+      if (!home.cwd || !isProjectFolder(home.cwd)) {
+        state("native-cwd-refused");
+        return finish(`${agent} needs one of this Mac's project folders, and this thread has none.`);
+      }
       const turn = new AbortController();
       if (!running.has(threadId)) running.set(threadId, turn);
       setNativeTurn(threadId, { id, state: "running" }, dir);
       broadcast(threadList());
       try {
-        const home = threadHome(threadId, dir);
         const done = await runner.run({
           threadId,
           text,
           ...home,
+          cwd: home.cwd,
           bypass: loadSettings(dir).yolo,
           model: threadModel(threadId, dir),
           effort: threadEffort(threadId, dir),
@@ -724,8 +731,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
         // The agent could not run at all — not installed, not logged in, crashed. Said in the
         // thread, finished, so the composer is not left offering Stop for a dead turn.
         if (turn.signal.aborted) return;
+        // The whole error stays on the Mac: SDK messages name local paths and accounts, and a
+        // phone only needs to know the turn is over and where the detail is.
         state(`native-error ${error instanceof Error ? error.message : String(error)}`);
-        finish(`${agent} could not answer: ${error instanceof Error ? error.message : String(error)}`);
+        process.stderr.write(`native-error ${threadId}: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+        finish(`${agent} could not answer; see the Mac log.`);
       } finally {
         if (running.get(threadId) === turn) running.delete(threadId);
         if (!stopped) {
@@ -969,6 +979,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         try {
           // A coding agent runs where the picker offered, and nowhere else: a path typed into a
           // frame by hand is not a folder this Mac agreed to open an agent in.
+          // A missing folder is refused by `createThread` itself, after it has checked the agent.
           const cwd = event.data.cwd?.trim();
           if (event.data.agent && event.data.agent !== "yorozu" && cwd && !isProjectFolder(cwd)) {
             throw new Error(`"${cwd}" is not one of this Mac's project folders`);
@@ -1229,19 +1240,24 @@ export function serve(options: ServeOptions = {}): Sidecar {
         const known = devices.get(body.pub);
         // A key pair not on file gets in only with proof it read a QR this Mac drew. The
         // relay verified the frame's signature, but the relay could have signed it itself.
-        if (!known) {
-          const proved =
-            typeof body.proof === "string" &&
-            typeof body.spub === "string" &&
-            [...pairingSecrets].some((secret) => helloProof(secret, body.pub, body.spub!) === body.proof);
-          if (!proved) return state("hello-refused");
-          pairingSecrets.clear();
+        const proved =
+          typeof body.proof === "string" &&
+          typeof body.spub === "string" &&
+          [...pairingSecrets].some((secret) => helloProof(secret, body.pub, body.spub!) === body.proof);
+        if (!known && !proved) return state("hello-refused");
+        // A device on file may say hello again without proof, but it cannot move its relay
+        // identity without one: `revoke` is addressed to that key, so a relay that could swap
+        // it in with a signed frame could make the device unrevokable. The stored key stays.
+        let signingPub = known?.record.signingPub;
+        if (typeof body.spub === "string" && body.spub !== signingPub) {
+          if (proved) signingPub = body.spub;
+          else state("hello-spub-ignored");
         }
+        if (proved) pairingSecrets.clear();
+        const changed = !known || signingPub !== known.record.signingPub;
         remember({
           pub: body.pub,
-          ...(body.spub ? { signingPub: body.spub } : known?.record.signingPub
-            ? { signingPub: known.record.signingPub }
-            : {}),
+          ...(signingPub ? { signingPub } : {}),
           pairedAt: known?.record.pairedAt ?? Date.now(),
           lastSeen: Date.now(),
         });
@@ -1254,8 +1270,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
         // And every device's list of devices has just gained one.
         pushDevices();
         // Join tokens are one-time, so the one in the printed QR has just been burnt: mint the
-        // next one now, and the Mac's menu bar shows a QR a second device can still use.
-        ws.send(JSON.stringify({ type: "mint" }));
+        // next one now, and the Mac's menu bar shows a QR a second device can still use. A
+        // known device saying hello again with no proof read no QR and burnt nothing, so the
+        // code on screen stays as it is rather than being redrawn on every reconnect.
+        if (changed || proved) ws.send(JSON.stringify({ type: "mint" }));
         return;
       }
       if (body.t !== "box") return;
@@ -1298,8 +1316,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
     });
 
     ws.on("message", (data) => {
-      const msg = JSON.parse(data.toString()) as Record<string, unknown>;
       try {
+        // Inside the try: the relay is the one peer that can hand us a frame that is not JSON
+        // at all, and a parse error here would end the process rather than the frame.
+        const msg = JSON.parse(data.toString()) as Record<string, unknown>;
         switch (msg.type) {
           case "pong":
             if (deadline) clearTimeout(deadline);

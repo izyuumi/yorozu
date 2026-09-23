@@ -93,7 +93,7 @@ export const threadsDir = (dir = stateDir()): string => join(dir, "threads");
 const indexFile = (dir: string): string => join(dir, "threads.json");
 
 function saveThreads(threads: ThreadRecord[], dir: string): void {
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
   const temporary = indexFile(dir) + ".tmp";
   writeFileSync(temporary, `${JSON.stringify(threads, null, 2)}\n`, { flush: true });
   renameSync(temporary, indexFile(dir));
@@ -184,6 +184,9 @@ export function createThread(
   const existing = listThreads(dir).find((thread) => thread.id === id);
   if (existing) return existing;
   const cwd = home.cwd?.trim();
+  // A native agent runs in its thread's folder and nowhere else, so a record without one is
+  // not written: it would send the agent to whatever directory the sidecar was started in.
+  if (agent !== "yorozu" && !cwd) throw new Error(`a ${agent} thread needs a project folder`);
   const thread: ThreadRecord = {
     id,
     title: title?.trim() ?? "",
@@ -297,7 +300,11 @@ export function threadAgent(id: string, dir = stateDir()): ThreadAgent {
   return agent && THREAD_AGENTS.includes(agent) ? agent : "yorozu";
 }
 
-/** The folder and native session a native agent's next turn picks up from. */
+/**
+ * The folder and native session a native agent's next turn picks up from. `cwd` is absent only
+ * on a record from before folders were required; the caller refuses to run without one rather
+ * than letting the agent fall back to the sidecar's own directory.
+ */
 export function threadHome(id: string, dir = stateDir()): { cwd?: string; sessionId?: string } {
   const thread = listThreads(dir).find((candidate) => candidate.id === id);
   return {
@@ -409,7 +416,7 @@ export function stashToolResult(
   limit = TOOL_RESULT_PREVIEW_CHARS,
 ): YorozuEvent & { kind: "tool_result" } {
   if (event.data.output.length <= limit) return event;
-  mkdirSync(threadsDir(dir), { recursive: true });
+  mkdirSync(threadsDir(dir), { recursive: true, mode: 0o700 });
   writeFileSync(resultFile(event.threadId, event.data.callId, dir), JSON.stringify(event));
   const end = /[\uD800-\uDBFF]/.test(event.data.output[limit - 1]!) ? limit - 1 : limit;
   return { ...event, data: { ...event.data, output: event.data.output.slice(0, end), truncated: true } };
@@ -434,7 +441,7 @@ const resultFile = (threadId: string, callId: string, dir: string): string =>
 /** Appends to the thread's log. Control events (sync, thread admin) are not history. */
 export function appendThreadEvent(event: YorozuEvent, dir = stateDir()): void {
   if (!LOGGED.has(event.kind)) return;
-  mkdirSync(threadsDir(dir), { recursive: true });
+  mkdirSync(threadsDir(dir), { recursive: true, mode: 0o700 });
   appendFileSync(logFile(event.threadId, dir), `${JSON.stringify(event)}\n`);
 }
 
