@@ -10,7 +10,8 @@ import tempfile
 import unittest
 
 
-RELEASE_SCRIPT = Path(__file__).resolve().with_name("release.sh")
+# RELEASE_SCRIPT points the fixture at another copy of release.sh, for example a branch's.
+RELEASE_SCRIPT = Path(os.environ.get("RELEASE_SCRIPT") or Path(__file__).resolve().with_name("release.sh"))
 TARGET = "v0.2.1"
 CURRENT_DMG = "Yorozu-0.2.1-42.dmg"
 PREVIOUS_DMG = "Yorozu-0.2.0-41.dmg"
@@ -79,6 +80,19 @@ elif command == "gh":
     else:
         sys.exit("unexpected gh command: " + repr(args))
     state_path.write_text(json.dumps(state))
+elif command == "git":
+    # release.sh only asks which commit HEAD and the release tag name, in either the
+    # bare or the `--verify` form; one constant SHA makes the guard pass.
+    tag = os.environ["RELEASE_TAG"]
+    accepted = {
+        ("rev-parse", "HEAD"),
+        ("rev-parse", "--verify", "HEAD"),
+        ("rev-parse", tag + "^{commit}"),
+        ("rev-parse", "--verify", tag + "^{commit}"),
+    }
+    if tuple(args) not in accepted:
+        sys.exit("unexpected git command: " + repr(args))
+    print("0123456789abcdef0123456789abcdef01234567")
 else:
     sys.exit("unexpected command: " + command)
 '''
@@ -133,14 +147,20 @@ class ReleaseTests(unittest.TestCase):
         return result
 
     def commands(self):
+        # git calls are read-only guards (HEAD == tag); tag cleanup is asserted separately.
         return [
             " ".join(event["args"][:2]) if event["command"] == "gh" else event["command"]
             for event in self.events
+            if event["command"] != "git"
         ]
 
     def assert_tags_preserved(self):
         self.assertEqual(self.state["tags"], self.original_tags)
-        self.assertNotIn("git", [event["command"] for event in self.events])
+        for event in self.events:
+            if event["command"] == "gh" and event["args"][:2] == ["release", "delete"]:
+                self.assertNotIn("--cleanup-tag", event["args"])
+            if event["command"] == "git":
+                self.assertNotIn(event["args"][:1], (["tag"], ["push"]))
 
     def test_successful_existing_and_new_releases(self):
         # A fresh fixture is required for each successful release invocation.
@@ -157,7 +177,7 @@ class ReleaseTests(unittest.TestCase):
                 expected += ["release upload", "release edit", "api repos/fixture/yorozu/releases"]
                 expected += ["release delete"] * 3
                 self.assertEqual(self.commands(), expected)
-                build = self.events[1]
+                build = next(event for event in self.events if event["command"] == "build-mac.sh")
                 self.assertEqual((build["version"], build["build"]), ("0.2.1", "42"))
                 upload = next(event for event in self.events if event["args"][:2] == ["release", "upload"])
                 self.assertEqual(set(upload["assets"]), {CURRENT_DMG, PREVIOUS_DMG, "Yorozu.dmg", "appcast.xml", "models.json"})
