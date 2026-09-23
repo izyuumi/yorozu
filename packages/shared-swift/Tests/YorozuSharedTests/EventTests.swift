@@ -192,19 +192,45 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     #expect(try QrPayload.decode(QrPayload(relayUrl: "ws://127.0.0.1:8791", macPubkey: "AAA", token: "t-_", roomId: "r").encoded()).roomId == "r")
     // Whitespace is what a paste out of Messages brings with it.
     #expect(try QrPayload.decode("  \(code)\n").roomId == "r")
-    #expect(try QrPayload.decode("yorozu://pair?v=1&relay=ws://r&key=AAA&token=t").roomId == nil)
+    #expect(try QrPayload.decode("yorozu://pair?v=1&relay=wss://r&key=AAA&token=t").roomId == nil)
     // The pairing secret rides along when the Mac minted one, and is checked like the keys.
     #expect(try QrPayload.decode("\(code)&secret=s3cr3t").secret == "s3cr3t")
     #expect(throws: (any Error).self) { try QrPayload.decode("\(code)&secret=not%20base64!") }
 
-    #expect(throws: (any Error).self) { try QrPayload.decode("yorozu://pair?v=1&relay=ws://r&token=t") }
+    #expect(throws: (any Error).self) { try QrPayload.decode("yorozu://pair?v=1&relay=wss://r&token=t") }
     #expect(throws: (any Error).self) { try QrPayload.decode("yorozu://pair?v=1&key=AAA&token=t") }
-    #expect(throws: (any Error).self) { try QrPayload.decode("yorozu://pair?v=1&relay=ws://r&key=AAA") }
-    #expect(throws: (any Error).self) { try QrPayload.decode("yorozu://pair?v=2&relay=ws://r&key=AAA&token=t") }
+    #expect(throws: (any Error).self) { try QrPayload.decode("yorozu://pair?v=1&relay=wss://r&key=AAA") }
+    #expect(throws: (any Error).self) { try QrPayload.decode("yorozu://pair?v=2&relay=wss://r&key=AAA&token=t") }
     #expect(throws: (any Error).self) {
-        try QrPayload.decode("yorozu://pair?v=1&relay=ws://r&key=not%20base64!&token=t")
+        try QrPayload.decode("yorozu://pair?v=1&relay=wss://r&key=not%20base64!&token=t")
     }
     #expect(throws: (any Error).self) { try QrPayload.decode("yorozu://nonsense") }
+}
+
+@Test func aPairingCodeOnlyPointsAtARelayWorthDialling() throws {
+    // TLS anywhere; cleartext only back to this machine, which is what a dev relay is.
+    #expect(QrPayload.isAcceptableRelayUrl("wss://relay.yumi.to"))
+    #expect(QrPayload.isAcceptableRelayUrl("WSS://Relay.Example.com:443/path"))
+    #expect(QrPayload.isAcceptableRelayUrl("ws://127.0.0.1:8791"))
+    #expect(QrPayload.isAcceptableRelayUrl("ws://localhost:8791"))
+    #expect(QrPayload.isAcceptableRelayUrl("ws://LOCALHOST"))
+    #expect(QrPayload.isAcceptableRelayUrl("ws://[::1]:8791"))
+    // A cleartext socket to anyone else, a web URL, or no URL at all.
+    #expect(!QrPayload.isAcceptableRelayUrl("ws://relay.yumi.to"))
+    #expect(!QrPayload.isAcceptableRelayUrl("ws://127.0.0.1.evil.example"))
+    #expect(!QrPayload.isAcceptableRelayUrl("ws://localhost.evil.example"))
+    #expect(!QrPayload.isAcceptableRelayUrl("https://relay.yumi.to"))
+    #expect(!QrPayload.isAcceptableRelayUrl("wss://"))
+    #expect(!QrPayload.isAcceptableRelayUrl("relay.yumi.to"))
+    #expect(!QrPayload.isAcceptableRelayUrl(""))
+    #expect(!QrPayload.isAcceptableRelayUrl("not a url"))
+
+    // The same rule is what `decode` enforces, so the code is refused as malformed.
+    #expect(throws: (any Error).self) { try QrPayload.decode("yorozu://pair?v=1&relay=ws://relay.yumi.to&key=AAA&token=t") }
+    #expect(throws: (any Error).self) { try QrPayload.decode("yorozu://pair?v=1&relay=https://r&key=AAA&token=t") }
+    #expect(throws: (any Error).self) { try QrPayload.decode("yorozu://pair?v=1&relay=r&key=AAA&token=t") }
+    #expect(try QrPayload.decode("yorozu://pair?v=1&relay=ws%3A%2F%2Flocalhost%3A8791&key=AAA&token=t").relayUrl == "ws://localhost:8791")
+    #expect(try QrPayload.decode("yorozu://pair?v=1&relay=wss%3A%2F%2Frelay.yumi.to&key=AAA&token=t").relayUrl == "wss://relay.yumi.to")
 }
 
 @Test func aDeviceListUsesTheSharedShape() throws {
