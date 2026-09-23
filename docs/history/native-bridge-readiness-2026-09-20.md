@@ -113,7 +113,7 @@ Every live acceptance criterion is retained below. Automated logic coverage is d
 | `xcodebuild … -scheme YorozuKeyboardUITests -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build-for-testing` | Pass; UI interactions not executed |
 | `xcodebuild … -scheme YorozuIOS -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build` | Pass; unsigned device build only |
 | Independent standards and acceptance reviews | Both green after fixing all reported material findings |
-| Offscreen screenshot harness and Time Profiler | Four screenshots; zero ≥250 ms recorded hangs. [Performance evidence](native-ui-performance.md) |
+| Offscreen screenshot harness and Time Profiler | Four screenshots; zero ≥250 ms recorded hangs. [Performance evidence](native-ui-performance-2026-09-20.md) |
 
 Logs are local `/tmp/yorozu-all-build.log`, `/tmp/yorozu-all-tests.log`, `/tmp/yorozu-final-runtime.log`, `/tmp/yorozu-final-swift.log`, `/tmp/yorozu-mac-tests.log`, `/tmp/yorozu-mac-build.log`, `/tmp/yorozu-ios-ui-build.log`, `/tmp/yorozu-ios-device-build.log`, `/tmp/yorozu-harness.log`. No release scripts ran. Existing compiler warnings are not errors.
 
