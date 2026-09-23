@@ -103,10 +103,12 @@ the repo's public key before anything leaves it. Nothing is pasted into a browse
 committed.
 
 ```sh
-# The Developer ID Application certificate with its private key: Keychain Access → My
-# Certificates → right-click the identity → Export as .p12, with a password.
-gh secret set MAC_CERT_P12 < <(base64 -i ~/Downloads/DeveloperID.p12)
-gh secret set MAC_CERT_PASSWORD           # prompts; the password given at export
+# Every identity in the login keychain with its private key, as one .p12: Developer ID
+# Application for the Mac job, Apple Development for the iOS archive. Prompts for the login
+# keychain password, then for a new export password; the file exists for one moment.
+P=$(mktemp -d)/ids.p12 && security export -k ~/Library/Keychains/login.keychain-db \
+  -t identities -f pkcs12 -o "$P" && gh secret set MAC_CERT_P12 < <(base64 -i "$P"); rm -rf "$(dirname "$P")"
+gh secret set MAC_CERT_PASSWORD           # prompts; the export password
 # The App Store Connect API key notarization uses — the same one as TestFlight.
 gh secret set ASC_KEY_ID --body <KEYID>
 gh secret set ASC_ISSUER_ID --body <ISSUER-UUID>
@@ -125,9 +127,11 @@ The runner imports the identity into a keychain of its own, stores the notary ke
 Internal testing only: team members are added to the "Internal" beta group in App Store Connect
 and install through the TestFlight app. No public link.
 
-The `ios` job in `release.yml` runs this on every `v*` tag, beside the Mac job, with the three
-`ASC_*` secrets above; the version comes from the tag and the build number from the commit
-count. To run it by hand instead:
+The `ios` job in `release.yml` runs this on every `v*` tag, beside the Mac job, with the
+`ASC_*` secrets above plus the same `.p12` (the archive step wants an Apple Development
+identity on the machine; without one Xcode mints a new certificate per run until the team hits
+Apple's cap). The version comes from the tag and the build number from the commit count. To
+run it by hand instead:
 
 ```sh
 ASC_KEY_ID=<KEYID> ASC_ISSUER_ID=<ISSUER-UUID> VERSION=0.2.1 ./scripts/build-ios.sh
