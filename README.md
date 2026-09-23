@@ -91,6 +91,7 @@ pnpm --filter @yorozu/relay build && node apps/relay/dist/index.js    # PORT, de
 pnpm -r test                                              # runtime, shared, relay
 env -u SDKROOT swift test --package-path packages/shared-swift
 env -u SDKROOT swift test --package-path apps/mac
+python3 scripts/test-release.py                           # isolated publication checks
 ```
 
 The `env -u SDKROOT` is load-bearing — an inherited `SDKROOT` makes SwiftPM build against the
@@ -98,12 +99,15 @@ wrong SDK. `apps/ios/e2e/run.sh` is the end-to-end proof: it stands up a relay, 
 and the sidecar, builds the app onto a throwaway simulator, and asserts a streamed reply and a
 tool call reach the phone.
 
-CI (`.github/workflows/ci.yml`) runs those three jobs on macOS. Release Please maintains a release PR; merging it runs the signed Mac release workflow.
+CI (`.github/workflows/ci.yml`) runs the Node, Swift, and iOS jobs on macOS, plus workflow
+validation, ShellCheck, isolated release-publication tests, and a relay container build and
+WebSocket check on Linux. Release Please
+maintains a release PR; merging it runs the signed Mac release workflow.
 See [the release guide](docs/releasing.md) for credentials and retries.
 
 ### Configuration
 
-The sidecar reads five environment variables:
+The main sidecar settings are:
 
 | Variable | Default |
 | --- | --- |
@@ -112,6 +116,9 @@ The sidecar reads five environment variables:
 | `OPENCLAW_BIN` | `openclaw` on `PATH` |
 | `YOROZU_PROJECTS_DIR` | `~/Projects` — the folders a coding-agent thread can start in |
 | `YOROZU_RUNTIME_CMD` | set by the Mac app; the bundled sidecar, else the dev checkout |
+
+Automatic thread titles also use the provider-chain settings described in
+[the runtime guide](docs/legacy-runtime.md#provider-code-that-remains-live).
 
 ## Install
 

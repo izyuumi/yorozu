@@ -31,7 +31,7 @@ ASC_ISSUER_ID=${ASC_ISSUER_ID:?ASC_ISSUER_ID is required}
 # CI carries the key base64 in ASC_KEY_P8; xcodebuild only takes a path, so write it out
 # at mode 600 and remove it however the script exits.
 if [ -n "${ASC_KEY_P8:-}" ]; then
-  ASC_KEY_PATH="$(mktemp -t AuthKey_$ASC_KEY_ID)"
+  ASC_KEY_PATH="$(mktemp -t "AuthKey_$ASC_KEY_ID")"
   chmod 600 "$ASC_KEY_PATH"
   printf '%s' "$ASC_KEY_P8" | base64 --decode > "$ASC_KEY_PATH"
   trap 'rm -f "$ASC_KEY_PATH"' EXIT INT TERM

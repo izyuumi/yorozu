@@ -18,8 +18,9 @@ so that is what makes one build newer than another, and the build number is in t
 two builds of one tag are two files rather than one URL with two meanings. `scripts/build-ios.sh`
 derives both the same way.
 
-> `apps/ios/Project.swift` and `scripts/dev-bundle.sh` each hardcode a `0.2.0` display version for
-> non-release builds. They do not affect a real release, but they do lag the current tag.
+`apps/ios/Project.swift` and `scripts/dev-bundle.sh` read `version.txt` for development builds
+and append `-beta` to the display label. Release Please maintains that file. Shipping builds
+continue to use the release tag and explicit build-script overrides.
 
 ## The Mac DMG
 

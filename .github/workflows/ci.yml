@@ -17,6 +17,52 @@ permissions:
   contents: read
 
 jobs:
+  release-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install workflow and shell linters
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          sudo apt-get update
+          sudo apt-get install --yes shellcheck
+      - name: Lint workflows and release scripts
+        run: |
+          "$(go env GOPATH)/bin/actionlint"
+          shellcheck scripts/release.sh scripts/appcast.sh scripts/build-mac.sh scripts/build-ios.sh scripts/dev-bundle.sh
+      - name: Check publication success and failure paths
+        run: python3 scripts/test-release.py
+
+  relay-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Build the locked relay image
+        run: docker build -f apps/relay/Dockerfile -t yorozu-relay:ci .
+      - name: Check the packaged relay accepts a WebSocket connection
+        run: |
+          docker run --rm --entrypoint node yorozu-relay:ci --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { once } from "node:events";
+            import WebSocket from "ws";
+            import { startRelay } from "./dist/index.js";
+            const timeout = setTimeout(() => { console.error("relay smoke timed out"); process.exit(1); }, 10000);
+            const relay = await startRelay(0);
+            try {
+              const ws = new WebSocket(`ws://127.0.0.1:${relay.port}`);
+              const [data] = await once(ws, "message");
+              const { nonce } = JSON.parse(data.toString());
+              assert.equal(typeof nonce, "string");
+              assert.ok(nonce.length > 0);
+              ws.close();
+              await once(ws, "close");
+            } finally {
+              await relay.close();
+              clearTimeout(timeout);
+            }
+          '
+
   node:
     runs-on: macos-latest
     steps:

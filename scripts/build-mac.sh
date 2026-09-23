@@ -91,7 +91,7 @@ NODE_DIR="node-$NODE_VERSION-$NODE_ARCH"
 mkdir -p "$DIST"
 [ -f "$DIST/$NODE_DIR.tar.gz" ] || \
   curl -fsSL "https://nodejs.org/dist/$NODE_VERSION/$NODE_DIR.tar.gz" -o "$DIST/$NODE_DIR.tar.gz"
-rm -rf "$DIST/$NODE_DIR"
+rm -rf "${DIST:?}/${NODE_DIR:?}"
 mkdir -p "$DIST/$NODE_DIR"
 tar -xzf "$DIST/$NODE_DIR.tar.gz" -C "$DIST/$NODE_DIR" --strip-components=1
 cp "$DIST/$NODE_DIR/bin/node" "$APP/Contents/Resources/node"
