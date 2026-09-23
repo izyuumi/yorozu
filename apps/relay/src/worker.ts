@@ -9,12 +9,13 @@
  * the query string, so a client that appends it works against either relay.
  *
  * Rooms hibernate: sockets are accepted with the Hibernation API and per-socket state
- * lives in the socket attachment, tokens and the offline buffer in DO storage. Only the
- * rate-limit bucket is in memory, which is the point of it — it is per isolate lifetime.
+ * lives in the socket attachment, tokens and the offline buffer in DO storage. The socket
+ * bucket survives too, so waking an object does not grant a second burst.
  */
 import {
   alertPayload,
   allowFrame,
+  allowNotify,
   parseAck,
   BACKGROUND_CLASSES,
   BACKGROUND_INTERVAL_MS,
@@ -26,7 +27,10 @@ import {
   dropCount,
   evictions,
   frameWire,
+  MAX_PAYLOAD_BYTES,
+  MAX_TOKENS_PER_ROOM,
   newBucket,
+  NOTIFY_PER_MINUTE,
   parseDevices,
   parseEnvelope,
   parseFrames,
@@ -36,16 +40,20 @@ import {
   parseRegister,
   parseRevoke,
   PING,
+  positiveLimit,
   PONG,
   safeReason,
   TOKEN_TTL_MS,
   type Bucket,
   type Notify,
+  type NotifyWindow,
 } from "./protocol.js";
 import * as apns from "./apns.js";
 
 export interface Env extends apns.ApnsEnv {
   ROOM: DurableObjectNamespace;
+  RELAY_MAX_TOKENS_PER_ROOM?: string;
+  RELAY_NOTIFY_PER_MINUTE?: string;
 }
 
 const ED25519 = { name: "Ed25519" } as const;
@@ -99,6 +107,8 @@ type Conn = {
   role: "mac" | "phone" | null;
   /** base64url public key whose signature every frame from this socket must carry. */
   key: string | null;
+  /** Optional for sockets accepted before buckets lived in attachments. */
+  bucket?: Bucket;
 };
 
 type Buffered = { raw: string; bytes: number; at: number; seq: number };
@@ -137,11 +147,6 @@ type PushRecord = {
 const tokenPrefix = "t:";
 
 export class Room implements DurableObject {
-  /**
-   * One bucket per socket, in memory: a phone that floods closes itself and nobody else. A
-   * socket woken from hibernation starts a fresh one, which is a full burst it was owed anyway.
-   */
-  private buckets = new WeakMap<WebSocket, Bucket>();
   /** Verification is async, so messages are chained to keep frames strictly in order. */
   private tail: Promise<unknown> = Promise.resolve();
   private keys = new Map<string, Promise<CryptoKey>>();
@@ -154,7 +159,7 @@ export class Room implements DurableObject {
   ) {
     // Answered at the edge, so a heartbeat keeps the socket warm without ever waking this
     // object. Set per isolate rather than per socket: it is room-wide state and applies to
-    // every hibernated socket the room holds.
+    // every hibernated socket the room holds. Every other message spends its socket's bucket.
     this.state.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
   }
 
@@ -163,7 +168,7 @@ export class Room implements DurableObject {
     const { 0: client, 1: server } = new WebSocketPair();
     this.state.acceptWebSocket(server);
     const nonce = randomToken();
-    server.serializeAttachment({ nonce, room, role: null, key: null } satisfies Conn);
+    server.serializeAttachment({ nonce, room, role: null, key: null, bucket: newBucket(Date.now()) } satisfies Conn);
     server.send(JSON.stringify({ type: "nonce", nonce }));
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -202,14 +207,21 @@ export class Room implements DurableObject {
     const now = Date.now();
     const storage = this.state.storage;
     await this.trim(now);
-    const tokens = await storage.list<number>({ prefix: tokenPrefix });
-    const expired = [...tokens].filter(([, expiresAt]) => now > expiresAt).map(([key]) => key);
-    if (expired.length > 0) await storage.delete(expired);
+    const tokens = await storage.transaction(async (storage) => {
+      const tokens = await storage.list<number>({ prefix: tokenPrefix });
+      const expired = [...tokens].filter(([, expiresAt]) => now > expiresAt).map(([key]) => key);
+      if (expired.length > 0) await storage.delete(expired);
+      const order = ((await storage.get<string[]>("token-order")) ?? [])
+        .filter((key) => (tokens.get(key) ?? -Infinity) >= now);
+      if (order.length > 0) await storage.put("token-order", order);
+      else await storage.delete("token-order");
+      return tokens;
+    });
     // Whichever comes first: the buffer's next sweep, or the earliest token still live.
     const remaining = await storage.list({ prefix: "b:", limit: 1 });
     const next = Math.min(
       remaining.size > 0 ? now + BUFFER_TTL_MS : Infinity,
-      ...[...tokens.values()].filter((expiresAt) => expiresAt >= now),
+      ...[...tokens.values()].filter((expiresAt) => expiresAt >= now).map((expiresAt) => expiresAt + 1),
     );
     if (next !== Infinity) await storage.setAlarm(next);
   }
@@ -218,6 +230,40 @@ export class Room implements DurableObject {
   private async alarmBy(at: number): Promise<void> {
     const scheduled = await this.state.storage.getAlarm();
     if (scheduled === null || scheduled > at) await this.state.storage.setAlarm(at);
+  }
+
+  private async mint(now: number): Promise<{ token: string; expiresAt: number }> {
+    const token = randomToken();
+    const expiresAt = now + TOKEN_TTL_MS;
+    const cap = positiveLimit(this.env.RELAY_MAX_TOKENS_PER_ROOM, MAX_TOKENS_PER_ROOM);
+    await this.state.storage.transaction(async (storage) => {
+      const tokens = await storage.list<number>({ prefix: tokenPrefix });
+      const order = (await storage.get<string[]>("token-order")) ?? [];
+      // Older deployments only stored expiries. New mints retain their order even when the
+      // clock gives several of them the same timestamp, or the object hibernates between them.
+      const legacy = [...tokens].filter(([key, at]) => at >= now && !order.includes(key))
+        .sort(([, a], [, b]) => a - b).map(([key]) => key);
+      const live = [...legacy, ...order.filter((key) => (tokens.get(key) ?? -Infinity) >= now)];
+      const drop = [...tokens].filter(([, at]) => now > at).map(([key]) => key);
+      drop.push(...live.splice(0, Math.max(0, live.length - cap + 1)));
+      if (drop.length > 0) await storage.delete(drop);
+      await storage.put(tokenPrefix + token, expiresAt);
+      await storage.put("token-order", [...live, tokenPrefix + token]);
+    });
+    // Expiry is strict: at the expiry millisecond the token is still valid.
+    await this.alarmBy(expiresAt + 1);
+    return { token, expiresAt };
+  }
+
+  private async reserveNotify(now: number): Promise<boolean> {
+    const limit = positiveLimit(this.env.RELAY_NOTIFY_PER_MINUTE, NOTIFY_PER_MINUTE);
+    // Reserve before starting APNs, and retain the room budget through hibernation/reconnects.
+    return this.state.storage.transaction(async (storage) => {
+      const window = (await storage.get<NotifyWindow>("notify-window")) ?? { count: 0, startedAt: now };
+      if (!allowNotify(window, now, limit)) return false;
+      await storage.put("notify-window", window);
+      return true;
+    });
   }
 
   private sockets(role: "mac" | "phone"): WebSocket[] {
@@ -482,10 +528,19 @@ export class Room implements DurableObject {
   }
 
   private async handle(ws: WebSocket, data: string | ArrayBuffer): Promise<void> {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    const bytes = typeof data === "string" ? new TextEncoder().encode(data).byteLength : data.byteLength;
+    if (bytes > MAX_PAYLOAD_BYTES) return this.drop(ws, 1009, "message too big");
     const raw = typeof data === "string" ? data : new TextDecoder().decode(data);
     const now = Date.now();
     const conn = ws.deserializeAttachment() as Conn;
     const storage = this.state.storage;
+
+    // Charge before parsing or verifying, including messages that do not forward ciphertext.
+    const bucket = conn.bucket ?? newBucket(now);
+    if (!allowFrame(bucket, now)) return this.drop(ws, CLOSE_RATE_LIMIT, "rate limit");
+    conn.bucket = bucket;
+    ws.serializeAttachment(conn);
 
     // Only the envelope is parsed; `payload` is forwarded byte-for-byte.
     const msg = parseEnvelope(raw);
@@ -533,8 +588,7 @@ export class Room implements DurableObject {
       }
 
       // The heartbeat the edge normally answers for us. Handled here too so a socket that
-      // somehow reaches the object still gets a pong instead of a "unknown type" close, and so
-      // the Node relay and this one behave identically.
+      // somehow reaches the object still gets a pong instead of an "unknown type" close.
       case "ping":
         return void ws.send(PONG);
 
@@ -547,12 +601,7 @@ export class Room implements DurableObject {
 
       case "mint": {
         if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
-        const token = randomToken();
-        const expiresAt = now + TOKEN_TTL_MS;
-        await storage.put(tokenPrefix + token, expiresAt);
-        // Swept by the alarm once it expires, so a token nobody redeemed does not sit in
-        // storage until the next one happens to be looked up.
-        await this.alarmBy(expiresAt);
+        const { token, expiresAt } = await this.mint(now);
         ws.send(JSON.stringify({ type: "token", token, expiresAt }));
         return;
       }
@@ -652,6 +701,10 @@ export class Room implements DurableObject {
         if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
         const notify = parseNotify(msg);
         if (!notify) return this.drop(ws, CLOSE_PROTOCOL, "bad notify");
+        if (!(await this.reserveNotify(now))) {
+          ws.send(JSON.stringify({ type: "state", state: "notify rate limit" }));
+          return;
+        }
         // Detached from the message chain: Apple answering slowly must not hold up the next
         // frame. `waitUntil` keeps the object alive for it; the catch is the only place a
         // failure would otherwise be seen.
@@ -675,10 +728,6 @@ export class Room implements DurableObject {
             return this.drop(ws, CLOSE_BAD_SIGNATURE, "bad frame signature");
           }
         }
-        let bucket = this.buckets.get(ws);
-        if (!bucket) this.buckets.set(ws, (bucket = newBucket(now)));
-        if (!allowFrame(bucket, now)) return this.drop(ws, CLOSE_RATE_LIMIT, "rate limit");
-
         if (conn.role === "phone") {
           const mac = this.mac();
           if (mac) send(mac, raw);
