@@ -61,10 +61,35 @@ public struct ChannelCounter: Codable, Equatable, Sendable {
     }
 }
 
-/// Persists a ``ChannelCounter`` so a relaunch neither reuses a `seq` it already sent nor
-/// accepts one it already saw. Keyed by both X25519 public keys: new keys on either side mean
-/// new channel keys, and a fresh pair rightly starts from zero.
-public struct ChannelCounterStore: Sendable {
+/// Where a ``ChannelCounter`` lives between launches. Whatever holds it must live exactly as
+/// long as the identity it counts for: the counter is what tells a replay from a fresh box, so
+/// keys that survive without it are keys the peer will drop everything from as a replay — and
+/// keys that are dropped must take it with them, or a re-pair under the same keys would start
+/// numbering from where the old one left off.
+///
+/// The apps keep it inside the pairing record in the Keychain, next to the identity, which is
+/// what a reinstall on iOS keeps. ``ChannelCounterStore`` is the `UserDefaults` fallback for a
+/// caller that passes nothing; a reinstall loses it.
+public protocol ChannelCounterStorage: Sendable {
+    /// The counter as last saved, or nil when none has been. Throws when something is stored
+    /// but cannot be read: a counter that starts over is not survivable — every box out is a
+    /// replay to the peer until `send` climbs past what it last took, and every box in is dropped
+    /// as new when it should have been a replay — so the caller is told rather than left to start
+    /// from zero.
+    func load() throws -> ChannelCounter?
+    /// Must have written the counter through before returning: a `seq` handed out after this
+    /// call is one a relaunch will not hand out again. Throws only if it could not, and the
+    /// caller must then not send or accept.
+    func save(_ counter: ChannelCounter) throws
+    /// Forgets the counter, for when the pairing itself is dropped.
+    func clear() throws
+}
+
+/// The `UserDefaults` ``ChannelCounterStorage``: keyed by both X25519 public keys, so new keys
+/// on either side — which mean new channel keys — rightly start from zero. A fallback for
+/// callers that pass ``RelayClient`` nothing better; it does not survive an iOS reinstall, so
+/// the apps store the counter with the identity instead.
+public struct ChannelCounterStore: ChannelCounterStorage {
     /// `UserDefaults` is documented thread-safe; the SDK just does not spell it `Sendable`.
     nonisolated(unsafe) private let defaults: UserDefaults
     private let key: String
@@ -74,15 +99,15 @@ public struct ChannelCounterStore: Sendable {
         self.key = "yorozu.channel.\(ownPub.base64URLEncodedString()).\(peerPub.base64URLEncodedString())"
     }
 
-    /// Zero when nothing is stored, or when what is stored cannot be read. Starting over is
-    /// survivable — the Mac drops our boxes as replays until `send` climbs past what it last
-    /// took, and takes nothing older than what we last accepted as new — where refusing to
-    /// launch is not.
-    public func load() -> ChannelCounter {
-        guard let data = defaults.data(forKey: key),
-            let counter = try? JSONDecoder().decode(ChannelCounter.self, from: data)
-        else { return ChannelCounter() }
-        return counter
+    /// Nil when nothing is stored. What is stored but cannot be read throws: see
+    /// ``ChannelCounterStorage/load()`` for why zero would be the wrong answer.
+    public func load() throws -> ChannelCounter? {
+        guard let data = defaults.data(forKey: key) else { return nil }
+        do {
+            return try JSONDecoder().decode(ChannelCounter.self, from: data)
+        } catch {
+            throw YorozuCrypto.CryptoError.malformed("stored channel counter is unreadable")
+        }
     }
 
     /// Writes the counter through before returning: `UserDefaults.set` updates the in-process

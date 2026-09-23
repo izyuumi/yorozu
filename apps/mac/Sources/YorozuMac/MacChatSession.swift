@@ -133,6 +133,9 @@ final class MacChatSession {
         do { try pair(with: pending.code) } catch {}
     }
 
+    /// Drops the client pairing: keys, counters and cache together. The counters live in the
+    /// same Keychain item as the keys, so clearing the record clears them; what an older build
+    /// left in `UserDefaults` goes with it.
     func unpair() {
         model.close(); relay = nil; model = Self.idleModel()
         pairedAt = nil; failure = nil
@@ -148,6 +151,14 @@ final class MacChatSession {
         try? FileManager.default.removeItem(atPath: path)
         Sidecar.shared.start()
         model = Self.localModel(); configure(model)
+        // Only the host answers a phone's request to turn approvals off: the runtime sends it
+        // over the local socket alone, and the person at this keyboard is the one it is asking.
+        // Never on the relay model — a hostile host could otherwise pop consent alerts on a
+        // client Mac, and an Allow there would be sent back to the very host that asked.
+        model.onApprovalSettingsRequest = { [weak model] request in
+            guard let model else { return }
+            YoloConsent.ask(request, model: model)
+        }
         Task {
             var waited = 0
             while !FileManager.default.fileExists(atPath: path), waited < 100 {
@@ -161,7 +172,8 @@ final class MacChatSession {
         do {
             model.close()
             let relay = try RelayClient(pairing: stored.pairing, identity: stored.identity,
-                paired: stored.paired == true, onPaired: MacPairingStore.markPaired)
+                paired: stored.paired == true, counters: MacPairingCounterStorage(),
+                onPaired: MacPairingStore.markPaired)
             self.relay = relay; pairedAt = stored.pairedAt
             let model = ChatModel(transport: relay, cache: MacCacheStore.open(), device: "mac")
             model.onPaired = { [weak self] in
@@ -173,9 +185,9 @@ final class MacChatSession {
         }
     }
 
+    /// What both roles share. The YOLO consent hook is deliberately not here: see `startHost`.
     private func configure(_ model: ChatModel) {
         model.onThreads = { NSApp.dockTile.badgeLabel = model.unreadCount == 0 ? nil : String(model.unreadCount) }
-        model.onApprovalSettingsRequest = { request in YoloConsent.ask(request, model: model) }
     }
     private static func localModel() -> ChatModel {
         ChatModel(transport: LocalSocketTransport(path: LocalSocketTransport.defaultPath()), device: "mac")
@@ -209,14 +221,51 @@ private enum MacClientKeychain {
 }
 
 private enum MacPairingStore {
-    struct Stored: Codable { var pairing: QrPayload; var identity: PhoneIdentity; var paired: Bool?; var pairedAt: Date? }
+    /// `counters` is the live channel's sequence numbers, kept with the keys they count for
+    /// rather than in `UserDefaults`, and optional so a record from before it existed decodes.
+    struct Stored: Codable {
+        var pairing: QrPayload; var identity: PhoneIdentity; var paired: Bool?; var pairedAt: Date?
+        var counters: ChannelCounter?
+    }
     private static let account = "pairing"
     static func load() -> Stored? { MacClientKeychain.load(account).flatMap { try? JSONDecoder().decode(Stored.self, from: $0) } }
     static func save(_ value: Stored) throws { try MacClientKeychain.save(JSONEncoder().encode(value), account: account) }
-    static func clear() { MacClientKeychain.clear(account) }
+    /// The record and, with it, the counters; plus what an older build left in `UserDefaults`.
+    static func clear() { try? MacPairingCounterStorage().clearLegacy(); MacClientKeychain.clear(account) }
     static func markPaired() {
         guard var value = load(), value.paired != true else { return }
         value.paired = true; value.pairedAt = Date(); value.pairing.token = ""; try? save(value)
+    }
+}
+
+/// The client Mac's channel counters, kept in the pairing record in the Keychain: the same
+/// arrangement as the phone's `PairingCounterStorage`, for the same reason. A record from a
+/// build that kept them in `UserDefaults` is read from there once, so an upgrade does not
+/// restart the sequence.
+private struct MacPairingCounterStorage: ChannelCounterStorage {
+    struct NoPairing: Error {}
+    func load() throws -> ChannelCounter? {
+        guard let stored = MacPairingStore.load() else { return nil }
+        if let counters = stored.counters { return counters }
+        return try legacyStore(for: stored)?.load()
+    }
+    func save(_ counter: ChannelCounter) throws {
+        guard var stored = MacPairingStore.load() else { throw NoPairing() }
+        stored.counters = counter; try MacPairingStore.save(stored)
+        legacyStore(for: stored)?.clear()
+    }
+    func clear() throws {
+        try clearLegacy()
+        guard var stored = MacPairingStore.load() else { return }
+        stored.counters = nil; try MacPairingStore.save(stored)
+    }
+    func clearLegacy() throws {
+        guard let stored = MacPairingStore.load() else { return }
+        legacyStore(for: stored)?.clear()
+    }
+    private func legacyStore(for stored: MacPairingStore.Stored) -> ChannelCounterStore? {
+        guard let macPub = Data(base64URLEncoded: stored.pairing.macPubkey) else { return nil }
+        return ChannelCounterStore(defaults: .standard, ownPub: stored.identity.sessionPublicKey, peerPub: macPub)
     }
 }
 

@@ -98,7 +98,7 @@ public actor RelayClient: ChatTransport {
     /// Where each direction stands, persisted before every send and after every accept so a
     /// relaunch can neither reuse a `seq` nor accept one it already saw.
     private var counter: ChannelCounter
-    private let counterStore: ChannelCounterStore
+    private let counterStore: any ChannelCounterStorage
     private let logger = Logger(subsystem: "to.yumi.yorozu", category: "relay")
     private var updates: AsyncStream<Update>.Continuation?
 
@@ -123,14 +123,18 @@ public actor RelayClient: ChatTransport {
     private var pinger: Task<Void, Never>?
     private var pongDeadline: Task<Void, Never>?
 
-    /// Throws if the QR payload is not usable: a bad relay URL, a missing room, or a Mac
-    /// public key the channel keys cannot be agreed from.
+    /// Throws if the QR payload is not usable — a bad relay URL, a missing room, or a Mac
+    /// public key the channel keys cannot be agreed from — or if `counters` holds something it
+    /// cannot read: a counter that starts over is a channel the Mac drops every box from, and
+    /// that is better said now than discovered as a chat that never answers.
     ///
     /// - Parameters:
     ///   - paired: whether the relay already knows this device, so the one-time token in
     ///     `pairing` has been spent and must not be sent again.
     ///   - session: the URLSession the socket is dialled on.
-    ///   - defaults: where the sequence counter for this pairing is kept across relaunches.
+    ///   - counters: where the sequence counters for this pairing are kept across relaunches.
+    ///     The apps pass storage that keeps them in the pairing record next to the identity;
+    ///     nil falls back to `UserDefaults.standard`, which an iOS reinstall does not keep.
     ///   - onPaired: called once, the first time the relay accepts this device, so the caller
     ///     can persist that fact. Called off the main actor.
     public init(
@@ -138,7 +142,7 @@ public actor RelayClient: ChatTransport {
         identity: PhoneIdentity,
         paired: Bool = false,
         session: URLSession = .shared,
-        defaults: UserDefaults = .standard,
+        counters: (any ChannelCounterStorage)? = nil,
         onPaired: (@Sendable () -> Void)? = nil
     ) throws {
         guard let url = URL(string: pairing.relayUrl), url.scheme?.hasPrefix("ws") == true else {
@@ -172,12 +176,12 @@ public actor RelayClient: ChatTransport {
             theirPub: macPub,
             role: .device
         )
-        self.counterStore = ChannelCounterStore(
-            defaults: defaults,
+        self.counterStore = counters ?? ChannelCounterStore(
+            defaults: .standard,
             ownPub: identity.sessionPublicKey,
             peerPub: macPub
         )
-        self.counter = counterStore.load()
+        self.counter = try counterStore.load() ?? ChannelCounter()
     }
 
     /// Dials, and keeps re-dialling after every drop, yielding every update until ``close()``.
