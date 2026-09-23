@@ -7,7 +7,7 @@ const { codexMock, startThreadMock, runStreamedMock, execFileMock, accessSyncMoc
     return {
       runStreamedMock,
       startThreadMock,
-      codexMock: vi.fn(() => ({ startThread: startThreadMock })),
+      codexMock: vi.fn(function () { return { startThread: startThreadMock }; }),
       execFileMock: vi.fn(),
       accessSyncMock: vi.fn(),
     };
