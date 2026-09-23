@@ -143,9 +143,33 @@ final class Sidecar: ObservableObject {
         return URL.applicationSupportDirectory.appending(path: "Yorozu")
     }
 
+    /// The variables the sidecar is given, out of everything the app was launched with. The
+    /// runtime needs its own `YOROZU_*`, the provider keys a dev run exports, and enough of
+    /// the login environment to find node and a home directory; it gets nothing else, because
+    /// the app's environment is whatever launched it — a shell with secrets exported, a
+    /// LaunchAgent, a screenshot script — and the runtime spawns agents that run commands.
+    ///
+    /// `LC_*` is a prefix because the locale is a family of variables; the others are exact.
+    static let passedEnvironment: Set<String> = ["PATH", "HOME", "TMPDIR", "LANG", "USER", "SHELL"]
+    static let passedEnvironmentPrefixes = ["LC_", "YOROZU_", "CLAUDE_", "ANTHROPIC_", "CODEX_", "OPENAI_"]
+
+    static func sidecarEnvironment(from environment: [String: String]) -> [String: String] {
+        environment.filter { name, _ in
+            passedEnvironment.contains(name) || passedEnvironmentPrefixes.contains { name.hasPrefix($0) }
+        }
+    }
+
+    /// What the runtime's `/bin/sh` reads back as exactly `path`, however it is spelt: one
+    /// single-quoted word, with any single quote inside it closed, escaped and reopened.
+    static func shellQuoted(_ path: String) -> String {
+        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     private func spawn(generation: Int) {
-        var environment = ProcessInfo.processInfo.environment
-        guard let launch = Self.launch(environment: environment) else {
+        let inherited = ProcessInfo.processInfo.environment
+        // Looked up in the full environment — `PATH` is passed through anyway — and then run
+        // with only the allowlisted part of it.
+        guard let launch = Self.launch(environment: inherited) else {
             state = "failed: no runtime found"
             Log.write("sidecar: no bundled runtime, dev checkout or YOROZU_RUNTIME_CMD to run")
             scheduleRestart(ranFor: 0, generation: generation)
@@ -162,6 +186,7 @@ final class Sidecar: ObservableObject {
         let stateDirectory = Self.stateDirectory
         try? FileManager.default.createDirectory(at: stateDirectory, withIntermediateDirectories: true)
         process.currentDirectoryURL = stateDirectory
+        var environment = Self.sidecarEnvironment(from: inherited)
         if environment["YOROZU_STATE_DIR"] == nil { environment["YOROZU_STATE_DIR"] = stateDirectory.path }
         // The relay chosen in General; an explicit YOROZU_RELAY_URL in the app's own
         // environment still wins, for dev runs.
@@ -171,7 +196,7 @@ final class Sidecar: ObservableObject {
         // sit in a path with spaces in it.
         if environment["YOROZU_NATIVE_CMD"] == nil,
            let helper = Bundle.main.url(forAuxiliaryExecutable: "yorozu-native") {
-            environment["YOROZU_NATIVE_CMD"] = "'\(helper.path)'"
+            environment["YOROZU_NATIVE_CMD"] = Self.shellQuoted(helper.path)
         }
         process.environment = environment
         process.standardOutput = output
@@ -280,8 +305,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev"
             Log.write("launch: build \(version) at \(Bundle.main.bundlePath)")
+            // Debug builds only: the screenshot scripts and the keyboard UI tests run a debug
+            // bundle (`scripts/dev-bundle.sh` defaults to it), and a shipped build should not
+            // change what it does for an argument or a variable whoever launched it can set.
+            #if DEBUG
             let ephemeral = ProcessInfo.processInfo.arguments.contains("-yorozuShowcase")
                 || ProcessInfo.processInfo.environment["YOROZU_EPHEMERAL_RUN"] == "1"
+            #else
+            let ephemeral = false
+            #endif
             if ephemeral {
                 // Screenshot/showcase bundles must never become login items or supervise
                 // themselves. They are deliberately disposable and may live under /tmp.
@@ -301,9 +333,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Updates.start()
             if MacChatSession.shared.role == .host { NeverSleep.shared.restoreFromDefaults() }
             MacChatSession.shared.start()
+            #if DEBUG
             // Test harness only, and inert without a `-yorozuShowcase` argument. After
             // `LocalChat.start`, whose thread hook it chains onto.
             Showcase.attach(to: MacChatSession.shared.model)
+            #endif
             OnboardingWindow.showIfFirstLaunch()
         }
     }

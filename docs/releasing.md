@@ -41,9 +41,13 @@ and the menu bar sits at `starting`. The nodejs.org build links nothing but syst
 tarball is cached in `dist/`, and the build runs `node --version` once before signing so a node
 that cannot start fails the build rather than the user.
 
-The bundle is Developer ID signed with the hardened runtime and `apps/mac/Yorozu.entitlements`,
-which is only the three exceptions Node needs: JIT, unsigned executable memory, and library
-validation off. There is no sandbox — the agent drives the whole Mac. The DMG is signed too.
+The bundle is Developer ID signed with the hardened runtime. `apps/mac/Yorozu.entitlements`,
+for the app and the `yorozu-native` helper, holds only the privacy usage entitlements (Apple
+Events, camera, microphone, contacts, calendars, location, photos) — no hardened-runtime
+exceptions, so the app and helper cannot load unsigned code or write executable memory. The
+bundled `node` alone is signed with `apps/mac/Node.entitlements`, which grants the two
+exceptions V8 needs: JIT and unsigned executable memory. Library validation stays on for every
+binary. There is no sandbox — the agent drives the whole Mac. The DMG is signed too.
 
 The bundled runtime is large: `@openai/codex` and `@anthropic-ai/claude-agent-sdk` vendor ~277 MB
 and ~194 MB of platform binaries respectively, which is most of the DMG.
