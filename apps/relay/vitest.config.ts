@@ -1,12 +1,11 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { generateKeyPairSync } from "node:crypto";
-import { defineWorkersProject } from "@cloudflare/vitest-pool-workers/config";
+import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
 // Resolve the pool's runtime, not Wrangler's newer, independent installation.
-const require = createRequire(import.meta.url);
-const poolRequire = createRequire(require.resolve("@cloudflare/vitest-pool-workers/config"));
+const poolRequire = createRequire(import.meta.resolve("@cloudflare/vitest-pool-workers"));
 const miniflareRequire = createRequire(poolRequire.resolve("miniflare"));
 const supported = miniflareRequire("workerd").compatibilityDate as string;
 const configured = readFileSync(new URL("./wrangler.toml", import.meta.url), "utf8")
@@ -41,18 +40,18 @@ export default defineConfig({
   test: {
     projects: [
       { test: { name: "node", include: ["src/index.test.ts", "src/protocol.test.ts"] } },
-      defineWorkersProject({
+      {
+        plugins: [
+          cloudflareTest({
+            wrangler: { configPath: "./wrangler.toml" },
+            miniflare: { bindings: apns },
+          }),
+        ],
         test: {
           name: "worker",
           include: ["src/worker.test.ts", "src/apns.test.ts"],
-          poolOptions: {
-            workers: {
-              wrangler: { configPath: "./wrangler.toml" },
-              miniflare: { bindings: apns },
-            },
-          },
         },
-      }),
+      },
     ],
   },
 });
