@@ -99,14 +99,9 @@ public struct ChatView: View {
         Binding(get: { model.attachments[thread.id] ?? [] }, set: { model.attachments[thread.id] = $0 })
     }
 
-    /// The last agent message, which is the only one that can still be streaming.
-    private var streamingId: String? {
-        guard generating else { return nil }
-        return events.last { event in
-            if case .message(let data) = event.payload, data.role == .agent { return true }
-            return false
-        }?.id
-    }
+    /// The last message, if it is an agent reply still arriving. A user message sent after a
+    /// finished reply starts a turn too, and that reply is not streaming again: it stays Markdown.
+    private var streamingId: String? { generating ? streamingMessageId(in: events) : nil }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -1360,4 +1355,13 @@ extension View {
                 .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
         }
     }
+}
+
+/// The id of the message still arriving, or nil: the last message, only when it is an agent
+/// reply not yet marked done. A user message sent after a finished reply is not a reply
+/// streaming again.
+func streamingMessageId(in events: [YorozuEvent]) -> String? {
+    let last = events.last { if case .message = $0.payload { true } else { false } }
+    guard let last, case .message(let data) = last.payload, data.role == .agent, data.done != true else { return nil }
+    return last.id
 }
