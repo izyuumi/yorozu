@@ -158,9 +158,11 @@ operation and leaves the file untouched: restore from backup or repair the origi
 restarting, because logs alone cannot recover native session metadata safely.
 
 Threads are created on demand and nobody is asked to name one. `+` creates a thread with an empty
-title, the lists draw it as "New chat", and after the first completed reply the sidecar titles it
-from the first five words of the opening message. Only an empty title is ever filled in, which is
-also the whole of the rule that a title typed with Rename is never overwritten.
+title, the lists draw it as "New chat", and as the first message lands the sidecar asks the
+configured model chain for a 3-5 word title from it, alongside the turn rather than after it —
+falling back to the first five words of the message when no model answers within 15 s. Only an
+empty title is ever filled in, which is also the whole of the rule that a title typed with Rename
+is never overwritten.
 
 `sync_request` carries `lastSeen`, a replay cursor per thread, and is answered with one
 `sync_delta` holding everything after those cursors across every live thread — at most 200 events

@@ -58,6 +58,7 @@ import type { TurnContext } from "./index.js";
 import type { createLegacyRunner } from "./legacy.js";
 import { localSocketPath, startLocalChannel, type Send } from "./local.js";
 import type { Provider } from "./provider.js";
+import { autoTitle } from "./title.js";
 // Mirrors PING in apps/relay/src/protocol.ts; the shipped runtime must not depend on the relay package.
 const PING = JSON.stringify({ type: "ping" });
 import {
@@ -113,16 +114,6 @@ const APPROVAL_TIMEOUT_MS = 10 * 60_000;
  * which is the only honest answer the runtime has.
  */
 const ONLINE_MS = 90_000;
-
-/** The model's answer as a title: one line, no quotes, no trailing period, and short. */
-export function cleanTitle(raw: string): string {
-  return raw
-    .split("\n")
-    .map((line) => line.replace(/["'`]/g, "").trim())
-    .find((line) => line !== "")
-    ?.replace(/[.\s]+$/, "")
-    .slice(0, 60) ?? "";
-}
 
 /**
  * A one-off or task-bounded answer typed in the thread instead of tapped on the card. Permanent
@@ -252,6 +243,8 @@ export interface ServeOptions {
   stateDir?: string;
   /** Defaults to the model chain configured from the environment. */
   provider?: Provider;
+  /** Names new threads after their first reply. Defaults to `provider`; absent, the first five words serve. */
+  titler?: Provider;
   /** Defaults to stdout. */
   log?: (line: string) => void;
   /**
@@ -285,6 +278,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   recoverNativeTurns(dir);
   const keys = loadKeys(dir);
   const provider = options.provider;
+  const titler = options.titler ?? provider;
   const openclaw = provider ? undefined : options.openclawRunner ?? new OpenClawRunner({ stateDir: dir });
   /**
    * Whether this thread's turns, stops and archives go through the OpenClaw bridge. Only a
@@ -633,6 +627,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * One agent turn in `threadId`, however it was started — a phone message or a due job —
    * with its reply emitted to the phone the same way either way.
    */
+  /** Deliberately not awaited: titling runs alongside the turn and must never delay a reply. */
+  const title = (threadId: string, opening: string): void => {
+    void autoTitle(threadId, opening, titler, dir)
+      .then((changed) => { if (changed) broadcast(threadList()); })
+      .catch((e: unknown) => state(`title-error ${String(e)}`));
+  };
+
   async function runTurn(
     threadId: string,
     text: string,
@@ -656,6 +657,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
         dir,
       );
     }
+
+    // Started before the agent is, so the title lands while it is still working.
+    title(threadId, text);
 
     // The reply streams under one id: every delta re-sends the whole text so far, so the phone
     // replaces that message in place and a dropped frame still converges. Only the finished
@@ -716,9 +720,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
         // An interrupted turn says nothing: the user already knows they stopped it.
         if (turn.signal.aborted) return;
         finish(done.text);
-        const untitled = listThreads(dir).find((thread) => thread.id === threadId)?.title === "";
-        const title = text.trim().split(/\s+/).slice(0, 5).join(" ");
-        if (untitled && title && renameThread(threadId, cleanTitle(title), dir)) broadcast(threadList());
       } catch (error) {
         // The agent could not run at all — not installed, not logged in, crashed. Said in the
         // thread, finished, so the composer is not left offering Stop for a dead turn.
@@ -755,9 +756,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (reply === undefined) return;
         const final = message(reply, true);
         finalizeOpenClaw(final);
-        const untitled = listThreads(dir).find((thread) => thread.id === threadId)?.title === "";
-        const title = text.trim().split(/\s+/).slice(0, 5).join(" ");
-        if (untitled && title && renameThread(threadId, cleanTitle(title), dir)) broadcast(threadList());
       } finally {
         if (running.get(threadId) === turn) running.delete(threadId);
       }
@@ -1441,8 +1439,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const legacyReady = provider ? import("./legacy.js").then(({ createLegacyRunner }) => {
     if (stopped) return undefined;
     legacy = createLegacyRunner({ provider, dir, emit, ask, askUser: questions.ask,
-      reportProgress, proposeRule, turn: runTurn, enqueue: enqueueTurn, state,
-      changed: () => broadcast(threadList()), cleanTitle });
+      reportProgress, proposeRule, turn: runTurn, enqueue: enqueueTurn, state });
     if (legacy.models().length) broadcast(modelList());
     return legacy;
   }) : undefined;
@@ -1493,7 +1490,8 @@ if (import.meta.main) {
     default: {
       // Test rigs can pin a deterministic provider instead of talking to the live OpenClaw
       // gateway. Ordinary launches have no argument and keep OpenClaw as their backend.
-      const sidecar = serve(command === "--direct-provider" ? { provider: (await import("./chain.js")).chainFromEnv() } : {});
+      const { chainFromEnv } = await import("./chain.js");
+      const sidecar = serve(command === "--direct-provider" ? { provider: chainFromEnv() } : { titler: chainFromEnv() });
       // The Mac app's "New code" button, and the only thing stdin is for. Skipped on a
       // terminal: reading one from a backgrounded shell job earns a SIGTTIN, and a person
       // running the sidecar by hand has no button to press anyway.

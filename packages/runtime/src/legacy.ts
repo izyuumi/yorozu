@@ -11,17 +11,10 @@ import { loadProviders, modelOptions } from "./providers.js";
 import { startScheduler } from "./scheduler.js";
 import { listSkills, skillsDir, skillsPrompt } from "./skills.js";
 import { contextFor, updateSummary } from "./summary.js";
-import { listThreads, renameThread, threadEffort, threadHistory, threadModel } from "./threads.js";
+import { threadEffort, threadModel } from "./threads.js";
 import { closeBrowser } from "./tools/browser.js";
 import { askUserTool, reportProgressTool, type AskUserFn, type ReportProgressFn } from "./tools/cards.js";
 import { useProviderSearch } from "./tools/search.js";
-
-/** A title is a nicety: past this the thread keeps its placeholder rather than the phone waiting. */
-const TITLE_TIMEOUT_MS = 5_000;
-const TITLE_SYSTEM =
-  "Reply with a 3-5 word title for this conversation, no quotes, no trailing period";
-/** How much of the opening exchange the titler is shown. */
-const TITLE_CONTEXT_CHARS = 500;
 
 interface LegacyOptions {
   provider: Provider;
@@ -34,8 +27,6 @@ interface LegacyOptions {
   turn(threadId: string, text: string): Promise<void>;
   enqueue(threadId: string, text: string): Promise<void>;
   state(name: string): void;
-  changed(): void;
-  cleanTitle(raw: string): string;
 }
 
 export function createLegacyRunner(options: LegacyOptions) {
@@ -140,60 +131,11 @@ export function createLegacyRunner(options: LegacyOptions) {
     // The finished reply is always logged, and always sent: unlike the deltas it carries
     // `done`, so even a reply whose text matches the last delta exactly is still news.
     onDone(reply);
-    // Deliberately not awaited: titling is a second completion and must never delay a reply.
-    void autoTitle(threadId).catch((e: unknown) => state(`title-error ${String(e)}`));
-    // Nor is the summary: it is only ever needed by the *next* turn, and a thread that has not
+    // Deliberately not awaited: the summary is only ever needed by the *next* turn, and a thread that has not
     // outgrown its window does no work here at all. A failure leaves the summary as it was.
     void updateSummary(threadId, turnProvider, dir).catch((e: unknown) =>
       state(`summary-error ${String(e)}`),
     );
-  }
-
-  /**
-   * Names a thread from its opening exchange, once. Only a thread whose title is still empty is
-   * titled, which is also what keeps a rename the user typed: that title is not empty, so no
-   * later turn overwrites it.
-   */
-  async function autoTitle(threadId: string): Promise<void> {
-    const untitled = (): boolean =>
-      listThreads(dir).find((thread) => thread.id === threadId)?.title === "";
-    if (!untitled()) return;
-
-    const history = threadHistory(threadId, dir);
-    const opening = [
-      history.find((m) => m.role === "user")?.content,
-      history.find((m) => m.role === "assistant")?.content,
-    ]
-      .filter(Boolean)
-      .join("\n\n")
-      .slice(0, TITLE_CONTEXT_CHARS);
-    if (!opening) return;
-
-    const ask = async (): Promise<string> => {
-      let text = "";
-      for await (const event of provider.stream(
-        [
-          { role: "system", content: TITLE_SYSTEM },
-          { role: "user", content: opening },
-        ],
-        [],
-      )) {
-        if (event.type === "text") text += event.text;
-      }
-      return text;
-    };
-    const title = options.cleanTitle(
-      await Promise.race([
-        ask(),
-        new Promise<string>((resolve) => {
-          setTimeout(() => resolve(""), TITLE_TIMEOUT_MS).unref?.();
-        }),
-      ]),
-    );
-
-    // Re-checked: a rename may have landed while the titler was thinking.
-    if (!title || !untitled()) return;
-    if (renameThread(threadId, title, dir)) options.changed();
   }
 
   return {
