@@ -1,6 +1,6 @@
-# Downloads live on the rolling `mac` release of izyuumi/yorozu: DMGs are
-# 300+ MB, over the 25 MiB static-asset limit. The app and appcast only ever see these
-# yorozu.yumi.to URLs, so the host can move without shipping a new build.
-/mac https://github.com/izyuumi/yorozu/releases/download/mac/Yorozu.dmg 302
-/appcast.xml https://github.com/izyuumi/yorozu/releases/download/mac/appcast.xml 302
-/download/* https://github.com/izyuumi/yorozu/releases/download/mac/:splat 302
+# Downloads live on the latest versioned GitHub release: DMGs exceed the static-asset
+# limit. Keep these public URLs stable for installed apps and website download links.
+/mac https://github.com/izyuumi/yorozu/releases/latest/download/Yorozu.dmg 302
+/appcast.xml https://github.com/izyuumi/yorozu/releases/latest/download/appcast.xml 302
+/download/* https://github.com/izyuumi/yorozu/releases/latest/download/:splat 302
+/models.json https://github.com/izyuumi/yorozu/releases/latest/download/models.json 302

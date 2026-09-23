@@ -1,10 +1,14 @@
 # Releasing
 
-A release is a `v*` tag: pushing one runs `.github/workflows/release.yml`, which builds,
-notarizes, signs the appcast and publishes, on a GitHub-hosted Mac. The Developer ID identity,
-the notary key and the Sparkle signing key come from repository secrets — encrypted, masked in
-logs, and never handed to a fork's pull request. The same scripts run locally too, from the
-login keychain, which is where those keys were made.
+Release Please runs on pushes to `main`, collecting Conventional Commits into a version and
+changelog PR. Merging that PR creates a tagged draft release and builds the Mac app in the same
+workflow. After signing, notarization and asset upload succeed, it publishes the release as
+latest and deletes older published releases. Git tags and draft releases are preserved.
+
+The workflow uses `GITHUB_TOKEN`; no personal access token is needed. Repository Actions
+settings must allow GitHub Actions to create pull requests. Bot-created PRs do not trigger
+`pull_request` CI automatically; close and reopen the PR as a maintainer to run those checks
+before merging. Builds run in the same workflow because bot-created tags do not trigger CI.
 
 ## Versions
 
@@ -60,8 +64,8 @@ ID signed but not notarized — Gatekeeper then asks on first launch instead of 
 
 ### Sparkle
 
-The update feed is signed with an EdDSA key whose private half lives in the login keychain and
-never leaves it:
+The update feed is signed with an EdDSA key kept in the login keychain locally and provided
+to CI through the `SPARKLE_ED_KEY` repository secret:
 
 ```sh
 ./apps/mac/.build/artifacts/sparkle/Sparkle/bin/generate_keys   # once, prints the public key
@@ -85,30 +89,39 @@ relaunch.
 
 ### Cutting a release
 
+Use `fix:` for patch releases, `feat:` for minor releases, and `!` or `BREAKING CHANGE:` for
+breaking changes (minor bumps while below 1.0). Review and merge the Release Please PR. It
+updates `version.txt`, `.release-please-manifest.json`, and `CHANGELOG.md`; the shipping app
+continues to derive its version from the tag and its build number from the commit count.
+
+`scripts/release.sh` uploads the appcast's DMGs, stable `Yorozu.dmg`, `appcast.xml`, and model
+catalog to the versioned release. `yorozu.yumi.to/mac`, `/appcast.xml`, and `/download/*` point to
+GitHub's `releases/latest/download` URLs. Older releases are removed only after upload and
+publication succeed. The catalog workflow updates the latest release without creating another.
+
+To retry a failed build using the current workflow and the original source tag:
+
 ```sh
-git tag -a v0.2.2 -m v0.2.2 && git push github v0.2.2
+gh workflow run release.yml -f tag=v0.2.2
 ```
 
-The workflow runs `scripts/release.sh`: it builds, notarizes, signs the appcast, and uploads the
-DMGs the appcast offers — plus a stable `Yorozu.dmg` and `appcast.xml` — to this repo's rolling
-`mac` release, which `yorozu.yumi.to/mac`, `/appcast.xml` and `/download/*` redirect to. It also
-uploads everything to that version tag's GitHub release with `--clobber`. To rerun it for a tag
-that already exists, `gh workflow run release.yml --ref v0.2.2`; the same script works from a
-local checkout standing on the tag, with `gh` signed in.
+A failed build leaves a draft and the previous download intact. The same publication script
+can run locally from the release tag with `gh` authenticated and the signing keys available.
 
 #### The secrets, set once
 
-Five repository secrets, all set with `gh secret set`, which encrypts them on this machine with
+Eight repository secrets, all set with `gh secret set`, which encrypts them on this machine with
 the repo's public key before anything leaves it. Nothing is pasted into a browser and nothing is
 committed.
 
 ```sh
-# Every identity in the login keychain with its private key, as one .p12: Developer ID
-# Application for the Mac job, Apple Development for the iOS archive. Prompts for the login
-# keychain password, then for a new export password; the file exists for one moment.
-P=$(mktemp -d)/ids.p12 && security export -k ~/Library/Keychains/login.keychain-db \
-  -t identities -f pkcs12 -o "$P" && gh secret set MAC_CERT_P12 < <(base64 -i "$P"); rm -rf "$(dirname "$P")"
-gh secret set MAC_CERT_PASSWORD           # prompts; the export password
+# Mac releases need the Developer ID Application identity and its private key.
+# Export as an encrypted .p12 from Keychain Access, then upload the base64 file:
+base64 -i developer-id.p12 | gh secret set DEVELOPER_ID_P12
+gh secret set DEVELOPER_ID_PASSWORD       # prompts for the export password
+# TestFlight separately uses an Apple Development identity and its private key.
+base64 -i apple-development.p12 | gh secret set MAC_CERT_P12
+gh secret set MAC_CERT_PASSWORD
 # The App Store Connect API key notarization uses — the same one as TestFlight.
 gh secret set ASC_KEY_ID --body <KEYID>
 gh secret set ASC_ISSUER_ID --body <ISSUER-UUID>
@@ -127,7 +140,7 @@ The runner imports the identity into a keychain of its own, stores the notary ke
 Internal testing only: team members are added to the "Internal" beta group in App Store Connect
 and install through the TestFlight app. No public link.
 
-The `ios` job in `release.yml` runs this on every `v*` tag, beside the Mac job, with the
+The `ios` job in `testflight.yml` runs this on every push to `main`, with the
 `ASC_*` secrets above plus the same `.p12` (the archive step wants an Apple Development
 identity on the machine; without one Xcode mints a new certificate per run until the team hits
 Apple's cap). The version comes from the tag and the build number from the commit count. To
@@ -140,7 +153,7 @@ ASC_KEY_ID=<KEYID> ASC_ISSUER_ID=<ISSUER-UUID> VERSION=0.2.1 ./scripts/build-ios
 Signing is automatic. `apps/ios/Project.swift` carries `DEVELOPMENT_TEAM` and
 `CODE_SIGN_STYLE = Automatic`, and given `-allowProvisioningUpdates` plus an App Store Connect
 key, `xcodebuild` issues the distribution certificate and the App Store profile on its own — so
-there is no `.p12` and no `.mobileprovision` anywhere. The same key authenticates the upload,
+Xcode manages the distribution profile; the development `.p12` is imported temporarily by CI. The same key authenticates the upload,
 which is why the export options say `destination: upload` rather than writing an `.ipa` for a
 second tool to send: one invocation, one credential, nothing on disk to leak. The key may be a
 path (`ASC_KEY_PATH`, defaulting to `~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8`) or

@@ -98,8 +98,8 @@ wrong SDK. `apps/ios/e2e/run.sh` is the end-to-end proof: it stands up a relay, 
 and the sidecar, builds the app onto a throwaway simulator, and asserts a streamed reply and a
 tool call reach the phone.
 
-CI (`.github/workflows/ci.yml`) runs those three jobs on macOS. Release builds are local only —
-the signing identities, notary profile and Sparkle key never enter CI.
+CI (`.github/workflows/ci.yml`) runs those three jobs on macOS. Release Please maintains a release PR; merging it runs the signed Mac release workflow.
+See [the release guide](docs/releasing.md) for credentials and retries.
 
 ### Configuration
 

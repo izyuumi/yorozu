@@ -1,10 +1,12 @@
 name: Catalog
 
-# The catalog ships as one asset of a rolling release the clients fetch daily.
+# The catalog ships beside the app on the latest versioned release.
 on:
   push:
     branches: [main]
     paths: ["catalog/**"]
+
+concurrency: release
 
 permissions:
   contents: write
@@ -16,5 +18,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - run: gh release create catalog --title Catalog --notes "Rolling model catalog." || true
-      - run: gh release upload catalog catalog/models.json --clobber
+      - name: Update catalog on the latest release
+        run: |
+          set -eu
+          TAG=$(gh release view --json tagName --jq .tagName)
+          gh release upload "$TAG" catalog/models.json --clobber

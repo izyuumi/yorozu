@@ -1,5 +1,6 @@
 name: Release
-# Cut a Mac release from a v* tag (TestFlight builds go from every push to main; see
+# Release Please opens version PRs; merging one builds a Mac release (TestFlight
+# builds go from every push to main; see
 # testflight.yml): scripts/release.sh on a hosted runner, with the signing identity, the
 # notary key and the Sparkle key coming from repository secrets. Only a push to this repo
 # triggers it — never a fork's pull request — so secrets are never in a stranger's job.
@@ -14,17 +15,46 @@ name: Release
 #   gh secret set DEVELOPER_ID_PASSWORD --body "$PW" && rm developer-id.p12
 on:
   push:
-    tags: ['v*']
-  # Rerun for a tag that already exists: gh workflow run release.yml --ref v0.2.2
+    branches: [main]
+  # Retry a failed build with the current workflow and the original source tag.
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to build (for example v0.2.2)'
+        required: true
+        type: string
 
 concurrency: release
 
 permissions:
   contents: write
+  issues: write
+  pull-requests: write
 
 jobs:
+  release-please:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
   mac:
+    needs: release-please
+    # GITHUB_TOKEN-created tags do not trigger another workflow. Build here instead.
+    if: >-
+      always() && !cancelled() &&
+      (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ needs.release-please.outputs.tag_name || inputs.tag }}
     runs-on: macos-latest
     timeout-minutes: 90
     steps:
@@ -33,6 +63,13 @@ jobs:
           # The version is the latest v* tag and the build number the commit count; both need
           # the whole history.
           fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
+      - name: Check out release tooling
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: .release-tooling
+      - name: Use current publication script
+        run: cp .release-tooling/scripts/release.sh scripts/release.sh
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with: { xcode-version: latest-stable }
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
