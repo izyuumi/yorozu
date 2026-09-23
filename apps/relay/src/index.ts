@@ -1,8 +1,9 @@
 import { createHash, createPublicKey, randomBytes, sign, verify, type KeyObject } from "node:crypto";
-import type { AddressInfo } from "node:net";
+import { isIP, type AddressInfo } from "node:net";
 import { WebSocketServer, type WebSocket } from "ws";
 import {
   allowFrame,
+  allowNotify,
   CLOSE_BAD_SIGNATURE,
   CLOSE_PROTOCOL,
   CLOSE_RATE_LIMIT,
@@ -10,19 +11,25 @@ import {
   evictions,
   frameWire,
   newBucket,
+  MAX_PAYLOAD_BYTES,
+  MAX_TOKENS_PER_ROOM,
+  NOTIFY_PER_MINUTE,
   parseAck,
   parseDevices,
   parseEnvelope,
   parseFrames,
   parseJoin,
+  parseNotify,
   parsePush,
   parseRegister,
   parseRevoke,
   PING,
+  positiveLimit,
   PONG,
   safeReason,
   TOKEN_TTL_MS,
   type Bucket,
+  type NotifyWindow,
 } from "./protocol.js";
 
 /** Room ID is derived from the Mac public key; the relay never reads payloads. */
@@ -73,6 +80,7 @@ type Room = {
    */
   pushTokens: Map<string, string>;
   buffer: Buffered[];
+  notifyWindow: NotifyWindow;
 };
 
 type Conn = {
@@ -95,10 +103,11 @@ function newRoom(): Room {
     devices: new Map(),
     pushTokens: new Map(),
     buffer: [],
+    notifyWindow: { count: 0, startedAt: Date.now() },
   };
 }
 
-/** Expired tokens go on mint, so a token nobody redeemed does not sit in memory forever. */
+/** Used on mint and by the timer, so expiry does not depend on another client arriving. */
 function sweepTokens(room: Room, now: number): void {
   for (const [token, expiresAt] of room.tokens) if (now > expiresAt) room.tokens.delete(token);
 }
@@ -150,7 +159,12 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
   const rooms = new Map<string, Room>();
   /** Which device each phone socket joined as, so a revoke can close exactly that one. */
   const phoneKeys = new WeakMap<WebSocket, string>();
-  const wss = new WebSocketServer({ port });
+  const maxConnections = positiveLimit(process.env.RELAY_MAX_CONNS_PER_IP, 32);
+  const maxTokens = positiveLimit(process.env.RELAY_MAX_TOKENS_PER_ROOM, MAX_TOKENS_PER_ROOM);
+  const notifyLimit = positiveLimit(process.env.RELAY_NOTIFY_PER_MINUTE, NOTIFY_PER_MINUTE);
+  const trustProxy = Boolean(process.env.RELAY_TRUST_PROXY);
+  const connections = new Map<string, number>();
+  const wss = new WebSocketServer({ port, maxPayload: MAX_PAYLOAD_BYTES });
 
   /**
    * Drops devices the Mac no longer considers paired: forgotten, so they cannot rejoin
@@ -185,10 +199,40 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
       room.devices.size === 0
     ) {
       rooms.delete(id);
+      log("room-drop");
     }
   };
 
-  wss.on("connection", (ws) => {
+  // A room created only to mint a token must disappear even if nobody ever reconnects.
+  const sweep = setInterval(() => {
+    const now = Date.now();
+    for (const [id, room] of rooms) {
+      sweepTokens(room, now);
+      trimBuffer(room, now);
+      dropRoomIfIdle(id, room);
+    }
+  }, 60_000);
+  sweep.unref();
+  wss.on("close", () => clearInterval(sweep));
+
+  wss.on("connection", (ws, request) => {
+    // ws emits an error as well as a 1009 close for oversized messages.
+    ws.on("error", (error) => log("error", { error: safeReason(error.message) }));
+    const forwarded = request.headers["x-forwarded-for"];
+    const first = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(",")[0]?.trim();
+    const ip = trustProxy && first && isIP(first) ? first : (request.socket.remoteAddress ?? "unknown");
+    const count = connections.get(ip) ?? 0;
+    if (count >= maxConnections) {
+      log("drop", { code: 1008, reason: "connection limit" });
+      ws.close(1008, "connection limit");
+      return;
+    }
+    connections.set(ip, count + 1);
+    ws.once("close", () => {
+      const remaining = (connections.get(ip) ?? 1) - 1;
+      if (remaining === 0) connections.delete(ip);
+      else connections.set(ip, remaining);
+    });
     const conn: Conn = {
       nonce: randomBytes(32).toString("base64url"),
       role: null,
@@ -200,16 +244,21 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
     ws.send(JSON.stringify({ type: "nonce", nonce: conn.nonce }));
 
     ws.on("message", (data) => {
-      const raw = data.toString();
+      if (ws.readyState !== ws.OPEN) return;
       const now = Date.now();
+      const raw = data.toString();
+      // The heartbeat is free: the Worker relay answers it at the edge without waking the
+      // room, and the two relays behave identically on the wire.
+      if (raw === PING) return ws.send(PONG);
+      // Charge before parsing or signature verification: control traffic has a cost too.
+      if (!allowFrame(conn.bucket, now)) return ws.close(CLOSE_RATE_LIMIT, "rate limit");
 
       // Only the envelope is parsed; `payload` is forwarded byte-for-byte.
       const msg = parseEnvelope(raw);
       if (!msg) return ws.close(CLOSE_PROTOCOL, "bad json");
 
       switch (msg.type) {
-        // The heartbeat both clients send on an otherwise quiet socket. The Worker relay
-        // answers it at the edge without waking the room; here there is nothing to wake.
+        // A ping that was not the exact PING string still gets its pong, charged like any message.
         case "ping":
           return ws.send(PONG);
 
@@ -234,6 +283,10 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
             return ws.close(CLOSE_BAD_SIGNATURE, "bad challenge");
           }
           const id = roomId(pubkey);
+          // A socket owns one membership; changing it would strand the old room's reference.
+          if (conn.role && (conn.role !== "mac" || conn.roomId !== id)) {
+            return ws.close(CLOSE_PROTOCOL, "already joined");
+          }
           const room = rooms.get(id) ?? newRoom();
           rooms.set(id, room);
           // A fresh registration wins; the stale Mac socket is dropped.
@@ -261,6 +314,10 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
         case "mint": {
           if (conn.role !== "mac" || !conn.room) return ws.close(CLOSE_PROTOCOL, "not registered");
           sweepTokens(conn.room, now);
+          // Map insertion order breaks ties when several tokens are minted in one millisecond.
+          while (conn.room.tokens.size >= maxTokens) {
+            conn.room.tokens.delete(conn.room.tokens.keys().next().value!);
+          }
           const token = randomBytes(32).toString("base64url");
           const expiresAt = now + TOKEN_TTL_MS;
           conn.room.tokens.set(token, expiresAt);
@@ -304,6 +361,9 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           const join = parseJoin(msg);
           if (!join) return ws.close(CLOSE_PROTOCOL, "bad join");
           const { roomId: id, token, phonePubkey, sig } = join;
+          if (conn.role && (conn.role !== "phone" || conn.roomId !== id)) {
+            return ws.close(CLOSE_PROTOCOL, "already joined");
+          }
           // A room nobody registered yet is empty rather than absent, as it is on the Worker,
           // so a join there fails for the same reason on both: no such device, no such token.
           const room = rooms.get(id) ?? newRoom();
@@ -358,7 +418,6 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
               return ws.close(CLOSE_BAD_SIGNATURE, "bad frame signature");
             }
           }
-          if (!allowFrame(conn.bucket, now)) return ws.close(CLOSE_RATE_LIMIT, "rate limit");
 
           if (conn.role === "phone") {
             if (conn.room.mac) conn.room.mac.send(raw);
@@ -386,9 +445,14 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           return;
         }
 
-        case "notify":
-          if (conn.role !== "mac") return ws.close(CLOSE_PROTOCOL, "not registered");
+        case "notify": {
+          if (conn.role !== "mac" || !conn.room) return ws.close(CLOSE_PROTOCOL, "not registered");
+          if (!parseNotify(msg)) return ws.close(CLOSE_PROTOCOL, "bad notify");
+          if (!allowNotify(conn.room.notifyWindow, now, notifyLimit)) {
+            ws.send(JSON.stringify({ type: "state", state: "notify rate limit" }));
+          }
           return;
+        }
 
         default:
           return ws.close(CLOSE_PROTOCOL, "unknown type");
@@ -414,6 +478,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
         port: (wss.address() as AddressInfo).port,
         close: () =>
           new Promise((done) => {
+            clearInterval(sweep);
             for (const client of wss.clients) client.terminate();
             wss.close(() => done());
           }),
