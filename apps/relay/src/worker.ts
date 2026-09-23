@@ -16,17 +16,20 @@ import {
   alertPayload,
   allowFrame,
   allowNotify,
+  AUTH_TIMEOUT_MS,
   parseAck,
   BACKGROUND_CLASSES,
   BACKGROUND_INTERVAL_MS,
   backgroundPayload,
   BUFFER_TTL_MS,
   CLOSE_BAD_SIGNATURE,
+  CLOSE_POLICY,
   CLOSE_PROTOCOL,
   CLOSE_RATE_LIMIT,
   dropCount,
   evictions,
   frameWire,
+  isRoomId,
   MAX_PAYLOAD_BYTES,
   MAX_TOKENS_PER_ROOM,
   newBucket,
@@ -109,6 +112,8 @@ type Conn = {
   key: string | null;
   /** Optional for sockets accepted before buckets lived in attachments. */
   bucket?: Bucket;
+  /** When the socket was accepted; the auth deadline counts from here. Optional as above. */
+  since?: number;
 };
 
 type Buffered = { raw: string; bytes: number; at: number; seq: number };
@@ -168,8 +173,12 @@ export class Room implements DurableObject {
     const { 0: client, 1: server } = new WebSocketPair();
     this.state.acceptWebSocket(server);
     const nonce = randomToken();
-    server.serializeAttachment({ nonce, room, role: null, key: null, bucket: newBucket(Date.now()) } satisfies Conn);
+    const now = Date.now();
+    server.serializeAttachment({ nonce, room, role: null, key: null, bucket: newBucket(now), since: now } satisfies Conn);
     server.send(JSON.stringify({ type: "nonce", nonce }));
+    // The alarm rather than a timer: this object may hibernate before the deadline, and a
+    // timer would hibernate with it while the socket stayed open.
+    await this.alarmBy(now + AUTH_TIMEOUT_MS);
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -202,10 +211,27 @@ export class Room implements DurableObject {
     ws.close(code, reason);
   }
 
-  /** The buffer's TTL and the join tokens' expiry, swept once rather than per entry. */
+  /**
+   * Closes every socket that has sat past its deadline without registering or joining, and
+   * says when the next one falls due, so the alarm can come back for it.
+   */
+  private sweepUnauthenticated(now: number): number {
+    let next = Infinity;
+    for (const ws of this.state.getWebSockets()) {
+      const conn = ws.deserializeAttachment() as Conn | null;
+      if (!conn || conn.role !== null) continue;
+      const deadline = (conn.since ?? now) + AUTH_TIMEOUT_MS;
+      if (now >= deadline) this.drop(ws, CLOSE_POLICY, "auth timeout");
+      else next = Math.min(next, deadline);
+    }
+    return next;
+  }
+
+  /** The buffer's TTL, the join tokens' expiry and the auth deadlines, swept in one pass. */
   async alarm(): Promise<void> {
     const now = Date.now();
     const storage = this.state.storage;
+    const authDue = this.sweepUnauthenticated(now);
     await this.trim(now);
     const tokens = await storage.transaction(async (storage) => {
       const tokens = await storage.list<number>({ prefix: tokenPrefix });
@@ -217,9 +243,11 @@ export class Room implements DurableObject {
       else await storage.delete("token-order");
       return tokens;
     });
-    // Whichever comes first: the buffer's next sweep, or the earliest token still live.
+    // Whichever comes first: the buffer's next sweep, the earliest token still live, or the
+    // next unauthenticated socket's deadline.
     const remaining = await storage.list({ prefix: "b:", limit: 1 });
     const next = Math.min(
+      authDue,
       remaining.size > 0 ? now + BUFFER_TTL_MS : Infinity,
       ...[...tokens.values()].filter((expiresAt) => expiresAt >= now).map((expiresAt) => expiresAt + 1),
     );
@@ -755,6 +783,9 @@ export default {
       return new Response("yorozu relay\n", { headers: { "content-type": "text/plain" } });
     }
     if (!room) return new Response("missing ?room", { status: 400 });
+    // Refused here, before a Durable Object is named: a name no key could hash to would
+    // otherwise create and bill an object for nothing.
+    if (!isRoomId(room)) return new Response("bad ?room", { status: 400 });
     return env.ROOM.get(env.ROOM.idFromName(room)).fetch(request);
   },
 } satisfies ExportedHandler<Env>;

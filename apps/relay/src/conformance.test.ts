@@ -28,6 +28,9 @@ export type Adapter = {
   advance(room: string, ms: number): Promise<void>;
 };
 
+/** A room name of the right shape for a socket that never gets as far as naming a real one. */
+export const fakeRoom = (label: string): string => label.padEnd(43, "0");
+
 export function conformance(relay: Adapter) {
   const { keypair, roomId, connect } = relay;
 
@@ -328,7 +331,7 @@ export function conformance(relay: Adapter) {
 
   test("json that is not an object closes the socket", async () => {
     for (const raw of ["null", "42", '"frame"', '[{"type":"ping"}]', "{oops"]) {
-      const peer = await connect("anything");
+      const peer = await connect(fakeRoom("anything"));
       await peer.next(); // nonce
       peer.raw(raw);
       expect(await peer.closed()).toBe(CLOSE_PROTOCOL);
@@ -336,7 +339,7 @@ export function conformance(relay: Adapter) {
   });
 
   test("an oversized envelope closes the socket", async () => {
-    const peer = await connect("anything");
+    const peer = await connect(fakeRoom("anything"));
     await peer.next(); // nonce
     peer.raw(JSON.stringify({ type: "frame", payload: "A".repeat(2 * 1024 * 1024) }));
     expect(await peer.closed()).toBe(1009);
@@ -359,7 +362,7 @@ export function conformance(relay: Adapter) {
   });
 
   test("a mis-typed message closes the socket", async () => {
-    const peer = await connect("anything");
+    const peer = await connect(fakeRoom("anything"));
     await peer.next(); // nonce
     peer.send({ type: "nope" });
     expect(await peer.closed()).toBe(CLOSE_PROTOCOL);
@@ -392,7 +395,7 @@ export function conformance(relay: Adapter) {
   });
 
   test("only a joined phone may ask about presence", async () => {
-    const stranger = await connect("some-room");
+    const stranger = await connect(fakeRoom("some-room"));
     await stranger.next(); // nonce
     stranger.send({ type: "owner" });
     expect(await stranger.closed()).toBe(CLOSE_PROTOCOL);
