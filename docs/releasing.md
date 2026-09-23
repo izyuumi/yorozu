@@ -1,7 +1,10 @@
 # Releasing
 
-Release builds run locally, never in CI: the Developer ID identity, the notary profile and the
-Sparkle signing key all live in the login keychain and none of them are in the repo.
+A release is a `v*` tag: pushing one runs `.github/workflows/release.yml`, which builds,
+notarizes, signs the appcast and publishes, on a GitHub-hosted Mac. The Developer ID identity,
+the notary key and the Sparkle signing key come from repository secrets — encrypted, masked in
+logs, and never handed to a fork's pull request. The same scripts run locally too, from the
+login keychain, which is where those keys were made.
 
 ## Versions
 
@@ -82,17 +85,40 @@ relaunch.
 
 ### Cutting a release
 
-From a checkout standing on the tag:
-
 ```sh
-git tag -a v0.2.2 -m v0.2.2
-./scripts/release.sh
+git tag -a v0.2.2 -m v0.2.2 && git push github v0.2.2
 ```
 
-It builds, notarizes, signs the appcast, and uploads the DMGs the appcast offers — plus a stable
-`Yorozu.dmg` and `appcast.xml` — to this repo's rolling `mac` release, which `yorozu.yumi.to/mac`,
-`/appcast.xml` and `/download/*` redirect to. It also uploads everything to that version tag's
-GitHub release with `--clobber`.
+The workflow runs `scripts/release.sh`: it builds, notarizes, signs the appcast, and uploads the
+DMGs the appcast offers — plus a stable `Yorozu.dmg` and `appcast.xml` — to this repo's rolling
+`mac` release, which `yorozu.yumi.to/mac`, `/appcast.xml` and `/download/*` redirect to. It also
+uploads everything to that version tag's GitHub release with `--clobber`. To rerun it for a tag
+that already exists, `gh workflow run release.yml --ref v0.2.2`; the same script works from a
+local checkout standing on the tag, with `gh` signed in.
+
+#### The secrets, set once
+
+Five repository secrets, all set with `gh secret set`, which encrypts them on this machine with
+the repo's public key before anything leaves it. Nothing is pasted into a browser and nothing is
+committed.
+
+```sh
+# The Developer ID Application certificate with its private key: Keychain Access → My
+# Certificates → right-click the identity → Export as .p12, with a password.
+gh secret set MAC_CERT_P12 < <(base64 -i ~/Downloads/DeveloperID.p12)
+gh secret set MAC_CERT_PASSWORD           # prompts; the password given at export
+# The App Store Connect API key notarization uses — the same one as TestFlight.
+gh secret set ASC_KEY_ID --body <KEYID>
+gh secret set ASC_ISSUER_ID --body <ISSUER-UUID>
+gh secret set ASC_KEY_P8 < <(base64 -i ~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8)
+# The Sparkle private key, exported from the login keychain into a file for one moment.
+KEY=$(mktemp -d)/ed && ./apps/mac/.build/artifacts/sparkle/Sparkle/bin/generate_keys -x "$KEY" \
+  && gh secret set SPARKLE_ED_KEY < "$KEY"; rm -rf "$(dirname "$KEY")"
+```
+
+The runner imports the identity into a keychain of its own, stores the notary key as the
+`yorozu-notary` profile `build-mac.sh` looks for, and hands the Sparkle key to `appcast.sh` as
+`SPARKLE_ED_KEY_FILE`; all three are deleted at the end of the job, and the VM with them.
 
 ## TestFlight
 
