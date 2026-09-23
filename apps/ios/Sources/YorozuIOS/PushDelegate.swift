@@ -10,10 +10,11 @@ import YorozuShared
 /// threads it already holds. See ``Session/open(threadRef:)``.
 final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     /// The categories an approval push names, and the buttons each draws. `approval-quick` is
-    /// what the Mac sends when the action is below every floor and commits nothing external;
-    /// everything else gets `approval-review`, whose only button opens the card.
-    static let quickCategory = "approval-quick"
-    static let reviewCategory = "approval-review"
+    /// what the extension sets when the Mac sealed its quick judgement into the preview — the
+    /// action is below every floor and commits nothing external; everything else gets
+    /// `approval-review`, whose only button opens the card, or no category at all.
+    static let quickCategory = NotificationFallback.quickCategory
+    static let reviewCategory = NotificationFallback.reviewCategory
     static let allowAction = "approval.allow"
     static let denyAction = "approval.deny"
     static let reviewAction = "approval.review"
@@ -112,9 +113,11 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         //
         // Only when the words the buttons were pressed under are the Mac's, though: the sealed
         // preview in this push opens, under this phone's key, to exactly the body that was on
-        // screen. Anything else — a relay's own sentence, a box that will not open, no box —
-        // is no approval of anything, and the tap just opens the card instead. Checked here
-        // rather than trusted from `userInfo`, which the relay writes.
+        // screen, names this very card, and carries the Mac's own judgement that the card may
+        // be answered from a button. Anything else — a relay's own sentence, a box that will
+        // not open, no box, a box about another card, a card the Mac sent for review — is no
+        // approval of anything, and the tap just opens the card instead. Checked here rather
+        // than trusted from `userInfo` or the category, which the relay writes.
         let answer: ApprovalAnswerData.Answer? = switch response.actionIdentifier {
         case Self.allowAction: .yes
         case Self.denyAction: .no
@@ -122,8 +125,8 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         }
         let content = response.notification.request.content
         if let answer, let eventRef,
-           NotificationFallback.showsDecryptedPreview(
-               body: content.body, userInfo: info, key: NotificationPreview.loadKey()
+           NotificationFallback.permitsLockScreenAnswer(
+               body: content.body, userInfo: info, key: NotificationPreview.loadKey(), eventRef: eventRef
            ) {
             guard let model = await MainActor.run(body: { Session.shared.model }) else { return }
             if await model.answerFromNotification(eventRef: eventRef, answer) { return }

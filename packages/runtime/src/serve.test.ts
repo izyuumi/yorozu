@@ -6,6 +6,7 @@ import { startRelay, type Relay } from "@yorozu/relay";
 import { connectPhone, rejoinPhone } from "@yorozu/relay/dist/testing.js";
 import {
   decodeEnvelope,
+  decodeNotificationPreview,
   decodeQrPayload,
   deriveChannelKeys,
   deriveSessionKey,
@@ -1732,7 +1733,7 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   // side-channel beside the sealed frames. The real relays take `notify` and say nothing back,
   // so a double is the only place the message itself can be read.
   const seen: Record<string, unknown>[] = [];
-  const sockets: { mac?: any; phone?: any } = {};
+  const sockets: { mac?: any; phones: any[] } = { phones: [] };
   const fake = new WebSocketServer({ port: 0 });
   fake.on("connection", (ws) => {
     ws.send(JSON.stringify({ type: "nonce", nonce: "n" }));
@@ -1747,21 +1748,22 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
             JSON.stringify({ type: "token", token: "tok", expiresAt: Date.now() + 60_000 }),
           );
         case "join":
-          sockets.phone = ws;
+          sockets.phones.push(ws);
           return ws.send(JSON.stringify({ type: "joined", roomId: "r", ownerOnline: true }));
         case "notify":
           return void seen.push(msg);
         case "frame": {
-          const other = ws === sockets.mac ? sockets.phone : sockets.mac;
-          return void other?.send(JSON.stringify(msg));
+          if (ws === sockets.mac) for (const phone of sockets.phones) phone.send(JSON.stringify(msg));
+          else sockets.mac?.send(JSON.stringify(msg));
+          return;
         }
       }
     });
   });
   const port = (fake.address() as AddressInfo).port;
 
-  let qrLine!: (line: string) => void;
-  const qrPrinted = new Promise<string>((resolve) => (qrLine = resolve));
+  const qrs = qrQueue();
+  let paired = 0;
   let turn = 0;
   sidecar = serve({
     relayUrl: `ws://127.0.0.1:${port}`,
@@ -1778,11 +1780,12 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
       }),
     }),
     log: (line) => {
-      if (line.startsWith("QR ")) qrLine(line.slice(3));
+      if (line.startsWith("QR ")) qrs.push(line.slice(3));
+      if (line === "STATE paired") paired += 1;
     },
   });
 
-  const qr = decodeQrPayload(await qrPrinted);
+  const qr = await qrs.next();
   const { phone, keys } = await connectPhone(port, qr.roomId!, qr.token);
   expect(await phone.next()).toMatchObject({ type: "joined" });
 
@@ -1791,6 +1794,25 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   // Preview boxes stay under the shared session key: the notification extension holds no counter.
   const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
   phone.frame(hello(qr, toBase64Url(phoneKeys.publicKey), keys.pub), keys);
+
+  // A second phone, under its own keys and the next QR — a proof burns the secret it was made
+  // with: a preview is sealed once per device, each under the key only that device holds.
+  await vi.waitFor(() => expect(paired).toBe(1));
+  const nextQr = await qrs.next();
+  const second = await connectPhone(port, nextQr.roomId!, nextQr.token);
+  expect(await second.phone.next()).toMatchObject({ type: "joined" });
+  const secondKeys = generateKeypair();
+  const secondSessionKey = deriveSessionKey(secondKeys.privateKey, fromBase64Url(nextQr.macPubkey));
+  second.phone.frame(hello(nextQr, toBase64Url(secondKeys.publicKey), second.keys.pub), second.keys);
+  // Both hellos taken before anything is said: a device that paired after an event was
+  // emitted is, rightly, sent no box for it.
+  await vi.waitFor(() => expect(paired).toBe(2));
+
+  /** Opens the preview box sealed for one device, as that device's notification extension would. */
+  const openPreview = (notify: Record<string, unknown>, pub: string, key: Uint8Array) => {
+    const box = (notify.previews as Record<string, { n: string; c: string }>)[pub]!;
+    return decodeNotificationPreview(Buffer.from(open(key, fromBase64Url(box.n), fromBase64Url(box.c))).toString());
+  };
 
   const sent: YorozuEvent = {
     id: "e1",
@@ -1812,12 +1834,14 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
     threadRef: threadRef("thread-one"),
   });
   expect(notify.eventRef).toMatch(/^[A-Za-z0-9_-]{8}$/);
-  const preview = (notify.previews as Record<string, { n: string; c: string }>)[keys.pub]!;
-  expect(Buffer.from(open(
-    sessionKey,
-    fromBase64Url(preview.n),
-    fromBase64Url(preview.c),
-  )).toString()).toBe("the secret reply");
+  // One box per device, and each opens only under its own key to the reply, which names the
+  // event it is about and permits no button.
+  expect(Object.keys(notify.previews as object).sort()).toEqual([keys.pub, second.keys.pub].sort());
+  expect(openPreview(notify, keys.pub, sessionKey))
+    .toEqual({ body: "the secret reply", event: notify.eventRef, quick: false });
+  expect(openPreview(notify, second.keys.pub, secondSessionKey))
+    .toEqual({ body: "the secret reply", event: notify.eventRef, quick: false });
+  expect(() => openPreview(notify, second.keys.pub, sessionKey)).toThrow();
   expect(JSON.stringify(notify)).not.toContain("the secret reply");
 
   const failed: YorozuEvent = {
@@ -1839,7 +1863,15 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   };
   phone.frame(channel.box(gated), keys);
   await vi.waitFor(() => expect(seen.map((msg) => msg.class)).toContain("approval"));
-  expect(seen.find((msg) => msg.class === "approval")).toMatchObject({ actions: true });
+  const approval = seen.find((msg) => msg.class === "approval")!;
+  expect(approval).toMatchObject({ actions: true });
+  // The card's line, sealed per device with the Mac's own judgement and the card's reference:
+  // what the phone draws Allow and Deny under, and checks before either counts.
+  expect(Object.keys(approval.previews as object).sort()).toEqual([keys.pub, second.keys.pub].sort());
+  expect(openPreview(approval, keys.pub, sessionKey))
+    .toEqual({ body: "Run a command: echo yorozu-lockscreen", event: approval.eventRef, quick: true });
+  expect(openPreview(approval, second.keys.pub, secondSessionKey))
+    .toEqual({ body: "Run a command: echo yorozu-lockscreen", event: approval.eventRef, quick: true });
 
   // The whole side-channel, everything the relay was ever told in the clear. Neither side of
   // the conversation is in it, and neither is the thread it happened in.
@@ -1848,8 +1880,9 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   expect(wire).not.toContain("thread-one");
   expect(wire).not.toContain("echo");
 
-  // `close()` waits on the open sockets, and this test attached a phone to them as well.
+  // `close()` waits on the open sockets, and this test attached phones to them as well.
   phone.ws.close();
+  second.phone.ws.close();
   await sidecar.close();
   await new Promise<void>((done) => fake.close(() => done()));
 });
@@ -2028,6 +2061,27 @@ test.each([["claude-code", "yes"], ["claude-code", "no"], ["codex", "yes"], ["co
   expect((await eventsUntil((e) => e.kind === "message" && e.data.done === true)).at(-1)).toMatchObject({ data: { text: `${answer === "yes"}:Custom` } });
   expect(listRules(dir)).toEqual([]);
   expect(readThreadEvents("native", dir).some((e) => e.kind === "rule_proposal")).toBe(false);
+});
+
+test("a lock-screen answer never settles a native card the runtime did not judge quick", async () => {
+  // An MCP tool is someone else's integration, which the runtime cannot classify by name: the
+  // card it raises is for review in the app, and a button press against it is refused before
+  // the native card is even looked up. The card stays up, and the app's own answer settles it.
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    const allowed = await turn.approve!("mcp__mail__send", { to: "bob@example.com" }, turn.signal);
+    return { text: `sent:${allowed}`, sessionId: "sdk-session" };
+  } };
+  const { send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { "claude-code": runner } });
+  send({ kind: "thread_create", data: { agent: "claude-code", cwd: proj } }, "native");
+  send({ kind: "message", data: { role: "user", text: "mail bob" } }, "native");
+  const card = (await eventsUntil((e) => e.kind === "approval_card")).at(-1)!;
+  if (card.kind !== "approval_card") throw new Error("missing approval");
+  expect(card.data).toMatchObject({ nativeAgent: "claude-code", actionClass: "mcp__mail__send" });
+  send({ kind: "approval_answer", data: { actionId: card.data.actionId, answer: "yes", source: "notification" } }, "native");
+  await vi.waitFor(() => expect(states).toContain("notification-answer-refused"));
+  send({ kind: "approval_answer", data: { actionId: card.data.actionId, answer: "no" } }, "native");
+  expect((await eventsUntil((e) => e.kind === "message" && e.data.done === true)).at(-1))
+    .toMatchObject({ data: { text: "sent:false" } });
 });
 
 test.each(["claude-code", "codex"] as const)("%s native bypass shares global YOLO on new and resumed turns", async (agent) => {

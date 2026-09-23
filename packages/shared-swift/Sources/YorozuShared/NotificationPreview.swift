@@ -16,17 +16,64 @@ public struct NotificationPreviewPayload: Equatable, Sendable {
     }
 }
 
-/// Local-only opening of the reply text APNs carries as an opaque ChaChaPoly box.
+/// What a sealed preview says once opened: the words for the lock screen, the reference of
+/// the card they are about, and whether the Mac judged that card answerable from a button.
+/// Mirrors `NotificationPreviewContent` in packages/shared/src/notify.ts.
+///
+/// The plaintext is `{"v":1,"body":"<text>","event":"<threadRef or null>","quick":<bool>}`.
+/// A plaintext that is not a JSON object, or has no `v`, is a preview from before the object
+/// existed: its whole text is the body, it names no card, and it permits no button.
+public struct NotificationPreviewContent: Equatable, Sendable {
+    public static let version = 1
+
+    /// The reply's text, or the card's one-line summary.
+    public let body: String
+    /// `threadRef` of the card or message this preview is about; nil when unknown.
+    public let event: String?
+    /// Whether the Mac judged this card answerable from the lock screen. Never true for a reply.
+    public let quick: Bool
+
+    public init(body: String, event: String?, quick: Bool) {
+        self.body = body
+        self.event = event
+        self.quick = quick
+    }
+
+    /// Nil for an empty body, which is no preview at all.
+    public init?(plaintext: String) {
+        let parsed = try? JSONSerialization.jsonObject(with: Data(plaintext.utf8), options: [.fragmentsAllowed])
+        guard let object = parsed as? [String: Any], object["v"] != nil else {
+            if plaintext.isEmpty { return nil }
+            self.init(body: plaintext, event: nil, quick: false)
+            return
+        }
+        guard let body = object["body"] as? String, !body.isEmpty else { return nil }
+        let event = (object["event"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        // A JSON `true` only: NSNumber bridges numbers to Bool too, so the type is checked.
+        let quick: Bool
+        if let number = object["quick"] as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() {
+            quick = number.boolValue
+        } else {
+            quick = false
+        }
+        self.init(body: body, event: event, quick: quick)
+    }
+}
+
+/// Local-only opening of the preview APNs carries as an opaque ChaChaPoly box.
 public enum NotificationPreview {
     private static let service = "to.yumi.yorozu.notification-preview"
     private static let account = "session-key"
 
-    public static func decrypt(nonce: String, ciphertext: String, key: SymmetricKey) -> String? {
+    /// The preview a box holds, or nil when it does not open under `key`, is not UTF-8, or
+    /// says nothing.
+    public static func decrypt(nonce: String, ciphertext: String, key: SymmetricKey) -> NotificationPreviewContent? {
         guard let nonce = Data(base64URLEncoded: nonce), nonce.count == 12,
               let ciphertext = Data(base64URLEncoded: ciphertext), ciphertext.count >= 16,
-              let plaintext = try? YorozuCrypto.open(key: key, nonce: nonce, ciphertext: ciphertext)
+              let plaintext = try? YorozuCrypto.open(key: key, nonce: nonce, ciphertext: ciphertext),
+              let text = String(data: plaintext, encoding: .utf8)
         else { return nil }
-        return String(data: plaintext, encoding: .utf8).flatMap { $0.isEmpty ? nil : $0 }
+        return NotificationPreviewContent(plaintext: text)
     }
 
     /// Shares only the derived symmetric key with the notification extension. Pairing private

@@ -28,7 +28,8 @@ import {
   open,
   seal,
   notifyFor,
-  notificationPreview,
+  notificationPreviewBody,
+  encodeNotificationPreview,
   signFrame,
   threadRef,
   toBase64Url,
@@ -431,8 +432,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const heldRevokes = new Set<string>();
 
   /**
-   * Tells the relay that something happened and, for replies, supplies one opaque preview box
-   * per phone. Replaced per connection, a no-op while there is none.
+   * Tells the relay that something happened and, for replies and cards, supplies one opaque
+   * preview box per phone. Replaced per connection, a no-op while there is none.
    */
   let notifyRelay: (event: YorozuEvent) => void = () => {};
   /** Turns that ended while the relay socket was down, waiting to be announced on reconnect. */
@@ -1002,13 +1003,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
         questions.cancelAll(event.threadId);
         return;
       case "approval_answer": {
-        if (nativeCards.answer(event)) return;
         // A lock-screen button is honoured only for a card this runtime judged answerable
-        // from one. The relay chose which buttons the push drew, and a relay that put Allow
-        // under a purchase card must not be able to move money with it.
-        if (event.data.source === "notification" && quickActions.get(event.data.actionId) !== true) {
+        // from one — a Yorozu card or a native agent's alike, and judged before either is
+        // looked up, so no card of any kind settles on a button it was not sent with. The
+        // relay chose which buttons the push drew, and a relay that put Allow under a
+        // purchase card must not be able to move money with it.
+        if (
+          event.data.source === "notification" &&
+          quickActions.get(event.data.actionId) !== true &&
+          !nativeCards.quickApprovable(event.data.actionId)
+        ) {
           return state("notification-answer-refused");
         }
+        if (nativeCards.answer(event)) return;
         pending.get(event.data.actionId)?.settle({
           answer: event.data.answer,
           ...(event.data.rule ? { rule: event.data.rule } : {}),
@@ -1258,21 +1265,27 @@ export function serve(options: ServeOptions = {}): Sidecar {
         heldNotifies.push(event);
         return;
       }
-      const preview = notificationPreview(event);
-      const previews = preview
+      // An approval the phone may answer from its lock screen: below every floor and nothing
+      // external, or a native agent's own local tool. One bit for the relay, which draws the
+      // buttons; the same bit sealed into the preview, which is what the phone acts on. The
+      // action itself stays in the sealed frame.
+      const quick =
+        event.kind === "approval_card" &&
+        (quickActions.get(event.data.actionId) === true || nativeCards.quickApprovable(event.data.actionId));
+      // A reply's words, or a card's one line, each sealed once per phone under its own key,
+      // together with the reference of the event they are about and the quick judgement.
+      const body = notificationPreviewBody(event);
+      const plaintext = body ? encodeNotificationPreview({ body, event: threadRef(event.id), quick }) : null;
+      const previews = plaintext
         ? Object.fromEntries(
             [...devices.values()].flatMap(({ key, record }) => {
               if (!record.signingPub || event.ts < (record.pairedAt ?? 0)) return [];
-              const box = seal(key, Buffer.from(preview));
+              const box = seal(key, Buffer.from(plaintext));
               return [[record.signingPub, { n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }]];
             }),
           )
         : undefined;
-      // An approval the phone may answer from its lock screen: below every floor and nothing
-      // external. One bit for the relay; the action itself stays in the sealed frame.
-      const actions =
-        event.kind === "approval_card" &&
-        (quickActions.get(event.data.actionId) === true || nativeCards.quickApprovable(event.data.actionId));
+      const actions = quick;
       // Thread and event ids travel only as short one-way references. The latter lets a tap
       // select the exact encrypted card after sync without teaching the relay what it contains.
       ws.send(
