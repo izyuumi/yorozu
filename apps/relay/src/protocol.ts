@@ -18,6 +18,28 @@ export const MAX_DEVICES = 16;
 export const BUFFER_TTL_MS = 24 * 60 * 60_000;
 export const BUFFER_CAP_BYTES = 5 * 1024 * 1024;
 export const FRAMES_PER_SEC = 60;
+export const MAX_PAYLOAD_BYTES = 1_048_576;
+export const MAX_TOKENS_PER_ROOM = 8;
+export const NOTIFY_PER_MINUTE = 60;
+
+/** Invalid configuration must not silently remove a resource limit. */
+export function positiveLimit(value: string | undefined, fallback: number): number {
+  const limit = Number(value);
+  return Number.isSafeInteger(limit) && limit > 0 ? limit : fallback;
+}
+
+export type NotifyWindow = { count: number; startedAt: number };
+
+/** A room shares this budget across owner reconnects, so reconnecting cannot buy more pushes. */
+export function allowNotify(window: NotifyWindow, now: number, limit = NOTIFY_PER_MINUTE): boolean {
+  if (window.count === 0 || now - window.startedAt >= 60_000) {
+    window.startedAt = now;
+    window.count = 0;
+  }
+  if (window.count >= limit) return false;
+  window.count++;
+  return true;
+}
 
 /**
  * Application-level heartbeat. A socket that says nothing for minutes is dropped by whatever
@@ -25,8 +47,8 @@ export const FRAMES_PER_SEC = 60;
  *
  * These are whole messages rather than websocket ping frames because the Worker relay answers
  * them with `state.setWebSocketAutoResponse`, which matches an exact message string: the edge
- * replies and the Durable Object stays hibernated, so a heartbeat costs no wall time. Both
- * relays also answer them in the handler, so the two behave identically on the wire.
+ * replies and the Durable Object stays hibernated, so a heartbeat costs no wall time. The Node
+ * relay answers the exact string the same way, before the bucket, so the two match on the wire.
  */
 export const PING = JSON.stringify({ type: "ping" });
 export const PONG = JSON.stringify({ type: "pong" });
@@ -37,7 +59,7 @@ export const CLOSE_BAD_SIGNATURE = 4003;
 export const CLOSE_RATE_LIMIT = 4029;
 
 /**
- * Token bucket, per socket: sustained FRAMES_PER_SEC with a one-second burst. Per socket
+ * Token bucket, per socket: sustained FRAMES_PER_SEC messages with a one-second burst. Per socket
  * rather than per room so one phone flooding closes that phone and nobody else; a Mac's
  * fan-out to every paired phone travels as one `frames` batch and costs one token.
  */
@@ -58,7 +80,7 @@ export function allowFrame(bucket: Bucket, now: number): boolean {
 
 /**
  * How many of the oldest buffered entries to drop so the buffer respects both the TTL and
- * the byte cap. TTLs are enforced lazily on access, so an idle relay holds no timers.
+ * the byte cap. Both relays also sweep idle buffers so expiry does not depend on new traffic.
  */
 export function dropCount(
   entries: readonly { bytes: number; at: number }[],
@@ -281,7 +303,9 @@ const parsePreviews = (value: unknown): Record<string, EncryptedPreview> | null 
 };
 
 export const parsePush = (msg: Record<string, unknown>): Push | null =>
-  strings(msg, "deviceToken");
+  typeof msg.deviceToken === "string" && msg.deviceToken.length === 64 && /^[0-9a-f]{64}$/i.test(msg.deviceToken)
+    ? { deviceToken: msg.deviceToken }
+    : null;
 
 export const parseNotify = (msg: Record<string, unknown>): Notify | null => {
   if (typeof msg.threadRef !== "string" || msg.threadRef === "") return null;

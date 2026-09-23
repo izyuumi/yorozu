@@ -4,7 +4,7 @@ import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, expect, test, vi } from "vitest";
 import { MAX_DEVICES, NOTIFY_BODY, type Notify } from "./protocol.js";
 import * as apns from "./apns.js";
-import type { Env } from "./worker.js";
+import { Room, type Env } from "./worker.js";
 import { conformance } from "./conformance.test.js";
 
 /**
@@ -14,6 +14,9 @@ import { conformance } from "./conformance.test.js";
  */
 
 const ED25519 = { name: "Ed25519" } as const;
+const DEVICE_TOKEN = "a".repeat(64);
+const SECOND_DEVICE_TOKEN = "b".repeat(64);
+const REPLACEMENT_TOKEN = "c".repeat(64);
 
 function toBase64Url(bytes: Uint8Array): string {
   return btoa(String.fromCharCode(...bytes))
@@ -175,7 +178,7 @@ test("a used or expired join token is swept by the alarm, and a live one is kept
   expect(await (await connectPhone(room, live)).phone.next()).toMatchObject({ type: "joined" });
 });
 
-test("the auto-response pair is what answers a ping, and leaves presence alone", async () => {
+test("heartbeats answer without changing presence", async () => {
   const macKeys = await keypair();
   const room = await roomId(macKeys.pub);
   const mac = await connectMac(macKeys);
@@ -297,7 +300,7 @@ async function paired() {
   const mac = await connectMac(macKeys);
   const { phone, keys } = await connectPhone(room, await mintToken(mac));
   await phone.next(); // joined
-  phone.send({ type: "push", deviceToken: "device-token" });
+  phone.send({ type: "push", deviceToken: DEVICE_TOKEN });
   await settled(phone);
   return { mac, macKeys, phone, keys, room };
 }
@@ -319,12 +322,12 @@ const wake = (name: string) => runInDurableObject(room(name), (instance) =>
 test("a phone registers where it can be woken, and revoking it takes the token with it", async () => {
   const { mac, phone, keys, room } = await paired();
 
-  expect(await record(room, keys.pub)).toEqual({ deviceToken: "device-token" });
+  expect(await record(room, keys.pub)).toEqual({ deviceToken: DEVICE_TOKEN });
 
   // Re-registering is what a phone does on every launch, and the newest token wins.
-  phone.send({ type: "push", deviceToken: "device-token-2" });
+  phone.send({ type: "push", deviceToken: SECOND_DEVICE_TOKEN });
   await settled(phone);
-  expect(await record(room, keys.pub)).toEqual({ deviceToken: "device-token-2" });
+  expect(await record(room, keys.pub)).toEqual({ deviceToken: SECOND_DEVICE_TOKEN });
 
   // And the whole registration goes when the Mac unpairs the device: a revoked phone is not
   // woken again, which is the entire point of revoking it.
@@ -395,7 +398,7 @@ test("a wake-up carries a class and an opaque reference, and nothing of the conv
   await macSettled(mac);
 
   const call = calls[0]!;
-  expect(call.url).toBe("https://apns.test/3/device/device-token");
+  expect(call.url).toBe(`https://apns.test/3/device/${DEVICE_TOKEN}`);
   expect(call.headers.get("apns-topic")).toBe("to.yumi.yorozu.ios");
   expect(call.headers.get("apns-push-type")).toBe("alert");
   expect(call.body.aps.alert).toEqual({ title: "Yorozu", "loc-key": NOTIFY_BODY.approval });
@@ -478,7 +481,7 @@ test("one APNs network failure does not block another phone", async () => {
   const { mac, phone, room } = await paired();
   const second = await connectPhone(room, await mintToken(mac));
   await second.phone.next();
-  second.phone.send({ type: "push", deviceToken: "device-token-2" });
+  second.phone.send({ type: "push", deviceToken: SECOND_DEVICE_TOKEN });
   await settled(second.phone);
   phone.ws.close();
   second.phone.ws.close();
@@ -490,7 +493,7 @@ test("one APNs network failure does not block another phone", async () => {
   // gets both. Three calls, and both tokens were tried.
   expect(calls).toHaveLength(3);
   expect(new Set(calls.map((url) => url.split("/").at(-1)))).toEqual(
-    new Set(["device-token", "device-token-2"]),
+    new Set([DEVICE_TOKEN, SECOND_DEVICE_TOKEN]),
   );
 });
 
@@ -521,13 +524,13 @@ test.each([200, 410])("an old APNs response (%i) cannot change a replacement tok
   });
   const pending = wake(name);
   await vi.waitFor(() => expect(complete).toBeTypeOf("function"));
-  phone.send({ type: "push", deviceToken: "replacement-token" });
+  phone.send({ type: "push", deviceToken: REPLACEMENT_TOKEN });
   await settled(phone);
   // Workerd requires deferred I/O to complete in the Durable Object that owns it.
   await runInDurableObject(room(name), () => complete(new Response(null, { status })));
   await pending;
 
-  expect(await record(name, keys.pub)).toEqual({ deviceToken: "replacement-token" });
+  expect(await record(name, keys.pub)).toEqual({ deviceToken: REPLACEMENT_TOKEN });
   await macSettled(mac);
 });
 
@@ -611,7 +614,7 @@ test("a wake-up also nudges the app awake, at most once a minute", async () => {
 
   expect(calls).toHaveLength(2);
   const silent = calls[1]!;
-  expect(silent.url).toBe("https://apns.test/3/device/device-token");
+  expect(silent.url).toBe(`https://apns.test/3/device/${DEVICE_TOKEN}`);
   // The app's own topic, not the activity's, and explicitly not urgent — Apple rejects a
   // background push that claims to be.
   expect(silent.headers.get("apns-topic")).toBe("to.yumi.yorozu.ios");
@@ -676,7 +679,150 @@ test("a token production APNs refuses as bad is retried through sandbox, and tha
   expect(hosts()).toEqual(["apns-sandbox.test"]);
 
   // A new token may be from either environment, so nothing is assumed about it.
-  phone.send({ type: "push", deviceToken: "device-token-2" });
+  phone.send({ type: "push", deviceToken: SECOND_DEVICE_TOKEN });
   await settled(phone);
-  expect(await record(room, keys.pub)).toEqual({ deviceToken: "device-token-2" });
+  expect(await record(room, keys.pub)).toEqual({ deviceToken: SECOND_DEVICE_TOKEN });
+});
+
+test.each([false, true])("messages over one MiB close before parsing (binary: %s)", async (binary) => {
+  const name = `payload-limit-${binary}`;
+  const client = await connect(name);
+  await client.next();
+  // The wire cap counts bytes, including JSON and multi-byte UTF-8 characters.
+  const oversized = JSON.stringify({ type: "ping", padding: "é".repeat(524_288) });
+  await runInDurableObject(room(name), async (instance, state) => {
+    const socket = state.getWebSockets()[0]!;
+    // Exercise the handler itself; workerd also has a transport limit of its own.
+    await (instance as unknown as { webSocketMessage(ws: WebSocket, data: string | ArrayBuffer): Promise<void> })
+      .webSocketMessage(socket, binary ? new TextEncoder().encode(oversized).buffer as ArrayBuffer : oversized);
+  });
+  expect(await client.closed()).toBe(1009);
+});
+
+test("a message exactly one MiB is accepted", async () => {
+  const client = await connect("payload-boundary");
+  await client.next();
+  client.raw(JSON.stringify({ type: "ping" }).padEnd(1_048_576));
+  expect(await client.next()).toEqual({ type: "pong" });
+});
+
+test("the socket bucket survives an object being reconstructed", async () => {
+  const client = await connect("bucket-hibernation");
+  await client.next();
+  await runInDurableObject(room("bucket-hibernation"), async (_instance, state) => {
+    const socket = state.getWebSockets()[0]!;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+    try {
+      for (let i = 0; i < 61; i++) {
+        const awake = new Room(state, env as unknown as Env);
+        await awake.webSocketMessage(socket, JSON.stringify({ type: "ping" }));
+      }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+  expect(await client.closed()).toBe(4029);
+});
+
+test("heartbeats are answered at the edge and never spend the bucket", async () => {
+  const client = await connect("ping-free");
+  await client.next();
+  // Far more than one second's burst: pings are matched by the edge auto-response and never
+  // reach the bucket, so the socket stays open and every one gets its pong.
+  for (let i = 0; i < 100; i++) client.send({ type: "ping" });
+  for (let i = 0; i < 100; i++) expect(await client.next()).toMatchObject({ type: "pong" });
+});
+
+test("the configured token cap evicts the first mint even when expiries tie across hibernation", async () => {
+  const keys = await keypair();
+  const name = await roomId(keys.pub);
+  const mac = await connectMac(keys);
+  await runInDurableObject(room(name), async (_instance, state) => {
+    const socket = state.getWebSockets()[0]!;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+    let minted = 0;
+    const random = vi.spyOn(crypto, "getRandomValues").mockImplementation((array) => {
+      if (array) new Uint8Array(array.buffer, array.byteOffset, array.byteLength).fill([254, 253, 255][minted++]!);
+      return array;
+    });
+    try {
+      for (let i = 0; i < 3; i++) {
+        const awake = new Room(state, { ...(env as unknown as Env), RELAY_MAX_TOKENS_PER_ROOM: "2" });
+        await awake.webSocketMessage(socket, JSON.stringify({ type: "mint" }));
+      }
+    } finally {
+      random.mockRestore();
+      clock.mockRestore();
+    }
+  });
+  const first = await mac.next();
+  const second = await mac.next();
+  const third = await mac.next();
+  expect(first.expiresAt).toBe(second.expiresAt);
+  expect(first.expiresAt).toBe(third.expiresAt);
+  expect(await (await connectPhone(name, first.token)).phone.closed()).toBe(4001);
+  expect(await (await connectPhone(name, second.token)).phone.next()).toMatchObject({ type: "joined" });
+  expect(await (await connectPhone(name, third.token)).phone.next()).toMatchObject({ type: "joined" });
+});
+
+test("notify limits share a room budget across hibernation and reset after a minute", async () => {
+  const calls = fakeApns();
+  const { mac, macKeys, phone, room: name } = await paired();
+  const now = Date.now();
+  const notify = JSON.stringify({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
+  const deliver = (at: number) => runInDurableObject(room(name), async (_instance, state) => {
+    const socket = state.getWebSockets().find((ws) => ws.deserializeAttachment()?.role === "mac")!;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(at);
+    try {
+      const awake = new Room(state, { ...(env as unknown as Env), RELAY_NOTIFY_PER_MINUTE: "2" });
+      await awake.webSocketMessage(socket, notify);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+  await deliver(now);
+  await deliver(now);
+  await deliver(now);
+  expect(await mac.next()).toEqual({ type: "state", state: "notify rate limit" });
+  await vi.waitFor(() => expect(calls).toHaveLength(2));
+  // A dropped notification leaves encrypted traffic and later windows working normally.
+  await frame(mac, "c3RpbGwtb3Blbg", macKeys);
+  expect(await phone.next()).toMatchObject({ type: "frame", payload: "c3RpbGwtb3Blbg" });
+  await deliver(now + 60_000);
+  await vi.waitFor(() => expect(calls).toHaveLength(3));
+});
+
+
+test("mint requests spend the same bucket as registration", async () => {
+  const keys = await keypair();
+  const name = await roomId(keys.pub);
+  const mac = await connect(name);
+  const { nonce } = await mac.next();
+  const register = JSON.stringify({ type: "register", pubkey: keys.pub, nonceSig: await sign(nonce, keys) });
+  await runInDurableObject(room(name), async (instance, state) => {
+    const socket = state.getWebSockets()[0]!;
+    const awake = instance as Room;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+    try {
+      await awake.webSocketMessage(socket, register);
+      for (let i = 0; i < 60; i++) await awake.webSocketMessage(socket, JSON.stringify({ type: "mint" }));
+    } finally {
+      clock.mockRestore();
+    }
+  });
+  expect(await mac.next()).toMatchObject({ type: "registered" });
+  for (let i = 0; i < 59; i++) expect(await mac.next()).toMatchObject({ type: "token" });
+  expect(await mac.closed()).toBe(4029);
+});
+
+test("the default token cap retains the newest eight pairing tokens", async () => {
+  const keys = await keypair();
+  const name = await roomId(keys.pub);
+  const mac = await connectMac(keys);
+  const tokens = [];
+  for (let i = 0; i < 9; i++) tokens.push(await mintToken(mac));
+  expect(await (await connectPhone(name, tokens[0]!)).phone.closed()).toBe(4001);
+  for (const token of tokens.slice(1)) {
+    expect(await (await connectPhone(name, token)).phone.next()).toMatchObject({ type: "joined" });
+  }
 });
