@@ -20,9 +20,9 @@ jobs:
   node:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 26
           cache: pnpm
@@ -33,9 +33,9 @@ jobs:
   swift:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # The hosted image's default Xcode can lag; this project needs the newest stable.
-      - uses: maxim-lobanov/setup-xcode@v1
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with: { xcode-version: latest-stable }
       # `swift test` already builds this package; a separate build compiled it twice.
       - run: env -u SDKROOT swift test --package-path packages/shared-swift
@@ -46,9 +46,9 @@ jobs:
     # Simulator UI tests can hang on a hosted runner; fail instead of holding a slot for hours.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # The hosted image's default Xcode can lag; this project needs the newest stable.
-      - uses: maxim-lobanov/setup-xcode@v1
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with: { xcode-version: latest-stable }
       # The Xcode project is generated, not checked in; see apps/ios/Project.swift.
       - run: command -v tuist >/dev/null || brew install --cask tuist
