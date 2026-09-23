@@ -10,13 +10,18 @@ import Foundation
 @MainActor
 @Observable
 public final class ChatModel {
-    /// Every thread, the unsent draft included, newest first once a list has ordered them.
-    public var threads: [ThreadSummary] { draft.map { [$0] + synced } ?? synced }
+    /// Every thread, unsent drafts included, newest first once a list has ordered them.
+    public var threads: [ThreadSummary] { draftThreads + synced }
     /// The threads the runtime has told us about.
     private var synced: [ThreadSummary] = []
-    /// The thread this device has started but not yet sent anything in, so the runtime has never
-    /// heard of it. There is at most one: starting another replaces it.
-    public private(set) var draft: ThreadSummary?
+    /// Threads started on this device that the runtime has not heard of yet.
+    private var draftThreads: [ThreadSummary] = []
+    /// The newest unsent draft.
+    public var draft: ThreadSummary? { draftThreads.first }
+
+    public func isDraft(_ threadId: String) -> Bool {
+        draftThreads.contains { $0.id == threadId }
+    }
     /// Whether a `thread_list` has arrived yet, so an app can wait before deciding what to open.
     public private(set) var listed = false
     /// Advances after a complete sync response. Notification navigation uses this to tell
@@ -306,7 +311,7 @@ public final class ChatModel {
         // must not take different routes, or the runtime is told about a message in a thread it
         // has never heard of.
         let queue = !canDeliver
-        if let draft, draft.id == threadId {
+        if let draft = draftThreads.first(where: { $0.id == threadId }) {
             // A draft becomes real with its first message. The id is ours, so the message below
             // lands in the thread this `thread_create` is about to mint on the other end.
             // A draft for a coding agent carries who answers it and where; a Yorozu draft says
@@ -324,7 +329,7 @@ public final class ChatModel {
             if let effort = draft.effort {
                 deliver(event(.threadSetEffort(ThreadSetEffortData(effort: effort)), in: threadId), queue: queue)
             }
-            self.draft = nil
+            draftThreads.removeAll { $0.id == threadId }
             synced.insert(draft, at: 0)
         }
         let event = YorozuEvent(
@@ -456,9 +461,10 @@ public final class ChatModel {
     }
 
     /// A thread that exists only on this device until its first message: nothing is sent until
-    /// then, so backing out of it leaves nothing behind. Replaces any draft still unsent.
+    /// then. Starting another keeps drafts with input and removes empty ones.
     @discardableResult
     public func newDraft(agent: ThreadAgent = .yorozu, cwd: String? = nil) -> ThreadSummary {
+        for id in draftThreads.map(\.id) { discardDraft(id) }
         let thread = ThreadSummary(
             id: UUID().uuidString,
             title: "",
@@ -467,14 +473,23 @@ public final class ChatModel {
             agent: agent == .yorozu ? nil : agent,
             cwd: agent == .yorozu ? nil : cwd
         )
-        draft = thread
+        draftThreads.insert(thread, at: 0)
         return thread
     }
 
-    /// Throws away the draft when it is still the one named and still unsent. A draft that was
-    /// sent in is a real thread by then and is not this one any more.
+    /// Leaving a draft discards it only when its composer is empty.
     public func discardDraft(_ threadId: String) {
-        if draft?.id == threadId { draft = nil }
+        guard (drafts[threadId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            (attachments[threadId] ?? []).isEmpty
+        else { return }
+        removeDraft(threadId)
+    }
+
+    private func removeDraft(_ threadId: String) {
+        guard isDraft(threadId) else { return }
+        draftThreads.removeAll { $0.id == threadId }
+        drafts[threadId] = nil
+        attachments[threadId] = nil
     }
 
     /// Creates a thread on the runtime straight away, title and all. Only the end-to-end harness
@@ -500,8 +515,8 @@ public final class ChatModel {
     public func setArchived(_ thread: ThreadSummary, _ archived: Bool) {
         // An unsent draft is nowhere but here, so dropping it is the whole of archiving it —
         // and there is nothing to bring back afterwards.
-        guard draft?.id != thread.id else {
-            if archived { discardDraft(thread.id) }
+        guard !isDraft(thread.id) else {
+            if archived { removeDraft(thread.id) }
             return
         }
         set(thread.id) { $0.archived = archived }
@@ -517,7 +532,7 @@ public final class ChatModel {
     /// Pins a thread to the top of the list, or unpins it. A draft cannot be pinned: it does not
     /// exist anywhere the pin could be remembered.
     public func setPinned(_ thread: ThreadSummary, _ pinned: Bool) {
-        guard draft?.id != thread.id else { return }
+        guard !isDraft(thread.id) else { return }
         set(thread.id) { $0.pinned = pinned }
         emit(.threadPin(ThreadPinData(pinned: pinned)), in: thread.id)
     }
@@ -527,9 +542,9 @@ public final class ChatModel {
     /// yet keeps the choice on the draft — there is no thread on the Mac to set it on until the
     /// first message, which carries it along (see ``send(_:in:attachment:)``).
     public func setModel(_ thread: ThreadSummary, _ model: String?) {
-        guard draft?.id != thread.id else {
-            draft?.model = model
-            if thread.agent?.needsFolder == true { draft?.effort = nil }
+        if let index = draftThreads.firstIndex(where: { $0.id == thread.id }) {
+            draftThreads[index].model = model
+            if thread.agent?.needsFolder == true { draftThreads[index].effort = nil }
             return
         }
         set(thread.id) { $0.model = model; if thread.agent?.needsFolder == true { $0.effort = nil } }
@@ -549,8 +564,8 @@ public final class ChatModel {
     /// Sets how much reasoning this thread requests, or returns it to the provider default.
     /// Drafts keep the choice locally until their first message creates them on the runtime.
     public func setEffort(_ thread: ThreadSummary, _ effort: ReasoningEffort?) {
-        guard draft?.id != thread.id else {
-            draft?.effort = effort
+        if let index = draftThreads.firstIndex(where: { $0.id == thread.id }) {
+            draftThreads[index].effort = effort
             return
         }
         set(thread.id) { $0.effort = effort }
@@ -588,7 +603,7 @@ public final class ChatModel {
     /// on the app becoming active with one open, and — debounced — when a reply lands in it.
     private func reportRead() {
         // A draft exists on this device alone: there is no thread on the runtime to mark.
-        guard let openThread, openThread != draft?.id, isReading(openThread) else { return }
+        guard let openThread, !isDraft(openThread), isReading(openThread) else { return }
         markRead(openThread)
     }
 

@@ -613,7 +613,8 @@ public struct ThreadListView<Destination: View>: View {
         // pulling a transcript down reveals "Search threads" above the conversation.
         .threadListSearch(text: $query, enabled: splitLayout || path.isEmpty)
         .refreshable { await onRefresh?() }
-        .navigationTitle("Yorozu")
+        .navigationTitle("Threads")
+        .toolbarTitleDisplayMode(.inline)
         .toolbar {
             if let onSettings {
                 ToolbarItem(placement: .navigation) {
@@ -633,11 +634,15 @@ public struct ThreadListView<Destination: View>: View {
                 }
             }
             #if os(iOS)
-                ToolbarItem(placement: .primaryAction) { newThreadButton }
-                if threads.contains(where: \.isUnread), let onReadAll {
-                    ToolbarItem(placement: .primaryAction) {
+                // One trailing group shaped like the chat's — see ``ChatView`` — with the compose
+                // glyph last in both: pushing a thread then swaps the buttons in place instead of
+                // animating a lone item into a group and back, and a second `.primaryAction`
+                // would fold into a "…" overflow menu anyway.
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    if threads.contains(where: \.isUnread), let onReadAll {
                         Button("Mark all as read", systemImage: "envelope.open", action: onReadAll)
                     }
+                    newThreadButton
                 }
             #endif
             #if os(macOS)
@@ -779,7 +784,7 @@ extension View {
             #if os(iOS)
                 searchable(
                     text: text,
-                    placement: .navigationBarDrawer(displayMode: .always),
+                    placement: .navigationBarDrawer(displayMode: .automatic),
                     prompt: "Search threads"
                 )
             #else
