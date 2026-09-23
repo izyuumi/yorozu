@@ -55,6 +55,8 @@ import {
   narrowestRule,
   quickApprovable,
   saveSettings,
+  yoloExpiry,
+  yoloHours,
   type Action,
   type AskResult,
   type Rule,
@@ -924,7 +926,45 @@ export function serve(options: ServeOptions = {}): Sidecar {
     return false;
   };
 
-  function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0): void {
+  /** The current YOLO state as every device is told it: on carries the moment it ends. */
+  const approvalSettingsEvent = (extra: { pending?: true } = {}): YorozuEvent => {
+    const { yolo, yoloUntil } = loadSettings(dir);
+    return control({ kind: "approval_settings", data: { yolo, ...(yolo && yoloUntil ? { yoloUntil } : {}), ...extra } });
+  };
+
+  /**
+   * YOLO is never on for good. One timer flips it off when the stored grant ends, armed here
+   * whenever the grant changes and again at start, so a relaunch keeps the clock.
+   */
+  let yoloTimer: NodeJS.Timeout | null = null;
+  const armYoloExpiry = (): void => {
+    if (yoloTimer) clearTimeout(yoloTimer);
+    yoloTimer = null;
+    const { yolo, yoloUntil } = loadSettings(dir);
+    if (!yolo || yoloUntil === undefined) return;
+    yoloTimer = setTimeout(() => {
+      yoloTimer = null;
+      if (!stopped) setYolo(false);
+    }, Math.max(0, yoloUntil - Date.now()));
+    yoloTimer.unref();
+  };
+
+  /** Turns YOLO on for `hours` (default 8, capped at 24) or off now, and tells every device. */
+  const setYolo = (on: boolean, hours?: number): void => {
+    const { yoloUntil: _stale, ...settings } = loadSettings(dir);
+    saveSettings(on ? { ...settings, yolo: true, yoloUntil: yoloExpiry(hours) } : { ...settings, yolo: false }, dir);
+    armYoloExpiry();
+    broadcast(threadList());
+    broadcast(approvalSettingsEvent());
+  };
+  armYoloExpiry();
+
+  /**
+   * `from` names the relay device a sealed box came from. Absent for the local socket, whose
+   * clients are this Mac's own user: that difference is what decides whether turning YOLO on
+   * is a command or a request.
+   */
+  function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0, from?: string): void {
     if (event.kind === "message" && !attachmentsWithinLimits(event.data.attachments ?? [])) {
       return state("rejected-oversized-attachments");
     }
@@ -989,15 +1029,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
         deleteRule(event.data.ruleId, dir);
         return broadcast(ruleList());
       case "approval_settings": {
-        const settings = loadSettings(dir);
-        const changed = typeof event.data.yolo === "boolean";
-        if (changed) saveSettings({ ...settings, yolo: event.data.yolo! }, dir);
-        const current = control({
-          kind: "approval_settings",
-          data: { yolo: changed ? event.data.yolo! : settings.yolo },
-        });
-        if (changed) broadcast(threadList());
-        return changed ? broadcast(current) : reply(current);
+        if (typeof event.data.yolo !== "boolean") return reply(approvalSettingsEvent());
+        // Off is anyone's to say, at once. On from a phone is a request: the phone might be in
+        // someone else's hand, and YOLO is code execution as the user. The Mac in front of the
+        // user is asked, and the phone is told nothing changed yet, so its toggle snaps back.
+        if (event.data.yolo && from !== undefined) {
+          const request = control({
+            kind: "approval_settings_request",
+            data: { requestId: randomUUID(), device: from, yolo: true, hours: yoloHours(event.data.hours) },
+          });
+          for (const send of locals.values()) send(request);
+          return reply(approvalSettingsEvent({ pending: true }));
+        }
+        return setYolo(event.data.yolo, event.data.hours);
       }
       case "rule_proposal":
         // Emitted by the runtime, never accepted from a device: a proposal is not a decision.
@@ -1377,7 +1421,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const known = devices.get(device);
       // Hearing from a device is the only thing that makes it online, so the stamp is kept.
       if (known) known.record.lastSeen = Date.now();
-      handleEvent(event, (answer) => sendTo(device, answer), known?.record.pairedAt ?? 0);
+      handleEvent(event, (answer) => sendTo(device, answer), known?.record.pairedAt ?? 0, device);
     }
 
     /**

@@ -70,6 +70,11 @@ struct GeneralView: View {
                     Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
                         .font(.caption)
                         .foregroundStyle(.red)
+                    if let until = session.model.yoloUntil {
+                        Text("until \(Date(timeIntervalSince1970: Double(until) / 1000).formatted(date: .omitted, time: .shortened))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .onAppear { session.model.requestApprovalSettings() }

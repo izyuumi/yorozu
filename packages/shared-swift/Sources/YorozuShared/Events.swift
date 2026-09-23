@@ -45,6 +45,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case ruleUpdate = "rule_update"
         case ruleDelete = "rule_delete"
         case approvalSettings = "approval_settings"
+        case approvalSettingsRequest = "approval_settings_request"
         case questionCard = "question_card"
         case questionAnswer = "question_answer"
         case progressCard = "progress_card"
@@ -80,6 +81,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case ruleUpdate(RuleUpdateData)
         case ruleDelete(RuleDeleteData)
         case approvalSettings(ApprovalSettingsData)
+        case approvalSettingsRequest(ApprovalSettingsRequestData)
         case questionCard(QuestionCardData)
         case questionAnswer(QuestionAnswerData)
         case progressCard(ProgressCardData)
@@ -115,6 +117,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .ruleUpdate: .ruleUpdate
             case .ruleDelete: .ruleDelete
             case .approvalSettings: .approvalSettings
+            case .approvalSettingsRequest: .approvalSettingsRequest
             case .questionCard: .questionCard
             case .questionAnswer: .questionAnswer
             case .progressCard: .progressCard
@@ -164,6 +167,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .ruleUpdate: payload = .ruleUpdate(try c.decode(RuleUpdateData.self, forKey: .data))
         case .ruleDelete: payload = .ruleDelete(try c.decode(RuleDeleteData.self, forKey: .data))
         case .approvalSettings: payload = .approvalSettings(try c.decode(ApprovalSettingsData.self, forKey: .data))
+        case .approvalSettingsRequest:
+            payload = .approvalSettingsRequest(try c.decode(ApprovalSettingsRequestData.self, forKey: .data))
         case .questionCard: payload = .questionCard(try c.decode(QuestionCardData.self, forKey: .data))
         case .questionAnswer: payload = .questionAnswer(try c.decode(QuestionAnswerData.self, forKey: .data))
         case .progressCard: payload = .progressCard(try c.decode(ProgressCardData.self, forKey: .data))
@@ -209,6 +214,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .ruleUpdate(let d): try c.encode(d, forKey: .data)
         case .ruleDelete(let d): try c.encode(d, forKey: .data)
         case .approvalSettings(let d): try c.encode(d, forKey: .data)
+        case .approvalSettingsRequest(let d): try c.encode(d, forKey: .data)
         case .questionCard(let d): try c.encode(d, forKey: .data)
         case .questionAnswer(let d): try c.encode(d, forKey: .data)
         case .progressCard(let d): try c.encode(d, forKey: .data)
@@ -582,9 +588,50 @@ public struct RuleListData: Codable, Equatable, Sendable {
 }
 
 /// Global approval configuration. An empty payload requests current state; `yolo` updates it.
+/// Turning it on from a phone is only a request: the runtime answers with the unchanged state
+/// plus `pending`, asks the Mac, and the Mac's own `yolo: true` (carrying `hours` and the
+/// `requestId`) is what applies it. YOLO always expires; `yoloUntil` says when.
 public struct ApprovalSettingsData: Codable, Equatable, Sendable {
     public var yolo: Bool?
-    public init(yolo: Bool? = nil) { self.yolo = yolo }
+    /// When the bypass switches itself off again, in epoch ms. Present in reports while it is on.
+    public var yoloUntil: Int?
+    /// Set on the reply to a phone that asked to turn it on: nothing changed yet, the Mac decides.
+    public var pending: Bool?
+    /// How long to allow, in hours, when turning it on. The runtime caps it.
+    public var hours: Int?
+    /// The `approval_settings_request` this answers, when the Mac is confirming one.
+    public var requestId: String?
+    public init(
+        yolo: Bool? = nil,
+        yoloUntil: Int? = nil,
+        pending: Bool? = nil,
+        hours: Int? = nil,
+        requestId: String? = nil
+    ) {
+        self.yolo = yolo
+        self.yoloUntil = yoloUntil
+        self.pending = pending
+        self.hours = hours
+        self.requestId = requestId
+    }
+}
+
+/// A phone asked to turn the bypass on. Sent by the runtime to local-socket (Mac) clients only,
+/// so the person at the keyboard confirms it; a lost phone cannot grant itself unattended runs.
+public struct ApprovalSettingsRequestData: Codable, Equatable, Sendable {
+    public var requestId: String
+    /// The requester, as its public key or name.
+    public var device: String
+    /// Always true: only turning it on needs consent.
+    public var yolo: Bool
+    /// How long it asked for, in hours.
+    public var hours: Int
+    public init(requestId: String, device: String, yolo: Bool, hours: Int) {
+        self.requestId = requestId
+        self.device = device
+        self.yolo = yolo
+        self.hours = hours
+    }
 }
 
 /// Saves a rule: a new one, or the edited form of the one with the same id.

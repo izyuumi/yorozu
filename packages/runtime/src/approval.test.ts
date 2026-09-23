@@ -28,6 +28,7 @@ import {
   readLog,
   recordApproval,
   saveSettings,
+  yoloExpiry,
   TaskGrants,
   verifyApproved,
   type Action,
@@ -50,6 +51,9 @@ const settings = (over: Partial<Settings> = {}): Settings => ({
   ...DEFAULT_SETTINGS,
   rules: [],
   ...over,
+  // A grant in these tests is on unless a test says when it ends: the runtime never writes
+  // `yolo: true` without an end, and `loadSettings` reads one without as off.
+  ...(over.yolo && over.yoloUntil === undefined ? { yoloUntil: Date.now() + 3_600_000 } : {}),
 });
 
 /** A rule with only the fields a case is about; the rest are what a saved rule always has. */
@@ -618,6 +622,32 @@ test("settings round-trip, and a file broken by hand falls back to the safe floo
 
   writeFileSync(join(dir, "approval.json"), "{ not json");
   expect(loadSettings(dir)).toEqual(DEFAULT_SETTINGS);
+});
+
+test("a YOLO grant reads as off once its expiry has passed, and the expiry travels while it has not", () => {
+  const now = 1_757_640_000_000;
+  saveSettings(settings({ yolo: true, yoloUntil: now + 60_000 }), dir);
+  expect(loadSettings(dir, now)).toMatchObject({ yolo: true, yoloUntil: now + 60_000 });
+  expect(loadSettings(dir, now + 60_000)).toMatchObject({ yolo: false });
+  expect(loadSettings(dir, now + 60_000).yoloUntil).toBeUndefined();
+  // Off is off, whatever stale expiry the file still carries.
+  saveSettings(settings({ yolo: false, yoloUntil: now + 60_000 }), dir);
+  expect(loadSettings(dir, now)).toMatchObject({ yolo: false });
+  expect(loadSettings(dir, now).yoloUntil).toBeUndefined();
+  // No expiry is no grant: a file written by hand or by an older runtime does not keep YOLO
+  // on for good, it has to be turned on again and given an end.
+  writeFileSync(join(dir, "approval.json"), JSON.stringify({ ...DEFAULT_SETTINGS, yolo: true }));
+  expect(loadSettings(dir, now)).toMatchObject({ yolo: false });
+});
+
+test("a YOLO grant defaults to eight hours, is capped at a day, and shrugs off nonsense", () => {
+  const now = 1_757_640_000_000;
+  expect(yoloExpiry(undefined, now)).toBe(now + 8 * 3_600_000);
+  expect(yoloExpiry(2, now)).toBe(now + 2 * 3_600_000);
+  expect(yoloExpiry(100, now)).toBe(now + 24 * 3_600_000);
+  expect(yoloExpiry(0, now)).toBe(now + 8 * 3_600_000);
+  expect(yoloExpiry(1.5, now)).toBe(now + 2 * 3_600_000);
+  expect(yoloExpiry(Number.NaN, now)).toBe(now + 8 * 3_600_000);
 });
 
 test("YOLO mode bypasses rules below the floor while keeping an audit row", async () => {

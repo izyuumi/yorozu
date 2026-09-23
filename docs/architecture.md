@@ -413,6 +413,16 @@ card on interrupt. These carry no Yorozu rules, floors or task grants — the SD
 card is how the question reaches a phone. The **YOLO** toggle in Settings → General is passed to
 these agents as a bypass.
 
+YOLO is code execution as the user, so a phone cannot grant it to itself. `approval_settings
+{ yolo: true }` arriving through the relay is a request: the runtime leaves the setting alone,
+answers the phone with the unchanged state plus `pending: true` (its toggle snaps back and it shows
+"Waiting for the Mac to allow it"), and sends an `approval_settings_request` to local-socket clients
+only. The Mac app shows a modal (`YoloConsent.swift`); Allow sends `{ yolo: true, hours, requestId }`
+over the local socket, which is applied at once because that socket is the user's own machine. On is
+never for good: every grant stores `yoloUntil` (default 8 h, cap 24 h), `loadSettings` reads a passed
+expiry as off, one timer in `serve.ts` flips it off and broadcasts the change (re-armed at start),
+and `yolo: false` from any device applies immediately.
+
 An approval can be answered from the notification. The Mac marks a `notify` with `actions: true`
 when the action is quick-approvable, and the relay sets the notification category to
 `approval-quick`, which the app registers with **Allow** and **Don't allow** buttons; anything

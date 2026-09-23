@@ -108,6 +108,11 @@ export type RuleField = ApprovalRuleField;
 export interface Settings {
   /** Skip ordinary approval policy, but not hard financial confirmation floors. */
   yolo: boolean;
+  /**
+   * Epoch milliseconds when `yolo` switches itself off. YOLO is never granted for good: the
+   * runtime sets this whenever it turns it on, and `loadSettings` reads a passed one as off.
+   */
+  yoloUntil?: number;
   /** Ask about any action at or above this amount. */
   moneyThreshold: number;
   /** Ask before deleting anything outside the state directory. */
@@ -182,6 +187,25 @@ export const DEFAULT_SETTINGS: Settings = {
   rules: [],
 };
 
+/** How long YOLO stays on when nobody says: one working day, not a week of forgetting. */
+export const YOLO_DEFAULT_HOURS = 8;
+/** The most any one grant can ask for. Longer is turning it on again tomorrow. */
+export const YOLO_MAX_HOURS = 24;
+
+/**
+ * The hours a YOLO grant asked for, as granted: default 8, capped at 24, whole hours (the
+ * devices carry an integer), nonsense is the default.
+ */
+export function yoloHours(hours?: number): number {
+  const asked = typeof hours === "number" && Number.isFinite(hours) && hours > 0 ? hours : YOLO_DEFAULT_HOURS;
+  return Math.min(Math.ceil(asked), YOLO_MAX_HOURS);
+}
+
+/** When a YOLO grant of `hours` ends. */
+export function yoloExpiry(hours?: number, now = Date.now()): number {
+  return now + yoloHours(hours) * 3_600_000;
+}
+
 const settingsFile = (dir: string): string => join(dir, "approval.json");
 const logFile = (dir: string): string => join(dir, "approvals.jsonl");
 
@@ -225,12 +249,23 @@ export function normalizeRule(stored: Partial<Rule> & { target?: string }, index
   };
 }
 
-/** Hand-editable, like every other file the runtime keeps: unknown keys and bad types default. */
-export function loadSettings(dir = stateDir()): Settings {
+/**
+ * Hand-editable, like every other file the runtime keeps: unknown keys and bad types default.
+ * A YOLO grant whose `yoloUntil` has passed, or that has none, is reported off, whatever the
+ * file says.
+ */
+export function loadSettings(dir = stateDir(), now = Date.now()): Settings {
   try {
     const stored = JSON.parse(readFileSync(settingsFile(dir), "utf8")) as Partial<Settings>;
+    const until = typeof stored.yoloUntil === "number" && Number.isFinite(stored.yoloUntil)
+      ? stored.yoloUntil
+      : undefined;
+    // No expiry, no grant: a `yolo: true` written by hand or by an older runtime is not
+    // carried over for good, it has to be granted again and given an end.
+    const yolo = stored.yolo === true && until !== undefined && until > now;
     return {
-      yolo: stored.yolo === true,
+      yolo,
+      ...(yolo && until !== undefined ? { yoloUntil: until } : {}),
       moneyThreshold:
         typeof stored.moneyThreshold === "number"
           ? stored.moneyThreshold
