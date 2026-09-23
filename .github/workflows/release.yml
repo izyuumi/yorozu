@@ -1,8 +1,17 @@
 name: Release
 # Cut a Mac release from a v* tag (TestFlight builds go from every push to main; see
-# testflight.yml): scripts/release.sh on a hosted runner, with the signing
-# identity, the notary key and the Sparkle key coming from repository secrets. Only a push to
-# this repo triggers it — never a fork's pull request — so secrets are never in a stranger's job.
+# testflight.yml): scripts/release.sh on a hosted runner, with the signing identity, the
+# notary key and the Sparkle key coming from repository secrets. Only a push to this repo
+# triggers it — never a fork's pull request — so secrets are never in a stranger's job.
+#
+# DEVELOPER_ID_P12 is the "Developer ID Application" identity with its private key, exported
+# from the maintainer's login keychain, base64; DEVELOPER_ID_PASSWORD is the .p12 password.
+# (MAC_CERT_P12 holds the Apple Development identity the TestFlight archive needs; it does
+# not carry Developer ID, which is why this job has a secret of its own.) To refresh:
+#   security export -k ~/Library/Keychains/login.keychain-db -t identities -f pkcs12 \
+#     -P "$PW" -o developer-id.p12      # click Allow in the keychain dialog
+#   base64 -i developer-id.p12 | gh secret set DEVELOPER_ID_P12
+#   gh secret set DEVELOPER_ID_PASSWORD --body "$PW" && rm developer-id.p12
 on:
   push:
     tags: ['v*']
@@ -37,8 +46,8 @@ jobs:
       # with the VM. Never `set -x` here: the values would land in the log.
       - name: Signing identity and notary credentials
         env:
-          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
-          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          DEVELOPER_ID_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
@@ -49,8 +58,9 @@ jobs:
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          printf '%s' "$MAC_CERT_P12" | base64 -d > "$RUNNER_TEMP/cert.p12"
-          security import "$RUNNER_TEMP/cert.p12" -P "$MAC_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          : "${DEVELOPER_ID_P12:?set the DEVELOPER_ID_P12 secret; see the top of this file}"
+          printf '%s' "$DEVELOPER_ID_P12" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -P "$DEVELOPER_ID_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
           rm "$RUNNER_TEMP/cert.p12"
           # A Developer ID certificate is only an identity codesign will use if its chain
           # validates, and a fresh runner has no Apple intermediates. Both are public.
