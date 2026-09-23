@@ -278,8 +278,16 @@ export function conformance(relay: Adapter) {
     for (let i = 0; i < FRAMES_PER_SEC + 20; i++) phone.send({ type: "frame", payload, sig });
     expect(await phone.closed()).toBe(CLOSE_RATE_LIMIT);
 
-    // The burst that got through sits ahead of anything else in the Mac's queue.
-    for (let i = 0; i < FRAMES_PER_SEC; i++) expect(await mac.next()).toMatchObject({ type: "frame" });
+    // Joining also costs a token, and real time may refill some of the burst. A marker from
+    // the other phone bounds the forwarded messages without assuming an exact bucket balance.
+    await frame(other.phone, "bWFya2Vy", other.keys);
+    let forwarded = 0;
+    for (let msg = await mac.next(); msg.payload !== "bWFya2Vy"; msg = await mac.next()) {
+      expect(msg).toMatchObject({ type: "frame", payload });
+      forwarded++;
+    }
+    expect(forwarded).toBeGreaterThan(0);
+    expect(forwarded).toBeLessThan(FRAMES_PER_SEC + 20);
     await frame(mac, "c3RpbGwtb3Blbg", macKeys);
     expect(await other.phone.next()).toMatchObject({ type: "frame", payload: "c3RpbGwtb3Blbg" });
   });
@@ -287,16 +295,17 @@ export function conformance(relay: Adapter) {
   test("a mac's frame batch costs one token and lands on phones as plain frames", async () => {
     const { macKeys, mac, room, phone } = await paired();
 
-    // A full second of batches, each the size of the device cap: as single frames that would be
-    // sixteen bursts; as batches it is exactly the allowance, and the socket stays open.
+    // Leave room for registration, mint and the follow-up checks: control messages also
+    // spend the socket's bucket. Charging each copy would still exhaust it on the fourth batch.
+    const batches = FRAMES_PER_SEC - 4;
     const batch = await Promise.all(
       Array.from({ length: MAX_DEVICES }, async (_, i) => {
         const payload = `Y29weS${i}`;
         return { payload, sig: await macKeys.sign(payload) };
       }),
     );
-    for (let i = 0; i < FRAMES_PER_SEC; i++) mac.send({ type: "frame", frames: batch });
-    for (let i = 0; i < FRAMES_PER_SEC * MAX_DEVICES; i++) {
+    for (let i = 0; i < batches; i++) mac.send({ type: "frame", frames: batch });
+    for (let i = 0; i < batches * MAX_DEVICES; i++) {
       const copy = batch[i % MAX_DEVICES]!;
       expect(await phone.next()).toEqual({ type: "frame", payload: copy.payload, sig: copy.sig });
     }
@@ -330,9 +339,23 @@ export function conformance(relay: Adapter) {
     const peer = await connect("anything");
     await peer.next(); // nonce
     peer.raw(JSON.stringify({ type: "frame", payload: "A".repeat(2 * 1024 * 1024) }));
-    // ponytail: neither relay caps message size itself. The Worker's runtime refuses at 1 MiB
-    // with 1009; Node parses it and closes on protocol. A cap in protocol.ts would unify this.
-    expect([CLOSE_PROTOCOL, 1009]).toContain(await peer.closed());
+    expect(await peer.closed()).toBe(1009);
+  });
+
+  test("push registration accepts hexadecimal tokens and rejects malformed tokens", async () => {
+    const { mac, room, phone } = await paired();
+    for (const deviceToken of ["abcdef0123456789".repeat(4), "ABCDEF0123456789".repeat(4)]) {
+      phone.send({ type: "push", deviceToken });
+      phone.send({ type: "owner" });
+      expect(await phone.next()).toMatchObject({ type: "owner", online: true });
+    }
+
+    for (const deviceToken of ["a".repeat(63), "a".repeat(65), "g".repeat(64)]) {
+      const invalid = await connectPhone(room, await mintToken(mac));
+      await invalid.phone.next(); // joined
+      invalid.phone.send({ type: "push", deviceToken });
+      expect(await invalid.phone.closed()).toBe(CLOSE_PROTOCOL);
+    }
   });
 
   test("a mis-typed message closes the socket", async () => {

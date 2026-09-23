@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import {
   alertPayload,
   allowFrame,
+  allowNotify,
   BUFFER_CAP_BYTES,
   BUFFER_TTL_MS,
   dropCount,
@@ -72,6 +73,15 @@ test("the bucket refills at the sustained rate and never above the burst", () =>
   expect(allowFrame(bucket, 3_600_000)).toBe(false);
 });
 
+test("a notification window starts with its first notify and lasts a full minute", () => {
+  const window = { count: 0, startedAt: 0 };
+  expect(allowNotify(window, 59_000, 2)).toBe(true);
+  expect(allowNotify(window, 59_000, 2)).toBe(true);
+  expect(allowNotify(window, 60_000, 2)).toBe(false);
+  expect(allowNotify(window, 118_999, 2)).toBe(false);
+  expect(allowNotify(window, 119_000, 2)).toBe(true);
+});
+
 const entry = (bytes: number, at: number) => ({ bytes, at });
 
 test("nothing is dropped from a buffer inside both limits", () => {
@@ -140,7 +150,12 @@ test("known devices are capped, and a device already known evicts nobody", () =>
 });
 
 test("push registrations are accepted only in the shape the relay stores", () => {
-  expect(parsePush({ deviceToken: "abc" })).toEqual({ deviceToken: "abc" });
+  for (const deviceToken of ["a".repeat(64), "0123456789ABCDEF".repeat(4)]) {
+    expect(parsePush({ deviceToken })).toEqual({ deviceToken });
+  }
+  for (const deviceToken of ["", "abc", "a".repeat(63), "a".repeat(65), "g".repeat(64), "a".repeat(64) + "\n"]) {
+    expect(parsePush({ deviceToken })).toBeNull();
+  }
   expect(parsePush({})).toBeNull();
   expect(parsePush({ deviceToken: 1 })).toBeNull();
 });
