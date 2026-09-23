@@ -9,6 +9,7 @@
   <link rel="icon" href="/favicon.png" type="image/png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/styles.css">
+  <script src="/copy.js" defer></script>
   <meta property="og:title" content="Yorozu">
   <meta property="og:description" content="Your Mac's AI agents, from your iPhone. End-to-end encrypted.">
   <meta property="og:url" content="https://yorozu.yumi.to/">
@@ -16,46 +17,118 @@
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
-  <header>
+  <header class="site">
     <a class="wordmark" href="/"><img src="/assets/icon.png" alt="" width="34" height="34">Yorozu</a>
     <nav aria-label="Primary">
       <a href="/privacy/">Privacy</a>
       <a href="/terms/">Terms</a>
+      <a href="https://github.com/izyuumi/yorozu">GitHub</a>
+      <a class="button small" href="/mac">Download</a>
     </nav>
   </header>
 
   <main id="main">
     <section class="hero" aria-labelledby="title">
-      <img src="/assets/icon.png" alt="" width="128" height="128">
-      <h1 id="title">Your Mac's agents.<br><span>In your pocket.</span></h1>
-      <p>Yorozu <span class="kana" lang="ja">(よろず)</span> connects your iPhone to OpenClaw, Claude Code and Codex running on your own Mac. Start a task, answer an approval from the lock screen, pick it up where you left off.</p>
-      <div class="actions">
-        <a class="button" href="/mac">Download for Mac</a>
-        <a class="button quiet" href="#before-you-install">Read before installing</a>
+      <div class="hero-inner">
+        <div class="hero-copy">
+          <h1 id="title">Your Mac's agents.<br><em>In your pocket.</em></h1>
+          <p class="lede">Yorozu <span class="kana" lang="ja">(よろず)</span> connects your iPhone to OpenClaw, Claude Code and Codex running on your own Mac. Start a task on the train, approve a command from the lock screen, read the result at your desk.</p>
+          <div class="actions">
+            <a class="button" href="/mac">Download for Mac</a>
+            <a class="button ghost" href="#setup-with-an-agent">Set up with an agent</a>
+          </div>
+          <p class="fine">macOS 15+ · Apple silicon · Needs <a href="https://openclaw.ai">OpenClaw</a> · <a href="https://github.com/izyuumi/yorozu">Open source, MIT</a> · iPhone app coming to the App Store</p>
+        </div>
+        <figure class="phone">
+          <img src="/assets/iphone-approval.webp" alt="Yorozu on iPhone asking to run rm on old Desktop screenshots, with Allow once, For this task, Don't allow and Discuss first buttons" width="804" height="1748" fetchpriority="high">
+        </figure>
       </div>
-      <p class="fine">macOS 15 or later · Apple silicon · Needs OpenClaw installed · <a href="https://github.com/izyuumi/yorozu">Open source (MIT)</a> · iPhone app coming to the App Store</p>
     </section>
 
-    <section class="features" aria-label="Features">
-      <article>
-        <h2>End-to-end encrypted</h2>
-        <p>Messages are sealed on your devices. The relay passes ciphertext it has no key for.</p>
-      </article>
-      <article>
-        <h2>Approvals on the lock screen</h2>
-        <p>When an agent needs a yes or no, answer from the notification without opening the app.</p>
-      </article>
-      <article>
-        <h2>No Yorozu account</h2>
-        <p>Pair with one QR code. Your agents, models and credentials stay on your Mac.</p>
-      </article>
+    <section class="steps" aria-labelledby="steps-title">
+      <h2 id="steps-title">Three minutes, once.</h2>
+      <ol>
+        <li>
+          <span class="num" aria-hidden="true">1</span>
+          <h3>Install on your Mac</h3>
+          <p>A menu bar app. It grants the macOS permissions you choose and nothing else.</p>
+        </li>
+        <li>
+          <span class="num" aria-hidden="true">2</span>
+          <h3>Scan one code</h3>
+          <p>The QR carries a key exchange, not a login. There is no Yorozu account to make.</p>
+        </li>
+        <li>
+          <span class="num" aria-hidden="true">3</span>
+          <h3>Talk from anywhere</h3>
+          <p>Every thread lives on the Mac. Your phone, and any other Mac, just reaches it.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="proof" aria-labelledby="approve-title">
+      <div class="proof-text">
+        <h2 id="approve-title">A yes or no, from wherever you are.</h2>
+        <p>When an agent wants to run a command, send a message or spend money, the question lands on your phone as a card. Quick decisions get <strong>Allow</strong> and <strong>Don't allow</strong> right on the notification. Anything bigger opens the card, so nothing dangerous is one accidental tap away.</p>
+        <p>Say <em>Discuss first</em> and the agent explains before it acts.</p>
+      </div>
+      <figure class="shot phone-shot">
+        <img src="/assets/iphone-chat.webp" alt="Yorozu on iPhone answering whether an invoice was paid, with a table of invoices and a written explanation" width="804" height="1748" loading="lazy">
+      </figure>
+    </section>
+
+    <section class="proof flip" aria-labelledby="mac-title">
+      <div class="proof-text">
+        <h2 id="mac-title">Your Mac does the work.</h2>
+        <p>OpenClaw answers by default, with the providers, models, tools and memory you configured there. Open a thread as <strong>Claude Code</strong> or <strong>Codex</strong> instead and it runs in a folder under <code>~/Projects</code>, with that agent's own permissions.</p>
+        <p>Threads sync between the Mac and every paired device. Pick up on the desktop exactly where the phone left off.</p>
+      </div>
+      <figure class="shot mac-shot">
+        <picture>
+          <source srcset="/assets/mac-progress-dark.webp" media="(prefers-color-scheme: dark)" width="900" height="620">
+          <img src="/assets/mac-chat-light.webp" alt="Yorozu on the Mac, a sidebar of threads beside a conversation about an invoice" width="900" height="620" loading="lazy">
+        </picture>
+      </figure>
+    </section>
+
+    <section class="relay" aria-labelledby="relay-title">
+      <h2 id="relay-title">The relay can't read a word of it.</h2>
+      <svg class="diagram" viewBox="0 0 720 150" role="img" aria-labelledby="diagram-title">
+        <title id="diagram-title">Your iPhone and your Mac exchange sealed messages through a relay that sees only size and timing.</title>
+        <g fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="30" y="30" width="60" height="100" rx="12"/>
+          <line x1="50" y1="40" x2="70" y2="40" stroke-linecap="round"/>
+          <rect x="612" y="40" width="90" height="62" rx="8"/>
+          <line x1="640" y1="112" x2="674" y2="112" stroke-linecap="round"/>
+          <path d="M310 88 a24 24 0 0 1 8 -46 a30 30 0 0 1 58 -6 a26 26 0 0 1 34 52 z"/>
+          <path d="M110 80 H300 M410 80 H600" stroke-dasharray="4 8" stroke-linecap="round"/>
+          <path d="M594 74 l8 6 l-8 6 M116 74 l-8 6 l8 6" stroke-linecap="round" stroke-linejoin="round"/>
+        </g>
+        <g font-family="ui-monospace, SF Mono, Menlo, monospace" font-size="12" fill="currentColor" text-anchor="middle">
+          <text x="205" y="70">ChaCha20-Poly1305</text>
+          <text x="505" y="70">ChaCha20-Poly1305</text>
+          <text x="60" y="145">iPhone</text>
+          <text x="657" y="145">Mac</text>
+          <text x="360" y="120" class="muted-text">sees size and timing</text>
+        </g>
+      </svg>
+      <dl>
+        <div><dt>Keys never leave your devices</dt><dd>An X25519 exchange at pairing time. The relay stores public keys and a room id, nothing it could open.</dd></div>
+        <div><dt>No Yorozu account</dt><dd>No email, no password, no analytics. Your provider logins stay in OpenClaw, Claude Code and Codex on the Mac.</dd></div>
+        <div><dt>Run it yourself if you like</dt><dd>The relay is a few hundred lines. Put it on a Mac mini over Tailscale and change one URL in Settings.</dd></div>
+      </dl>
     </section>
 
     <section class="agent-setup" id="setup-with-an-agent" aria-labelledby="agent-setup-title">
-      <h2 id="agent-setup-title">Let an agent set it up</h2>
-      <p>Already using Claude Code, Codex or another coding agent? Paste this line into it. The guide asks what you want, checks what is already installed, and walks you through pairing, permissions and OpenClaw.</p>
-      <pre><code>Read https://raw.githubusercontent.com/izyuumi/yorozu/main/Start.md and follow it to set up Yorozu on my devices. Ask me before configuring anything.</code></pre>
-      <p class="fine">Click the line to select it. The guide is <a href="https://github.com/izyuumi/yorozu/blob/main/Start.md">Start.md</a> in the repository.</p>
+      <div class="agent-setup-text">
+        <h2 id="agent-setup-title">Or let an agent set it up.</h2>
+        <p>Already using Claude Code, Codex or another coding agent? Paste this into it. The guide checks what is installed, asks what you want, and walks you through pairing, permissions and OpenClaw without deciding anything for you.</p>
+      </div>
+      <div class="prompt">
+        <pre><code id="agent-prompt">Read https://raw.githubusercontent.com/izyuumi/yorozu/main/Start.md and follow it to set up Yorozu on my devices. Ask me before configuring anything.</code></pre>
+        <button type="button" class="copy" data-copy="agent-prompt" hidden>Copy</button>
+      </div>
+      <p class="fine">The guide is <a href="https://github.com/izyuumi/yorozu/blob/main/Start.md">Start.md</a> in the repository. Read it yourself first if you want to know what the agent will ask.</p>
     </section>
 
     <section class="warning" id="before-you-install" aria-labelledby="risk-title">
@@ -65,7 +138,7 @@
     </section>
   </main>
 
-  <footer>
+  <footer class="site">
     <span>© 2026 Yumi Izumi. Yorozu is not affiliated with OpenClaw, Anthropic or OpenAI.</span>
     <nav aria-label="Footer">
       <a href="/privacy/">Privacy</a>
