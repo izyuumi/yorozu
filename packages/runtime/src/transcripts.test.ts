@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "node:process";
@@ -137,4 +137,13 @@ test("read_transcripts is registered in the shared tool list, and a call by name
     transcriptDir(dir),
   );
   expect(registered!.run({})).toContain("user: logged");
+});
+
+test("a day's transcript file is written owner-only", () => {
+  // Fresh directory: `mode` only applies when the file is created, and a umask can restrict
+  // 0o600 no further, so the mode is exact.
+  const logs = transcriptDir(dir);
+  appendTranscript(message("2026-09-12T00:10:00Z", "private"), logs);
+
+  expect(statSync(join(logs, "2026-09-12.jsonl")).mode & 0o777).toBe(0o600);
 });

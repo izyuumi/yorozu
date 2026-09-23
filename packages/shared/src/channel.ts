@@ -18,6 +18,14 @@ export interface ChannelEnvelope {
  */
 export const MAX_SEQ = Number.MAX_SAFE_INTEGER;
 
+/**
+ * How many phones one Mac pairs with at most. Mirrors `MAX_DEVICES` in apps/relay/src/protocol.ts,
+ * which caps the room's known-device set and the `devices` announcement the runtime sends it: a
+ * runtime that paired a seventeenth phone could never announce the list the relay rebuilds from,
+ * so the runtime refuses the `hello` first.
+ */
+export const MAX_DEVICES = 16;
+
 /** True for a number a counter can hold: an integer from 0 to `MAX_SEQ`. */
 export const isSeq = (value: unknown): value is number =>
   Number.isSafeInteger(value) && (value as number) >= 0;

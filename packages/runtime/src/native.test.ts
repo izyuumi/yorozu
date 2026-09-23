@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { claudeCodeRunner, type QueryFn } from "./native.js";
+import { CHILD_ENV_KEYS, CHILD_ENV_PREFIXES, childEnv, claudeCodeRunner, type QueryFn } from "./native.js";
 
 /** A stand-in for the SDK's Query: the messages it will yield, plus close(). */
 function fakeQuery(messages: unknown[] | ((options: Record<string, unknown>) => unknown[])) {
@@ -41,6 +41,8 @@ test("a turn runs in the thread's folder and hands back the session to resume", 
   // The agent keeps its own tools and settings: Yorozu names none of them.
   expect(calls[0]).not.toHaveProperty("tools");
   expect(calls[0]).not.toHaveProperty("mcpServers");
+  // The CLI gets an explicit allowlisted env, not Yorozu's own.
+  expect(calls[0]!.env).toEqual(childEnv());
   expect(closes).toHaveLength(1);
 
   // The next prompt resumes that session, in the same folder, and is told the new one.
@@ -225,6 +227,7 @@ test("Claude publishes SDK models and passes selected model/effort on each resum
   const catalogQuery: QueryFn = (params) => Object.assign(query(params), { supportedModels: models });
   const runner = claudeCodeRunner(catalogQuery);
   expect(await runner.models!()).toEqual([{ id: "opus", label: "Opus", providerLabel: "Claude Code", efforts: ["low", "high", "max"] }]);
+  expect(calls[0]).toMatchObject({ tools: [], env: childEnv() });
   for (const effort of ["low", "max"] as const) {
     await runner.run({ threadId: "cc", cwd: "/tmp/proj", text: "go", sessionId: "s-model", model: "opus", effort, signal: new AbortController().signal });
     expect(calls.at(-1)).toMatchObject({ model: "opus", effort, resume: "s-model" });
@@ -242,4 +245,35 @@ test.each([true, false])("Claude questions use PreToolUse even when permission c
   const stopped = new AbortController(); stopped.abort();
   expect((await hooks.PreToolUse[0]!.hooks[0]!({ hook_event_name: "PreToolUse", tool_input: input }, "id", { signal: stopped.signal })).hookSpecificOutput.permissionDecision).toBe("deny");
   expect(ask).toHaveBeenCalledTimes(2);
+});
+
+test("childEnv keeps the shell basics and the agents' own variables", () => {
+  const source = {
+    PATH: "/usr/bin:/bin", HOME: "/Users/me", LANG: "en_US.UTF-8", LC_ALL: "C", XDG_CONFIG_HOME: "/Users/me/.config",
+    CLAUDE_CODE_X: "1", ANTHROPIC_API_KEY: "sk-ant", CODEX_HOME: "/Users/me/.codex", OPENAI_API_KEY: "sk-oa",
+  };
+  expect(childEnv(source)).toEqual(source);
+  expect(CHILD_ENV_KEYS).toEqual(expect.arrayContaining(["PATH", "HOME", "TMPDIR", "LANG", "USER", "SHELL", "TERM"]));
+  expect(CHILD_ENV_PREFIXES).toEqual(expect.arrayContaining(["LC_", "XDG_", "CLAUDE_", "ANTHROPIC_", "CODEX_", "OPENAI_"]));
+});
+
+test("childEnv drops Yorozu's own variables and unrelated provider keys", () => {
+  const env = childEnv({
+    PATH: "/bin", YOROZU_STATE_DIR: "/state", YOROZU_RELAY_URL: "wss://relay", GOOGLE_API_KEY: "g",
+    AWS_SECRET_ACCESS_KEY: "aws", GITHUB_TOKEN: "ghp", SOME_API_KEY: "k",
+  });
+  expect(env).toEqual({ PATH: "/bin" });
+});
+
+test("childEnv skips undefined values, lets extra win, and reads process.env by default", () => {
+  expect(childEnv({ PATH: undefined, HOME: "/h", TERM: "xterm" }, { TERM: "dumb", CLAUDE_AGENT_SDK_CLIENT_APP: "yorozu" }))
+    .toEqual({ HOME: "/h", TERM: "dumb", CLAUDE_AGENT_SDK_CLIENT_APP: "yorozu" });
+  vi.stubEnv("YOROZU_TEST_SECRET", "hidden");
+  vi.stubEnv("PATH", "/stubbed/bin");
+  try {
+    const env = childEnv();
+    expect(env.PATH).toBe("/stubbed/bin");
+    expect(Object.keys(env).some((key) => key.startsWith("YOROZU_"))).toBe(false);
+    expect(Object.values(env).every((value) => typeof value === "string")).toBe(true);
+  } finally { vi.unstubAllEnvs(); }
 });

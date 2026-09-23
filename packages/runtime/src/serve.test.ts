@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startRelay, type Relay } from "@yorozu/relay";
@@ -13,6 +13,7 @@ import {
   fromBase64Url,
   generateKeypair,
   helloProof,
+  MAX_DEVICES,
   open,
   seal,
   threadRef,
@@ -29,7 +30,7 @@ import { createConnection } from "node:net";
 import { afterEach, expect, test, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import { openaiCompat } from "./provider.js";
-import { loadDevices, loadKeys, serve as startSidecar, typedAnswer, type ServeOptions, type Sidecar } from "./serve.js";
+import { ensureStateDir, loadChannelSeqs, loadDevices, loadKeys, parseFrameBody, serve as startSidecar, typedAnswer, type ServeOptions, type Sidecar } from "./serve.js";
 import type { NativeAgentRunner, NativeTurn } from "./native.js";
 import * as schedulerModule from "./scheduler.js";
 import { OpenClawRunner, type OpenClawTurn } from "./openclaw.js";
@@ -271,15 +272,24 @@ test.each([false, true])("a phone rejoins without hello and preserves a safe cut
     lastMacSeq = Math.max(lastMacSeq, envelope.seq);
     if (envelope.event.kind === "sync_delta") break;
   }
-  // The send counter is written ahead of use: what is on file is past everything sent.
-  const stored = loadDevices(join(stateDir, "devices.json"))[0]!;
+  // The send counter is written ahead of use: what is on file is past everything sent. The
+  // counters have a file of their own; the pairing file carries none, and neither is left
+  // with a temporary beside it once written.
+  const stored = loadChannelSeqs(join(stateDir, "channel-seq.json"))![pub]!;
   expect(stored.sendSeq).toBeGreaterThanOrEqual(lastMacSeq);
   expect(stored.recvSeq).toBe(1);
+  expect(loadDevices(join(stateDir, "devices.json"))[0]).not.toHaveProperty("sendSeq");
+  expect(loadDevices(join(stateDir, "devices.json"))[0]).not.toHaveProperty("recvSeq");
+  expect(readdirSync(stateDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
 
   phone.ws.close();
   await first.cast.close();
   const originalPairedAt = loadDevices(join(stateDir, "devices.json"))[0]!.pairedAt;
-  if (legacy) writeFileSync(join(stateDir, "devices.json"), JSON.stringify([{ pub, lastSeen: 1, sendSeq: stored.sendSeq, recvSeq: stored.recvSeq }]));
+  // Legacy: one file from before the split, counters and all, and no counters file at all.
+  if (legacy) {
+    rmSync(join(stateDir, "channel-seq.json"));
+    writeFileSync(join(stateDir, "devices.json"), JSON.stringify([{ pub, lastSeen: 1, sendSeq: stored.sendSeq, recvSeq: stored.recvSeq }]));
+  }
   createThread("Old history", stateDir, "old-history");
   appendThreadEvent({ id: "old-message", threadId: "old-history", ts: 1, agentId: "phone", kind: "message", data: { role: "user", text: "before pairing" } }, stateDir);
 
@@ -293,6 +303,8 @@ test.each([false, true])("a phone rejoins without hello and preserves a safe cut
   const restoredPairedAt = loadDevices(join(stateDir, "devices.json"))[0]!.pairedAt;
   expect(restoredPairedAt).toBeGreaterThan(1);
   if (!legacy) expect(restoredPairedAt).toBe(originalPairedAt);
+  // Counters found only in the old file are moved to their own on start.
+  expect(loadChannelSeqs(join(stateDir, "channel-seq.json"))).toEqual({ [pub]: stored });
   // Nothing from before the restart is taken again, and nothing after it reuses a seq.
   again.frame(early, keys);
   await vi.waitFor(() => expect(lines).toContain("STATE replayed-frame"));
@@ -433,14 +445,14 @@ async function pairedPhone(responses: (() => Response)[], openclaw = false, extr
 }
 
 test("a box whose seq cannot be recorded is not acted on, and is taken when it comes again", async () => {
-  const { dir, eventsUntil, channel, frame } = await pairedPhone([]);
-  const devicesFile = join(dir, "devices.json");
+  const { dir, eventsUntil, channel, frame, pub } = await pairedPhone([]);
+  const seqFile = join(dir, "channel-seq.json");
   // The greeting ends with everyone's device list, and is what tells us the `hello` has been
   // written; wait for it before breaking the file.
   await eventsUntil((event) => event.kind === "device_list");
-  // A directory where the file goes: the next write of `devices.json` throws.
-  rmSync(devicesFile);
-  mkdirSync(devicesFile);
+  // A directory where the file goes: the next write of `channel-seq.json` throws.
+  rmSync(seqFile, { force: true });
+  mkdirSync(seqFile);
   const request: YorozuEvent = { id: "sync-1", threadId: "", ts: Date.now(), agentId: "phone", kind: "sync_request", data: { lastSeen: {} } };
   const box = channel.box(request);
   frame(box);
@@ -450,12 +462,14 @@ test("a box whose seq cannot be recorded is not acted on, and is taken when it c
 
   // With the file writable again, the same box — a relay replaying what was never acked — is
   // not a replay: the seq the failed write would have recorded was put back.
-  rmSync(devicesFile, { recursive: true });
+  rmSync(seqFile, { recursive: true });
+  // The failed move took its temporary with it.
+  expect(existsSync(`${seqFile}.tmp`)).toBe(false);
   frame(box);
   const answered = await eventsUntil((event) => event.kind === "sync_delta");
   expect(answered.map((event) => event.kind)).toEqual(["receipt", "sync_delta"]);
   expect(states).not.toContain("replayed-frame");
-  expect(loadDevices(devicesFile)[0]!.recvSeq).toBe(1);
+  expect(loadChannelSeqs(seqFile)![pub]!.recvSeq).toBe(1);
   // And now that it has been recorded, it is one.
   frame(box);
   await vi.waitFor(() => expect(states).toContain("replayed-frame"));
@@ -1704,7 +1718,7 @@ test("a second sidecar on the same state dir is the same Mac: same keys, same ro
   expect(loadDevices(join(stateDir, "devices.json"))).toEqual([paired]);
 });
 
-test("devices.json carries the channel counters, and drops ones that are not counts", () => {
+test("a devices.json from before the split still yields its channel counters, minus ones that are not counts", () => {
   const dir = mkdtempSync(join(tmpdir(), "yorozu-counters-"));
   const pub = toBase64Url(generateKeypair().publicKey);
   writeFileSync(join(dir, "devices.json"), JSON.stringify([
@@ -1715,6 +1729,52 @@ test("devices.json carries the channel counters, and drops ones that are not cou
     { pub, lastSeen: 1, sendSeq: 2000, recvSeq: 17 },
     { pub: "other", lastSeen: 1 },
   ]);
+});
+
+test("channel-seq.json is read by device, drops entries that are not two counts, and is undefined when absent", () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-seqfile-"));
+  const file = join(dir, "channel-seq.json");
+  expect(loadChannelSeqs(file)).toBeUndefined();
+  writeFileSync(file, JSON.stringify({ a: { sendSeq: 2000, recvSeq: 17 }, b: { sendSeq: -1, recvSeq: 3 }, c: "x", d: { sendSeq: 1 } }));
+  expect(loadChannelSeqs(file)).toEqual({ a: { sendSeq: 2000, recvSeq: 17 } });
+  writeFileSync(file, "[1, 2]");
+  expect(loadChannelSeqs(file)).toEqual({});
+  writeFileSync(file, "{not json");
+  expect(loadChannelSeqs(file)).toBeUndefined();
+});
+
+test("the state directory is made and kept owner-only", () => {
+  const parent = mkdtempSync(join(tmpdir(), "yorozu-statedir-"));
+  const fresh = join(parent, "fresh", "nested");
+  ensureStateDir(fresh);
+  expect(statSync(fresh).mode & 0o777).toBe(0o700);
+  // One an older release left open is tightened, not replaced.
+  const loose = join(parent, "loose");
+  mkdirSync(loose);
+  chmodSync(loose, 0o755);
+  writeFileSync(join(loose, "keys.json"), "{}");
+  ensureStateDir(loose);
+  expect(statSync(loose).mode & 0o777).toBe(0o700);
+  expect(existsSync(join(loose, "keys.json"))).toBe(true);
+});
+
+test.each<[string, unknown, unknown]>([
+  ["not a string", 7, null],
+  ["not base64url JSON", "%%%", null],
+  ["a JSON array", encodeBody([1, 2]), null],
+  ["a JSON string", encodeBody("hello"), null],
+  ["an unknown t", encodeBody({ t: "ping" }), null],
+  ["a hello without pub", encodeBody({ t: "hello" }), null],
+  ["a hello with an empty pub", encodeBody({ t: "hello", pub: "" }), null],
+  ["a hello whose spub is a number", encodeBody({ t: "hello", pub: "p", spub: 5 }), null],
+  ["a hello whose proof is an object", encodeBody({ t: "hello", pub: "p", proof: {} }), null],
+  ["a box missing c", encodeBody({ t: "box", n: "n" }), null],
+  ["a box whose n is a number", encodeBody({ t: "box", n: 1, c: "c" }), null],
+  ["a bare hello", encodeBody({ t: "hello", pub: "p", extra: 1 }), { t: "hello", pub: "p" }],
+  ["a full hello", encodeBody({ t: "hello", pub: "p", spub: "s", proof: "x" }), { t: "hello", pub: "p", spub: "s", proof: "x" }],
+  ["a box", encodeBody({ t: "box", n: "n", c: "c", junk: true }), { t: "box", n: "n", c: "c" }],
+])("a frame body is %s: parsed to its known fields or to nothing", (_name, payload, expected) => {
+  expect(parseFrameBody(payload)).toEqual(expected);
 });
 
 test("a keys file that will not read is an error, never a new identity", async () => {
@@ -2311,4 +2371,136 @@ test("a relay frame that is not JSON is one bad frame, not the end of the sideca
   await vi.waitFor(() => expect(seen).toContain("mint"));
   await sidecar.close();
   await new Promise<void>((done) => fake.close(() => done()));
+});
+
+test("a frame whose body is not a frame is logged and acked, and the relay's own state is surfaced", async () => {
+  // A relay double that replays three bodies nothing can handle — a box with a number for a
+  // nonce, an array, a payload that is not even a string — each tagged with a buffer seq, and
+  // then says something about itself. None may kill the sidecar, and each is acked: an
+  // unhandleable frame left unacked would sit at the head of the buffer for ever.
+  const acks: number[] = [];
+  const seen: string[] = [];
+  const fake = new WebSocketServer({ port: 0 });
+  fake.on("connection", (ws) => {
+    ws.send(JSON.stringify({ type: "nonce", nonce: "n" }));
+    ws.on("message", (data) => {
+      const msg = JSON.parse(data.toString()) as Record<string, unknown>;
+      seen.push(String(msg.type));
+      if (msg.type === "ack") acks.push(msg.seq as number);
+      if (msg.type === "register") {
+        ws.send(JSON.stringify({ type: "registered", roomId: "r" }));
+        ws.send(JSON.stringify({ type: "frame", payload: encodeBody({ t: "box", n: 5, c: "c" }), seq: 3 }));
+        ws.send(JSON.stringify({ type: "frame", payload: encodeBody([1, 2]), seq: 4 }));
+        ws.send(JSON.stringify({ type: "frame", payload: 12, seq: 5 }));
+        // A well-formed box nobody here can open is handled — to nothing — and acked too.
+        ws.send(JSON.stringify({ type: "frame", payload: encodeBody({ t: "box", n: "n", c: "c" }), seq: 6 }));
+        ws.send(JSON.stringify({ type: "state", state: "notify rate limit" }));
+      }
+    });
+  });
+  const lines: string[] = [];
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${(fake.address() as AddressInfo).port}`,
+    stateDir: mkdtempSync(join(tmpdir(), "yorozu-malformed-")),
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: vi.fn() }),
+    log: (line) => void lines.push(line),
+  });
+  await vi.waitFor(() => expect(acks).toEqual([3, 4, 5, 6]));
+  expect(lines.filter((line) => line === "STATE frame-error malformed body")).toHaveLength(3);
+  expect(lines).toContain("STATE relay-notify rate limit");
+  // Still alive: a token is still asked for after all that.
+  await vi.waitFor(() => expect(seen).toContain("mint"));
+  await sidecar.close();
+  await new Promise<void>((done) => fake.close(() => done()));
+});
+
+test("a seventeenth phone is refused, the list never grows past the cap, and the state dir is tightened", async () => {
+  relay = await startRelay(0);
+  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-cap-"));
+  // What an older release left behind: a state directory anyone on the Mac may list.
+  chmodSync(stateDir, 0o755);
+  const full = Array.from({ length: MAX_DEVICES }, (_, i) => ({
+    pub: toBase64Url(generateKeypair().publicKey), signingPub: `s${i}`, pairedAt: 1, lastSeen: 1,
+  }));
+  writeFileSync(join(stateDir, "devices.json"), JSON.stringify(full));
+
+  const lines: string[] = [];
+  let qrLine!: (line: string) => void;
+  const qrPrinted = new Promise<string>((resolve) => (qrLine = resolve));
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${relay.port}`,
+    stateDir,
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: vi.fn() }),
+    log: (line) => {
+      lines.push(line);
+      if (line.startsWith("QR ")) qrLine(line.slice(3));
+    },
+  });
+  expect(statSync(stateDir).mode & 0o777).toBe(0o700);
+
+  const qr = decodeQrPayload(await qrPrinted);
+  const { phone, keys } = await connectPhone(relay.port, qr.roomId!, qr.token);
+  expect(await phone.next()).toMatchObject({ type: "joined" });
+  const phoneKeys = generateKeypair();
+  const pub = toBase64Url(phoneKeys.publicKey);
+  // Proof and all: it is the count that refuses it, not the enrolment.
+  phone.frame(hello(qr, pub, keys.pub), keys);
+  await vi.waitFor(() => expect(lines).toContain("STATE hello-refused device-limit"));
+  expect(lines).not.toContain("STATE paired");
+  expect(loadDevices(join(stateDir, "devices.json")).map((device) => device.pub)).not.toContain(pub);
+
+  const mac = await macClient(stateDir);
+  try {
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "device_list")).toBe(true));
+    const list = mac.events.findLast((event) => event.kind === "device_list")!;
+    if (list.kind !== "device_list") throw new Error("unreachable");
+    expect(list.data.devices.filter((device) => device.via === "relay")).toHaveLength(MAX_DEVICES);
+  } finally {
+    mac.close();
+  }
+});
+
+test("a phone's YOLO request is one card a minute, and the Mac's yes must name a request still open", async () => {
+  const { dir, send, eventsUntil, pub } = await pairedPhone([]);
+  const mac = await macClient(dir);
+  const requests = () => mac.events.filter((event) => event.kind === "approval_settings_request");
+  try {
+    // Three asks in a row: one card on the Mac, three `pending` answers to the phone.
+    for (let i = 0; i < 3; i++) {
+      send({ kind: "approval_settings", data: { yolo: true, hours: 2 } });
+      expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1))
+        .toMatchObject({ data: { yolo: false, pending: true } });
+    }
+    await vi.waitFor(() => expect(requests()).toHaveLength(1));
+    expect(states.filter((state) => state === "yolo-request-coalesced")).toHaveLength(2);
+    const request = requests()[0]!;
+    if (request.kind !== "approval_settings_request") throw new Error("unreachable");
+    expect(request.data.device).toBe(pub);
+
+    // A yes that names a request nobody has open grants nothing, and the Mac hears the truth.
+    const before = mac.settings().length;
+    mac.send({ kind: "approval_settings", data: { yolo: true, requestId: randomUUID() } });
+    await vi.waitFor(() => expect(mac.settings().length).toBeGreaterThan(before));
+    expect(mac.settings().at(-1)).toMatchObject({ data: { yolo: false } });
+    expect(states).toContain("yolo-grant-refused");
+    expect(existsSync(join(dir, "approval.json"))).toBe(false);
+
+    // The yes that names the open request is the grant, and it closes the request.
+    mac.send({ kind: "approval_settings", data: { yolo: true, hours: 2, requestId: request.data.requestId } });
+    expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({ data: { yolo: true } });
+    send({ kind: "approval_settings", data: { yolo: false } });
+    expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({ data: { yolo: false } });
+    // Spent: the same request id buys nothing a second time.
+    const refused = states.filter((state) => state === "yolo-grant-refused").length;
+    mac.send({ kind: "approval_settings", data: { yolo: true, requestId: request.data.requestId } });
+    await vi.waitFor(() => expect(states.filter((state) => state === "yolo-grant-refused")).toHaveLength(refused + 1));
+    send({ kind: "approval_settings", data: {} });
+    expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({ data: { yolo: false } });
+    // And the phone may ask again: the grant cleared its request rather than leaving it to age out.
+    send({ kind: "approval_settings", data: { yolo: true } });
+    await eventsUntil((event) => event.kind === "approval_settings");
+    await vi.waitFor(() => expect(requests()).toHaveLength(2));
+  } finally {
+    mac.close();
+  }
 });
