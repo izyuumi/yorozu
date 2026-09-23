@@ -41,9 +41,14 @@ and the menu bar sits at `starting`. The nodejs.org build links nothing but syst
 tarball is cached in `dist/`, and the build runs `node --version` once before signing so a node
 that cannot start fails the build rather than the user.
 
-The bundle is Developer ID signed with the hardened runtime and `apps/mac/Yorozu.entitlements`,
-which is only the three exceptions Node needs: JIT, unsigned executable memory, and library
-validation off. There is no sandbox — the agent drives the whole Mac. The DMG is signed too.
+The bundle is Developer ID signed with the hardened runtime, inside out and without `--deep`,
+so each binary carries only the entitlements it needs. The app and `yorozu-native` get
+`apps/mac/Yorozu.entitlements`: the TCC keys (Apple Events, camera, microphone, contacts,
+calendars, location, photos) plus the JIT pair. The bundled `node` and the Agent SDK's vendored
+Bun-built `claude` get `apps/mac/Node.entitlements`: JIT and unsigned executable memory only,
+no library validation exception and no TCC keys. Sparkle's framework, helpers and XPC services
+keep the entitlements they shipped with. There is no sandbox — the agent drives the whole Mac.
+The DMG is signed too.
 
 The bundled runtime is large: `@openai/codex` and `@anthropic-ai/claude-agent-sdk` vendor ~277 MB
 and ~194 MB of platform binaries respectively, which is most of the DMG.

@@ -26,15 +26,17 @@ on:
 
 concurrency: release
 
-permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+# Nothing by default; each job asks for exactly what it needs.
+permissions: {}
 
 jobs:
   release-please:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
@@ -114,6 +116,9 @@ jobs:
           security default-keychain -s "$KEYCHAIN"
           # Names and fingerprints only, nothing secret: this is what codesign will be able to find.
           security find-identity -v -p codesigning "$KEYCHAIN"
+          # Fail here, not after a long build, if the .p12 was the wrong identity.
+          security find-identity -v -p codesigning "$KEYCHAIN" | grep -q "Developer ID Application" \
+            || { echo "DEVELOPER_ID_P12 holds no Developer ID Application identity" >&2; exit 1; }
           # The profile build-mac.sh looks for, stored in the default keychain set just above.
           printf '%s' "$ASC_KEY_P8" | base64 -d > "$RUNNER_TEMP/AuthKey.p8"
           chmod 600 "$RUNNER_TEMP/AuthKey.p8"
@@ -126,6 +131,7 @@ jobs:
           SPARKLE_ED_KEY: ${{ secrets.SPARKLE_ED_KEY }}
         run: |
           set -eu
+          : "${SPARKLE_ED_KEY:?SPARKLE_ED_KEY secret is empty}"
           umask 077
           printf '%s' "$SPARKLE_ED_KEY" > "$RUNNER_TEMP/sparkle.key"
 

@@ -14,9 +14,12 @@ case "$TAG" in
 esac
 # Build only the commit the tag names: in CI the checkout is `ref: RELEASE_TAG`, so this
 # holds by construction; locally it stops a stray HEAD from shipping under an old tag.
-# ALLOW_UNTAGGED=1 is for local experiments only.
-if [ "${ALLOW_UNTAGGED:-0}" != 1 ] && \
-  [ "$(git rev-parse HEAD)" != "$(git rev-parse "$TAG^{commit}")" ]; then
+# ALLOW_UNTAGGED=1 is for local experiments only. The two SHAs are assigned on their own
+# lines: a substitution inside `[ ]` escapes `set -e`, so a failing git would leave both
+# sides empty and equal, and the guard would pass.
+HEAD_SHA=$(git rev-parse --verify HEAD)
+TAG_SHA=$(git rev-parse --verify "$TAG^{commit}")
+if [ "${ALLOW_UNTAGGED:-0}" != 1 ] && [ "$HEAD_SHA" != "$TAG_SHA" ]; then
   echo "release refused: HEAD is not the commit tagged $TAG; check out the tag or set ALLOW_UNTAGGED=1 for a local experiment" >&2
   exit 1
 fi

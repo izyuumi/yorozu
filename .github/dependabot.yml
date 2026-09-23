@@ -1,0 +1,19 @@
+# Keeps the SHA-pinned actions in .github/workflows current and bumps the pnpm workspace's
+# dependencies (Dependabot reads pnpm-lock.yaml). Minor and patch npm bumps arrive as one
+# grouped PR a week; majors stay separate so they get read.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    versioning-strategy: increase
+    groups:
+      npm-minor-and-patch:
+        update-types:
+          - minor
+          - patch
