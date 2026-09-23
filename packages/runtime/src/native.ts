@@ -13,8 +13,8 @@ import type { EventPayload, ModelOption, ReasoningEffort } from "@yorozu/shared"
 
 export interface NativeTurn {
   threadId: string;
-  /** The folder the agent runs in, fixed at thread creation. Absent runs where the sidecar does. */
-  cwd?: string;
+  /** The folder the agent runs in, fixed at thread creation. The runner refuses to start without one. */
+  cwd: string;
   text: string;
   /** The agent's own session id from the thread's last turn; absent starts a new session. */
   sessionId?: string;
@@ -32,6 +32,16 @@ export interface NativeTurn {
   onSession?: (sessionId: string) => void;
   approve?: (tool: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<boolean>;
   ask?: (question: string, options: string[], signal: AbortSignal) => Promise<string | undefined>;
+}
+
+/**
+ * The folder a turn must run in. The type already requires it; the check is for JS callers and
+ * thread records from before cwd was required, so a missing folder never becomes the sidecar's.
+ */
+export function turnCwd(turn: NativeTurn): string {
+  const cwd = typeof turn.cwd === "string" ? turn.cwd.trim() : "";
+  if (!cwd) throw new Error("a native agent turn needs a working directory");
+  return cwd;
 }
 
 /** A tool result's content as one string: text blocks joined, anything else named. */
@@ -82,6 +92,8 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
       } finally { session.close(); }
     },
     async run(turn) {
+      // Refuse before anything is spawned: a turn with no folder must not run where the sidecar does.
+      const cwd = turnCwd(turn);
       const abort = new AbortController();
       const onAbort = (): void => abort.abort();
       if (turn.signal.aborted) onAbort();
@@ -105,7 +117,7 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
         prompt: turn.text,
         options: {
           abortController: abort,
-          ...(turn.cwd ? { cwd: turn.cwd } : {}),
+          cwd,
           ...(turn.sessionId ? { resume: turn.sessionId } : {}),
           ...(turn.model ? { model: turn.model } : {}),
           ...(claudeEffort(turn.effort) ? { effort: claudeEffort(turn.effort) } : {}),

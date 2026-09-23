@@ -46,6 +46,16 @@ test("Codex starts/resumes native threads with cwd, models, effort and independe
   expect(await runner.models!()).toEqual([{ id: "model-a", label: "Model A", providerLabel: "Codex", efforts: ["high", "ultra"] }]);
 });
 
+test.each([{ cwd: "" }, { cwd: "   " }, { cwd: undefined }])("Codex refuses a turn without a folder before the app server is spawned (%o)", async (folder) => {
+  const spawned = vi.fn();
+  const fake = fakeCodex();
+  const connect: ConnectCodex = (handlers) => { spawned(); return fake.connect(handlers); };
+  // The type requires cwd; the cast stands in for a JS caller or a thread record from before it did.
+  await expect(codexNativeRunner(connect).run(turn(folder as never))).rejects.toThrow("needs a working directory");
+  expect(spawned).not.toHaveBeenCalled();
+  expect(fake.calls).toEqual([]);
+});
+
 test.each([true, false])("Codex permission %s and multiple-choice/free-text answers return to native server", async (allow) => {
   const decisions: unknown[] = [];
   const fake = fakeCodex(async (h) => {
