@@ -125,6 +125,10 @@ The runner imports the identity into a keychain of its own, stores the notary ke
 Internal testing only: team members are added to the "Internal" beta group in App Store Connect
 and install through the TestFlight app. No public link.
 
+The `ios` job in `release.yml` runs this on every `v*` tag, beside the Mac job, with the three
+`ASC_*` secrets above; the version comes from the tag and the build number from the commit
+count. To run it by hand instead:
+
 ```sh
 ASC_KEY_ID=<KEYID> ASC_ISSUER_ID=<ISSUER-UUID> VERSION=0.2.1 ./scripts/build-ios.sh
 ```
