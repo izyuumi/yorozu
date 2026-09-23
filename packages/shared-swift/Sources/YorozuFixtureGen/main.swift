@@ -9,8 +9,13 @@ let bob = YorozuCrypto.generateKeypair()
 let signer = YorozuCrypto.generateSigningKeypair()
 
 let sessionKey = try YorozuCrypto.deriveSessionKey(myPriv: alice.privateKey, theirPub: bob.publicKey)
+let channel = try YorozuCrypto.deriveChannelKeys(myPriv: alice.privateKey, theirPub: bob.publicKey, role: .mac)
 let plaintext = Data(Vectors.plaintextString.utf8)
 let sealed = try YorozuCrypto.seal(key: sessionKey, plaintext: plaintext)
+let channelBox = try YorozuCrypto.seal(
+    key: channel.send,
+    plaintext: try ChannelEnvelope(seq: Vectors.seq, event: Vectors.event).encoded()
+)
 
 let qr = QrPayload(
     relayUrl: "wss://relay.yumi.to",
@@ -25,6 +30,11 @@ let vectors = Vectors(
     bobPriv: bob.privateKey.base64URLEncodedString(),
     bobPub: bob.publicKey.base64URLEncodedString(),
     sessionKey: sessionKey.withUnsafeBytes { Data($0) }.base64URLEncodedString(),
+    channelMacToDevice: channel.send.withUnsafeBytes { Data($0) }.base64URLEncodedString(),
+    channelDeviceToMac: channel.recv.withUnsafeBytes { Data($0) }.base64URLEncodedString(),
+    channelSeq: Vectors.seq,
+    channelNonce: channelBox.nonce.base64URLEncodedString(),
+    channelCiphertext: channelBox.ciphertext.base64URLEncodedString(),
     nonce: sealed.nonce.base64URLEncodedString(),
     plaintext: plaintext.base64URLEncodedString(),
     ciphertext: sealed.ciphertext.base64URLEncodedString(),

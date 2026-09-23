@@ -21,6 +21,43 @@ import Testing
     )
     #expect(key.withUnsafeBytes { Data($0) } == (try bytes(vectors.sessionKey)))
 
+    // Alice is the Mac, so the device's send key is her recv key and vice versa.
+    let channel = try YorozuCrypto.deriveChannelKeys(
+        myPriv: bytes(vectors.bobPriv),
+        theirPub: bytes(vectors.alicePub),
+        role: .device
+    )
+    #expect(channel.send.withUnsafeBytes { Data($0) } == (try bytes(vectors.channelDeviceToMac)))
+    #expect(channel.recv.withUnsafeBytes { Data($0) } == (try bytes(vectors.channelMacToDevice)))
+
+    // A live-channel box the TypeScript Mac sealed opens under the device's recv key, and its
+    // envelope reads as the same seq and event TypeScript put in it — field names and integer
+    // encoding included. Under the device's send key, as if reflected, or under the preview
+    // key, it does not open.
+    #expect(vectors.channelSeq == Vectors.seq)
+    let envelope = try ChannelEnvelope.decode(
+        try YorozuCrypto.open(
+            key: channel.recv,
+            nonce: bytes(vectors.channelNonce),
+            ciphertext: bytes(vectors.channelCiphertext)
+        )
+    )
+    #expect(envelope == ChannelEnvelope(seq: Vectors.seq, event: Vectors.event))
+    #expect(throws: (any Error).self) {
+        try YorozuCrypto.open(
+            key: channel.send,
+            nonce: bytes(vectors.channelNonce),
+            ciphertext: bytes(vectors.channelCiphertext)
+        )
+    }
+    #expect(throws: (any Error).self) {
+        try YorozuCrypto.open(
+            key: key,
+            nonce: bytes(vectors.channelNonce),
+            ciphertext: bytes(vectors.channelCiphertext)
+        )
+    }
+
     let opened = try YorozuCrypto.open(
         key: key,
         nonce: bytes(vectors.nonce),
