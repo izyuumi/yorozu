@@ -64,21 +64,23 @@ jobs:
         run: |
           # The test drives the software keyboard; a connected hardware keyboard hides it.
           defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false
-          # Boot outside the test clock: one run waited five minutes for the first launch
-          # and hit a 120-second lockdown timeout that the test then paid for.
+          # One device at a time. Given both destinations at once, xcodebuild boots both
+          # simulators up front and leaves them running; on the hosted VM that starved the
+          # first to the point where its test runner was killed before it ever connected,
+          # and made the second's tests ten times slower than usual. Booting outside the
+          # test clock keeps a slow boot from eating the test's own timeouts.
           for name in 'iPhone 17 Pro' 'iPad Pro 11-inch (M5)'; do
+            xcrun simctl shutdown all
             xcrun simctl boot "$name" || true
             xcrun simctl bootstatus "$name" -b
+            env -u SDKROOT xcodebuild test \
+              -workspace apps/ios/Yorozu.xcworkspace \
+              -scheme YorozuKeyboardUITests \
+              -destination "platform=iOS Simulator,name=$name" \
+              -resultBundlePath "$RUNNER_TEMP/keyboard-ui/$name.xcresult" \
+              CODE_SIGNING_ALLOWED=NO
           done
-          env -u SDKROOT xcodebuild test \
-            -workspace apps/ios/Yorozu.xcworkspace \
-            -scheme YorozuKeyboardUITests \
-            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
-            -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' \
-            -parallel-testing-enabled NO \
-            -resultBundlePath "$RUNNER_TEMP/keyboard-ui.xcresult" \
-            CODE_SIGNING_ALLOWED=NO
       # The log alone named no assertion when this failed; the result bundle does.
       - if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with: { name: keyboard-ui-xcresult, path: "${{ runner.temp }}/keyboard-ui.xcresult" }
+        with: { name: keyboard-ui-xcresult, path: "${{ runner.temp }}/keyboard-ui" }
