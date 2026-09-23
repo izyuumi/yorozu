@@ -33,7 +33,9 @@ export interface LocalChannel {
 }
 
 export function startLocalChannel(options: LocalChannelOptions): LocalChannel {
-  mkdirSync(dirname(options.path), { recursive: true });
+  // Keys and plaintext logs live in the state dir, so nobody but the owner may even list it.
+  // It is usually there already (loadKeys and the transcripts make it); this is for when it is not.
+  mkdirSync(dirname(options.path), { recursive: true, mode: 0o700 });
   // A socket file left behind by a killed sidecar would refuse the bind. There is only ever
   // one sidecar per state dir, so whatever is there is ours and stale.
   rmSync(options.path, { force: true });
@@ -77,9 +79,22 @@ export function startLocalChannel(options: LocalChannelOptions): LocalChannel {
   });
 
   server.on("error", (e) => options.onError?.(`local-error ${e.message}`));
+  // Plaintext events cross this socket, so only its owner may open it. The bind creates the
+  // node with the process umask applied, so a chmod afterwards leaves a window in which another
+  // local user could connect: the umask is narrowed around the bind so the node is 0600 from
+  // the start. It is put back as soon as listen settles, either way, so a failed bind does not
+  // leave the whole process at 0o077 — and again from close(), because a server closed before
+  // `listening` fires never fires it at all. Only the first restore does anything.
+  let previous: number | undefined = process.umask(0o077);
+  const restore = () => {
+    if (previous === undefined) return;
+    process.umask(previous);
+    previous = undefined;
+  };
+  server.once("error", restore);
   server.listen(options.path, () => {
-    // Plaintext events cross this socket, so only its owner may open it. The node between the
-    // bind and this chmod is inside the user's own state dir, which nothing else writes to.
+    restore();
+    // Belt and braces, for a platform whose bind ignores the umask.
     try {
       chmodSync(options.path, 0o600);
     } catch (e) {
@@ -91,6 +106,7 @@ export function startLocalChannel(options: LocalChannelOptions): LocalChannel {
     path: options.path,
     close: () =>
       new Promise<void>((done) => {
+        restore();
         for (const socket of clients) socket.destroy();
         server.close(() => {
           rmSync(options.path, { force: true });
