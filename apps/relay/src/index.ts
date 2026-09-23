@@ -1,10 +1,13 @@
 import { createHash, createPublicKey, randomBytes, sign, verify, type KeyObject } from "node:crypto";
 import { isIP, type AddressInfo } from "node:net";
 import { WebSocketServer, type WebSocket } from "ws";
+import type { IncomingHttpHeaders } from "node:http";
 import {
   allowFrame,
   allowNotify,
+  AUTH_TIMEOUT_MS,
   CLOSE_BAD_SIGNATURE,
+  CLOSE_POLICY,
   CLOSE_PROTOCOL,
   CLOSE_RATE_LIMIT,
   dropCount,
@@ -53,6 +56,41 @@ function verifySignature(data: string, signature: string, key: KeyObject): boole
   } catch {
     return false;
   }
+}
+
+/**
+ * How many proxy hops in front of this relay are trusted. `RELAY_TRUST_PROXY` unset or empty
+ * is none; a positive integer N is exactly N; any other value ("1", "true", "yes") is one.
+ */
+export function trustedHops(value: string | undefined): number {
+  if (!value) return 0;
+  const hops = Number(value);
+  return Number.isSafeInteger(hops) && hops > 0 ? hops : 1;
+}
+
+/**
+ * The address the per-IP cap counts. Only headers a trusted proxy sets are believed: every
+ * hop *appends* to `X-Forwarded-For`, so the client's own words are at the front and the
+ * trusted proxy's at the back. With N trusted hops, the Nth entry from the end is what the
+ * outermost trusted proxy saw; anything earlier was written by whoever it was talking to.
+ * Cloudflare puts the same answer in `CF-Connecting-IP`, which wins when present.
+ *
+ * A chain shorter than the trusted hop count means a proxy did not do its job, so the peer
+ * address is used rather than trusting whatever is there.
+ */
+export function clientIp(headers: IncomingHttpHeaders, peer: string | undefined, hops: number): string {
+  const fallback = peer ?? "unknown";
+  if (hops === 0) return fallback;
+  const cf = headers["cf-connecting-ip"];
+  const cfIp = (Array.isArray(cf) ? cf[0] : cf)?.trim();
+  if (cfIp && isIP(cfIp)) return cfIp;
+  const forwarded = headers["x-forwarded-for"];
+  const chain = (Array.isArray(forwarded) ? forwarded.join(",") : (forwarded ?? ""))
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
+  const ip = chain.length >= hops ? chain[chain.length - hops] : undefined;
+  return ip && isIP(ip) ? ip : fallback;
 }
 
 type Buffered = { raw: string; bytes: number; at: number; seq: number };
@@ -162,7 +200,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
   const maxConnections = positiveLimit(process.env.RELAY_MAX_CONNS_PER_IP, 32);
   const maxTokens = positiveLimit(process.env.RELAY_MAX_TOKENS_PER_ROOM, MAX_TOKENS_PER_ROOM);
   const notifyLimit = positiveLimit(process.env.RELAY_NOTIFY_PER_MINUTE, NOTIFY_PER_MINUTE);
-  const trustProxy = Boolean(process.env.RELAY_TRUST_PROXY);
+  const trustedProxies = trustedHops(process.env.RELAY_TRUST_PROXY);
   const connections = new Map<string, number>();
   const wss = new WebSocketServer({ port, maxPayload: MAX_PAYLOAD_BYTES });
 
@@ -218,13 +256,11 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
   wss.on("connection", (ws, request) => {
     // ws emits an error as well as a 1009 close for oversized messages.
     ws.on("error", (error) => log("error", { error: safeReason(error.message) }));
-    const forwarded = request.headers["x-forwarded-for"];
-    const first = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(",")[0]?.trim();
-    const ip = trustProxy && first && isIP(first) ? first : (request.socket.remoteAddress ?? "unknown");
+    const ip = clientIp(request.headers, request.socket.remoteAddress, trustedProxies);
     const count = connections.get(ip) ?? 0;
     if (count >= maxConnections) {
-      log("drop", { code: 1008, reason: "connection limit" });
-      ws.close(1008, "connection limit");
+      log("drop", { code: CLOSE_POLICY, reason: "connection limit" });
+      ws.close(CLOSE_POLICY, "connection limit");
       return;
     }
     connections.set(ip, count + 1);
@@ -242,6 +278,13 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
       bucket: newBucket(Date.now()),
     };
     ws.send(JSON.stringify({ type: "nonce", nonce: conn.nonce }));
+    // A socket that never answers the challenge is let go, so idle strangers cost nothing.
+    const authTimer = setTimeout(() => {
+      if (conn.role !== null) return;
+      log("drop", { code: CLOSE_POLICY, reason: "auth timeout" });
+      ws.close(CLOSE_POLICY, "auth timeout");
+    }, AUTH_TIMEOUT_MS);
+    ws.once("close", () => clearTimeout(authTimer));
 
     ws.on("message", (data) => {
       if (ws.readyState !== ws.OPEN) return;
@@ -296,6 +339,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           conn.room = room;
           conn.roomId = id;
           conn.key = key;
+          clearTimeout(authTimer);
           ws.send(JSON.stringify({ type: "registered", roomId: id }));
           log("registered", { phones: room.phones.size });
           notifyOwner(room, true);
@@ -401,6 +445,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           conn.room = room;
           conn.roomId = id;
           conn.key = key;
+          clearTimeout(authTimer);
           ws.send(JSON.stringify({ type: "joined", roomId: id, ownerOnline: room.mac !== null }));
           return;
         }

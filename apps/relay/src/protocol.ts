@@ -57,6 +57,23 @@ export const PONG = JSON.stringify({ type: "pong" });
 export const CLOSE_PROTOCOL = 4001;
 export const CLOSE_BAD_SIGNATURE = 4003;
 export const CLOSE_RATE_LIMIT = 4029;
+/** RFC 6455 policy violation: the socket broke a rule of the server, not of the protocol. */
+export const CLOSE_POLICY = 1008;
+
+/**
+ * How long a socket may sit open without proving who it is. A `nonce` costs nothing to be
+ * handed, so without this a stranger could hold sockets open forever at no cost to itself;
+ * a real client answers the challenge in its first round trip.
+ */
+export const AUTH_TIMEOUT_MS = 10_000;
+
+/**
+ * What a room ID looks like on the wire: base64url of a 32-byte SHA-256, unpadded, so exactly
+ * 43 characters. Checked before any room is touched, so a stranger cannot make the relay do
+ * work for a name that no key could ever produce.
+ */
+export const ROOM_ID = /^[A-Za-z0-9_-]{43}$/;
+export const isRoomId = (value: string): boolean => ROOM_ID.test(value);
 
 /**
  * Token bucket, per socket: sustained FRAMES_PER_SEC messages with a one-second burst. Per socket
