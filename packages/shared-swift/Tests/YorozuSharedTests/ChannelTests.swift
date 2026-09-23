@@ -124,11 +124,11 @@ private func freshDefaults() throws -> (UserDefaults, String) {
     let peer = YorozuCrypto.generateKeypair().publicKey
     try ChannelCounterStore(defaults: defaults, ownPub: own, peerPub: peer)
         .save(ChannelCounter(send: 4, recv: 7))
-    let reloaded = ChannelCounterStore(defaults: defaults, ownPub: own, peerPub: peer).load()
+    let reloaded = try ChannelCounterStore(defaults: defaults, ownPub: own, peerPub: peer).load()
     #expect(reloaded == ChannelCounter(send: 4, recv: 7))
 }
 
-/// New keys mean new channel keys, and a fresh pair rightly starts from zero.
+/// New keys mean new channel keys, and a fresh pair rightly starts from nothing.
 @Test func storeKeysByPeer() throws {
     let (defaults, suite) = try freshDefaults()
     defer { defaults.removePersistentDomain(forName: suite) }
@@ -137,7 +137,7 @@ private func freshDefaults() throws -> (UserDefaults, String) {
     let other = YorozuCrypto.generateKeypair().publicKey
     try ChannelCounterStore(defaults: defaults, ownPub: own, peerPub: peer)
         .save(ChannelCounter(send: 4, recv: 7))
-    #expect(ChannelCounterStore(defaults: defaults, ownPub: own, peerPub: other).load() == ChannelCounter())
+    #expect(try ChannelCounterStore(defaults: defaults, ownPub: own, peerPub: other).load() == nil)
 }
 
 /// Dropping the pairing drops its counters; another pairing's are untouched.
@@ -151,17 +151,145 @@ private func freshDefaults() throws -> (UserDefaults, String) {
     try store.save(ChannelCounter(send: 4, recv: 7))
     try ChannelCounterStore(defaults: defaults, ownPub: own, peerPub: other).save(ChannelCounter(send: 1, recv: 1))
     store.clear()
-    #expect(store.load() == ChannelCounter())
-    #expect(ChannelCounterStore(defaults: defaults, ownPub: own, peerPub: other).load() == ChannelCounter(send: 1, recv: 1))
+    #expect(try store.load() == nil)
+    #expect(try ChannelCounterStore(defaults: defaults, ownPub: own, peerPub: other).load() == ChannelCounter(send: 1, recv: 1))
 }
 
-/// A counter that starts over is survivable; a crash on launch is not.
-@Test func storeReadsGarbageAsZero() throws {
+/// A counter that starts over is not survivable — the Mac drops every box as a replay — so a
+/// stored counter that cannot be read is an error, not a zero.
+@Test func storeRefusesGarbage() throws {
     let (defaults, suite) = try freshDefaults()
     defer { defaults.removePersistentDomain(forName: suite) }
     let own = YorozuCrypto.generateKeypair().publicKey
     let peer = YorozuCrypto.generateKeypair().publicKey
     let key = "yorozu.channel.\(own.base64URLEncodedString()).\(peer.base64URLEncodedString())"
     defaults.set(Data("nope".utf8), forKey: key)
-    #expect(ChannelCounterStore(defaults: defaults, ownPub: own, peerPub: peer).load() == ChannelCounter())
+    #expect(throws: (any Error).self) {
+        try ChannelCounterStore(defaults: defaults, ownPub: own, peerPub: peer).load()
+    }
+}
+
+// MARK: - ChannelCounterStorage through RelayClient
+
+/// A storage the tests can look into: what the apps' Keychain-backed ones do, in memory.
+private final class MemoryCounterStorage: ChannelCounterStorage, @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: ChannelCounter?
+    private var loadError: (any Error)?
+    private(set) var saves = 0
+
+    init(_ stored: ChannelCounter? = nil, loadError: (any Error)? = nil) {
+        self.stored = stored
+        self.loadError = loadError
+    }
+
+    var value: ChannelCounter? { lock.withLock { stored } }
+
+    func load() throws -> ChannelCounter? {
+        try lock.withLock {
+            if let loadError { throw loadError }
+            return stored
+        }
+    }
+
+    func save(_ counter: ChannelCounter) throws {
+        lock.withLock { stored = counter; saves += 1 }
+    }
+
+    func clear() throws {
+        lock.withLock { stored = nil }
+    }
+}
+
+private func relayClient(counters: any ChannelCounterStorage) throws -> RelayClient {
+    let mac = YorozuCrypto.generateKeypair()
+    let pairing = QrPayload(
+        relayUrl: "ws://127.0.0.1:1",
+        macPubkey: mac.publicKey.base64URLEncodedString(),
+        token: "t",
+        roomId: "r"
+    )
+    return try RelayClient(pairing: pairing, identity: .generate(), counters: counters)
+}
+
+/// The counter the client numbers from is the one the storage holds, and every number it
+/// hands out is in the storage before the box is anywhere else — here, before `send` fails on
+/// a socket that was never dialled.
+@Test func relayClientNumbersFromTheStoredCounterAndSavesBeforeSending() async throws {
+    let storage = MemoryCounterStorage(ChannelCounter(send: 41, recv: 7))
+    let client = try relayClient(counters: storage)
+    await #expect(throws: (any Error).self) { try await client.send(sampleEvent) }
+    #expect(storage.value == ChannelCounter(send: 42, recv: 7))
+    #expect(storage.saves == 1)
+}
+
+/// Nothing stored is a fresh pairing: the first box out is 1.
+@Test func relayClientStartsFromOneWithEmptyStorage() async throws {
+    let storage = MemoryCounterStorage()
+    let client = try relayClient(counters: storage)
+    await #expect(throws: (any Error).self) { try await client.send(sampleEvent) }
+    #expect(storage.value == ChannelCounter(send: 1, recv: 0))
+}
+
+/// Storage that cannot be read is refused at construction rather than silently started over.
+@Test func relayClientRefusesUnreadableStorage() {
+    let storage = MemoryCounterStorage(loadError: YorozuCrypto.CryptoError.malformed("unreadable"))
+    #expect(throws: (any Error).self) { try relayClient(counters: storage) }
+}
+
+// MARK: - The pairing record the apps keep the counter in
+
+/// Field for field what `PairingStore.Stored` (iOS) and `MacPairingStore.Stored` (Mac) declare:
+/// a synthesized `Codable` with `counters` optional, so a record written before the counter
+/// moved in still decodes. The apps' own types cannot be imported into this package's tests,
+/// so the declaration is mirrored here and the JSON is what those apps wrote.
+private struct StoredPairingRecord: Codable, Equatable {
+    var pairing: QrPayload
+    var identity: PhoneIdentity
+    var paired: Bool?
+    var pairedAt: Date?
+    var counters: ChannelCounter?
+}
+
+private let identityJSON = """
+    {"signingPrivateKey":"AA==","signingPublicKey":"AQ==","sessionPrivateKey":"Ag==","sessionPublicKey":"Aw=="}
+    """
+
+/// A record from before `counters` existed decodes with none, and a client built from it
+/// starts from one rather than refusing the pairing.
+@Test func pairingRecordWithoutCountersDecodes() throws {
+    let text = """
+        {"pairing":{"v":1,"relayUrl":"ws://127.0.0.1:1","macPubkey":"AAA","token":"","roomId":"r"},
+         "identity":\(identityJSON),"paired":true,"pairedAt":0}
+        """
+    let record = try JSONDecoder().decode(StoredPairingRecord.self, from: Data(text.utf8))
+    #expect(record.counters == nil)
+    #expect(record.paired == true)
+    #expect(record.identity.sessionPublicKey == Data([3]))
+}
+
+/// The oldest shape of all — no `paired`, no `pairedAt` — decodes too.
+@Test func pairingRecordFromBeforePairedDecodes() throws {
+    let text = """
+        {"pairing":{"v":1,"relayUrl":"ws://127.0.0.1:1","macPubkey":"AAA","token":"t"},
+         "identity":\(identityJSON)}
+        """
+    let record = try JSONDecoder().decode(StoredPairingRecord.self, from: Data(text.utf8))
+    #expect(record.counters == nil)
+    #expect(record.paired == nil)
+}
+
+/// Counters written into the record come back as written, and the rest of the record with them.
+@Test func pairingRecordRoundTripsCounters() throws {
+    var record = try JSONDecoder().decode(
+        StoredPairingRecord.self,
+        from: Data("""
+            {"pairing":{"v":1,"relayUrl":"ws://127.0.0.1:1","macPubkey":"AAA","token":"t"},
+             "identity":\(identityJSON)}
+            """.utf8)
+    )
+    record.counters = ChannelCounter(send: 12, recv: 34)
+    let reloaded = try JSONDecoder().decode(StoredPairingRecord.self, from: JSONEncoder().encode(record))
+    #expect(reloaded == record)
+    #expect(reloaded.counters == ChannelCounter(send: 12, recv: 34))
 }
