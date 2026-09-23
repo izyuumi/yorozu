@@ -82,12 +82,15 @@ public struct ChatView: View {
 
     private var rows: [ChatRow] { model.timeline(thread.id).rows(generating: generating) }
 
-    /// Waiting with nothing drawn yet: the turn has started, no token has landed, and there is
-    /// no live work row saying what is happening either. Only then is "Thinking…" worth a line.
-    private var thinking: Bool {
-        guard generating, streamingId == nil else { return false }
-        if case .work(let work) = rows.last, work.running { return false }
-        return true
+    /// Pending decisions take precedence over progress, on both timeline implementations.
+    private var activity: ChatActivity? {
+        chatActivity(
+            in: rows,
+            generating: generating,
+            streamingId: streamingId,
+            answeredApprovals: model.answered,
+            answeredQuestions: model.answeredQuestions
+        )
     }
 
     private var generating: Bool { model.generating.contains(thread.id) }
@@ -173,19 +176,8 @@ public struct ChatView: View {
             // repeats and the buttons next to it when a window toolbar draws it.
             .navigationSubtitle(macModelCaption)
         #endif
+        #if os(iOS)
         .toolbar {
-            if thread.agent?.needsFolder == true {
-                ToolbarItem(placement: .primaryAction) {
-                    Menu("Thread settings", systemImage: "ellipsis.circle") {
-                        Toggle("Bypass tool approvals", isOn: Binding(
-                            get: { model.yoloMode },
-                            set: { model.setBypass(thread, $0) }
-                        ))
-                        Text("Syncs with YOLO mode for all agents. Applies on the next turn.")
-                    }
-                }
-            }
-            #if os(iOS)
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 7) {
                         YorozuMark(dimension: 20)
@@ -215,8 +207,8 @@ public struct ChatView: View {
                         Button("New session", systemImage: "square.and.pencil") { choosingAgent = true }
                     }
                 }
-            #endif
         }
+        #endif
         // Opened from the magnifier rather than always on show: a thread is for reading, and
         // a permanent search field would be one more thing to read past — and on iOS 26 it
         // would be one more bar under the composer, which already owns the bottom of a chat.
@@ -337,8 +329,7 @@ public struct ChatView: View {
             }
             return IOSChatTimeline(
                 rows: rows,
-                generating: thinking,
-                streamingId: streamingId,
+                activity: activity,
                 request: timelineRequest,
                 notificationRequest: notificationRequest,
                 presentation: TimelinePresentation(
@@ -406,7 +397,7 @@ public struct ChatView: View {
                     // specialist did is behind it; the main agent's own tool use is shown
                     // here, grouped, where it happened.
                     ForEach(rows) { row in rowView(row) }
-                    if thinking { ThinkingRow() }
+                    if let activity { ChatActivityRow(activity: activity) }
                     Color.clear.frame(height: 1).id(Self.bottomAnchor)
                 }
                 .compactQuietTranscriptLayout()
@@ -585,26 +576,33 @@ public struct ChatView: View {
                 .padding(.horizontal, 4)
                 .padding(.bottom, 4)
             #else
-                HStack(alignment: .bottom, spacing: 4) {
+                // Give writing its own row: model names and a running turn's Stop control
+                // must never reduce the space available for the message itself.
+                TextField("Message Yorozu", text: draft, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.body)
+                    .lineLimit(1...6)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+                    .padding(.bottom, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .onSubmit { draft.wrappedValue += "\n" }
+                    .focused($composerFocused)
+                    .background(ImagePasteMonitor(isActive: composerFocused && !generating, onPaste: pasteImages))
+                    .accessibilityLabel("Message")
+
+                HStack(alignment: .center, spacing: 4) {
                     attachButton
                     runSettingsButton
-                    TextField("Message Yorozu", text: draft, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .font(.body)
-                        .lineLimit(1...6)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, composerPadding)
-                        .frame(minHeight: controlTarget)
-                        .onSubmit { draft.wrappedValue += "\n" }
-                        .focused($composerFocused)
-                        .background(ImagePasteMonitor(isActive: composerFocused && !generating, onPaste: pasteImages))
-                        .accessibilityLabel("Message")
+                        .frame(maxWidth: 280, alignment: .leading)
+                    Spacer(minLength: 4)
                     if generating {
                         stopButton
                     }
                     sendButton
-                        .padding(.trailing, 6)
                 }
+                .padding(.horizontal, 4)
+                .padding(.bottom, 4)
             #endif
         }
         .background(fieldBackground, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
@@ -651,6 +649,12 @@ public struct ChatView: View {
 
     private var runSettingsButton: some View {
         Menu {
+            #if os(macOS)
+                Text("Current model: \(composerModelLabel)")
+                Text("Effort: \(thread.effort?.label ?? String(localized: "Default"))")
+                Divider()
+            #endif
+
             Picker("Model", selection: modelBinding) {
                 Text("Auto").tag(String?.none)
                 ForEach(model.models(for: thread)) { option in
@@ -672,6 +676,10 @@ public struct ChatView: View {
             .frame(minHeight: controlTarget)
         }
         .menuStyle(.borderlessButton)
+        #if os(macOS)
+            .menuIndicator(.hidden)
+            .help(composerChipLabel)
+        #endif
         .accessibilityIdentifier("runSettingsMenu")
         .accessibilityLabel("Model and effort")
         .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? "Default effort")")
@@ -804,8 +812,7 @@ public struct ChatView: View {
     /// scroll tree as a reply grows.
     private struct IOSChatTimeline: UIViewRepresentable {
         let rows: [ChatRow]
-        let generating: Bool
-        let streamingId: String?
+        let activity: ChatActivity?
         let request: TimelineRequest?
         let notificationRequest: TimelineRequest?
         let presentation: TimelinePresentation
@@ -815,7 +822,7 @@ public struct ChatView: View {
 
         private enum Entry: Hashable {
             case row(String)
-            case thinking
+            case activity(ChatActivity)
         }
 
         func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -866,8 +873,8 @@ public struct ChatView: View {
                             if let row = self.rowsById[id] {
                                 self.parent.content(row).compactQuietTranscriptLayout()
                             }
-                        case .thinking:
-                            ThinkingRow().compactQuietTranscriptLayout()
+                        case .activity(let activity):
+                            ChatActivityRow(activity: activity).compactQuietTranscriptLayout()
                         }
                     }
                     .margins(.horizontal, 10)
@@ -896,7 +903,7 @@ public struct ChatView: View {
             func update(_ collectionView: UICollectionView) {
                 rowsById = Dictionary(parent.rows.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
                 var entries = parent.rows.map { Entry.row($0.id) }
-                if parent.generating, parent.streamingId == nil { entries.append(.thinking) }
+                if let activity = parent.activity { entries.append(.activity(activity)) }
 
                 var changed = parent.rows.compactMap { previousRows[$0.id] == $0 ? nil : Entry.row($0.id) }
                 if previousPresentation != parent.presentation { changed = entries }
@@ -1199,7 +1206,7 @@ public enum ChatShowcase {
     /// nothing on a simulator can open a real share sheet on demand, and the composer is the
     /// part worth showing anyway.
     public static var share = false
-    /// Draws every long message already unfolded, as tapping "Read more" leaves it. Nothing on
+    /// Draws long message and approval details already unfolded. Nothing on
     /// a simulator taps a button on demand, and the two states are the picture worth having.
     public static var expanded = false
     /// Opens the approval card's rule editor over the card. Same reason as ``modelMenu``:
@@ -1249,14 +1256,19 @@ private struct SearchHitBar: View {
     }
 }
 
-/// Shown between pressing Send and the first token arriving, so the thread is never silent
-/// about the fact that something is happening.
-private struct ThinkingRow: View {
+/// Names the next step truthfully: active work animates; a decision waiting on the reader does not.
+private struct ChatActivityRow: View {
+    let activity: ChatActivity
+
     var body: some View {
         HStack(spacing: 8) {
             YorozuMark(dimension: 16)
-            ProgressView().controlSize(.small).tint(YorozuPalette.vermilion)
-            Text("Thinking…").font(.caption).foregroundStyle(.secondary)
+            if let symbol = activity.symbol {
+                Image(systemName: symbol).foregroundStyle(YorozuPalette.vermilion)
+            } else {
+                ProgressView().controlSize(.small).tint(YorozuPalette.vermilion)
+            }
+            Text(activity.label).font(.caption).foregroundStyle(.secondary)
             Spacer(minLength: 0)
         }
         .accessibilityElement(children: .combine)

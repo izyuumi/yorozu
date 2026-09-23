@@ -209,7 +209,7 @@ extension View {
 /// a dot for as long as a reply has arrived in it that has not been read.
 ///
 /// Nothing here is sized in points that Dynamic Type cannot move — the dot scales with the body
-/// font and the two lines of text wrap by truncating, never by clipping.
+/// font. Mac titles can wrap onto a second line; previews remain a compact single line.
 struct ThreadRow: View {
     let thread: ThreadSummary
     var working = false
@@ -236,7 +236,13 @@ struct ThreadRow: View {
                         .foregroundStyle(
                             thread.title.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary)
                         )
-                        .lineLimit(1)
+                        #if os(macOS)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .help(thread.displayTitle)
+                        #else
+                            .lineLimit(1)
+                        #endif
                     Spacer(minLength: 0)
                     Text(compactThreadTime(thread.lastActivityDate))
                     .font(.caption)

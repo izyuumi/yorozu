@@ -1079,6 +1079,7 @@ public final class ChatModel {
         actionClass: "purchase",
         target: "Ethiopia Guji, whole bean · 1kg",
         amount: 32,
+        currency: "USD",
         scope: ApprovalScope(
             operation: "purchase",
             account: "Visa ••4242",
@@ -1098,7 +1099,8 @@ public final class ChatModel {
                 "category": ApprovalRuleField(mode: .exact, value: "groceries"),
                 "operation": ApprovalRuleField(mode: .exact, value: "purchase"),
             ],
-            maxAmount: 48
+            maxAmount: 48,
+            currency: "USD"
         )
     )
 

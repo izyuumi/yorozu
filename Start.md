@@ -28,8 +28,8 @@ Rules that apply throughout:
 - Never read, print, or ask for provider credentials, API keys, the OpenClaw device token, or
   the contents of `~/Library/Application Support/Yorozu`. You do not need them.
 - Pairing codes are secrets while they are valid. Don't echo them into logs or summaries.
-- Speak plainly. If they are not technical, skip the terminal entirely — every step below has
-  a GUI route.
+- Speak plainly. If they are not technical, skip the terminal. The iPhone source-build route
+  is for developers; without an internal testing invitation, offer Mac-only setup for now.
 
 ## 1. Learn their situation
 
@@ -77,7 +77,9 @@ A Mac is one of two things:
 - **Client** — a second Mac that pairs with the host exactly like a phone does. Runs no agent.
   Needs only the app and a pairing code.
 
-An **iPhone** (iOS 18+) is always a client of a host.
+An **iPhone** (iOS 18+) is always a client of a host. Before promising phone setup, check
+whether they already have an internal TestFlight invitation or want to build from source
+(section 5). There is no public iPhone download yet; Mac-only setup remains available.
 
 Decision:
 
@@ -250,7 +252,22 @@ Threads, replies and approval cards all sync from the host. Unpair from the same
 
 ## 5. iPhone
 
-Needs iOS 18+ and the Yorozu iOS app (App Store / TestFlight — check <https://yorozu.yumi.to>).
+Needs iOS 18+ and the Yorozu iOS app. **The iPhone app is in internal testing; there is no
+public App Store or TestFlight download yet.** Establish an installation path before pairing:
+
+- **Already invited to internal testing:** open their invitation on the iPhone and install
+  through TestFlight. Access is limited to invited team members; see
+  [TestFlight details](docs/releasing.md#testflight). Do not offer a public signup link.
+- **Developer building from source:** follow [Development](README.md#development) for the
+  required tools and workspace setup. From the repository root, run
+  `tuist generate --no-open --path apps/ios`, then open `apps/ios/Yorozu.xcworkspace` in Xcode.
+  Configure their own signing team and provisioning for the app and its extensions, select
+  the **YorozuIOS** scheme and their connected iPhone, and run. The README's unsigned
+  simulator build does not install the app on a physical phone.
+- **Neither path fits:** continue with the Mac app and skip phone pairing for now. Do not
+  send them back to the website looking for an iPhone download.
+
+Once the app is installed:
 
 1. Open the app. It shows "Your Mac's agent, in your pocket." with **Scan pairing code**,
    **Enter code manually**, and **Try the demo** (a reviewer demo — not a real connection).

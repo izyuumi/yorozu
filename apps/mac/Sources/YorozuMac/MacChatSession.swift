@@ -133,6 +133,12 @@ final class MacChatSession {
         do { try pair(with: pending.code) } catch {}
     }
 
+    /// Retry the existing transport rather than generating another identity or clearing history.
+    func retryConnection() {
+        guard role == .client, relay != nil else { return }
+        model.reconnect()
+    }
+
     func unpair() {
         model.close(); relay = nil; model = Self.idleModel()
         pairedAt = nil; failure = nil

@@ -188,6 +188,8 @@ export interface ApprovalRule {
   scope?: Partial<Record<ApprovalScopeField, ApprovalRuleField>>;
   /** The most this rule authorizes. Absent means the rule says nothing about money. */
   maxAmount?: number;
+  /** ISO 4217 currency of the cap; absent on legacy rules with unspecified units. */
+  currency?: string;
   /** Absent means enabled: a rule switched off in Settings stops matching without being lost. */
   enabled?: boolean;
   createdAt?: number;
@@ -205,6 +207,8 @@ export interface ApprovalCardData {
   actionClass: string;
   target: string;
   amount?: number;
+  /** Transaction ISO 4217 currency, independent of the receiving device locale. */
+  currency?: string;
   /** What the action commits, field by field. */
   scope?: ApprovalScope;
   /** The exact items one decision covers, when the tool declared a batch. */

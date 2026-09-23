@@ -458,6 +458,8 @@ public struct ApprovalRule: Codable, Equatable, Sendable, Identifiable {
     /// Per-field patterns, keyed by scope field. A field left out is not constrained — "any".
     public var scope: [String: ApprovalRuleField]?
     public var maxAmount: Double?
+    /// ISO 4217 currency; absent on legacy rules with unspecified units.
+    public var currency: String?
     /// Absent means enabled.
     public var enabled: Bool?
     public var createdAt: Double?
@@ -470,6 +472,7 @@ public struct ApprovalRule: Codable, Equatable, Sendable, Identifiable {
         decision: Decision,
         scope: [String: ApprovalRuleField]? = nil,
         maxAmount: Double? = nil,
+        currency: String? = nil,
         enabled: Bool? = nil,
         createdAt: Double? = nil,
         lastUsed: Double? = nil,
@@ -480,6 +483,7 @@ public struct ApprovalRule: Codable, Equatable, Sendable, Identifiable {
         self.decision = decision
         self.scope = scope
         self.maxAmount = maxAmount
+        self.currency = currency
         self.enabled = enabled
         self.createdAt = createdAt
         self.lastUsed = lastUsed
@@ -501,6 +505,8 @@ public struct ApprovalCardData: Codable, Equatable, Sendable {
     public var actionClass: String
     public var target: String
     public var amount: Double?
+    /// Transaction ISO 4217 currency, independent of device locale.
+    public var currency: String?
     /// What the action commits, field by field.
     public var scope: ApprovalScope?
     /// The exact items one decision covers, when the tool declared a batch.
@@ -515,6 +521,7 @@ public struct ApprovalCardData: Codable, Equatable, Sendable {
         actionClass: String,
         target: String,
         amount: Double? = nil,
+        currency: String? = nil,
         scope: ApprovalScope? = nil,
         items: [BatchItem]? = nil,
         mustConfirm: Bool? = nil,
@@ -525,6 +532,7 @@ public struct ApprovalCardData: Codable, Equatable, Sendable {
         self.actionClass = actionClass
         self.target = target
         self.amount = amount
+        self.currency = currency
         self.scope = scope
         self.items = items
         self.mustConfirm = mustConfirm

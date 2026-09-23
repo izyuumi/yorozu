@@ -131,6 +131,7 @@ header nav a.button:hover { background: var(--red); color: white; }
 .lede { max-width: 32em; margin-top: 24px; font-size: clamp(18px, 1.6vw, 21px); line-height: 1.5; color: oklch(0.24 0.05 65); }
 .kana { font-weight: 500; }
 .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+.availability-note { max-width: 34em; margin-top: 20px; font-size: 16px; }
 .hero .fine { margin-top: 22px; }
 .fine { font-size: 14px; color: var(--muted); }
 .hero .fine { color: var(--amber-ink); }
@@ -154,6 +155,14 @@ main > section + section:not(.hero) { border-top: 1px solid var(--line); }
 
 /* Steps: an actual sequence, so the numbers are earned */
 
+.availability-intro { max-width: 40em; }
+.availability-intro p, .steps-intro { margin-top: 20px; color: var(--muted); max-width: 44em; }
+.installation-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 24px; margin-top: 32px; }
+.installation-options article { min-width: 0; padding: clamp(20px, 3vw, 32px); border: 1px solid var(--line); border-radius: 20px; background: var(--raised); }
+.installation-options p { margin-top: 12px; color: var(--muted); }
+.installation-options code { overflow-wrap: anywhere; }
+.installation-options a { display: inline-flex; align-items: center; min-height: 44px; margin-top: 12px; font-weight: 600; }
+section[id] { scroll-margin-top: 24px; }
 .steps ol { list-style: none; margin: 40px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: clamp(24px, 4vw, 56px); }
 .steps li { display: grid; gap: 8px; }
 .steps .num { font-family: var(--display); font-size: 64px; line-height: 1; color: var(--amber-deep); margin-bottom: 8px; }

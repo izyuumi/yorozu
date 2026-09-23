@@ -20,8 +20,8 @@ public enum LayoutMetrics {
         public static let cardRadius: CGFloat = 10
         public static let bubbleRadius: CGFloat = 10
         public static let sidebarMinWidth: CGFloat = 220
-        public static let sidebarIdealWidth: CGFloat = 240
-        public static let sidebarMaxWidth: CGFloat = 260
+        public static let sidebarIdealWidth: CGFloat = 280
+        public static let sidebarMaxWidth: CGFloat = 400
         public static let windowMinWidth: CGFloat = 640
         public static let windowMinHeight: CGFloat = 420
     #else

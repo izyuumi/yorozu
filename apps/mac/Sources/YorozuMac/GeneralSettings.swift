@@ -34,7 +34,7 @@ struct GeneralView: View {
                                 .font(.caption).foregroundStyle(.red)
                         }
                     } else {
-                        LabeledContent("Connection", value: session.model.state == .paired ? "Connected" : "Connecting…")
+                        clientConnection
                         if let pairedAt = session.pairedAt {
                             LabeledContent("Paired since", value: pairedAt.formatted(date: .abbreviated, time: .shortened))
                         }
@@ -62,15 +62,13 @@ struct GeneralView: View {
             // The one approval setting Yorozu itself still owns: the global bypass the
             // native agents read. Same toggle as the phone's; the runtime stores it.
             VStack(alignment: .leading, spacing: 4) {
-                Toggle("YOLO mode — skip all approvals", isOn: Binding(
+                Toggle("Skip approvals for all agents", isOn: Binding(
                     get: { session.model.yoloMode },
                     set: { session.model.setYoloMode($0) }
                 ))
-                if session.model.yoloMode {
-                    Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
+                Text("Applies to all agents and conversations on the host Mac and its paired devices. Tool requests can run without asking, including purchases, messages, commands, and deletes.")
+                    .font(.caption)
+                    .foregroundStyle(session.model.yoloMode ? Color.red : Color.secondary)
             }
             .onAppear { session.model.requestApprovalSettings() }
             if session.role == .host { KeepaliveView() }
@@ -91,6 +89,40 @@ struct GeneralView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Provider marks").font(.headline)
                 Text(ProviderMarkAttribution.notice)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var clientConnection: some View {
+        let failure = session.failure ?? session.model.failure
+        let status = ClientConnectionStatus(
+            state: session.model.state, ownerOnline: session.model.ownerOnline, failure: failure
+        )
+        return VStack(alignment: .leading, spacing: 6) {
+            LabeledContent("Connection", value: status.label)
+            if let failure {
+                Label {
+                    Text(failure).textSelection(.enabled)
+                } icon: {
+                    Image(systemName: "exclamationmark.circle").foregroundStyle(.red)
+                }
+                .font(.caption)
+                Text("Check your network and that Yorozu is open on your host Mac. Yorozu will keep trying to reconnect.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if status == .hostOffline {
+                Text("Open Yorozu on your host Mac. Your conversations will reconnect when it is available.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if status == .connecting {
+                ProgressView().controlSize(.small)
+                    .accessibilityLabel("Connecting to your host Mac")
+            }
+            if status != .connected {
+                Button("Retry connection", action: session.retryConnection)
+                Text("Retrying keeps your pairing and conversations.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

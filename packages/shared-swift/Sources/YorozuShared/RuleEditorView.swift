@@ -60,15 +60,16 @@ public struct RuleEditorView: View {
                         TextField(
                             "Up to",
                             value: $draft.maxAmount,
-                            format: .currency(code: Locale.current.currency?.identifier ?? "USD")
+                            format: .number
                         )
                         .multilineTextAlignment(.trailing)
                         #if os(iOS)
                             .keyboardType(.decimalPad)
                         #endif
+                        LabeledContent("Currency", value: draft.currencyLabel)
                     }
                 } footer: {
-                    Text("Anything over the cap is asked about as usual.")
+                    Text("Anything over the cap is asked about as usual. The cap uses the transaction’s currency.")
                 }
 
                 Section {
@@ -167,6 +168,15 @@ public struct RuleEditorView: View {
         public var fields: [Field]
         public var hasCap: Bool
         public var maxAmount: Double
+        public let currency: String?
+
+        public var currencyLabel: String {
+            guard let code = currency?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
+                  Locale.commonISOCurrencyCodes.contains(code) else {
+                return String(localized: "Unspecified")
+            }
+            return code
+        }
 
         public init(rule: ApprovalRule) {
             ruleId = rule.id
@@ -178,6 +188,7 @@ public struct RuleEditorView: View {
             decision = rule.decision
             hasCap = rule.maxAmount != nil
             maxAmount = rule.maxAmount ?? 0
+            currency = rule.currency
             // Every field the wire knows about is offered, so a rule can be widened *and*
             // narrowed here — one the card prefilled with a recipient can gain a category.
             fields = ApprovalRule.scopeFields.map { name in
@@ -213,6 +224,7 @@ public struct RuleEditorView: View {
                 decision: decision,
                 scope: scope.isEmpty ? nil : scope,
                 maxAmount: hasCap ? maxAmount : nil,
+                currency: currency,
                 enabled: enabled,
                 createdAt: createdAt,
                 lastUsed: lastUsed,

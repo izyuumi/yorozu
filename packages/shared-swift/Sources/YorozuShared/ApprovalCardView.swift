@@ -20,7 +20,7 @@ public struct ApprovalCardView: View {
 
     @State private var appeared = false
     @State private var editingRule: ApprovalRule?
-    @State private var itemsExpanded = false
+    @State private var itemsExpanded = ChatShowcase.expanded
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(
@@ -40,11 +40,12 @@ public struct ApprovalCardView: View {
             header
             subject
             if let amount = card.amount {
-                Text(amount, format: .currency(code: Locale.current.currency?.identifier ?? "USD"))
+                let formattedAmount = ApprovalAmountFormatter.string(amount: amount, currency: card.currency)
+                Text(formattedAmount)
                     .font(.title2.weight(.semibold).monospacedDigit())
                     // The label must carry the number: a bare "Amount" replaced it.
                     .accessibilityLabel(
-                        "Amount: \(amount.formatted(.currency(code: Locale.current.currency?.identifier ?? "USD")))"
+                        "Amount: \(formattedAmount)"
                     )
             }
             scopeRows
@@ -119,12 +120,14 @@ public struct ApprovalCardView: View {
                 .font(.headline)
                 .fixedSize(horizontal: false, vertical: true)
             if !card.target.isEmpty {
-                Text(card.target)
-                    .font(verb.isCode ? .callout.monospaced() : .callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(verb.isCode ? 6 : 3)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
+                ApprovalDetailText(
+                    text: card.target,
+                    font: verb.isCode ? .callout.monospaced() : .callout,
+                    previewLines: verb.isCode ? 6 : 3,
+                    expandLabel: "Show full action",
+                    collapseLabel: "Show less action",
+                    identifier: "approvalActionDisclosure"
+                )
                     .padding(verb.isCode ? LayoutMetrics.inner : 0)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
@@ -161,11 +164,14 @@ public struct ApprovalCardView: View {
     /// What would actually be sent, as far as the card carries it.
     @ViewBuilder private var content: some View {
         if let summary = card.scope?.contentSummary, !summary.isEmpty {
-            Text(summary)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .lineLimit(5)
-                .textSelection(.enabled)
+            ApprovalDetailText(
+                text: summary,
+                font: .callout,
+                previewLines: 5,
+                expandLabel: "Show full content",
+                collapseLabel: "Show less content",
+                identifier: "approvalContentDisclosure"
+            )
                 .padding(LayoutMetrics.inner)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.controlRadius, style: .continuous))
@@ -189,21 +195,29 @@ public struct ApprovalCardView: View {
                             .font(.subheadline.weight(.medium))
                         Spacer(minLength: 0)
                     }
+                    .frame(minHeight: controlTarget)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("approvalItemsDisclosure")
+                .accessibilityValue(itemsExpanded ? "Expanded" : "Collapsed")
                 .accessibilityHint("This decision covers exactly these items")
 
                 ForEach(itemsExpanded ? items : Array(items.prefix(Self.itemsShown))) { item in
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text("•").foregroundStyle(.tertiary)
-                        Text(item.label).font(.callout)
-                        if let detail = item.detail, !detail.isEmpty {
-                            Text(detail)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
+                        VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
+                            Text(item.label).font(.callout)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let detail = item.detail, !detail.isEmpty {
+                                Text(detail)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(itemsExpanded ? nil : 1)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .textSelection(.enabled)
+                            }
                         }
                         Spacer(minLength: 0)
                     }
@@ -402,6 +416,57 @@ public struct ApprovalCardView: View {
     }
 }
 
+/// Keeps compact previews while making every supplied character reachable before approval.
+/// Measure the same font at the available width, so disclosure follows actual wrapping rather
+/// than a character-count guess that breaks with Dynamic Type or narrow windows.
+private struct ApprovalDetailText: View {
+    let text: String
+    let font: Font
+    let previewLines: Int
+    let expandLabel: LocalizedStringKey
+    let collapseLabel: LocalizedStringKey
+    let identifier: String
+
+    @State private var expanded = ChatShowcase.expanded
+    @State private var previewHeight: CGFloat = 0
+    @State private var fullHeight: CGFloat = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
+            Text(text)
+                .lineLimit(expanded ? nil : previewLines)
+                .truncationMode(.middle)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { previewHeight = $0 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(alignment: .topLeading) {
+                    Text(text)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullHeight = $0 }
+                        .hidden()
+                        .accessibilityHidden(true)
+                }
+                .font(font)
+                .foregroundStyle(.secondary)
+
+            if expanded || fullHeight > previewHeight + 0.5 {
+                Button { expanded.toggle() } label: {
+                    Text(expanded ? "Show less" : expandLabel)
+                        .font(.subheadline)
+                        .frame(maxWidth: .infinity, minHeight: controlTarget, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tint)
+                .accessibilityIdentifier(identifier)
+                .accessibilityLabel(expanded ? collapseLabel : expandLabel)
+                .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            }
+        }
+    }
+}
+
 extension ApprovalRule {
     /// The rule as one phrase, for a button and a settings row: "message to bob@example.com",
     /// "purchase at Kurasu up to $48". Pure, so a test can check it without drawing anything.
@@ -414,8 +479,10 @@ extension ApprovalRule {
         if let category = scope?["category"] { phrase += " in \(category.phrase)" }
         if let target = scope?["target"] { phrase += " on \(target.phrase)" }
         if let cap = maxAmount {
-            let amount = cap.formatted(.currency(code: Locale.current.currency?.identifier ?? "USD"))
+            let amount = ApprovalAmountFormatter.string(amount: cap, currency: currency)
             phrase += " up to \(amount)"
+        } else if let currency, !currency.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            phrase += " in \(currency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased())"
         }
         return phrase
     }

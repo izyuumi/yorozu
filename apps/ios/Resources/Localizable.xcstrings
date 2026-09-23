@@ -1,6 +1,126 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Show full action" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Mostrar la acción completa" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "操作の全文を表示" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "작업 전체 보기" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "显示完整操作" } }
+      }
+    },
+    "Show full content" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Mostrar el contenido completo" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "内容の全文を表示" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "내용 전체 보기" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "显示完整内容" } }
+      }
+    },
+    "Show less" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Mostrar menos" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "折りたたむ" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "접기" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "收起" } }
+      }
+    },
+    "Show less action" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Contraer la acción" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "操作を折りたたむ" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "작업 접기" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "收起操作" } }
+      }
+    },
+    "Show less content" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Contraer el contenido" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "内容を折りたたむ" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "내용 접기" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "收起内容" } }
+      }
+    },
+    "Expanded" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Expandido" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "展開済み" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "펼쳐짐" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已展开" } }
+      }
+    },
+    "Collapsed" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Contraído" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "折りたたみ済み" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "접힘" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已收起" } }
+      }
+    },
+    "Currency" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Moneda" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "通貨" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "통화" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "币种" } }
+      }
+    },
+    "Unspecified" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Sin especificar" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "未指定" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "지정되지 않음" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未指定" } }
+      }
+    },
+    "Anything over the cap is asked about as usual. The cap uses the transaction’s currency." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Como siempre, se pedirá aprobación si se supera el límite. El límite usa la moneda de la transacción." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "上限を超える場合は、通常どおり承認を求めます。上限には取引の通貨を使用します。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "한도를 초과하면 평소처럼 승인을 요청합니다. 한도는 거래 통화를 기준으로 합니다." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "超出上限时仍会照常请求批准。上限使用交易的币种。" } }
+      }
+    },
+    "%@ (currency unspecified)" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "%@ (moneda sin especificar)" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%@（通貨未指定）" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "%@ (통화 미지정)" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "%@（币种未指定）" } }
+      }
+    },
+    "Waiting for your approval" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Esperando tu aprobación" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "承認を待っています" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "승인을 기다리는 중" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "等待你批准" } }
+      }
+    },
+    "Waiting for your answer" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Esperando tu respuesta" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "回答を待っています" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "답변을 기다리는 중" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "等待你回答" } }
+      }
+    },
+    "Skip approvals for all agents" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Omitir aprobaciones para todos los agentes" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "すべてのエージェントの承認を省略" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "모든 에이전트의 승인 건너뛰기" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "跳过所有智能体的批准请求" } }
+      }
+    },
+    "Applies to all agents and conversations on the host Mac and its paired devices. Tool requests can run without asking, including purchases, messages, commands, and deletes." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Se aplica a todos los agentes y conversaciones del Mac anfitrión y sus dispositivos emparejados. Las solicitudes de herramientas pueden ejecutarse sin pedir aprobación, incluidas compras, mensajes, comandos y eliminaciones." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストMac、およびそのMacにペアリング済みのデバイス上のすべてのエージェントと会話に適用されます。購入、メッセージ送信、コマンド実行、削除などのツール操作が、承認を求めずに実行されることがあります。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "호스트 Mac 및 해당 Mac에 페어링된 기기의 모든 에이전트와 대화에 적용됩니다. 구매, 메시지 전송, 명령 실행, 삭제를 포함한 도구 요청이 승인 없이 실행될 수 있습니다." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "适用于主机 Mac 及其已配对设备上的所有智能体和对话。工具请求可以不经批准就执行，包括购买、发送消息、运行命令和删除操作。" } }
+      }
+    },
     "Couldn’t connect. Generate a new pairing code and try again." : {
       "localizations" : {
           "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo conectar. Genera un nuevo código de emparejamiento e inténtalo de nuevo." } },

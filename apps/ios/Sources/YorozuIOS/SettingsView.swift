@@ -13,11 +13,7 @@ private extension ConnectionState {
     }
 }
 
-/// The phone's whole Settings screen: what it is connected to, when it paired, which build this
-/// is, and the two things it can do about any of that — unpair, or go read the source.
-///
-/// Everything here is read-only but the Unpair button, so it holds no state of its own beyond the
-/// confirmation alert's flag.
+/// Connection details, app information, and the host's shared approval setting.
 struct SettingsView: View {
     let status: ConnectionState
     let relayUrl: String
@@ -62,7 +58,7 @@ struct SettingsView: View {
                 if !isDemo {
                     Section {
                         Toggle(
-                            "YOLO mode",
+                            "Skip approvals for all agents",
                             isOn: Binding(
                                 get: { model.yoloMode },
                                 set: { model.setYoloMode($0) }
@@ -71,13 +67,8 @@ struct SettingsView: View {
                     } header: {
                         Text("Approvals")
                     } footer: {
-                        if model.yoloMode {
-                            Label {
-                                Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
-                            } icon: {
-                                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
-                            }
-                        }
+                        Text("Applies to all agents and conversations on the host Mac and its paired devices. Tool requests can run without asking, including purchases, messages, commands, and deletes.")
+                            .foregroundStyle(model.yoloMode ? Color.red : Color.secondary)
                     }
                 }
                 Section("App") {

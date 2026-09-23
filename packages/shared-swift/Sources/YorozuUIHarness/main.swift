@@ -1,4 +1,5 @@
-/// Offscreen SwiftUI screenshots and timing. No app bundle, window, account or network.
+/// SwiftUI screenshots and timing. No app bundle, account or network.
+/// Layout fixtures briefly host native windows so AppKit lists actually draw.
 /// swift run --package-path packages/shared-swift YorozuUIHarness /tmp/yorozu-ui
 import AppKit
 import CryptoKit
@@ -55,6 +56,103 @@ actor HarnessTransport: ChatTransport {
                 print("SCREEN native-\(Int(width))-\(dark ? "dark" : "light") \(bitmap.pixelsWide)x\(bitmap.pixelsHigh)")
             }
         }
+
+        // Adversarial approval fixtures: the end markers must remain reachable before deciding.
+        let longAction = (1...12).map { "echo action line \($0): verify the requested destination before running" }.joined(separator: "\n") + "\nACTION_END_MARKER"
+        let longContent = (1...9).map { "Message paragraph \($0): Please review the complete proposed message before sending." }.joined(separator: "\n") + "\nCONTENT_END_MARKER"
+        let approval = ApprovalCardData(
+            actionId: "long-approval", actionClass: "run-command", target: longAction,
+            scope: ApprovalScope(contentSummary: longContent),
+            items: (1...6).map { BatchItem(label: "Destination \($0)", detail: String(repeating: "Review the full item detail before approving. ", count: 4) + "ITEM_\($0)_END_MARKER") },
+            nativeAgent: .claudeCode
+        )
+        for expanded in [false, true] {
+            ChatShowcase.expanded = expanded
+            for width in [320.0, 390.0, 900.0] {
+                for dark in [false, true] {
+                    let scene = ApprovalCardView(card: approval) { _, _ in }
+                        .padding(20)
+                        .frame(width: width, alignment: .leading)
+                        .background(dark ? Color.black : Color.white)
+                        .environment(\.colorScheme, dark ? .dark : .light)
+                    let host = NSHostingView(rootView: scene)
+                    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    host.frame = CGRect(origin: .zero, size: host.fittingSize)
+                    let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                    window.contentView = host
+                    window.orderFrontRegardless()
+                    defer { window.orderOut(nil) }
+                    host.layoutSubtreeIfNeeded()
+                    // Allow SwiftUI measurement preferences and onAppear updates to settle.
+                    try await Task.sleep(for: .milliseconds(100))
+                    host.frame = CGRect(origin: .zero, size: host.fittingSize)
+                    host.layoutSubtreeIfNeeded()
+                    guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+                        throw NSError(domain: "UIHarness", code: 3)
+                    }
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    guard let png = bitmap.representation(using: .png, properties: [:]) else {
+                        throw NSError(domain: "UIHarness", code: 4)
+                    }
+                    let name = "approval-\(expanded ? "expanded" : "collapsed")-\(Int(width))-\(dark ? "dark" : "light")"
+                    try png.write(to: output.appendingPathComponent("\(name).png"))
+                    print("APPROVAL_DIAGNOSTIC \(name) \(bitmap.pixelsWide)x\(bitmap.pixelsHigh)")
+
+                }
+            }
+        }
+        ChatShowcase.expanded = false
+        let layoutTransport = HarnessTransport()
+        let layoutModel = ChatModel(transport: layoutTransport)
+        layoutModel.start()
+        while !layoutModel.ownerOnline { await Task.yield() }
+        let layoutThread = ThreadSummary(id: "layout", title: "Weeknight dinners and the complete family shopping list", archived: false,
+            lastActivity: Date().timeIntervalSince1970 * 1000, lastMessage: "Review the dinner plan and shopping list before ordering.",
+            model: "harness/long-model", effort: .high)
+        await layoutTransport.deliver(YorozuEvent(id: "models", threadId: "", ts: 0, agentId: "main", payload: .modelList(ModelListData(models: [
+            ModelOption(id: "harness/long-model", label: "Deliberately long reasoning model display name", providerLabel: "Validation provider")
+        ]))))
+        layoutModel.drafts[layoutThread.id] = "Please revise the dinner plan to include vegetarian options."
+        await layoutTransport.deliver(YorozuEvent(id: "greeting", threadId: layoutThread.id, ts: 1, agentId: "main", payload: .message(MessageData(role: .agent, text: "The dinner plan is ready to review.", done: true))))
+        for stress in [false, true] {
+            if stress {
+                layoutModel.previewActivity(in: layoutThread.id)
+                layoutModel.drafts[layoutThread.id] = (1...6).map { "Draft line \($0): please retain every detail." }.joined(separator: "\n")
+                layoutModel.attachments[layoutThread.id] = [MessageAttachment(name: "Dinner plan notes.txt", mime: "text/plain", data: Data("Vegetarian dinner options".utf8).base64EncodedString())]
+                await layoutTransport.deliver(YorozuEvent(id: "running", threadId: layoutThread.id, ts: 2, agentId: "main", payload: .message(MessageData(role: .user, text: "Please continue revising the plan."))))
+            }
+            for width in (stress ? [640.0] : [640.0, 900.0, 1200.0]) {
+                for dark in [false, true] {
+                    let scene = NavigationSplitView {
+                        ThreadSidebar(threads: [layoutThread], selection: .constant(layoutThread.id), onCreate: { _, _ in }, onRename: { _, _ in }, onArchive: { _, _ in })
+                            .navigationSplitViewColumnWidth(min: LayoutMetrics.sidebarMinWidth, ideal: stress ? 400 : LayoutMetrics.sidebarIdealWidth, max: LayoutMetrics.sidebarMaxWidth)
+                    } detail: {
+                        ChatView(model: layoutModel, thread: layoutThread)
+                    }
+                    .frame(width: width, height: stress ? 420 : 720)
+                    .environment(\.colorScheme, dark ? .dark : .light)
+                    let host = NSHostingView(rootView: scene)
+                    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    host.frame = CGRect(origin: .zero, size: CGSize(width: width, height: stress ? 420 : 720))
+                    let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                    window.contentView = host
+                    window.orderFrontRegardless()
+                    defer { window.orderOut(nil) }
+                    host.layoutSubtreeIfNeeded()
+                    try await Task.sleep(for: .milliseconds(100))
+                    host.layoutSubtreeIfNeeded()
+                    guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds),
+                          let png = { host.cacheDisplay(in: host.bounds, to: bitmap); return bitmap.representation(using: .png, properties: [:]) }() else {
+                        throw NSError(domain: "UIHarness", code: 5)
+                    }
+                    let name = "layout-\(stress ? "stress" : "ordinary")-\(Int(width))-\(dark ? "dark" : "light")"
+                    try png.write(to: output.appendingPathComponent("\(name).png"))
+                    print("LAYOUT_DIAGNOSTIC \(name) \(bitmap.pixelsWide)x\(bitmap.pixelsHigh)")
+                }
+            }
+        }
+        layoutModel.close()
+        if CommandLine.arguments.contains("--screenshots-only") { return }
 
         let cacheDir = output.appendingPathComponent("temporary-cache")
         defer { try? FileManager.default.removeItem(at: cacheDir) }
