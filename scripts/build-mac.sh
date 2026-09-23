@@ -169,8 +169,10 @@ PLIST
 # contains it, and every binary should get only the entitlements it needs. `find -depth`
 # lists a bundle after its contents; -type f skips the framework's symlinks (Sparkle ->
 # Versions/Current/Sparkle), and a .framework path signs the Versions/Current bundle.
-# Sparkle's helpers and XPC services keep their own sandbox entitlements. The loop body is
-# a subshell: `|| exit 1` makes a failed codesign end the pipeline, and set -e the script.
+# Sparkle's helpers and XPC services keep their own sandbox entitlements. The Agent SDK's
+# vendored `claude` is a Bun-built Mach-O with a JIT of its own, so it takes the same
+# entitlements as node; every other nested binary gets none. The loop body is a subshell:
+# `|| exit 1` makes a failed codesign end the pipeline, and set -e the script.
 find "$APP/Contents" -depth \( -type f -o -type d \) -print | while IFS= read -r code; do
   case "$code" in
     "$APP/Contents/Resources/node"|"$APP/Contents/MacOS/yorozu-native"|"$APP/Contents/MacOS/Yorozu") continue ;;
@@ -184,6 +186,10 @@ find "$APP/Contents" -depth \( -type f -o -type d \) -print | while IFS= read -r
     "$APP/Contents/Frameworks/Sparkle.framework"|"$APP/Contents/Frameworks/Sparkle.framework/"*)
       codesign --force --options runtime --timestamp \
         --preserve-metadata=entitlements,requirements,flags --sign "$IDENTITY" "$code" || exit 1
+      ;;
+    "$APP/Contents/Resources/runtime/node_modules/@anthropic-ai/claude-agent-sdk-darwin-"*/claude)
+      codesign --force --options runtime --timestamp \
+        --entitlements apps/mac/Node.entitlements --sign "$IDENTITY" "$code" || exit 1
       ;;
     *) codesign --force --options runtime --timestamp --sign "$IDENTITY" "$code" || exit 1 ;;
   esac
