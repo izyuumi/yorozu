@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { YorozuEvent } from "@yorozu/shared";
@@ -561,4 +561,15 @@ test("sync handles repeated ids, large UTF-8 lines, broken tails and changed fil
   expect(eventsAfter(HOME, "e6", dir).map((event) => event.id)).toEqual(["e7"]);
   rmSync(file);
   expect(eventsAfter(HOME, "e7", dir)).toEqual([]);
+});
+
+test("the thread index and a thread's log are written owner-only, with no temp file left", () => {
+  // `dir` is a fresh mkdtemp per test, so both files are created here and `mode` applies. A
+  // umask can only narrow 0o600, so the mode is exact under any umask.
+  const thread = createThread("private", dir);
+  appendThreadEvent(message("e1", "hi", thread.id), dir);
+
+  expect(statSync(join(dir, "threads.json")).mode & 0o777).toBe(0o600);
+  expect(statSync(join(threadsDir(dir), `${thread.id}.jsonl`)).mode & 0o777).toBe(0o600);
+  expect(existsSync(join(dir, "threads.json.tmp"))).toBe(false);
 });

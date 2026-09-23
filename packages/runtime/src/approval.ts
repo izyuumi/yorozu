@@ -285,8 +285,8 @@ export function loadSettings(dir = stateDir(), now = Date.now()): Settings {
 }
 
 export function saveSettings(settings: Settings, dir = stateDir()): void {
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(settingsFile(dir), `${JSON.stringify(settings, null, 2)}\n`);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  writeFileSync(settingsFile(dir), `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
 }
 
 export const listRules = (dir = stateDir()): Rule[] => loadSettings(dir).rules;
@@ -318,8 +318,8 @@ export function markRuleUsed(ruleId: string, dir = stateDir(), now = Date.now())
 }
 
 export function appendLog(row: LogRow, dir = stateDir()): void {
-  mkdirSync(dir, { recursive: true });
-  appendFileSync(logFile(dir), `${JSON.stringify(row)}\n`);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  appendFileSync(logFile(dir), `${JSON.stringify(row)}\n`, { mode: 0o600 });
 }
 
 /** The whole log, oldest first. Unreadable lines are skipped, as in the transcripts. */

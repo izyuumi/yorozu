@@ -6,7 +6,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { REASONING_EFFORTS, type ModelOption } from "@yorozu/shared";
-import { turnCwd } from "./native.js";
+import { childEnv, turnCwd } from "./native.js";
 import type { NativeAgentRunner, NativeTurn } from "./native.js";
 
 type ObjectValue = Record<string, unknown>;
@@ -26,9 +26,12 @@ export interface CodexConnection {
 }
 export type ConnectCodex = (handlers: CodexHandlers) => CodexConnection;
 
-/** Never forward CLI stderr: SDK diagnostics can contain private paths or auth material. */
+/**
+ * Never forward CLI stderr: SDK diagnostics can contain private paths or auth material. The app
+ * server gets an allowlisted env, not Yorozu's own, so its tools cannot read the sidecar's secrets.
+ */
 export const connectCodex: ConnectCodex = (handlers) => {
-  const child = spawn("codex", ["app-server"], { stdio: ["pipe", "pipe", "ignore"] });
+  const child = spawn("codex", ["app-server"], { stdio: ["pipe", "pipe", "ignore"], env: childEnv() });
   const lines = createInterface({ input: child.stdout });
   const pending = new Map<number, { resolve(value: ObjectValue): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
   const prompts = new Map<unknown, AbortController>();
