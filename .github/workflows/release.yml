@@ -56,8 +56,11 @@ jobs:
           # validates, and a fresh runner has no Apple intermediates. Both are public.
           curl -fsSL -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
           curl -fsSL -o "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
-          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -t cert -k "$KEYCHAIN"
-          security import "$RUNNER_TEMP/AppleWWDRCAG3.cer" -t cert -k "$KEYCHAIN"
+          # A .p12 exported from Keychain Access can carry part of the chain already, and
+          # `security import` treats a duplicate as an error.
+          for ca in DeveloperIDG2CA AppleWWDRCAG3; do
+            security import "$RUNNER_TEMP/$ca.cer" -t cert -k "$KEYCHAIN" 2>&1 | grep -v 'already exists' || true
+          done
           # codesign and notarytool read this keychain without a dialog nobody is there to click.
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
           security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
