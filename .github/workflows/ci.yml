@@ -12,6 +12,10 @@ concurrency:
 # GitHub-hosted runners only: this repo is public, and a self-hosted runner would run any fork's
 # pull request on the maintainer's Mac.
 
+# The token needs only to check out; nothing here writes back to GitHub.
+permissions:
+  contents: read
+
 jobs:
   node:
     runs-on: macos-latest

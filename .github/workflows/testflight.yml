@@ -1,0 +1,77 @@
+name: TestFlight
+# Every push to main goes to TestFlight. The repo is public, so hosted macOS minutes are free,
+# and the commit count on main rises with every push, which is all Apple asks of a build number.
+# Only a push to this repo triggers it — never a fork's pull request — so the App Store Connect
+# key and the signing identity are never in a stranger's job.
+on:
+  push:
+    branches: [main]
+  # Rerun by hand: gh workflow run testflight.yml. The same commit has the same commit count,
+  # and Apple rejects a build number it has already seen, so pass one above the last upload:
+  #   gh workflow run testflight.yml -f build=240
+  workflow_dispatch:
+    inputs:
+      build:
+        description: Build number (defaults to the commit count)
+        required: false
+        type: string
+
+# A newer push supersedes the one still archiving; the skipped build number is never missed.
+concurrency:
+  group: testflight
+  cancel-in-progress: true
+
+# The token needs only to check out; nothing here writes back to GitHub.
+permissions:
+  contents: read
+
+jobs:
+  # Automatic signing still wants an Apple Development identity with its private key on the
+  # machine for the archive step, and a fresh runner has none: left alone, Xcode mints a new
+  # certificate every run until the team hits Apple's cap. So the same .p12 as the Mac release
+  # job — exported with both identities — goes into a throwaway keychain. The App Store Connect
+  # key does the rest (profiles, distribution signing at export, upload); scripts/build-ios.sh
+  # writes it to a mode-600 temp file it removes on exit.
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The version is the latest v* tag and the build number the commit count; both need
+          # the whole history.
+          fetch-depth: 0
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: latest-stable }
+      - run: command -v tuist >/dev/null || brew install --cask tuist
+      # Secrets are written only to $RUNNER_TEMP and a keychain of this job's own, both gone
+      # with the VM. Never `set -x` here: the values would land in the log.
+      - name: Signing identity
+        env:
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          set -eu
+          KEYCHAIN="$RUNNER_TEMP/release.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 24)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          printf '%s' "$MAC_CERT_P12" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -P "$MAC_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          rm "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          security default-keychain -s "$KEYCHAIN"
+      - name: Archive and upload to TestFlight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          BUILD: ${{ inputs.build }}
+        run: ./scripts/build-ios.sh
+      - name: Forget the secrets
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security delete-keychain "$RUNNER_TEMP/release.keychain-db" 2>/dev/null || true
