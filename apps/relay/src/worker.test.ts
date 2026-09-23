@@ -1,3 +1,5 @@
+/// <reference types="@cloudflare/vitest-pool-workers/types" />
+
 import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, expect, test, vi } from "vitest";
 import { MAX_DEVICES, NOTIFY_BODY, type Notify } from "./protocol.js";
@@ -521,7 +523,8 @@ test.each([200, 410])("an old APNs response (%i) cannot change a replacement tok
   await vi.waitFor(() => expect(complete).toBeTypeOf("function"));
   phone.send({ type: "push", deviceToken: "replacement-token" });
   await settled(phone);
-  complete(new Response(null, { status }));
+  // Workerd requires deferred I/O to complete in the Durable Object that owns it.
+  await runInDurableObject(room(name), () => complete(new Response(null, { status })));
   await pending;
 
   expect(await record(name, keys.pub)).toEqual({ deviceToken: "replacement-token" });
@@ -544,7 +547,7 @@ test("a background response cannot restore a revoked registration", async () => 
   mac.send({ type: "revoke", pubkey: keys.pub });
   await macSettled(mac);
   expect(await record(name, keys.pub)).toBeUndefined();
-  complete(new Response(null, { status: 200 }));
+  await runInDurableObject(room(name), () => complete(new Response(null, { status: 200 })));
   await pending;
 
   expect(await record(name, keys.pub)).toBeUndefined();
@@ -567,7 +570,7 @@ test("overlapping notifications share one in-flight background wake", async () =
   const pending = wake(name);
   await vi.waitFor(() => expect(complete).toBeTypeOf("function"));
   await wake(name);
-  complete(new Response(null, { status: 200 }));
+  await runInDurableObject(room(name), () => complete(new Response(null, { status: 200 })));
   await pending;
 
   expect(pushes).toEqual(["alert", "background", "alert"]);

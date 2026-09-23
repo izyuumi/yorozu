@@ -9,7 +9,7 @@ const { codexMock, startThreadMock, runStreamedMock } = vi.hoisted(() => {
   return {
     runStreamedMock,
     startThreadMock,
-    codexMock: vi.fn(() => ({ startThread: startThreadMock })),
+    codexMock: vi.fn(function () { return { startThread: startThreadMock }; }),
   };
 });
 

@@ -8,6 +8,10 @@ allowBuilds:
   sharp: false
   workerd: true
 
+overrides:
+  # The latest test pool pins this Miniflare to sharp 0.35.2 (GHSA-rgj7-g3m4-5g8c).
+  'miniflare@5.20260815.0-alpha>sharp': 0.35.4
+
 minimumReleaseAgeExclude:
   - '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.269'
   - '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.269'
@@ -18,3 +22,5 @@ minimumReleaseAgeExclude:
   - '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.269'
   - '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.269'
   - '@anthropic-ai/claude-agent-sdk@0.3.269'
+  - wrangler@4.137.0
+  - '@cloudflare/workers-types@5.20260923.1'
