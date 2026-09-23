@@ -169,7 +169,8 @@ export function loadKeys(dir: string): Keys {
   const file = join(dir, "keys.json");
   if (!existsSync(file)) {
     const keys: Keys = { session: generateKeypair(), signing: generateSigningKeypair() };
-    mkdirSync(dir, { recursive: true });
+    // Keys live here, so nobody but the owner may list the directory; created 0700 on first run.
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
     writeFileSync(file, JSON.stringify({ session: store(keys.session), signing: store(keys.signing) }), {
       mode: 0o600,
     });
