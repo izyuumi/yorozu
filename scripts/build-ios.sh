@@ -37,6 +37,11 @@ if [ -n "${ASC_KEY_P8:-}" ]; then
   trap 'rm -f "$ASC_KEY_PATH"' EXIT INT TERM
 fi
 ASC_KEY_PATH=${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8}
+# The archive signs with Apple Distribution outright rather than the default Apple Development.
+# A development certificate needs a private key on the machine, so a fresh CI runner would have
+# Xcode mint a new one every run until the team hits Apple's cap; a distribution certificate
+# can be cloud-managed, and the export re-signs with it anyway.
+#
 # -authenticationKeyPath rejects a relative path.
 case "$ASC_KEY_PATH" in /*) ;; *) ASC_KEY_PATH="$PWD/$ASC_KEY_PATH" ;; esac
 
@@ -68,6 +73,7 @@ env -u SDKROOT xcodebuild archive \
   -authenticationKeyPath "$ASC_KEY_PATH" \
   -authenticationKeyID "$ASC_KEY_ID" \
   -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+  CODE_SIGN_IDENTITY="Apple Distribution" \
   MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" \
   YOROZU_VERSION_LABEL="$VERSION_LABEL"
 
