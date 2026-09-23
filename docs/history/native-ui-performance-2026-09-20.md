@@ -11,7 +11,7 @@ Native SwiftUI Menu/Pickers replace the custom model/effort overlay on iOS and m
 - Final offscreen harness: 20 sync pages; median **13.35 ms**, p95 **13.58 ms**, maximum **13.58 ms**.
 - Instruments Time Profiler: 300 pages, median **12.27 ms**, p95 **13.61 ms**, maximum **20.04 ms**; 6,339 CPU samples; **zero potential-hang records** at the 250 ms threshold. ThreadCache.write stacks occur on worker threads. Trace: `/tmp/yorozu-ui-profile.trace`; exports `/tmp/yorozu-time-samples.xml`, `/tmp/yorozu-hangs.xml`.
 - Measurements use a debug executable on this Mac, not iPhone frame-rate measurements. Screenshot rendering uses actual AppKit-hosted SwiftUI controls without a window or app bundle. A 390-point image is a narrow-layout check, not an iOS screenshot. Interrupted buttons in the scene are illustrative; approval, question and work views are production components.
-- Four inspected screenshots: [narrow light](screens/native-bridge/native-390-light.png), [narrow dark](screens/native-bridge/native-390-dark.png), [wide light](screens/native-bridge/native-900-light.png), [wide dark](screens/native-bridge/native-900-dark.png).
+- Four inspected screenshots: [narrow light](../screens/native-bridge/native-390-light.png), [narrow dark](../screens/native-bridge/native-390-dark.png), [wide light](../screens/native-bridge/native-900-light.png), [wide dark](../screens/native-bridge/native-900-dark.png).
 - iOS keyboard/model-menu interaction tests compile, but were not launched: this session prohibits alternate app bundles. Physical iPhone/iPad keyboard, IME, VoiceOver, Reduce Motion and sustained streaming/scrolling still need device verification. No claim of a complete real-device stutter fix.
 
 ## Reproduce without launching an app bundle
