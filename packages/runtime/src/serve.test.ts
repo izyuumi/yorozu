@@ -429,7 +429,7 @@ async function pairedPhone(responses: (() => Response)[], openclaw = false, extr
   const isReply = (event: YorozuEvent): boolean =>
     event.kind === "message" && event.data.role === "agent";
 
-  return { dir, send, eventsUntil, isReply, channel, frame };
+  return { dir, send, eventsUntil, isReply, channel, frame, pub: toBase64Url(phoneKeys.publicKey) };
 }
 
 test("a box whose seq cannot be recorded is not acted on, and is taken when it comes again", async () => {
@@ -460,6 +460,33 @@ test("a box whose seq cannot be recorded is not acted on, and is taken when it c
   frame(box);
   await vi.waitFor(() => expect(states).toContain("replayed-frame"));
 });
+
+/**
+ * The Mac app on the local socket: the user's own machine, which needs no key and is trusted
+ * with what a phone may only ask for. Keeps everything it hears.
+ */
+async function macClient(dir: string) {
+  const socket = createConnection(localSocketPath(dir));
+  const events: YorozuEvent[] = [];
+  let buffer = "";
+  socket.setEncoding("utf8");
+  socket.on("data", (chunk: string) => {
+    buffer += chunk;
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) if (line) events.push(JSON.parse(line));
+  });
+  await new Promise<void>((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
+  const send = (event: Omit<YorozuEvent, "id" | "threadId" | "ts" | "agentId">): void => {
+    socket.write(`${JSON.stringify({ id: randomUUID(), threadId: "", ts: Date.now(), agentId: "mac", ...event })}\n`);
+  };
+  const settings = (): YorozuEvent[] => events.filter((event) => event.kind === "approval_settings");
+  return { events, settings, send, close: () => socket.destroy() };
+}
+
+const HOUR_MS = 3_600_000;
+const approvalFile = (dir: string): { yolo?: boolean; yoloUntil?: number } =>
+  JSON.parse(readFileSync(join(dir, "approval.json"), "utf8"));
 
 test("OpenClaw activity reaches Mac and encrypted phone live, then replays during a running tool", async () => {
   vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
@@ -784,22 +811,87 @@ test("always runs the action and is permanent: the next one needs no second card
   expect(ran(second)).toBe(true);
 });
 
-test("approval settings persist and broadcast their current value", async () => {
-  const { dir, send, eventsUntil } = await pairedPhone([]);
+test("YOLO on from a phone is a request the Mac hears; the Mac's yes applies it with an expiry; off is anyone's", async () => {
+  const { dir, send, eventsUntil, pub } = await pairedPhone([]);
+  const mac = await macClient(dir);
+  try {
+    send({ kind: "approval_settings", data: { yolo: true, hours: 8 } });
+    // The phone is told the truth: nothing changed, and its toggle snaps back.
+    const answered = await eventsUntil((event) => event.kind === "approval_settings");
+    expect(answered.at(-1)).toMatchObject({ kind: "approval_settings", data: { yolo: false, pending: true } });
+    expect(answered.some((event) => event.kind === "approval_settings_request")).toBe(false);
+    expect(existsSync(join(dir, "approval.json"))).toBe(false);
+    // The request went to the Mac, and to the Mac alone.
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "approval_settings_request")).toBe(true));
+    const request = mac.events.find((event) => event.kind === "approval_settings_request")!;
+    if (request.kind !== "approval_settings_request") throw new Error("unreachable");
+    expect(request.data).toMatchObject({ device: pub, yolo: true, hours: 8 });
+    expect(request.data.requestId).toMatch(/[0-9a-f-]{36}/);
+    send({ kind: "approval_settings", data: {} });
+    const asked = (await eventsUntil((event) => event.kind === "approval_settings")).at(-1)!;
+    if (asked.kind !== "approval_settings") throw new Error("unreachable");
+    expect(asked.data).toEqual({ yolo: false });
 
-  send({ kind: "approval_settings", data: { yolo: true } });
-  expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({
-    kind: "approval_settings",
-    data: { yolo: true },
-  });
-  expect(JSON.parse(readFileSync(join(dir, "approval.json"), "utf8"))).toMatchObject({ yolo: true });
+    // The Mac says yes: on, for eight hours, and everyone hears so.
+    const before = Date.now();
+    mac.send({ kind: "approval_settings", data: { yolo: true, hours: 8, requestId: request.data.requestId } });
+    const on = (await eventsUntil((event) => event.kind === "approval_settings")).at(-1)!;
+    if (on.kind !== "approval_settings") throw new Error("unreachable");
+    expect(on.data.yolo).toBe(true);
+    expect(on.data.yoloUntil).toBeGreaterThanOrEqual(before + 8 * HOUR_MS);
+    expect(on.data.yoloUntil).toBeLessThanOrEqual(Date.now() + 8 * HOUR_MS);
+    expect(approvalFile(dir)).toMatchObject({ yolo: true, yoloUntil: on.data.yoloUntil });
+    await vi.waitFor(() => expect(mac.settings().at(-1)).toMatchObject({ data: { yolo: true, yoloUntil: on.data.yoloUntil } }));
+    send({ kind: "approval_settings", data: {} });
+    expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({
+      data: { yolo: true, yoloUntil: on.data.yoloUntil },
+    });
 
-  send({ kind: "approval_settings", data: {} });
-  expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({
-    kind: "approval_settings",
-    data: { yolo: true },
-  });
+    // Off from the phone needs nobody's leave.
+    send({ kind: "approval_settings", data: { yolo: false } });
+    expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({ data: { yolo: false } });
+    expect(approvalFile(dir)).toMatchObject({ yolo: false });
+    expect(approvalFile(dir).yoloUntil).toBeUndefined();
+    send({ kind: "approval_settings", data: {} });
+    expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({ data: { yolo: false } });
+  } finally {
+    mac.close();
+  }
 });
+
+test("a YOLO grant is capped at a day, ends on its own, and the end is announced", async () => {
+  const { dir, eventsUntil } = await pairedPhone([]);
+  const mac = await macClient(dir);
+  // Only the clock the grant is on: sockets and the relay's own housekeeping stay real.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    mac.send({ kind: "approval_settings", data: { yolo: true, hours: 100 } });
+    const on = (await eventsUntil((event) => event.kind === "approval_settings")).at(-1)!;
+    if (on.kind !== "approval_settings") throw new Error("unreachable");
+    expect(on.data.yolo).toBe(true);
+    expect(on.data.yoloUntil).toBeLessThanOrEqual(Date.now() + 24 * HOUR_MS);
+    expect(on.data.yoloUntil).toBeGreaterThan(Date.now() + 23 * HOUR_MS);
+    vi.advanceTimersByTime(24 * HOUR_MS);
+    vi.useRealTimers();
+    expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({ data: { yolo: false } });
+    expect(approvalFile(dir)).toMatchObject({ yolo: false });
+    await vi.waitFor(() => expect(mac.settings().at(-1)).toMatchObject({ data: { yolo: false } }));
+  } finally {
+    vi.useRealTimers();
+    mac.close();
+  }
+});
+
+test("a YOLO grant on disk is back on the clock after a relaunch", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-yolo-restart-"));
+  const yoloUntil = Date.now() + 2_000;
+  writeFileSync(join(dir, "approval.json"), JSON.stringify({ yolo: true, yoloUntil, moneyThreshold: 0, confirmIrreversibleDeletes: true, rules: [] }));
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir });
+  send({ kind: "approval_settings", data: {} });
+  expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({ data: { yolo: true, yoloUntil } });
+  expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({ data: { yolo: false } });
+  expect(approvalFile(dir)).toMatchObject({ yolo: false });
+}, 10_000);
 
 test("17: the card the phone gets carries the structured scope and a rule to widen", async () => {
   const cmd = "echo yorozu-scope-ok";
@@ -1942,9 +2034,12 @@ test.each(["claude-code", "codex"] as const)("%s native bypass shares global YOL
   const turns: NativeTurn[] = [];
   const runner: NativeAgentRunner = { run: async (turn) => { turns.push(turn); return { text: "ok", sessionId: "s" }; } };
   const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { [agent]: runner } });
+  const mac = await macClient(dir);
   send({ kind: "thread_create", data: { agent, cwd: proj } }, "cc");
   for (const bypass of [true, false]) {
-    send({ kind: "approval_settings", data: { yolo: bypass } });
+    // On is the Mac's to grant; off is the phone's to say.
+    if (bypass) mac.send({ kind: "approval_settings", data: { yolo: true } });
+    else send({ kind: "approval_settings", data: { yolo: false } });
     const list = (await eventsUntil((e) => e.kind === "thread_list" && e.data.threads.some((t) => t.id === "cc" && t.bypass === bypass))).at(-1)!;
     expect(JSON.stringify(list)).toContain(`"bypass":${bypass}`);
     expect(JSON.parse(readFileSync(join(dir, "approval.json"), "utf8")).yolo).toBe(bypass);
@@ -1954,6 +2049,7 @@ test.each(["claude-code", "codex"] as const)("%s native bypass shares global YOL
     send({ kind: "approval_settings", data: {} });
     expect((await eventsUntil((e) => e.kind === "approval_settings")).at(-1)).toMatchObject({ data: { yolo: bypass } });
   }
+  mac.close();
 });
 
 test.each([

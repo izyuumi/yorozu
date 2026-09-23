@@ -175,6 +175,7 @@ final class MacChatSession {
 
     private func configure(_ model: ChatModel) {
         model.onThreads = { NSApp.dockTile.badgeLabel = model.unreadCount == 0 ? nil : String(model.unreadCount) }
+        model.onApprovalSettingsRequest = { request in YoloConsent.ask(request, model: model) }
     }
     private static func localModel() -> ChatModel {
         ChatModel(transport: LocalSocketTransport(path: LocalSocketTransport.defaultPath()), device: "mac")
