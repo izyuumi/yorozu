@@ -6,6 +6,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { REASONING_EFFORTS, type ModelOption } from "@yorozu/shared";
+import { turnCwd } from "./native.js";
 import type { NativeAgentRunner, NativeTurn } from "./native.js";
 
 type ObjectValue = Record<string, unknown>;
@@ -121,6 +122,8 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
     },
     async run(turn) {
       if (turn.signal.aborted) return { text: "", sessionId: turn.sessionId };
+      // Refuse before the app server is spawned: a turn with no folder must not run where the sidecar does.
+      const cwd = turnCwd(turn);
       let sessionId = turn.sessionId;
       let turnId: string | undefined;
       let text = "";
@@ -183,7 +186,7 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
         await initialize(client);
         const home = await client.request(sessionId ? "thread/resume" : "thread/start", {
           ...(sessionId ? { threadId: sessionId, excludeTurns: true } : {}),
-          ...(turn.cwd ? { cwd: turn.cwd } : {}), model: turn.model ?? null,
+          cwd, model: turn.model ?? null,
           approvalPolicy: turn.bypass ? "never" : "on-request", approvalsReviewer: "user",
           sandbox: turn.bypass ? "danger-full-access" : "workspace-write",
         });

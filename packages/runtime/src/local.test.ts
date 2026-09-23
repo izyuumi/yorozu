@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { startRelay, type Relay } from "@yorozu/relay";
 import type { EventKind, EventPayload, YorozuEvent } from "@yorozu/shared";
 import { afterEach, expect, test, vi } from "vitest";
-import { localSocketPath } from "./local.js";
+import { localSocketPath, startLocalChannel } from "./local.js";
 import { openaiCompat } from "./provider.js";
 import { serve, type Sidecar } from "./serve.js";
 import { OpenClawRunner } from "./openclaw.js";
@@ -505,4 +505,52 @@ test("a thread set to a model the user has since deleted still gets an answer", 
   send(socket, "t1", { kind: "message", data: { role: "user", text: "ping" } });
   expect(await events.nextOf("message")).toMatchObject({ data: { role: "user", text: "ping" } });
   expect(await events.nextOf("message")).toMatchObject({ data: { role: "agent", text: "pong" } });
+});
+
+/** A channel with nothing listening on the other end: only the file modes are under test. */
+const bareChannel = (path: string) =>
+  startLocalChannel({ path, onOpen: () => {}, onEvent: () => {}, onClose: () => {} });
+
+test("the state dir and socket are created owner-only, and the umask is put back", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "yorozu-modes-"));
+  const path = join(tmp, "state", "local.sock");
+  const before = process.umask();
+  const channel = bareChannel(path);
+  try {
+    // The bind is synchronous but the listen callback, which restores the umask, is a tick later.
+    await vi.waitFor(() => expect(process.umask()).toBe(before));
+    // Keys and plaintext logs live in the state dir, so nobody but the owner may even list it.
+    expect(statSync(join(tmp, "state")).mode & 0o777).toBe(0o700);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  } finally {
+    await channel.close();
+  }
+});
+
+test("a wide-open umask still yields a 0600 socket, and is restored as found rather than reset", async () => {
+  const original = process.umask(0o000);
+  try {
+    const tmp = mkdtempSync(join(tmpdir(), "yorozu-umask-"));
+    const path = join(tmp, "state", "local.sock");
+    const channel = bareChannel(path);
+    try {
+      // What the channel puts back must be what it found, not some hard-coded default.
+      await vi.waitFor(() => expect(process.umask()).toBe(0o000));
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+      expect(statSync(join(tmp, "state")).mode & 0o777).toBe(0o700);
+    } finally {
+      await channel.close();
+    }
+  } finally {
+    process.umask(original);
+  }
+});
+
+test("a channel closed before it ever listened still puts the umask back", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "yorozu-early-close-"));
+  const before = process.umask();
+  // No tick between start and close: Node never emits `listening` for a server closed this
+  // early, so the listen callback is not where the restore can be relied on to happen.
+  await bareChannel(join(tmp, "state", "local.sock")).close();
+  expect(process.umask()).toBe(before);
 });

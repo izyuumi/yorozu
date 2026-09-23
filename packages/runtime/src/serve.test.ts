@@ -530,6 +530,14 @@ test("a thread is answered by the agent it was created for, and an unknown agent
   const refusedFolder = (await eventsUntil((event) => event.kind === "thought")).at(-1)!;
   expect(refusedFolder).toMatchObject({ threadId: "bad2", data: { text: expect.stringMatching(/not one of this Mac's project folders/) } });
   expect(listThreads(dir).map((thread) => thread.id)).toEqual([]);
+  // Nor no folder at all: an agent with nowhere to run would run where the sidecar does.
+  for (const [id, cwd] of [["bad3", undefined], ["bad4", "  "]] as const) {
+    send({ kind: "thread_create", data: { agent: "codex", ...(cwd ? { cwd } : {}) } }, id);
+    const refusedHomeless = (await eventsUntil((event) => event.kind === "thought")).at(-1)!;
+    expect(refusedHomeless).toMatchObject({ threadId: id, data: { text: expect.stringMatching(/a codex thread needs a project folder/) } });
+  }
+  expect(listThreads(dir).map((thread) => thread.id)).toEqual([]);
+  expect(states).toContain("thread-create-error a codex thread needs a project folder");
 
   // The list carries who answers each thread; a plain thread says nothing, as it always has.
   send({ kind: "thread_create", data: { agent: "claude-code", cwd: proj } }, "cc");
@@ -657,7 +665,10 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
   // An agent that cannot run at all still finishes the turn, with the reason in the thread.
   send({ kind: "message", data: { role: "user", text: "break" } }, "cc");
   const failed = (await eventsUntil((event) => event.kind === "message" && event.data.done === true)).at(-1)!;
-  expect(failed).toMatchObject({ data: { text: expect.stringMatching(/could not answer: claude is not logged in/) } });
+  // The phone hears that the turn is over and where to look; the SDK's own words, which can
+  // name local paths and accounts, stay in the Mac's log.
+  expect(failed).toMatchObject({ data: { text: `${agent} could not answer; see the Mac log.` } });
+  expect(JSON.stringify(failed)).not.toContain("not logged in");
   expect(states).toContain("native-error claude is not logged in");
 });
 
@@ -2095,4 +2106,113 @@ test.each([true, false])("legacy setup runs only with an injected provider (Open
   if (!openclaw) await vi.waitFor(() => expect(scheduler).toHaveBeenCalledTimes(1));
   else expect(scheduler).not.toHaveBeenCalled();
   expect(existsSync(join(dir, "agents", "main.md"))).toBe(!openclaw);
+});
+
+test.each(["claude-code", "codex"] as const)("a %s thread with no folder to run in is refused a turn, and the agent is never started", async (agent) => {
+  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
+  const run = vi.fn(async (_turn: NativeTurn) => ({ text: "ran" }));
+  // A record from before folders were required: on disk, with an agent and no `cwd`.
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-homeless-"));
+  writeFileSync(join(dir, "threads.json"), JSON.stringify([
+    { id: "legacy", title: "Old", createdAt: new Date().toISOString(), archived: false, agent },
+  ]));
+  const { send, eventsUntil } = await pairedPhone([], true, { stateDir: dir, nativeRunners: { [agent]: { run } } });
+
+  send({ kind: "message", data: { role: "user", text: "go" } }, "legacy");
+  const refused = (await eventsUntil((event) => event.kind === "message" && event.data.done === true)).at(-1)!;
+  expect(refused).toMatchObject({ threadId: "legacy", data: { role: "agent", text: `${agent} needs one of this Mac's project folders, and this thread has none.` } });
+
+  // And a folder that has since left `~/Projects` is no longer one this Mac agreed to.
+  const gone = join(projectsRoot, `gone-${agent}`);
+  mkdirSync(gone);
+  send({ kind: "thread_create", data: { agent, cwd: gone } }, "cc");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "cc"));
+  rmSync(gone, { recursive: true });
+  send({ kind: "message", data: { role: "user", text: "go" } }, "cc");
+  const orphaned = (await eventsUntil((event) => event.kind === "message" && event.data.done === true)).at(-1)!;
+  expect(orphaned).toMatchObject({ threadId: "cc", data: { role: "agent", text: expect.stringMatching(/needs one of this Mac's project folders/) } });
+
+  expect(run).not.toHaveBeenCalled();
+  expect(states.filter((line) => line === "native-cwd-refused")).toHaveLength(2);
+  // Refused before the turn was marked running, so nothing is left to recover on restart.
+  expect(listThreads(dir).every((thread) => thread.nativeTurn === undefined)).toBe(true);
+});
+
+test("a known device cannot move its relay key without proof, and a re-hello mints no new code", async () => {
+  relay = await startRelay(0);
+  const lines: string[] = [];
+  const qrs = qrQueue();
+  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-rehello-"));
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${relay.port}`,
+    stateDir,
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: vi.fn() }),
+    log: (line) => {
+      lines.push(line);
+      if (line.startsWith("QR ")) qrs.push(line.slice(3));
+    },
+  });
+  const qr = await qrs.next();
+  const { phone, keys } = await connectPhone(relay.port, qr.roomId!, qr.token);
+  expect(await phone.next()).toMatchObject({ type: "joined" });
+  const pub = toBase64Url(generateKeypair().publicKey);
+  const signingPubOf = () => loadDevices(join(stateDir, "devices.json")).find((device) => device.pub === pub)?.signingPub;
+  const paired = () => lines.filter((line) => line === "STATE paired").length;
+  const qrCount = () => lines.filter((line) => line.startsWith("QR ")).length;
+
+  // First hello, with proof: enrolled, and the burnt token is replaced by the next QR.
+  phone.frame(hello(qr, pub, keys.pub), keys);
+  await vi.waitFor(() => expect(paired()).toBe(1));
+  const next = await qrs.next();
+  expect(qrCount()).toBe(2);
+  expect(signingPubOf()).toBe(keys.pub);
+
+  // The same device again, no proof: welcome back, same key, and no code was spent.
+  phone.frame(encodeBody({ t: "hello", pub, spub: keys.pub }), keys);
+  await vi.waitFor(() => expect(paired()).toBe(2));
+  // A different relay key without proof: the relay signed this frame, and the relay could be
+  // the one asking. The stored key stays, and the runtime says so.
+  phone.frame(encodeBody({ t: "hello", pub, spub: "impostor" }), keys);
+  await vi.waitFor(() => expect(paired()).toBe(3));
+  expect(lines).toContain("STATE hello-spub-ignored");
+  expect(signingPubOf()).toBe(keys.pub);
+  expect(lines).not.toContain("STATE hello-refused");
+
+  // With proof over the code on screen, the key does move — that is a re-pairing, and it
+  // spends the code, so a fresh one follows. Exactly one: the two hellos above minted nothing.
+  phone.frame(hello(next, pub, "moved"), keys);
+  await vi.waitFor(() => expect(paired()).toBe(4));
+  await qrs.next();
+  expect(qrCount()).toBe(3);
+  expect(signingPubOf()).toBe("moved");
+});
+
+test("a relay frame that is not JSON is one bad frame, not the end of the sidecar", async () => {
+  const seen: string[] = [];
+  const fake = new WebSocketServer({ port: 0 });
+  fake.on("connection", (ws) => {
+    ws.send(JSON.stringify({ type: "nonce", nonce: "n" }));
+    ws.on("message", (data) => {
+      const msg = JSON.parse(data.toString()) as Record<string, unknown>;
+      seen.push(String(msg.type));
+      if (msg.type === "register") {
+        // Garbage first, then the real answer: both reach the same handler.
+        ws.send("this is not json");
+        ws.send(JSON.stringify({ type: "registered", roomId: "r" }));
+      }
+    });
+  });
+  const lines: string[] = [];
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${(fake.address() as AddressInfo).port}`,
+    stateDir: mkdtempSync(join(tmpdir(), "yorozu-badframe-")),
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: vi.fn() }),
+    log: (line) => void lines.push(line),
+  });
+  await vi.waitFor(() => expect(lines).toContain("STATE registered"));
+  expect(lines.some((line) => line.startsWith("STATE frame-error "))).toBe(true);
+  // Still alive and still talking: registration went on to ask for a token.
+  await vi.waitFor(() => expect(seen).toContain("mint"));
+  await sidecar.close();
+  await new Promise<void>((done) => fake.close(() => done()));
 });
