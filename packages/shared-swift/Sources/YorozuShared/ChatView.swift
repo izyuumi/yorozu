@@ -21,6 +21,10 @@ public struct ChatView: View {
     /// running yet.
     public let offlineNotice: String
 
+    /// Where a pairing code tapped in a message goes; the app sets it, and the default drops
+    /// the link. See ``OpenURLAction/chatLinks(onPairingLink:)``.
+    @Environment(\.onPairingLink) private var onPairingLink
+
     /// Whether geometry currently reaches the newest message. Reader intent is tracked
     /// separately because async row growth can make this false without any manual scroll.
     @State private var atBottom = true
@@ -103,6 +107,10 @@ public struct ChatView: View {
     /// finished reply starts a turn too, and that reply is not streaming again: it stays Markdown.
     private var streamingId: String? { generating ? streamingMessageId(in: events) : nil }
 
+    /// The timeline's link policy, built here because the phone's rows are hosted in UIKit
+    /// cells that do not inherit this view's environment and have to be handed it per row.
+    private var linkAction: OpenURLAction { .chatLinks(onPairingLink: onPairingLink) }
+
     public var body: some View {
         VStack(spacing: 0) {
             if !model.ownerOnline {
@@ -134,7 +142,9 @@ public struct ChatView: View {
                     EmptyThreadView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    messages
+                    // Every link in a message is text the model wrote. Only the web and mail
+                    // open from here; a pairing code is asked about first, the rest is dropped.
+                    messages.environment(\.openURL, linkAction)
                 }
             }
             composer
@@ -343,7 +353,11 @@ public struct ChatView: View {
                 atBottom: $atBottom,
                 showJumpToLatest: $showJumpToLatest,
                 content: { row in
-                    AnyView(rowView(row).environment(\.searchHighlight, search))
+                    AnyView(
+                        rowView(row)
+                            .environment(\.searchHighlight, search)
+                            .environment(\.openURL, linkAction)
+                    )
                 }
             )
             // A thread change must create a fresh native timeline. Reusing the previous

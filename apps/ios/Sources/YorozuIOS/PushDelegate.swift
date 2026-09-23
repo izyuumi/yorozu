@@ -109,12 +109,22 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         // A button, not a tap: answer the card without bringing the app forward. The phone
         // was just unlocked to press it, and the answer is the same `approval_answer` the card
         // would send. A card that cannot be found is left for the app to show.
+        //
+        // Only when the words the buttons were pressed under are the Mac's, though: the sealed
+        // preview in this push opens, under this phone's key, to exactly the body that was on
+        // screen. Anything else — a relay's own sentence, a box that will not open, no box —
+        // is no approval of anything, and the tap just opens the card instead. Checked here
+        // rather than trusted from `userInfo`, which the relay writes.
         let answer: ApprovalAnswerData.Answer? = switch response.actionIdentifier {
         case Self.allowAction: .yes
         case Self.denyAction: .no
         default: nil
         }
-        if let answer, let eventRef {
+        let content = response.notification.request.content
+        if let answer, let eventRef,
+           NotificationFallback.showsDecryptedPreview(
+               body: content.body, userInfo: info, key: NotificationPreview.loadKey()
+           ) {
             guard let model = await MainActor.run(body: { Session.shared.model }) else { return }
             if await model.answerFromNotification(eventRef: eventRef, answer) { return }
         }

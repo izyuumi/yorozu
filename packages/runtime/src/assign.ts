@@ -213,11 +213,12 @@ export async function autoAssign(options: AssignOptions = {}): Promise<string> {
   ) as Record<string, Assignment | undefined>;
 
   const backup: Record<string, string> = {};
+  const catalogIds = new Set(catalog.map((entry) => entry.id));
   let diff = "";
   for (const [file, text] of before) {
     const pick = answer[file.slice(0, -3)];
     const model = typeof pick?.model === "string" ? pick.model.trim() : "";
-    if (!model) continue;
+    if (!model || !catalogIds.has(model)) continue;
     const next = setField(text, "model", model);
     if (next === text) continue;
     writeFileSync(join(agents, file), next);

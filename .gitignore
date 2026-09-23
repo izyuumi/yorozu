@@ -13,3 +13,12 @@ apps/ios/e2e/.screens/
 
 # Local Cloudflare deployment state and cache.
 .wrangler/
+
+# Signing credentials and local environment secrets.
+*.p12
+*.p8
+*.pem
+*.mobileprovision
+*.key
+.env
+.env.*

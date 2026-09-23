@@ -23,7 +23,12 @@ fi
 # Matched on the executable's full path, not the process name: a test build and the real one
 # are both called Yorozu, and each has to be able to tell that the *other* one is not itself.
 # The anchor also keeps this script's own command line — /bin/sh first — from matching.
-if pgrep -f "^$APP/Contents/MacOS/" >/dev/null 2>&1; then
+#
+# The path is a regular expression to pgrep, and a path is user data: "Yumi (work)" or an
+# app kept under "~/Apps+" would match something else or nothing. Every ERE metacharacter in
+# it is escaped first, so the pattern means the path and only the path.
+ESCAPED=$(printf '%s' "$APP" | sed -e 's/[][\.*^$+?(){}|]/\\&/g')
+if pgrep -f "^$ESCAPED/Contents/MacOS/" >/dev/null 2>&1; then
   exit 0
 fi
 

@@ -115,7 +115,7 @@ The main sidecar settings are:
 | `YOROZU_RELAY_URL` | `wss://relay.yumi.to` |
 | `OPENCLAW_BIN` | `openclaw` on `PATH` |
 | `YOROZU_PROJECTS_DIR` | `~/Projects` — the folders a coding-agent thread can start in |
-| `YOROZU_RUNTIME_CMD` | set by the Mac app; the bundled sidecar, else the dev checkout |
+| `YOROZU_RUNTIME_CMD` | unset — the Mac app runs the bundled sidecar, else the dev checkout it was built from. Set to override: split into words like `sh` would (quotes and backslashes, no expansion) and run directly, not through a shell, with the state directory as working directory, so use absolute paths |
 
 Automatic thread titles also use the provider-chain settings described in
 [the runtime guide](docs/legacy-runtime.md#provider-code-that-remains-live).
