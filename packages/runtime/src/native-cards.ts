@@ -1,14 +1,25 @@
 import { randomUUID } from "node:crypto";
 import type { EventPayload, ThreadAgent, YorozuEvent } from "@yorozu/shared";
 
+/**
+ * Whether a native agent's tool may be allowed from a lock-screen button. The agent's own tools
+ * run in the thread's folder as the user — a command, an edit, a read — and are the local,
+ * uncommitted kind an approval-card `quickApprovable` also passes. An MCP tool is someone
+ * else's integration: the runtime cannot tell a search from a payment by its name, so it is
+ * reviewed in the app, whatever buttons a push happened to draw.
+ */
+export const nativeQuickApprovable = (tool: string): boolean => !tool.startsWith("mcp__");
+
 /** SDK prompts have no Yorozu rules, floors, task grants or proposals. */
 export class NativeCards {
-  private waiting = new Map<string, { threadId: string; kind: "approval_answer" | "question_answer"; settle: (answer?: string) => void }>();
+  private waiting = new Map<string, { threadId: string; kind: "approval_answer" | "question_answer"; quick: boolean; settle: (answer?: string) => void }>();
 
   constructor(private emit: (event: YorozuEvent) => void) {}
 
+  /** Whether a waiting approval card was judged answerable from a notification when raised. */
   quickApprovable(actionId: string): boolean {
-    return this.waiting.get(actionId)?.kind === "approval_answer";
+    const pending = this.waiting.get(actionId);
+    return pending?.kind === "approval_answer" && pending.quick;
   }
 
   answer(event: YorozuEvent): boolean {
@@ -24,7 +35,7 @@ export class NativeCards {
     const actionId = randomUUID();
     const answer = await this.request(threadId, actionId, "approval_answer", {
       kind: "approval_card", data: { actionId, nativeAgent: agent, actionClass: tool, target: JSON.stringify(input, null, 2) },
-    }, signal);
+    }, signal, nativeQuickApprovable(tool));
     return answer === "yes";
   }
 
@@ -35,7 +46,7 @@ export class NativeCards {
     }, signal);
   }
 
-  private request(threadId: string, id: string, kind: "approval_answer" | "question_answer", payload: EventPayload, signal: AbortSignal): Promise<string | undefined> {
+  private request(threadId: string, id: string, kind: "approval_answer" | "question_answer", payload: EventPayload, signal: AbortSignal, quick = false): Promise<string | undefined> {
     if (signal.aborted) return Promise.resolve(undefined);
     return new Promise((resolve) => {
       const cancel = (): void => settle();
@@ -48,7 +59,7 @@ export class NativeCards {
           : { kind, data: { questionId: id, answer: answer ?? "Cancelled" } }) });
         resolve(answer);
       };
-      this.waiting.set(id, { threadId, kind, settle });
+      this.waiting.set(id, { threadId, kind, quick, settle });
       signal.addEventListener("abort", cancel, { once: true });
       this.emit({ id: randomUUID(), threadId, ts: Date.now(), agentId: "main", ...payload });
     });

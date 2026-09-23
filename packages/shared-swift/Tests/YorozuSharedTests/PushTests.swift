@@ -47,16 +47,87 @@ import Testing
         "preview": ["n": sealed.nonce.base64URLEncodedString(), "c": sealed.ciphertext.base64URLEncodedString()],
         "cls": "approval",
     ]
-    #expect(NotificationFallback.showsDecryptedPreview(body: "Run the tests?", userInfo: info, key: key))
+    #expect(NotificationFallback.showsDecryptedPreview(body: "Run the tests?", userInfo: info, key: key)?.body == "Run the tests?")
     // A relay's own sentence over a replayed box, the fallback line over a box that did open,
     // the wrong key, no key, and no box.
-    #expect(!NotificationFallback.showsDecryptedPreview(body: "Tap Allow to see the photo", userInfo: info, key: key))
-    #expect(!NotificationFallback.showsDecryptedPreview(body: NotificationFallback.body, userInfo: info, key: key))
-    #expect(!NotificationFallback.showsDecryptedPreview(body: "Run the tests?", userInfo: info, key: SymmetricKey(size: .bits256)))
-    #expect(!NotificationFallback.showsDecryptedPreview(body: "Run the tests?", userInfo: info, key: nil))
-    #expect(!NotificationFallback.showsDecryptedPreview(body: NotificationFallback.body, userInfo: ["cls": "approval"], key: key))
+    #expect(NotificationFallback.showsDecryptedPreview(body: "Tap Allow to see the photo", userInfo: info, key: key) == nil)
+    #expect(NotificationFallback.showsDecryptedPreview(body: NotificationFallback.body, userInfo: info, key: key) == nil)
+    #expect(NotificationFallback.showsDecryptedPreview(body: "Run the tests?", userInfo: info, key: SymmetricKey(size: .bits256)) == nil)
+    #expect(NotificationFallback.showsDecryptedPreview(body: "Run the tests?", userInfo: info, key: nil) == nil)
+    #expect(NotificationFallback.showsDecryptedPreview(body: NotificationFallback.body, userInfo: ["cls": "approval"], key: key) == nil)
     // A mark the relay writes into userInfo changes nothing.
     var forged = info
     forged["yorozuPreviewDecrypted"] = true
-    #expect(!NotificationFallback.showsDecryptedPreview(body: "Tap Allow", userInfo: forged, key: key))
+    #expect(NotificationFallback.showsDecryptedPreview(body: "Tap Allow", userInfo: forged, key: key) == nil)
+}
+
+/// The plaintext inside a preview box, in the shape the Mac seals today and the one it sealed
+/// before there was a shape.
+@Test func aPreviewDecodesTheVersionedObjectAndTheBareStringBeforeIt() {
+    let current = NotificationPreviewContent(
+        plaintext: #"{"v":1,"body":"Run a command: echo hi","event":"6s82CDjb","quick":true}"#
+    )
+    #expect(current == NotificationPreviewContent(body: "Run a command: echo hi", event: "6s82CDjb", quick: true))
+    // Before the object: the whole plaintext is the body, about no card, with no buttons.
+    #expect(NotificationPreviewContent(plaintext: "Yorozu says hi") == NotificationPreviewContent(body: "Yorozu says hi", event: nil, quick: false))
+    #expect(NotificationPreviewContent(plaintext: #"{"body":"no version"}"#) == NotificationPreviewContent(body: #"{"body":"no version"}"#, event: nil, quick: false))
+    // `quick` is a boolean or nothing: a string, a number, an absence all mean no buttons.
+    #expect(NotificationPreviewContent(plaintext: #"{"v":1,"body":"x","quick":"true"}"#)?.quick == false)
+    #expect(NotificationPreviewContent(plaintext: #"{"v":1,"body":"x","quick":1}"#)?.quick == false)
+    #expect(NotificationPreviewContent(plaintext: #"{"v":1,"body":"x"}"#) == NotificationPreviewContent(body: "x", event: nil, quick: false))
+    // An event that is not a name is no event.
+    #expect(NotificationPreviewContent(plaintext: #"{"v":1,"body":"x","event":"","quick":true}"#)?.event == nil)
+    #expect(NotificationPreviewContent(plaintext: #"{"v":1,"body":"x","event":null,"quick":true}"#)?.event == nil)
+    // Nothing to say is no preview.
+    #expect(NotificationPreviewContent(plaintext: #"{"v":1,"body":""}"#) == nil)
+    #expect(NotificationPreviewContent(plaintext: #"{"v":1}"#) == nil)
+    #expect(NotificationPreviewContent(plaintext: "") == nil)
+}
+
+/// Which buttons the extension draws: Allow and Deny only under the Mac's sealed judgement,
+/// and only for the card the push is about. The relay's `aps.category` is never a factor.
+@Test func theExtensionDrawsAllowAndDenyOnlyUnderASealedQuickJudgementForThisCard() {
+    let quick = NotificationPreviewContent(body: "Run a command: echo hi", event: "6s82CDjb", quick: true)
+    #expect(NotificationFallback.category(for: quick, eventRef: "6s82CDjb") == NotificationFallback.quickCategory)
+    #expect(NotificationFallback.category(for: quick, eventRef: "TqFAWIFQ") == "")
+    #expect(NotificationFallback.category(for: quick, eventRef: nil) == "")
+    #expect(NotificationFallback.category(for: NotificationPreviewContent(body: "x", event: nil, quick: true), eventRef: "6s82CDjb") == "")
+    #expect(NotificationFallback.category(for: NotificationPreviewContent(body: "Send a message: bob", event: "6s82CDjb", quick: false), eventRef: "6s82CDjb") == "")
+    #expect(NotificationFallback.category(for: nil, eventRef: "6s82CDjb") == "")
+}
+
+/// The app's gate before an Allow counts: the preview re-opens to the body on screen, the Mac
+/// judged the card quick, and the preview names the very card being answered.
+@Test func aLockScreenAnswerNeedsTheMacsQuickJudgementForThisCard() throws {
+    let key = SymmetricKey(size: .bits256)
+    func box(_ plaintext: String, under key: SymmetricKey) throws -> [AnyHashable: Any] {
+        let sealed = try YorozuCrypto.seal(key: key, plaintext: Data(plaintext.utf8))
+        return [
+            "preview": ["n": sealed.nonce.base64URLEncodedString(), "c": sealed.ciphertext.base64URLEncodedString()],
+            "cls": "approval",
+            "event": "6s82CDjb",
+        ]
+    }
+    let body = "Run a command: echo hi"
+    let quick = try box(#"{"v":1,"body":"\#(body)","event":"6s82CDjb","quick":true}"#, under: key)
+    #expect(NotificationFallback.permitsLockScreenAnswer(body: body, userInfo: quick, key: key, eventRef: "6s82CDjb"))
+    // The relay's sentence, another card, no card, the wrong key, no key.
+    #expect(!NotificationFallback.permitsLockScreenAnswer(body: "Tap Allow", userInfo: quick, key: key, eventRef: "6s82CDjb"))
+    #expect(!NotificationFallback.permitsLockScreenAnswer(body: body, userInfo: quick, key: key, eventRef: "TqFAWIFQ"))
+    #expect(!NotificationFallback.permitsLockScreenAnswer(body: body, userInfo: quick, key: key, eventRef: nil))
+    #expect(!NotificationFallback.permitsLockScreenAnswer(body: body, userInfo: quick, key: SymmetricKey(size: .bits256), eventRef: "6s82CDjb"))
+    #expect(!NotificationFallback.permitsLockScreenAnswer(body: body, userInfo: quick, key: nil, eventRef: "6s82CDjb"))
+    // A card the Mac sent for review: same words, same card, no buttons.
+    let review = try box(#"{"v":1,"body":"\#(body)","event":"6s82CDjb","quick":false}"#, under: key)
+    #expect(!NotificationFallback.permitsLockScreenAnswer(body: body, userInfo: review, key: key, eventRef: "6s82CDjb"))
+    // A preview from before the object: it names no card and permits no button.
+    let legacy = try box(body, under: key)
+    #expect(NotificationFallback.showsDecryptedPreview(body: body, userInfo: legacy, key: key)?.body == body)
+    #expect(!NotificationFallback.permitsLockScreenAnswer(body: body, userInfo: legacy, key: key, eventRef: "6s82CDjb"))
+    // No box at all, and a mark the relay writes into userInfo.
+    #expect(!NotificationFallback.permitsLockScreenAnswer(body: body, userInfo: ["cls": "approval", "event": "6s82CDjb"], key: key, eventRef: "6s82CDjb"))
+    var forged = review
+    forged["yorozuPreviewDecrypted"] = true
+    forged["quick"] = true
+    #expect(!NotificationFallback.permitsLockScreenAnswer(body: body, userInfo: forged, key: key, eventRef: "6s82CDjb"))
 }
