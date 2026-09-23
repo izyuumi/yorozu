@@ -410,7 +410,8 @@ test("OpenClaw activity reaches Mac and encrypted phone live, then replays durin
     expect((await eventsUntil((event) => event.id === result.id)).at(-1)).toEqual(result);
     finish("Done");
     await eventsUntil((event) => event.kind === "message" && event.data.done === true);
-    expect((await threadsAfter(eventsUntil)).find((thread) => thread.id === "t1")?.title).toBe("inspect");
+    // Titled while the turn ran, from the message: no titler here, so its first words.
+    expect(listThreads(dir).find((thread) => thread.id === "t1")?.title).toBe("inspect");
     expect(readThreadEvents("t1", dir).filter((event) => event.kind.startsWith("tool_")).map((event) => event.id)).toEqual(["live-call", "live-result"]);
   } finally {
     mac.destroy();
@@ -1188,11 +1189,12 @@ async function threadsAfter(
 const storedThreads = (dir: string): { title: string }[] =>
   JSON.parse(readFileSync(join(dir, "threads.json"), "utf8")) as { title: string }[];
 
-test("the first reply names an untitled thread, and no later turn renames it", async () => {
+test("the first message names an untitled thread, and no later turn renames it", async () => {
   const { dir, send, eventsUntil, isReply } = await pairedPhone([
-    () => sse("Sure — milk and eggs."),
-    // The titler's own completion, with the quotes and the full stop it was told not to use.
+    // The titler asks first, alongside the turn — with the quotes and the full stop it was
+    // told not to use.
     () => sse('"Groceries for the week."\n'),
+    () => sse("Sure — milk and eggs."),
     () => sse("Added bread."),
   ]);
 
@@ -1202,12 +1204,13 @@ test("the first reply names an untitled thread, and no later turn renames it", a
   expect(created!.title).toBe("");
 
   send({ kind: "message", data: { role: "user", text: "buy milk" } }, created!.id);
-  await eventsUntil(isReply);
-
-  // The title lands after the reply, in a fresh list.
-  expect(await threadsAfter(eventsUntil)).toEqual([
-    expect.objectContaining({ id: created!.id, title: "Groceries for the week" }),
-  ]);
+  // The title lands in a fresh list, alongside the turn: usually before the reply, never
+  // guaranteed to.
+  const titled = (event: YorozuEvent): boolean =>
+    event.kind === "thread_list" && event.data.threads[0]?.title === "Groceries for the week";
+  const seen = await eventsUntil(titled);
+  expect(seen.at(-1)).toMatchObject({ data: { threads: [expect.objectContaining({ id: created!.id })] } });
+  if (!seen.some(isReply)) await eventsUntil(isReply);
 
   // A second turn spends no completion on titling, so the queued third response is its reply.
   send({ kind: "message", data: { role: "user", text: "and bread" } }, created!.id);
