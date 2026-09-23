@@ -17,3 +17,11 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # Majors that the rest of the toolchain has to move with, so they are taken by hand:
+      # @cloudflare/vitest-pool-workers cannot start under vitest 5 yet, and TypeScript 7 is
+      # a new compiler (it stops including Node's types implicitly, for a start).
+      - dependency-name: vitest
+        update-types: ["version-update:semver-major"]
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
