@@ -6,7 +6,7 @@ const { codexMock, runStreamedMock } = vi.hoisted(() => {
   const runStreamedMock = vi.fn();
   return {
     runStreamedMock,
-    codexMock: vi.fn(() => ({ startThread: () => ({ runStreamed: runStreamedMock }) })),
+    codexMock: vi.fn(function () { return { startThread: () => ({ runStreamed: runStreamedMock }) }; }),
   };
 });
 vi.mock("@openai/codex-sdk", () => ({ Codex: codexMock }));
