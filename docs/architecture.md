@@ -208,9 +208,14 @@ either. Both relays implement it.
 `tuist generate` emits, and they cannot drift from the sources.
 
 An unpaired phone opens on a splash and offers the two ways in: **Scan QR**, or the code pasted
-into a text field. A tapped `yorozu://` link pairs without either, through `onOpenURL`. However
-the code arrived, it is stored together with a freshly generated device identity — Ed25519 for
-frame signatures, X25519 for the session key — in the Keychain.
+into a text field. A tapped `yorozu://pair` link pairs without either, through `onOpenURL` — but
+only a phone with nothing to lose pairs on the spot. One that already holds a pairing is shown
+the link's relay host and the first eight bytes of the Mac key and asked before its keys and
+cached threads are thrown away, because a link is a line of text anyone can send. A client Mac
+asks the same question, and a hosting Mac is told it would stop hosting. Whichever way the code
+arrived, it must name a `wss://` relay (`ws://` only to loopback), and it is stored together
+with a freshly generated device identity — Ed25519 for frame signatures, X25519 for the session
+key — in the Keychain.
 
 Replies stream: the sidecar re-sends one message event per delta under a stable event ID, each
 carrying the whole text so far, and the phone replaces that message in place rather than
