@@ -60,7 +60,18 @@ The QR encodes that same string, so one parser — `decodePairingString` in `pac
 `yorozu://` link a phone opens when the code is tapped in Messages.
 
 The phone joins the room, announces its own X25519 key in one cleartext `hello` frame, and every
-frame after that is ChaCha20-Poly1305 sealed under the derived session key.
+frame after that is ChaCha20-Poly1305 sealed. The X25519 secret yields one key per direction
+(`deriveChannelKeys`: HKDF info `yorozu-channel/mac->device` and `device->mac`), so a box the
+relay reflects to its own sender opens under no key it holds. Inside each box the plaintext is
+`{"seq", "event"}`, `seq` counting up from 1 per sender and direction; a receiver drops any box
+at or below the last `seq` it accepted, and both ends keep their counters across a restart —
+the Mac in `devices.json`, the phone in `UserDefaults`, each keyed by the pair of X25519 keys,
+so a phone that unpairs and pairs again under new keys starts from zero, and a stale record dies
+with the device (`device_remove` drops it from `devices.json`). This framing replaced the single
+bidirectional session key without a version bump: a phone and a runtime on opposite sides of it
+cannot open each other's boxes until both are updated, after which an existing pairing carries
+on, its counters starting at zero on both ends. The one shared key `deriveSessionKey` still
+yields is used for push preview boxes only, and opens nothing on the live channel.
 
 The relay checks each frame's signature — but the relay could have signed it itself, so the
 runtime does not take the relay's word for who is enrolling. The pairing string carries a
@@ -183,17 +194,18 @@ temporary 10,000-event fixture.
 
 ## Several phones at once
 
-The sidecar keeps one session key per device, keyed by the X25519 key that phone announced in its
-`hello`. Agent events are sealed once per device and broadcast; relay frames carry no sender, so
-an inbound box is attributed to whichever session key opens it, which is also how a `sync_request`
-is answered to just the phone that asked. Because every phone receives the copies meant for the
+The sidecar keeps one pair of channel keys per device, keyed by the X25519 key that phone
+announced in its `hello`. Agent events are sealed once per device and broadcast; relay frames
+carry no sender, so an inbound box is attributed to whichever device's receive key opens it,
+which is also how a `sync_request` is answered to just the phone that asked. Because every phone receives the copies meant for the
 others, `RelayClient` drops a frame it cannot open silently rather than reporting it.
 
 Join tokens stay one-time, but a burnt one is replaced immediately: pairing mints the next token
 and prints a fresh `QR` line, so the menu bar is always showing a code a second device can use.
 
 Devices outlive a restart in `<state dir>/devices.json`, one record each: the X25519 key the
-session is agreed from, the Ed25519 key the relay knows it by, and when it was last heard from.
+channel keys are agreed from, the Ed25519 key the relay knows it by, when it was last heard from,
+and the two `seq` counters — the send counter reserved 1000 ahead so streaming costs no writes.
 The Mac app lists them over the local socket — `device_list`, pushed whenever a device comes or
 goes — with "online" meaning *said something in the last 90 seconds*, which is the only honest
 answer the runtime has: the relay tells phones whether the Mac is up, never the other way round.

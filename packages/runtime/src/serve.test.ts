@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startRelay, type Relay } from "@yorozu/relay";
 import { connectPhone, rejoinPhone } from "@yorozu/relay/dist/testing.js";
 import {
+  decodeEnvelope,
   decodeQrPayload,
+  deriveChannelKeys,
   deriveSessionKey,
+  encodeEnvelope,
   fromBase64Url,
   generateKeypair,
   helloProof,
@@ -71,17 +74,38 @@ const hello = (qr: QrPayload, pub: string, spub: string, secret = qr.secret!) =>
   encodeBody({ t: "hello", pub, spub, proof: helloProof(secret, pub, spub) });
 
 /**
+ * A phone's half of the live channel: seals under its `send` key with a running seq, opens the
+ * Mac's boxes under `recv`. `box` is the encoded frame body, ready for `phone.frame`.
+ */
+function channelFor(priv: Uint8Array, macPub: Uint8Array) {
+  const keys = deriveChannelKeys(priv, macPub, "device");
+  let seq = 0;
+  return {
+    box(event: YorozuEvent): string {
+      const sealed = seal(keys.send, encodeEnvelope(++seq, event));
+      return encodeBody({ t: "box", n: toBase64Url(sealed.nonce), c: toBase64Url(sealed.ciphertext) });
+    },
+    /** Throws when the box is not ours. */
+    envelope(body: { n: string; c: string }) {
+      return decodeEnvelope(open(keys.recv, fromBase64Url(body.n), fromBase64Url(body.c)));
+    },
+    open(body: { n: string; c: string }): YorozuEvent {
+      return this.envelope(body).event;
+    },
+  };
+}
+type PhoneChannel = ReturnType<typeof channelFor>;
+
+/**
  * The next event sealed for this phone that is not a receipt. Every command is receipted
  * before it is answered, and a test reading frames one at a time is after the answer.
  */
 async function nextEvent(
   client: { next: () => Promise<{ payload: string }> },
-  sessionKey: Uint8Array,
+  channel: PhoneChannel,
 ): Promise<YorozuEvent> {
   for (;;) {
-    const body = frameBody((await client.next()).payload);
-    const plain = open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c));
-    const event = JSON.parse(Buffer.from(plain).toString()) as YorozuEvent;
+    const event = channel.open(frameBody((await client.next()).payload));
     if (event.kind !== "receipt") return event;
   }
 }
@@ -119,7 +143,7 @@ test("a sealed message from a phone round-trips through the agent loop", async (
   // The phone announces its X25519 key in the clear, then everything is sealed. Without proof
   // it read the QR the runtime enrols nothing: the relay signed that frame just as well.
   const phoneKeys = generateKeypair();
-  const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
+  const channel = channelFor(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
   phone.frame(encodeBody({ t: "hello", pub: toBase64Url(phoneKeys.publicKey), spub: keys.pub }), keys);
   await vi.waitFor(() => expect(lines).toContain("STATE hello-refused"));
   phone.frame(hello(qr, toBase64Url(phoneKeys.publicKey), keys.pub, "not-the-secret"), keys);
@@ -136,13 +160,10 @@ test("a sealed message from a phone round-trips through the agent loop", async (
     kind: "message",
     data: { role: "user", text: "ping" },
   };
-  const box = seal(sessionKey, Buffer.from(JSON.stringify(sent)));
-  phone.frame(
-    encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }),
-    keys,
-  );
+  const box = channel.box(sent);
+  phone.frame(box, keys);
 
-  const openNext = (): Promise<YorozuEvent> => nextEvent(phone, sessionKey);
+  const openNext = (): Promise<YorozuEvent> => nextEvent(phone, channel);
 
   // Pairing is greeted with the thread list — empty, on a state dir nothing has happened in —
   // and the agent's reply follows it.
@@ -167,15 +188,43 @@ test("a sealed message from a phone round-trips through the agent loop", async (
   expect(lines).toContain("STATE paired");
   expect(fetchMock.mock.calls[0]![0]).toBe("https://example.invalid/v1/chat/completions");
 
-  // The same message again — a relay replaying an unacked frame, or a phone retrying a send
-  // it never saw land — is not a second turn and not a second line in the thread.
-  phone.frame(
-    encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }),
-    keys,
-  );
+  // The same box again — a relay replaying an unacked frame, or anyone who captured it — is
+  // caught by its seq before it is even read as a command.
+  phone.frame(box, keys);
+  await vi.waitFor(() => expect(lines).toContain("STATE replayed-frame"));
+  // The same message under a fresh seq — a phone retrying a send it never saw land — is a
+  // command, but not a second turn and not a second line in the thread.
+  phone.frame(channel.box(sent), keys);
   await vi.waitFor(() => expect(lines).toContain("STATE duplicate-command"));
   expect(fetchMock).toHaveBeenCalledTimes(1);
   expect(readThreadEvents("t1", stateDir).filter((e) => e.id === "e1")).toHaveLength(1);
+
+  // A box the Mac sealed, reflected back by the relay, opens under no device's key: it is
+  // nobody's command, so nothing is receipted for it.
+  const reflected = frameBody((await phone.next()).payload);
+  const reflectedId = channel.open(reflected).id;
+  phone.frame(encodeBody(reflected), keys);
+  phone.frame(channel.box({ ...sent, id: "e2", data: { role: "user", text: "ping again" } }), keys);
+  const receipts: string[] = [];
+  for (;;) {
+    const event = channel.open(frameBody((await phone.next()).payload));
+    if (event.kind === "receipt") receipts.push(event.data.eventId);
+    if (event.kind === "message" && event.data.role === "agent" && event.data.done) break;
+  }
+  expect(receipts).toEqual(["e2"]);
+  expect(reflectedId).not.toBe("e2");
+
+  // A phone says `hello` on every join. Saying it again resets no counter on either side: the
+  // old box is still a replay, and the Mac's seqs carry on from where they were.
+  const before = channel.envelope(frameBody((await (async () => {
+    phone.frame(channel.box({ ...sent, id: "e3", threadId: "", kind: "sync_request", data: { lastSeen: {} } } as YorozuEvent), keys);
+    return phone.next();
+  })()).payload)).seq;
+  phone.frame(hello(qr, toBase64Url(phoneKeys.publicKey), keys.pub), keys);
+  await vi.waitFor(() => expect(lines.filter((l) => l === "STATE paired")).toHaveLength(2));
+  expect(channel.envelope(frameBody((await phone.next()).payload)).seq).toBeGreaterThan(before);
+  phone.frame(box, keys);
+  await vi.waitFor(() => expect(lines.filter((l) => l === "STATE replayed-frame")).toHaveLength(2));
 });
 
 test.each([false, true])("a phone rejoins without hello and preserves a safe cutoff (legacy=%s)", async (legacy) => {
@@ -184,6 +233,7 @@ test.each([false, true])("a phone rejoins without hello and preserves a safe cut
   const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => sse("pong"));
 
   // Two sidecars in a row over one state dir: the second is the "restart".
+  const lines: string[] = [];
   const start = () => {
     let qrLine!: (line: string) => void;
     const qr = new Promise<string>((resolve) => (qrLine = resolve));
@@ -192,6 +242,7 @@ test.each([false, true])("a phone rejoins without hello and preserves a safe cut
       stateDir,
       provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: fetchMock }),
       log: (line) => {
+        lines.push(line);
         if (line.startsWith("QR ")) qrLine(line.slice(3));
       },
     });
@@ -204,18 +255,31 @@ test.each([false, true])("a phone rejoins without hello and preserves a safe cut
   expect(await phone.next()).toMatchObject({ type: "joined" });
 
   const phoneKeys = generateKeypair();
-  const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
+  const channel = channelFor(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
   const pub = toBase64Url(phoneKeys.publicKey);
   phone.frame(hello(qr, pub, keys.pub), keys);
   // The `hello` is what writes the phone into `devices.json`.
   await vi.waitFor(() =>
     expect(loadDevices(join(stateDir, "devices.json")).map((device) => device.pub)).toEqual([pub]),
   );
+  // One exchange before the restart, so both counters have something to carry over.
+  const early = channel.box({ id: "early", threadId: "", ts: Date.now(), agentId: "phone", kind: "sync_request", data: { lastSeen: {} } });
+  phone.frame(early, keys);
+  let lastMacSeq = 0;
+  for (;;) {
+    const envelope = channel.envelope(frameBody((await phone.next()).payload));
+    lastMacSeq = Math.max(lastMacSeq, envelope.seq);
+    if (envelope.event.kind === "sync_delta") break;
+  }
+  // The send counter is written ahead of use: what is on file is past everything sent.
+  const stored = loadDevices(join(stateDir, "devices.json"))[0]!;
+  expect(stored.sendSeq).toBeGreaterThanOrEqual(lastMacSeq);
+  expect(stored.recvSeq).toBe(1);
 
   phone.ws.close();
   await first.cast.close();
   const originalPairedAt = loadDevices(join(stateDir, "devices.json"))[0]!.pairedAt;
-  if (legacy) writeFileSync(join(stateDir, "devices.json"), JSON.stringify([{ pub, lastSeen: 1 }]));
+  if (legacy) writeFileSync(join(stateDir, "devices.json"), JSON.stringify([{ pub, lastSeen: 1, sendSeq: stored.sendSeq, recvSeq: stored.recvSeq }]));
   createThread("Old history", stateDir, "old-history");
   appendThreadEvent({ id: "old-message", threadId: "old-history", ts: 1, agentId: "phone", kind: "message", data: { role: "user", text: "before pairing" } }, stateDir);
 
@@ -229,9 +293,14 @@ test.each([false, true])("a phone rejoins without hello and preserves a safe cut
   const restoredPairedAt = loadDevices(join(stateDir, "devices.json"))[0]!.pairedAt;
   expect(restoredPairedAt).toBeGreaterThan(1);
   if (!legacy) expect(restoredPairedAt).toBe(originalPairedAt);
-  const sync = seal(sessionKey, Buffer.from(JSON.stringify({ id: "sync", threadId: "", ts: Date.now(), agentId: "phone", kind: "sync_request", data: { lastSeen: {} } })));
-  again.frame(encodeBody({ t: "box", n: toBase64Url(sync.nonce), c: toBase64Url(sync.ciphertext) }), keys);
-  expect(await nextEvent(again, sessionKey)).toMatchObject({ kind: "sync_delta", data: { events: [] } });
+  // Nothing from before the restart is taken again, and nothing after it reuses a seq.
+  again.frame(early, keys);
+  await vi.waitFor(() => expect(lines).toContain("STATE replayed-frame"));
+  again.frame(channel.box({ id: "sync", threadId: "", ts: Date.now(), agentId: "phone", kind: "sync_request", data: { lastSeen: {} } }), keys);
+  const receipt = channel.envelope(frameBody((await again.next()).payload));
+  expect(receipt.event.kind).toBe("receipt");
+  expect(receipt.seq).toBeGreaterThan(lastMacSeq);
+  expect(await nextEvent(again, channel)).toMatchObject({ kind: "sync_delta", data: { events: [] } });
 
   const sent: YorozuEvent = {
     id: "e2",
@@ -241,15 +310,14 @@ test.each([false, true])("a phone rejoins without hello and preserves a safe cut
     kind: "message",
     data: { role: "user", text: "ping" },
   };
-  const box = seal(sessionKey, Buffer.from(JSON.stringify(sent)));
-  again.frame(encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }), keys);
+  again.frame(channel.box(sent), keys);
 
-  expect(await nextEvent(again, sessionKey)).toMatchObject({
+  expect(await nextEvent(again, channel)).toMatchObject({
     threadId: "home",
     kind: "message",
     data: { role: "user", text: "ping" },
   });
-  expect(await nextEvent(again, sessionKey)).toMatchObject({
+  expect(await nextEvent(again, channel)).toMatchObject({
     threadId: "home",
     kind: "message",
     data: { role: "agent", text: "pong" },
@@ -337,13 +405,12 @@ async function pairedPhone(responses: (() => Response)[], openclaw = false, extr
   await phone.next();
 
   const phoneKeys = generateKeypair();
-  const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
+  const channel = channelFor(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
   phone.frame(hello(qr, toBase64Url(phoneKeys.publicKey), keys.pub), keys);
 
-  sendRaw = (full: YorozuEvent): void => {
-    const box = seal(sessionKey, Buffer.from(JSON.stringify(full)));
-    phone.frame(encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }), keys);
-  };
+  sendRaw = (full: YorozuEvent): void => phone.frame(channel.box(full), keys);
+  /** The same encoded frame body can be sent twice: what a replaying relay does. */
+  const frame = (body: string): void => phone.frame(body, keys);
   const send = (
     event: Omit<YorozuEvent, "id" | "threadId" | "ts" | "agentId">,
     threadId = "t1",
@@ -353,9 +420,7 @@ async function pairedPhone(responses: (() => Response)[], openclaw = false, extr
   async function eventsUntil(done: (event: YorozuEvent) => boolean): Promise<YorozuEvent[]> {
     const seen: YorozuEvent[] = [];
     for (;;) {
-      const body = frameBody((await phone.next()).payload);
-      const plain = open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c));
-      const event = JSON.parse(Buffer.from(plain).toString()) as YorozuEvent;
+      const event = channel.open(frameBody((await phone.next()).payload));
       seen.push(event);
       if (done(event)) return seen;
     }
@@ -364,8 +429,37 @@ async function pairedPhone(responses: (() => Response)[], openclaw = false, extr
   const isReply = (event: YorozuEvent): boolean =>
     event.kind === "message" && event.data.role === "agent";
 
-  return { dir, send, eventsUntil, isReply };
+  return { dir, send, eventsUntil, isReply, channel, frame };
 }
+
+test("a box whose seq cannot be recorded is not acted on, and is taken when it comes again", async () => {
+  const { dir, eventsUntil, channel, frame } = await pairedPhone([]);
+  const devicesFile = join(dir, "devices.json");
+  // The greeting ends with everyone's device list, and is what tells us the `hello` has been
+  // written; wait for it before breaking the file.
+  await eventsUntil((event) => event.kind === "device_list");
+  // A directory where the file goes: the next write of `devices.json` throws.
+  rmSync(devicesFile);
+  mkdirSync(devicesFile);
+  const request: YorozuEvent = { id: "sync-1", threadId: "", ts: Date.now(), agentId: "phone", kind: "sync_request", data: { lastSeen: {} } };
+  const box = channel.box(request);
+  frame(box);
+  await vi.waitFor(() => expect(states.some((state) => state.startsWith("frame-error"))).toBe(true));
+  // Not acted on: no receipt went out for it.
+  expect(states).not.toContain("replayed-frame");
+
+  // With the file writable again, the same box — a relay replaying what was never acked — is
+  // not a replay: the seq the failed write would have recorded was put back.
+  rmSync(devicesFile, { recursive: true });
+  frame(box);
+  const answered = await eventsUntil((event) => event.kind === "sync_delta");
+  expect(answered.map((event) => event.kind)).toEqual(["receipt", "sync_delta"]);
+  expect(states).not.toContain("replayed-frame");
+  expect(loadDevices(devicesFile)[0]!.recvSeq).toBe(1);
+  // And now that it has been recorded, it is one.
+  frame(box);
+  await vi.waitFor(() => expect(states).toContain("replayed-frame"));
+});
 
 test("OpenClaw activity reaches Mac and encrypted phone live, then replays during a running tool", async () => {
   vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
@@ -997,17 +1091,13 @@ async function pairPhone(port: number, qr: QrPayload) {
   const { phone, keys } = await connectPhone(port, qr.roomId!, qr.token);
   expect(await phone.next()).toMatchObject({ type: "joined" });
   const identity = generateKeypair();
-  const sessionKey = deriveSessionKey(identity.privateKey, fromBase64Url(qr.macPubkey));
+  const channel = channelFor(identity.privateKey, fromBase64Url(qr.macPubkey));
   phone.frame(hello(qr, toBase64Url(identity.publicKey), keys.pub), keys);
 
   return {
     send(threadId: string, payload: EventPayload, ts = Date.now()): void {
       const event: YorozuEvent = { id: randomUUID(), threadId, ts, agentId: "phone", ...payload };
-      const box = seal(sessionKey, Buffer.from(JSON.stringify(event)));
-      phone.frame(
-        encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }),
-        keys,
-      );
+      phone.frame(channel.box(event), keys);
     },
     /** The next event of `kind` this phone can open: frames for the other device are not ours. */
     async next(kind: EventKind): Promise<YorozuEvent> {
@@ -1017,9 +1107,7 @@ async function pairPhone(port: number, qr: QrPayload) {
         const body = frameBody(frame.payload);
         let event: YorozuEvent;
         try {
-          event = JSON.parse(
-            Buffer.from(open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c))).toString(),
-          ) as YorozuEvent;
+          event = channel.open(body);
         } catch {
           continue; // Sealed for the other phone.
         }
@@ -1262,7 +1350,7 @@ test("a revoked device is forgotten here and at the relay", async () => {
   // The `hello` carries the relay identity as well as the session key: revoking a device at
   // the relay is addressed to the Ed25519 key, which cannot be derived from the other one.
   const phoneKeys = generateKeypair();
-  const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
+  const channel = channelFor(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
   const pub = toBase64Url(phoneKeys.publicKey);
   phone.frame(hello(qr, pub, keys.pub), keys);
   const devicesFile = join(stateDir, "devices.json");
@@ -1279,8 +1367,7 @@ test("a revoked device is forgotten here and at the relay", async () => {
     kind: "device_remove",
     data: { pub },
   };
-  const box = seal(sessionKey, Buffer.from(JSON.stringify(remove)));
-  phone.frame(encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }), keys);
+  phone.frame(channel.box(remove), keys);
 
   await vi.waitFor(() => expect(loadDevices(devicesFile)).toEqual([]));
   // And the relay has forgotten it too: the nonce rejoin a known device may make is refused.
@@ -1429,14 +1516,11 @@ test("an open relay socket holds notifications until registration completes", as
     expect(seen.findIndex((msg) => msg.type === "revoke")).toBeLessThan(seen.findIndex((msg) => msg.type === "notify"));
     expect(seen.find((msg) => msg.type === "notify")).toMatchObject({ class: "reply", threadRef: threadRef("early-thread") });
 
-    const sessionKey = deriveSessionKey(identity.privateKey, loadKeys(stateDir).session.publicKey);
-    const request = seal(sessionKey, Buffer.from(JSON.stringify({ id: "catch-up", threadId: "", ts: Date.now(), agentId: "phone", kind: "sync_request", data: { lastSeen: {} } })));
-    macSocket.send(JSON.stringify({ type: "frame", payload: encodeBody({ t: "box", n: toBase64Url(request.nonce), c: toBase64Url(request.ciphertext) }) }));
+    const channel = channelFor(identity.privateKey, loadKeys(stateDir).session.publicKey);
+    const request = channel.box({ id: "catch-up", threadId: "", ts: Date.now(), agentId: "phone", kind: "sync_request", data: { lastSeen: {} } });
+    macSocket.send(JSON.stringify({ type: "frame", payload: request }));
     await vi.waitFor(() => {
-      const events = seen.filter((msg) => msg.type === "frame").map((msg) => {
-        const body = frameBody(msg.payload as string);
-        return JSON.parse(Buffer.from(open(sessionKey, fromBase64Url(body.n), fromBase64Url(body.c))).toString()) as YorozuEvent;
-      });
+      const events = seen.filter((msg) => msg.type === "frame").map((msg) => channel.open(frameBody(msg.payload as string)));
       expect(events.find((event) => event.kind === "sync_delta")).toMatchObject({ data: { events: expect.arrayContaining([expect.objectContaining({ kind: "message", data: { role: "agent", text: "answered before registration", done: true } })]) } });
     });
   } finally {
@@ -1517,6 +1601,19 @@ test("a second sidecar on the same state dir is the same Mac: same keys, same ro
   expect(loadDevices(join(stateDir, "devices.json"))).toEqual([paired]);
 });
 
+test("devices.json carries the channel counters, and drops ones that are not counts", () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-counters-"));
+  const pub = toBase64Url(generateKeypair().publicKey);
+  writeFileSync(join(dir, "devices.json"), JSON.stringify([
+    { pub, lastSeen: 1, sendSeq: 2000, recvSeq: 17 },
+    { pub: "other", lastSeen: 1, sendSeq: -1, recvSeq: "17" },
+  ]));
+  expect(loadDevices(join(dir, "devices.json"))).toEqual([
+    { pub, lastSeen: 1, sendSeq: 2000, recvSeq: 17 },
+    { pub: "other", lastSeen: 1 },
+  ]);
+});
+
 test("a keys file that will not read is an error, never a new identity", async () => {
   // A corrupt or unreadable file is not a missing one: minting fresh keys here would give this
   // Mac a new room and silently unpair every phone. Only an absent file is a first run.
@@ -1587,6 +1684,8 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   expect(await phone.next()).toMatchObject({ type: "joined" });
 
   const phoneKeys = generateKeypair();
+  const channel = channelFor(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
+  // Preview boxes stay under the shared session key: the notification extension holds no counter.
   const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
   phone.frame(hello(qr, toBase64Url(phoneKeys.publicKey), keys.pub), keys);
 
@@ -1598,11 +1697,7 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
     kind: "message",
     data: { role: "user", text: "the secret question" },
   };
-  const box = seal(sessionKey, Buffer.from(JSON.stringify(sent)));
-  phone.frame(
-    encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }),
-    keys,
-  );
+  phone.frame(channel.box(sent), keys);
 
   // The turn ends with the agent's reply, which is the one thing worth waking a phone for.
   await vi.waitFor(() => expect(seen.map((msg) => msg.class)).toContain("reply"));
@@ -1628,11 +1723,7 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
     ts: 2,
     data: { role: "user", text: "another secret question" },
   };
-  const failedBox = seal(sessionKey, Buffer.from(JSON.stringify(failed)));
-  phone.frame(
-    encodeBody({ t: "box", n: toBase64Url(failedBox.nonce), c: toBase64Url(failedBox.ciphertext) }),
-    keys,
-  );
+  phone.frame(channel.box(failed), keys);
   await vi.waitFor(() => expect(seen.map((msg) => msg.class)).toContain("failed"));
 
   // An approval for something local and below every floor may be answered from the lock
@@ -1643,11 +1734,7 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
     ts: 3,
     data: { role: "user", text: "run the secret script" },
   };
-  const gatedBox = seal(sessionKey, Buffer.from(JSON.stringify(gated)));
-  phone.frame(
-    encodeBody({ t: "box", n: toBase64Url(gatedBox.nonce), c: toBase64Url(gatedBox.ciphertext) }),
-    keys,
-  );
+  phone.frame(channel.box(gated), keys);
   await vi.waitFor(() => expect(seen.map((msg) => msg.class)).toContain("approval"));
   expect(seen.find((msg) => msg.class === "approval")).toMatchObject({ actions: true });
 
@@ -1741,7 +1828,7 @@ test("a replayed frame is acked once handled, and a turn that ends offline is an
   const { phone, keys } = await connectPhone(port, qr.roomId!, qr.token);
   expect(await phone.next()).toMatchObject({ type: "joined" });
   const phoneKeys = generateKeypair();
-  const sessionKey = deriveSessionKey(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
+  const channel = channelFor(phoneKeys.privateKey, fromBase64Url(qr.macPubkey));
   phone.frame(hello(qr, toBase64Url(phoneKeys.publicKey), keys.pub), keys);
   await vi.waitFor(() => expect(lines).toContain("STATE paired"));
 
@@ -1750,11 +1837,7 @@ test("a replayed frame is acked once handled, and a turn that ends offline is an
       id, threadId: "thread-one", ts: Date.now(), agentId: "phone",
       kind: "message", data: { role: "user", text },
     };
-    const box = seal(sessionKey, Buffer.from(JSON.stringify(event)));
-    phone.frame(
-      encodeBody({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }),
-      keys,
-    );
+    phone.frame(channel.box(event), keys);
   };
   ask("e1", "a question");
 
