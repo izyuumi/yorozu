@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, expect, test, vi } from "vitest";
@@ -1138,4 +1138,15 @@ test("25: a batch card offers no rule, because no standing rule can mean “exac
     recipient: "bob@example.com",
   });
   expect(single.suggestedRule).toMatchObject({ scope: { recipient: exact("bob@example.com") } });
+});
+
+test("approval settings and the decision log are written owner-only", () => {
+  // `mode` applies only at creation, so both files are new in this fresh mkdtemp dir. A umask
+  // can only take bits away from 0o600, never add any, so the mode is exact whatever it is.
+  const fresh = mkdtempSync(join(tmpdir(), "yorozu-approval-mode-"));
+  saveSettings(settings(), fresh);
+  appendLog({ ts: 1, actionClass: "send-message", target: "bob@example.com", decision: "yes" }, fresh);
+
+  expect(statSync(join(fresh, "approval.json")).mode & 0o777).toBe(0o600);
+  expect(statSync(join(fresh, "approvals.jsonl")).mode & 0o777).toBe(0o600);
 });

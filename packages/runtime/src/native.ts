@@ -56,6 +56,31 @@ function resultText(content: unknown): string {
     .join("\n");
 }
 
+/**
+ * What an agent child — the Claude Code CLI, the Codex app server — may inherit from Yorozu's
+ * own environment. Those children run arbitrary tools in the user's folders, so they get the
+ * shell basics and their own configuration only: never Yorozu's secrets (`YOROZU_*`), and never
+ * keys for providers Yorozu talks to on the user's behalf (`GOOGLE_API_KEY`, `AWS_*`,
+ * `GITHUB_TOKEN`, any `*_API_KEY`). Anything not named here is dropped.
+ */
+export const CHILD_ENV_KEYS: readonly string[] = ["PATH", "HOME", "TMPDIR", "LANG", "USER", "SHELL", "TERM"];
+/** Prefixes passed through whole: locale, XDG dirs, and each agent's own vendor variables. */
+export const CHILD_ENV_PREFIXES: readonly string[] = ["LC_", "XDG_", "CLAUDE_", "ANTHROPIC_", "CODEX_", "OPENAI_"];
+
+/**
+ * The explicit env an agent child is started with, built from the allowlist above. Both SDKs
+ * replace the child's environment with what they are given rather than merging it, so this
+ * carries PATH and HOME itself. `extra` is for what the runner sets on its own and wins.
+ */
+export function childEnv(source: NodeJS.ProcessEnv = process.env, extra: Record<string, string> = {}): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value === undefined) continue;
+    if (CHILD_ENV_KEYS.includes(key) || CHILD_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) env[key] = value;
+  }
+  return { ...env, ...extra };
+}
+
 export interface NativeTurnResult {
   /** The finished reply. Empty when the turn was aborted before it said anything. */
   text: string;
@@ -83,7 +108,7 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
   return {
     async models() {
       // No prompt is submitted while asking the CLI for its own catalog.
-      const session = query({ prompt: (async function* () {})(), options: { tools: [] } });
+      const session = query({ prompt: (async function* () {})(), options: { tools: [], env: childEnv() } });
       try {
         return (await session.supportedModels()).map((model) => ({
           id: model.value, label: model.displayName, providerLabel: "Claude Code",
@@ -118,6 +143,8 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
         options: {
           abortController: abort,
           cwd,
+          // Replaces the CLI's environment: Yorozu's own secrets and other providers' keys stay here.
+          env: childEnv(),
           ...(turn.sessionId ? { resume: turn.sessionId } : {}),
           ...(turn.model ? { model: turn.model } : {}),
           ...(claudeEffort(turn.effort) ? { effort: claudeEffort(turn.effort) } : {}),

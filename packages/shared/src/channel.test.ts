@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { acceptsSeq, decodeEnvelope, encodeEnvelope, isSeq, MAX_SEQ } from "./channel.js";
+import { acceptsSeq, decodeEnvelope, encodeEnvelope, isSeq, MAX_DEVICES, MAX_SEQ } from "./channel.js";
 import type { YorozuEvent } from "./events.js";
 
 const event: YorozuEvent = {
@@ -80,4 +80,8 @@ test("a counter carried across a simulated restart keeps rejecting what was alre
   expect(receive(1)).toBe(false);
   expect(receive(2)).toBe(false);
   expect(receive(3)).toBe(true);
+});
+
+test("the device cap is the relay's: sixteen phones per Mac", () => {
+  expect(MAX_DEVICES).toBe(16);
 });

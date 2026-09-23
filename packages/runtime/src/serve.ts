@@ -8,7 +8,7 @@
  * both the same pairing string. `MINT` on stdin asks the relay for a fresh join token.
  */
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { argv, env, stdin, stdout } from "node:process";
@@ -22,6 +22,7 @@ import {
   fromBase64Url,
   generateKeypair,
   isSeq,
+  MAX_DEVICES,
   generateSigningKeypair,
   helloProof,
   attachmentsWithinLimits,
@@ -222,6 +223,60 @@ export function loadDevices(file: string): DeviceRecord[] {
   }
 }
 
+/** One device's live-channel counters, as `channel-seq.json` keeps them: public key to counts. */
+export type ChannelSeqs = Record<string, { sendSeq: number; recvSeq: number }>;
+
+/**
+ * The live-channel counters, kept apart from the pairings: they move on every accepted box and
+ * every thousandth send, the pairings only when a phone joins or leaves. `undefined` when there
+ * is no such file, which is what tells the caller to fall back to counters `devices.json` may
+ * still carry from before they were split out. An entry that is not two counts is dropped.
+ */
+export function loadChannelSeqs(file: string): ChannelSeqs | undefined {
+  let stored: unknown;
+  try {
+    stored = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return undefined;
+  }
+  if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return {};
+  const seqs: ChannelSeqs = {};
+  for (const [pub, value] of Object.entries(stored as Record<string, unknown>)) {
+    if (typeof value !== "object" || value === null) continue;
+    const { sendSeq, recvSeq } = value as Record<string, unknown>;
+    if (isSeq(sendSeq) && isSeq(recvSeq)) seqs[pub] = { sendSeq, recvSeq };
+  }
+  return seqs;
+}
+
+/**
+ * Writes a state file whole or not at all: the bytes go to `<file>.tmp` and the name is moved
+ * over the old file in one step, so a crash mid-write leaves the previous version, never a
+ * truncated one. A failed move takes its temporary with it.
+ */
+function writeFileAtomic(file: string, text: string): void {
+  const temporary = `${file}.tmp`;
+  writeFileSync(temporary, text, { mode: 0o600, flush: true });
+  try {
+    renameSync(temporary, file);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
+/**
+ * The state directory, owner-only. Created 0700 when missing; when it is already there and
+ * ours, tightened to 0700, since an older release created it with the umask's default and
+ * every key, pairing and transcript lives under it. Someone else's directory is left alone:
+ * chmod on it would fail anyway, and the failure is not this process's to report.
+ */
+export function ensureStateDir(dir: string): void {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const info = statSync(dir);
+  if ((info.mode & 0o777) !== 0o700 && info.uid === process.getuid?.()) chmodSync(dir, 0o700);
+}
+
 /**
  * Frame bodies, base64url JSON inside the relay's opaque `payload`. `hello` is the phone
  * announcing its X25519 key; everything after it is sealed.
@@ -234,6 +289,40 @@ export function loadDevices(file: string): DeviceRecord[] {
 type FrameBody =
   | { t: "hello"; pub: string; spub?: string; proof?: string }
   | { t: "box"; n: string; c: string };
+
+/**
+ * The relay's `payload`, read as one of the two bodies or as nothing. Everything about it is
+ * attacker-controlled — not JSON, JSON that is not an object, a `t` this runtime does not
+ * know, fields of the wrong type — and none of it may throw: a body this rejects is logged and
+ * acked, so a bad frame in the relay's buffer is let go of rather than replayed for ever.
+ */
+export function parseFrameBody(payload: unknown): FrameBody | null {
+  if (typeof payload !== "string") return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(payload, "base64url").toString());
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  const body = parsed as Record<string, unknown>;
+  if (body.t === "hello") {
+    if (typeof body.pub !== "string" || body.pub === "") return null;
+    if (body.spub !== undefined && typeof body.spub !== "string") return null;
+    if (body.proof !== undefined && typeof body.proof !== "string") return null;
+    return {
+      t: "hello",
+      pub: body.pub,
+      ...(body.spub !== undefined ? { spub: body.spub } : {}),
+      ...(body.proof !== undefined ? { proof: body.proof } : {}),
+    };
+  }
+  if (body.t === "box") {
+    if (typeof body.n !== "string" || typeof body.c !== "string") return null;
+    return { t: "box", n: body.n, c: body.c };
+  }
+  return null;
+}
 
 /**
  * One line of `devices.json`. `signingPub` is the Ed25519 key the relay knows the device by,
@@ -306,6 +395,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // Memory and the schedule tools resolve their own paths from the environment:
   // publish the choice so an explicit `stateDir` moves the whole runtime, not just the keys.
   env.YOROZU_STATE_DIR = dir;
+  // Before anything is read or written under it: keys, pairings and transcripts all live here.
+  ensureStateDir(dir);
   const transcripts = transcriptDir(dir);
   recoverNativeTurns(dir);
   const keys = loadKeys(dir);
@@ -341,20 +432,33 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * neither does a relaunch of this sidecar.
    */
   const devicesFile = join(dir, "devices.json");
+  /**
+   * The live-channel counters, in their own file: they change on every accepted box, the
+   * pairings only when a phone joins or leaves, and a pairing file rewritten a thousand times
+   * an hour is a pairing file a crash finds half-written.
+   */
+  const seqFile = join(dir, "channel-seq.json");
   const devices = new Map<string, PairedDevice>();
   /**
    * Announces the paired list to the relay, which replaces what it knows with it. Assigned
    * per connection, a no-op while there is none.
    */
   let announceDevices: () => void = () => {};
-  /** The file alone: what the seq counters update, which is nothing the relay needs to hear. */
+  /** The pairings alone, counters left out: written when a device joins, leaves or changes key. */
   const writeDevices = (): void => {
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileAtomic(
       devicesFile,
-      JSON.stringify([...devices.values()].map(({ record }) => record)),
-      { mode: 0o600 },
+      JSON.stringify([...devices.values()].map(({ record: { sendSeq: _send, recvSeq: _recv, ...record } }) => record)),
     );
+  };
+  /** The counters alone: what every accepted box and every thousandth send update. */
+  const writeSeqs = (): void => {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const seqs: ChannelSeqs = Object.fromEntries(
+      [...devices.values()].map(({ record }) => [record.pub, { sendSeq: record.sendSeq ?? 0, recvSeq: record.recvSeq ?? 0 }]),
+    );
+    writeFileAtomic(seqFile, JSON.stringify(seqs));
   };
   const saveDevices = (): void => {
     writeDevices();
@@ -379,7 +483,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
     });
   };
   let migratedPairingTime = false;
-  for (const record of loadDevices(devicesFile)) {
+  // Counters from their own file where there is one; a `devices.json` from before the split
+  // still carries them itself, and those are honoured until the first write moves them over.
+  const storedSeqs = loadChannelSeqs(seqFile);
+  let legacySeqs = false;
+  // Never more than the relay will be told about: a file past the cap is read up to it.
+  for (const record of loadDevices(devicesFile).slice(0, MAX_DEVICES)) {
     // A key on disk we can no longer agree with is simply dropped, not a reason not to start.
     try {
       // Older releases never recorded first pairing. Do not invent historical access:
@@ -388,12 +497,22 @@ export function serve(options: ServeOptions = {}): Sidecar {
         record.pairedAt = Date.now();
         migratedPairingTime = true;
       }
+      const seqs = storedSeqs?.[record.pub];
+      if (seqs) {
+        record.sendSeq = seqs.sendSeq;
+        record.recvSeq = seqs.recvSeq;
+      } else if (storedSeqs === undefined && (record.sendSeq || record.recvSeq)) {
+        legacySeqs = true;
+      }
       remember(record);
     } catch {
       // Not a usable X25519 key any more.
     }
   }
   if (migratedPairingTime) saveDevices();
+  // Counters that were only ever in `devices.json` go to their own file now, so the next
+  // start reads them from where every later write puts them.
+  if (legacySeqs) writeSeqs();
 
   /**
    * The same thing for devices on the local socket, which need no key: the Mac app is one more
@@ -401,6 +520,22 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * because what it stores per device is a writer rather than a session key.
    */
   const locals = new Map<string, Send>();
+
+  /**
+   * The one YOLO request each relay device may have open, by device key. A phone that asks
+   * again inside a minute is told `pending` again and the Mac hears nothing new; after that a
+   * fresh request replaces the old one, since the Mac may have missed it. An entry outlives
+   * its usefulness after five minutes and a grant clears them all: the Mac's yes must name a
+   * request that is still open, or name none — the user turning YOLO on from Settings.
+   */
+  const yoloRequests = new Map<string, { requestId: string; at: number }>();
+  const YOLO_REQUEST_REPEAT_MS = 60_000;
+  const YOLO_REQUEST_TTL_MS = 5 * 60_000;
+  const pruneYoloRequests = (now: number): void => {
+    for (const [device, request] of yoloRequests) {
+      if (now - request.at >= YOLO_REQUEST_TTL_MS) yoloRequests.delete(device);
+    }
+  };
 
   let socket: WebSocket | null = null;
   // OPEN only means transport connected; the relay accepts application traffic after register.
@@ -634,6 +769,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const known = devices.get(pub);
     if (!known) return;
     devices.delete(pub);
+    yoloRequests.delete(pub);
     saveDevices();
     if (known.record.signingPub) revokeAtRelay(known.record.signingPub);
     state("revoked");
@@ -1034,12 +1170,38 @@ export function serve(options: ServeOptions = {}): Sidecar {
         // someone else's hand, and YOLO is code execution as the user. The Mac in front of the
         // user is asked, and the phone is told nothing changed yet, so its toggle snaps back.
         if (event.data.yolo && from !== undefined) {
+          const now = Date.now();
+          pruneYoloRequests(now);
+          const open = yoloRequests.get(from);
+          // Asked a moment ago: the Mac already has the card. Once more is one more card;
+          // a phone re-sending every second is not.
+          if (open && now - open.at < YOLO_REQUEST_REPEAT_MS) {
+            state("yolo-request-coalesced");
+            return reply(approvalSettingsEvent({ pending: true }));
+          }
+          const requestId = randomUUID();
+          yoloRequests.set(from, { requestId, at: now });
           const request = control({
             kind: "approval_settings_request",
-            data: { requestId: randomUUID(), device: from, yolo: true, hours: yoloHours(event.data.hours) },
+            data: { requestId, device: from, yolo: true, hours: yoloHours(event.data.hours) },
           });
           for (const send of locals.values()) send(request);
           return reply(approvalSettingsEvent({ pending: true }));
+        }
+        if (event.data.yolo) {
+          // The Mac's yes to a phone's request names the request; one that names a request
+          // nobody has open — expired, granted already, or made up — grants nothing. The Mac
+          // turning YOLO on for itself from Settings names none, and needs nobody's request.
+          const requestId = event.data.requestId;
+          if (requestId !== undefined) {
+            pruneYoloRequests(Date.now());
+            const open = [...yoloRequests.values()].some((request) => request.requestId === requestId);
+            if (typeof requestId !== "string" || !open) {
+              state("yolo-grant-refused");
+              return reply(approvalSettingsEvent());
+            }
+          }
+          yoloRequests.clear();
         }
         return setYolo(event.data.yolo, event.data.hours);
       }
@@ -1308,7 +1470,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         const ceiling = known.record.sendSeq;
         known.record.sendSeq = known.sent + SEND_SEQ_RESERVE - 1;
         try {
-          writeDevices();
+          writeSeqs();
         } catch (e) {
           known.record.sendSeq = ceiling;
           throw e;
@@ -1359,7 +1521,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         const accepted = known.record.recvSeq;
         known.record.recvSeq = envelope.seq;
         try {
-          writeDevices();
+          writeSeqs();
         } catch (e) {
           known.record.recvSeq = accepted;
           throw e;
@@ -1369,13 +1531,17 @@ export function serve(options: ServeOptions = {}): Sidecar {
       return null;
     }
 
-    /** Everything here is attacker-controlled: a bad frame must not kill the sidecar. */
-    function onFrame(payload: unknown): void {
-      if (typeof payload !== "string") return;
-      const body = JSON.parse(Buffer.from(payload, "base64url").toString()) as FrameBody;
+    /**
+     * A well-formed body, whose every field is still attacker-controlled: a bad frame must not
+     * kill the sidecar. What throws here is a handler's own failure, which is what keeps the
+     * relay's ack back; the shape was already judged by `parseFrameBody`.
+     */
+    function onFrame(body: FrameBody): void {
       if (body.t === "hello") {
-        if (typeof body.pub !== "string" || body.pub === "") return state("hello-refused");
         const known = devices.get(body.pub);
+        // The relay remembers this many devices per room and the announce below is capped at
+        // as many, so a seventeenth phone would be one the relay could never be told about.
+        if (!known && devices.size >= MAX_DEVICES) return state("hello-refused device-limit");
         // A key pair not on file gets in only with proof it read a QR this Mac drew. The
         // relay verified the frame's signature, but the relay could have signed it itself.
         const proved =
@@ -1414,7 +1580,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (changed || proved) ws.send(JSON.stringify({ type: "mint" }));
         return;
       }
-      if (body.t !== "box") return;
       const opened = openFrom(body);
       if (!opened) return;
       const [device, event] = opened;
@@ -1507,21 +1672,33 @@ export function serve(options: ServeOptions = {}): Sidecar {
             log(`QR ${pairing}`);
             return log(`PAIR ${pairing}`);
           }
-          case "frame":
+          case "frame": {
             // A replayed frame carries the relay's buffer sequence; acking it is what lets the
             // relay let go. The ack is cumulative, so it is sent only once every frame up to
             // this one has been handled: a frame that threw is left for the next replay
             // rather than deleted by the ack of the one after it. Live frames carry no `seq`.
-            try {
-              onFrame(msg.payload);
-            } catch (e) {
-              if (typeof msg.seq === "number") ackBlocked = true;
-              throw e;
+            // A body that is not a frame at all is different: nothing will ever handle it, so
+            // it is logged and acked, or it would sit at the head of the buffer for good.
+            const body = parseFrameBody(msg.payload);
+            if (!body) {
+              state("frame-error malformed body");
+            } else {
+              try {
+                onFrame(body);
+              } catch (e) {
+                if (typeof msg.seq === "number") ackBlocked = true;
+                throw e;
+              }
             }
             if (typeof msg.seq === "number" && !ackBlocked) {
               ws.send(JSON.stringify({ type: "ack", seq: msg.seq }));
             }
             return;
+          }
+          case "state":
+            // The relay's own word on something it did to us — a notify held back by its rate
+            // limit, say — surfaced as a state so the Mac app can show it rather than a mystery.
+            return state(`relay-${String(msg.state).replace(/\s+/g, " ").slice(0, 200)}`);
         }
       } catch (e) {
         state(`frame-error ${e instanceof Error ? e.message : String(e)}`);

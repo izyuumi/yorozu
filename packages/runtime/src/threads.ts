@@ -95,7 +95,7 @@ const indexFile = (dir: string): string => join(dir, "threads.json");
 function saveThreads(threads: ThreadRecord[], dir: string): void {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const temporary = indexFile(dir) + ".tmp";
-  writeFileSync(temporary, `${JSON.stringify(threads, null, 2)}\n`, { flush: true });
+  writeFileSync(temporary, `${JSON.stringify(threads, null, 2)}\n`, { flush: true, mode: 0o600 });
   renameSync(temporary, indexFile(dir));
 }
 
@@ -417,7 +417,7 @@ export function stashToolResult(
 ): YorozuEvent & { kind: "tool_result" } {
   if (event.data.output.length <= limit) return event;
   mkdirSync(threadsDir(dir), { recursive: true, mode: 0o700 });
-  writeFileSync(resultFile(event.threadId, event.data.callId, dir), JSON.stringify(event));
+  writeFileSync(resultFile(event.threadId, event.data.callId, dir), JSON.stringify(event), { mode: 0o600 });
   const end = /[\uD800-\uDBFF]/.test(event.data.output[limit - 1]!) ? limit - 1 : limit;
   return { ...event, data: { ...event.data, output: event.data.output.slice(0, end), truncated: true } };
 }
@@ -442,7 +442,7 @@ const resultFile = (threadId: string, callId: string, dir: string): string =>
 export function appendThreadEvent(event: YorozuEvent, dir = stateDir()): void {
   if (!LOGGED.has(event.kind)) return;
   mkdirSync(threadsDir(dir), { recursive: true, mode: 0o700 });
-  appendFileSync(logFile(event.threadId, dir), `${JSON.stringify(event)}\n`);
+  appendFileSync(logFile(event.threadId, dir), `${JSON.stringify(event)}\n`, { mode: 0o600 });
 }
 
 /** The thread's events, oldest first. Unreadable lines are skipped. */
