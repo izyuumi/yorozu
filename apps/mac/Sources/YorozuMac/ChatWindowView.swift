@@ -83,7 +83,7 @@ struct ChatWindowView: View {
         .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
         .background(YorozuPalette.canvas)
         .yorozuTint()
-        // Selecting something else is what discards a draft nothing was ever sent in, and what
+        // Selecting something else discards empty drafts, keeps input, and
         // tells the model which thread is being read — a reply landing in the open thread is
         // read on arrival, and one landing anywhere else raises a dot in the sidebar.
         .onChange(of: selection, initial: true) { old, new in

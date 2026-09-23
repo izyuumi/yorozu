@@ -318,11 +318,11 @@ final class Session {
     func clearNotificationOpen() { notificationOpen = nil }
 
     /// The few threads the share sheet's picker offers, newest first. Archived threads and the
-    /// unsent draft are left out: neither is somewhere to put a link.
+    /// unsent drafts are left out: neither is somewhere to put a link.
     private func publishThreads(_ model: ChatModel? = nil) {
         guard let model = model ?? self.model, let directory = ShareBox.directory() else { return }
         let threads = model.threads
-            .filter { !$0.archived && $0.id != model.draft?.id }
+            .filter { !$0.archived && !model.isDraft($0.id) }
             .sorted { $0.lastActivity > $1.lastActivity }
             .prefix(5)
         ShareBox.save(threads: Array(threads), in: directory)
@@ -603,7 +603,7 @@ struct RootView: View {
             // Pairing mid-session is the other way a model appears, and it decides an opening
             // thread of its own.
             .onChange(of: session.openPath) { _, opened in path = opened }
-            // Backing out of a draft without sending is what discards it. Whatever is on top is
+            // Backing out discards empty drafts and keeps input. Whatever is on top is
             // the thread being read, so a reply arriving in it does not raise an unread dot.
             .onChange(of: path, initial: true) { old, new in
                 if let left = old.first, !new.contains(left) { model.discardDraft(left) }

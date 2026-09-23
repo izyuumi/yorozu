@@ -515,6 +515,72 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     #expect(model.threads.map(\.id) == [second.id])
 }
 
+@MainActor
+@Test func draftsWithInputSurviveNavigationNewSessionsAndSync() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    let first = model.newDraft(agent: .codex, cwd: "/tmp/project")
+    model.drafts[first.id] = "  finish this later  "
+    model.discardDraft(first.id)
+    #expect(model.isDraft(first.id))
+
+    let second = model.newDraft()
+    model.drafts[second.id] = "another thought"
+    #expect(model.threads.map(\.id) == [second.id, first.id])
+    // Settings on an older draft stay local, including after a runtime refresh.
+    model.setModel(first, "codex-model")
+    model.setEffort(first, .low)
+    model.foreground = true
+    model.openThread = first.id
+    await transport.yield(.event(event("refresh", .threadList(ThreadListData(threads: [])))))
+    #expect(await eventually { model.listed })
+    #expect(model.threads.map(\.id) == [second.id, first.id])
+    #expect(model.drafts[first.id] == "  finish this later  ")
+    #expect(await transport.sent.allSatisfy { $0.threadId != first.id })
+
+    model.send(in: first)
+    #expect(!model.isDraft(first.id))
+    #expect(model.isDraft(second.id))
+    #expect(model.drafts[first.id] == "")
+    #expect(model.drafts[second.id] == "another thought")
+    let sent = await sent(by: transport, atLeast: pairingSends + 4)
+        .filter { $0.threadId == first.id }
+    #expect(sent.map(\.payload.kind) == [.threadCreate, .threadSetModel, .threadSetEffort, .message])
+    guard case .threadCreate(let creation) = sent.first?.payload else {
+        Issue.record("draft was not created before sending")
+        return
+    }
+    #expect(creation.agent == .codex)
+    #expect(creation.cwd == "/tmp/project")
+    #expect(model.threads.first { $0.id == first.id }?.model == "codex-model")
+    #expect(model.threads.first { $0.id == first.id }?.effort == .low)
+}
+
+@MainActor
+@Test func attachmentDraftsAreKeptUntilClearedOrExplicitlyArchived() async {
+    let model = await connected(FakeTransport())
+    let first = model.newDraft()
+    let attachment = MessageAttachment(name: "p.png", mime: "image/png", data: "aGk=")
+    model.attachments[first.id] = [attachment]
+    model.discardDraft(first.id)
+    let empty = model.newDraft()
+    model.drafts[empty.id] = " \n "
+    let newest = model.newDraft()
+    #expect(model.threads.map(\.id) == [newest.id, first.id])
+    #expect(model.drafts[empty.id] == nil)
+    #expect(model.attachments[first.id] == [attachment])
+
+    model.archive(first)
+    #expect(!model.isDraft(first.id))
+    #expect(model.attachments[first.id] == nil)
+    model.drafts[newest.id] = "changed my mind"
+    model.discardDraft(newest.id)
+    #expect(model.isDraft(newest.id))
+    model.drafts[newest.id] = ""
+    model.discardDraft(newest.id)
+    #expect(model.threads.isEmpty)
+}
+
 @Test func theThreadToOpenIsTheNewestOneWhileItIsStillWarm() {
     let now = Date(timeIntervalSince1970: 100_000)
     func thread(_ id: String, _ minutesAgo: Double, archived: Bool = false) -> ThreadSummary {
