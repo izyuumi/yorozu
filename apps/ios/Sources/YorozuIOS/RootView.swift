@@ -95,10 +95,21 @@ final class Session {
         let syncRevision: Int
     }
 
+    /// A pairing code that arrived as a link while this phone already holds a pairing. It waits
+    /// here for the person to say the old one should go; the alert in ``RootView`` asks.
+    struct PendingPairing: Identifiable, Equatable {
+        let id = UUID()
+        /// The link itself, which is the pairing string.
+        let code: String
+        let relayHost: String
+        let macKeyFingerprint: String
+    }
+
     private(set) var model: ChatModel?
     private(set) var failure: String?
     private(set) var isPairing = false
     private(set) var isDemo = false
+    private(set) var pendingPairing: PendingPairing?
     /// What the thread list's navigation stack starts out holding, decided the moment the model
     /// exists rather than after the list has drawn. The cache is read synchronously in
     /// ``ChatModel``'s initialiser, so the answer is already known here — and knowing it here is
@@ -171,6 +182,43 @@ final class Session {
             throw error
         }
     }
+
+    /// Where every `yorozu://pair` link lands, whether tapped in Messages or in a chat bubble.
+    ///
+    /// A fresh phone pairs on the spot, as scanning would. One that already holds a pairing is
+    /// asked first: a link is a line of text anyone can send, and following it silently would
+    /// hand the chat — and every reply from then on — to whichever Mac minted the code. Any
+    /// other host, and anything that does not parse as a code, is dropped here.
+    func handlePairingLink(_ url: URL) {
+        guard url.host()?.lowercased() == "pair",
+              let payload = try? QrPayload.decode(url.absoluteString)
+        else { return }
+        // The stored pairing is the test, not the model: a demo has a model and nothing to
+        // lose, and a pairing still waiting on the relay is already something to replace.
+        guard PairingStore.load() != nil else {
+            // `pair` builds over whatever model is there; the demo's has to go first, or the
+            // real pairing inherits `isDemo` and never registers for push.
+            if isDemo { exitDemo() }
+            do { try pair(with: url.absoluteString) } catch {}
+            return
+        }
+        pendingPairing = PendingPairing(
+            code: url.absoluteString,
+            relayHost: payload.relayHost ?? payload.relayUrl,
+            macKeyFingerprint: payload.macKeyFingerprint ?? String(localized: "unreadable key")
+        )
+    }
+
+    /// The confirmed half of ``handlePairingLink(_:)``: the same unpair Settings does, then
+    /// the new code. Takes the pending value rather than reading it back, because the alert's
+    /// dismissal may have cleared it before the button's action runs.
+    func replacePairing(with pending: PendingPairing) {
+        pendingPairing = nil
+        unpair()
+        do { try pair(with: pending.code) } catch {}
+    }
+
+    func cancelPendingPairing() { pendingPairing = nil }
 
     /// Builds a throwaway model over the local demo transport. Its nil cache is intentional:
     /// nothing shown here can read from or write to a real pairing's encrypted history.
@@ -414,7 +462,7 @@ struct RootView: View {
             // Four things arrive as a `yorozu://` link and they are told apart by the host, not
             // by trying each parser in turn: `pair` is the pairing string tapped in Messages,
             // `thread` and `ref` name a thread to open, `share` is the share extension handing
-            // over. Anything else is not ours.
+            // over. Anything else is not ours and is ignored, not tried as a pairing code.
             .onOpenURL { url in
                 switch url.host() {
                 case "thread":
@@ -429,9 +477,28 @@ struct RootView: View {
                     // The token names the file, but everything waiting is drained either way —
                     // see ``Session/drainShares()``.
                     session.drainShares()
+                case "pair":
+                    session.handlePairingLink(url)
                 default:
-                    do { try session.pair(with: url.absoluteString) } catch {}
+                    break
                 }
+            }
+            // A pairing code tapped inside a chat takes the same road as one tapped in Messages.
+            .environment(\.onPairingLink) { session.handlePairingLink($0) }
+            // Replacing a pairing throws away this phone's keys and cached threads for a Mac the
+            // link chose, so the link only says what it is and the person says whether.
+            .alert(
+                "Replace pairing?",
+                isPresented: Binding(
+                    get: { session.pendingPairing != nil },
+                    set: { if !$0 { session.cancelPendingPairing() } }
+                ),
+                presenting: session.pendingPairing
+            ) { pending in
+                Button("Replace pairing", role: .destructive) { session.replacePairing(with: pending) }
+                Button("Cancel", role: .cancel) { session.cancelPendingPairing() }
+            } message: { pending in
+                Text("This link pairs Yorozu with another Mac.\n\nRelay: \(pending.relayHost)\nMac key: \(pending.macKeyFingerprint)\n\nYorozu will forget its current keys and cached threads.")
             }
             // iOS suspends the app and its socket with it. Coming back is the moment to re-dial,
             // rather than waiting out a backoff that ran down while nothing was executing — and
