@@ -19,26 +19,26 @@ final class NotificationService: UNNotificationServiceExtension {
         // relay's to write as much as the body is, and the preview never supplies them, so
         // they are fixed on both paths; the interruption level goes back to the default so a
         // push cannot make itself time-sensitive either. A push whose box is missing or will
-        // not open was not written by the Mac, and gets no say on the lock screen.
-        let category = content.categoryIdentifier
+        // not open was not written by the Mac, and gets no say on the lock screen. The
+        // category `aps` named is never read back: which buttons a card gets is sealed inside
+        // the preview by the Mac, not chosen by the relay.
         content.title = NotificationFallback.title
         content.subtitle = ""
         content.body = NotificationFallback.body
         content.categoryIdentifier = ""
         content.interruptionLevel = .active
         bestAttemptContent = content
-        if let preview = NotificationPreviewPayload(userInfo: content.userInfo),
-           let key = NotificationPreview.loadKey(),
-           let body = NotificationPreview.decrypt(
-               nonce: preview.nonce,
-               ciphertext: preview.ciphertext,
-               key: key
-           ) {
-            content.body = body
-            // The buttons come back only under the Mac's words. The app checks the same thing
-            // again before an Allow counts — see `PushDelegate` and
-            // `NotificationFallback.showsDecryptedPreview`.
-            content.categoryIdentifier = category
+        if let preview = NotificationFallback.decryptedPreview(
+            userInfo: content.userInfo, key: NotificationPreview.loadKey()
+        ) {
+            content.body = preview.body
+            // Allow and Deny appear only when the Mac sealed `quick` into the preview and the
+            // preview names the card this push is about. The app checks the same thing again
+            // before an Allow counts — see `PushDelegate` and
+            // `NotificationFallback.permitsLockScreenAnswer`.
+            content.categoryIdentifier = NotificationFallback.category(
+                for: preview, eventRef: content.userInfo["event"] as? String
+            )
         }
         deliver(content)
     }
