@@ -75,6 +75,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r build
       - run: pnpm -r test
+      - name: Test website interactions
+        run: node --test apps/web/tests/*.test.mjs
 
   swift:
     runs-on: macos-latest

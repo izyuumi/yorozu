@@ -120,12 +120,12 @@ public func threadMatches(
 ) -> Bool {
     let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !needle.isEmpty else { return true }
-    if thread.displayTitle.localizedCaseInsensitiveContains(needle) { return true }
-    if thread.lastMessage?.localizedCaseInsensitiveContains(needle) == true { return true }
+    if !searchRanges(in: thread.displayTitle, term: needle).isEmpty { return true }
+    if !searchRanges(in: thread.lastMessage ?? "", term: needle).isEmpty { return true }
     // Who answers it and where: "claude" finds every Claude Code thread, "yorozu" the repo's.
-    if (thread.agent ?? .yorozu).label.localizedCaseInsensitiveContains(needle) { return true }
-    if thread.repoName?.localizedCaseInsensitiveContains(needle) == true { return true }
-    return body().localizedCaseInsensitiveContains(needle)
+    if !searchRanges(in: (thread.agent ?? .yorozu).label, term: needle).isEmpty { return true }
+    if !searchRanges(in: thread.repoName ?? "", term: needle).isEmpty { return true }
+    return !searchRanges(in: body(), term: needle).isEmpty
 }
 
 /// One short, whitespace-normalized window around a search match. Search results show the line
@@ -133,7 +133,7 @@ public func threadMatches(
 public func searchExcerpt(in text: String, matching query: String, limit: Int = 96) -> String? {
     let haystack = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
     let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !needle.isEmpty, let match = haystack.range(of: needle, options: .caseInsensitive) else { return nil }
+    guard !needle.isEmpty, let match = haystack.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) else { return nil }
     let matchOffset = haystack.distance(from: haystack.startIndex, to: match.lowerBound)
     let startOffset = max(0, matchOffset - limit / 3)
     let start = haystack.index(haystack.startIndex, offsetBy: startOffset)
@@ -321,7 +321,7 @@ struct ThreadRow: View {
     /// Building one `Text` keeps truncation and Dynamic Type behavior identical to normal rows.
     private func highlightedText(_ text: String) -> Text {
         let needle = highlightQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !needle.isEmpty, let match = text.range(of: needle, options: .caseInsensitive) else {
+        guard !needle.isEmpty, let match = text.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) else {
             return Text(text)
         }
         return Text(String(text[..<match.lowerBound]))
@@ -444,6 +444,8 @@ public struct ThreadListView<Destination: View>: View {
     @Binding private var path: [String]
     /// Where a coding agent can be started. Empty means the picker offers Yorozu alone.
     private let projects: [ProjectFolder]
+    private let projectListStatus: ProjectListStatus
+    private let onRefreshProjects: (() async -> Void)?
     /// Starts a thread for the chosen agent, in the chosen folder when it needs one.
     private let onCreate: (ThreadAgent, String?) -> Void
     private let onRename: (ThreadSummary, String) -> Void
@@ -460,6 +462,7 @@ public struct ThreadListView<Destination: View>: View {
 
     @State private var renaming: ThreadSummary?
     @State private var query = ThreadListShowcase.query
+    @State private var searchRequest: ThreadSearchRequest?
     /// The archive opens closed: it is where threads go to stop being in the way.
     @State private var showArchived = false
     @State private var choosingAgent = NewThreadShowcase.agent != nil
@@ -481,7 +484,21 @@ public struct ThreadListView<Destination: View>: View {
     /// The split view's selection is the top of the stack, so opening a thread from a
     /// notification or a share lands in the detail column the same way it lands on the stack.
     private var selection: Binding<String?> {
-        Binding(get: { path.last }, set: { path = $0.map { [$0] } ?? [] })
+        Binding(get: { path.last }, set: { id in
+            if let id { prepareSearchNavigation(id) }
+            else { searchRequest = nil }
+            path = id.map { [$0] } ?? []
+        })
+    }
+
+    /// Only writes made by navigation controls carry list-search intent. A notification or
+    /// restored session writes the parent's binding directly and keeps its own destination.
+    private var navigationPath: Binding<[String]> {
+        Binding(get: { path }, set: { value in
+            if let id = value.last { prepareSearchNavigation(id) }
+            else { searchRequest = nil }
+            path = value
+        })
     }
 
     public init(
@@ -490,6 +507,8 @@ public struct ThreadListView<Destination: View>: View {
         connection: ConnectionState? = nil,
         path: Binding<[String]>,
         projects: [ProjectFolder] = [],
+        projectListStatus: ProjectListStatus = .ready,
+        onRefreshProjects: (() async -> Void)? = nil,
         onCreate: @escaping (ThreadAgent, String?) -> Void,
         onRename: @escaping (ThreadSummary, String) -> Void,
         onArchive: @escaping (ThreadSummary, Bool) -> Void,
@@ -507,6 +526,8 @@ public struct ThreadListView<Destination: View>: View {
         self.connection = connection
         self._path = path
         self.projects = projects
+        self.projectListStatus = projectListStatus
+        self.onRefreshProjects = onRefreshProjects
         self.onCreate = onCreate
         self.onRename = onRename
         self.onArchive = onArchive
@@ -527,18 +548,12 @@ public struct ThreadListView<Destination: View>: View {
 
     private var searchNeedle: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-    private var threadResults: [ThreadSummary] {
-        guard !searchNeedle.isEmpty else { return [] }
-        return threads.filter {
-            $0.displayTitle.localizedCaseInsensitiveContains(searchNeedle)
-                || $0.lastMessage?.localizedCaseInsensitiveContains(searchNeedle) == true
-        }
+    private var searchResults: ThreadSearchResults {
+        ThreadSearchResults(threads: threads, query: query, messageText: messageText)
     }
 
-    private var messageResults: [ThreadSummary] {
-        guard !searchNeedle.isEmpty else { return [] }
-        return threads.filter { messageText($0.id).localizedCaseInsensitiveContains(searchNeedle) }
-    }
+    private var threadResults: [ThreadSummary] { searchResults.threads }
+    private var messageResults: [ThreadSummary] { searchResults.messages }
 
     public var body: some View {
         Group {
@@ -557,14 +572,26 @@ public struct ThreadListView<Destination: View>: View {
             #endif
         }
         .renameAlert($renaming, onRename: onRename)
+        .onChange(of: path) { _, value in
+            if searchRequest?.threadId != value.last { searchRequest = nil }
+        }
+    }
+
+    private func prepareSearchNavigation(_ id: String) {
+        guard !searchNeedle.isEmpty else {
+            searchRequest = nil
+            return
+        }
+        searchRequest = searchRanges(in: messageText(id), term: searchNeedle).isEmpty
+            ? nil : ThreadSearchRequest(threadId: id, query: searchNeedle)
     }
 
     private var stack: some View {
-        NavigationStack(path: $path) {
+        NavigationStack(path: navigationPath) {
             list
                 .navigationDestination(for: String.self) { id in
                     if let thread = threads.first(where: { $0.id == id }) {
-                        destination(thread)
+                        destination(thread).environment(\.threadSearchRequest, searchRequest)
                     }
                 }
         }
@@ -573,7 +600,7 @@ public struct ThreadListView<Destination: View>: View {
     /// The detail column is never blank: with nothing chosen it says so, and says what to do.
     @ViewBuilder private var detail: some View {
         if let id = path.last, let thread = threads.first(where: { $0.id == id }) {
-            destination(thread)
+            destination(thread).environment(\.threadSearchRequest, searchRequest)
         } else {
             ContentUnavailableView(
                 "No thread selected",
@@ -586,6 +613,11 @@ public struct ThreadListView<Destination: View>: View {
     private var list: some View {
         let groups = groups
         return List(selection: splitLayout ? selection : nil) {
+            if let connection, connection != .connected {
+                ConnectionPill(state: connection)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
             if searchNeedle.isEmpty {
                 if !groups.pinned.isEmpty {
                     Section("Pinned") { rows(groups.pinned) }
@@ -667,7 +699,7 @@ public struct ThreadListView<Destination: View>: View {
                 .keyboardShortcut("n")
             #endif
             .sheet(isPresented: $choosingAgent) {
-                NewThreadPicker(projects: projects, onStart: onCreate)
+                NewThreadPicker(projects: projects, status: projectListStatus, onRefresh: onRefreshProjects, onStart: onCreate)
                     .presentationDetents([.medium, .large])
             }
     }
@@ -706,6 +738,11 @@ public struct ThreadListView<Destination: View>: View {
                     // row tappable while the card draws its chevron inside.
                     row.background { NavigationLink(value: thread.id) { EmptyView() }.opacity(0) }
                 }
+            }
+            .simultaneousGesture(TapGesture().onEnded { prepareSearchNavigation(thread.id) })
+            .accessibilityAction {
+                prepareSearchNavigation(thread.id)
+                path = [thread.id]
             }
             .listRowInsets(EdgeInsets(top: 3, leading: 12, bottom: 3, trailing: 12))
             .listRowSeparator(.hidden)
@@ -770,7 +807,7 @@ public struct ThreadListView<Destination: View>: View {
     /// Nothing to show is two different situations, and saying which is the whole of the help:
     /// a search that found nothing, or a phone that has not been talked to yet.
     @ViewBuilder private func empty(_ groups: ThreadGroups) -> some View {
-        if groups.isEmpty {
+        if searchNeedle.isEmpty ? groups.isEmpty : searchResults.isEmpty {
             if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 ContentUnavailableView(
                     "No threads yet",
@@ -817,6 +854,8 @@ public struct ThreadSidebar: View {
     @Binding private var selection: String?
     /// Where a coding agent can be started. Empty means the picker offers Yorozu alone.
     private let projects: [ProjectFolder]
+    private let projectListStatus: ProjectListStatus
+    private let onRefreshProjects: (() async -> Void)?
     /// Starts a thread for the chosen agent, in the chosen folder when it needs one.
     private let onCreate: (ThreadAgent, String?) -> Void
     private let onRename: (ThreadSummary, String) -> Void
@@ -826,10 +865,12 @@ public struct ThreadSidebar: View {
     private let onRead: (ThreadSummary, Bool) -> Void
     private let messageText: (String) -> String
     private let exportMarkdown: ((ThreadSummary) -> String)?
+    private let onSearchSelect: ((ThreadSearchRequest?) -> Void)?
 
     @State private var renaming: ThreadSummary?
-    @State private var query = ""
+    @State private var query = ThreadListShowcase.query
     @State private var hoveredThreadID: String?
+    @State private var searchThreadID: String?
     /// The archive opens closed: it is where threads go to stop being in the way.
     @State private var showArchived = false
     @State private var choosingAgent = NewThreadShowcase.agent != nil
@@ -839,18 +880,23 @@ public struct ThreadSidebar: View {
         workingThreads: Set<String> = [],
         selection: Binding<String?>,
         projects: [ProjectFolder] = [],
+        projectListStatus: ProjectListStatus = .ready,
+        onRefreshProjects: (() async -> Void)? = nil,
         onCreate: @escaping (ThreadAgent, String?) -> Void,
         onRename: @escaping (ThreadSummary, String) -> Void,
         onArchive: @escaping (ThreadSummary, Bool) -> Void,
         onPin: @escaping (ThreadSummary, Bool) -> Void = { _, _ in },
         onRead: @escaping (ThreadSummary, Bool) -> Void = { _, _ in },
         messageText: @escaping (String) -> String = { _ in "" },
-        exportMarkdown: ((ThreadSummary) -> String)? = nil
+        exportMarkdown: ((ThreadSummary) -> String)? = nil,
+        onSearchSelect: ((ThreadSearchRequest?) -> Void)? = nil
     ) {
         self.threads = threads
         self.workingThreads = workingThreads
         self._selection = selection
         self.projects = projects
+        self.projectListStatus = projectListStatus
+        self.onRefreshProjects = onRefreshProjects
         self.onCreate = onCreate
         self.onRename = onRename
         self.onArchive = onArchive
@@ -858,15 +904,27 @@ public struct ThreadSidebar: View {
         self.onRead = onRead
         self.messageText = messageText
         self.exportMarkdown = exportMarkdown
+        self.onSearchSelect = onSearchSelect
     }
 
     private var groups: ThreadGroups {
         ThreadGroups(threads.filter { threadMatches($0, query: query, body: messageText($0.id)) })
     }
 
+    private var navigationSelection: Binding<String?> {
+        Binding(get: { selection }, set: { id in
+            if let id { prepareSearchNavigation(id) }
+            else {
+                searchThreadID = nil
+                onSearchSelect?(nil)
+            }
+            selection = id
+        })
+    }
+
     public var body: some View {
         let groups = groups
-        List(selection: $selection) {
+        List(selection: navigationSelection) {
             if !groups.pinned.isEmpty {
                 Section("Pinned") { rows(groups.pinned) }
             }
@@ -874,7 +932,11 @@ public struct ThreadSidebar: View {
                 Section(section.title) { rows(section.threads) }
             }
             if !groups.archived.isEmpty {
-                Section { archive(groups.archived) }
+                if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Section { archive(groups.archived) }
+                } else {
+                    Section("Archived") { rows(groups.archived) }
+                }
             }
         }
         .listStyle(.sidebar)
@@ -891,10 +953,16 @@ public struct ThreadSidebar: View {
             // asks who should answer in the same modal as the keyboard shortcut.
             Button("New thread", systemImage: "square.and.pencil") { choosingAgent = true }
                 .sheet(isPresented: $choosingAgent) {
-                    NewThreadPicker(projects: projects, onStart: onCreate)
+                    NewThreadPicker(projects: projects, status: projectListStatus, onRefresh: onRefreshProjects, onStart: onCreate)
                 }
         }
         .renameAlert($renaming, onRename: onRename)
+        .onChange(of: selection) { _, id in
+            if searchThreadID != id {
+                searchThreadID = nil
+                onSearchSelect?(nil)
+            }
+        }
         #if os(macOS)
             // What the Mac's File menu acts on. Published from here because a new thread is the
             // list's business and outlives whichever one is open — see ``ThreadCommands``.
@@ -911,6 +979,19 @@ public struct ThreadSidebar: View {
         #endif
     }
 
+    private func prepareSearchNavigation(_ id: String) {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else {
+            searchThreadID = nil
+            onSearchSelect?(nil)
+            return
+        }
+        let request = searchRanges(in: messageText(id), term: needle).isEmpty
+            ? nil : ThreadSearchRequest(threadId: id, query: needle)
+        searchThreadID = request?.threadId
+        onSearchSelect?(request)
+    }
+
     private func archive(_ threads: [ThreadSummary]) -> some View {
         DisclosureGroup(isExpanded: $showArchived) {
             rows(threads)
@@ -925,6 +1006,9 @@ public struct ThreadSidebar: View {
                 ThreadRow(
                     thread: thread,
                     working: workingThreads.contains(thread.id),
+                    preview: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? nil : searchExcerpt(in: messageText(thread.id), matching: query),
+                    highlightQuery: query,
                     selected: selection == thread.id
                 )
                 Menu { menu(thread) } label: {
@@ -934,11 +1018,16 @@ public struct ThreadSidebar: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .opacity(hoveredThreadID == thread.id ? 1 : 0)
-                .allowsHitTesting(hoveredThreadID == thread.id)
+                .opacity(hoveredThreadID == thread.id || selection == thread.id ? 1 : 0)
+                .allowsHitTesting(hoveredThreadID == thread.id || selection == thread.id)
                 .accessibilityLabel("Thread actions")
             }
             .tag(thread.id)
+            .simultaneousGesture(TapGesture().onEnded { prepareSearchNavigation(thread.id) })
+            .accessibilityAction {
+                prepareSearchNavigation(thread.id)
+                selection = thread.id
+            }
             .listRowInsets(EdgeInsets(top: 3, leading: 8, bottom: 3, trailing: 8))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)

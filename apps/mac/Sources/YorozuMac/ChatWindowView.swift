@@ -15,6 +15,7 @@ import YorozuShared
 struct ChatWindowView: View {
     @State private var session = MacChatSession.shared
     @State private var selection: String?
+    @State private var searchRequest: ThreadSearchRequest?
     /// `.key` is this window being the key window of the active app, which is exactly the Mac's
     /// half of "somebody is looking at this": `.active` is a window in the active app that is
     /// not key, and `.inactive` is the whole app sitting behind something else.
@@ -42,6 +43,8 @@ struct ChatWindowView: View {
                 workingThreads: model.generating,
                 selection: $selection,
                 projects: model.projects,
+                projectListStatus: model.projectListStatus,
+                onRefreshProjects: { await model.refreshProjects() },
                 onCreate: { agent, cwd in selection = model.newDraft(agent: agent, cwd: cwd).id },
                 onRename: { model.rename($0, to: $1) },
                 onArchive: model.setArchived,
@@ -55,9 +58,10 @@ struct ChatWindowView: View {
                         if case .message(let data) = $0.payload { return data.text }
                         return nil
                     }
-                    .joined(separator: " ")
+                    .joined(separator: "\n\n")
                 },
-                exportMarkdown: model.markdown(of:)
+                exportMarkdown: model.markdown(of:),
+                onSearchSelect: { searchRequest = $0 }
             )
             .navigationSplitViewColumnWidth(
                 min: LayoutMetrics.sidebarMinWidth,
@@ -73,6 +77,7 @@ struct ChatWindowView: View {
                         thread: thread,
                         offlineNotice: "Runtime not reachable — see Settings for its state."
                     )
+                    .environment(\.threadSearchRequest, searchRequest)
                 } else {
                     ContentUnavailableView("No thread", systemImage: "bubble.left.and.bubble.right")
                 }

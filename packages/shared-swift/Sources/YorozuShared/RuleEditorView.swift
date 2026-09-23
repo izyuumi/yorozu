@@ -39,7 +39,7 @@ public struct RuleEditorView: View {
                 } footer: {
                     Text(
                         draft.decision == .never
-                            ? "A never rule wins over any allow rule it overlaps with."
+                            ? "The most specific matching rule applies. If equally specific rules conflict, Never allow wins."
                             : "Yorozu will do this without asking, until you revoke the rule."
                     )
                 }
@@ -59,8 +59,7 @@ public struct RuleEditorView: View {
                     if draft.hasCap {
                         TextField(
                             "Up to",
-                            value: $draft.maxAmount,
-                            format: .number
+                            text: $draft.amountText
                         )
                         .multilineTextAlignment(.trailing)
                         #if os(iOS)
@@ -72,12 +71,26 @@ public struct RuleEditorView: View {
                     Text("Anything over the cap is asked about as usual. The cap uses the transaction’s currency.")
                 }
 
-                Section {
-                    LabeledContent("This rule covers", value: draft.rule.summary)
-                        .font(.callout)
+                if draft.canSave {
+                    Section {
+                        LabeledContent("This rule covers", value: draft.rule.summary)
+                            .font(.callout)
+                    }
                 }
             }
             .formStyle(.grouped)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if let message = draft.validationMessage {
+                    Label(message, systemImage: "exclamationmark.circle")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(LayoutMetrics.stack)
+                        .background(.bar)
+                        .accessibilityIdentifier("ruleValidationMessage")
+                }
+            }
             .navigationTitle(title)
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -88,14 +101,17 @@ public struct RuleEditorView: View {
                         .keyboardShortcut(.cancelAction)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { onSave(draft.rule) }
-                        // A rule with every field widened to Any and no cap is exactly the
-                        // blanket authorization the spec does not support, so it cannot be saved.
-                        .disabled(!draft.isNarrowEnough)
+                    Button("Save") {
+                        guard draft.canSave else { return }
+                        onSave(draft.rule)
+                    }
+                        .disabled(!draft.canSave)
                 }
             }
         }
-        .frame(minWidth: 380, minHeight: 420)
+        #if os(macOS)
+            .frame(minWidth: 380, minHeight: 420)
+        #endif
     }
 
     /// One editable scope field.
@@ -124,6 +140,8 @@ public struct RuleEditorView: View {
                         .pickerStyle(.menu)
                         .fixedSize()
                         TextField(field.label, text: $field.value)
+                            .labelsHidden()
+                            .accessibilityLabel(field.label)
                             .textFieldStyle(.roundedBorder)
                             #if os(iOS)
                                 .textInputAutocapitalization(.never)
@@ -167,7 +185,22 @@ public struct RuleEditorView: View {
         public var decision: ApprovalRule.Decision
         public var fields: [Field]
         public var hasCap: Bool
-        public var maxAmount: Double
+        public var amountText: String
+        public var maxAmount: Double {
+            get {
+                let locale = Locale.current
+                let input = amountText.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard Self.hasValidGrouping(input, locale: locale) else { return .nan }
+                let normalized = input
+                    .replacingOccurrences(of: locale.groupingSeparator ?? "", with: "")
+                    .replacingOccurrences(of: locale.decimalSeparator ?? ".", with: ".")
+                    .map { character in
+                        character.wholeNumberValue.map(String.init) ?? String(character)
+                    }.joined()
+                return Double(normalized) ?? .nan
+            }
+            set { amountText = Self.amountInput(newValue) }
+        }
         public let currency: String?
 
         public var currencyLabel: String {
@@ -187,7 +220,7 @@ public struct RuleEditorView: View {
             enabled = rule.enabled
             decision = rule.decision
             hasCap = rule.maxAmount != nil
-            maxAmount = rule.maxAmount ?? 0
+            amountText = Self.amountInput(rule.maxAmount ?? 0)
             currency = rule.currency
             // Every field the wire knows about is offered, so a rule can be widened *and*
             // narrowed here — one the card prefilled with a recipient can gain a category.
@@ -202,20 +235,66 @@ public struct RuleEditorView: View {
             }
         }
 
-        /// The fields that actually constrain something. A field switched to Any, or left
-        /// blank, constrains nothing and is dropped rather than saved as an empty pattern.
+        /// The fields that actually constrain something. Validation prevents saving an
+        /// explicitly selected blank field; Any fields are omitted from the saved scope.
         var constrained: [Field] {
-            fields.filter { !$0.isAny && !$0.value.trimmingCharacters(in: .whitespaces).isEmpty }
+            fields.filter { !$0.isAny && !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         }
 
         /// A rule has to pin down at least one thing. Otherwise it authorizes a whole action
         /// class outright, which is the blanket grant v1.5 does not offer.
         public var isNarrowEnough: Bool { !constrained.isEmpty }
 
+        public var canSave: Bool { validationMessage == nil }
+
+        public var validationMessage: String? {
+            if let field = fields.first(where: {
+                !$0.isAny && $0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }) {
+                return String(localized: "Enter a value for \(field.label), or switch it to Any.")
+            }
+            guard isNarrowEnough else {
+                return String(localized: "Choose at least one scope field before saving.")
+            }
+            if hasCap, !maxAmount.isFinite || maxAmount < 0 {
+                return String(localized: "Enter a valid amount of zero or more.")
+            }
+            return nil
+        }
+
+        private static func amountInput(_ amount: Double) -> String {
+            // String(Double) preserves round-trip precision; currency display formatting may
+            // round a stored cap before the user has made any edit.
+            String(amount).replacingOccurrences(of: ".", with: Locale.current.decimalSeparator ?? ".")
+        }
+
+        private static func hasValidGrouping(_ input: String, locale: Locale) -> Bool {
+            guard let separator = locale.groupingSeparator, !separator.isEmpty,
+                  input.contains(separator) else { return true }
+            let parts = input.components(separatedBy: locale.decimalSeparator ?? ".")
+            guard parts.count <= 2, !parts.dropFirst().contains(where: { $0.contains(separator) }) else {
+                return false
+            }
+            var integer = parts[0]
+            if integer.first == "-" || integer.first == "+" { integer.removeFirst() }
+            let groups = integer.components(separatedBy: separator)
+            let formatter = NumberFormatter()
+            formatter.locale = locale
+            formatter.numberStyle = .decimal
+            let primary = formatter.groupingSize
+            let secondary = formatter.secondaryGroupingSize > 0 ? formatter.secondaryGroupingSize : primary
+            guard primary > 0,
+                  let first = groups.first, (1...secondary).contains(first.count),
+                  groups.last?.count == primary,
+                  groups.allSatisfy({ !$0.isEmpty && $0.allSatisfy { $0.wholeNumberValue != nil } })
+            else { return false }
+            return groups.dropFirst().dropLast().allSatisfy { $0.count == secondary }
+        }
+
         public var rule: ApprovalRule {
             let scope = Dictionary(
                 uniqueKeysWithValues: constrained.map {
-                    ($0.id, ApprovalRuleField(mode: $0.mode, value: $0.value.trimmingCharacters(in: .whitespaces)))
+                    ($0.id, ApprovalRuleField(mode: $0.mode, value: $0.value.trimmingCharacters(in: .whitespacesAndNewlines)))
                 }
             )
             return ApprovalRule(

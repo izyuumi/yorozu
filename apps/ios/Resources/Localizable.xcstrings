@@ -1,6 +1,422 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "The most specific matching rule applies. If equally specific rules conflict, Never allow wins." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Se aplica la regla coincidente más específica. Si entran en conflicto reglas igual de específicas, prevalece «No permitir nunca»." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "一致するルールのうち、最も具体的なものが適用されます。同じ具体性のルールが競合する場合は、「許可しない」が優先されます。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "일치하는 규칙 중 가장 구체적인 규칙이 적용됩니다. 구체성이 같은 규칙이 충돌하면 '허용 안 함'이 우선합니다." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "应用最具体的匹配规则。如果同样具体的规则发生冲突，则“永不允许”优先。" } }
+      }
+    },
+    "Archived" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Archivados" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アーカイブ済み" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "보관됨" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已归档" } }
+      }
+    },
+    "Choose photos or files for this message" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Elige fotos o archivos para este mensaje" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このメッセージに添付する写真やファイルを選びます" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이 메시지에 첨부할 사진이나 파일을 선택하세요" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "为此消息选择照片或文件" } }
+      }
+    },
+    "Some attachments couldn’t be added. A message can contain up to 10 attachments and 20 MB in total." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudieron añadir algunos archivos adjuntos. Un mensaje puede contener hasta 10 archivos adjuntos y un total de 20 MB." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "一部の添付ファイルを追加できませんでした。1つのメッセージに添付できるファイルは10個まで、合計20 MBまでです。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "일부 첨부 파일을 추가할 수 없습니다. 메시지 하나에 파일을 최대 10개, 총 20 MB까지 첨부할 수 있습니다." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "部分附件无法添加。每条消息最多可包含 10 个附件，总大小不得超过 20 MB。" } }
+      }
+    },
+    "Camera access is off" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "El acceso a la cámara está desactivado" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "カメラへのアクセスがオフです" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "카메라 접근이 꺼져 있습니다" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "相机访问已关闭" } }
+      }
+    },
+    "Allow camera access in Settings to scan, or enter the pairing code manually." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Permite el acceso a la cámara en Ajustes para escanear o introduce el código de emparejamiento manualmente." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スキャンするには「設定」でカメラへのアクセスを許可するか、ペアリングコードを手動で入力してください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "스캔하려면 설정에서 카메라 접근을 허용하거나 페어링 코드를 직접 입력하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请在“设置”中允许访问相机以进行扫描，或手动输入配对码。" } }
+      }
+    },
+    "Open Settings" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Abrir Ajustes" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "設定を開く" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "설정 열기" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开设置" } }
+      }
+    },
+    "Camera access is restricted" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "El acceso a la cámara está restringido" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "カメラへのアクセスが制限されています" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "카메라 접근이 제한되어 있습니다" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "相机访问受限" } }
+      }
+    },
+    "This device does not allow camera access. Enter the pairing code manually." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Este dispositivo no permite el acceso a la cámara. Introduce el código de emparejamiento manualmente." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このデバイスではカメラへのアクセスが許可されていません。ペアリングコードを手動で入力してください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이 기기에서는 카메라 접근이 허용되지 않습니다. 페어링 코드를 직접 입력하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此设备不允许访问相机。请手动输入配对码。" } }
+      }
+    },
+    "Scanning unavailable" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Escaneo no disponible" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スキャンを利用できません" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "스캔할 수 없습니다" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法扫描" } }
+      }
+    },
+    "This device cannot scan pairing codes. You can enter the code manually instead." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Este dispositivo no puede escanear códigos de emparejamiento. Puedes introducir el código manualmente." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このデバイスではペアリングコードをスキャンできません。代わりにコードを手動で入力できます。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이 기기에서는 페어링 코드를 스캔할 수 없습니다. 대신 코드를 직접 입력할 수 있습니다." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此设备无法扫描配对码。你可以改为手动输入代码。" } }
+      }
+    },
+    "Waiting for camera access…" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Esperando acceso a la cámara…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "カメラへのアクセス許可を待っています…" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "카메라 접근 권한 대기 중…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在等待相机访问权限…" } }
+      }
+    },
+    "Camera unavailable" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cámara no disponible" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "カメラを利用できません" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "카메라를 사용할 수 없습니다" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "相机不可用" } }
+      }
+    },
+    "Try the camera again, or enter the pairing code manually." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Vuelve a intentar usar la cámara o introduce el código de emparejamiento manualmente." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "カメラをもう一度試すか、ペアリングコードを手動で入力してください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "카메라를 다시 시도하거나 페어링 코드를 직접 입력하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请重试相机，或手动输入配对码。" } }
+      }
+    },
+    "Try camera again" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Volver a intentar con la cámara" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "カメラを再試行" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "카메라 다시 시도" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重试相机" } }
+      }
+    },
+    "Refresh folders" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Actualizar carpetas" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "フォルダを更新" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "폴더 새로 고침" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "刷新文件夹" } }
+      }
+    },
+    "Folders come from the host Mac’s projects directory (~/Projects by default). Add a project folder there, then refresh." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Las carpetas provienen del directorio de proyectos del Mac anfitrión (~/Projects por defecto). Añade allí una carpeta de proyecto y actualiza." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストMacのプロジェクトディレクトリ（デフォルトは ~/Projects）にあるフォルダを表示します。そこにプロジェクトフォルダを追加してから、更新してください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "호스트 Mac의 프로젝트 디렉터리(기본값: ~/Projects)에 있는 폴더를 표시합니다. 그곳에 프로젝트 폴더를 추가한 후 새로 고침하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "文件夹来自主机 Mac 的项目目录（默认为 ~/Projects）。请在那里添加项目文件夹，然后刷新。" } }
+      }
+    },
+    "Add a project folder on the host Mac to get started." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Añade una carpeta de proyecto en el Mac anfitrión para empezar." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストMacにプロジェクトフォルダを追加して始めましょう。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "시작하려면 호스트 Mac에 프로젝트 폴더를 추가하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请先在主机 Mac 上添加项目文件夹。" } }
+      }
+    },
+    "Loading project folders…" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cargando carpetas de proyectos…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "プロジェクトフォルダを読み込み中…" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "프로젝트 폴더 불러오는 중…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在加载项目文件夹…" } }
+      }
+    },
+    "Host Mac unavailable" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Mac anfitrión no disponible" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストMacに接続できません" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "호스트 Mac을 사용할 수 없음" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "主机 Mac 不可用" } }
+      }
+    },
+    "Connect to your host Mac to load its project folders." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Conéctate al Mac anfitrión para cargar sus carpetas de proyectos." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストMacに接続して、プロジェクトフォルダを読み込んでください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "프로젝트 폴더를 불러오려면 호스트 Mac에 연결하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请连接主机 Mac 以加载其项目文件夹。" } }
+      }
+    },
+    "Couldn’t load project folders" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudieron cargar las carpetas de proyectos" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "プロジェクトフォルダを読み込めませんでした" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "프로젝트 폴더를 불러올 수 없습니다" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法加载项目文件夹" } }
+      }
+    },
+    "Check that Yorozu is running on the host Mac, then refresh." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Comprueba que Yorozu esté abierto en el Mac anfitrión y actualiza." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストMacでYorozuが起動していることを確認してから、更新してください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "호스트 Mac에서 Yorozu가 실행 중인지 확인한 후 새로 고침하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请确认主机 Mac 上的 Yorozu 正在运行，然后刷新。" } }
+      }
+    },
+    "Host Mac unavailable. Showing previously loaded folders." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Mac anfitrión no disponible. Se muestran las carpetas cargadas anteriormente." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストMacに接続できません。前回読み込んだフォルダを表示しています。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "호스트 Mac을 사용할 수 없습니다. 이전에 불러온 폴더를 표시합니다." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "主机 Mac 不可用。正在显示之前加载的文件夹。" } }
+      }
+    },
+    "Couldn’t refresh. Showing previously loaded folders." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo actualizar. Se muestran las carpetas cargadas anteriormente." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "更新できませんでした。前回読み込んだフォルダを表示しています。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "새로 고칠 수 없습니다. 이전에 불러온 폴더를 표시합니다." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法刷新。正在显示之前加载的文件夹。" } }
+      }
+    },
+    "Starts a thread in this folder on the host Mac" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Inicia una conversación en esta carpeta del Mac anfitrión" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストMacのこのフォルダで会話を開始します" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "호스트 Mac의 이 폴더에서 대화를 시작합니다" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "在主机 Mac 的此文件夹中开始对话" } }
+      }
+    },
+    "Message %@" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Enviar un mensaje a %@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%@にメッセージを送信" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "%@에게 메시지 보내기" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "向 %@ 发送消息" } }
+      }
+    },
+    "Start with %@" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Empieza con %@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%@で始める" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "%@로 시작하기" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "开始使用 %@" } }
+      }
+    },
+    "Describe a change, ask about the code, or investigate a problem in this project." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Describe un cambio, pregunta sobre el código o investiga un problema en este proyecto." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このプロジェクトで行いたい変更を説明したり、コードについて質問したり、問題を調べたりできます。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이 프로젝트에서 변경할 내용을 설명하거나, 코드에 대해 질문하거나, 문제를 조사하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "描述更改、询问代码，或调查此项目中的问题。" } }
+      }
+    },
+    "Start a new thread and choose a project folder for this coding agent." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Inicia una nueva conversación y elige una carpeta de proyecto para este agente de programación." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "新しい会話を開始し、このコーディングエージェントのプロジェクトフォルダを選んでください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "새 대화를 시작하고 이 코딩 에이전트가 사용할 프로젝트 폴더를 선택하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请开始新对话，并为此编程智能体选择项目文件夹。" } }
+      }
+    },
+    "Project folder: %@" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Carpeta del proyecto: %@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "プロジェクトフォルダ：%@" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "프로젝트 폴더: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "项目文件夹：%@" } }
+      }
+    },
+    "Mac online" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Mac conectado" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Macはオンラインです" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "Mac 온라인" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Mac 在线" } }
+      }
+    },
+    "Loading attachments…" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cargando archivos adjuntos…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "添付ファイルを読み込み中…" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "첨부 파일 불러오는 중…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在加载附件…" } }
+      }
+    },
+    "Couldn’t load attachments" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudieron cargar los archivos adjuntos" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "添付ファイルを読み込めませんでした" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "첨부 파일을 불러올 수 없습니다" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法加载附件" } }
+      }
+    },
+    "Attachments couldn’t be added" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudieron añadir los archivos adjuntos" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "添付ファイルを追加できませんでした" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "첨부 파일을 추가할 수 없습니다" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法添加附件" } }
+      }
+    },
+    "Retry failed attachments" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Reintentar los archivos adjuntos fallidos" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "失敗した添付ファイルを再試行" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "실패한 첨부 파일 다시 시도" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重试失败的附件" } }
+      }
+    },
+    "Loading attachments" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cargando archivos adjuntos" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "添付ファイルを読み込み中" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "첨부 파일 불러오는 중" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在加载附件" } }
+      }
+    },
+    "Remove an attachment to add another" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Elimina un archivo adjunto para añadir otro" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "別のファイルを追加するには、添付ファイルを1つ取り除いてください" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "다른 파일을 추가하려면 첨부 파일 하나를 제거하세요" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请移除一个附件后再添加其他附件" } }
+      }
+    },
+    "Each attachment must be 5 MB or smaller." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cada archivo adjunto debe ocupar 5 MB o menos." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "各添付ファイルは5 MB以下にしてください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "첨부 파일은 각각 5 MB 이하여야 합니다." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "每个附件不得超过 5 MB。" } }
+      }
+    },
+    "Couldn’t read the image. Copy it again or choose another file." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo leer la imagen. Cópiala de nuevo o elige otro archivo." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "画像を読み取れませんでした。もう一度コピーするか、別のファイルを選んでください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이미지를 읽을 수 없습니다. 다시 복사하거나 다른 파일을 선택하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法读取图片。请重新复制或选择其他文件。" } }
+      }
+    },
+    "Couldn’t open the selected files. Choose them again and check that they’re available on this device." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudieron abrir los archivos seleccionados. Selecciónalos de nuevo y comprueba que estén disponibles en este dispositivo." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "選択したファイルを開けませんでした。もう一度選択し、このデバイスで利用できることを確認してください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "선택한 파일을 열 수 없습니다. 다시 선택하고 이 기기에서 사용할 수 있는지 확인하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法打开所选文件。请重新选择，并确认此设备可以访问这些文件。" } }
+      }
+    },
+    "Couldn’t read the photo. Try taking it again." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo leer la foto. Intenta tomarla de nuevo." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "写真を読み取れませんでした。もう一度撮影してください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "사진을 읽을 수 없습니다. 다시 촬영해 보세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法读取照片。请重新拍摄。" } }
+      }
+    },
+    "Couldn’t load: %@. Try again, or choose another file." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo cargar: %@. Inténtalo de nuevo o elige otro archivo." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "読み込めませんでした：%@。もう一度試すか、別のファイルを選んでください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "불러올 수 없습니다: %@. 다시 시도하거나 다른 파일을 선택하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法加载：%@。请重试或选择其他文件。" } }
+      }
+    },
+    "Couldn’t load the attachments. Choose them again." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudieron cargar los archivos adjuntos. Selecciónalos de nuevo." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "添付ファイルを読み込めませんでした。もう一度選択してください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "첨부 파일을 불러올 수 없습니다. 다시 선택하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法加载附件。请重新选择。" } }
+      }
+    },
+    "Couldn’t read: %@. Choose another file." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo leer: %@. Elige otro archivo." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "読み取れませんでした：%@。別のファイルを選んでください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "읽을 수 없습니다: %@. 다른 파일을 선택하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法读取：%@。请选择其他文件。" } }
+      }
+    },
+    "Too large: %@. Each attachment must be 5 MB or smaller." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Demasiado grande: %@. Cada archivo adjunto debe ocupar 5 MB o menos." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイズが大きすぎます：%@。各添付ファイルは5 MB以下にしてください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "파일이 너무 큽니다: %@. 첨부 파일은 각각 5 MB 이하여야 합니다." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "文件过大：%@。每个附件不得超过 5 MB。" } }
+      }
+    },
+    "A message can contain up to 10 attachments. Remove one to add another." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Un mensaje puede contener hasta 10 archivos adjuntos. Elimina uno para añadir otro." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "1つのメッセージに添付できるファイルは10個までです。別のファイルを追加するには、1つ取り除いてください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "메시지 하나에 파일을 최대 10개까지 첨부할 수 있습니다. 다른 파일을 추가하려면 하나를 제거하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "每条消息最多可包含 10 个附件。请移除一个后再添加其他附件。" } }
+      }
+    },
+    "Send answer" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Enviar respuesta" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "回答を送信" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "답변 보내기" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "发送回答" } }
+      }
+    },
+    "Enter a value for %@, or switch it to Any." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Introduce un valor para %@ o cambia a Cualquiera." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%@の値を入力するか、「任意」に切り替えてください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "%@의 값을 입력하거나 모두로 전환하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请输入 %@ 的值，或切换为“任意”。" } }
+      }
+    },
+    "Choose at least one scope field before saving." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Elige al menos un campo de alcance antes de guardar." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "保存する前に、適用範囲の項目を1つ以上選んでください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "저장하기 전에 적용 범위 필드를 하나 이상 선택하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "保存前请至少选择一个适用范围字段。" } }
+      }
+    },
+    "Enter a valid amount of zero or more." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Introduce un importe válido igual o superior a cero." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "0以上の有効な金額を入力してください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "0 이상의 올바른 금액을 입력하세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请输入有效的非负金额。" } }
+      }
+    },
+    "Wait for attachments to finish loading, then paste again." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Espera a que terminen de cargarse los archivos adjuntos e intenta pegar de nuevo." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "添付ファイルの読み込みが完了してから、もう一度貼り付けてください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "첨부 파일을 모두 불러온 후 다시 붙여 넣으세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请等待附件加载完成，然后重新粘贴。" } }
+      }
+    },
     "Show full action" : {
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Mostrar la acción completa" } },

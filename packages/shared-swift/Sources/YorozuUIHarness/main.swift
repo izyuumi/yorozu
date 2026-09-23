@@ -1,6 +1,7 @@
 /// SwiftUI screenshots and timing. No app bundle, account or network.
 /// Layout fixtures briefly host native windows so AppKit lists actually draw.
-/// swift run --package-path packages/shared-swift YorozuUIHarness /tmp/yorozu-ui
+/// swift run --package-path packages/shared-swift YorozuUIHarness /tmp/yorozu-ui --screenshots-only
+/// Add --round-two for adversarial questions, messages, agent states, folders and search.
 import AppKit
 import CryptoKit
 import Foundation
@@ -22,10 +23,84 @@ actor HarnessTransport: ChatTransport {
 }
 
 @main struct Harness {
+    @MainActor static func render<V: View>(_ scene: V, name: String, width: Double, height: Double? = nil, dark: Bool, output: URL) async throws {
+        let host = NSHostingView(rootView: scene.frame(width: width).background(dark ? Color.black : Color.white).environment(\.colorScheme, dark ? .dark : .light))
+        host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        host.frame = CGRect(origin: .zero, size: CGSize(width: width, height: height ?? host.fittingSize.height))
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil) }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(120))
+        if height == nil { host.frame = CGRect(origin: .zero, size: host.fittingSize) }
+        host.layoutSubtreeIfNeeded()
+        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { throw NSError(domain: "UIHarness", code: 6) }
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        guard let png = bitmap.representation(using: .png, properties: [:]) else { throw NSError(domain: "UIHarness", code: 7) }
+        try png.write(to: output.appendingPathComponent("\(name).png"))
+        print("REVIEW_DIAGNOSTIC \(name) \(bitmap.pixelsWide)x\(bitmap.pixelsHigh)")
+    }
+
     @MainActor static func main() async throws {
         NSApplication.shared.setActivationPolicy(.prohibited)
         let output = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "/tmp/yorozu-ui")
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        if CommandLine.arguments.contains("--round-two") {
+            let option = "Choose the complete vegetarian dinner plan for the entire family, including substitutions, allergies, and shopping instructions. OPTION_END_MARKER"
+            let question = QuestionCardData(questionId: "long-question", question: "Which complete dinner plan should we prepare for the family this weekend? QUESTION_END_MARKER", options: [option, "Keep the existing plan"], allowOther: true)
+            for width in [320.0, 640.0] {
+                for dark in [false, true] {
+                    let suffix = "\(Int(width))-\(dark ? "dark" : "light")"
+                    try await render(QuestionCardView(card: question) { print("QUESTION_ANSWER \($0)") }.padding(16), name: "question-pending-\(suffix)", width: width, dark: dark, output: output)
+                    let progress = ProgressCardData(cardId: "progress", title: "Prepare the complete dinner plan", steps: ProgressStep.State.allCases.map { ProgressStep(label: "Review every requirement and preserve the full instructions for this \($0.rawValue) step. STEP_END_MARKER", state: $0) })
+                    try await render(ProgressCardView(card: progress, activity: "Checking every ingredient and preparation step").padding(16), name: "progress-\(suffix)", width: width, dark: dark, output: output)
+                    try await render(QuestionCardView(card: question, answered: true, chosen: option) { _ in }.padding(16), name: "question-answered-\(suffix)", width: width, dark: dark, output: output)
+                    let text = "Review this result before continuing.\n\n```shell\necho \(String(repeating: "long-command-", count: 14))CODE_END_MARKER\n```\n\n| Choice | Detail |\n| --- | --- |\n| Vegetarian | \(String(repeating: "Shopping detail ", count: 10))TABLE_END_MARKER |"
+                    try await render(MessageBubble(id: "message-actions", data: MessageData(role: .agent, text: text, done: true), onRetry: {}, onDelete: {}).padding(16), name: "message-actions-\(suffix)", width: width, dark: dark, output: output)
+                    try await render(MessageBubble(id: "user-failed", data: MessageData(role: .user, text: "Please keep this unsent request until the Mac reconnects."), status: .failed, onDelete: {}, onResend: {}).padding(16), name: "message-failed-\(suffix)", width: width, dark: dark, output: output)
+                    try await render(RuleEditorView(rule: ApprovalRule(id: "rule", actionClass: "send-message", decision: .always, scope: ["recipient": ApprovalRuleField(mode: .exact, value: "family@example.com")]), title: "Always allow", onSave: { _ in }, onCancel: {}), name: "rule-editor-\(suffix)", width: width, height: 640, dark: dark, output: output)
+                }
+            }
+            for dark in [false, true] {
+                try await render(RuleEditorView(rule: ApprovalRule(id: "invalid-rule", actionClass: "send-message", decision: .always), title: "Always allow", onSave: { _ in }, onCancel: {}), name: "rule-invalid-380-\(dark ? "dark" : "light")", width: 380, height: 420, dark: dark, output: output)
+            }
+            let emptyTransport = HarnessTransport()
+            let emptyModel = ChatModel(transport: emptyTransport)
+            emptyModel.start()
+            while !emptyModel.ownerOnline { await Task.yield() }
+            for agent in [ThreadAgent.codex, .claudeCode, .yorozu] {
+                let thread = ThreadSummary(id: "empty-\(agent.rawValue)", title: "", archived: false, lastActivity: 0, agent: agent, cwd: agent == .yorozu ? nil : "/Users/example/Projects/資料 and a project with a long directory name")
+                for width in [280.0, 640.0] {
+                    for dark in [false, true] {
+                        try await render(ChatView(model: emptyModel, thread: thread), name: "empty-\(agent.rawValue)-\(Int(width))-\(dark ? "dark" : "light")", width: width, height: 420, dark: dark, output: output)
+                    }
+                }
+            }
+            emptyModel.close()
+            NewThreadShowcase.agent = .codex
+            for status in [ProjectListStatus.loading, .ready, .offline, .failed] {
+                for dark in [false, true] {
+                    try await render(NewThreadPicker(projects: [], status: status, onRefresh: {}) { _, _ in }, name: "picker-\(status)-380-\(dark ? "dark" : "light")", width: 380, height: 480, dark: dark, output: output)
+                }
+            }
+            for dark in [false, true] {
+                try await render(NewThreadPicker(projects: [ProjectFolder(path: "/Users/example/Projects/資料 and a project with a long directory name/selected-project", name: "selected-project")], status: .ready, onRefresh: {}) { _, _ in }, name: "picker-longpath-380-\(dark ? "dark" : "light")", width: 380, height: 480, dark: dark, output: output)
+            }
+            NewThreadShowcase.agent = nil
+            let searchThreads = [
+                ThreadSummary(id: "metadata", title: "Implement settings", archived: false, lastActivity: Date().timeIntervalSince1970 * 1000, agent: .claudeCode, cwd: "/Users/example/Projects/app"),
+                ThreadSummary(id: "archived", title: "Archived lunar review", archived: true, lastActivity: 0, agent: .codex)
+            ]
+            for query in ["Claude", "lunar"] {
+                ThreadListShowcase.query = query
+                for dark in [false, true] {
+                    try await render(ThreadSidebar(threads: searchThreads, selection: .constant(nil), onCreate: { _, _ in }, onRename: { _, _ in }, onArchive: { _, _ in }), name: "search-\(query)-320-\(dark ? "dark" : "light")", width: 320, height: 420, dark: dark, output: output)
+                }
+            }
+            ThreadListShowcase.query = ""
+            return
+        }
         let card = ApprovalCardData(actionId: "approval", actionClass: "Bash", target: "swift test --package-path packages/shared-swift", nativeAgent: .claudeCode)
         for width in [390.0, 900.0] {
             for dark in [false, true] {

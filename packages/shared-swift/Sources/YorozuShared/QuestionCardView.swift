@@ -30,12 +30,14 @@ public struct QuestionCardView: View {
         VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
             Label(card.question, systemImage: "questionmark.bubble")
                 .font(.headline)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             if answered {
                 Label(chosen.map { "Answered: \($0)" } ?? String(localized: "Answered"), systemImage: "checkmark.circle.fill")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 // One per line: the options are sentences, not words, and a row of them
                 // truncates the moment Dynamic Type grows.
@@ -43,11 +45,13 @@ public struct QuestionCardView: View {
                     ForEach(card.options, id: \.self) { option in
                         Button { answer(option) } label: {
                             Text(option)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, minHeight: controlTarget, alignment: .leading)
                                 .padding(.vertical, 2)
                         }
-                        .buttonStyle(.bordered)
-                        .frame(minHeight: controlTarget)
+                        .buttonStyle(QuestionOptionStyle())
                     }
                 }
                 if card.offersFreeText { freeText }
@@ -67,12 +71,15 @@ public struct QuestionCardView: View {
                 .padding(.vertical, LayoutMetrics.inner)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: LayoutMetrics.controlRadius, style: .continuous))
                 .onSubmit(sendOther)
-            Button("Send", systemImage: "arrow.up.circle.fill", action: sendOther)
-                .labelStyle(.iconOnly)
+            Button(action: sendOther) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .frame(minWidth: controlTarget, minHeight: controlTarget)
+                    .contentShape(Rectangle())
+            }
                 .font(.title3)
                 .buttonStyle(.plain)
                 .disabled(trimmed.isEmpty)
-                .frame(minWidth: controlTarget, minHeight: controlTarget)
+                .accessibilityLabel("Send answer")
         }
     }
 
@@ -82,5 +89,25 @@ public struct QuestionCardView: View {
         guard !trimmed.isEmpty else { return }
         writing = false
         answer(trimmed)
+    }
+}
+
+/// AppKit's bordered button makes sentence-length labels single-line even when the Text can
+/// wrap. Keep the full option as the button label and draw its pressed state around that label.
+private struct QuestionOptionStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, LayoutMetrics.inner)
+            .padding(.vertical, LayoutMetrics.tight)
+            .foregroundStyle(.primary)
+            .background(
+                configuration.isPressed ? YorozuPalette.stone : YorozuPalette.canvas,
+                in: RoundedRectangle(cornerRadius: LayoutMetrics.controlRadius, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: LayoutMetrics.controlRadius, style: .continuous)
+                    .strokeBorder(YorozuPalette.rule, lineWidth: 0.8)
+            }
+            .contentShape(Rectangle())
     }
 }

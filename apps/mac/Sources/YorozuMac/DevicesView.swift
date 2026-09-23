@@ -9,10 +9,11 @@ struct DevicesView: View {
     @ObservedObject var sidecar: Sidecar
     @State private var pairing = false
     @State private var confirmingRemoval: DeviceInfo?
+    @State private var expandedDeviceIDs: Set<String> = []
 
     private var model: ChatModel { MacChatSession.shared.model }
 
-    /// A paired phone, not this Mac's own client: only those are ours to revoke.
+    /// A paired remote device, not this Mac's own client: only those are ours to revoke.
     private func removable(_ device: DeviceInfo) -> Bool { device.via == .relay }
 
     var body: some View {
@@ -23,16 +24,41 @@ struct DevicesView: View {
             }
 
             if model.devices.isEmpty {
-                Text("No devices yet. Pair your phone to chat with this Mac from it.")
+                Text("No devices yet. Pair an iPhone, iPad, or another Mac to chat with this Mac.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
             List(model.devices) { device in
                 HStack(spacing: 8) {
-                    Image(systemName: device.via == .local ? "laptopcomputer" : "iphone")
-                        .accessibilityLabel(device.via == .local ? "Mac" : "Phone")
+                    // The protocol reports the connection, not the device's hardware type.
+                    Image(systemName: device.via == .local ? "laptopcomputer" : "network")
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(device.shortId).font(.system(.body, design: .monospaced))
+                        Text(device.via == .local ? "This Mac" : "Paired device")
+                            .fontWeight(.medium)
+                        Button {
+                            if !expandedDeviceIDs.insert(device.pub).inserted {
+                                expandedDeviceIDs.remove(device.pub)
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: expandedDeviceIDs.contains(device.pub) ? "chevron.down" : "chevron.right")
+                                    .font(.caption2)
+                                    .accessibilityHidden(true)
+                                Text("Device ID: \(device.shortId)")
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .font(.caption)
+                        .buttonStyle(.plain)
+                        .accessibilityValue(expandedDeviceIDs.contains(device.pub) ? Text("Expanded") : Text("Collapsed"))
+                        if expandedDeviceIDs.contains(device.pub) {
+                            Text(device.pub)
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         Text(subtitle(device)).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -41,6 +67,7 @@ struct DevicesView: View {
                         .accessibilityLabel(device.online ? "online" : "offline")
                     if removable(device) {
                         Button("Remove", role: .destructive) { confirmingRemoval = device }
+                            .accessibilityLabel("Remove device \(device.shortId)")
                     }
                 }
             }
@@ -48,7 +75,6 @@ struct DevicesView: View {
             .frame(minHeight: 160)
 
             Button("Pair Another Device…") {
-                sidecar.newCode()
                 pairing = true
             }
             Text("Removing a device forgets its key here and at the relay: it has to pair again.")
@@ -66,7 +92,6 @@ struct DevicesView: View {
         .sheet(isPresented: $pairing) {
             PairingSheet(
                 sidecar: sidecar,
-                existingDeviceIDs: Set(model.devices.filter(removable).map(\.pub)),
                 done: { pairing = false }
             )
             // Esc closes a sheet on the Mac; a sheet with no Cancel button has to say so itself.
@@ -85,17 +110,16 @@ struct DevicesView: View {
                 confirmingRemoval = nil
             }
             Button("Cancel", role: .cancel) { confirmingRemoval = nil }
-        } message: { _ in
-            Text("It will forget its key here and at the relay, and must pair again.")
+        } message: { device in
+            Text("Remove paired device \(device.shortId)? Device ID: \(device.pub)\n\nThis device will lose access to this Mac and must pair again to reconnect.")
         }
     }
 
     private func subtitle(_ device: DeviceInfo) -> String {
-        if device.via == .local { return "This Mac" }
-        if device.online { return "Online now" }
-        guard device.lastSeen > 0 else { return "Paired" }
+        if device.online { return String(localized: "Online now") }
+        guard device.lastSeen > 0 else { return String(localized: "Paired") }
         let seen = Date(timeIntervalSince1970: device.lastSeen / 1000)
-        return "Last seen \(seen.formatted(.relative(presentation: .named)))"
+        return String(localized: "Last seen \(seen.formatted(.relative(presentation: .named)))")
     }
 }
 
@@ -103,7 +127,6 @@ struct DevicesView: View {
 /// pairing is something you do once per device, not a setting.
 struct PairingSheet: View {
     @ObservedObject var sidecar: Sidecar
-    let existingDeviceIDs: Set<String>
     var done: () -> Void
     var autoDismiss = true
     var onPaired: () -> Void = {}
@@ -111,6 +134,9 @@ struct PairingSheet: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var paired = false
+    @State private var progress = DevicePairingProgress()
+    @State private var preparationFailed = false
+    @State private var attempt = 0
 
     private var model: ChatModel { MacChatSession.shared.model }
 
@@ -128,17 +154,48 @@ struct PairingSheet: View {
                     .multilineTextAlignment(.center)
             } else {
                 Text("Pair a device").font(.headline)
-                if let qr = sidecar.qr {
+                if progress.baseline == nil {
+                    VStack(spacing: 8) {
+                        if preparationFailed {
+                            Text("Couldn’t load paired devices").font(.headline)
+                            Text("Check the connection in General settings, then try again.")
+                                .font(.callout).foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                            Button("Try again") { attempt += 1 }
+                        } else {
+                            ProgressView("Checking paired devices…")
+                        }
+                    }
+                    .frame(height: 220)
+                } else if let qr = sidecar.qr {
                     Image(nsImage: qr)
                         .interpolation(.none)
                         .resizable()
                         .frame(width: 220, height: 220)
                         .accessibilityLabel("Pairing QR code")
-                    Text("Scan from the Yorozu iOS app.").font(.caption).foregroundStyle(.secondary)
+                    Text("Scan with Yorozu on your iPhone or iPad.").font(.caption).foregroundStyle(.secondary)
                 } else {
-                    ProgressView("Waiting for the runtime…").frame(height: 220)
+                    if sidecar.state == "stopped" || sidecar.state == "closed"
+                        || sidecar.state.hasPrefix("restarting") || sidecar.state.hasPrefix("failed") {
+                        VStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                                .font(.largeTitle)
+                            Text("Pairing is temporarily unavailable").font(.headline)
+                            Text("Check the connection in General settings. When Yorozu reconnects, request a new code.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(height: 220)
+                    } else if sidecar.pairingString == nil {
+                        ProgressView("Preparing a pairing code…").frame(height: 220)
+                    } else {
+                        Text("Use the pairing code below to connect your device.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                if let code = sidecar.pairingString {
+                if progress.baseline != nil, let code = sidecar.pairingString {
                     HStack {
                         Text(code)
                             .lineLimit(1)
@@ -159,13 +216,16 @@ struct PairingSheet: View {
                             NSPasteboard.general.setString(code, forType: .string)
                         }
                     }
-                    Text("Or paste this code into the app.").font(.caption).foregroundStyle(.secondary)
+                    Text("Or paste this code into Yorozu on your iPhone, iPad, or another Mac.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
                 if showsActions {
                     HStack {
                         Button("New code") { sidecar.newCode() }
+                            .disabled(progress.baseline == nil)
                         Spacer()
-                        Button("Done", action: done).keyboardShortcut(.defaultAction)
+                        Button("Close", action: done).keyboardShortcut(.defaultAction)
                     }
                 }
             }
@@ -174,28 +234,38 @@ struct PairingSheet: View {
         .frame(width: 380)
         .frame(minHeight: 180)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: paired)
-        .task {
-            // Establish what was already paired before looking for the device using this code.
-            // A fresh host has not necessarily received its first device list yet.
+        .task(id: attempt) {
+            // Do not expose a code until a fresh list establishes which devices already exist.
+            // Once visible, freeze that baseline: even an immediate pairing must count.
+            preparationFailed = false
+            let revision = model.deviceListRevision
             model.requestDevices()
-            try? await Task.sleep(for: .milliseconds(500))
-            let baseline = existingDeviceIDs.union(
-                model.devices.filter { $0.via == .relay }.map(\.pub)
-            )
+            let deadline = Date().addingTimeInterval(10)
+            while model.deviceListRevision == revision, !Task.isCancelled {
+                guard Date() < deadline else {
+                    preparationFailed = true
+                    return
+                }
+                do { try await Task.sleep(for: .milliseconds(100)) }
+                catch { return }
+            }
+            guard !Task.isCancelled else { return }
+            progress.establishBaseline(model.devices)
+            sidecar.newCode()
             while !Task.isCancelled, !paired {
                 model.requestDevices()
-                if model.devices.contains(where: {
-                    $0.via == .relay && !baseline.contains($0.pub)
-                }) {
+                if progress.newlyPaired(in: model.devices) {
                     paired = true
                     onPaired()
                     if autoDismiss {
-                        try? await Task.sleep(for: .seconds(1.2))
+                        do { try await Task.sleep(for: .seconds(1.2)) }
+                        catch { return }
                         done()
                     }
                     return
                 }
-                try? await Task.sleep(for: .seconds(0.5))
+                do { try await Task.sleep(for: .seconds(0.5)) }
+                catch { return }
             }
         }
     }

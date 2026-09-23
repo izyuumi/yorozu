@@ -14,7 +14,7 @@ struct PermissionBadge: View {
             Label("Asking macOS…", systemImage: "hourglass")
                 .foregroundStyle(.secondary)
         } else {
-            Label(granted ? "Granted" : "Waiting…", systemImage: granted ? "checkmark.circle.fill" : "circle.dotted")
+            Label(granted ? "Granted" : "Not granted", systemImage: granted ? "checkmark.circle.fill" : "circle")
                 .foregroundStyle(granted ? .green : .secondary)
         }
     }
@@ -61,7 +61,7 @@ struct PermissionStatusRow: View {
             if permission.canPrompt || permission.settingsURL != nil {
                 HStack {
                     Spacer()
-                    if permission.canPrompt {
+                    if permission.canPrompt && !granted {
                         Button("Request") { Task { await ask() } }
                             .disabled(asking)
                     }

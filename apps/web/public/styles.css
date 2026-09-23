@@ -15,6 +15,7 @@
   --amber-deep: oklch(0.7 0.16 72);
   --amber-ink: oklch(0.32 0.08 68);
   --red: oklch(0.55 0.19 35);
+  --on-red: white;
   --red-bg: oklch(0.96 0.03 45);
   --shadow: 0 30px 80px -30px oklch(0.3 0.08 70 / 0.55);
   --page: min(1120px, calc(100% - clamp(32px, 6vw, 64px)));
@@ -35,6 +36,7 @@
     --muted: oklch(0.76 0.015 80);
     --line: oklch(0.3 0.015 60);
     --red: oklch(0.74 0.16 35);
+    --on-red: oklch(0.16 0.012 60);
     --red-bg: oklch(0.25 0.05 40);
     --shadow: 0 30px 80px -30px oklch(0 0 0 / 0.8);
   }
@@ -104,7 +106,7 @@ header nav .button { margin-left: 8px; }
 .button:hover { transform: translateY(-1px); }
 .button:active { transform: translateY(0); transition-duration: 0.08s; }
 header nav a.button { min-height: 38px; padding: 0 16px; font-size: 14px; background: var(--ink); color: var(--canvas); }
-header nav a.button:hover { background: var(--red); color: white; }
+header nav a.button:hover { background: var(--red); color: var(--on-red); }
 .button.ghost { background: transparent; color: inherit; box-shadow: inset 0 0 0 2px currentColor; }
 .button.ghost:hover { background: oklch(1 0 0 / 0.25); }
 
@@ -223,8 +225,15 @@ section[id] { scroll-margin-top: 24px; }
   transition: background-color 0.2s, transform 0.35s var(--ease);
 }
 .copy:hover { transform: translateY(-1px); }
-.copy.done { background: var(--red); color: white; }
+.copy.done { background: var(--red); color: var(--on-red); }
 .agent-setup .fine { margin-top: 14px; }
+.copy-status { margin-top: 12px; font-size: 14px; color: var(--muted); }
+.copy-status:empty { margin-top: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .button, .copy { transition: none; }
+  .button:hover, .button:active, .copy:hover { transform: none; }
+}
 
 /* Warning */
 

@@ -389,6 +389,10 @@ final class Session {
                 paired: stored.paired == true,
                 onPaired: PairingStore.markPaired
             )
+            // A later pairing attempt replaces the previous reconnect loop as well as its UI.
+            self.model?.onPaired = nil
+            self.model?.onThreads = nil
+            self.model?.close()
             self.relay = relay
             // A token that arrived before there was a relay to tell — registration is asked for
             // at launch, and iOS answers whenever it likes — is told now rather than never.
@@ -451,6 +455,10 @@ struct RootView: View {
     /// Screenshot only: `-yorozuShowcase share` draws the share extension's composer here,
     /// because a simulator cannot be made to open a real share sheet.
     @State private var shareShowcase = ChatShowcase.share
+    #if DEBUG
+    @State private var showcasePairingConnecting = false
+    @State private var showcasePairingError: String?
+    #endif
 
     private var actualConnection: ConnectionState {
         guard let model = session.model else { return .reconnecting }
@@ -570,9 +578,23 @@ struct RootView: View {
             PairView(onPair: { _ in String(localized: "Not a Yorozu pairing code.") })
         } else if let pairingScene = launchArgument("yorozuShowcase"), pairingScene.hasPrefix("pairing") {
             PairingFlowView(
-                onPair: { _ in String(localized: "Not a Yorozu pairing code.") },
+                onPair: { _ in
+                    guard pairingScene == "pairing-connection-failure" else {
+                        return String(localized: "Not a Yorozu pairing code.")
+                    }
+                    showcasePairingError = nil
+                    showcasePairingConnecting = true
+                    Task {
+                        try? await Task.sleep(for: .seconds(2))
+                        showcasePairingConnecting = false
+                        showcasePairingError = String(localized: "Couldn’t connect. Generate a new pairing code and try again.")
+                    }
+                    return nil
+                },
                 onDemo: {},
-                externalError: pairingScene == "pairing-error" ? String(localized: "Not a Yorozu pairing code.") : nil
+                externalError: pairingScene == "pairing-error"
+                    ? String(localized: "Not a Yorozu pairing code.") : showcasePairingError,
+                connecting: pairingScene == "pairing-connecting" || showcasePairingConnecting
             )
         } else if let model = session.model, !session.isPairing {
             pairedContent(model)
@@ -595,6 +617,8 @@ struct RootView: View {
                 connection: connection.state,
                 path: $path,
                 projects: model.projects,
+                projectListStatus: model.projectListStatus,
+                onRefreshProjects: { await model.refreshProjects() },
                 onCreate: { agent, cwd in path = [model.newDraft(agent: agent, cwd: cwd).id] },
                 onRename: { model.rename($0, to: $1) },
                 onArchive: model.setArchived,
@@ -611,7 +635,7 @@ struct RootView: View {
                         if case .message(let data) = $0.payload { return data.text }
                         return nil
                     }
-                    .joined(separator: " ")
+                    .joined(separator: "\n\n")
                 },
                 exportMarkdown: model.markdown(of:),
                 onSettings: { settings = true }
@@ -686,7 +710,7 @@ struct RootView: View {
             externalError: session.failure ?? session.model?.failure.map { _ in
                 String(localized: "Couldn’t connect. Generate a new pairing code and try again.")
             },
-            connecting: session.isPairing && session.model?.failure == nil
+            connecting: session.isPairing && session.failure == nil && session.model?.failure == nil
         )
     }
 

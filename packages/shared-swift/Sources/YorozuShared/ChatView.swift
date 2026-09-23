@@ -24,6 +24,7 @@ public struct ChatView: View {
     /// Where a pairing code tapped in a message goes; the app sets it, and the default drops
     /// the link. See ``OpenURLAction/chatLinks(onPairingLink:)``.
     @Environment(\.onPairingLink) private var onPairingLink
+    @Environment(\.threadSearchRequest) private var threadSearchRequest
 
     /// Whether geometry currently reaches the newest message. Reader intent is tracked
     /// separately because async row growth can make this false without any manual scroll.
@@ -39,6 +40,13 @@ public struct ChatView: View {
     /// Id of the reply whose first token just landed, which is the moment worth a tap.
     @State private var replyStarted: String?
     @State private var attachmentTooLarge = false
+    @State private var attachmentLoading = false
+    @State private var attachmentFailure: String?
+    @State private var searchRequestRevision = UUID()
+    @State private var pendingExternalSearch = false
+    @State private var handledNotificationResume: UUID?
+    @State private var suppressedSearchRequest: UUID?
+    @State private var supersededNotificationResume: UUID?
     #if os(macOS)
         @FocusState private var composerFocused: Bool
     #endif
@@ -77,6 +85,8 @@ public struct ChatView: View {
         self.onCreate = onCreate
         self.offlineNotice = offlineNotice
     }
+
+    private var presentation: ThreadPresentation { ThreadPresentation(thread: thread) }
 
     private var events: [YorozuEvent] { model.timeline(thread.id).events }
 
@@ -140,9 +150,12 @@ public struct ChatView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityElement(children: .contain)
             }
+            if let path = presentation.projectPath {
+                projectContext(path)
+            }
             Group {
                 if rows.isEmpty {
-                    EmptyThreadView()
+                    EmptyThreadView(presentation: presentation)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     // Every link in a message is text the model wrote. Only the web and mail
@@ -159,7 +172,8 @@ public struct ChatView: View {
         .environment(\.fetchToolResult) { model.requestToolResult($0, in: thread.id) }
         .sheet(isPresented: $choosingAgent) {
             if let onCreate {
-                NewThreadPicker(projects: model.projects, onStart: onCreate)
+                NewThreadPicker(projects: model.projects, status: model.projectListStatus,
+                    onRefresh: { await model.refreshProjects() }, onStart: onCreate)
                     .presentationDetents([.medium, .large])
             }
         }
@@ -180,7 +194,7 @@ public struct ChatView: View {
         .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 7) {
-                        YorozuMark(dimension: 20)
+                        AgentMarkView(presentation.agent, size: 20)
                         VStack(alignment: .leading, spacing: 0) {
                             Text(thread.displayTitle)
                                 .font(.subheadline.weight(.semibold))
@@ -189,7 +203,8 @@ public struct ChatView: View {
                                 Circle()
                                     .fill(model.ownerOnline ? YorozuPalette.sage : Color.secondary)
                                     .frame(width: 5, height: 5)
-                                Text(thread.agent?.label ?? "Yorozu")
+                                    .accessibilityHidden(true)
+                                Text(presentation.agent.label)
                                     .lineLimit(1)
                             }
                             .font(.caption2)
@@ -197,6 +212,7 @@ public struct ChatView: View {
                         }
                     }
                     .accessibilityElement(children: .combine)
+                    .accessibilityValue(model.ownerOnline ? String(localized: "Mac online") : String(localized: "Mac offline"))
                 }
                 // One group, not two `.primaryAction` items: iOS folds a second primary action
                 // into a "…" overflow menu, which is exactly the button this replaced.
@@ -213,6 +229,12 @@ public struct ChatView: View {
         // a permanent search field would be one more thing to read past — and on iOS 26 it
         // would be one more bar under the composer, which already owns the bottom of a chat.
         .threadSearch(text: $search, presented: $searching)
+        .onChange(of: resumeRequest, initial: true) { _, _ in
+            handleNotificationResume()
+        }
+        .onChange(of: threadSearchRequest, initial: true) { _, _ in
+            applyThreadSearchRequest()
+        }
         // The Mac reuses this detail view while its sidebar selection changes. A new thread is
         // a new opening intent even when the surrounding `ChatView` value keeps its state.
         .onChange(of: thread.id, initial: true) { _, _ in
@@ -220,6 +242,17 @@ public struct ChatView: View {
             showJumpToLatest = false
             scrollPhase = .idle
             newestScroll = NewestScrollIntent()
+            attachmentLoading = false
+            attachmentFailure = nil
+            attachmentTooLarge = false
+            searching = false
+            search = ""
+            hit = 0
+            pendingExternalSearch = false
+            #if os(iOS)
+                timelineRequest = nil
+            #endif
+            applyThreadSearchRequest()
         }
         // A reply being read aloud follows the thread it is in: walking away stops it, which is
         // the same thing every other app that talks does. Leaving a thread is the trigger on
@@ -270,6 +303,37 @@ public struct ChatView: View {
         }
     }
 
+    private func handleNotificationResume() {
+        guard let resumeRequest, resumeRequest != handledNotificationResume else { return }
+        handledNotificationResume = resumeRequest
+        supersededNotificationResume = nil
+        suppressedSearchRequest = threadSearchRequest?.id
+        searching = false
+        search = ""
+        hit = 0
+        pendingExternalSearch = false
+        #if os(iOS)
+            timelineRequest = nil
+        #endif
+    }
+
+    private func applyThreadSearchRequest() {
+        // A notification chooses a concrete event. Ignore the older list search request, but
+        // allow a later explicit search (a new request id) in the same open conversation.
+        handleNotificationResume()
+        guard let request = threadSearchRequest, request.threadId == thread.id,
+              request.id != suppressedSearchRequest else { return }
+        // The notification target may still be waiting for sync. A newer explicit search
+        // supersedes that pending target as well as any already-rendered notification jump.
+        supersededNotificationResume = resumeRequest
+        searching = true
+        search = request.query
+        hit = 0
+        pendingExternalSearch = true
+        // A reused Mac detail can return to the same request after another selection.
+        searchRequestRevision = UUID()
+    }
+
     private var modelBinding: Binding<String?> {
         Binding(get: { thread.model }, set: { model.setModel(thread, $0) })
     }
@@ -309,6 +373,7 @@ public struct ChatView: View {
     #if os(iOS)
         private var nativeMessages: some View {
             let notificationRequest = resumeRequest.flatMap { id -> TimelineRequest? in
+                guard id != supersededNotificationResume else { return nil }
                 // A cold notification can resolve its thread before that thread's refreshed
                 // events arrive. Keep the request pending until the unread assistant bubble
                 // exists; turning a missing target into `.latest` here consumed the request
@@ -330,6 +395,7 @@ public struct ChatView: View {
             return IOSChatTimeline(
                 rows: rows,
                 activity: activity,
+                agent: presentation.agent,
                 request: timelineRequest,
                 notificationRequest: notificationRequest,
                 presentation: TimelinePresentation(
@@ -380,11 +446,16 @@ public struct ChatView: View {
                 requestCurrentHit()
             }
             .onChange(of: hit) { _, _ in requestCurrentHit() }
+            .onChange(of: searchRequestRevision) { _, _ in requestCurrentHit() }
+            .onChange(of: hits, initial: true) { _, _ in
+                if pendingExternalSearch { requestCurrentHit() }
+            }
             .animation(reduceMotion ? nil : .snappy, value: search.isEmpty)
         }
 
         private func requestCurrentHit() {
             guard hits.indices.contains(hit) else { return }
+            pendingExternalSearch = false
             timelineRequest = TimelineRequest(target: .event(hits[hit].eventId))
         }
     #endif
@@ -397,7 +468,7 @@ public struct ChatView: View {
                     // specialist did is behind it; the main agent's own tool use is shown
                     // here, grouped, where it happened.
                     ForEach(rows) { row in rowView(row) }
-                    if let activity { ChatActivityRow(activity: activity) }
+                    if let activity { ChatActivityRow(activity: activity, agent: presentation.agent) }
                     Color.clear.frame(height: 1).id(Self.bottomAnchor)
                 }
                 .compactQuietTranscriptLayout()
@@ -481,6 +552,10 @@ public struct ChatView: View {
                 scrollToHit(proxy)
             }
             .onChange(of: hit) { _, _ in scrollToHit(proxy) }
+            .onChange(of: searchRequestRevision) { _, _ in scrollToHit(proxy) }
+            .onChange(of: hits, initial: true) { _, _ in
+                if pendingExternalSearch { scrollToHit(proxy) }
+            }
             .animation(reduceMotion ? nil : .snappy, value: search.isEmpty)
         }
     }
@@ -498,7 +573,8 @@ public struct ChatView: View {
                     status: model.outboxStatus(of: event.id),
                     onRetry: data.role == .user ? { retry(data) } : nil,
                     onDelete: { model.delete(event.id, in: thread.id) },
-                    onResend: { model.retry(event.id) }
+                    onResend: { model.retry(event.id) },
+                    agent: presentation.agent
                 )
                 .id(event.id)
             }
@@ -538,8 +614,30 @@ public struct ChatView: View {
     /// Puts the current hit in the middle of the screen, where a hit being read wants to be.
     private func scrollToHit(_ proxy: ScrollViewProxy) {
         guard hits.indices.contains(hit) else { return }
+        pendingExternalSearch = false
         newestScroll.targetEvent()
         withAnimation(reduceMotion ? nil : .default) { proxy.scrollTo(hits[hit].eventId, anchor: .center) }
+    }
+
+    private func projectContext(_ path: String) -> some View {
+        Label {
+            Text(path)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+        } icon: {
+            Image(systemName: "folder")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(String(localized: "Project folder: \(path)"))
+        #if os(macOS)
+            .help(path)
+        #endif
     }
 
     private var composer: some View {
@@ -547,6 +645,33 @@ public struct ChatView: View {
         // send control all live inside the same rounded container, so the eye reads one thing
         // to type into rather than three controls in a row.
         VStack(alignment: .leading, spacing: 0) {
+            if let attachmentFailure {
+                HStack(alignment: .top, spacing: 8) {
+                    Label(attachmentFailure, systemImage: "exclamationmark.circle")
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        self.attachmentFailure = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .frame(width: controlTarget, height: controlTarget)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss attachment error")
+                }
+                .foregroundStyle(.secondary)
+                .padding(.leading, 12)
+                .padding(.trailing, 4)
+                .padding(.top, 8)
+            }
+            if attachmentLoading {
+                Label("Loading attachments…", systemImage: "paperclip")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+            }
             if !attachments.wrappedValue.isEmpty {
                 StagedStrip(attachments: attachments.wrappedValue) { index in
                     attachments.wrappedValue.remove(at: index)
@@ -557,7 +682,7 @@ public struct ChatView: View {
             #if os(iOS)
                 ComposerTextView(
                     text: draft,
-                    placeholder: String(localized: "Message Yorozu"),
+                    placeholder: presentation.composerPlaceholder,
                     onSubmit: send,
                     onPasteImage: generating ? nil : { pasteImages() }
                 )
@@ -578,7 +703,7 @@ public struct ChatView: View {
             #else
                 // Give writing its own row: model names and a running turn's Stop control
                 // must never reduce the space available for the message itself.
-                TextField("Message Yorozu", text: draft, axis: .vertical)
+                TextField(presentation.composerPlaceholder, text: draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.body)
                     .lineLimit(1...6)
@@ -589,7 +714,7 @@ public struct ChatView: View {
                     .onSubmit { draft.wrappedValue += "\n" }
                     .focused($composerFocused)
                     .background(ImagePasteMonitor(isActive: composerFocused && !generating, onPaste: pasteImages))
-                    .accessibilityLabel("Message")
+                    .accessibilityLabel(presentation.composerPlaceholder)
 
                 HStack(alignment: .center, spacing: 4) {
                     attachButton
@@ -624,27 +749,45 @@ public struct ChatView: View {
         AttachButton(
             remaining: MessageAttachment.maxCount - attachments.wrappedValue.count,
             onPick: addAttachments,
-            onTooLarge: { attachmentTooLarge = true }
+            onTooLarge: { attachmentTooLarge = true },
+            onLoadingChanged: { loading in
+                if loading { attachmentFailure = nil }
+                attachmentLoading = loading
+            }
         )
+        .id(thread.id)
         .disabled(generating)
     }
 
     private func pasteImages() {
+        guard !attachmentLoading else {
+            reportAttachmentFailure(String(localized: "Wait for attachments to finish loading, then paste again."))
+            return
+        }
+        attachmentFailure = nil
         stageAttachments(
             pasteboardImagePicks(),
             remaining: MessageAttachment.maxCount - attachments.wrappedValue.count,
             onPick: addAttachments,
-            onTooLarge: { attachmentTooLarge = true }
+            onTooLarge: { attachmentTooLarge = true },
+            onFailure: reportAttachmentFailure
         )
     }
 
+    private func reportAttachmentFailure(_ message: String) {
+        if let previous = attachmentFailure {
+            if !previous.contains(message) { attachmentFailure = previous + "\n" + message }
+        } else {
+            attachmentFailure = message
+        }
+    }
+
     private func addAttachments(_ picked: [MessageAttachment]) {
-        let combined = attachments.wrappedValue + picked
-        guard combined.count <= MessageAttachment.maxCount,
-            combined.compactMap(\.bytes).reduce(0, { $0 + $1.count })
-                <= MessageAttachment.maxTotalBytes
-        else { return attachmentTooLarge = true }
-        attachments.wrappedValue = combined
+        let result = addingAttachments(picked, to: attachments.wrappedValue)
+        attachments.wrappedValue = result.attachments
+        if result.rejectedCount > 0 {
+            reportAttachmentFailure(String(localized: "Some attachments couldn’t be added. A message can contain up to 10 attachments and 20 MB in total."))
+        }
     }
 
     private var runSettingsButton: some View {
@@ -741,8 +884,10 @@ public struct ChatView: View {
     }
 
     private var canSend: Bool {
-        !draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !attachments.wrappedValue.isEmpty
+        !attachmentLoading && (
+            !draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !attachments.wrappedValue.isEmpty
+        )
     }
 
     private func send() {
@@ -813,6 +958,7 @@ public struct ChatView: View {
     private struct IOSChatTimeline: UIViewRepresentable {
         let rows: [ChatRow]
         let activity: ChatActivity?
+        let agent: ThreadAgent
         let request: TimelineRequest?
         let notificationRequest: TimelineRequest?
         let presentation: TimelinePresentation
@@ -874,7 +1020,7 @@ public struct ChatView: View {
                                 self.parent.content(row).compactQuietTranscriptLayout()
                             }
                         case .activity(let activity):
-                            ChatActivityRow(activity: activity).compactQuietTranscriptLayout()
+                            ChatActivityRow(activity: activity, agent: self.parent.agent).compactQuietTranscriptLayout()
                         }
                     }
                     .margins(.horizontal, 10)
@@ -1259,10 +1405,11 @@ private struct SearchHitBar: View {
 /// Names the next step truthfully: active work animates; a decision waiting on the reader does not.
 private struct ChatActivityRow: View {
     let activity: ChatActivity
+    let agent: ThreadAgent
 
     var body: some View {
         HStack(spacing: 8) {
-            YorozuMark(dimension: 16)
+            AgentMarkView(agent, size: 16)
             if let symbol = activity.symbol {
                 Image(systemName: symbol).foregroundStyle(YorozuPalette.vermilion)
             } else {
@@ -1297,21 +1444,27 @@ private struct ScrollToBottomPill: View {
 /// A thread nobody has said anything in yet. Compact Quiet leaves it genuinely quiet: the
 /// composer is already the action, so suggestion pills only repeat it and dominate the screen.
 private struct EmptyThreadView: View {
+    let presentation: ThreadPresentation
+
     var body: some View {
-        VStack(spacing: LayoutMetrics.stack) {
-            YorozuMark(dimension: 42)
-            Text("Start the conversation")
-                .font(.title3.weight(.semibold))
-                .fontDesign(.serif)
-                .foregroundStyle(YorozuPalette.ink)
-            Text("Ask for anything your Mac can do — files, mail, calendars, or the browser.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 360)
+        ScrollView {
+            VStack(spacing: LayoutMetrics.stack) {
+                AgentMarkView(presentation.agent, size: 42)
+                Text(presentation.emptyTitle)
+                    .font(.title3.weight(.semibold))
+                    .fontDesign(.serif)
+                    .foregroundStyle(YorozuPalette.ink)
+                Text(presentation.emptyMessage)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 360)
+            }
+            .padding(LayoutMetrics.section)
+            .accessibilityElement(children: .combine)
+            .frame(maxWidth: .infinity)
         }
-        .padding(LayoutMetrics.section)
-        .accessibilityElement(children: .combine)
+        .defaultScrollAnchor(.center, for: .alignment)
     }
 }
 

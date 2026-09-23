@@ -41,7 +41,7 @@
           <p class="fine">Mac: macOS 15+ · Apple silicon · <a href="https://openclaw.ai">OpenClaw</a> required on the host<br>iPhone: iOS 18+ · <a href="#setup-with-an-agent">Set up with an agent</a> · <a href="https://github.com/izyuumi/yorozu">Open source, MIT</a></p>
         </div>
         <figure class="phone">
-          <img src="/assets/iphone-approval.webp" alt="Yorozu on iPhone asking to run rm on old Desktop screenshots, with Allow once, For this task, Don't allow and Discuss first buttons" width="804" height="1748" fetchpriority="high">
+          <img src="/assets/iphone-chat.webp" alt="Yorozu on iPhone answering whether an invoice was paid, with a table of invoices and a written explanation" width="804" height="1748" fetchpriority="high">
         </figure>
       </div>
     </section>
@@ -94,7 +94,7 @@
         <p>Say <em>Discuss first</em> and the agent explains before it acts.</p>
       </div>
       <figure class="shot phone-shot">
-        <img src="/assets/iphone-chat.webp" alt="Yorozu on iPhone answering whether an invoice was paid, with a table of invoices and a written explanation" width="804" height="1748" loading="lazy">
+        <img src="/assets/iphone-approval.webp" alt="Yorozu on iPhone asking to run rm on old Desktop screenshots, with Allow once, For this task, Don't allow and Discuss first buttons" width="804" height="1748" loading="lazy">
       </figure>
     </section>
 
@@ -107,7 +107,7 @@
       <figure class="shot mac-shot">
         <picture>
           <source srcset="/assets/mac-progress-dark.webp" media="(prefers-color-scheme: dark)" width="900" height="620">
-          <img src="/assets/mac-chat-light.webp" alt="Yorozu on the Mac, a sidebar of threads beside a conversation about an invoice" width="900" height="620" loading="lazy">
+          <img src="/assets/mac-chat-light.webp" alt="Yorozu on the Mac, with a sidebar of threads beside an agent conversation" width="900" height="620" loading="lazy">
         </picture>
       </figure>
     </section>
@@ -149,6 +149,7 @@
         <pre><code id="agent-prompt">Read https://raw.githubusercontent.com/izyuumi/yorozu/main/Start.md and follow it to set up Yorozu on my devices. Ask me before configuring anything.</code></pre>
         <button type="button" class="copy" data-copy="agent-prompt" hidden>Copy</button>
       </div>
+      <p class="copy-status" id="agent-prompt-status" role="status" aria-atomic="true"></p>
       <p class="fine">The guide is <a href="https://github.com/izyuumi/yorozu/blob/main/Start.md">Start.md</a> in the repository. Read it yourself first if you want to know what the agent will ask.</p>
     </section>
 
