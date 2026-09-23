@@ -42,13 +42,15 @@ tarball is cached in `dist/`, and the build runs `node --version` once before si
 that cannot start fails the build rather than the user.
 
 The bundle is Developer ID signed with the hardened runtime, inside out and without `--deep`,
-so each binary carries only the entitlements it needs. The app and `yorozu-native` get
-`apps/mac/Yorozu.entitlements`: the TCC keys (Apple Events, camera, microphone, contacts,
-calendars, location, photos) plus the JIT pair. The bundled `node` and the Agent SDK's vendored
-Bun-built `claude` get `apps/mac/Node.entitlements`: JIT and unsigned executable memory only,
-no library validation exception and no TCC keys. Sparkle's framework, helpers and XPC services
-keep the entitlements they shipped with. There is no sandbox — the agent drives the whole Mac.
-The DMG is signed too.
+so each binary carries only the entitlements it needs. `apps/mac/Yorozu.entitlements`, for the
+app and the `yorozu-native` helper, holds only the privacy usage entitlements (Apple Events,
+camera, microphone, contacts, calendars, location, photos) — no hardened-runtime exceptions, so
+the app and helper cannot load unsigned code or write executable memory. The bundled `node` and
+the Agent SDK's vendored Bun-built `claude` are signed with `apps/mac/Node.entitlements`, which
+grants the two exceptions their JITs need: JIT and unsigned executable memory, no library
+validation exception and no TCC keys. Sparkle's framework, helpers and XPC services keep the
+entitlements they shipped with. There is no sandbox — the agent drives the whole Mac. The DMG
+is signed too.
 
 The bundled runtime is large: `@openai/codex` and `@anthropic-ai/claude-agent-sdk` vendor ~277 MB
 and ~194 MB of platform binaries respectively, which is most of the DMG.
