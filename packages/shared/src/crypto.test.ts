@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import {
+  deriveChannelKeys,
   deriveSessionKey,
   fromBase64Url,
   generateKeypair,
@@ -32,6 +33,24 @@ test("both peers derive the same session key", () => {
   expect(deriveSessionKey(mac.privateKey, phone.publicKey)).toEqual(
     deriveSessionKey(phone.privateKey, mac.publicKey),
   );
+});
+
+test("channel keys differ per direction and cross over between the two ends", () => {
+  const mac = generateKeypair();
+  const phone = generateKeypair();
+  const macSide = deriveChannelKeys(mac.privateKey, phone.publicKey, "mac");
+  const phoneSide = deriveChannelKeys(phone.privateKey, mac.publicKey, "device");
+  expect(macSide.send).toHaveLength(32);
+  expect(macSide.send).not.toEqual(macSide.recv);
+  expect(macSide.send).toEqual(phoneSide.recv);
+  expect(macSide.recv).toEqual(phoneSide.send);
+  // Neither is the preview key, which stays in use beside them.
+  const session = deriveSessionKey(mac.privateKey, phone.publicKey);
+  expect(macSide.send).not.toEqual(session);
+  expect(macSide.recv).not.toEqual(session);
+  // A box the Mac sealed does not open as if the phone had sent it.
+  const box = seal(macSide.send, new TextEncoder().encode("from the mac"));
+  expect(() => open(macSide.recv, box.nonce, box.ciphertext)).toThrow();
 });
 
 test("seal then open round-trips", () => {

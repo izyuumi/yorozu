@@ -13,10 +13,15 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { argv, env, stdin, stdout } from "node:process";
 import {
+  acceptsSeq,
+  decodeEnvelope,
+  deriveChannelKeys,
   deriveSessionKey,
+  encodeEnvelope,
   encodePairingString,
   fromBase64Url,
   generateKeypair,
+  isSeq,
   generateSigningKeypair,
   helloProof,
   attachmentsWithinLimits,
@@ -29,6 +34,7 @@ import {
   toBase64Url,
   REASONING_EFFORTS,
   type ApprovalCardData,
+  type ChannelKeys,
   type DeviceInfo,
   type EventPayload,
   type Keypair,
@@ -203,6 +209,8 @@ export function loadDevices(file: string): DeviceRecord[] {
           ...(typeof record.pairedAt === "number" && Number.isFinite(record.pairedAt) && record.pairedAt > 0
             ? { pairedAt: record.pairedAt } : {}),
           lastSeen: typeof record.lastSeen === "number" ? record.lastSeen : 0,
+          ...(isSeq(record.sendSeq) ? { sendSeq: record.sendSeq } : {}),
+          ...(isSeq(record.recvSeq) ? { recvSeq: record.recvSeq } : {}),
         },
       ];
     });
@@ -236,6 +244,27 @@ export interface DeviceRecord {
   pairedAt?: number;
   /** Epoch milliseconds we last heard from it; 0 for a device paired before this was kept. */
   lastSeen: number;
+  /** Highest live-channel seq reserved for boxes to it; nothing past it has been sealed. */
+  sendSeq?: number;
+  /** Last live-channel seq accepted from it; anything at or below is a replay. */
+  recvSeq?: number;
+}
+
+/**
+ * How many send seqs are written ahead at a time. A restart resumes past the whole block, so
+ * no seq is ever sealed twice without paying a disk write per streamed delta.
+ */
+const SEND_SEQ_RESERVE = 1_000;
+
+/** A phone paired over the relay, as the runtime holds it. */
+interface PairedDevice {
+  /** The one shared key, kept for push preview boxes only. */
+  key: Uint8Array;
+  /** Live-channel keys, one per direction. */
+  channel: ChannelKeys;
+  /** Last seq sealed to it; `record.sendSeq` is the ceiling written ahead of it. */
+  sent: number;
+  record: DeviceRecord;
 }
 
 export interface ServeOptions {
@@ -303,32 +332,46 @@ export function serve(options: ServeOptions = {}): Sidecar {
   let legacy: ReturnType<typeof createLegacyRunner> | undefined;
 
   /**
-   * Session key per paired device, keyed by the X25519 public key it announced. Several
-   * phones can be paired at once, so every agent event is sealed once per device; the map
-   * outlives the socket, so a reconnect unpairs nobody, and `devices.json` carries it across
-   * a restart, so neither does a relaunch of this sidecar.
+   * Keys per paired device, keyed by the X25519 public key it announced. Several phones can
+   * be paired at once, so every agent event is sealed once per device; the map outlives the
+   * socket, so a reconnect unpairs nobody, and `devices.json` carries it across a restart, so
+   * neither does a relaunch of this sidecar.
    */
   const devicesFile = join(dir, "devices.json");
-  const devices = new Map<string, { key: Uint8Array; record: DeviceRecord }>();
+  const devices = new Map<string, PairedDevice>();
   /**
    * Announces the paired list to the relay, which replaces what it knows with it. Assigned
    * per connection, a no-op while there is none.
    */
   let announceDevices: () => void = () => {};
-  const saveDevices = (): void => {
+  /** The file alone: what the seq counters update, which is nothing the relay needs to hear. */
+  const writeDevices = (): void => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       devicesFile,
       JSON.stringify([...devices.values()].map(({ record }) => record)),
       { mode: 0o600 },
     );
+  };
+  const saveDevices = (): void => {
+    writeDevices();
     // This file is what the relay's known-device set is rebuilt from, so it is told whenever
-    // the file changes rather than only at register time.
+    // the set changes rather than only at register time.
     announceDevices();
   };
   const remember = (record: DeviceRecord): void => {
+    // A repeat `hello` says nothing about seqs. The counters on file carry on, or the phone
+    // would take our next box for a replay and we would take its replays for new; and the
+    // seq last sealed carries on too, so a re-hello burns no block.
+    const before = devices.get(record.pub);
+    record.sendSeq ??= before?.record.sendSeq ?? 0;
+    record.recvSeq ??= before?.record.recvSeq ?? 0;
+    const theirPub = fromBase64Url(record.pub);
     devices.set(record.pub, {
-      key: deriveSessionKey(keys.session.privateKey, fromBase64Url(record.pub)),
+      key: deriveSessionKey(keys.session.privateKey, theirPub),
+      channel: deriveChannelKeys(keys.session.privateKey, theirPub, "mac"),
+      // Fresh from disk the ceiling is all there is, and everything up to it counts as used.
+      sent: before?.sent ?? record.sendSeq,
       record,
     });
   };
@@ -854,6 +897,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * second copy of a command must not apply twice — a `rule_update` restoring a rule since
    * revoked, a `thread_archive` undoing an unarchive. Messages are also checked against the
    * thread log, which outlives a restart; for the rest this window is what there is.
+   *
+   * The seq inside every box catches a replayed frame first; this catches the same command
+   * re-sent under a fresh seq, which is what a phone's outbox does.
    */
   const seenCommands = new Set<string>();
   const SEEN_COMMANDS = 2_000;
@@ -1193,29 +1239,76 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
     };
 
+    /**
+     * The one place a live-channel box is sealed: every seq is used once, and its ceiling is
+     * written ahead in blocks so a restart resumes past anything this process may have sent.
+     */
+    const sealFor = (known: PairedDevice, event: YorozuEvent): FrameBody => {
+      known.sent += 1;
+      if (known.sent > (known.record.sendSeq ?? 0)) {
+        // If the write fails the ceiling stays where it was, so the next send tries again
+        // rather than sealing the rest of a block nothing on disk knows about. The seq that
+        // was about to go out is burnt either way: a gap costs nothing, a reuse costs the box.
+        const ceiling = known.record.sendSeq;
+        known.record.sendSeq = known.sent + SEND_SEQ_RESERVE - 1;
+        try {
+          writeDevices();
+        } catch (e) {
+          known.record.sendSeq = ceiling;
+          throw e;
+        }
+      }
+      const box = seal(known.channel.send, encodeEnvelope(known.sent, event));
+      return { t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) };
+    };
+
     sendTo = (device: string, event: YorozuEvent): void => {
       const known = devices.get(device);
-      const key = known?.key;
-      if (!key || !relayReady || ws.readyState !== WebSocket.OPEN) return;
+      if (!known || !relayReady || ws.readyState !== WebSocket.OPEN) return;
       const cutoff = known.record.pairedAt ?? 0;
       if (event.threadId && event.ts < cutoff) return;
       if (event.kind === "thread_list") event = { ...threadList(cutoff), id: event.id, ts: event.ts };
-      const box = seal(key, Buffer.from(JSON.stringify(event)));
-      sendFrame({ t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) });
+      sendFrame(sealFor(known, event));
     };
 
     /**
-     * Frames carry no sender, so the device that sent one is whichever session key opens it.
-     * A box sealed for another phone is simply not ours to read.
+     * Frames carry no sender, so the device that sent one is whichever device's `recv` key
+     * opens it. A box sealed for another phone is simply not ours to read, and one we sealed
+     * ourselves and got reflected opens under no `recv` key at all. Once a key has named the
+     * sender the seq is judged against that device alone: at or below the last accepted is a
+     * replay, dropped without a receipt — the phone re-sends under a fresh seq if it must.
      */
     function openFrom(body: { n: string; c: string }): [string, YorozuEvent] | null {
-      for (const [device, { key }] of devices) {
+      for (const [device, known] of devices) {
+        let plain: Uint8Array;
         try {
-          const plain = open(key, fromBase64Url(body.n), fromBase64Url(body.c));
-          return [device, JSON.parse(Buffer.from(plain).toString()) as YorozuEvent];
+          plain = open(known.channel.recv, fromBase64Url(body.n), fromBase64Url(body.c));
         } catch {
-          // Not sealed for us: try the next paired device.
+          continue; // Not sealed for us: try the next paired device.
         }
+        let envelope: ReturnType<typeof decodeEnvelope>;
+        try {
+          envelope = decodeEnvelope(plain);
+        } catch {
+          state("malformed-frame");
+          return null;
+        }
+        if (!acceptsSeq(known.record.recvSeq ?? 0, envelope.seq)) {
+          state("replayed-frame");
+          return null;
+        }
+        // Written before the event is acted on: a crash between the two must not reopen it.
+        // And acted on only if written: a box whose seq could not be recorded is left for the
+        // relay's replay to bring again, so the counter is put back to say so.
+        const accepted = known.record.recvSeq;
+        known.record.recvSeq = envelope.seq;
+        try {
+          writeDevices();
+        } catch (e) {
+          known.record.recvSeq = accepted;
+          throw e;
+        }
+        return [device, envelope.event];
       }
       return null;
     }
