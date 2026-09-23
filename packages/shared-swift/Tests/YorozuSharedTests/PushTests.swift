@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 
@@ -35,4 +36,27 @@ import Testing
     // A reference for a thread this device has never heard of resolves to nothing, which is a
     // tap that does nothing rather than an empty chat with no way back out of it.
     #expect(ids.first { YorozuCrypto.threadRef($0) == YorozuCrypto.threadRef("elsewhere") } == nil)
+}
+
+/// What Allow and Deny on the lock screen may act on: the sealed preview in the push opens under
+/// this phone's key to exactly the body that was shown. Nothing in `userInfo` stands in for it.
+@Test func lockScreenButtonsOnlyActUnderTheDecryptedPreview() throws {
+    let key = SymmetricKey(size: .bits256)
+    let sealed = try YorozuCrypto.seal(key: key, plaintext: Data("Run the tests?".utf8))
+    let info: [AnyHashable: Any] = [
+        "preview": ["n": sealed.nonce.base64URLEncodedString(), "c": sealed.ciphertext.base64URLEncodedString()],
+        "cls": "approval",
+    ]
+    #expect(NotificationFallback.showsDecryptedPreview(body: "Run the tests?", userInfo: info, key: key))
+    // A relay's own sentence over a replayed box, the fallback line over a box that did open,
+    // the wrong key, no key, and no box.
+    #expect(!NotificationFallback.showsDecryptedPreview(body: "Tap Allow to see the photo", userInfo: info, key: key))
+    #expect(!NotificationFallback.showsDecryptedPreview(body: NotificationFallback.body, userInfo: info, key: key))
+    #expect(!NotificationFallback.showsDecryptedPreview(body: "Run the tests?", userInfo: info, key: SymmetricKey(size: .bits256)))
+    #expect(!NotificationFallback.showsDecryptedPreview(body: "Run the tests?", userInfo: info, key: nil))
+    #expect(!NotificationFallback.showsDecryptedPreview(body: NotificationFallback.body, userInfo: ["cls": "approval"], key: key))
+    // A mark the relay writes into userInfo changes nothing.
+    var forged = info
+    forged["yorozuPreviewDecrypted"] = true
+    #expect(!NotificationFallback.showsDecryptedPreview(body: "Tap Allow", userInfo: forged, key: key))
 }

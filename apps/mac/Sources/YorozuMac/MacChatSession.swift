@@ -75,6 +75,64 @@ final class MacChatSession {
         }
     }
 
+    /// A pairing code that arrived as a link and would replace something this Mac has: its
+    /// client pairing, or — when it is the host — the hosting itself, since pairing turns it
+    /// into a client and stops the sidecar.
+    struct PendingPairing: Equatable {
+        /// The link itself, which is the pairing string.
+        let code: String
+        let relayHost: String
+        let macKeyFingerprint: String
+        /// Whether following it turns this host into a client, which the prompt has to say.
+        let stopsHosting: Bool
+    }
+
+    /// What a `yorozu://` link may do right now, before anything is done.
+    enum PairingLinkAction: Equatable {
+        /// Nothing to replace: a Mac with no role and no pairing pairs on the spot.
+        case pair(String)
+        /// Something to replace, so ask first.
+        case confirm(PendingPairing)
+    }
+
+    /// Decides without acting, so the rule is one function: only `pair` is a pairing link, only
+    /// a code that parses counts, and a Mac that hosts or already holds a pairing is asked.
+    func pairingLinkAction(for url: URL) -> PairingLinkAction? {
+        guard url.host()?.lowercased() == "pair",
+              let payload = try? QrPayload.decode(url.absoluteString)
+        else { return nil }
+        let code = url.absoluteString
+        let hosting = role == .host
+        guard hosting || MacPairingStore.load() != nil else { return .pair(code) }
+        return .confirm(PendingPairing(
+            code: code,
+            relayHost: payload.relayHost ?? payload.relayUrl,
+            macKeyFingerprint: payload.macKeyFingerprint ?? String(localized: "unreadable key"),
+            stopsHosting: hosting
+        ))
+    }
+
+    /// Where every `yorozu://pair` link lands, from Launch Services or a chat bubble. A link is
+    /// a line of text anyone can send, and following it silently would hand this Mac's chat to
+    /// whichever Mac minted the code — or, worse, quietly stop this one hosting the phones.
+    func handlePairingLink(_ url: URL) {
+        switch pairingLinkAction(for: url) {
+        case .pair(let code)?:
+            do { try pair(with: code) } catch {}
+        case .confirm(let pending)?:
+            if PairingConsent.ask(pending) { replacePairing(with: pending) }
+        case nil:
+            break
+        }
+    }
+
+    /// The confirmed half of ``handlePairingLink(_:)``: the same clean-up Settings' Unpair
+    /// does, then the new code, which also flips a host into a client and stops the sidecar.
+    func replacePairing(with pending: PendingPairing) {
+        unpair()
+        do { try pair(with: pending.code) } catch {}
+    }
+
     func unpair() {
         model.close(); relay = nil; model = Self.idleModel()
         pairedAt = nil; failure = nil

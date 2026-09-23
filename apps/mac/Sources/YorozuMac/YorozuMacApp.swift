@@ -38,35 +38,137 @@ final class Sidecar: ObservableObject {
         spawn(generation: generation)
     }
 
-    /// The runtime bundled by `scripts/build-mac.sh` when there is one, else the dev
-    /// default: `swift run` from `apps/mac` leaves the repo layout reachable. Quoted
-    /// because the command is run through `/bin/sh` and an .app can sit in a path with
-    /// spaces. Override either with YOROZU_RUNTIME_CMD.
-    private static let defaultCommand: String = {
-        let dev = "node ../../packages/runtime/dist/serve.js"
-        guard let resources = Bundle.main.resourceURL else { return dev }
-        let node = resources.appendingPathComponent("node").path
-        let serve = resources.appendingPathComponent("runtime/dist/serve.js").path
-        guard FileManager.default.isExecutableFile(atPath: node),
-              FileManager.default.isReadableFile(atPath: serve)
-        else { return dev }
-        return "'\(node)' '\(serve)'"
-    }()
+    /// One thing to run: an executable and its arguments, handed to `Process` as they are.
+    /// There is no shell in between, so a path with a space in it — an .app in "Application
+    /// Support", a checkout under a name with one — is one argument and nothing else.
+    struct Launch: Equatable {
+        var executable: URL
+        var arguments: [String]
+    }
+
+    /// The runtime this build runs: the node and `serve.js` `scripts/build-mac.sh` bundled, else
+    /// the dev checkout this source file sits in, which is what `swift run` from `apps/mac`
+    /// leaves in place. `YOROZU_RUNTIME_CMD` overrides both, split into words here rather than
+    /// given to `/bin/sh`. Nil when nothing runnable was found, which is logged and retried.
+    static func launch(environment: [String: String]) -> Launch? {
+        // An override set to nothing is no override: it falls through to the defaults rather
+        // than spinning the restart loop on an empty command.
+        if let command = environment["YOROZU_RUNTIME_CMD"], !shellWords(command).isEmpty {
+            return launch(words: shellWords(command), environment: environment)
+        }
+        return bundledLaunch() ?? devLaunch(environment: environment)
+    }
+
+    private static func bundledLaunch() -> Launch? {
+        guard let resources = Bundle.main.resourceURL else { return nil }
+        let node = resources.appendingPathComponent("node")
+        let serve = resources.appendingPathComponent("runtime/dist/serve.js")
+        guard FileManager.default.isExecutableFile(atPath: node.path),
+              FileManager.default.isReadableFile(atPath: serve.path)
+        else { return nil }
+        return Launch(executable: node, arguments: [serve.path])
+    }
+
+    /// `packages/runtime/dist/serve.js` relative to this file, not to the working directory:
+    /// the app is launched from wherever Finder, `open` or the watchdog happened to be.
+    private static func devLaunch(environment: [String: String]) -> Launch? {
+        let root = URL(fileURLWithPath: #filePath)  // apps/mac/Sources/YorozuMac/YorozuMacApp.swift
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let serve = root.appending(path: "packages/runtime/dist/serve.js")
+        guard FileManager.default.isReadableFile(atPath: serve.path),
+              let node = executable(named: "node", environment: environment)
+        else { return nil }
+        return Launch(executable: node, arguments: [serve.path])
+    }
+
+    private static func launch(words: [String], environment: [String: String]) -> Launch? {
+        guard let first = words.first, !first.isEmpty else { return nil }
+        let executable = first.contains("/")
+            ? URL(fileURLWithPath: first)
+            : executable(named: first, environment: environment)
+        guard let executable else { return nil }
+        return Launch(executable: executable, arguments: Array(words.dropFirst()))
+    }
+
+    /// Looks a bare command name up on the app's own `PATH`, then where Homebrew and a
+    /// package install put node: an app opened from Finder has `/usr/bin:/bin` and little else.
+    private static func executable(named name: String, environment: [String: String]) -> URL? {
+        let path = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
+        let directories = path + ["/opt/homebrew/bin", "/usr/local/bin"]
+        return directories.lazy
+            .map { URL(fileURLWithPath: $0).appending(path: name) }
+            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    }
+
+    /// The words of a command as `sh` would split them, for the subset `YOROZU_RUNTIME_CMD` has
+    /// ever used: whitespace separates, single and double quotes group, a backslash escapes
+    /// the next character outside single quotes. Nothing expands: there is no shell to expand
+    /// it, which is the point.
+    static func shellWords(_ command: String) -> [String] {
+        var words: [String] = []
+        var current = ""
+        var inWord = false
+        var quote: Character?
+        var escaped = false
+        for character in command {
+            if escaped {
+                current.append(character); escaped = false; continue
+            }
+            if let open = quote {
+                if character == open { quote = nil }
+                else if character == "\\", open == "\"" { escaped = true }
+                else { current.append(character) }
+                continue
+            }
+            switch character {
+            case "\'", "\"": quote = character; inWord = true
+            case "\\": escaped = true; inWord = true
+            case " ", "\t", "\n":
+                if inWord { words.append(current); current = ""; inWord = false }
+            default: current.append(character); inWord = true
+            }
+        }
+        if inWord { words.append(current) }
+        return words
+    }
+
+    /// Where the sidecar keeps its keys, threads and socket: what `YOROZU_STATE_DIR` names, or
+    /// the runtime's own default under Application Support — the same choice
+    /// `LocalSocketTransport.defaultPath()` makes, so the app dials the socket it creates.
+    static var stateDirectory: URL {
+        if let dir = ProcessInfo.processInfo.environment["YOROZU_STATE_DIR"], !dir.isEmpty {
+            return URL(fileURLWithPath: dir)
+        }
+        return URL.applicationSupportDirectory.appending(path: "Yorozu")
+    }
 
     private func spawn(generation: Int) {
-        let command = ProcessInfo.processInfo.environment["YOROZU_RUNTIME_CMD"]
-            ?? Self.defaultCommand
+        var environment = ProcessInfo.processInfo.environment
+        guard let launch = Self.launch(environment: environment) else {
+            state = "failed: no runtime found"
+            Log.write("sidecar: no bundled runtime, dev checkout or YOROZU_RUNTIME_CMD to run")
+            scheduleRestart(ranFor: 0, generation: generation)
+            return
+        }
         let output = Pipe()
         let process = Process()
         input = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", command]
-        var environment = ProcessInfo.processInfo.environment
+        process.executableURL = launch.executable
+        process.arguments = launch.arguments
+        // The sidecar's working directory is its state directory rather than whatever the app
+        // inherited — `/` when opened from Finder — so a relative path it ever resolves lands
+        // among its own files. Created first: `run()` refuses a directory that is not there.
+        let stateDirectory = Self.stateDirectory
+        try? FileManager.default.createDirectory(at: stateDirectory, withIntermediateDirectories: true)
+        process.currentDirectoryURL = stateDirectory
+        if environment["YOROZU_STATE_DIR"] == nil { environment["YOROZU_STATE_DIR"] = stateDirectory.path }
         // The relay chosen in General; an explicit YOROZU_RELAY_URL in the app's own
         // environment still wins, for dev runs.
         if environment[RelaySettings.key] == nil { environment[RelaySettings.key] = RelaySettings.url }
-        // The native tool host, if this build is bundled: quoted because the runtime runs the
-        // command through /bin/sh, and an .app can sit in a path with spaces in it.
+        // The native tool host, if this build is bundled. Quoted because the *runtime* runs
+        // this one through /bin/sh — see `nativeCommand` in packages/runtime — and an .app can
+        // sit in a path with spaces in it.
         if environment["YOROZU_NATIVE_CMD"] == nil,
            let helper = Bundle.main.url(forAuxiliaryExecutable: "yorozu-native") {
             environment["YOROZU_NATIVE_CMD"] = "'\(helper.path)'"
@@ -78,7 +180,7 @@ final class Sidecar: ObservableObject {
             try process.run()
         } catch {
             state = "failed: \(error.localizedDescription)"
-            Log.write("sidecar: could not start — \(error.localizedDescription)")
+            Log.write("sidecar: could not start \(launch.executable.path) — \(error.localizedDescription)")
             scheduleRestart(ranFor: 0, generation: generation)
             return
         }
@@ -242,7 +344,12 @@ struct YorozuMacApp: App {
         // at all to hang ⌘N, ⌘F and Stop off — see ``ChatWindowView``.
         Window("Yorozu", id: Self.chatWindow) {
             ChatWindowView()
-                .onOpenURL { url in try? MacChatSession.shared.pair(with: url.absoluteString) }
+                // A `yorozu://pair` link, from Messages or a browser. Asked about before it
+                // replaces anything — see ``MacChatSession/handlePairingLink(_:)``. Other hosts
+                // are the phone's, and mean nothing here.
+                .onOpenURL { url in MacChatSession.shared.handlePairingLink(url) }
+                // The same road for a code tapped inside a chat bubble.
+                .environment(\.onPairingLink) { MacChatSession.shared.handlePairingLink($0) }
                 .onAppear { WindowPresence.opened() }
                 .onDisappear {
                     WindowPresence.closed()

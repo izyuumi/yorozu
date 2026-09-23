@@ -1110,6 +1110,25 @@ public struct QrPayload: Codable, Equatable, Sendable {
         return try decodePairingString(text)
     }
 
+    /// Whether a pairing code's `relay` is somewhere this device should dial at all: a `wss`
+    /// URL, or a plain `ws` one only when it points back at this machine. The relay carries
+    /// sealed frames, but a cleartext socket to a stranger's host still hands them the room,
+    /// the device list and every reconnect — and a code is untrusted text out of a QR, a
+    /// paste or a tapped link. Hosts are compared case-insensitively; `::1` arrives with or
+    /// without its brackets depending on who parsed it.
+    public static func isAcceptableRelayUrl(_ relay: String) -> Bool {
+        guard let components = URLComponents(string: relay),
+              let host = components.host?.lowercased(), !host.isEmpty
+        else { return false }
+        switch components.scheme?.lowercased() {
+        case "wss": return true
+        case "ws":
+            let bare = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+            return ["localhost", "127.0.0.1", "::1"].contains(bare)
+        default: return false
+        }
+    }
+
     /// `yorozu://pair?v=1&relay=<urlencoded>&key=<base64url>&token=<base64url>`, the compact
     /// form the Mac shows for copying and encodes in the QR.
     private static func decodePairingString(_ text: String) throws -> QrPayload {
@@ -1133,7 +1152,7 @@ public struct QrPayload: Codable, Equatable, Sendable {
         }
         let items = components.queryItems ?? []
         let query = Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
-        guard query["v"] == "1", let relayUrl = query["relay"], !relayUrl.isEmpty else {
+        guard query["v"] == "1", let relayUrl = query["relay"], isAcceptableRelayUrl(relayUrl) else {
             throw malformed()
         }
         return QrPayload(
