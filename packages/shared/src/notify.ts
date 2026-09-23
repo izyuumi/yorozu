@@ -4,12 +4,32 @@
  *
  * Its cleartext fields are deliberately content-free. The relay — and APNs behind it — learn
  * that *something* of a given class happened in a thread named by an opaque reference. A reply
- * may also carry a separately sealed preview which only that phone can open.
+ * or a card may also carry a separately sealed preview which only that phone can open: the
+ * words for the lock screen, the reference of the card they are about, and whether the Mac
+ * judged that card answerable from a button — see `NotificationPreviewContent`.
  */
-import type { YorozuEvent } from "./events.js";
+import type { ApprovalCardData, QuestionCardData, YorozuEvent } from "./events.js";
 
-/** Maximum plaintext bytes carried by an encrypted lock-screen reply preview. */
+/** Maximum plaintext bytes carried by an encrypted lock-screen preview's `body`. */
 export const NOTIFY_PREVIEW_BYTES = 256;
+
+/** The `v` a sealed preview's plaintext carries. A plaintext without one is a bare body. */
+export const NOTIFY_PREVIEW_VERSION = 1;
+
+/**
+ * What a sealed preview says once opened. The phone shows `body`, and draws Allow and Deny
+ * only when `quick` is set *and* `event` names the card the push is about — both sealed by the
+ * Mac, so a relay that redraws the buttons under a different card, or under a card the Mac
+ * sent for review, changes nothing.
+ */
+export interface NotificationPreviewContent {
+  /** The reply's text, or the card's one-line summary. */
+  body: string;
+  /** `threadRef(event.id)` of the card or message this preview is about; null when unknown. */
+  event: string | null;
+  /** Whether the Mac judged this card answerable from the lock screen. Never true for a reply. */
+  quick: boolean;
+}
 
 /** What kind of thing happened, which is the whole of what a notification says. */
 export type NotifyClass = "reply" | "approval" | "done" | "failed";
@@ -61,10 +81,8 @@ export function notifyFor(event: YorozuEvent): NotifyClass | null {
   }
 }
 
-/** Reply text worth previewing, bounded before encryption so APNs stays well below 4 KB. */
-export function notificationPreview(event: YorozuEvent): string | null {
-  if (notifyFor(event) !== "reply" || event.kind !== "message") return null;
-  const text = event.data.text.trim();
+/** The first `NOTIFY_PREVIEW_BYTES` of a text, cut between characters so no glyph is split. */
+function boundedBytes(text: string): string {
   let bytes = 0;
   let preview = "";
   for (const character of text) {
@@ -73,5 +91,86 @@ export function notificationPreview(event: YorozuEvent): string | null {
     preview += character;
     bytes += size;
   }
-  return preview || null;
+  return preview;
+}
+
+/** The wire class as a phrase, the same words the card itself leads with. */
+const CARD_VERBS: Record<string, string> = {
+  "send-message": "Send a message",
+  purchase: "Make a purchase",
+  "transfer-money": "Transfer money",
+  book: "Make a booking",
+  "run-command": "Run a command",
+  "edit-file": "Change a file",
+  "delete-file": "Delete a file",
+};
+
+/**
+ * One line for an approval card: what it wants to do and to what, which is what the lock
+ * screen needs to ask "Allow?" over. A native SDK card leads with the tool it names.
+ */
+export function approvalCardSummary(card: ApprovalCardData): string {
+  const words = card.actionClass.replace(/-/g, " ");
+  const verb = card.nativeAgent
+    ? card.actionClass
+    : CARD_VERBS[card.actionClass] ?? words.charAt(0).toUpperCase() + words.slice(1);
+  const target = card.target.trim().replace(/\s+/g, " ");
+  return target ? `${verb}: ${target}` : verb;
+}
+
+/** One line for a question card: the question itself. */
+export function questionCardSummary(card: QuestionCardData): string {
+  return card.question.trim().replace(/\s+/g, " ");
+}
+
+/**
+ * The words a preview carries for an event, bounded before encryption so APNs stays well
+ * below 4 KB: a completed reply's text, or a card's summary. Nothing else has a preview.
+ */
+export function notificationPreviewBody(event: YorozuEvent): string | null {
+  switch (notifyFor(event)) {
+    case "reply":
+      return event.kind === "message" ? boundedBytes(event.data.text.trim()) || null : null;
+    case "approval":
+      if (event.kind === "approval_card") return boundedBytes(approvalCardSummary(event.data)) || null;
+      if (event.kind === "question_card") return boundedBytes(questionCardSummary(event.data)) || null;
+      return null;
+    default:
+      return null;
+  }
+}
+
+/** The plaintext that is sealed into a preview box: the versioned JSON object. */
+export function encodeNotificationPreview(content: NotificationPreviewContent): string {
+  return JSON.stringify({
+    v: NOTIFY_PREVIEW_VERSION,
+    body: content.body,
+    event: content.event,
+    quick: content.quick === true,
+  });
+}
+
+/**
+ * What an opened preview box says. A plaintext that is not a JSON object, or one without a
+ * `v`, is a preview from before the object existed: its whole text is the body, it is about
+ * no card in particular, and it permits no button. An empty body is no preview at all.
+ */
+export function decodeNotificationPreview(plaintext: string): NotificationPreviewContent | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(plaintext);
+  } catch {
+    parsed = undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) || !("v" in parsed)) {
+    return plaintext === "" ? null : { body: plaintext, event: null, quick: false };
+  }
+  const object = parsed as Record<string, unknown>;
+  const body = typeof object.body === "string" ? object.body : "";
+  if (body === "") return null;
+  return {
+    body,
+    event: typeof object.event === "string" && object.event !== "" ? object.event : null,
+    quick: object.quick === true,
+  };
 }
