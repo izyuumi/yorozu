@@ -14,6 +14,23 @@ import Testing
     #expect(a == b)
 }
 
+/// The two directions must never share a key, or the relay could reflect a box back to its
+/// sender; and each end's send key must be the other end's recv key, or nothing would open.
+@Test func channelKeysAreDirectionalAndMirrorAcrossTheExchange() throws {
+    let mac = YorozuCrypto.generateKeypair()
+    let phone = YorozuCrypto.generateKeypair()
+    let macSide = try YorozuCrypto.deriveChannelKeys(
+        myPriv: mac.privateKey, theirPub: phone.publicKey, role: .mac)
+    let phoneSide = try YorozuCrypto.deriveChannelKeys(
+        myPriv: phone.privateKey, theirPub: mac.publicKey, role: .device)
+    let session = try YorozuCrypto.deriveSessionKey(myPriv: mac.privateKey, theirPub: phone.publicKey)
+    #expect(macSide.send != macSide.recv)
+    #expect(macSide.send != session)
+    #expect(macSide.recv != session)
+    #expect(macSide.send == phoneSide.recv)
+    #expect(macSide.recv == phoneSide.send)
+}
+
 @Test func sealThenOpenRoundTrips() throws {
     let key = SymmetricKey(size: .bits256)
     let plaintext = Data("hello from the Mac".utf8)
