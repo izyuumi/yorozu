@@ -52,10 +52,18 @@ jobs:
           printf '%s' "$MAC_CERT_P12" | base64 -d > "$RUNNER_TEMP/cert.p12"
           security import "$RUNNER_TEMP/cert.p12" -P "$MAC_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
           rm "$RUNNER_TEMP/cert.p12"
+          # A Developer ID certificate is only an identity codesign will use if its chain
+          # validates, and a fresh runner has no Apple intermediates. Both are public.
+          curl -fsSL -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          curl -fsSL -o "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -t cert -k "$KEYCHAIN"
+          security import "$RUNNER_TEMP/AppleWWDRCAG3.cer" -t cert -k "$KEYCHAIN"
           # codesign and notarytool read this keychain without a dialog nobody is there to click.
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
           security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
           security default-keychain -s "$KEYCHAIN"
+          # Names and fingerprints only, nothing secret: this is what codesign will be able to find.
+          security find-identity -v -p codesigning "$KEYCHAIN"
           # The profile build-mac.sh looks for, stored in the default keychain set just above.
           printf '%s' "$ASC_KEY_P8" | base64 -d > "$RUNNER_TEMP/AuthKey.p8"
           chmod 600 "$RUNNER_TEMP/AuthKey.p8"
