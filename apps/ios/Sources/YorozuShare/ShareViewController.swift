@@ -16,9 +16,11 @@ final class ShareViewController: UIViewController {
         // The sheet is presented over the host app, which should show through around it.
         view.backgroundColor = .clear
 
+        let destinations = ShareBox.directory().map { ShareBox.destinations(in: $0) }
         let host = UIHostingController(
             rootView: ShareComposeView(
-                threads: ShareBox.directory().map { ShareBox.threads(in: $0) } ?? [],
+                hosts: destinations?.hosts ?? [],
+                threads: destinations?.threads ?? [],
                 load: { [weak self] in await self?.sharedItem() ?? .unsupported },
                 send: { [weak self] in self?.hand(over: $0) },
                 cancel: { [weak self] in self?.dismiss(cancelled: true) }

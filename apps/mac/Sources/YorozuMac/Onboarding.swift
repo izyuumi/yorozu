@@ -211,20 +211,24 @@ struct OnboardingView: View {
 
     /// A stored pairing without the host's greeting yet, and nothing has gone wrong. That
     /// includes a host that is offline: the relay keeps trying, and the label says which.
+    private var clientFailure: String? {
+        session.failure ?? session.hostFailures[session.hosts.preferredHostID ?? ""] ?? session.model.failure
+    }
+
     private var clientConnecting: Bool {
         session.relay != nil && session.model.state != .paired
-            && session.model.failure == nil && session.failure == nil && pairingError == nil
+            && clientFailure == nil && pairingError == nil
     }
 
     private var clientProgressLabel: String {
         ClientConnectionStatus(
-            state: session.model.state, ownerOnline: session.model.ownerOnline, failure: session.model.failure
+            state: session.model.state, ownerOnline: session.model.ownerOnline, failure: clientFailure
         ).label
     }
 
     private var clientErrorMessage: String? {
         if let pairingError { return pairingError }
-        if session.model.failure != nil || session.failure != nil {
+        if clientFailure != nil {
             return String(localized: "Couldn’t connect. Retry, or paste a new code from the host Mac.")
         }
         return nil
@@ -259,14 +263,22 @@ struct OnboardingView: View {
             Button("Back") { step = .role }
             Spacer()
             // The connection that failed is kept; retrying it costs no new identity.
-            if clientErrorMessage != nil, session.relay != nil {
-                Button("Retry") { pairingError = nil; session.retryConnection() }
+            if clientErrorMessage != nil, let hostID = session.hosts.preferredHostID {
+                Button("Retry") { pairingError = nil; session.retryConnection(hostID) }
             }
             Button("Connect") {
                 do {
                     try session.pair(with: pairingCode)
                     submittedCode = pairingCode.trimmingCharacters(in: .whitespacesAndNewlines)
                     pairingError = nil
+                } catch MacChatSession.PairingError.alreadyConnected {
+                    // A replacement code for this host needs the same explicit repair
+                    // consent as Settings and links; another host must never be replaced.
+                    if let payload = try? QrPayload.decode(pairingCode), let code = try? payload.encoded(),
+                       let url = URL(string: code) {
+                        pairingError = nil
+                        session.handlePairingLink(url)
+                    }
                 } catch {
                     pairingError = String(localized: "That pairing code is invalid or expired.")
                 }

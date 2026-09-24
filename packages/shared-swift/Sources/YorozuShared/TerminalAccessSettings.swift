@@ -9,6 +9,12 @@ public struct TerminalAccessSettings: View {
     public init(model: ChatModel) { self.model = model }
 
     public var body: some View {
+        // The live typed status reply proves support, including hosts predating peer-info.
+        // Older hosts never answer this probe, so do not offer them an inert toggle.
+        if model.terminalEpoch?.isEmpty == false { terminalSection }
+    }
+
+    private var terminalSection: some View {
         Section {
             Toggle("Terminal access", isOn: Binding(
                 get: { model.terminalEnabled },

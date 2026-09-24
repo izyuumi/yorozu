@@ -347,13 +347,13 @@ export function conformance(relay: Adapter) {
 
   test("push registration accepts hexadecimal tokens and rejects malformed tokens", async () => {
     const { mac, room, phone } = await paired();
-    for (const deviceToken of ["abcdef0123456789".repeat(4), "ABCDEF0123456789".repeat(4)]) {
+    for (const deviceToken of ["abcdef0123456789".repeat(4), "ABCDEF0123456789".repeat(8), "ab".repeat(100), "cd".repeat(512)]) {
       phone.send({ type: "push", deviceToken });
       phone.send({ type: "owner" });
       expect(await phone.next()).toMatchObject({ type: "owner", online: true });
     }
 
-    for (const deviceToken of ["a".repeat(63), "a".repeat(65), "g".repeat(64)]) {
+    for (const deviceToken of ["", "a".repeat(63), "a".repeat(65), "g".repeat(64), "a".repeat(63) + "\n", "a".repeat(1026)]) {
       const invalid = await connectPhone(room, await mintToken(mac));
       await invalid.phone.next(); // joined
       invalid.phone.send({ type: "push", deviceToken });

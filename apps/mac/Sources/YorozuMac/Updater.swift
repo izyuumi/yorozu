@@ -204,10 +204,9 @@ final class PendingUpdate {
     private func install() {
         guard !preparing, !installStarted, handler != nil else { return }
         preparing = true
-        let model = MacChatSession.shared.model
         defer { preparing = false }
         do {
-            try model.saveForRestart()
+            try MacChatSession.shared.saveForRestart()
             UserDefaults.standard.set(WindowPresence.isOpen, forKey: "restoreChatAfterUpdate")
             status.phase = .installing
             Updates.installing = true

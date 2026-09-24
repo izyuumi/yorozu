@@ -41,6 +41,7 @@ private actor FakeTransport: ChatTransport {
     func yield(_ update: TransportUpdate) {
         if let updates { updates.yield(update) } else { held.append(update) }
     }
+
 }
 
 /// Holds every send open until released, exposing whether the model starts a later wire send
@@ -82,6 +83,14 @@ private func sent(by transport: FakeTransport, atLeast count: Int) async -> [Yor
         try? await Task.sleep(for: .milliseconds(10))
     }
     return await transport.sent
+}
+
+private func sent(by transport: FakeTransport, payload: YorozuEvent.Payload, in threadID: String) async -> YorozuEvent? {
+    for _ in 0..<300 {
+        if let event = await transport.sent.first(where: { $0.threadId == threadID && $0.payload == payload }) { return event }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    return await transport.sent.first { $0.threadId == threadID && $0.payload == payload }
 }
 
 private func started(by transport: BlockingTransport, atLeast count: Int) async -> [YorozuEvent.Kind] {
@@ -264,6 +273,40 @@ private let pairingKinds: Set<YorozuEvent.Kind> = [.threadList, .syncRequest, .d
     #expect(inputs.count == 1)
 }
 
+@MainActor
+@Test func shuttingDownAHostInvalidatesTerminalAndWaitsForAnInFlightSend() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    var state = TerminalData(action: .state, epoch: "host-epoch")
+    state.enabled = true
+    await transport.yield(.event(event("terminal-state", .terminal(state), thread: "")))
+    #expect(await eventually { model.terminalEpoch == "host-epoch" })
+    await transport.holdTerminalInput()
+    model.terminal(.input, sessionId: "s", data: Data([0x41]))
+    _ = await sent(by: transport, atLeast: pairingSends + 1)
+    model.terminal(.input, sessionId: "s", data: Data([0x42]))
+
+    var finished = false
+    let shutdown = Task {
+        await model.shutdown()
+        finished = true
+    }
+    #expect(await eventually { !model.canDeliver })
+    #expect(model.terminalEpoch == nil)
+    #expect(!model.terminalEnabled)
+    // Removal may now erase pairing keys: it must first await the transport's in-flight send.
+    #expect(!finished)
+    await transport.releaseTerminalInput()
+    await shutdown.value
+    #expect(finished)
+    let inputs = await transport.sent.filter {
+        if case .terminal(let data) = $0.payload { return data.action == .input }
+        return false
+    }
+    #expect(inputs.count == 1)
+    #expect(model.outbox.isEmpty)
+}
+
 /// A model with a live link behind it: paired and the Mac awake. Anything less and a send goes
 /// to the outbox instead of to the transport, which is what ``OutboxTests`` is about.
 @MainActor
@@ -272,14 +315,18 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     await transport.yield(.state(.paired))
     await transport.yield(.ownerOnline(true))
     model.start()
-    _ = await eventually { model.canDeliver }
+    #expect(await eventually { model.canDeliver })
+    // Becoming deliverable schedules these controls; it does not mean they finished sending.
+    let requests = await sent(by: transport, atLeast: pairingSends)
+    #expect(Set(requests.map(\.payload.kind)).isSuperset(of: pairingKinds))
     return model
 }
 
 @MainActor
 @Test func deviceRequestAnnouncesReadableOSName() async {
     let transport = FakeTransport()
-    _ = await connected(transport)
+    let model = await connected(transport)
+    defer { model.close() }
     let requests = await sent(by: transport, atLeast: pairingSends)
     let name = requests.compactMap { event -> String? in
         guard case .deviceList(let data) = event.payload else { return nil }
@@ -342,16 +389,19 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
 @Test func rapidStreamingDeltasAreCoalescedBeforeTheyInvalidateTheChat() async throws {
     let transport = FakeTransport()
     let model = await connected(transport)
+    defer { model.close() }
     var rendered = 0
     model.onEvent = { event in
         if case .message(let data) = event.payload, data.role == .agent { rendered += 1 }
     }
 
+    // Feed the reducer synchronously: actor hops could turn a burst into paced input when
+    // other tests occupy MainActor. The paced-stream test separately exercises real frames.
     for index in 0..<120 {
-        await transport.yield(.event(event(
+        model.applyEvent(event(
             "stream",
             .message(MessageData(role: .agent, text: String(repeating: "word ", count: index + 1)))
-        )))
+        ))
     }
 
     #expect(await eventually {
@@ -428,25 +478,28 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     ] {
         let transport = FakeTransport()
         let model = await connected(transport)
+        defer { model.close() }
 
         for index in 0..<historyCount {
-            await transport.yield(.event(event(
+            model.applyEvent(event(
                 "history-\(index)",
                 .message(MessageData(role: index.isMultiple(of: 2) ? .user : .agent, text: "history \(index)", done: true))
-            )))
+            ))
         }
-        #expect(await eventually { (model.events["home"]?.count ?? 0) == historyCount })
+        #expect((model.events["home"]?.count ?? 0) == historyCount)
 
         var rendered = 0
         model.onEvent = { event in
             if event.id == "matrix-stream" { rendered += 1 }
         }
         let unit = String(repeating: "x", count: chunkWidth)
+        // Test the reducer's burst boundary without scheduler-inserted frame gaps. Transport
+        // iteration and real frame cadence remain covered by the paced/wire-order tests.
         for index in 0..<chunks {
-            await transport.yield(.event(event(
+            model.applyEvent(event(
                 "matrix-stream",
                 .message(MessageData(role: .agent, text: String(repeating: unit, count: index + 1)))
-            )))
+            ))
         }
 
         let finalCount = chunks * chunkWidth
@@ -1101,15 +1154,15 @@ func finalStreamedReplyFollowsToolHistory(finalTimestamp: Int) async throws {
     // Applied here and now, so the caption and the tick move under the tap rather than a round
     // trip later, and sent for the runtime to persist.
     #expect(model.threads[0].model == "codex/gpt-5.6")
-    // Pairing already sent its own requests, so it is the next one that is the pick.
-    let picked = await sent(by: transport, atLeast: pairingSends + 1)
-    #expect(picked.last?.threadId == "t1")
-    #expect(picked.last?.payload == .threadSetModel(ThreadSetModelData(model: "codex/gpt-5.6")))
+    let picked = try #require(await sent(by: transport,
+        payload: .threadSetModel(ThreadSetModelData(model: "codex/gpt-5.6")), in: "t1"))
+    await transport.yield(.event(event("model-receipt", .receipt(ReceiptData(eventId: picked.id)))))
+    #expect(await eventually { !model.outbox.contains { $0.id == picked.id } })
 
     model.setModel(model.threads[0], nil)
     #expect(model.threads[0].model == nil)
-    let cleared = await sent(by: transport, atLeast: pairingSends + 2)
-    #expect(cleared.last?.payload == .threadSetModel(ThreadSetModelData(model: nil)))
+    let cleared = await sent(by: transport, payload: .threadSetModel(ThreadSetModelData(model: nil)), in: "t1")
+    #expect(cleared?.payload == .threadSetModel(ThreadSetModelData(model: nil)))
 }
 
 /// A model picked in a chat nothing has been sent in yet has no thread on the Mac to be set on.
@@ -1145,8 +1198,12 @@ func finalStreamedReplyFollowsToolHistory(finalTimestamp: Int) async throws {
 
     model.setEffort(model.threads[0], .high)
     #expect(model.threads[0].effort == .high)
-    let picked = await sent(by: transport, atLeast: pairingSends + 1)
-    #expect(picked.last?.payload == .threadSetEffort(ThreadSetEffortData(effort: .high)))
+    let picked = try #require(await sent(by: transport,
+        payload: .threadSetEffort(ThreadSetEffortData(effort: .high)), in: thread.id))
+    // This is now a durable command. Model the runtime's receipt before starting another
+    // send, otherwise the retained command correctly retries alongside the new draft.
+    await transport.yield(.event(event("effort-receipt", .receipt(ReceiptData(eventId: picked.id)))))
+    #expect(await eventually { model.outbox.isEmpty })
 
     let draft = model.newDraft()
     let before = await sent(by: transport, atLeast: pairingSends + 1).count
