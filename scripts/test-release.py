@@ -47,8 +47,9 @@ class FakeGitHub(publication.GitHub):
                            "head_branch": "main", "head_repository": {"full_name": self.repo}, "event": "push",
                            "status": "completed", "conclusion": "success"}}
 
-    def add_release(self, tag, assets=None, *, draft=False, prerelease=False, source=SHA):
-        self.releases[tag] = {"tagName": tag, "isDraft": draft, "isPrerelease": prerelease, "targetCommitish": source, "files": assets or {}}
+    def add_release(self, tag, assets=None, *, draft=False, prerelease=False, source=SHA, name=None):
+        self.releases[tag] = {"tagName": tag, "name": name or f"Yorozu {tag}", "isDraft": draft,
+                              "isPrerelease": prerelease, "targetCommitish": source, "files": assets or {}}
         self.tags[tag] = source
 
     def call(self, *args, optional=False):
@@ -69,7 +70,7 @@ class FakeGitHub(publication.GitHub):
                     return None
                 result = {"object": {"type": "commit", "sha": self.tags[tag]}}
             elif endpoint == "releases?per_page=100":
-                result = [[{"tag_name": tag, "draft": release["isDraft"], "prerelease": release["isPrerelease"],
+                result = [[{"tag_name": tag, "name": release["name"], "draft": release["isDraft"], "prerelease": release["isPrerelease"],
                             "assets": [{"name": name} for name in release["files"]]}
                            for tag, release in self.releases.items()]]
             elif endpoint.startswith("pulls?"):
@@ -100,7 +101,7 @@ class FakeGitHub(publication.GitHub):
             assert tag not in self.releases
             assert "--draft" in args and "--latest=false" in args
             self.add_release(tag, draft=True, prerelease="--prerelease" in args,
-                             source=args[args.index("--target") + 1])
+                             source=args[args.index("--target") + 1], name=args[args.index("--title") + 1])
             self.releases[tag]["notes"] = args[args.index("--notes") + 1]
         elif action == "download":
             name = args[args.index("--pattern") + 1]
@@ -162,6 +163,46 @@ class ReleaseFixture(unittest.TestCase):
 
 
 class ReleaseTests(ReleaseFixture):
+    def test_main_candidate_cannot_move_beta_backwards(self):
+        data = self.publish()
+        self.gh.releases.clear()
+        self.gh.tags.clear()
+        for short, build, status in (("0.6.0", "10000", "ahead"), ("0.4.9", "10099", "ahead"),
+                                     ("0.5.0", "10041", "behind"), ("0.5.0", "10041", "diverged")):
+            with self.subTest(short=short, build=build, status=status):
+                tag = f"candidate-{short}-{build}"
+                previous = {**data, "version": short, "build": build, "tag": tag, "source_sha": OTHER,
+                            "ios": {**data["ios"], "version": short, "build": build}}
+                self.gh.add_release(tag, {"candidate.json": json.dumps(previous).encode()},
+                                    prerelease=True, source=OTHER, name=f"Yorozu Beta {tag}")
+                self.gh.compare_status = status
+                self.gh.events.clear()
+                with self.assertRaisesRegex(ValueError, "backwards"):
+                    self.publish()
+                self.assertEqual(self.mutations(), [])
+                self.gh.releases.clear()
+                self.gh.tags.clear()
+
+    def test_main_candidate_ignores_hotfixes_and_allows_descendant_source(self):
+        data = self.publish()
+        self.gh.releases.clear()
+        self.gh.tags.clear()
+        tag = "candidate-0.5.0-10041"
+        previous = {**data, "build": "10041", "tag": tag, "source_sha": OTHER,
+                    "ios": {**data["ios"], "build": "10041"}}
+        self.gh.add_release(tag, {"candidate.json": json.dumps(previous).encode()},
+                            prerelease=True, source=OTHER, name=f"Yorozu Beta {tag}")
+        self.gh.add_release("candidate-0.5.0-10099", prerelease=True)
+        self.publish()
+        self.assertEqual(self.gh.releases[self.tag]["name"], f"Yorozu Beta {self.tag}")
+
+    def test_release_branch_candidates_do_not_become_public_main_beta(self):
+        self.data["source_branch"] = "release/0.5"
+        self.gh.runs["7"]["head_branch"] = "release/0.5"
+        publication.write_json(self.dist / "candidate.json", self.data)
+        self.publish()
+        self.assertEqual(self.gh.releases[self.tag]["name"], f"Yorozu {self.tag}")
+
     def test_exact_artifact_promotion_retains_every_release_and_tag(self):
         self.gh.add_release("v0.4.0", {"appcast.xml": feed("0.4.0", "10001")})
         self.publish()

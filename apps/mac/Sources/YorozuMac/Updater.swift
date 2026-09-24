@@ -16,7 +16,7 @@ enum Updates {
     /// forever — the Info.plist keys only supply an initial value, and there already is one.
     private static let configuredKey = "YorozuUpdatesConfigured"
     private static let betaKey = "YorozuBetaUpdates"
-    static let betaFeedURL = "https://github.com/izyuumi/yorozu/releases/download/main-beta/appcast.xml"
+    static let betaFeedURL = "https://yorozu.yumi.to/beta/appcast.xml"
 
     static let controller: SPUStandardUpdaterController? = {
         guard Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil else { return nil }
