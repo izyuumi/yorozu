@@ -11,9 +11,8 @@ struct GeneralView: View {
     @State private var confirmingUnpair = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("This Mac").font(.headline)
+        Form {
+            Section("This Mac") {
                 Picker("Role", selection: Binding(get: { session.role ?? .host }, set: { session.select($0) })) {
                     Text("Host Yorozu here").tag(MacRole.host)
                     Text("Connect to another Mac").tag(MacRole.client)
@@ -21,12 +20,13 @@ struct GeneralView: View {
                 .pickerStyle(.segmented)
                 if session.role == .client {
                     if session.relay == nil {
-                        TextField("Paste pairing code", text: $pairingCode, axis: .vertical)
-                            .textFieldStyle(.roundedBorder)
-                        Button("Connect") {
-                            if (try? session.pair(with: pairingCode)) != nil { pairingCode = "" }
+                        TextField("Pairing code", text: $pairingCode, axis: .vertical)
+                        LabeledContent("") {
+                            Button("Connect") {
+                                if (try? session.pair(with: pairingCode)) != nil { pairingCode = "" }
+                            }
+                            .disabled(pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
-                        .disabled(pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         if let failure = session.failure {
                             Text(failure).font(.caption).foregroundStyle(.red)
                         } else if session.model.failure != nil {
@@ -38,7 +38,9 @@ struct GeneralView: View {
                         if let pairedAt = session.pairedAt {
                             LabeledContent("Paired since", value: pairedAt.formatted(date: .abbreviated, time: .shortened))
                         }
-                        Button("Unpair", role: .destructive) { confirmingUnpair = true }
+                        LabeledContent("") {
+                            Button("Unpair…", role: .destructive) { confirmingUnpair = true }
+                        }
                     }
                 }
             }
@@ -48,58 +50,78 @@ struct GeneralView: View {
             } message: {
                 Text("Yorozu will remove pairing keys and all cached chats from this Mac.")
             }
-            if session.role == .host {
-                RelayView()
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Agent runtime").font(.headline)
-                Text(session.role == .host
-                    ? "OpenClaw owns models, tools, browser access, credentials, and approvals."
-                    : "This Mac uses the OpenClaw runtime on its paired host Mac.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            if session.role == .host { RelayView() }
             // The one approval setting Yorozu itself still owns: the global bypass the
             // native agents read. Same toggle as the phone's; the runtime stores it.
-            VStack(alignment: .leading, spacing: 4) {
+            Section {
                 Toggle("YOLO mode — skip all approvals", isOn: Binding(
                     get: { session.model.yoloMode },
                     set: { session.model.setYoloMode($0) }
                 ))
-                if session.model.yoloMode {
-                    Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                    if let until = session.model.yoloUntil {
-                        Text("until \(Date(timeIntervalSince1970: Double(until) / 1000).formatted(date: .omitted, time: .shortened))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            } header: {
+                Text("Agent runtime")
+            } footer: {
+                Group {
+                    if session.model.yoloMode {
+                        Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
+                            .foregroundStyle(.red)
+                        if let until = session.model.yoloUntil {
+                            Text("until \(Date(timeIntervalSince1970: Double(until) / 1000).formatted(date: .omitted, time: .shortened))")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text(session.role == .host
+                            ? "OpenClaw owns models, tools, browser access, credentials, and approvals."
+                            : "This Mac uses the OpenClaw runtime on its paired host Mac.")
                     }
                 }
+                .leadingFooter()
             }
             .onAppear { session.model.requestApprovalSettings() }
-            if session.role == .host { KeepaliveView() }
-            if session.role == .host { VStack(alignment: .leading, spacing: 4) {
-                Toggle("Never sleep", isOn: Binding(
-                    get: { neverSleep.isRunning },
-                    set: { $0 ? neverSleep.start() : neverSleep.stop() }
-                ))
-                Text("Keeps this Mac awake so the agent can answer your phone while you are away.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } }
-            LabeledContent("Version", value: versionLabel)
-                .foregroundStyle(.secondary)
-            AutomaticUpdatesToggle()
-            CheckForUpdatesButton()
-            Divider()
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Provider marks").font(.headline)
+            if session.role == .host {
+                Section {
+                    KeepaliveView()
+                    Toggle("Never sleep", isOn: Binding(
+                        get: { neverSleep.isRunning },
+                        set: { $0 ? neverSleep.start() : neverSleep.stop() }
+                    ))
+                } header: {
+                    Text("Stay available")
+                } footer: {
+                    Group {
+                        Text(
+                            "Keep Yorozu running checks every minute and opens Yorozu again if it has died; "
+                                + "quitting from the menu is still a quit. Never sleep keeps this Mac awake so "
+                                + "the agent can answer your phone while you are away."
+                        )
+                    }
+                    .leadingFooter()
+                }
+            }
+            Section {
+                LabeledContent("Version", value: versionLabel)
+                AutomaticUpdatesToggle()
+                if Updates.controller != nil {
+                    LabeledContent("") { CheckForUpdatesButton() }
+                }
+            } header: {
+                Text("Updates")
+            } footer: {
+                Group {
+                    if Updates.controller != nil {
+                        Text("Downloads new versions in the background and installs them while you are away.")
+                    }
+                }
+                .leadingFooter()
+            }
+            Section {
                 Text(ProviderMarkAttribution.notice)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
+        .formStyle(.grouped)
+        .toggleStyle(.switch)
     }
 
     private var versionLabel: String {
@@ -122,25 +144,10 @@ struct KeepaliveView: View {
     @State private var keepRunning = Watchdog.isEnabled
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Toggle("Start at login", isOn: Binding(
-                    get: { startsAtLogin },
-                    set: { LoginItem.set($0) }
-                ))
+        Toggle(isOn: Binding(get: { startsAtLogin }, set: { LoginItem.set($0) })) {
+            Text("Start at login")
+            if !loginStatus.isEmpty {
                 Text(loginStatus)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Toggle("Keep Yorozu running", isOn: $keepRunning)
-                    .onChange(of: keepRunning) { Watchdog.isEnabled = keepRunning }
-                Text(
-                    "Checks every minute and opens Yorozu again if it has died. Quitting from the menu is "
-                        + "still a quit; supervision resumes next time Yorozu opens."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
             }
         }
         .task {
@@ -150,5 +157,16 @@ struct KeepaliveView: View {
                 try? await Task.sleep(for: .seconds(2))
             }
         }
+        Toggle("Keep Yorozu running", isOn: $keepRunning)
+            .onChange(of: keepRunning) { Watchdog.isEnabled = keepRunning }
+    }
+}
+
+extension View {
+    /// A grouped Form on the Mac sets its footers flush right, under the controls; a sentence
+    /// of explanation reads from the left, like the rows above it.
+    func leadingFooter() -> some View {
+        multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
