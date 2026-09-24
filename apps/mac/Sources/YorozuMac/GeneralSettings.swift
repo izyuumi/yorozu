@@ -8,6 +8,7 @@ struct GeneralView: View {
     @ObservedObject private var neverSleep = NeverSleep.shared
     @State private var session = MacChatSession.shared
     @State private var betaUpdates = Updates.beta
+    @AppStorage(ChatView.sendWithCommandReturnKey) private var sendWithCommandReturn = false
 
     var body: some View {
         Form {
@@ -23,6 +24,19 @@ struct GeneralView: View {
                 }
             }
             if session.role == .host { RelayView() }
+            Section {
+                Picker("Send message with", selection: $sendWithCommandReturn) {
+                    Text("Return").tag(false)
+                    Text("⌘ Return").tag(true)
+                }
+            } header: {
+                Text("Chat")
+            } footer: {
+                Text(sendWithCommandReturn
+                    ? "Return starts a new line."
+                    : "Shift-Return starts a new line.")
+                    .leadingFooter()
+            }
             // The one approval setting Yorozu itself still owns: the global bypass the
             // native agents read. Same toggle as the phone's; the runtime stores it.
             if session.role == .host {
