@@ -10,10 +10,12 @@ same artifacts. Release Please prepares version/changelog PRs; merging one does 
 
 ## Versions
 
-`release-version.txt` holds the intended next numeric `MAJOR.MINOR.PATCH` version. A manual
-candidate dispatch can override it explicitly. Release Please owns `version.txt` and
-`.release-please-manifest.json`, which record its last prepared version; neither selects shipping
-versions. Production build scripts require explicit `VERSION` and `BUILD`.
+`release-please-config.json` holds the intended next numeric `MAJOR.MINOR.PATCH` version in
+`packages["."]["release-as"]`. Edit this value per source branch; Release Please and candidate
+builds both read it. A manual candidate dispatch can override its build version explicitly.
+Release Please owns `version.txt` and `.release-please-manifest.json`, which record its last
+prepared version. Stable promotion requires both to match the candidate at its source SHA.
+Production build scripts require explicit `VERSION` and `BUILD`.
 
 The single `Release` workflow assigns `BUILD = 10000 + github.run_number` to both platforms.
 That number identifies the Mac DMG, iOS archive, and TestFlight upload. Do not upload local builds
@@ -77,7 +79,10 @@ signature; the XML itself is not signed:
 
 ```sh
 ./apps/mac/.build/artifacts/sparkle/Sparkle/bin/generate_keys   # once, prints the public key
-./scripts/appcast.sh                                            # writes dist/appcast.xml
+# Local example matching the DMG above; use the actual candidate version/build in CI.
+CHANNEL=beta \
+  DOWNLOAD_PREFIX=https://github.com/izyuumi/yorozu/releases/download/candidate-0.5.0-9999/ \
+  ./scripts/appcast.sh                                       # writes dist/appcast.xml
 ```
 
 The public key goes in `SU_PUBLIC_KEY` in `build-mac.sh`, which writes it into the app's
@@ -101,7 +106,8 @@ The candidate workflow imports both signing identities, notarizes the Mac DMG, g
 Sparkle archive signature, then uploads the matching iOS build. It records the exact processed App Store
 Connect build ID in the candidate manifest. Stable promotion requires the App Store Connect
 key to verify that this same build was selected for the approved App Store version; it does
-not rebuild, sign, or upload the iOS app again.
+not rebuild, sign, or upload the iOS app again. The publication command verifies Apple
+approval itself, so local promotion has the same credential and review requirements.
 
 #### Secrets, set once
 

@@ -41,5 +41,5 @@ jobs:
         run: |
           set -eu
           python3 scripts/release.py promote --candidate "$CANDIDATE" --dist dist/promotion
-          printf 'Promoted tested candidate `%s`. Check App Store availability separately.\n' \
+          printf 'Promoted tested candidate %s. Check App Store availability separately.\n' \
             "$CANDIDATE" >> "$GITHUB_STEP_SUMMARY"

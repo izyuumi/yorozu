@@ -176,7 +176,7 @@ def prepare(gh, args):
     require(os.environ.get("GITHUB_RUN_ATTEMPT", "1") == "1", "dispatch a fresh candidate build instead of rerunning uploads")
     require(checkout_sha() == args.source, "checkout HEAD does not match candidate source")
     require(re.fullmatch(r"[1-9]\d*", str(args.run_number)), "run number must be positive")
-    data = {"schema": 1, "version": args.version or Path("release-version.txt").read_text().strip(),
+    data = {"schema": 1, "version": args.version or json.loads(Path("release-please-config.json").read_text())["packages"]["."]["release-as"],
             "build": str(10000 + int(args.run_number)), "source_sha": args.source,
             "source_branch": args.branch, "run_id": str(args.run_id), "ci_run_id": str(args.ci_run_id)}
     data["tag"] = f"candidate-{data['version']}-{data['build']}"
@@ -324,23 +324,30 @@ def rolling_beta(gh, tag, directory):
 
 
 def finish_release_pr(gh, data, publish=False):
-    query = urlencode({"state": "closed", "base": data["source_branch"], "per_page": 100})
+    query = urlencode({"state": "closed", "per_page": 100})
     pages = gh.api(f"pulls?{query}", "--paginate", "--slurp")
-    title = f"chore({data['source_branch']}): release {data['version']}"
-    matches = [pull for page in pages for pull in page
-               if pull.get("merged_at") and pull.get("title") == title
-               and any(label.get("name") == "autorelease: pending" for label in pull.get("labels", []))]
-    require(len(matches) <= 1, "multiple pending release PRs match candidate version and branch")
-    if not matches:
-        return
-    pull = matches[0]
-    merged = pull.get("merge_commit_sha", "")
-    require(isinstance(merged, str) and re.fullmatch(r"[0-9a-f]{40}", merged), "release PR has no valid merge commit")
-    comparison = gh.api(f"compare/{merged}...{data['source_sha']}")
-    require(comparison.get("status") in ("ahead", "identical"), "candidate source must include release PR merge commit")
+    major, minor, _ = version(data["version"])
+    branches = {"main", f"release/{major}.{minor}"}
+    inherited = []
+    for pull in (pull for page in pages for pull in page):
+        branch = pull.get("base", {}).get("ref")
+        if (branch not in branches or not pull.get("merged_at")
+                or pull.get("title") != f"chore({branch}): release {data['version']}"
+                or not any(label.get("name") == "autorelease: pending" for label in pull.get("labels", []))):
+            continue
+        merged = pull.get("merge_commit_sha", "")
+        require(isinstance(merged, str) and re.fullmatch(r"[0-9a-f]{40}", merged), "release PR has no valid merge commit")
+        comparison = gh.api(f"compare/{merged}...{data['source_sha']}")
+        ancestor = comparison.get("status") in ("ahead", "identical")
+        require(ancestor or branch != data["source_branch"], "candidate source must include release PR merge commit")
+        if ancestor:
+            inherited.append(pull)
+    # A release branch can inherit main's preparation PR. Clear every included
+    # preparation only after publication, leaving unrelated branch work pending.
     if publish:
-        gh.call("pr", "edit", pull["number"], "--repo", gh.repo,
-                "--remove-label", "autorelease: pending", "--add-label", "autorelease: tagged")
+        for pull in inherited:
+            gh.call("pr", "edit", pull["number"], "--repo", gh.repo,
+                    "--remove-label", "autorelease: pending", "--add-label", "autorelease: tagged")
 
 
 def promote(gh, tag, directory, expected=None):
