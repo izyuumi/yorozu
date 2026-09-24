@@ -3,6 +3,6 @@
 /mac https://github.com/izyuumi/yorozu/releases/latest/download/yorozu.dmg 302
 /appcast.xml https://github.com/izyuumi/yorozu/releases/latest/download/appcast.xml 302
 # Preserve the shipped pre-candidate feed's latest-relative URL during migration.
-/download/Yorozu-0.4.0-293.dmg https://github.com/izyuumi/yorozu/releases/download/v0.4.0/Yorozu-0.4.0-293.dmg 302
+/download/Yorozu-0.4.0-293.dmg https://github.com/izyuumi/yorozu/releases/download/v0.4.0/yorozu.dmg 302
 /download/* https://github.com/izyuumi/yorozu/releases/latest/download/:splat 302
 /models.json https://raw.githubusercontent.com/izyuumi/yorozu/main/catalog/models.json 302

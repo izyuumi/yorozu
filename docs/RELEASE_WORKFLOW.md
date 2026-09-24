@@ -190,7 +190,8 @@ the feed and archive-signature format.
 - Appcast enclosure URLs point directly to retained numbered release assets. A later release
   does not break a cached appcast's download URL. Stable and candidate releases are preserved.
 - Pin the previously shipped `0.4.0 (293)` download redirect to `v0.4.0` before first promotion,
-  preserving the legacy cached appcast during migration. Do not delete its versioned asset.
+  preserving the legacy cached appcast during migration. It resolves to the same signed bytes
+  under `v0.4.0/yorozu.dmg`; the duplicate versioned asset is no longer needed.
 - Before deploying lowercase stable links, make `yorozu.dmg` available on the current stable
   release. Then deploy the website Worker with `apps/relay/node_modules/.bin/wrangler deploy
   --config apps/web/wrangler.jsonc` from the repository root. Future beta candidates appear
