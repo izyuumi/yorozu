@@ -1,4 +1,5 @@
 import SwiftUI
+import YorozuShared
 
 /// The splash an unpaired phone opens on: the icon, the name, what the app is for, one button.
 /// The icon is a flat 1024 render of AppIcon.icon as its own image set — an app icon is not
@@ -32,17 +33,14 @@ struct PairingFlowView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
-                    Text("On your host Mac, open Yorozu, then choose Settings › Devices › Pair Another Device.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.top, 4)
-                        .frame(maxWidth: 320)
+                    guide.padding(.top, 8)
                     Spacer()
-                    Button("Scan pairing code", systemImage: "qrcode.viewfinder") { destination = .scanner }
+                    Button { destination = .scanner } label: {
+                        Label("Scan pairing code", systemImage: "qrcode.viewfinder")
+                            .frame(maxWidth: .infinity)
+                    }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
-                        .frame(maxWidth: .infinity)
                         .disabled(connecting)
                     Button("Enter code manually") { destination = .manual }
                         .frame(minHeight: 44)
@@ -61,11 +59,16 @@ struct PairingFlowView: View {
                         .multilineTextAlignment(.leading)
                     }
                 }
-                .frame(minHeight: max(0, geometry.size.height - 40))
+                // Phone-width content, centred: an iPad or a landscape phone is wider than a
+                // column of buttons should ever be.
+                .frame(maxWidth: 360)
+                .frame(maxWidth: .infinity, minHeight: max(0, geometry.size.height - 40))
                 .padding(.horizontal, 24)
                 .padding(.vertical, 20)
             }
         }
+        .background(YorozuPalette.canvas.ignoresSafeArea())
+        .yorozuTint()
         .sheet(item: $destination) { shown in
             switch shown {
             case .scanner:
@@ -74,10 +77,38 @@ struct PairingFlowView: View {
                     if failure == nil { destination = nil }
                     return failure
                 }, onManualEntry: { destination = .manual })
+                .yorozuTint()
             case .manual:
                 PairView(onPair: submit)
+                    .yorozuTint()
             }
         }
+    }
+
+    /// The three things to do on the Mac, and where to get the Mac app if there is none yet.
+    private var guide: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Pair with your Mac").font(.subheadline.weight(.semibold))
+            VStack(alignment: .leading, spacing: 4) {
+                guideStep(1, "Open Yorozu on your Mac")
+                guideStep(2, "Settings › Devices › Pair Another Device")
+                guideStep(3, "Scan the code, or paste it here")
+            }
+            Link("Don’t have the Mac app yet? Get it", destination: URL(string: "https://yorozu.yumi.to/mac")!)
+                .font(.subheadline)
+                .frame(minHeight: 44, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .yorozuPaperCard()
+    }
+
+    private func guideStep(_ number: Int, _ text: LocalizedStringKey) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("\(number).").monospacedDigit()
+            Text(text)
+        }
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
     }
 
     private func submit(_ text: String) -> String? {

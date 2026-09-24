@@ -148,6 +148,8 @@ struct PairingSheet: View {
     var autoDismiss = true
     var onPaired: () -> Void = {}
     var showsActions = true
+    /// Inside the setup window, which supplies its own title, width and padding.
+    var embedded = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var paired = false
@@ -165,12 +167,12 @@ struct PairingSheet: View {
                     .foregroundStyle(YorozuPalette.sage)
                     .accessibilityHidden(true)
                 Text("Device paired").font(.headline)
-                Text("Your device is connected and ready to use.")
+                Text("It can reach this Mac now. Whether an agent answers depends on what is set up here.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             } else {
-                Text("Pair a device").font(.headline)
+                if !embedded { Text("Pair a device").font(.headline) }
                 if progress.baseline == nil {
                     VStack(spacing: 8) {
                         if preparationFailed {
@@ -233,7 +235,9 @@ struct PairingSheet: View {
                             NSPasteboard.general.setString(code, forType: .string)
                         }
                     }
-                    Text("Or paste this code into Yorozu on your iPhone, iPad, or another Mac.")
+                    // Codes are not revoked by minting another: the runtime and the relay keep
+                    // recent ones until they expire, so "keep it private" is the whole advice.
+                    Text("Or paste it into Connect to another Mac on a Mac, or Enter code manually on an iPhone or iPad. Codes work once and expire; keep this one private.")
                         .font(.caption).foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
@@ -247,10 +251,11 @@ struct PairingSheet: View {
                 }
             }
         }
-        .padding(24)
-        .frame(width: 380)
+        .padding(embedded ? 0 : 24)
+        .frame(width: embedded ? nil : 380)
         .frame(minHeight: 180)
-        .background(YorozuPalette.paper)
+        // A sheet of its own sits on paper like every other card; embedded, it takes its host's.
+        .background(embedded ? Color.clear : YorozuPalette.paper)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: paired)
         .task(id: attempt) {
             // Do not expose a code until a fresh list establishes which devices already exist.
