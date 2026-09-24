@@ -146,11 +146,13 @@ public func searchExcerpt(in text: String, matching query: String, limit: Int = 
 public let openWindow: TimeInterval = 2 * 60 * 60
 
 /// One glanceable unit with no redundant “ago”, matching the compact row anatomy on both
-/// platforms. Dates replace vague large relative numbers after a year.
+/// platforms. Seconds show under two minutes, where a live reply is still landing; dates
+/// replace vague large relative numbers after a year.
 public func compactThreadTime(_ date: Date, now: Date = Date()) -> String {
     let seconds = max(0, now.timeIntervalSince(date))
-    if seconds < 60 { return String(localized: "now") }
-    if seconds < 3_600 { return "\(max(1, Int(seconds / 60)))m" }
+    if seconds < 60 { return "\(Int(seconds))s" }
+    if seconds < 120 { return "1m \(Int(seconds) - 60)s" }
+    if seconds < 3_600 { return "\(Int(seconds / 60))m" }
     if seconds < 86_400 { return "\(Int(seconds / 3_600))h" }
     if seconds < 604_800 { return "\(Int(seconds / 86_400))d" }
     if seconds < 2_629_800 { return "\(Int(seconds / 604_800))w" }
@@ -245,7 +247,10 @@ struct ThreadRow: View {
                             .lineLimit(1)
                         #endif
                     Spacer(minLength: 0)
-                    Text(compactThreadTime(thread.lastActivityDate))
+                    // Ticks each second only while seconds are on show.
+                    TimelineView(.periodic(from: .now, by: thread.lastActivityDate > .now - 120 ? 1 : 60)) {
+                        Text(compactThreadTime(thread.lastActivityDate, now: $0.date))
+                    }
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
