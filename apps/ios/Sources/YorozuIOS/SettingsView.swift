@@ -18,6 +18,13 @@ private func hostStatus(_ host: HostSession) -> String {
     return ConnectionState(state: host.model.state, ownerOnline: host.model.ownerOnline).label
 }
 
+/// The colour ``hostStatus(_:)`` is drawn in. An update the Mac needs is attention, not failure.
+@MainActor
+private func statusTint(_ host: HostSession) -> Color {
+    if case .updateRequired = host.model.compatibility { return YorozuPalette.warning }
+    return ConnectionState(state: host.model.state, ownerOnline: host.model.ownerOnline).tint
+}
+
 struct SettingsView: View {
     let session: Session
     @Environment(\.dismiss) private var dismiss
@@ -43,14 +50,23 @@ struct SettingsView: View {
                                     addingHost = true
                                 }
                             } label: {
-                                if session.hosts.hasMultipleHosts {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(host.label)
-                                        Text(hostStatus(host)).font(.caption).foregroundStyle(.secondary)
+                                HStack(spacing: 12) {
+                                    YorozuGlyphTile {
+                                        Image(systemName: "desktopcomputer")
+                                            .font(.body.weight(.medium))
+                                            .foregroundStyle(YorozuPalette.ink)
                                     }
-                                } else {
-                                    LabeledContent("Status", value: hostStatus(host))
+                                    .accessibilityHidden(true)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(session.hosts.hasMultipleHosts ? host.label : String(localized: "Your Mac"))
+                                            .font(.headline)
+                                            .foregroundStyle(YorozuPalette.ink)
+                                        YorozuStatusLabel(hostStatus(host), tint: statusTint(host))
+                                            .font(.subheadline)
+                                    }
                                 }
+                                .padding(.vertical, 2)
+                                .accessibilityElement(children: .combine)
                             }
                         }
                         Button("Add host", systemImage: "plus") {
@@ -81,9 +97,28 @@ struct SettingsView: View {
                     Section { Label(failure, systemImage: "exclamationmark.circle").foregroundStyle(.secondary) }
                         .listRowBackground(YorozuPalette.paper)
                 }
-                Section("App") {
-                    LabeledContent("Version", value: Self.version)
-                    Link("Source on GitHub", destination: URL(string: "https://github.com/izyuumi/yorozu")!)
+                Section {
+                    HStack(spacing: 12) {
+                        YorozuGlyphTile { YorozuMark(dimension: 22) }
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Yorozu")
+                                .font(.headline)
+                                .fontDesign(.serif)
+                                .foregroundStyle(YorozuPalette.ink)
+                            Text("Version \(Self.version)")
+                                .font(.subheadline.monospacedDigit())
+                                .foregroundStyle(YorozuPalette.ink.opacity(0.62))
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                    .accessibilityElement(children: .combine)
+                    Link(destination: URL(string: "https://github.com/izyuumi/yorozu")!) {
+                        Label("Source on GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
+                    }
+                } header: {
+                    Text("App")
                 }
                 .listRowBackground(YorozuPalette.paper)
                 Section("Provider marks") {
@@ -97,9 +132,7 @@ struct SettingsView: View {
                     .listRowBackground(YorozuPalette.paper)
                 }
             }
-            .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
-            .background(YorozuPalette.canvas)
+            .paperList()
             .navigationTitle("Settings")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .sheet(isPresented: $addingHost) {
@@ -136,8 +169,6 @@ private struct HostSettingsView: View {
     @State private var removing = false
     @State private var nickname = ""
 
-    private var status: ConnectionState { ConnectionState(state: host.model.state, ownerOnline: host.model.ownerOnline) }
-
     var body: some View {
         List {
             Section(session.hosts.hasMultipleHosts ? "Host" : "Connection") {
@@ -148,12 +179,7 @@ private struct HostSettingsView: View {
                     if let name = host.model.peerInfo?.computerName { LabeledContent("Computer name", value: name) }
                 }
                 LabeledContent("Status") {
-                    HStack(spacing: 7) {
-                        Circle().fill(status.tint).frame(width: 8, height: 8)
-                            .accessibilityHidden(true)
-                        Text(hostStatus(host))
-                    }
-                    .foregroundStyle(status.tint)
+                    YorozuStatusLabel(hostStatus(host), tint: statusTint(host))
                 }
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Relay")
@@ -208,9 +234,7 @@ private struct HostSettingsView: View {
             }
             .listRowBackground(YorozuPalette.paper)
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(YorozuPalette.canvas)
+        .paperList()
         .navigationTitle(session.hosts.hasMultipleHosts ? host.label : "Connection")
         .onAppear { nickname = host.nickname ?? ""; host.model.requestApprovalSettings() }
         .alert(session.hosts.hasMultipleHosts ? "Remove \(host.label)?" : "Remove connection?", isPresented: $confirmingRemoval) {

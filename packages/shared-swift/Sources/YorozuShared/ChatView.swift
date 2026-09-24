@@ -236,7 +236,7 @@ public struct ChatView: View {
                             .padding(.bottom, LayoutMetrics.inner)
                             .frame(maxWidth: LayoutMetrics.composerWidth)
                     }
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
                 }
             }
         #endif
@@ -1469,9 +1469,8 @@ public enum ChatShowcase {
     public static var imageViewer = false
     /// A term, which opens the search field over the transcript with it already typed.
     public static var search: String?
-    /// Draws the "…" menu's Model choices as a popover over the toolbar. A screenshot needs
-    /// them on screen and nothing on a simulator can open a real menu; the contents are the
-    /// menu's own, not a copy of them.
+    /// Opens the composer's model and effort card on the phone. A screenshot needs it on
+    /// screen and nothing on a simulator taps a button on demand; the card is the real one.
     public static var modelMenu = false
     /// Puts the share extension's composer on screen. The app draws it only for a screenshot:
     /// nothing on a simulator can open a real share sheet on demand, and the composer is the

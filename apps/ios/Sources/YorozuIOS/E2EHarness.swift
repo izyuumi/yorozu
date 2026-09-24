@@ -111,8 +111,8 @@ final class E2EHarness {
             }
             seed()
             model.onThreads = seed
-            // Nothing on a simulator can open a menu, so the menu's own contents are drawn as
-            // a popover over the button they hang off.
+            // Nothing on a simulator taps the chip on demand, so the chat opens with its model
+            // and effort card already up.
             ChatShowcase.modelMenu = true
         // The two t53 pictures: several photos in one message as a grid, and the viewer that
         // opens on one of them. Re-seeded on every thread list for the same reason as `share`.

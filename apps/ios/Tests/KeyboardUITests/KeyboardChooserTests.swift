@@ -81,6 +81,7 @@ final class KeyboardChooserTests: XCTestCase {
         effort.tap()
         XCTAssertTrue(app.keyboards.firstMatch.exists, "Effort selection must preserve keyboard")
         app.buttons["Done"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "Closing the card must preserve keyboard")
         expectValue(app.buttons["Model and effort"], "Auto, Low")
         expectValue(field, "Keyboard regression draft")
         field.typeText(" continues")
