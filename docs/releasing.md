@@ -12,11 +12,20 @@ before merging. Builds run in the same workflow because bot-created tags do not 
 
 ## Versions
 
-Neither number is typed. The marketing version is the latest `v*` tag and `CFBundleVersion` is the
-commit count, which rises with every commit and never repeats. Sparkle compares `CFBundleVersion`,
-so that is what makes one build newer than another, and the build number is in the DMG's name so
-two builds of one tag are two files rather than one URL with two meanings. `scripts/build-ios.sh`
-derives both the same way.
+Neither number is typed. The marketing version is the latest `v*` tag on both platforms. The build
+number comes from git on both too, but each counts differently, because each platform's consumer
+asks something different of it.
+
+On the Mac, `CFBundleVersion` is the whole commit count, which rises with every commit and never
+repeats. Sparkle compares `CFBundleVersion` *across* versions, so that is what makes one build
+newer than another and it has to stay globally monotonic. It is also in the DMG's name so two
+builds of one tag are two files rather than one URL with two meanings.
+
+On iOS, `scripts/build-ios.sh` counts commits since that tag, plus one so the tagged commit is
+build 1 (Apple rejects `0`): `0.2.4 (1)`, `0.2.4 (2)`, ... then `0.2.5 (1)`. Apple only needs the
+number unique and rising *within* one marketing version, and TestFlight groups builds by version,
+so a tester can read `(2)` as the second build of that version, which the global count never said.
+Otherwise the same properties: no file to bump, and the same number on any checkout of a commit.
 
 > `apps/ios/Project.swift` and `scripts/dev-bundle.sh` each hardcode a `0.2.0` display version for
 > non-release builds. They do not affect a real release, but they do lag the current tag.

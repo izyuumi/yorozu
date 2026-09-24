@@ -1,18 +1,20 @@
 name: TestFlight
 # Every push to main goes to TestFlight. The repo is public, so hosted macOS minutes are free,
-# and the commit count on main rises with every push, which is all Apple asks of a build number.
+# and the build number — commits since the latest v* tag, plus one — restarts at 1 for each
+# version and rises with every push to main, which is all Apple asks of it.
 # Only a push to this repo triggers it — never a fork's pull request — so the App Store Connect
 # key and the signing identity are never in a stranger's job.
 on:
   push:
     branches: [main]
-  # Rerun by hand: gh workflow run testflight.yml. The same commit has the same commit count,
-  # and Apple rejects a build number it has already seen, so pass one above the last upload:
-  #   gh workflow run testflight.yml -f build=240
+  # Rerun by hand: gh workflow run testflight.yml. The same commit has the same build number,
+  # and Apple rejects one it has already seen for that version, so pass one above the last
+  # upload of the current version:
+  #   gh workflow run testflight.yml -f build=12
   workflow_dispatch:
     inputs:
       build:
-        description: Build number (defaults to the commit count)
+        description: Build number (defaults to commits since the latest v* tag, plus one)
         required: false
         type: string
 
@@ -38,8 +40,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The version is the latest v* tag and the build number the commit count; both need
-          # the whole history.
+          # The version is the latest v* tag and the build number the commit count since it;
+          # both need the whole history.
           fetch-depth: 0
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with: { xcode-version: latest-stable }

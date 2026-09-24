@@ -16,13 +16,19 @@ cd "$(dirname "$0")/.."
 
 # App Store marketing versions are numeric, while a prerelease tag can carry a suffix.
 # Keep the owner-visible label intact but strip that suffix only where Apple requires it.
-TAG_VERSION=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//' || true)
+TAG=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+TAG_VERSION=${TAG#v}
 VERSION_LABEL=${VERSION_LABEL:-${TAG_VERSION:-0.1.0}}
 VERSION=${VERSION:-${TAG_VERSION%%-*}}
 VERSION=${VERSION:-0.1.0}
-# The build number has to rise with every upload and never repeat. The commit count does
-# both, needs no file to bump, and is the same number on any checkout of that commit.
-BUILD=${BUILD:-$(git rev-list --count HEAD)}
+# Apple only needs the build number unique and rising within one marketing version, and
+# TestFlight groups builds by version, so count commits since the tag rather than all of
+# them: 0.2.4 (1), 0.2.4 (2), ... then 0.2.5 (1), where a tester can read (2) as the second
+# build of that version. Plus one so the tagged commit itself is build 1; Apple rejects 0.
+# Still no file to bump, and still the same number on any checkout of that commit. The Mac
+# keeps the whole-history count on purpose: Sparkle compares CFBundleVersion across
+# versions, so that one has to stay globally monotonic.
+BUILD=${BUILD:-$(( $(git rev-list --count ${TAG:+$TAG..}HEAD) + 1 ))}
 DIST=${DIST:-dist}
 TEAM_ID=${TEAM_ID:-AN5KM8QGEF}
 ASC_KEY_ID=${ASC_KEY_ID:?ASC_KEY_ID is required}
