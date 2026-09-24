@@ -121,6 +121,7 @@ jobs:
           xcodebuild build \
             -workspace apps/ios/Yorozu.xcworkspace \
             -scheme YorozuIOS \
+            -skipPackagePluginValidation \
             -destination 'generic/platform=iOS Simulator' \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO

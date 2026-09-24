@@ -9,6 +9,7 @@ public struct UpdateStatusData: Codable, Equatable, Sendable {
     public var updateId: String?
     public var version: String?
     public var activeThreads: Int?
+    public var openTerminals: Int?
     public var deadline: Double?
     public var postponedUntil: Double?
     public var requestId: String?
@@ -24,14 +25,27 @@ public struct UpdateStatusData: Codable, Equatable, Sendable {
 
     public func label(at date: Date = Date()) -> String {
         switch phase {
-        case .none: ""
-        case .unknown: String(localized: "Update waiting · checking agent status")
+        case .none: return ""
+        case .unknown: return String(localized: "Update waiting · checking agent status")
         case .waiting:
-            activeThreads == 1 ? String(localized: "Update queued · 1 agent working")
-                : String(localized: "Update queued · \(activeThreads ?? 0) agents working")
-        case .countdown: String(localized: "Restarting in \(max(0, Int(ceil((deadline ?? 0) / 1000 - date.timeIntervalSince1970))))s")
-        case .postponed: String(localized: "Update postponed until \(Date(timeIntervalSince1970: (postponedUntil ?? 0) / 1000).formatted(date: .omitted, time: .shortened))")
-        case .installing: String(localized: "Updating · waiting for Mac to restart")
+            if let openTerminals, openTerminals > 0 {
+                let agents = max(0, (activeThreads ?? 0) - openTerminals)
+                if agents > 0 && openTerminals == 1 {
+                    return String(localized: "Update queued · agents working; close terminal session")
+                } else if agents > 0 {
+                    return String(localized: "Update queued · agents working; close \(openTerminals) terminal sessions")
+                } else if openTerminals == 1 {
+                    return String(localized: "Update queued · close terminal session")
+                } else {
+                    return String(localized: "Update queued · close \(openTerminals) terminal sessions")
+                }
+            } else {
+                return activeThreads == 1 ? String(localized: "Update queued · 1 agent working")
+                    : String(localized: "Update queued · \(activeThreads ?? 0) agents working")
+            }
+        case .countdown: return String(localized: "Restarting in \(max(0, Int(ceil((deadline ?? 0) / 1000 - date.timeIntervalSince1970))))s")
+        case .postponed: return String(localized: "Update postponed until \(Date(timeIntervalSince1970: (postponedUntil ?? 0) / 1000).formatted(date: .omitted, time: .shortened))")
+        case .installing: return String(localized: "Updating · waiting for Mac to restart")
         }
     }
 }
