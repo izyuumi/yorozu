@@ -144,7 +144,11 @@ private struct CodeBlock: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+        .background(YorozuPalette.paper, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(YorozuPalette.rule.opacity(0.72), lineWidth: 0.75)
+        }
     }
 }
 
@@ -183,7 +187,11 @@ private struct MarkdownTable: View {
             grid.fixedSize(horizontal: true, vertical: true).padding(8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+        .background(YorozuPalette.paper, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(YorozuPalette.rule.opacity(0.72), lineWidth: 0.75)
+        }
     }
 
     private var grid: some View {
