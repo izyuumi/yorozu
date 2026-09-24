@@ -97,7 +97,7 @@ class GitHub:
 
     def release(self, tag):
         output = self.call("release", "view", tag, "--repo", self.repo,
-                           "--json", "tagName,isDraft,isPrerelease,targetCommitish,assets", optional=True)
+                           "--json", "tagName,name,isDraft,isPrerelease,targetCommitish,assets", optional=True)
         return json.loads(output) if output is not None else None
 
     def tag_sha(self, tag):
@@ -122,28 +122,22 @@ class GitHub:
         require(path.is_file(), f"release asset missing: {tag}/{name}")
         return path
 
-    def create(self, tag, source, prerelease, notes=None):
+    def create(self, tag, source, prerelease, notes=None, title=None):
         ref = self.tag_sha(tag)
         require(ref is None or ref == source, f"existing tag {tag} points at another commit")
         args = ["release", "create", tag, "--repo", self.repo, "--target", source,
-                "--draft", "--latest=false", "--title", f"Yorozu {tag}",
+                "--draft", "--latest=false", "--title", title or f"Yorozu {tag}",
                 "--notes", notes or f"Source: {source}\nRelease workflow: docs/RELEASE_WORKFLOW.md"]
         if prerelease:
             args.append("--prerelease")
         self.call(*args)
 
-    def upload(self, tag, path, replace=False):
-        args = ["release", "upload", tag, "--repo", self.repo, str(path)]
-        if replace:
-            args.append("--clobber")
-        self.call(*args)
+    def upload(self, tag, path):
+        self.call("release", "upload", tag, "--repo", self.repo, str(path))
 
-    def publish(self, tag, prerelease, latest=False, notes=None):
-        args = ["release", "edit", tag, "--repo", self.repo, "--draft=false",
-                f"--prerelease={str(prerelease).lower()}", f"--latest={str(latest).lower()}"]
-        if notes is not None:
-            args += ["--notes", notes]
-        self.call(*args)
+    def publish(self, tag, prerelease, latest=False):
+        self.call("release", "edit", tag, "--repo", self.repo, "--draft=false",
+                  f"--prerelease={str(prerelease).lower()}", f"--latest={str(latest).lower()}")
 
 
 def check_ci(gh, source, branch, run_id=None):
@@ -213,13 +207,14 @@ def appcast(path, data=None, repo=None, beta=None):
     return tree
 
 
-def immutable_assets(gh, tag, source, paths, prerelease, notes=None):
+def immutable_assets(gh, tag, source, paths, prerelease, notes=None, title=None):
     release = gh.release(tag)
     if release is None:
-        gh.create(tag, source, prerelease, notes)
+        gh.create(tag, source, prerelease, notes, title)
         release = gh.release(tag)
         require(release is not None, "created release cannot be read")
     require(release["isPrerelease"] == prerelease, "existing release has wrong channel")
+    require(title is None or release["name"] == title, "existing release has wrong candidate title")
     ref = gh.tag_sha(tag)
     # GitHub may defer creation of a draft's tag until publication.
     require(ref == source or (ref is None and release["isDraft"] and release.get("targetCommitish") == source), "release tag source does not match candidate")
@@ -254,9 +249,11 @@ def publish_candidate(gh, manifest_path, ios_path, directory):
     validate_manifest(data)
     appcast(directory / "appcast.xml", data, gh.repo, beta=True)
     check_ci(gh, data["source_sha"], data["source_branch"], data["ci_run_id"])
+    check_main_progress(gh, data)
     write_json(directory / "candidate.json", data)
     paths = [directory / name for name in ("candidate.json", asset, "appcast.xml")]
-    immutable_assets(gh, data["tag"], data["source_sha"], paths, prerelease=True, notes=data.get("notes"))
+    title = f"Yorozu Beta {data['tag']}" if data["source_branch"] == "main" else f"Yorozu {data['tag']}"
+    immutable_assets(gh, data["tag"], data["source_sha"], paths, prerelease=True, notes=data["notes"], title=title)
     return data
 
 
@@ -278,40 +275,34 @@ def fetch(gh, tag, directory):
     return data
 
 
-def rolling_beta(gh, tag, directory):
-    data = fetch(gh, tag, directory)
-    require(data["source_branch"] == "main", "only main candidates can update rolling beta")
-    directory = Path(directory)
-    rolling = "main-beta"
-    release = gh.release(rolling)
-    if release:
-        require(release["isPrerelease"], "main-beta must be a prerelease")
-        names = {asset["name"] for asset in release["assets"]}
-        if "appcast.xml" in names:
-            with tempfile.TemporaryDirectory(prefix="yorozu-beta-") as old:
-                previous = gh.download(rolling, "appcast.xml", old)
-                current = appcast(previous)
-                target = (version(data["version"]), int(data["build"]))
-                require(target >= current and int(data["build"]) >= current[1], "refusing to move beta backwards in version or build")
-                if target == current:
-                    require(sha256(previous) == data["mac"]["appcast_sha256"], "beta identity already points at different bytes")
-        elif not release["isDraft"]:
-            raise ValueError("published beta release has no appcast")
-        if "candidate.json" in names:
-            with tempfile.TemporaryDirectory(prefix="yorozu-beta-source-") as old:
-                previous = json.loads(gh.download(rolling, "candidate.json", old).read_text())
-            validate_manifest(previous)
-            require(previous["source_branch"] == "main", "beta pointer must reference a main candidate")
-            comparison = gh.api(f"compare/{previous['source_sha']}...{data['source_sha']}")
-            require(comparison.get("status") in ("ahead", "identical"), "refusing to move beta source backwards or across divergent history")
-    else:
-        gh.create(rolling, data["source_sha"], prerelease=True)
-    # Old versioned beta assets remain available to cached legacy feeds. The tag stays fixed.
-    gh.upload(rolling, directory / "yorozu.dmg", replace=True)
-    gh.upload(rolling, directory / "candidate.json", replace=True)
-    gh.upload(rolling, directory / "appcast.xml", replace=True)  # Commit the pointer last.
-    gh.publish(rolling, prerelease=True, notes=data["notes"])
-    return data
+def check_main_progress(gh, data):
+    """A retained main candidate is also the public beta; reject delayed old builds."""
+    if data["source_branch"] != "main":
+        return
+    pages = gh.api("releases?per_page=100", "--paginate", "--slurp")
+    prior = [release for page in pages for release in page
+             if not release["draft"] and release["prerelease"]
+             and CANDIDATE.fullmatch(release["tag_name"])
+             and release.get("name") == f"Yorozu Beta {release['tag_name']}"
+             and release["tag_name"] != data["tag"]]
+    if not prior:
+        return
+    latest = max(prior, key=lambda release: (
+        version(CANDIDATE.fullmatch(release["tag_name"])[1]),
+        int(CANDIDATE.fullmatch(release["tag_name"])[2])))
+    tag = latest["tag_name"]
+    with tempfile.TemporaryDirectory(prefix="yorozu-beta-source-") as directory:
+        previous = json.loads(gh.download(tag, "candidate.json", directory).read_text())
+    validate_manifest(previous)
+    require(previous["source_branch"] == "main" and previous["tag"] == tag,
+            "main beta release has mismatched candidate metadata")
+    require(gh.tag_sha(tag) == previous["source_sha"], "main beta tag source does not match manifest")
+    require(version(data["version"]) >= version(previous["version"])
+            and int(data["build"]) > int(previous["build"]),
+            "refusing to move beta backwards in version or build")
+    comparison = gh.api(f"compare/{previous['source_sha']}...{data['source_sha']}")
+    require(comparison.get("status") in ("ahead", "identical"),
+            "refusing to move beta source backwards or across divergent history")
 
 
 def finish_release_pr(gh, data, publish=False):
@@ -395,7 +386,7 @@ def main():
     candidate.add_argument("--manifest", default="dist/candidate.json")
     candidate.add_argument("--ios", default="dist/ios.json")
     candidate.add_argument("--dist", default="dist")
-    for command in ("fetch", "beta", "promote"):
+    for command in ("fetch", "promote"):
         sub = commands.add_parser(command)
         sub.add_argument("--candidate", required=True)
         sub.add_argument("--dist", default=f"dist/{command}")
@@ -413,7 +404,7 @@ def main():
         subprocess.run(["node", "scripts/asc-candidate.mjs", "verify", str(Path(args.dist) / "candidate.json")], check=True)
         result = promote(gh, args.candidate, args.dist, expected=expected)
     else:
-        result = {"fetch": fetch, "beta": rolling_beta}[args.command](gh, args.candidate, args.dist)
+        result = fetch(gh, args.candidate, args.dist)
     print(json.dumps(result, sort_keys=True))
 
 

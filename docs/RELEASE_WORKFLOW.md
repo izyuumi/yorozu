@@ -88,8 +88,8 @@ do not repeat the underlying commits; actual Conventional Commit merge subjects 
 Historical nonconventional subjects appear under **Other Changes**, never silently disappear.
 Each entry links its commit, and the full-history link uses permanent SHAs.
 
-These notes are saved in `candidate.json` and used verbatim for the candidate, the rolling main
-beta, and its stable release. Commits merged after Release Please's version PR are included. `CHANGELOG.md` remains
+These notes are saved in `candidate.json` and used verbatim for the candidate and its stable
+release. Commits merged after Release Please's version PR are included. `CHANGELOG.md` remains
 the version-PR preview, not the source of final GitHub notes; its standard commit sections are
 also configured to stay visible. CI checks type coverage, breaking footers, merge duplication,
 branch ancestry, and exact-note preservation through promotion.
@@ -121,10 +121,11 @@ the candidate SHA's `version.txt` and `.release-please-manifest.json` must both 
 
 Each `candidate-<version>-<build>` release retains exactly one DMG (`yorozu.dmg`), the appcast,
 and `candidate.json` with source SHA, version/build, artifact hashes, and exact App Store Connect
-build ID. Existing published candidate artifacts are not overwritten. Only a candidate from `main`
-updates `main-beta`'s mutable `yorozu.dmg` and `appcast.xml` pointer assets. Its legacy tag stays
-in place; the numbered candidate and manifest identify the actual source. Old versioned DMGs
-and uppercase `Yorozu.dmg` aliases remain available for legacy download links and cached feeds.
+build ID. Existing published candidate artifacts are not overwritten. Main candidates use the
+release title `Yorozu Beta candidate-<version>-<build>`, which identifies them to the website
+endpoint. Before publishing, the workflow checks that their marketing version/build increase
+and their source descends from the previous main candidate. Release-branch candidates do not
+carry the beta title and never replace the public main beta.
 
 ## Promote to stable
 
@@ -179,7 +180,9 @@ the feed and archive-signature format.
 
 - Stable users read `https://yorozu.yumi.to/appcast.xml`; the website's Mac download follows the
   latest stable GitHub Release.
-- Opted-in beta users read the separate `main-beta` appcast. The app rejects lower marketing
+- Opted-in beta users read `https://yorozu.yumi.to/beta/appcast.xml`, which redirects to the
+  newest retained main candidate. `https://yorozu.yumi.to/beta` downloads that candidate's DMG.
+  The app rejects lower marketing
   versions even when their build number is larger, preventing a later stable hotfix from
   downgrading a next-version beta.
 - Turning **Receive beta updates** off waits until stable catches up to the installed marketing
@@ -188,21 +191,25 @@ the feed and archive-signature format.
   does not break a cached appcast's download URL. Stable and candidate releases are preserved.
 - Pin the previously shipped `0.4.0 (293)` download redirect to `v0.4.0` before first promotion,
   preserving the legacy cached appcast during migration. Do not delete its versioned asset.
-- Coordinate the lowercase download-link deployment with the first new candidate/stable
-  publication. Before changing live links, make `yorozu.dmg` available in both the current
-  stable release and `main-beta` (copy the existing signed DMG for a one-time compatibility
-  alias if needed). Then deploy the updated `/mac` redirect and beta link. New releases need
-  only the lowercase DMG; old aliases remain for existing links.
+- Before deploying lowercase stable links, make `yorozu.dmg` available on the current stable
+  release. Then deploy the website Worker with `apps/relay/node_modules/.bin/wrangler deploy
+  --config apps/web/wrangler.jsonc` from the repository root. Future beta candidates appear
+  automatically; no per-release website deployment or rolling release is needed.
 - Model lists come live from OpenClaw's `models.list`, Claude SDK's `supportedModels()`, and
   Codex's paginated `model/list`. No release `models.json` asset is needed. The dormant
   direct-provider catalog reads `main/catalog/models.json` directly with cache/bundled fallback;
   `/models.json` remains a compatibility redirect for older legacy consumers.
 
-The rolling **Yorozu Beta** (`main-beta`) release is still required: shipped Mac binaries have
-its appcast URL built in. Do not delete it until those clients have migrated to another feed.
-It deliberately has mutable assets; do not enable repository-wide GitHub release immutability
-without first replacing that pointer design. The obsolete `v0.3.0` tag is not a feed or notes
-baseline; historical references use its retained commit SHA instead.
+The website Worker discovers published candidates through the GitHub API, orders numeric
+marketing versions/builds, and checks the selected manifest belongs to `main`. Discovery is
+cached for five minutes and limited to 2,000 releases; beyond that ceiling, replace discovery
+with a dedicated index. Missing candidates or upstream failures return 503 and retry guidance;
+the static website stays available. The endpoint never points to a release-branch candidate.
+
+The obsolete **Yorozu Beta** (`main-beta`) release/tag is removed: the project has only one
+development user, so no legacy beta feed migration is required. Install a new candidate manually
+to get the replacement feed URL; old beta binaries still reference the deleted feed. The unused
+`v0.3.0` tag is also removed; historical references use its retained commit SHA instead.
 
 ## Parallel stabilization and hotfixes
 
