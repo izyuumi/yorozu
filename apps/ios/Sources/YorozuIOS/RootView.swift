@@ -55,8 +55,11 @@ private actor DemoTransport: ChatTransport {
 #if DEBUG
 /// Local transport for deterministic showcase screenshots. Production never enters this path.
 private actor ShowcaseTransport: ChatTransport {
+    private var continuation: AsyncStream<TransportUpdate>.Continuation?
+
     func connect() -> AsyncStream<TransportUpdate> {
         AsyncStream { continuation in
+            self.continuation = continuation
             continuation.yield(.ownerOnline(launchArgument("yorozuShowcase") != "queued"))
             continuation.yield(.state(.paired))
         }
@@ -64,6 +67,7 @@ private actor ShowcaseTransport: ChatTransport {
 
     func send(_ event: YorozuEvent) async throws {}
     func close() async {}
+    func deliver(_ event: YorozuEvent) { continuation?.yield(.event(event)) }
 }
 #endif
 
@@ -141,12 +145,41 @@ final class Session {
         #if DEBUG
         if launchArgument("yorozuDemo") != nil { startDemo(); return }
         if launchArgument("yorozuShowcase") != nil || launchArgument("yorozuScene") != nil {
-            let model = ChatModel(transport: ShowcaseTransport())
+            let transport = ShowcaseTransport()
+            let model = ChatModel(transport: transport)
             E2EHarness.attach(to: model)
             model.start()
             self.model = model
             let showcase = launchArgument("yorozuScene") ?? launchArgument("yorozuShowcase")
             openPath = showcase == "threads" || showcase == "thread-search" ? [] : model.threads.prefix(1).map(\.id)
+            if launchArgument("yorozuPickerReply") != nil {
+                NewThreadShowcase.onFoldersAppear = {
+                    NewThreadShowcase.onFoldersAppear = nil
+                    Task {
+                        let now = Int(Date().timeIntervalSince1970 * 1000)
+                        var threads = model.threads
+                        guard let index = threads.firstIndex(where: { $0.id == "Standup notes" }) else { return }
+                        threads[index].lastActivity = Double(now)
+                        threads[index].lastAgentAt = Double(now)
+                        threads[index].lastMessage = "Picker regression reply"
+                        await transport.deliver(YorozuEvent(
+                            id: "picker-reply", threadId: threads[index].id, ts: now, agentId: "main",
+                            payload: .message(MessageData(role: .agent, text: "Picker regression reply", done: true))
+                        ))
+                        await transport.deliver(YorozuEvent(
+                            id: "picker-threads", threadId: "", ts: now, agentId: "main",
+                            payload: .threadList(ThreadListData(threads: threads))
+                        ))
+                        // A visible acknowledgement means the test never guesses when delivery finished.
+                        var projects = model.projects
+                        projects[0].name = "Reply received"
+                        await transport.deliver(YorozuEvent(
+                            id: "picker-projects", threadId: "", ts: now, agentId: "main",
+                            payload: .projectList(ProjectListData(projects: projects))
+                        ))
+                    }
+                }
+            }
             return
         }
         #endif

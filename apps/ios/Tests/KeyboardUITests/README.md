@@ -29,3 +29,8 @@ These tests cover accepted manual input dismissing before an asynchronous failur
 input staying editable, scanner-to-manual recovery, disabled actions while connecting, and
 the largest accessibility text size in landscape. Simulator scanner fallback is covered;
 actual camera permission denial and scanning hardware still require device validation.
+
+Picker regressions also open New thread from the list and New session from a chat, then
+deliver an agent reply and unread thread-list update through the offline transport. Delivery
+starts when the folder step appears, so no timing guess is needed. They assert the picker keeps
+that step, stays interactive, and dismisses when a folder starts the new draft.
