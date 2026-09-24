@@ -51,9 +51,6 @@ public struct MessageBubble: View {
     private let onResend: (() -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// iPhone only: SwiftUI's `Text` selects itself whole, so a selection by word or letter
-    /// happens in a sheet that hosts a `UITextView`.
-    @State private var selecting = false
     /// Set by the thread's search field; every hit inside this bubble is drawn highlighted.
     @Environment(\.searchHighlight) private var highlight
 
@@ -124,7 +121,6 @@ public struct MessageBubble: View {
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: speaking)
-        .sheet(isPresented: $selecting) { selectionSheet }
         #if os(macOS)
             // Mac only: on the phone the long press belongs to text selection.
             .contextMenu { actions }
@@ -135,9 +131,6 @@ public struct MessageBubble: View {
     @ViewBuilder private var actions: some View {
         if !data.text.isEmpty {
             Button("Copy", systemImage: "doc.on.doc") { copyToPasteboard(data.text) }
-            #if os(iOS)
-                Button("Select text", systemImage: "text.cursor") { selecting = true }
-            #endif
         }
         if !isUser, !id.isEmpty, !data.text.isEmpty {
             // One utterance at a time, so this is a toggle rather than a second voice.
@@ -157,27 +150,6 @@ public struct MessageBubble: View {
             // would promise something this button cannot do.
             Button("Remove from this device", systemImage: "trash", role: .destructive, action: onDelete)
         }
-    }
-
-    @ViewBuilder private var selectionSheet: some View {
-        #if os(iOS)
-            NavigationStack {
-                // One text view, not one `Text` per Markdown block: SwiftUI selection takes a
-                // whole `Text` at a time, so a reply drawn block by block could only be copied
-                // a paragraph at a time. UITextView selects by word or letter across all of it.
-                SelectableText(.chatDocument(data.text))
-                    .padding(.horizontal)
-                    .navigationTitle("Select text")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") { selecting = false }
-                        }
-                    }
-            }
-        #else
-            EmptyView()
-        #endif
     }
 
     private var messageActions: some View {
@@ -244,6 +216,15 @@ public struct MessageBubble: View {
         // A bubble stops short of the far edge, so which side it is on stays readable as
         // who said it even when the message is long.
         .frame(maxWidth: bubbleMaxWidth, alignment: isUser ? .trailing : .leading)
+        #if os(iOS)
+            // Prose as UITextViews, so a long press selects by word and letter in place; the
+            // same design and colours the modifiers above give the SwiftUI path.
+            .environment(\.proseStyle, ProseStyle(
+                serif: !isUser,
+                ink: isUser ? .white : UIColor(YorozuPalette.ink),
+                tint: isUser ? .white : UIColor(YorozuPalette.vermilion)
+            ))
+        #endif
     }
 
     private var bubbleBackground: AnyShapeStyle {
@@ -427,38 +408,3 @@ extension MessageAttachment {
         ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file)
     }
 }
-
-#if os(iOS)
-    /// A read-only UITextView, which is the one text control on iOS that lets a selection run
-    /// by word or letter across paragraphs, code and lists alike. SwiftUI's `Text` selects
-    /// itself whole.
-    struct SelectableText: UIViewRepresentable {
-        let text: AttributedString
-
-        init(_ text: AttributedString) { self.text = text }
-
-        func makeUIView(context: Context) -> UITextView {
-            let view = UITextView()
-            view.isEditable = false
-            view.isSelectable = true
-            view.isScrollEnabled = true
-            view.alwaysBounceVertical = true
-            view.backgroundColor = .clear
-            view.textContainerInset = UIEdgeInsets(top: 12, left: 0, bottom: 12, right: 0)
-            view.textContainer.lineFragmentPadding = 0
-            view.adjustsFontForContentSizeCategory = true
-            return view
-        }
-
-        func updateUIView(_ view: UITextView, context: Context) {
-            let styled = NSMutableAttributedString(text)
-            // Anything the Markdown pass left unstyled reads as body text in the label colour;
-            // an attributed string with no font at all would draw at UIKit's 12-point default.
-            styled.enumerateAttribute(.font, in: NSRange(location: 0, length: styled.length)) { font, range, _ in
-                if font == nil { styled.addAttribute(.font, value: UIFont.preferredFont(forTextStyle: .body), range: range) }
-            }
-            styled.addAttribute(.foregroundColor, value: UIColor.label, range: NSRange(location: 0, length: styled.length))
-            view.attributedText = styled
-        }
-    }
-#endif

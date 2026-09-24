@@ -29,16 +29,16 @@ public struct MarkdownText: View {
     @ViewBuilder private func view(at offset: Int) -> some View {
         let last = offset == blocks.count - 1
         switch blocks[offset] {
-        case .paragraph(let text):
+        case .paragraph(let text) where cursor && last:
             // The cursor sits inside the paragraph's own text so it follows the last word to
             // wherever the line wrapped, rather than sitting under it on a line of its own.
-            (Text(AttributedString.chatInline(text, highlight: highlight)) + (cursor && last ? Text(" ") : Text("")))
-                .overlayCursor(cursor && last)
+            (Text(AttributedString.chatInline(text, highlight: highlight)) + Text(" "))
+                .overlayCursor(true)
+        case .paragraph(let text):
+            Prose(.chatInline(text, highlight: highlight))
         case .heading(let level, let text):
-            Text(AttributedString.chatInline(text, highlight: highlight))
-                .font(headingFont(level))
+            Prose(.chatInline(text, highlight: highlight), heading: level)
                 .padding(.top, offset == 0 ? 0 : 4)
-                .accessibilityAddTraits(.isHeader)
         case .code(let language, let text):
             CodeBlock(language: language, code: text)
         case .list(let ordered, let items):
@@ -48,6 +48,42 @@ public struct MarkdownText: View {
         case .rule:
             Divider()
         }
+    }
+
+}
+
+/// A paragraph, heading or list item. A `Text`, except on the phone inside a message bubble,
+/// where it is a `UITextView` so a long press selects by word and letter rather than taking
+/// the whole block; the bubble says so by setting a ``ProseStyle`` in the environment.
+private struct Prose: View {
+    let text: AttributedString
+    /// Heading level, or nil for body prose.
+    let level: Int?
+    #if os(iOS)
+        @Environment(\.proseStyle) private var style
+    #endif
+
+    init(_ text: AttributedString, heading level: Int? = nil) {
+        self.text = text
+        self.level = level
+    }
+
+    var body: some View {
+        #if os(iOS)
+            if let style {
+                SelectableProse(text: text, level: level, style: style)
+            } else {
+                label
+            }
+        #else
+            label
+        #endif
+    }
+
+    private var label: some View {
+        Text(text)
+            .font(level.map(headingFont))
+            .accessibilityAddTraits(level == nil ? [] : .isHeader)
     }
 
     /// Relative sizes, so every heading tracks Dynamic Type instead of pinning a point size.
@@ -161,7 +197,7 @@ private struct MarkdownList: View {
                         .foregroundStyle(.secondary)
                         // Numbers line up their own column; a wide list stays a list.
                         .monospacedDigit()
-                    Text(AttributedString.chatInline(item, highlight: highlight))
+                    Prose(.chatInline(item, highlight: highlight))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
