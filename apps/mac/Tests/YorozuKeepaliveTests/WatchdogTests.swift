@@ -5,10 +5,8 @@ import Testing
 
 /// The agent launchd is handed, and the rule that decides whether a Quit sticks.
 ///
-/// Both are tested as text and as behaviour: the plist because a typo in it is a watchdog
-/// that silently never runs, and the pause because the two halves of that rule live in two
-/// languages — ``Watchdog/isPaused(contents:now:)`` here and the `[ -lt ]` in watchdog.sh —
-/// and a Mac only ever obeys the second one.
+/// The plist is checked as launchd input; pause behavior is exercised through the shipped
+/// watchdog.sh script, which is what the Mac actually runs.
 
 // MARK: - The agent
 
@@ -48,18 +46,6 @@ import Testing
     let arguments = try #require(parsed?["ProgramArguments"] as? [String])
     #expect(arguments.contains("/Users/ben & jerry/Yorozu.app"))
     #expect(parsed?["StartInterval"] as? Int == 60)
-}
-
-// MARK: - The pause
-
-@Test func onlyADeadlineInTheFutureIsAPause() {
-    let now = Date(timeIntervalSince1970: 1_000_000)
-    #expect(Watchdog.isPaused(contents: "1000600\n", now: now))
-    #expect(!Watchdog.isPaused(contents: "999400\n", now: now))
-    // Nothing to read is not a pause: an app that never quit on purpose gets supervised.
-    #expect(!Watchdog.isPaused(contents: nil, now: now))
-    #expect(!Watchdog.isPaused(contents: "", now: now))
-    #expect(!Watchdog.isPaused(contents: "soon", now: now))
 }
 
 // MARK: - The script itself
