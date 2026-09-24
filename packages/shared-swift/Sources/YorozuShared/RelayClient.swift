@@ -95,6 +95,10 @@ public actor RelayClient: ChatTransport {
     private let dial: URL
     /// `send` is device->mac, `recv` mac->device; see ``YorozuCrypto/deriveChannelKeys``.
     private let channelKeys: (send: SymmetricKey, recv: SymmetricKey)
+    /// Older Mac runtimes sealed plain events with one key in both directions.
+    private let legacyKey: SymmetricKey
+    private enum ChannelFormat { case current, legacy }
+    private var channelFormat: ChannelFormat?
     /// Where each direction stands, persisted before every send and after every accept so a
     /// relaunch can neither reuse a `seq` nor accept one it already saw.
     private var counter: ChannelCounter
@@ -176,6 +180,10 @@ public actor RelayClient: ChatTransport {
             theirPub: macPub,
             role: .device
         )
+        self.legacyKey = try YorozuCrypto.deriveSessionKey(
+            myPriv: identity.sessionPrivateKey,
+            theirPub: macPub
+        )
         self.counterStore = counters ?? ChannelCounterStore(
             defaults: .standard,
             ownPub: identity.sessionPublicKey,
@@ -230,6 +238,7 @@ public actor RelayClient: ChatTransport {
         while !stopped {
             updates?.yield(.state(.connecting))
             joined = false
+            channelFormat = nil
             nonce = ""
             let socket = session.webSocketTask(with: dial)
             self.socket = socket
@@ -291,6 +300,15 @@ public actor RelayClient: ChatTransport {
     /// The counter is persisted before the frame leaves: a `seq` that went out and was then
     /// forgotten would be reused after a relaunch, and the Mac would drop the reuse as a replay.
     public func send(_ event: YorozuEvent) async throws {
+        guard let channelFormat else {
+            throw YorozuCrypto.CryptoError.malformed("Mac has not answered pairing")
+        }
+        if channelFormat == .legacy {
+            let box = try YorozuCrypto.seal(key: legacyKey, plaintext: JSONEncoder().encode(event))
+            try await sendFrame(FrameBody(t: "box", n: box.nonce.base64URLEncodedString(),
+                c: box.ciphertext.base64URLEncodedString()))
+            return
+        }
         let envelope = ChannelEnvelope(seq: counter.next(), event: event)
         // Recorded before it is sealed, and not sent at all if it cannot be: the counter in
         // memory has moved on either way, so a retry takes the next `seq`, never this one.
@@ -354,7 +372,7 @@ public actor RelayClient: ChatTransport {
         case "owner":
             updates?.yield(.ownerOnline(message.online ?? false))
         case "frame":
-            open(message.payload)
+            acceptFrame(message.payload)
         default:
             break
         }
@@ -411,13 +429,12 @@ public actor RelayClient: ChatTransport {
             // secret's hash and nothing else, and the hash is bound to these two keys alone.
             let proof = pairing.secret.map { YorozuCrypto.helloProof(secret: $0, pub: pub, spub: spub) }
             try await sendFrame(FrameBody(t: "hello", pub: pub, spub: spub, proof: proof))
-            updates?.yield(.state(.paired))
         } catch {
             updates?.yield(.failed(error.localizedDescription))
         }
     }
 
-    private func open(_ payload: String?) {
+    func acceptFrame(_ payload: String?) {
         guard let payload, let raw = Data(base64URLEncoded: payload),
             let body = try? JSONDecoder().decode(FrameBody.self, from: raw),
             body.t == "box",
@@ -428,8 +445,23 @@ public actor RelayClient: ChatTransport {
         // broadcasts all of them, so a frame we cannot open is simply another device's and is
         // dropped without a word. Our own boxes, reflected, fail the same way: they were
         // sealed under the other direction's key.
-        guard let plain = try? YorozuCrypto.open(key: channelKeys.recv, nonce: nonce, ciphertext: ciphertext)
-        else { return }
+        let current = try? YorozuCrypto.open(key: channelKeys.recv, nonce: nonce, ciphertext: ciphertext)
+        if current == nil {
+            // The first old-format box must be the Mac's greeting. Once a modern box has
+            // arrived, old captured boxes cannot switch this connection back.
+            if channelFormat == .current { return }
+            guard let plain = try? YorozuCrypto.open(key: legacyKey, nonce: nonce, ciphertext: ciphertext),
+                let event = try? JSONDecoder().decode(YorozuEvent.self, from: plain)
+            else { return }
+            if channelFormat == nil {
+                guard case .threadList = event.payload else { return }
+                channelFormat = .legacy
+                updates?.yield(.state(.paired))
+            }
+            updates?.yield(.event(event))
+            return
+        }
+        guard let plain = current else { return }
         // A replay or a malformed envelope is logged, not surfaced: `.failed` would put an error
         // banner in front of the user for something the relay, not the Mac, did.
         guard let envelope = try? ChannelEnvelope.decode(plain) else {
@@ -448,6 +480,10 @@ public actor RelayClient: ChatTransport {
         } catch {
             logger.error("dropped box with seq \(envelope.seq): counter could not be saved")
             return
+        }
+        if channelFormat != .current {
+            channelFormat = .current
+            updates?.yield(.state(.paired))
         }
         updates?.yield(.event(envelope.event))
     }

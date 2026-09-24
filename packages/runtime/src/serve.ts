@@ -211,6 +211,8 @@ export function loadDevices(file: string): DeviceRecord[] {
         {
           pub: record.pub,
           ...(typeof record.signingPub === "string" ? { signingPub: record.signingPub } : {}),
+          ...(typeof record.name === "string" && /^(iOS|iPadOS|macOS) \d+\.\d+(?:\.\d+)?$/.test(record.name)
+            ? { name: record.name } : {}),
           ...(typeof record.pairedAt === "number" && Number.isFinite(record.pairedAt) && record.pairedAt > 0
             ? { pairedAt: record.pairedAt } : {}),
           lastSeen: typeof record.lastSeen === "number" ? record.lastSeen : 0,
@@ -333,6 +335,8 @@ export function parseFrameBody(payload: unknown): FrameBody | null {
 export interface DeviceRecord {
   pub: string;
   signingPub?: string;
+  /** Platform and OS version announced by this device. */
+  name?: string;
   /** First pairing time. Sync never backfills events older than this device relationship. */
   pairedAt?: number;
   /** Epoch milliseconds we last heard from it; 0 for a device paired before this was kept. */
@@ -749,6 +753,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const paired: DeviceInfo[] = [...devices.values()].map(({ record }) => ({
       pub: record.pub,
       ...(record.signingPub ? { signingPub: record.signingPub } : {}),
+      ...(record.name ? { name: record.name } : {}),
       via: "relay",
       lastSeen: record.lastSeen,
       online: now - record.lastSeen < ONLINE_MS,
@@ -1310,8 +1315,17 @@ export function serve(options: ServeOptions = {}): Sidecar {
         setThreadEffort(event.threadId, effort ?? null, dir);
         return broadcast(threadList());
       }
-      case "device_list":
+      case "device_list": {
+        const name = event.data.name;
+        const known = from && devices.get(from);
+        if (known && typeof name === "string" && /^(iOS|iPadOS|macOS) \d+\.\d+(?:\.\d+)?$/.test(name)
+          && known.record.name !== name) {
+          known.record.name = name;
+          saveDevices();
+          return pushDevices();
+        }
         return reply(deviceList());
+      }
       case "device_remove":
         return forgetDevice(event.data.pub);
       case "sync_request":
@@ -1575,6 +1589,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         remember({
           pub: body.pub,
           ...(signingPub ? { signingPub } : {}),
+          ...(known?.record.name ? { name: known.record.name } : {}),
           pairedAt: known?.record.pairedAt ?? Date.now(),
           lastSeen: Date.now(),
         });

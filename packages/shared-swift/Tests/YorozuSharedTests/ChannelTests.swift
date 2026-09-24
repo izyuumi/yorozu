@@ -201,15 +201,31 @@ private final class MemoryCounterStorage: ChannelCounterStorage, @unchecked Send
     }
 }
 
-private func relayClient(counters: any ChannelCounterStorage) throws -> RelayClient {
+private func relayClient(counters: any ChannelCounterStorage) throws -> (RelayClient, PhoneIdentity, YorozuCrypto.Keypair) {
     let mac = YorozuCrypto.generateKeypair()
+    let identity = PhoneIdentity.generate()
     let pairing = QrPayload(
         relayUrl: "ws://127.0.0.1:1",
         macPubkey: mac.publicKey.base64URLEncodedString(),
         token: "t",
         roomId: "r"
     )
-    return try RelayClient(pairing: pairing, identity: .generate(), counters: counters)
+    return (try RelayClient(pairing: pairing, identity: identity, counters: counters), identity, mac)
+}
+
+private func greet(_ client: RelayClient, identity: PhoneIdentity, mac: YorozuCrypto.Keypair, legacy: Bool = false, seq: Int = 1) async throws {
+    let key = try legacy
+        ? YorozuCrypto.deriveSessionKey(myPriv: mac.privateKey, theirPub: identity.sessionPublicKey)
+        : YorozuCrypto.deriveChannelKeys(myPriv: mac.privateKey, theirPub: identity.sessionPublicKey, role: .mac).send
+    let greeting = YorozuEvent(id: "greeting", threadId: "", ts: 1, agentId: "main",
+        payload: .threadList(ThreadListData(threads: [])))
+    let plain = try legacy ? JSONEncoder().encode(greeting) : ChannelEnvelope(seq: seq, event: greeting).encoded()
+    let box = try YorozuCrypto.seal(key: key, plaintext: plain)
+    let body = try JSONSerialization.data(withJSONObject: [
+        "t": "box", "n": box.nonce.base64URLEncodedString(),
+        "c": box.ciphertext.base64URLEncodedString(),
+    ])
+    await client.acceptFrame(body.base64URLEncodedString())
 }
 
 /// The counter the client numbers from is the one the storage holds, and every number it
@@ -217,18 +233,40 @@ private func relayClient(counters: any ChannelCounterStorage) throws -> RelayCli
 /// a socket that was never dialled.
 @Test func relayClientNumbersFromTheStoredCounterAndSavesBeforeSending() async throws {
     let storage = MemoryCounterStorage(ChannelCounter(send: 41, recv: 7))
-    let client = try relayClient(counters: storage)
+    let (client, identity, mac) = try relayClient(counters: storage)
+    try await greet(client, identity: identity, mac: mac, seq: 8)
     await #expect(throws: (any Error).self) { try await client.send(sampleEvent) }
-    #expect(storage.value == ChannelCounter(send: 42, recv: 7))
-    #expect(storage.saves == 1)
+    #expect(storage.value == ChannelCounter(send: 42, recv: 8))
+    #expect(storage.saves == 2)
 }
 
 /// Nothing stored is a fresh pairing: the first box out is 1.
 @Test func relayClientStartsFromOneWithEmptyStorage() async throws {
     let storage = MemoryCounterStorage()
-    let client = try relayClient(counters: storage)
+    let (client, identity, mac) = try relayClient(counters: storage)
+    try await greet(client, identity: identity, mac: mac)
     await #expect(throws: (any Error).self) { try await client.send(sampleEvent) }
-    #expect(storage.value == ChannelCounter(send: 1, recv: 0))
+    #expect(storage.value == ChannelCounter(send: 1, recv: 1))
+}
+
+@Test func legacyMacGreetingLetsNewClientSendWithoutNumberedEnvelope() async throws {
+    let storage = MemoryCounterStorage()
+    let (client, identity, mac) = try relayClient(counters: storage)
+    // Before the greeting, no request can be sent in the wrong wire format.
+    await #expect(throws: (any Error).self) { try await client.send(sampleEvent) }
+    #expect(storage.saves == 0)
+    try await greet(client, identity: identity, mac: mac, legacy: true)
+    await #expect(throws: (any Error).self) { try await client.send(sampleEvent) }
+    #expect(storage.saves == 0)
+}
+
+@Test func upgradedMacMovesExistingPairingToNumberedChannel() async throws {
+    let storage = MemoryCounterStorage()
+    let (client, identity, mac) = try relayClient(counters: storage)
+    try await greet(client, identity: identity, mac: mac, legacy: true)
+    try await greet(client, identity: identity, mac: mac)
+    await #expect(throws: (any Error).self) { try await client.send(sampleEvent) }
+    #expect(storage.value == ChannelCounter(send: 1, recv: 1))
 }
 
 /// Storage that cannot be read is refused at construction rather than silently started over.

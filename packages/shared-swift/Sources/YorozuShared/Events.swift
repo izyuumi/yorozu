@@ -1031,8 +1031,7 @@ public struct SyncDeltaData: Codable, Equatable, Sendable {
     }
 }
 
-/// One device this Mac is paired with, as the Devices tab lists them. Public keys only: they
-/// are identifiers here, and the short form of ``pub`` is what the user sees.
+/// One device this Mac is paired with, as the Devices tab lists them.
 public struct DeviceInfo: Codable, Equatable, Sendable, Identifiable {
     /// How the device reaches the runtime.
     public enum Via: String, Codable, Sendable { case relay, local }
@@ -1041,6 +1040,8 @@ public struct DeviceInfo: Codable, Equatable, Sendable, Identifiable {
     /// Ed25519 key the relay knows the device by, when it announced one. A different key from
     /// ``pub`` and not derivable from it, so revoking at the relay needs it carried here.
     public var signingPub: String?
+    /// Platform and OS version announced by the device, when known.
+    public var name: String?
     public var via: Via
     /// Epoch milliseconds the runtime last heard from it.
     public var lastSeen: Double
@@ -1051,9 +1052,10 @@ public struct DeviceInfo: Codable, Equatable, Sendable, Identifiable {
     /// Enough of the key to tell two devices apart, which is all a list needs.
     public var shortId: String { String(pub.prefix(8)) }
 
-    public init(pub: String, signingPub: String? = nil, via: Via, lastSeen: Double, online: Bool) {
+    public init(pub: String, signingPub: String? = nil, name: String? = nil, via: Via, lastSeen: Double, online: Bool) {
         self.pub = pub
         self.signingPub = signingPub
+        self.name = name
         self.via = via
         self.lastSeen = lastSeen
         self.online = online
@@ -1062,7 +1064,12 @@ public struct DeviceInfo: Codable, Equatable, Sendable, Identifiable {
 
 public struct DeviceListData: Codable, Equatable, Sendable {
     public var devices: [DeviceInfo]
-    public init(devices: [DeviceInfo]) { self.devices = devices }
+    /// Optional name in a device's encrypted request; absent in runtime responses.
+    public var name: String?
+    public init(devices: [DeviceInfo], name: String? = nil) {
+        self.devices = devices
+        self.name = name
+    }
 }
 
 /// Forget a device: dropped from the runtime's `devices.json`, and the relay is told to revoke

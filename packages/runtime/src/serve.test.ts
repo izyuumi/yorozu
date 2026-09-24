@@ -162,9 +162,6 @@ test("a sealed message from a phone round-trips through the agent loop", async (
     kind: "message",
     data: { role: "user", text: "ping" },
   };
-  const box = channel.box(sent);
-  phone.frame(box, keys);
-
   const openNext = (): Promise<YorozuEvent> => nextEvent(phone, channel);
 
   // Pairing is greeted with the thread list — empty, on a state dir nothing has happened in —
@@ -177,6 +174,15 @@ test("a sealed message from a phone round-trips through the agent loop", async (
   expect(await openNext()).toMatchObject({ kind: "project_list", data: { projects: [{ name: "proj" }] } });
   // Pairing changed who the devices are, so the new list follows it.
   expect(await openNext()).toMatchObject({ kind: "device_list" });
+  phone.frame(channel.box({ id: "bad-name", threadId: "", ts: Date.now(), agentId: "phone", kind: "device_list",
+    data: { devices: [], name: "bad\nname" } }), keys);
+  expect(await openNext()).toMatchObject({ kind: "device_list", data: { devices: [expect.not.objectContaining({ name: "bad\nname" })] } });
+  phone.frame(channel.box({ id: "device-name", threadId: "", ts: Date.now(), agentId: "phone", kind: "device_list",
+    data: { devices: [], name: "iPadOS 27.0" } }), keys);
+  expect(await openNext()).toMatchObject({ kind: "device_list", data: { devices: [expect.objectContaining({ name: "iPadOS 27.0" })] } });
+  expect(loadDevices(join(stateDir, "devices.json"))[0]?.name).toBe("iPadOS 27.0");
+  const box = channel.box(sent);
+  phone.frame(box, keys);
   expect(await openNext()).toMatchObject({
     threadId: "t1",
     kind: "message",
@@ -224,6 +230,7 @@ test("a sealed message from a phone round-trips through the agent loop", async (
   })()).payload)).seq;
   phone.frame(hello(qr, toBase64Url(phoneKeys.publicKey), keys.pub), keys);
   await vi.waitFor(() => expect(lines.filter((l) => l === "STATE paired")).toHaveLength(2));
+  expect(loadDevices(join(stateDir, "devices.json"))[0]?.name).toBe("iPadOS 27.0");
   expect(channel.envelope(frameBody((await phone.next()).payload)).seq).toBeGreaterThan(before);
   phone.frame(box, keys);
   await vi.waitFor(() => expect(lines.filter((l) => l === "STATE replayed-frame")).toHaveLength(2));
