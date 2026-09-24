@@ -29,9 +29,11 @@ jobs:
       - name: Lint workflows and release scripts
         run: |
           "$(go env GOPATH)/bin/actionlint"
-          shellcheck scripts/release.sh scripts/appcast.sh scripts/build-mac.sh scripts/build-ios.sh scripts/dev-bundle.sh
+          shellcheck scripts/release.sh scripts/beta-release.sh scripts/appcast.sh scripts/build-mac.sh scripts/build-ios.sh scripts/dev-bundle.sh
       - name: Check publication success and failure paths
-        run: python3 scripts/test-release.py
+        run: |
+          python3 scripts/test-release.py
+          python3 scripts/test-beta-release.py
 
   relay-image:
     runs-on: ubuntu-latest

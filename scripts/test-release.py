@@ -58,7 +58,10 @@ elif command == "gh":
     state_path = root / "github.json"
     state = json.loads(state_path.read_text())
     if args[0] == "api":
-        print("\n".join(state["published"]))
+        tags = list(state["published"])
+        if "prerelease == false" not in " ".join(args):
+            tags += state["prereleases"]
+        print("\n".join(tags))
     elif args[:2] == ["release", "view"]:
         sys.exit(0 if state["exists"] else 1)
     elif args[:2] == ["release", "create"]:
@@ -124,10 +127,11 @@ class ReleaseTests(unittest.TestCase):
             self.env.pop(variable, None)
 
     def run_release(self, *, existing=True, published=None, **environment):
-        self.original_tags = ["v0.1.0", "v0.2.0", "mac", TARGET]
+        self.original_tags = ["v0.1.0", "v0.2.0", "mac", TARGET, "main-beta"]
         state = {
             "exists": existing,
             "published": ["v0.1.0", "v0.2.0", "mac"] if published is None else published,
+            "prereleases": ["main-beta"],
             "tags": self.original_tags,
         }
         (self.root / "github.json").write_text(json.dumps(state))
@@ -187,6 +191,7 @@ class ReleaseTests(unittest.TestCase):
                 self.assertIn("--draft=false", publish["args"])
                 self.assertIn("--latest", publish["args"])
                 self.assertEqual(self.state["published"], [TARGET])
+                self.assertEqual(self.state["prereleases"], ["main-beta"])
                 self.assert_tags_preserved()
                 self.assertEqual(list((self.root / "release-output").glob("stable.*")), [])
 
