@@ -1,7 +1,25 @@
+import Foundation
 import ProjectDescription
 
 /// Generates `Yorozu.xcworkspace`, which is *not* checked in: CI and the e2e harness run
 /// `tuist generate --path apps/ios --no-open` first. Re-run it after changing this file.
+
+let versionFile = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .appendingPathComponent("../../version.txt")
+    .standardizedFileURL
+let developmentVersion: String = {
+    do {
+        let value = try String(contentsOf: versionFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.range(of: #"^[0-9]+\.[0-9]+\.[0-9]+$"#, options: .regularExpression) != nil else {
+            fatalError("Expected a numeric major.minor.patch version in \(versionFile.path)")
+        }
+        return value
+    } catch {
+        fatalError("Unable to read development version from \(versionFile.path): \(error)")
+    }
+}()
 
 /// The App Group is the only thing the two targets share at runtime: the share extension
 /// writes into it and the app reads out of it. Nothing secret goes in there — see `ShareBox`.
@@ -17,9 +35,9 @@ func signing(_ extra: SettingsDictionary = [:]) -> Settings {
         base: [
             "DEVELOPMENT_TEAM": "AN5KM8QGEF",
             "CODE_SIGN_STYLE": "Automatic",
-            "MARKETING_VERSION": "0.2.0",
+            "MARKETING_VERSION": .string(developmentVersion),
             "CURRENT_PROJECT_VERSION": "1",
-            "YOROZU_VERSION_LABEL": "0.2.0-beta",
+            "YOROZU_VERSION_LABEL": .string("\(developmentVersion)-beta"),
         ].merging(extra) { _, new in new }
     )
 }

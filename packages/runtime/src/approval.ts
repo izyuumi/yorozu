@@ -92,6 +92,8 @@ export interface Action extends ApprovalScope {
   target: string;
   /** Money involved, when the class carries any. */
   amount?: number;
+  /** ISO 4217 transaction currency, never inferred from device locale. */
+  currency?: string;
   /** The exact items one decision covers, when the tool declared a batch. */
   items?: BatchItem[];
   /** Full-content commitment kept inside the runtime; cards show only `contentSummary`. */
@@ -131,7 +133,7 @@ export interface LogRow {
   target: string;
   decision: string;
   /** The structured scope the decision was made against. */
-  scope?: ApprovalScope & { amount?: number };
+  scope?: ApprovalScope & { amount?: number; currency?: string };
   /** Set when a rule decided this without asking. */
   ruleId?: string;
   /** Who was acting. Recorded, but never matched on: rules are global. */
@@ -242,6 +244,7 @@ export function normalizeRule(stored: Partial<Rule> & { target?: string }, index
     ...(typeof stored.maxAmount === "number" && Number.isFinite(stored.maxAmount) && stored.maxAmount >= 0
       ? { maxAmount: stored.maxAmount }
       : {}),
+    ...(typeof stored.currency === "string" ? { currency: stored.currency } : {}),
     ...(stored.enabled === false ? { enabled: false } : {}),
     ...(typeof stored.createdAt === "number" ? { createdAt: stored.createdAt } : {}),
     ...(typeof stored.lastUsed === "number" ? { lastUsed: stored.lastUsed } : {}),
@@ -436,6 +439,11 @@ export function matchesRule(rule: Rule, action: Action): boolean {
     const value = scopeValue(action, field);
     if (value === undefined || !matchField(pattern, value)) return false;
   }
+  // Caps compare amounts only in the same units. Legacy unspecified caps remain unspecified.
+  // A legacy denial must not disappear and expose a broader allowance after an upgrade.
+  const legacyDenial = rule.decision === "never" && rule.currency === undefined;
+  if (!legacyDenial && (rule.currency !== undefined || rule.maxAmount !== undefined)
+    && rule.currency !== action.currency) return false;
   if (rule.maxAmount !== undefined && !(action.amount !== undefined && action.amount <= rule.maxAmount)) {
     return false;
   }
@@ -504,6 +512,7 @@ export function narrowestRule(action: Action, headroom = CAP_HEADROOM, now = Dat
     ...(action.amount !== undefined
       ? { maxAmount: Math.ceil(action.amount * headroom * 100) / 100 }
       : {}),
+    ...(action.currency !== undefined ? { currency: action.currency } : {}),
     createdAt: now,
   };
 }
@@ -511,6 +520,7 @@ export function narrowestRule(action: Action, headroom = CAP_HEADROOM, now = Dat
 /** Two rules cover the same ground: same class, same patterns, same cap. */
 const sameScope = (a: Rule, b: Rule): boolean =>
   a.actionClass === b.actionClass &&
+  a.currency === b.currency &&
   JSON.stringify(a.scope ?? {}) === JSON.stringify(b.scope ?? {});
 
 /**
@@ -579,6 +589,7 @@ const COMMITTED_FIELDS = [
   "target",
   "operation",
   "amount",
+  "currency",
   "quantity",
   "recipient",
   "account",
@@ -627,7 +638,12 @@ export function verifyApproved(
   const changed: string[] = [];
   for (const field of COMMITTED_FIELDS) {
     const value = final[field];
-    if (value !== undefined && value !== record.action[field]) {
+    // A final amount is meaningful only in its approved units; other partial checks may
+    // omit both amount and currency without claiming that the denomination changed.
+    const provided = field === "currency"
+      ? Object.hasOwn(final, field) || final.amount !== undefined
+      : value !== undefined;
+    if (provided && value !== record.action[field]) {
       changed.push(`${field} is now ${String(value)}, not ${String(record.action[field])}`);
     }
   }
@@ -666,13 +682,14 @@ const discussNote = (action: Action): string =>
 
 /** Builds the card for an action, prefilled editor and all. Shared with the sidecar's `ask`. */
 export function cardFor(actionId: string, action: Action): ApprovalCardData {
-  const { actionClass, target, amount, items, contentHash: _contentHash, ...scope } = action;
+  const { actionClass, target, amount, currency, items, contentHash: _contentHash, ...scope } = action;
   const hasScope = Object.values(scope).some((value) => value !== undefined && value !== "");
   return {
     actionId,
     actionClass,
     target,
     ...(amount !== undefined ? { amount } : {}),
+    ...(currency !== undefined ? { currency } : {}),
     ...(hasScope ? { scope } : {}),
     ...(items?.length ? { items } : {}),
     ...(needsFreshConfirmation(action) ? { mustConfirm: true } : {}),

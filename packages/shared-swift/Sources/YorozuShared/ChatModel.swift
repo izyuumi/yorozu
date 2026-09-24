@@ -81,6 +81,8 @@ public final class ChatModel {
     public private(set) var generating: Set<String> = []
     /// Every device the runtime answers, newest list wins. Only the Mac's Settings draws these.
     public private(set) var devices: [DeviceInfo] = []
+    /// Includes empty replies, so pairing can await a confirmed list before showing its code.
+    public private(set) var deviceListRevision = 0
     /// Every model a thread can be put on, as the Mac has it configured. Arrives with the
     /// thread list; empty until then, which is a picker that offers only Default.
     public private(set) var models: [ModelOption] = []
@@ -99,6 +101,40 @@ public final class ChatModel {
     /// Where a coding agent's thread can be started, recents first, as the Mac last listed
     /// them. Arrives with the thread list; empty until then.
     public private(set) var projects: [ProjectFolder] = []
+    private var projectsRevision = 0
+    private var projectsRefreshing = false
+    private var projectsFailed = false
+
+    public var projectListStatus: ProjectListStatus {
+        guard canDeliver else { return .offline }
+        if projectsRefreshing { return .loading }
+        if projectsFailed { return .failed }
+        return projectsRevision == 0 && projects.isEmpty ? .loading : .ready
+    }
+
+    /// Refreshes the existing host's allowed folders, preserving the last answer while waiting.
+    /// A bounded wait gives the picker a retry action when a connected host fails to answer.
+    public func refreshProjects(timeout: Duration = .seconds(10)) async {
+        guard canDeliver, !projectsRefreshing else { return }
+        projectsRefreshing = true
+        projectsFailed = false
+        let revision = projectsRevision
+        defer {
+            projectsRefreshing = false
+            // Dismissing the sheet cancels its request task; do not leave a loading state
+            // behind when there has never been a response. Opening it again requests afresh.
+            if projectsRevision == 0 && projects.isEmpty { projectsFailed = true }
+        }
+        emit(.projectList(ProjectListData(projects: [])), in: "")
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while projectsRevision == revision, canDeliver, !Task.isCancelled,
+            ContinuousClock.now < deadline
+        {
+            do { try await Task.sleep(for: .milliseconds(50)) }
+            catch { return }
+        }
+        if !Task.isCancelled, canDeliver, projectsRevision == revision { projectsFailed = true }
+    }
     /// Messages typed with nowhere to send them, oldest first. Persisted, so a phone closed on
     /// the underground still has them when it comes back up. See ``OutboxItem``.
     public private(set) var outbox: [OutboxItem] = []
@@ -927,9 +963,12 @@ public final class ChatModel {
             // And where a coding agent can be started, the same way.
             case .projectList(let data):
                 projects = data.projects
+                projectsRevision += 1
+                projectsFailed = false
             // About the devices rather than in a thread, like the thread list above it.
             case .deviceList(let data):
                 devices = data.devices
+                deviceListRevision += 1
                 onDevices?()
             // The stored rules, in answer to `rule_list` and after any change to them. Also
             // not a thread's event: rules are global, which is the whole point of them.
@@ -1191,6 +1230,7 @@ public final class ChatModel {
         actionClass: "purchase",
         target: "Ethiopia Guji, whole bean · 1kg",
         amount: 32,
+        currency: "USD",
         scope: ApprovalScope(
             operation: "purchase",
             account: "Visa ••4242",
@@ -1210,7 +1250,8 @@ public final class ChatModel {
                 "category": ApprovalRuleField(mode: .exact, value: "groceries"),
                 "operation": ApprovalRuleField(mode: .exact, value: "purchase"),
             ],
-            maxAmount: 48
+            maxAmount: 48,
+            currency: "USD"
         )
     )
 

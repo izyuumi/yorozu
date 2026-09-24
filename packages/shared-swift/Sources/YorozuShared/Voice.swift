@@ -71,6 +71,8 @@ public final class Speaker {
 
 /// The chip on a bubble that is being read aloud: what is happening, and the way to stop it.
 public struct SpeakingChip: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     public init() {}
 
     public var body: some View {
@@ -79,7 +81,7 @@ public struct SpeakingChip: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "waveform")
-                    .symbolEffect(.variableColor.iterative, options: .repeating)
+                    .symbolEffect(.variableColor.iterative, options: .repeating, isActive: !reduceMotion)
                 Text("Speaking")
                 Image(systemName: "stop.fill")
             }

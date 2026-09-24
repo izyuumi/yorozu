@@ -27,8 +27,9 @@ number unique and rising *within* one marketing version, and TestFlight groups b
 so a tester can read `(2)` as the second build of that version, which the global count never said.
 Otherwise the same properties: no file to bump, and the same number on any checkout of a commit.
 
-> `apps/ios/Project.swift` and `scripts/dev-bundle.sh` each hardcode a `0.2.0` display version for
-> non-release builds. They do not affect a real release, but they do lag the current tag.
+`apps/ios/Project.swift` and `scripts/dev-bundle.sh` read `version.txt` for development builds
+and append `-beta` to the display label. Release Please maintains that file. Shipping builds
+continue to use the release tag and explicit build-script overrides.
 
 ## The Mac DMG
 

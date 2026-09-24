@@ -34,7 +34,7 @@ struct GeneralView: View {
                                 .font(.caption).foregroundStyle(.red)
                         }
                     } else {
-                        LabeledContent("Connection", value: session.model.state == .paired ? "Connected" : "Connecting…")
+                        clientConnection
                         if let pairedAt = session.pairedAt {
                             LabeledContent("Paired since", value: pairedAt.formatted(date: .abbreviated, time: .shortened))
                         }
@@ -122,6 +122,40 @@ struct GeneralView: View {
         }
         .formStyle(.grouped)
         .toggleStyle(.switch)
+    }
+
+    private var clientConnection: some View {
+        let failure = session.failure ?? session.model.failure
+        let status = ClientConnectionStatus(
+            state: session.model.state, ownerOnline: session.model.ownerOnline, failure: failure
+        )
+        return VStack(alignment: .leading, spacing: 6) {
+            LabeledContent("Connection", value: status.label)
+            if let failure {
+                Label {
+                    Text(failure).textSelection(.enabled)
+                } icon: {
+                    Image(systemName: "exclamationmark.circle").foregroundStyle(.red)
+                }
+                .font(.caption)
+                Text("Check your network and that Yorozu is open on your host Mac. Yorozu will keep trying to reconnect.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if status == .hostOffline {
+                Text("Open Yorozu on your host Mac. Your conversations will reconnect when it is available.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if status == .connecting {
+                ProgressView().controlSize(.small)
+                    .accessibilityLabel("Connecting to your host Mac")
+            }
+            if status != .connected {
+                Button("Retry connection", action: session.retryConnection)
+                Text("Retrying keeps your pairing and conversations.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var versionLabel: String {

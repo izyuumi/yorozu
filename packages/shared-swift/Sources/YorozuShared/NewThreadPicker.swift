@@ -15,13 +15,22 @@ import SwiftUI
 /// `onStart` with a draft's worth of answer and close themselves.
 public struct NewThreadPicker: View {
     private let projects: [ProjectFolder]
+    private let status: ProjectListStatus
+    private let onRefresh: (() async -> Void)?
     private let onStart: (ThreadAgent, String?) -> Void
 
     @State private var path: [ThreadAgent] = NewThreadShowcase.agent.map { [$0] } ?? []
     @Environment(\.dismiss) private var dismiss
 
-    public init(projects: [ProjectFolder], onStart: @escaping (ThreadAgent, String?) -> Void) {
+    public init(
+        projects: [ProjectFolder],
+        status: ProjectListStatus = .ready,
+        onRefresh: (() async -> Void)? = nil,
+        onStart: @escaping (ThreadAgent, String?) -> Void
+    ) {
         self.projects = projects
+        self.status = status
+        self.onRefresh = onRefresh
         self.onStart = onStart
     }
 
@@ -61,6 +70,10 @@ public struct NewThreadPicker: View {
                 .navigationDestination(for: ThreadAgent.self) { folders(for: $0) }
         }
         .yorozuTint()
+        .task(id: status == .offline) {
+            guard status != .offline else { return }
+            await onRefresh?()
+        }
         #if os(macOS)
             .frame(minWidth: 380, minHeight: 440)
         #endif
@@ -126,12 +139,9 @@ public struct NewThreadPicker: View {
         let (recent, other) = Self.sections(projects)
         return List {
             if projects.isEmpty {
-                ContentUnavailableView(
-                    "No project folders",
-                    systemImage: "folder",
-                    description: Text("Put a project under ~/Projects on the Mac and it will be listed here.")
-                )
-                .listRowBackground(Color.clear)
+                emptyFolders.listRowBackground(Color.clear)
+            } else if status != .ready {
+                projectStatus.listRowBackground(Color.clear)
             }
             if !recent.isEmpty {
                 Section {
@@ -150,6 +160,20 @@ public struct NewThreadPicker: View {
                     if recent.isEmpty { question("Where should \(agent.label) work?") } else { Text("Other folders") }
                 }
             }
+            Section {
+                if let onRefresh {
+                    Button {
+                        Task { await onRefresh() }
+                    } label: {
+                        Label("Refresh folders", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(status == .loading || status == .offline)
+                }
+            } footer: {
+                Text("Folders come from the host Mac’s projects directory (~/Projects by default). Add a project folder there, then refresh.")
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .paperList()
         .navigationTitle(agent.label)
@@ -166,25 +190,75 @@ public struct NewThreadPicker: View {
         #endif
     }
 
+    @ViewBuilder private var emptyFolders: some View {
+        switch status {
+        case .ready:
+            ContentUnavailableView("No project folders", systemImage: "folder",
+                description: Text("Add a project folder on the host Mac to get started."))
+        case .loading:
+            VStack(spacing: 12) {
+                ProgressView()
+                Text("Loading project folders…").foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 32)
+        case .offline:
+            ContentUnavailableView("Host Mac unavailable", systemImage: "wifi.slash",
+                description: Text("Connect to your host Mac to load its project folders."))
+        case .failed:
+            ContentUnavailableView("Couldn’t load project folders", systemImage: "exclamationmark.arrow.triangle.2.circlepath",
+                description: Text("Check that Yorozu is running on the host Mac, then refresh."))
+        }
+    }
+
+    @ViewBuilder private var projectStatus: some View {
+        switch status {
+        case .loading:
+            HStack {
+                ProgressView().controlSize(.small)
+                Text("Loading project folders…")
+            }
+        case .offline:
+            Label("Host Mac unavailable. Showing previously loaded folders.", systemImage: "wifi.slash")
+        case .failed:
+            Label("Couldn’t refresh. Showing previously loaded folders.", systemImage: "exclamationmark.circle")
+        case .ready:
+            EmptyView()
+        }
+    }
+
     private func rows(_ folders: [ProjectFolder], agent: ThreadAgent) -> some View {
         ForEach(folders) { folder in
             Button { start(agent, folder.path) } label: {
                 Label {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(folder.name).foregroundStyle(YorozuPalette.ink)
+                        Text(folder.name)
+                            .foregroundStyle(YorozuPalette.ink)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
                         Text(folder.path)
                             .font(.caption)
                             .foregroundStyle(YorozuPalette.ink.opacity(0.62))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 } icon: {
                     Image(systemName: "folder").foregroundStyle(YorozuPalette.ink.opacity(0.62))
                 }
+                .frame(maxWidth: .infinity, minHeight: controlTarget, alignment: .leading)
+                .padding(.vertical, 4)
                 .contentShape(Rectangle())
             }
+            // Native macOS button bezels constrain labels to one line, even inside a List.
+            // The full-width list row is the button, so paths can use their required height.
+            .buttonStyle(.plain)
             .listRowBackground(YorozuPalette.paper)
             .accessibilityLabel("\(folder.name), \(agent.label)")
+            .accessibilityValue(folder.path)
+            .accessibilityHint("Starts a thread in this folder on the host Mac")
+            #if os(macOS)
+                .help(folder.path)
+            #endif
         }
     }
 

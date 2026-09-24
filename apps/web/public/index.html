@@ -23,7 +23,7 @@
       <a href="/privacy/">Privacy</a>
       <a href="/terms/">Terms</a>
       <a href="https://github.com/izyuumi/yorozu">GitHub</a>
-      <a class="button small" href="/mac">Download</a>
+      <a class="button small" href="/mac">Download for Mac</a>
     </nav>
   </header>
 
@@ -35,28 +35,49 @@
           <p class="lede">Yorozu <span class="kana" lang="ja">(よろず)</span> connects your iPhone to OpenClaw, Claude Code and Codex running on your own Mac. Start a task on the train, approve a command from the lock screen, read the result at your desk.</p>
           <div class="actions">
             <a class="button" href="/mac">Download for Mac</a>
-            <a class="button ghost" href="#setup-with-an-agent">Set up with an agent</a>
+            <a class="button ghost" href="#iphone-availability">iPhone availability</a>
           </div>
-          <p class="fine">macOS 15+ · Apple silicon · Needs <a href="https://openclaw.ai">OpenClaw</a> · <a href="https://github.com/izyuumi/yorozu">Open source, MIT</a> · iPhone app coming to the App Store</p>
+          <p class="availability-note"><strong>iPhone: internal testing.</strong> No public App Store or TestFlight download yet. See the options below before setting up your Mac.</p>
+          <p class="fine">Mac: macOS 15+ · Apple silicon · <a href="https://openclaw.ai">OpenClaw</a> required on the host<br>iPhone: iOS 18+ · <a href="#setup-with-an-agent">Set up with an agent</a> · <a href="https://github.com/izyuumi/yorozu">Open source, MIT</a></p>
         </div>
         <figure class="phone">
-          <img src="/assets/iphone-approval.webp" alt="Yorozu on iPhone asking to run rm on old Desktop screenshots, with Allow once, For this task, Don't allow and Discuss first buttons" width="804" height="1748" fetchpriority="high">
+          <img src="/assets/iphone-chat.webp" alt="Yorozu on iPhone answering whether an invoice was paid, with a table of invoices and a written explanation" width="804" height="1748" fetchpriority="high">
         </figure>
       </div>
     </section>
 
+    <section class="iphone-availability" id="iphone-availability" aria-labelledby="iphone-title">
+      <div class="availability-intro">
+        <h2 id="iphone-title">Getting the iPhone app.</h2>
+        <p>The iPhone app is in internal testing. There is no public download link yet. You can use Yorozu on your Mac while you wait.</p>
+      </div>
+      <div class="installation-options">
+        <article>
+          <h3>Already invited to test?</h3>
+          <p>Open your invitation on your iPhone and follow it to install through TestFlight. Testing is currently limited to the internal team.</p>
+          <a href="https://github.com/izyuumi/yorozu/blob/main/docs/releasing.md#testflight">Read the testing details</a>
+        </article>
+        <article>
+          <h3>Build from source</h3>
+          <p>Developers can use Xcode and Tuist on a Mac. Follow the development guide to generate the workspace, then open <code>apps/ios/Yorozu.xcworkspace</code> in Xcode. For a physical iPhone, configure your own signing team and provisioning for the app and its extensions, select the <code>YorozuIOS</code> scheme and your connected iPhone, then run.</p>
+          <a href="https://github.com/izyuumi/yorozu#development">Open the development guide</a>
+        </article>
+      </div>
+    </section>
+
     <section class="steps" aria-labelledby="steps-title">
-      <h2 id="steps-title">Three minutes, once.</h2>
+      <h2 id="steps-title">Installed both apps? Pair once.</h2>
+      <p class="steps-intro">You’ll need Yorozu on your iPhone and an Apple silicon Mac with macOS 15 or later and OpenClaw configured. Keep your host Mac awake and online to reach it from your phone.</p>
       <ol>
         <li>
           <span class="num" aria-hidden="true">1</span>
-          <h3>Install on your Mac</h3>
-          <p>A menu bar app. It grants the macOS permissions you choose and nothing else.</p>
+          <h3>Set up your host Mac</h3>
+          <p>Open Yorozu from the menu bar, choose “Host Yorozu on this Mac” and grant the permissions you want.</p>
         </li>
         <li>
           <span class="num" aria-hidden="true">2</span>
           <h3>Scan one code</h3>
-          <p>The QR carries a key exchange, not a login. There is no Yorozu account to make.</p>
+          <p>In Mac Settings → Devices, choose “Pair Another Device”. Open Yorozu on your iPhone and scan the code. No Yorozu account needed.</p>
         </li>
         <li>
           <span class="num" aria-hidden="true">3</span>
@@ -73,7 +94,7 @@
         <p>Say <em>Discuss first</em> and the agent explains before it acts.</p>
       </div>
       <figure class="shot phone-shot">
-        <img src="/assets/iphone-chat.webp" alt="Yorozu on iPhone answering whether an invoice was paid, with a table of invoices and a written explanation" width="804" height="1748" loading="lazy">
+        <img src="/assets/iphone-approval.webp" alt="Yorozu on iPhone asking to run rm on old Desktop screenshots, with Allow once, For this task, Don't allow and Discuss first buttons" width="804" height="1748" loading="lazy">
       </figure>
     </section>
 
@@ -86,7 +107,7 @@
       <figure class="shot mac-shot">
         <picture>
           <source srcset="/assets/mac-progress-dark.webp" media="(prefers-color-scheme: dark)" width="900" height="620">
-          <img src="/assets/mac-chat-light.webp" alt="Yorozu on the Mac, a sidebar of threads beside a conversation about an invoice" width="900" height="620" loading="lazy">
+          <img src="/assets/mac-chat-light.webp" alt="Yorozu on the Mac, with a sidebar of threads beside an agent conversation" width="900" height="620" loading="lazy">
         </picture>
       </figure>
     </section>
@@ -128,6 +149,7 @@
         <pre><code id="agent-prompt">Read https://raw.githubusercontent.com/izyuumi/yorozu/main/Start.md and follow it to set up Yorozu on my devices. Ask me before configuring anything.</code></pre>
         <button type="button" class="copy" data-copy="agent-prompt" hidden>Copy</button>
       </div>
+      <p class="copy-status" id="agent-prompt-status" role="status" aria-atomic="true"></p>
       <p class="fine">The guide is <a href="https://github.com/izyuumi/yorozu/blob/main/Start.md">Start.md</a> in the repository. Read it yourself first if you want to know what the agent will ask.</p>
     </section>
 

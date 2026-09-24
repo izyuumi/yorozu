@@ -134,6 +134,12 @@ final class MacChatSession {
         do { try pair(with: pending.code) } catch {}
     }
 
+    /// Retry the existing transport rather than generating another identity or clearing history.
+    func retryConnection() {
+        guard role == .client, relay != nil else { return }
+        model.reconnect()
+    }
+
     /// Drops the client pairing: keys, counters and cache together. The counters live in the
     /// same Keychain item as the keys, so clearing the record clears them; what an older build
     /// left in `UserDefaults` goes with it.

@@ -56,7 +56,6 @@ struct OnboardingView: View {
         RoleChoiceButton(title: title, detail: detail, systemImage: systemImage) {
             session.select(role)
             if role == .host {
-                Sidecar.shared.newCode()
                 step = .hostPair
             } else {
                 step = .clientPair
@@ -69,7 +68,6 @@ struct OnboardingView: View {
             setupHeader("Connect your devices", detail: "Scan this code from Yorozu on an iPhone or client Mac.")
             PairingSheet(
                 sidecar: .shared,
-                existingDeviceIDs: Set(session.model.devices.filter { $0.via == .relay }.map(\.pub)),
                 done: { step = .hostPermissions },
                 autoDismiss: false,
                 showsActions: false
