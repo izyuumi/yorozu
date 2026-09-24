@@ -350,7 +350,7 @@ export interface DeviceRecord {
   signingPub?: string;
   /** Platform and OS version announced by this device. */
   name?: string;
-  /** First pairing time. Sync never backfills events older than this device relationship. */
+  /** First pairing time. Routine sync and live delivery start here; opening a thread can fetch its older log. */
   pairedAt?: number;
   /** Epoch milliseconds we last heard from it; 0 for a device paired before this was kept. */
   lastSeen: number;
@@ -889,18 +889,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
     pushDevices();
   };
 
-  /**
-   * What the device has not seen, across every live thread, in one frame — up to a page. A
-   * page is cut where the next event would take it past `SYNC_PAGE_BYTES`, and `more` tells
-   * the phone to ask again: its `lastSeen` has moved to the end of what it got, so the next
-   * page carries on from there, and the threads this one never reached.
-   */
-  const syncDelta = (lastSeen: Record<string, string>, pairedAt = 0): YorozuEvent => {
+  /** A bounded replay page. An explicit thread request includes its pre-pairing history. */
+  const syncDelta = (lastSeen: Record<string, string>, pairedAt = 0, threadId?: string): YorozuEvent => {
     const events: YorozuEvent[] = [];
     let bytes = 0;
     let more = false;
-    threads: for (const thread of listThreads(dir).filter((thread) => !thread.archived)) {
-      const page = eventsAfter(thread.id, lastSeen?.[thread.id], dir, pairedAt);
+    const selected = listThreads(dir).filter((thread) => threadId ? thread.id === threadId : !thread.archived);
+    threads: for (const thread of selected) {
+      const page = eventsAfter(thread.id, lastSeen?.[thread.id], dir, threadId ? 0 : pairedAt);
       if (page.length === SYNC_LIMIT) more = true;
       for (const event of page) {
         const size = Buffer.byteLength(JSON.stringify(event));
@@ -914,7 +910,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     return control({
       kind: "sync_delta",
-      data: { events, workingThreadIds: [...running.keys()], ...(more ? { more: true } : {}) },
+      data: { events, workingThreadIds: [...running.keys()], ...(threadId ? { threadId } : {}), ...(more ? { more: true } : {}) },
     });
   };
 
@@ -1516,7 +1512,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
       case "device_remove":
         return forgetDevice(event.data.pub);
       case "sync_request":
-        return reply(syncDelta(event.data.lastSeen, pairedAt));
+        if (event.data.threadId !== undefined && (typeof event.data.threadId !== "string" || !event.data.threadId)) return;
+        return reply(syncDelta(event.data.lastSeen, pairedAt, event.data.threadId));
     }
 
     if (event.kind !== "message" || event.data.role !== "user") return;

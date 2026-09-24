@@ -1101,6 +1101,71 @@ func finalStreamedReplyFollowsToolHistory(finalTimestamp: Int) async throws {
 }
 
 @MainActor
+@Test func openedThreadBackfillsFromStartAndRemembersCompletion() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: SymmetricKey(size: .bits256))
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    await transport.yield(.ownerOnline(true))
+    await transport.yield(.state(.paired))
+    model.start()
+    _ = await sent(by: transport, atLeast: pairingSends)
+    await transport.yield(.event(event("threads", .threadList(ThreadListData(threads: [
+        ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 100),
+        ThreadSummary(id: "other", title: "Other", archived: false, lastActivity: 100),
+    ])))))
+    let newer = event("newer", .message(MessageData(role: .agent, text: "After pairing")))
+    await transport.yield(.event(event("routine", .syncDelta(SyncDeltaData(events: [newer])))))
+    #expect(await eventually { model.events["home"]?.map(\.id) == ["newer"] })
+
+    model.openThread = "home"
+    let first = await sent(by: transport, atLeast: pairingSends + 1)
+    guard case .syncRequest(let initial) = first.last?.payload else {
+        Issue.record("Opening thread did not request history")
+        return
+    }
+    #expect(initial.threadId == "home")
+    #expect(initial.lastSeen.isEmpty)
+
+    var older = event("older", .message(MessageData(role: .agent, text: "Before pairing")))
+    older.ts = 0
+    older.syncCursor = "history-page-1"
+    await transport.yield(.event(event("page", .syncDelta(SyncDeltaData(
+        events: [older], threadId: "home", more: true
+    )))))
+    let second = await sent(by: transport, atLeast: pairingSends + 2)
+    guard case .syncRequest(let next) = second.last?.payload else {
+        Issue.record("Next history page was not requested")
+        return
+    }
+    #expect(next.threadId == "home")
+    #expect(next.lastSeen == ["home": "history-page-1"])
+    var latest = event("latest-history", .message(MessageData(role: .agent, text: "Latest")))
+    latest.ts = 2
+    await transport.yield(.event(event("last", .syncDelta(SyncDeltaData(
+        events: [latest], threadId: "home"
+    )))))
+    #expect(await eventually { model.events["home"]?.map(\.id) == ["older", "newer", "latest-history"] })
+    await model.flushCache()
+    #expect(cache.historyState(threadId: "home").loaded)
+    #expect(!cache.historyState(threadId: "other").loaded)
+
+    let resumedTransport = FakeTransport()
+    let resumed = ChatModel(transport: resumedTransport, cache: cache)
+    await resumedTransport.yield(.ownerOnline(true))
+    await resumedTransport.yield(.state(.paired))
+    resumed.start()
+    _ = await sent(by: resumedTransport, atLeast: pairingSends)
+    resumed.openThread = "home"
+    resumed.requestDevices() // Ordered send proves any open-triggered request would already be on wire.
+    #expect((await sent(by: resumedTransport, atLeast: pairingSends + 1)).filter {
+        if case .syncRequest(let data) = $0.payload { return data.threadId != nil }
+        return false
+    }.isEmpty)
+}
+
+@MainActor
 @Test func interruptedSyncRestoresItsCursorWithoutSkippingCachedLiveEvents() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }

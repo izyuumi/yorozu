@@ -507,10 +507,14 @@ export type InterruptData = Record<string, never>;
 /** Last sync cursor the device already holds, per thread. Event ids support older peers. */
 export interface SyncRequestData {
   lastSeen: Record<string, string>;
+  /** Explicitly opened thread: replay its complete history, including before pairing. */
+  threadId?: string;
 }
 
 export interface SyncDeltaData {
   events: YorozuEvent[];
+  /** Present when this page answers a request for one opened thread. */
+  threadId?: string;
   /** Threads with a turn still running on the Mac when this page was made. */
   workingThreadIds?: string[];
   /** Another bounded page is available; request again after applying this one. */
