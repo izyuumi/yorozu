@@ -2,9 +2,8 @@ import Foundation
 import Security
 import YorozuShared
 
-/// The one place this app talks to the Keychain. Everything it holds is a secret the phone
-/// must not leak to `UserDefaults` or a plain file: the pairing's private keys, and the key
-/// the local thread cache is encrypted with.
+/// Private keys and cache keys stay in the app's Keychain, including while locked background
+/// catch-up runs. Updating an item must never delete its previous value before the write succeeds.
 enum Keychain {
     private static let service = "to.yumi.yorozu.ios"
 
@@ -16,138 +15,254 @@ enum Keychain {
         ]
     }
 
-    static func load(_ account: String) -> Data? {
+    static func load(_ account: String) -> Data? { try? loadRequired(account) }
+
+    static func loadRequired(_ account: String) throws -> Data? {
         var query = query(account)
         query[kSecReturnData as String] = true
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess else { return nil }
-        return item as? Data
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = item as? Data else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
+        return data
     }
 
     static func save(_ data: Data, account: String) throws {
-        SecItemDelete(query(account) as CFDictionary)
-        var attributes = query(account)
-        attributes[kSecValueData as String] = data
-        // After first unlock, not while unlocked: the phone rejoins the relay and decrypts its
-        // thread cache from the background, with the screen locked, and a `WhenUnlocked` item is
-        // unreadable there. `ThisDeviceOnly` keeps the rest of the promise — the item is not in
-        // any backup and cannot be restored onto another phone.
-        //
-        // What survives an app update is the item itself: the Keychain is not part of the app
-        // container, so replacing the bundle (TestFlight, or `simctl install` over the same
-        // bundle id) leaves it where it is. It stays that way as long as nothing here changes
-        // the service name or starts asking for an access group — an item written without one
-        // lives in the app's own group, and adding one later would look like a different item.
-        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        let status = SecItemAdd(attributes as CFDictionary, nil)
+        let values: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        var status = SecItemUpdate(query(account) as CFDictionary, values as CFDictionary)
+        if status == errSecItemNotFound {
+            var attributes = query(account)
+            attributes.merge(values) { _, new in new }
+            status = SecItemAdd(attributes as CFDictionary, nil)
+            // Another writer may have created it between the lookup and insertion.
+            if status == errSecDuplicateItem {
+                status = SecItemUpdate(query(account) as CFDictionary, values as CFDictionary)
+            }
+        }
         guard status == errSecSuccess else {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
         }
     }
 
-    static func clear(_ account: String) {
-        SecItemDelete(query(account) as CFDictionary)
+    static func clear(_ account: String) { try? clearRequired(account) }
+
+    static func clearRequired(_ account: String) throws {
+        let status = SecItemDelete(query(account) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
     }
 }
 
-/// The pairing survives restarts in the Keychain: it holds the phone's private keys.
+/// All pairing records are replaced in one atomic Keychain update. The synchronous lock covers
+/// each complete read-modify-write: different hosts' relay actors otherwise lose one another's
+/// counters, and nickname/paired callbacks must not overwrite a newer counter snapshot.
 enum PairingStore {
     struct Stored: Codable {
         var pairing: QrPayload
         var identity: PhoneIdentity
-        /// Set once the relay has accepted this device. From then on the phone rejoins by
-        /// signing the connect nonce, so `pairing.token` — one-time, and long burnt — is not
-        /// sent again and is not kept either.
-        ///
-        /// Optional rather than defaulted: a synthesized `Codable` has no fallback for a missing
-        /// key, and absent is what a pairing stored before this existed looks like — which is
-        /// exactly a pairing whose token has not been redeemed yet.
         var paired: Bool?
-        /// When the relay first accepted this device, which is what Settings calls "paired
-        /// since". Optional for the same reason `paired` is: a pairing stored before this
-        /// existed has no date, and there is none to invent for it.
         var pairedAt: Date?
-        /// Where both directions of the live channel stand: the last `seq` sent and the last
-        /// accepted. Kept here, next to the identity, rather than in `UserDefaults`: the
-        /// Keychain is what a reinstall keeps, and a phone that kept its keys but lost its
-        /// counters would number from 1 again and have the Mac drop every box as a replay.
-        /// Optional for the same reason the others are: a record from before this existed has
-        /// none, which is a channel that starts from nothing.
         var counters: ChannelCounter?
+        var nickname: String?
+
+        var hostID: HostID { pairing.hostID ?? pairing.macPubkey }
     }
 
-    private static let account = "pairing"
+    private static let account = "pairings"
+    private static let legacyAccount = "pairing"
+    // ponytail: one lock for the small host collection; partition only if Keychain contention matters.
+    private static let lock = NSRecursiveLock()
 
-    static func load() -> Stored? {
-        Keychain.load(account).flatMap { try? JSONDecoder().decode(Stored.self, from: $0) }
+    fileprivate static func synchronized<T>(_ work: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try work()
+    }
+
+    fileprivate static func records() throws -> [HostID: Stored] {
+        guard let data = try Keychain.loadRequired(account) else { return [:] }
+        return try JSONDecoder().decode([HostID: Stored].self, from: data)
+    }
+
+    fileprivate static func write(_ records: [HostID: Stored]) throws {
+        try Keychain.save(JSONEncoder().encode(records), account: account)
+    }
+
+    /// Copies the exact identity, counters and encrypted cache before removing the old record.
+    /// Every step is retryable after interruption; a failed write leaves the original keys intact.
+    @discardableResult
+    static func migrateLegacy() throws -> HostID? {
+        try synchronized {
+            guard let data = try Keychain.loadRequired(legacyAccount) else { return nil }
+            var stored = try JSONDecoder().decode(Stored.self, from: data)
+            guard stored.pairing.hostID != nil else {
+                throw YorozuCrypto.CryptoError.malformed("stored Mac public key is invalid")
+            }
+            if stored.counters == nil { stored.counters = try legacyCounters(for: stored)?.load() }
+            var all = try records()
+            if let current = all[stored.hostID],
+               current.identity.sessionPublicKey != stored.identity.sessionPublicKey {
+                throw YorozuCrypto.CryptoError.malformed("legacy pairing conflicts with existing host")
+            }
+            try CacheStore.migrateLegacy(to: stored.hostID)
+            if var current = all[stored.hostID] {
+                current.counters = current.counters ?? stored.counters
+                all[stored.hostID] = current
+            } else {
+                all[stored.hostID] = stored
+            }
+            try write(all)
+            try Keychain.clearRequired(legacyAccount)
+            legacyCounters(for: stored)?.clear()
+            return stored.hostID
+        }
+    }
+
+    static var legacyHostID: HostID? {
+        synchronized {
+            guard let data = Keychain.load(legacyAccount),
+                  let stored = try? JSONDecoder().decode(Stored.self, from: data) else { return nil }
+            return stored.pairing.hostID
+        }
+    }
+
+    static func loadAll() -> [Stored] { (try? loadAllRequired()) ?? [] }
+
+    /// Startup must distinguish an empty collection from inaccessible or damaged pairing data.
+    static func loadAllRequired() throws -> [Stored] {
+        try synchronized {
+            try migrateLegacy()
+            return try records().values.sorted { $0.hostID < $1.hostID }
+        }
+    }
+
+    static func load(hostID: HostID) -> Stored? {
+        synchronized {
+            _ = try? migrateLegacy()
+            return try? records()[hostID]
+        }
     }
 
     static func save(_ stored: Stored) throws {
-        try Keychain.save(JSONEncoder().encode(stored), account: account)
+        guard stored.pairing.hostID != nil else {
+            throw YorozuCrypto.CryptoError.malformed("stored Mac public key is invalid")
+        }
+        try synchronized {
+            try migrateLegacy()
+            var all = try records()
+            var updated = stored
+            if let current = all[stored.hostID],
+               current.identity.sessionPublicKey == stored.identity.sessionPublicKey {
+                // Ordinary metadata saves cannot rewind a channel while retaining its keys.
+                updated.counters = current.counters ?? stored.counters
+                updated.paired = current.paired ?? stored.paired
+                updated.pairedAt = current.pairedAt ?? stored.pairedAt
+                if updated.paired == true { updated.pairing.token = "" }
+            }
+            all[stored.hostID] = updated
+            try write(all)
+        }
     }
 
-    /// Drops the record — keys, pairing and counters together, since they live in one item —
-    /// and the counters an older build left in `UserDefaults`, which would otherwise outlive
-    /// the keys they belong to.
-    static func clear() {
-        try? PairingCounterStorage().clearLegacy()
-        Keychain.clear(account)
+    static func remove(hostID: HostID) throws {
+        try synchronized {
+            try migrateLegacy()
+            var all = try records()
+            let removed = all.removeValue(forKey: hostID)
+            try write(all)
+            if let removed { legacyCounters(for: removed)?.clear() }
+        }
     }
 
-    /// Records that the relay knows this device, and drops the spent token with it. Best effort:
-    /// failing to persist it costs a re-pair, not the running connection.
-    static func markPaired() {
-        guard var stored = load(), stored.paired != true else { return }
-        stored.paired = true
-        stored.pairedAt = Date()
-        stored.pairing.token = ""
-        try? save(stored)
+    static func markPaired(hostID: HostID, expectedIdentity: Data) {
+        try? update(hostID: hostID) { stored in
+            guard stored.identity.sessionPublicKey == expectedIdentity else {
+                throw PairingCounterStorage.NoPairing()
+            }
+            if stored.paired != true {
+                stored.paired = true
+                stored.pairedAt = Date()
+                stored.pairing.token = ""
+            }
+        }
+    }
+
+    static func updateNickname(_ nickname: String?, hostID: HostID) throws {
+        let trimmed = nickname?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (trimmed?.count ?? 0) <= 128 else {
+            throw YorozuCrypto.CryptoError.malformed("host nickname is too long")
+        }
+        try update(hostID: hostID) { $0.nickname = trimmed?.isEmpty == false ? trimmed : nil }
+    }
+
+    fileprivate static func update(hostID: HostID, _ work: (inout Stored) throws -> Void) throws {
+        try synchronized {
+            try migrateLegacy()
+            var all = try records()
+            guard var stored = all[hostID] else { throw PairingCounterStorage.NoPairing() }
+            try work(&stored)
+            all[hostID] = stored
+            try write(all)
+        }
+    }
+
+    fileprivate static func legacyCounters(for stored: Stored) -> ChannelCounterStore? {
+        guard let macPub = Data(base64URLEncoded: stored.pairing.macPubkey) else { return nil }
+        return ChannelCounterStore(
+            defaults: .standard, ownPub: stored.identity.sessionPublicKey, peerPub: macPub)
     }
 }
 
-/// The live channel's counters, kept in the pairing record in the Keychain: what
-/// ``RelayClient`` is handed so a reinstall that keeps the identity keeps its place in the
-/// sequence too. Each save is a read-modify-write of the record; ``RelayClient`` is an actor,
-/// so its saves are serialised, and `markPaired` runs inside the same actor.
-///
-/// A record written by a build that kept the counters in `UserDefaults` has none here; that
-/// build's counters are read once, from where it left them, so the upgrade does not restart
-/// the sequence.
+/// Each host's counters live alongside its private keys. A removed/repaired connection cannot
+/// update the replacement identity through a counter-store instance retained by its old relay.
 struct PairingCounterStorage: ChannelCounterStorage {
     struct NoPairing: Error {}
 
+    let hostID: HostID
+    private let ownPublicKey: Data?
+
+    init(hostID: HostID) {
+        self.hostID = hostID
+        ownPublicKey = PairingStore.load(hostID: hostID)?.identity.sessionPublicKey
+    }
+
     func load() throws -> ChannelCounter? {
-        guard let stored = PairingStore.load() else { return nil }
-        if let counters = stored.counters { return counters }
-        return try legacyStore(for: stored)?.load()
+        try PairingStore.synchronized {
+            try PairingStore.migrateLegacy()
+            guard let stored = try PairingStore.records()[hostID] else { return nil }
+            guard stored.identity.sessionPublicKey == ownPublicKey else { throw NoPairing() }
+            return try stored.counters ?? PairingStore.legacyCounters(for: stored)?.load()
+        }
     }
 
     func save(_ counter: ChannelCounter) throws {
-        guard var stored = PairingStore.load() else { throw NoPairing() }
-        stored.counters = counter
-        try PairingStore.save(stored)
-        legacyStore(for: stored)?.clear()
+        try PairingStore.update(hostID: hostID) { stored in
+            guard stored.identity.sessionPublicKey == ownPublicKey else { throw NoPairing() }
+            stored.counters = counter
+        }
+        // Only remove the old defaults after the Keychain write has succeeded.
+        try clearLegacy()
     }
 
     func clear() throws {
-        try clearLegacy()
-        guard var stored = PairingStore.load() else { return }
-        stored.counters = nil
-        try PairingStore.save(stored)
+        try PairingStore.synchronized {
+            guard try PairingStore.records()[hostID] != nil else { return }
+            // Counters can disappear only with their keys: remove(hostID:) does both atomically.
+            throw YorozuCrypto.CryptoError.malformed("remove the pairing to clear channel counters")
+        }
     }
 
-    /// Forgets what an older build left in `UserDefaults`, if anything.
     func clearLegacy() throws {
-        guard let stored = PairingStore.load() else { return }
-        legacyStore(for: stored)?.clear()
-    }
-
-    private func legacyStore(for stored: PairingStore.Stored) -> ChannelCounterStore? {
-        guard let macPub = Data(base64URLEncoded: stored.pairing.macPubkey) else { return nil }
-        return ChannelCounterStore(
-            defaults: .standard,
-            ownPub: stored.identity.sessionPublicKey,
-            peerPub: macPub
-        )
+        try PairingStore.synchronized {
+            guard let stored = try PairingStore.records()[hostID] else { return }
+            guard stored.identity.sessionPublicKey == ownPublicKey else { throw NoPairing() }
+            PairingStore.legacyCounters(for: stored)?.clear()
+        }
     }
 }

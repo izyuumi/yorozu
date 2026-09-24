@@ -4,7 +4,44 @@ import Foundation
 /// What the notification service extension and the app agree on about a push whose preview
 /// could not be opened. One place for both, because the two are separate targets that share
 /// nothing but this package.
+public struct AuthenticatedNotificationPreview: Equatable, Sendable {
+    public let hostID: HostID
+    public let preview: NotificationPreviewContent
+}
+
 public enum NotificationFallback {
+    /// A local routing hint for notification cleanup, never evidence for an approval.
+    public static let localHostKey = "yorozuLocalHostID"
+
+    /// Identify a host solely by successful authenticated decryption. Even a matching host
+    /// label in userInfo is relay-controlled. Duplicate keys are ambiguous and fail closed.
+    public static func authenticatedPreview(
+        userInfo: [AnyHashable: Any], keys: [HostID: SymmetricKey]
+    ) -> AuthenticatedNotificationPreview? {
+        guard let payload = NotificationPreviewPayload(userInfo: userInfo) else { return nil }
+        var match: AuthenticatedNotificationPreview?
+        for (hostID, key) in keys {
+            guard let preview = NotificationPreview.decrypt(
+                nonce: payload.nonce, ciphertext: payload.ciphertext, key: key
+            ) else { continue }
+            guard match == nil else { return nil }
+            match = AuthenticatedNotificationPreview(hostID: hostID, preview: preview)
+        }
+        return match
+    }
+
+    /// Re-open the box in the main app, match the displayed words and sealed card reference,
+    /// then return the one host permitted to answer. No relay-written routing field is trusted.
+    public static func permittedLockScreenHost(
+        body: String, userInfo: [AnyHashable: Any], keys: [HostID: SymmetricKey], eventRef: String?
+    ) -> HostID? {
+        guard let match = authenticatedPreview(userInfo: userInfo, keys: keys),
+              match.preview.body == body, match.preview.quick,
+              let event = match.preview.event, let eventRef, event == eventRef
+        else { return nil }
+        return match.hostID
+    }
+
     /// The title every alert carries. The relay writes one too — `aps.alert.title` — and the
     /// preview never supplies one, so the extension overwrites it with this on both paths.
     public static let title = "Yorozu"

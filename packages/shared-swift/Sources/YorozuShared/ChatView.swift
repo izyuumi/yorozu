@@ -25,6 +25,7 @@ extension ModelOption {
 public struct ChatView: View {
     public let model: ChatModel
     public let thread: ThreadSummary
+    private let onNewThread: (() -> Void)?
     private let onCreate: ((ThreadAgent, String?) -> Void)?
     private let resumeRequest: UUID?
     private let notificationClass: String?
@@ -88,6 +89,7 @@ public struct ChatView: View {
         notificationEventRef: String? = nil,
         lastReadAt: Double? = nil,
         notificationSyncRevision: Int? = nil,
+        onNewThread: (() -> Void)? = nil,
         onCreate: ((ThreadAgent, String?) -> Void)? = nil,
         offlineNotice: String = "Mac offline — what you send waits on this phone until it's back."
     ) {
@@ -98,6 +100,7 @@ public struct ChatView: View {
         self.notificationEventRef = notificationEventRef
         self.lastReadAt = lastReadAt
         self.notificationSyncRevision = notificationSyncRevision
+        self.onNewThread = onNewThread
         self.onCreate = onCreate
         self.offlineNotice = offlineNotice
     }
@@ -139,6 +142,11 @@ public struct ChatView: View {
     /// The timeline's link policy, built here because the phone's rows are hosted in UIKit
     /// cells that do not inherit this view's environment and have to be handed it per row.
     private var linkAction: OpenURLAction { .chatLinks(onPairingLink: onPairingLink) }
+
+    private func newThread() {
+        if let onNewThread { onNewThread() }
+        else { choosingAgent = true }
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -248,10 +256,10 @@ public struct ChatView: View {
                         Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
                             .keyboardShortcut("f")
                     }
-                    if onCreate != nil {
+                    if onNewThread != nil || onCreate != nil {
                         // Duo places bottom-bar actions at the lower end of its vertical bar.
                         ToolbarItem(placement: .bottomBar) {
-                            Button("New session", systemImage: "square.and.pencil") { choosingAgent = true }
+                            Button("New session", systemImage: "square.and.pencil", action: newThread)
                         }
                     }
                 } else {
@@ -261,8 +269,8 @@ public struct ChatView: View {
                         }
                         Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
                             .keyboardShortcut("f")
-                        if onCreate != nil {
-                            Button("New session", systemImage: "square.and.pencil") { choosingAgent = true }
+                        if onNewThread != nil || onCreate != nil {
+                            Button("New session", systemImage: "square.and.pencil", action: newThread)
                         }
                     }
                 }

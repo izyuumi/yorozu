@@ -22,6 +22,29 @@ public struct ThreadCache: Sendable {
         self.key = key
     }
 
+    /// Copies a legacy cache without decrypting or rewriting it. The caller first preserves
+    /// its existing key and only removes the source after committing the new pairing record.
+    /// A crash before that commit can retry safely; a conflicting destination is never lost.
+    public static func migrateLegacyDirectory(from source: URL, to destination: URL) throws {
+        let files = FileManager.default
+        guard source.standardizedFileURL != destination.standardizedFileURL,
+            files.fileExists(atPath: source.path) else { return }
+        if files.fileExists(atPath: destination.path) {
+            let names = try files.contentsOfDirectory(atPath: source.path)
+            guard names.allSatisfy({ name in
+                let original = source.appendingPathComponent(name)
+                let migrated = destination.appendingPathComponent(name)
+                return files.contentsEqual(atPath: original.path, andPath: migrated.path)
+            }) else { throw CocoaError(.fileWriteFileExists) }
+            return
+        }
+        try files.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let staging = destination.deletingLastPathComponent().appendingPathComponent(".migrating-\(UUID().uuidString)")
+        defer { try? files.removeItem(at: staging) }
+        try files.copyItem(at: source, to: staging)
+        try files.moveItem(at: staging, to: destination)
+    }
+
     public func threads() -> [ThreadSummary] {
         read([ThreadSummary].self, from: "threads") ?? []
     }
@@ -29,6 +52,11 @@ public struct ThreadCache: Sendable {
     public func save(threads: [ThreadSummary]) {
         write(threads, to: "threads")
     }
+
+    /// Last authenticated identity details, for an offline host label. Negotiated permission
+    /// is deliberately not cached: every live channel negotiates compatibility again.
+    public func peerInfo() -> PeerInfoData? { read(PeerInfoData.self, from: "peer-info") }
+    public func save(peerInfo: PeerInfoData) { write(peerInfo, to: "peer-info") }
 
     // Unread was once kept here, as the set of threads a reply had arrived in while this device
     // had them closed. It is the runtime's now — see `thread_read` — so that reading on one

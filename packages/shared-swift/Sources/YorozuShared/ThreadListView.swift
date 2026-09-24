@@ -217,6 +217,7 @@ struct ThreadRow: View {
     var highlightQuery = ""
     var selected = false
     var chevron = false
+    var hostLabel: String? = nil
 
     @ScaledMetric(relativeTo: .body) private var dot = 9
     @ScaledMetric(relativeTo: .body) private var mark = 16
@@ -275,6 +276,12 @@ struct ThreadRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+                if let hostLabel {
+                    Text(hostLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             if thread.isUnread {
                 Circle()
@@ -308,6 +315,7 @@ struct ThreadRow: View {
     /// "Claude Code, yorozu: Fix the flaky test. Done: …" — and just the title for Yorozu's own.
     private var accessibilitySummary: String {
         var parts: [String] = []
+        if let hostLabel { parts.append(hostLabel) }
         if let agent = thread.agent, agent != .yorozu {
             parts.append([agent.label, thread.repoName].compactMap { $0 }.joined(separator: ", "))
         }
@@ -441,7 +449,10 @@ struct ConnectionPill: View {
 public struct ThreadListView<Destination: View>: View {
     private let threads: [ThreadSummary]
     private let workingThreads: Set<String>
+    private let hostLabel: (String) -> String?
+    private let onNewThread: (() -> Void)?
     private let connection: ConnectionState?
+    private let connectionSummary: String?
     @Binding private var path: [String]
     /// Where a coding agent can be started. Empty means the picker offers Yorozu alone.
     private let projects: [ProjectFolder]
@@ -517,7 +528,10 @@ public struct ThreadListView<Destination: View>: View {
     public init(
         threads: [ThreadSummary],
         workingThreads: Set<String> = [],
+        hostLabel: @escaping (String) -> String? = { _ in nil },
+        onNewThread: (() -> Void)? = nil,
         connection: ConnectionState? = nil,
+        connectionSummary: String? = nil,
         path: Binding<[String]>,
         projects: [ProjectFolder] = [],
         projectListStatus: ProjectListStatus = .ready,
@@ -536,7 +550,10 @@ public struct ThreadListView<Destination: View>: View {
     ) {
         self.threads = threads
         self.workingThreads = workingThreads
+        self.hostLabel = hostLabel
+        self.onNewThread = onNewThread
         self.connection = connection
+        self.connectionSummary = connectionSummary
         self._path = path
         self.projects = projects
         self.projectListStatus = projectListStatus
@@ -556,13 +573,16 @@ public struct ThreadListView<Destination: View>: View {
 
     /// The three groups, each already filtered by whatever is in the search field.
     private var groups: ThreadGroups {
-        ThreadGroups(threads.filter { threadMatches($0, query: query, body: messageText($0.id)) })
+        ThreadGroups(threads.filter {
+            threadMatches($0, query: query, body: messageText($0.id))
+                || !searchRanges(in: hostLabel($0.id) ?? "", term: query).isEmpty
+        })
     }
 
     private var searchNeedle: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     private var searchResults: ThreadSearchResults {
-        ThreadSearchResults(threads: threads, query: query, messageText: messageText)
+        ThreadSearchResults(threads: threads, query: query, metadataText: { hostLabel($0) ?? "" }, messageText: messageText)
     }
 
     private var threadResults: [ThreadSummary] { searchResults.threads }
@@ -588,6 +608,11 @@ public struct ThreadListView<Destination: View>: View {
         .onChange(of: path) { _, value in
             if searchRequest?.threadId != value.last { searchRequest = nil }
         }
+    }
+
+    private func newThread() {
+        if let onNewThread { onNewThread() }
+        else { choosingAgent = true }
     }
 
     private func prepareSearchNavigation(_ id: String) {
@@ -626,7 +651,13 @@ public struct ThreadListView<Destination: View>: View {
     private var list: some View {
         let groups = groups
         return List(selection: splitLayout ? selection : nil) {
-            if let connection, connection != .connected {
+            if let connectionSummary {
+                Text(connectionSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            } else if let connection, connection != .connected {
                 ConnectionPill(state: connection)
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
@@ -681,7 +712,7 @@ public struct ThreadListView<Destination: View>: View {
                         }
                     }
                     .accessibilityLabel("Settings")
-                    .accessibilityValue(connection.map { "Mac connection: \($0.label)" } ?? "")
+                    .accessibilityValue(connectionSummary ?? connection.map { "Mac connection: \($0.label)" } ?? "")
                 }
             }
             #if os(iOS)
@@ -710,7 +741,7 @@ public struct ThreadListView<Destination: View>: View {
     /// and the always-visible search field unobstructed. It asks who should answer — one tap
     /// for Yorozu, two for a coding agent in a recent folder.
     @ViewBuilder private var newThreadButton: some View {
-        Button("New thread", systemImage: "square.and.pencil") { choosingAgent = true }
+        Button("New thread", systemImage: "square.and.pencil", action: newThread)
             // ⌘N on an iPad keyboard; the Mac's File menu carries its own — see ``ThreadCommands``.
             #if os(iOS)
                 .keyboardShortcut("n")
@@ -744,7 +775,8 @@ public struct ThreadListView<Destination: View>: View {
                 working: workingThreads.contains(thread.id),
                 preview: preview(thread),
                 highlightQuery: searchNeedle,
-                chevron: !splitLayout
+                chevron: !splitLayout,
+                hostLabel: hostLabel(thread.id)
             )
             Group {
                 if splitLayout {
@@ -868,6 +900,8 @@ extension View {
 public struct ThreadSidebar: View {
     private let threads: [ThreadSummary]
     private let workingThreads: Set<String>
+    private let hostLabel: (String) -> String?
+    private let onNewThread: (() -> Void)?
     @Binding private var selection: String?
     /// Where a coding agent can be started. Empty means the picker offers Yorozu alone.
     private let projects: [ProjectFolder]
@@ -895,6 +929,8 @@ public struct ThreadSidebar: View {
     public init(
         threads: [ThreadSummary],
         workingThreads: Set<String> = [],
+        hostLabel: @escaping (String) -> String? = { _ in nil },
+        onNewThread: (() -> Void)? = nil,
         selection: Binding<String?>,
         projects: [ProjectFolder] = [],
         projectListStatus: ProjectListStatus = .ready,
@@ -911,6 +947,8 @@ public struct ThreadSidebar: View {
     ) {
         self.threads = threads
         self.workingThreads = workingThreads
+        self.hostLabel = hostLabel
+        self.onNewThread = onNewThread
         self._selection = selection
         self.projects = projects
         self.projectListStatus = projectListStatus
@@ -933,7 +971,7 @@ public struct ThreadSidebar: View {
     private var searchNeedle: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     private var searchResults: ThreadSearchResults {
-        ThreadSearchResults(threads: threads, query: query, messageText: messageText)
+        ThreadSearchResults(threads: threads, query: query, metadataText: { hostLabel($0) ?? "" }, messageText: messageText)
     }
 
     private var navigationSelection: Binding<String?> {
@@ -988,7 +1026,7 @@ public struct ThreadSidebar: View {
             }
             // The same compose glyph the phone's list and every Mac mail or notes app use. It
             // asks who should answer in the same modal as the keyboard shortcut.
-            Button("New thread", systemImage: "square.and.pencil") { choosingAgent = true }
+            Button("New thread", systemImage: "square.and.pencil", action: newThread)
                 .sheet(isPresented: $choosingAgent) {
                     NewThreadPicker(projects: projects, status: projectListStatus, onRefresh: onRefreshProjects, onStart: onCreate)
                 }
@@ -1004,7 +1042,7 @@ public struct ThreadSidebar: View {
             // What the Mac's File menu acts on. Published from here because a new thread is the
             // list's business and outlives whichever one is open — see ``ThreadCommands``.
             // ⌘N uses the same agent picker as the compose button.
-            .focusedSceneValue(\.threadCommands, ThreadCommands(newThread: { choosingAgent = true }))
+            .focusedSceneValue(\.threadCommands, ThreadCommands(newThread: newThread))
             // Delete on a selected row puts it away, as it does in every Mac list. Archiving
             // rather than deleting, because that is the only removal this list has — and it
             // is undone from the Archived section rather than with ⌘Z.
@@ -1014,6 +1052,11 @@ public struct ThreadSidebar: View {
                 onArchive(thread, true)
             }
         #endif
+    }
+
+    private func newThread() {
+        if let onNewThread { onNewThread() }
+        else { choosingAgent = true }
     }
 
     private func prepareSearchNavigation(_ id: String) {
@@ -1058,7 +1101,8 @@ public struct ThreadSidebar: View {
                 working: workingThreads.contains(thread.id),
                 preview: preview(thread),
                 highlightQuery: searchNeedle,
-                selected: selection == thread.id
+                selected: selection == thread.id,
+                hostLabel: hostLabel(thread.id)
             )
             .tag(thread.id)
             .simultaneousGesture(TapGesture().onEnded { prepareSearchNavigation(thread.id) })

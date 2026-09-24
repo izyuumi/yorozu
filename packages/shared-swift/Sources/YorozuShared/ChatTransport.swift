@@ -34,6 +34,9 @@ public enum TransportUpdate: Sendable {
     /// is the thing on the other end of it.
     case ownerOnline(Bool)
     case event(YorozuEvent)
+    /// Supplied only after validating the authenticated, encrypted peer exchange.
+    case peerInfo(PeerInfoData)
+    case compatibility(PeerCompatibility)
     case failed(String)
 }
 

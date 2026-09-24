@@ -99,6 +99,13 @@ public actor RelayClient: ChatTransport {
     private let legacyKey: SymmetricKey
     private enum ChannelFormat { case current, legacy }
     private var channelFormat: ChannelFormat?
+    public private(set) var compatibility: PeerCompatibility = .legacy
+    public private(set) var peerInfo: PeerInfoData?
+    private let localPeer = PeerInfoData.local
+    private(set) var peerInfoRequestID: String?
+    private var ready = false
+    private var incompatible = false
+    private var peerExchange: Task<Void, Never>?
     /// Where each direction stands, persisted before every send and after every accept so a
     /// relaunch can neither reuse a `seq` nor accept one it already saw.
     private var counter: ChannelCounter
@@ -196,14 +203,21 @@ public actor RelayClient: ChatTransport {
     /// Calling it twice replaces the previous stream's continuation, so treat it as one-shot
     /// per client.
     public func connect() -> AsyncStream<Update> {
-        let (stream, continuation) = AsyncStream<Update>.makeStream()
-        updates = continuation
+        let stream = makeUpdateStream()
         // A client that was closed can be dialled again. The phone does exactly this: a
         // background drain hangs up so the OS can suspend it, and the next foreground connects
         // afresh rather than being left with a client that will never redial.
         stopped = false
         loop?.cancel()
         loop = Task { await self.reconnectLoop() }
+        return stream
+    }
+
+    /// The receive stream is separate from dialing so encrypted-wire conformance can exercise
+    /// the real receive boundary without depending on a live network socket.
+    func makeUpdateStream() -> AsyncStream<Update> {
+        let (stream, continuation) = AsyncStream<Update>.makeStream()
+        updates = continuation
         return stream
     }
 
@@ -223,6 +237,7 @@ public actor RelayClient: ChatTransport {
         stopped = true
         pinger?.cancel()
         pongDeadline?.cancel()
+        peerExchange?.cancel()
         backoff?.cancel()
         loop?.cancel()
         socket?.cancel(with: .goingAway, reason: nil)
@@ -239,6 +254,12 @@ public actor RelayClient: ChatTransport {
             updates?.yield(.state(.connecting))
             joined = false
             channelFormat = nil
+            peerExchange?.cancel()
+            peerInfoRequestID = nil
+            ready = false
+            incompatible = false
+            peerInfo = nil
+            compatibility = .legacy
             nonce = ""
             let socket = session.webSocketTask(with: dial)
             self.socket = socket
@@ -300,6 +321,15 @@ public actor RelayClient: ChatTransport {
     /// The counter is persisted before the frame leaves: a `seq` that went out and was then
     /// forgotten would be reused after a relaunch, and the Mac would drop the reuse as a replay.
     public func send(_ event: YorozuEvent) async throws {
+        guard ready, !incompatible else {
+            throw YorozuCrypto.CryptoError.malformed("Host compatibility has not been established")
+        }
+        try await sendEncrypted(event)
+    }
+
+    private func sendEncrypted(_ event: YorozuEvent) async throws {
+        try Task.checkCancellation()
+        guard !stopped, !incompatible else { throw YorozuCrypto.CryptoError.malformed("Host connection is closed") }
         guard let channelFormat else {
             throw YorozuCrypto.CryptoError.malformed("Mac has not answered pairing")
         }
@@ -339,7 +369,7 @@ public actor RelayClient: ChatTransport {
 
     /// Everything here is attacker-controlled; a malformed frame must not tear the client down,
     /// so per-frame decode failures are reported and skipped rather than thrown.
-    private func handle(_ text: String) throws {
+    func handle(_ text: String) throws {
         guard let message = try? JSONDecoder().decode(Inbound.self, from: Data(text.utf8)) else {
             return
         }
@@ -435,6 +465,7 @@ public actor RelayClient: ChatTransport {
     }
 
     func acceptFrame(_ payload: String?) {
+        guard !incompatible else { return }
         guard let payload, let raw = Data(base64URLEncoded: payload),
             let body = try? JSONDecoder().decode(FrameBody.self, from: raw),
             body.t == "box",
@@ -449,22 +480,24 @@ public actor RelayClient: ChatTransport {
         if current == nil {
             // The first old-format box must be the Mac's greeting. Once a modern box has
             // arrived, old captured boxes cannot switch this connection back.
-            if channelFormat == .current { return }
-            guard let plain = try? YorozuCrypto.open(key: legacyKey, nonce: nonce, ciphertext: ciphertext),
-                let event = try? JSONDecoder().decode(YorozuEvent.self, from: plain)
-            else { return }
+            if channelFormat == .current || counter.peerInfoRequired == true { return }
+            guard let plain = try? YorozuCrypto.open(key: legacyKey, nonce: nonce, ciphertext: ciphertext) else { return }
+            guard let event = try? JSONDecoder().decode(YorozuEvent.self, from: plain) else {
+                rejectMalformedPeerClaim(plain, numbered: false)
+                return
+            }
             if channelFormat == nil {
                 guard case .threadList = event.payload else { return }
                 channelFormat = .legacy
-                updates?.yield(.state(.paired))
             }
-            updates?.yield(.event(event))
+            receiveAuthenticated(event)
             return
         }
         guard let plain = current else { return }
         // A replay or a malformed envelope is logged, not surfaced: `.failed` would put an error
         // banner in front of the user for something the relay, not the Mac, did.
         guard let envelope = try? ChannelEnvelope.decode(plain) else {
+            rejectMalformedPeerClaim(plain, numbered: true)
             logger.notice("dropped box with a malformed envelope")
             return
         }
@@ -481,11 +514,103 @@ public actor RelayClient: ChatTransport {
             logger.error("dropped box with seq \(envelope.seq): counter could not be saved")
             return
         }
-        if channelFormat != .current {
-            channelFormat = .current
-            updates?.yield(.state(.paired))
+        channelFormat = .current
+        receiveAuthenticated(envelope.event)
+    }
+
+    private func receiveAuthenticated(_ event: YorozuEvent) {
+        if case .threadList(let list) = event.payload {
+            if peerInfoRequestID == nil && (list.peerInfoSupported == true || list.peerInfo != nil || list.peerInfoError != nil) {
+                requestPeerInfo()
+                return
+            }
+            if !ready, (list.peerInfo != nil || list.peerInfoError != nil), list.peerInfoReplyTo != peerInfoRequestID {
+                return
+            }
+            if let reason = list.peerInfoError {
+                failCompatibility(reason)
+                return
+            }
+            if let peer = list.peerInfo {
+                let result = localPeer.compatibility(with: peer)
+                if case .updateRequired(let reason) = result { failCompatibility(reason); return }
+                guard channelFormat == .current else {
+                    failCompatibility("A replay-protected channel is required. Update Yorozu on the host Mac.")
+                    return
+                }
+                compatibility = result
+                var accepted = peer
+                if case .compatible(_, let capabilities) = result, !capabilities.contains("host-name") {
+                    accepted.computerName = nil
+                }
+                peerInfo = accepted
+                updates?.yield(.compatibility(result))
+                updates?.yield(.peerInfo(accepted))
+            } else if list.peerInfoSupported == true {
+                if ready { requestPeerInfo() }
+                return
+            } else if peerInfoRequestID != nil || counter.peerInfoRequired == true {
+                failCompatibility("This host no longer advertises required protocol support. Update Yorozu on the host Mac.")
+                return
+            }
+            if !ready {
+                ready = true
+                updates?.yield(.compatibility(compatibility))
+                updates?.yield(.state(.paired))
+            }
         }
-        updates?.yield(.event(envelope.event))
+        guard ready else { return }
+        updates?.yield(.event(event))
+    }
+
+    private func requestPeerInfo() {
+        guard channelFormat == .current else {
+            failCompatibility("A replay-protected channel is required. Update Yorozu on the host Mac.")
+            return
+        }
+        ready = false
+        counter.peerInfoRequired = true
+        guard (try? counterStore.save(counter)) != nil else { return }
+        let requestID = UUID().uuidString
+        peerInfoRequestID = requestID
+        let request = YorozuEvent(id: requestID, threadId: "", ts: Int(Date().timeIntervalSince1970 * 1_000),
+            agentId: "device", payload: .threadList(ThreadListData(threads: [], peerInfo: localPeer)))
+        peerExchange = Task {
+            do { try await self.sendEncrypted(request) }
+            catch { self.updates?.yield(.failed(error.localizedDescription)) }
+        }
+    }
+
+    private func failCompatibility(_ reason: String) {
+        incompatible = true
+        ready = false
+        stopped = true
+        compatibility = .updateRequired(reason)
+        updates?.yield(.compatibility(compatibility))
+        updates?.yield(.state(.closed))
+        updates?.yield(.failed("Update required: \(reason)"))
+        pinger?.cancel()
+        pongDeadline?.cancel()
+        peerExchange?.cancel()
+        socket?.cancel(with: .policyViolation, reason: nil)
+    }
+
+    /// Strict typed decoding rejects bad claims. Identify that failure only after authentication
+    /// and freshness checking, so a replay cannot force a healthy host into Update required.
+    private func rejectMalformedPeerClaim(_ plain: Data, numbered: Bool) {
+        guard let object = try? JSONSerialization.jsonObject(with: plain) as? [String: Any],
+            let event = numbered ? object["event"] as? [String: Any] : object,
+            event["kind"] as? String == "thread_list",
+            let data = event["data"] as? [String: Any],
+            data.keys.contains("peerInfo") || data.keys.contains("peerInfoSupported") || data.keys.contains("peerInfoError") || data.keys.contains("peerInfoReplyTo") else { return }
+        if numbered {
+            struct Sequence: Decodable { var seq: Int }
+            guard let seq = try? JSONDecoder().decode(Sequence.self, from: plain).seq,
+                (1...ChannelEnvelope.maxSeq).contains(seq), counter.accept(seq) else { return }
+            counter.peerInfoRequired = true
+            guard (try? counterStore.save(counter)) != nil else { return }
+        }
+        failCompatibility("Invalid peer information. Update Yorozu on this device and its host Mac.")
     }
 
     /// The relay verifies the signature over the base64url `payload` string itself.

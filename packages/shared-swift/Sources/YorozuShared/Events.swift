@@ -948,7 +948,37 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
 
 public struct ThreadListData: Codable, Equatable, Sendable {
     public var threads: [ThreadSummary]
-    public init(threads: [ThreadSummary]) { self.threads = threads }
+    /// Bootstrap hint understood by new clients and ignored by released clients.
+    public var peerInfoSupported: Bool?
+    public var peerInfo: PeerInfoData?
+    public var peerInfoError: String?
+    public var peerInfoReplyTo: String?
+    public init(threads: [ThreadSummary], peerInfoSupported: Bool? = nil, peerInfo: PeerInfoData? = nil,
+        peerInfoError: String? = nil, peerInfoReplyTo: String? = nil) {
+        self.threads = threads
+        self.peerInfoSupported = peerInfoSupported
+        self.peerInfo = peerInfo
+        self.peerInfoError = peerInfoError
+        self.peerInfoReplyTo = peerInfoReplyTo
+    }
+
+    private enum CodingKeys: String, CodingKey { case threads, peerInfoSupported, peerInfo, peerInfoError, peerInfoReplyTo }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        threads = try c.decode([ThreadSummary].self, forKey: .threads)
+        peerInfoSupported = c.contains(.peerInfoSupported) ? try c.decode(Bool.self, forKey: .peerInfoSupported) : nil
+        peerInfo = c.contains(.peerInfo) ? try c.decode(PeerInfoData.self, forKey: .peerInfo) : nil
+        peerInfoError = c.contains(.peerInfoError) ? try c.decode(String.self, forKey: .peerInfoError) : nil
+        peerInfoReplyTo = c.contains(.peerInfoReplyTo) ? try c.decode(String.self, forKey: .peerInfoReplyTo) : nil
+        if let peerInfoReplyTo, peerInfoReplyTo.isEmpty || peerInfoReplyTo.utf8.count > 128
+            || peerInfoReplyTo.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) {
+            throw DecodingError.dataCorruptedError(forKey: .peerInfoReplyTo, in: c, debugDescription: "Invalid peer-information reply ID")
+        }
+        if let peerInfoError, peerInfoError.isEmpty || peerInfoError.utf8.count > 512
+            || peerInfoError.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) {
+            throw DecodingError.dataCorruptedError(forKey: .peerInfoError, in: c, debugDescription: "Invalid peer compatibility error")
+        }
+    }
 }
 
 /// Archives `threadId` from the base fields, or brings it back when ``archived`` is false.

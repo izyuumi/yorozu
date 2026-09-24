@@ -10,7 +10,8 @@ public struct NotificationPreviewPayload: Equatable, Sendable {
     public init?(userInfo: [AnyHashable: Any]) {
         guard let preview = userInfo["preview"] as? [String: Any],
               let nonce = preview["n"] as? String,
-              let ciphertext = preview["c"] as? String else { return nil }
+              let ciphertext = preview["c"] as? String,
+              nonce.utf8.count <= 32, ciphertext.utf8.count <= 16_384 else { return nil }
         self.nonce = nonce
         self.ciphertext = ciphertext
     }
@@ -43,12 +44,17 @@ public struct NotificationPreviewContent: Equatable, Sendable {
     public init?(plaintext: String) {
         let parsed = try? JSONSerialization.jsonObject(with: Data(plaintext.utf8), options: [.fragmentsAllowed])
         guard let object = parsed as? [String: Any], object["v"] != nil else {
-            if plaintext.isEmpty { return nil }
+            if plaintext.isEmpty || plaintext.utf8.count > 8_192 { return nil }
             self.init(body: plaintext, event: nil, quick: false)
             return
         }
-        guard let body = object["body"] as? String, !body.isEmpty else { return nil }
-        let event = (object["event"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        guard let version = object["v"] as? NSNumber,
+              CFGetTypeID(version) != CFBooleanGetTypeID(), version == NSNumber(value: Self.version),
+              let body = object["body"] as? String, !body.isEmpty, body.utf8.count <= 8_192
+        else { return nil }
+        let event = (object["event"] as? String).flatMap {
+            $0.isEmpty || $0.utf8.count > 128 ? nil : $0
+        }
         // A JSON `true` only: NSNumber bridges numbers to Bool too, so the type is checked.
         let quick: Bool
         if let number = object["quick"] as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() {
@@ -76,21 +82,52 @@ public enum NotificationPreview {
         return NotificationPreviewContent(plaintext: text)
     }
 
-    /// Shares only the derived symmetric key with the notification extension. Pairing private
-    /// keys stay in the app's original, unshared Keychain group.
-    public static func save(key: SymmetricKey) {
-        guard let query else { return }
-        let data = key.withUnsafeBytes { Data($0) }
+    /// Shares only derived preview keys. Each host has a separate Keychain item; the
+    /// notification extension never receives the app's pairing private keys.
+    @discardableResult
+    public static func save(key: SymmetricKey, hostID: HostID) -> Bool {
+        guard !hostID.isEmpty else { return false }
+        return save(key: key, account: "host:\(hostID)")
+    }
+
+    public static func loadKeys() -> [HostID: SymmetricKey] {
+        guard var lookup = baseQuery else { return [:] }
+        lookup[kSecReturnAttributes as String] = true
+        lookup[kSecReturnData as String] = true
+        lookup[kSecMatchLimit as String] = kSecMatchLimitAll
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(lookup as CFDictionary, &result) == errSecSuccess,
+              let items = result as? [[String: Any]] else { return [:] }
+        var keys: [HostID: SymmetricKey] = [:]
+        for item in items {
+            guard let account = item[kSecAttrAccount as String] as? String,
+                  account.hasPrefix("host:"), account.count > 5,
+                  let data = item[kSecValueData as String] as? Data, data.count == 32
+            else { continue }
+            keys[String(account.dropFirst(5))] = SymmetricKey(data: data)
+        }
+        return keys
+    }
+
+    public static func clearKey(hostID: HostID) {
+        guard let query = query(account: "host:\(hostID)") else { return }
         SecItemDelete(query as CFDictionary)
-        var attributes = query
-        attributes[kSecValueData as String] = data
-        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(attributes as CFDictionary, nil)
+    }
+
+    /// Call only while migrating the known single legacy pairing, before adding other hosts.
+    /// Never infer this ownership from a notification, thread reference, or last-used host.
+    public static func migrateLegacyKey(to hostID: HostID) {
+        guard let key = loadKey(), save(key: key, hostID: hostID) else { return }
+        clearKey()
+    }
+
+    // Legacy access exists solely to migrate installations created before per-host storage.
+    public static func save(key: SymmetricKey) {
+        _ = save(key: key, account: account)
     }
 
     public static func loadKey() -> SymmetricKey? {
-        guard let query else { return nil }
-        var lookup = query
+        guard var lookup = query(account: account) else { return nil }
         lookup[kSecReturnData as String] = true
         var item: CFTypeRef?
         guard SecItemCopyMatching(lookup as CFDictionary, &item) == errSecSuccess,
@@ -99,18 +136,36 @@ public enum NotificationPreview {
     }
 
     public static func clearKey() {
-        guard let query else { return }
+        guard let query = query(account: account) else { return }
         SecItemDelete(query as CFDictionary)
     }
 
-    private static var query: [String: Any]? {
+    private static func save(key: SymmetricKey, account: String) -> Bool {
+        guard let query = query(account: account) else { return false }
+        let data = key.withUnsafeBytes { Data($0) }
+        let update = [kSecValueData as String: data]
+        let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+        if status == errSecSuccess { return true }
+        guard status == errSecItemNotFound else { return false }
+        var attributes = query
+        attributes[kSecValueData as String] = data
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
+    }
+
+    private static func query(account: String) -> [String: Any]? {
+        guard var query = baseQuery else { return nil }
+        query[kSecAttrAccount as String] = account
+        return query
+    }
+
+    private static var baseQuery: [String: Any]? {
         guard let accessGroup = Bundle.main.object(
             forInfoDictionaryKey: "YorozuNotificationKeychainAccessGroup"
         ) as? String else { return nil }
         return [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
             kSecAttrAccessGroup as String: accessGroup,
         ]
     }

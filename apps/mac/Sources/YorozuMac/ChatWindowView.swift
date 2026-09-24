@@ -14,6 +14,120 @@ import YorozuShared
 /// place the chat lives.
 struct ChatWindowView: View {
     @State private var session = MacChatSession.shared
+    var body: some View {
+        if session.role == .client { ClientChatWindowView(session: session) }
+        else { LocalChatWindowView() }
+    }
+}
+
+private struct ClientChatWindowView: View {
+    let session: MacChatSession
+    @State private var selection: HostThreadID?
+    @State private var searchedThread: HostThreadID?
+    @State private var searchRequest: ThreadSearchRequest?
+    @Environment(\.controlActiveState) private var controlActiveState
+    @Environment(\.openSettings) private var openSettings
+
+    private var hosts: MultiHostModel { session.hosts }
+
+    var body: some View {
+        NavigationSplitView {
+            MultiHostThreadSidebar(session: hosts, selection: $selection) { id, request in
+                searchedThread = id
+                searchRequest = request
+            }
+            .navigationSplitViewColumnWidth(min: LayoutMetrics.sidebarMinWidth,
+                ideal: LayoutMetrics.sidebarIdealWidth, max: LayoutMetrics.sidebarMaxWidth)
+            .safeAreaInset(edge: .bottom) {
+                HStack {
+                    Button { openSettings() } label: { Label("Settings", systemImage: "gearshape") }
+                        .buttonStyle(.plain)
+                    Spacer()
+                    Text(connectionLabel)
+                        .foregroundStyle(.secondary)
+                }
+                .font(.caption)
+                .padding(12)
+                .background(YorozuPalette.paper)
+            }
+        } detail: {
+            NavigationStack {
+                if let selection, let item = hosts.thread(for: selection), let model = hosts.model(for: selection) {
+                    ChatView(model: model, thread: item.thread,
+                        offlineNotice: hosts.hasMultipleHosts
+                            ? "\(item.hostLabel) is offline. Messages will send when it reconnects."
+                            : "Connection unavailable. Messages will send when your host Mac reconnects.")
+                        .environment(\.threadSearchRequest, searchedThread == selection ? searchRequest : nil)
+                        .id(selection)
+                } else {
+                    ContentUnavailableView("No thread", systemImage: "bubble.left.and.bubble.right",
+                        description: Text(hosts.sessions.isEmpty ? "Add a host in Settings to start chatting." : "Choose a thread or start a new one."))
+                }
+            }
+            .id(selection?.hostID)
+        }
+        .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
+        .background(YorozuPalette.canvas)
+        .safeAreaInset(edge: .top) {
+            UpdateStatusView(status: Updates.pending.status) { Updates.pending.postpone() }
+        }
+        .yorozuTint()
+        .onChange(of: selection, initial: true) { old, new in
+            if let old, old != new {
+                hosts.model(for: old)?.discardDraft(old.threadID)
+                hosts.model(for: old)?.openThread = nil
+            }
+            if let new { hosts.lastUsedHostID = new.hostID }
+            updateReading()
+        }
+        .onChange(of: hosts.lastUsedHostID) { _, _ in session.rememberLastHost() }
+        .onChange(of: controlActiveState, initial: true) { _, _ in updateReading() }
+        .onChange(of: hosts.sessions.map(\.id)) { _, _ in
+            if let selection, hosts.session(for: selection.hostID) == nil { self.selection = nil }
+            if selection == nil { open() }
+            updateReading()
+        }
+        .onAppear { open() }
+        .onDisappear {
+            for host in hosts.sessions { host.model.foreground = false }
+        }
+        .background(WindowNumberReporter())
+    }
+
+    private var connectionLabel: String {
+        guard !hosts.hasMultipleHosts else { return hosts.connectionSummary }
+        guard let host = hosts.sessions.first else { return "Not connected" }
+        if case .updateRequired = host.model.compatibility { return "Update required" }
+        return ClientConnectionStatus(state: host.model.state, ownerOnline: host.model.ownerOnline,
+            failure: session.hostFailures[host.id] ?? host.model.failure).label
+    }
+
+    private func updateReading() {
+        guard selection != nil else {
+            for host in hosts.sessions { host.model.foreground = false }
+            return
+        }
+        for host in hosts.sessions {
+            let selected = selection?.hostID == host.id
+            host.model.foreground = selected && controlActiveState == .key
+            host.model.openThread = selected ? selection?.threadID : nil
+        }
+    }
+
+    private func open() {
+        guard selection == nil else { return }
+        if let id = hosts.preferredHostID, let model = hosts.session(for: id)?.model,
+           let saved = model.openThread, model.threads.contains(where: { $0.id == saved }) {
+            selection = HostThreadID(hostID: id, threadID: saved)
+        } else if let newest = hosts.threads.first(where: { !$0.thread.archived }), threadToOpen([newest.thread]) != nil {
+            selection = newest.id
+        } else { selection = hosts.newDraft() }
+        updateReading()
+    }
+}
+
+private struct LocalChatWindowView: View {
+    @State private var session = MacChatSession.shared
     @State private var selection: String?
     @State private var searchRequest: ThreadSearchRequest?
     /// `.key` is this window being the key window of the active app, which is exactly the Mac's
@@ -183,11 +297,14 @@ struct SettingsView: View {
                 Tab("Permissions", systemImage: "lock.shield", value: "permissions") {
                     PermissionsView()
                 }
+            } else {
+                Tab(session.hosts.hasMultipleHosts ? "Hosts" : "Connection",
+                    systemImage: session.hosts.hasMultipleHosts ? "desktopcomputer" : "link", value: "hosts") {
+                    HostsView()
+                }
             }
         }
         .frame(width: 600, height: 620)
-        .onChange(of: session.role) { _, role in
-            if role != .host { selection = "general" }
-        }
+        .onChange(of: session.role) { _, _ in selection = "general" }
     }
 }

@@ -14,6 +14,7 @@ import {
   fromBase64Url,
   generateKeypair,
   helloProof,
+  localPeerInfo,
   MAX_DEVICES,
   open,
   seal,
@@ -272,6 +273,8 @@ test("public 0.2.3 phone syncs with current Mac runtime", async () => {
   sidecar = serve({
     relayUrl: `ws://127.0.0.1:${relay.port}`,
     stateDir,
+    appVersion: "0.3.0",
+    computerName: () => "Legacy hidden Mac",
     provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m",
       fetch: vi.fn<typeof fetch>().mockImplementation(async () => sse("pong")) }),
     log: (line) => { if (line.startsWith("QR ")) qrs.push(line.slice(3)); },
@@ -292,10 +295,20 @@ test("public 0.2.3 phone syncs with current Mac runtime", async () => {
     }
     throw new Error("Mac sent no legacy greeting");
   };
-  expect(await next()).toMatchObject({ kind: "thread_list", data: { threads: [] } });
+  const greeting = await next();
+  expect(greeting).toMatchObject({ kind: "thread_list", data: { threads: [] } });
+  expect(greeting.data).toEqual({ threads: [] });
   expect(await next()).toMatchObject({ kind: "model_list" });
   expect(await next()).toMatchObject({ kind: "project_list", data: { projects: [{ name: "proj" }] } });
   expect(await next()).toMatchObject({ kind: "device_list" });
+  phone.frame(channel.box({ id: "legacy-thread-list", threadId: "", ts: Date.now(),
+    agentId: "phone", kind: "thread_list", data: { threads: [] } }), keys);
+  expect(await next()).toMatchObject({ kind: "receipt", data: { eventId: "legacy-thread-list" } });
+  const listed = await next();
+  expect(listed).toMatchObject({ kind: "thread_list" });
+  expect(listed.data).not.toHaveProperty("peerInfo");
+  expect(await next()).toMatchObject({ kind: "model_list" });
+  expect(await next()).toMatchObject({ kind: "project_list" });
   phone.frame(channel.box({ id: "legacy-device-list", threadId: "", ts: Date.now(),
     agentId: "phone", kind: "device_list", data: { devices: [] } }), keys);
   expect(await next()).toMatchObject({ kind: "receipt", data: { eventId: "legacy-device-list" } });
@@ -344,6 +357,82 @@ test("public 0.2.3 phone syncs with current Mac runtime", async () => {
     }
   }
   expect(readThreadEvents("old-phone-thread", stateDir).some((event) => event.kind === "message" && event.data.text === "Hi")).toBe(true);
+});
+
+test("reflected legacy greetings cannot require negotiation, including after restart", async () => {
+  relay = await startRelay(0);
+  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-legacy-reflection-"));
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => sse("pong"));
+  const lines: string[] = [];
+  const start = () => {
+    let printed!: (qr: string) => void;
+    const qr = new Promise<string>((resolve) => (printed = resolve));
+    const cast = serve({
+      relayUrl: `ws://127.0.0.1:${relay.port}`,
+      stateDir,
+      appVersion: "0.3.0",
+      computerName: () => "Private Mac",
+      provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: fetchMock }),
+      log: (line) => {
+        lines.push(line);
+        if (line.startsWith("QR ")) printed(line.slice(3));
+      },
+    });
+    return { cast, qr };
+  };
+  const first = start();
+  sidecar = first.cast;
+  const qr = decodeQrPayload(await first.qr);
+  const joined = await connectPhone(relay.port, qr.roomId!, qr.token);
+  let phone = joined.phone;
+  const { keys } = joined;
+  expect(await phone.next()).toMatchObject({ type: "joined" });
+  const identity = generateKeypair();
+  const channel = legacyChannelFor(identity.privateKey, fromBase64Url(qr.macPubkey));
+  phone.frame(hello(qr, toBase64Url(identity.publicKey), keys.pub), keys);
+  const next = async (): Promise<{ event: YorozuEvent; payload: string }> => {
+    for (;;) {
+      const { payload } = await phone.next();
+      try { return { event: channel.open(frameBody(payload)), payload }; }
+      catch { /* A released client cannot open the modern greeting. */ }
+    }
+  };
+  const chat = async (id: string): Promise<void> => {
+    phone.frame(channel.box({ id, threadId: id, ts: Date.now(), agentId: "phone",
+      kind: "message", data: { role: "user", text: "ping" } }), keys);
+    for (;;) {
+      const { event } = await next();
+      if (event.threadId === id && event.kind === "message" && event.data.role === "agent" && event.data.done) {
+        expect(event.data.text).toBe("pong");
+        return;
+      }
+    }
+  };
+  const greeting = await next();
+  expect(greeting.event).toMatchObject({ kind: "thread_list" });
+  expect(greeting.event.data).toEqual({ threads: [] });
+  // Legacy uses the same key in both directions: replay the exact host ciphertext as input.
+  phone.frame(greeting.payload, keys);
+  await chat("after-reflection");
+  expect(loadDevices(join(stateDir, "devices.json"))[0]).not.toHaveProperty("peerInfoRequired");
+
+  // Hosts before this fix advertised support in legacy boxes. Reflecting one must also be harmless.
+  phone.frame(channel.box({ id: "pre-fix-greeting", threadId: "", ts: Date.now(), agentId: "yorozu",
+    kind: "thread_list", data: { threads: [], peerInfoSupported: true } }), keys);
+  await chat("after-legacy-claim");
+  expect(loadDevices(join(stateDir, "devices.json"))[0]).not.toHaveProperty("peerInfoRequired");
+  expect(lines).not.toContain("STATE peer-update-required");
+
+  phone.ws.close();
+  await sidecar.close();
+  const restarted = start();
+  sidecar = restarted.cast;
+  await restarted.qr;
+  phone = await rejoinPhone(relay.port, qr.roomId!, keys);
+  expect(await phone.next()).toMatchObject({ type: "joined" });
+  await chat("after-restart");
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(loadDevices(join(stateDir, "devices.json"))[0]).not.toHaveProperty("peerInfoRequired");
 });
 
 test.each([false, true])("a phone rejoins without hello and preserves a safe cutoff (legacy=%s)", async (legacy) => {
@@ -1476,7 +1565,7 @@ async function pairPhone(port: number, qr: QrPayload) {
       phone.frame(channel.box(event), keys);
     },
     /** The next event of `kind` this phone can open: frames for the other device are not ours. */
-    async next(kind: EventKind): Promise<YorozuEvent> {
+    async next(kind: EventKind, observed?: YorozuEvent[]): Promise<YorozuEvent> {
       for (;;) {
         const frame = await phone.next();
         if (frame?.type !== "frame") continue;
@@ -1487,11 +1576,216 @@ async function pairPhone(port: number, qr: QrPayload) {
         } catch {
           continue; // Sealed for the other phone.
         }
+        observed?.push(event);
         if (event.kind === kind) return event;
       }
     },
   };
 }
+
+test("terminal broadcasts reach only paired clients that requested terminal status", async () => {
+  relay = await startRelay(0);
+  const qrs = qrQueue();
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${relay.port}`,
+    stateDir: mkdtempSync(join(tmpdir(), "yorozu-terminal-opt-in-")),
+    log: (line) => { if (line.startsWith("QR ")) qrs.push(line.slice(3)); },
+  });
+  const ordinary = await pairPhone(relay.port, await qrs.next());
+  await ordinary.next("device_list");
+  const subscribed = await pairPhone(relay.port, await qrs.next());
+  await subscribed.next("device_list");
+
+  // Both clients predate peer-info negotiation. The terminal request itself opts one in.
+  subscribed.send("", { kind: "terminal", data: { action: "status" } });
+  const initial = await subscribed.next("terminal");
+  expect(initial).toMatchObject({ data: { action: "state", enabled: false, sessions: [], epoch: expect.any(String) } });
+  if (initial.kind !== "terminal") throw new Error("missing terminal state");
+  const epoch = initial.data.epoch!;
+  expect(epoch).not.toBe("");
+
+  for (const action of ["enable", "disable"] as const) {
+    subscribed.send("", { kind: "terminal", data: { action, epoch } });
+    expect(await subscribed.next("terminal")).toMatchObject({
+      data: { action: "state", enabled: action === "enable", sessions: [], epoch },
+    });
+    // A response to a later command bounds the negative check without timers or transport mocks.
+    ordinary.send("", { kind: "sync_request", data: { lastSeen: {} } });
+    const observed: YorozuEvent[] = [];
+    await ordinary.next("sync_delta", observed);
+    expect(observed.filter((event) => event.kind === "terminal")).toEqual([]);
+  }
+});
+
+test.each([true, false])("peer metadata follows an encrypted handshake (host-name=%s)", async (hostName) => {
+  relay = await startRelay(0);
+  const qrs = qrQueue();
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${relay.port}`,
+    stateDir: mkdtempSync(join(tmpdir(), "yorozu-peer-info-")),
+    appVersion: "0.3.0",
+    computerName: () => "Studio Mac",
+    log: (line) => { if (line.startsWith("QR ")) qrs.push(line.slice(3)); },
+  });
+  const qr = await qrs.next();
+  expect(JSON.stringify(qr)).not.toContain("Studio Mac");
+  const phone = await pairPhone(relay.port, qr);
+  const greeting = await phone.next("thread_list");
+  expect(greeting.data).toMatchObject({ threads: [], peerInfoSupported: true });
+  expect(greeting.data).not.toHaveProperty("peerInfo");
+
+  const peerInfo = localPeerInfo("0.3.1");
+  if (!hostName) peerInfo.capabilities = peerInfo.capabilities.filter((capability) => capability !== "host-name");
+  phone.send("", { kind: "thread_list", data: { threads: [], peerInfo } });
+  expect(await phone.next("thread_list")).toMatchObject({
+    data: { peerInfo: localPeerInfo("0.3.0", hostName ? "Studio Mac" : undefined) },
+  });
+  // The subsequent list request is still the existing command, with negotiation remembered.
+  phone.send("", { kind: "thread_list", data: { threads: [] } });
+  const listed = await phone.next("thread_list");
+  expect(listed.data).toMatchObject({ peerInfo: localPeerInfo("0.3.0", hostName ? "Studio Mac" : undefined) });
+  if (!hostName) expect(listed.data).not.toHaveProperty("peerInfo.computerName");
+});
+
+test.each(["replayed hello", "runtime restart"])("negotiated phones cannot downgrade after %s", async (reset) => {
+  relay = await startRelay(0);
+  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-peer-downgrade-"));
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => sse("pong"));
+  const start = () => {
+    let printed!: (qr: string) => void;
+    const qr = new Promise<string>((resolve) => (printed = resolve));
+    const cast = serve({
+      relayUrl: `ws://127.0.0.1:${relay.port}`,
+      stateDir,
+      appVersion: "0.3.0",
+      computerName: () => "Private Mac",
+      provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: fetchMock }),
+      log: (line) => { if (line.startsWith("QR ")) printed(line.slice(3)); },
+    });
+    return { cast, qr };
+  };
+  const first = start();
+  sidecar = first.cast;
+  const qr = decodeQrPayload(await first.qr);
+  const joined = await connectPhone(relay.port, qr.roomId!, qr.token);
+  let phone = joined.phone;
+  const { keys } = joined;
+  expect(await phone.next()).toMatchObject({ type: "joined" });
+  const identity = generateKeypair();
+  const pub = toBase64Url(identity.publicKey);
+  const channel = channelFor(identity.privateKey, fromBase64Url(qr.macPubkey));
+  const legacyChannel = legacyChannelFor(identity.privateKey, fromBase64Url(qr.macPubkey));
+  const initialHello = hello(qr, pub, keys.pub);
+  const next = async (kind: EventKind): Promise<YorozuEvent> => {
+    for (;;) {
+      const event = await nextEvent(phone, channel);
+      if (event.kind === kind) return event;
+    }
+  };
+  const send = (id: string, threadId: string, payload: EventPayload): void =>
+    phone.frame(channel.box({ id, threadId, ts: Date.now(), agentId: "phone", ...payload }), keys);
+  phone.frame(initialHello, keys);
+  await next("device_list");
+
+  // Capture an actual command from before this phone upgraded to negotiated, sequenced boxes.
+  createThread("Before upgrade", stateDir, "old-thread");
+  const oldBox = legacyChannel.box({ id: "old-command", threadId: "old-thread", ts: Date.now(),
+    agentId: "phone", kind: "message", data: { role: "user", text: "before upgrade" } });
+  phone.frame(oldBox, keys);
+  for (;;) {
+    let event: YorozuEvent;
+    try { event = legacyChannel.open(frameBody((await phone.next()).payload)); }
+    catch { continue; }
+    if (event.kind === "message" && event.data.role === "agent" && event.data.done) break;
+  }
+  send("negotiate", "", { kind: "thread_list", data: { threads: [], peerInfo: localPeerInfo("0.3.1") } });
+  expect(await next("thread_list")).toMatchObject({
+    data: { threads: [{ id: "old-thread" }], peerInfo: localPeerInfo("0.3.0", "Private Mac") },
+  });
+  expect(loadDevices(join(stateDir, "devices.json"))[0]).toMatchObject({ pub, peerInfoRequired: true });
+
+  if (reset === "runtime restart") {
+    phone.ws.close();
+    await sidecar.close();
+    const restarted = start();
+    sidecar = restarted.cast;
+    await restarted.qr;
+    phone = await rejoinPhone(relay.port, qr.roomId!, keys);
+    expect(await phone.next()).toMatchObject({ type: "joined" });
+  } else {
+    // This exact hello was already consumed. It contains no authenticated capability claim.
+    phone.frame(initialHello, keys);
+    const greeting = await next("thread_list");
+    expect(greeting.data).toMatchObject({ threads: [], peerInfoSupported: true });
+    expect(greeting.data).not.toHaveProperty("peerInfo");
+  }
+  expect(loadDevices(join(stateDir, "devices.json"))[0]).toMatchObject({ pub, peerInfoRequired: true });
+  phone.frame(oldBox, keys);
+  phone.frame(legacyChannel.box({ id: "legacy-forbidden", threadId: "legacy-forbidden", ts: Date.now(),
+    agentId: "phone", kind: "message", data: { role: "user", text: "must not run" } }), keys);
+  send("modern-held", "modern-held", { kind: "message", data: { role: "user", text: "must wait" } });
+  await vi.waitFor(() => expect(loadChannelSeqs(join(stateDir, "channel-seq.json"))?.[pub]?.recvSeq).toBe(2));
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(readThreadEvents("old-thread", stateDir).filter((event) => event.id === "old-command")).toHaveLength(1);
+  expect(readThreadEvents("legacy-forbidden", stateDir)).toEqual([]);
+  expect(readThreadEvents("modern-held", stateDir)).toEqual([]);
+
+  send("renegotiate", "", { kind: "thread_list", data: { threads: [], peerInfo: localPeerInfo("0.3.1") } });
+  expect(await next("thread_list")).toMatchObject({
+    data: { threads: [{ id: "old-thread" }], peerInfo: localPeerInfo("0.3.0", "Private Mac") },
+  });
+  send("after-renegotiation", "working-thread", { kind: "message", data: { role: "user", text: "ping" } });
+  expect(await next("message")).toMatchObject({ threadId: "working-thread", data: { role: "user", text: "ping" } });
+  expect(await next("message")).toMatchObject({ threadId: "working-thread", data: { role: "agent", text: "pong" } });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+test.each([
+  ["unsupported protocol", { ...localPeerInfo("0.4.0"), protocolMin: 2, protocolMax: 2 }],
+  ["unknown required capability", { ...localPeerInfo("0.4.0"),
+    capabilities: [...localPeerInfo("0.4.0").capabilities, "future-capability"], requiredCapabilities: ["future-capability"] }],
+  ["malformed metadata", { ...localPeerInfo("0.4.0"), protocolMin: "1" }],
+])("%s blocks only its own paired device", async (_reason, peerInfo) => {
+  relay = await startRelay(0);
+  const qrs = qrQueue();
+  const lines: string[] = [];
+  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-peer-incompatible-"));
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => sse("pong"));
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${relay.port}`,
+    stateDir,
+    appVersion: "0.3.0",
+    computerName: () => "Private Mac",
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: fetchMock }),
+    log: (line) => {
+      lines.push(line);
+      if (line.startsWith("QR ")) qrs.push(line.slice(3));
+    },
+  });
+  const blocked = await pairPhone(relay.port, await qrs.next());
+  await blocked.next("thread_list");
+  const blockedPub = loadDevices(join(stateDir, "devices.json"))[0]!.pub;
+  const healthy = await pairPhone(relay.port, await qrs.next());
+  await healthy.next("thread_list");
+
+  blocked.send("", { kind: "thread_list", data: { threads: [], peerInfo } } as EventPayload);
+  const refused = await blocked.next("thread_list");
+  expect(refused.data).toMatchObject({ peerInfo: localPeerInfo("0.3.0") });
+  expect(refused.data).not.toHaveProperty("peerInfo.computerName");
+  expect(lines).toContain("STATE peer-update-required");
+  blocked.send("blocked-thread", { kind: "thread_create", data: {} });
+  blocked.send("blocked-thread", { kind: "message", data: { role: "user", text: "must not run" } });
+  await vi.waitFor(() => expect(loadChannelSeqs(join(stateDir, "channel-seq.json"))?.[blockedPub]?.recvSeq).toBe(3));
+
+  healthy.send("", { kind: "thread_list", data: { threads: [], peerInfo: localPeerInfo("0.3.1") } });
+  expect(await healthy.next("thread_list")).toMatchObject({ data: { peerInfo: localPeerInfo("0.3.0", "Private Mac") } });
+  healthy.send("healthy-thread", { kind: "message", data: { role: "user", text: "ping" } });
+  expect(await healthy.next("message")).toMatchObject({ threadId: "healthy-thread", data: { role: "user", text: "ping" } });
+  expect(await healthy.next("message")).toMatchObject({ threadId: "healthy-thread", data: { role: "agent", text: "pong" } });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(listThreads(stateDir).some((thread) => thread.id === "blocked-thread")).toBe(false);
+  expect(readThreadEvents("blocked-thread", stateDir)).toEqual([]);
+});
 
 test("two phones pair at once and see the same threads, events and deltas", async () => {
   relay = await startRelay(0);

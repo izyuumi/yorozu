@@ -113,3 +113,80 @@ private func box(_ body: (URL) throws -> Void) throws {
     }
 }
 
+
+@Test func sharedThreadsWithTheSameIDRemainHostQualifiedAndRemovalIsLocal() throws {
+    try box { directory in
+        let a = ShareHost(id: "host-a", label: "Studio")
+        let b = ShareHost(id: "host-b", label: "Laptop")
+        let first = ShareThread(id: "same", title: "Same title", hostID: a.id, hostLabel: a.label)
+        let second = ShareThread(id: "same", title: "Same title", hostID: b.id, hostLabel: b.label)
+        ShareBox.save(hosts: [a, b], threads: [first, second], in: directory)
+        #expect(first.destination != second.destination)
+        #expect(ShareBox.destinations(in: directory) == ShareDestinations(hosts: [a, b], threads: [first, second]))
+        try ShareBox.write(SharePayload(hostID: a.id, threadId: "same", text: "Only A"), in: directory)
+        try ShareBox.write(SharePayload(hostID: b.id, threadId: "same", text: "Only B"), in: directory)
+        ShareBox.clear(hostID: a.id, in: directory)
+        #expect(ShareBox.hosts(in: directory) == [b])
+        #expect(ShareBox.threads(in: directory) == [second])
+        #expect(ShareBox.takeAll(in: directory) == [SharePayload(hostID: b.id, threadId: "same", text: "Only B")])
+    }
+}
+
+@Test func legacyShareFilesAreUnboundUntilExplicitOriginalHostMigration() throws {
+    try box { directory in
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let token = UUID().uuidString
+        try Data(#"{"threadId":"same","text":"Legacy content"}"#.utf8)
+            .write(to: directory.appending(path: "\(token).json"))
+        try Data(#"[{"id":"same","title":"Original thread"}]"#.utf8)
+            .write(to: directory.appending(path: "threads.json"))
+        #expect(ShareBox.threads(in: directory).first?.destination == nil)
+        #expect(ShareBox.hosts(in: directory).isEmpty)
+        let original = ShareHost(id: "original-host", label: "Mac")
+        #expect(ShareBox.migrateLegacy(to: original, in: directory))
+        #expect(ShareBox.take(token: token, in: directory) == SharePayload(hostID: original.id, threadId: "same", text: "Legacy content"))
+        #expect(ShareBox.hosts(in: directory) == [original])
+        #expect(ShareBox.threads(in: directory).first?.destination == HostThreadID(hostID: original.id, threadID: "same"))
+        // A new host's already-qualified queue is never reassigned by migration.
+        let next = try ShareBox.write(SharePayload(hostID: "another-host", text: "New"), in: directory)
+        #expect(ShareBox.migrateLegacy(to: original, in: directory))
+        #expect(ShareBox.take(token: next, in: directory)?.hostID == "another-host")
+    }
+}
+
+@Test func unavailableShareDestinationsStayQueuedWhileOtherHostsDrain() throws {
+    try box { directory in
+        let unavailable = SharePayload(hostID: "repairing-host", threadId: "same", text: "Keep until ready")
+        let available = SharePayload(hostID: "connected-host", threadId: "same", text: "Send now")
+        let legacy = SharePayload(threadId: "same", text: "Await migration")
+        try ShareBox.write(unavailable, in: directory)
+        try ShareBox.write(available, in: directory)
+        try ShareBox.write(legacy, in: directory)
+        #expect(ShareBox.takeAll(in: directory, matching: { $0.hostID == "connected-host" }) == [available])
+        #expect(ShareBox.takeAll(in: directory, matching: { _ in false }).isEmpty)
+        let remaining = ShareBox.takeAll(in: directory)
+        #expect(remaining.count == 2)
+        #expect(remaining.contains(unavailable))
+        #expect(remaining.contains(legacy))
+    }
+}
+
+@Test func shareHostChoiceIsImplicitOnlyForOnePairedHost() {
+    let a = ShareHost(id: "host-a", label: "Studio")
+    let b = ShareHost(id: "host-b", label: "Laptop")
+    let threadA = ShareThread(id: "same", title: "Chat", hostID: a.id, hostLabel: a.label)
+    let threadB = ShareThread(id: "same", title: "Chat", hostID: b.id, hostLabel: b.label)
+    let none = ShareDestinations(hosts: [], threads: [])
+    let single = ShareDestinations(hosts: [a], threads: [threadA])
+    // Availability is deliberately absent: an offline paired host remains a destination.
+    let multiple = ShareDestinations(hosts: [a, b], threads: [threadA, threadB])
+    #expect(none.hostID(for: nil, newHostID: nil) == nil)
+    #expect(single.hostID(for: nil, newHostID: nil) == a.id)
+    #expect(multiple.hostID(for: nil, newHostID: nil) == nil)
+    #expect(multiple.hostID(for: nil, newHostID: b.id) == b.id)
+    #expect(multiple.hostID(for: threadA.destination, newHostID: b.id) == a.id)
+    #expect(multiple.hostID(for: threadB.destination, newHostID: a.id) == b.id)
+    #expect(single.hostID(for: threadB.destination, newHostID: nil) == nil)
+    #expect(single.hostID(for: nil, newHostID: b.id) == nil)
+    #expect(single.hostID(for: HostThreadID(hostID: a.id, threadID: "missing"), newHostID: nil) == nil)
+}

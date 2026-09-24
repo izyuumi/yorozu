@@ -81,6 +81,38 @@ accepted only with `proof`, a hash over that secret and both announced keys (`he
 byte-identical in both languages). The Mac honours the last four secrets it drew and spends them
 all on a pairing.
 
+## Multiple hosts on one client
+
+iOS and client Macs keep one `HostSession` per authenticated Mac X25519 public key. A relay
+URL, room ID, computer name or thread ID cannot substitute for that identity. Each session owns
+its own device identity, channel counters, `RelayClient`, `ChatModel`, cache key, encrypted
+history and outbox. `MultiHostModel` combines their thread lists, search results and unread
+counts; actions resolve a `(hostID, threadID)` pair back to its owning model. Identical thread
+IDs on different Macs remain separate chats.
+
+All sessions connect while the app is active. iOS suspends their sockets together and uses
+APNs/background catch-up for every paired host. With one saved host, host names and pickers
+stay hidden and new threads and shares use that destination automatically. With multiple
+saved hosts, rows show host labels and New Thread remembers its last destination and offers
+a host picker; projects and agents come from that destination. Share Sheet New Session then
+requires an explicit host choice. Existing share destinations always carry both host and
+thread IDs. Saved connections still count while offline or being repaired.
+
+Settings → Connection holds Add Host, connection and compatibility states, repair and removal.
+With multiple saved connections it becomes Hosts and also shows names and nicknames.
+A pairing link opened by a paired client asks to add the host and shows its relay and
+key fingerprint. A duplicate key is detected before its one-time token is consumed and offers
+explicit repair. Removal clears only that host's keys, counters, cache, outbox, preview key and
+pending notifications. Existing single-host records migrate with their keys and persisted
+counters intact; cache migration retains the original encryption key and files.
+
+Peer information travels inside the encrypted channel using bounded typed fields on existing
+`thread_list` messages. App versions are diagnostic; protocol ranges and capabilities determine
+compatibility. Peers negotiate support before the host sends its macOS computer name. Older
+peers retain legacy chat, with a stable `Mac · [fingerprint]` label when no authenticated name
+is available. A local nickname overrides the supplied name. A required protocol or security
+mismatch blocks that host with **Update required** while other hosts continue working.
+
 ## The relay
 
 The relay forwards ciphertext between Mac and phone and can read none of it. Rooms are keyed by
@@ -143,8 +175,11 @@ It never sees message text, tool names or arguments, approval details, summaries
 titles — those travel sealed, in the frame beside the notify, under a key the relay does not
 hold. APNs receives a fixed fallback body plus that opaque box. The iOS Notification Service
 Extension opens a valid reply box locally and replaces the fallback; missing keys, malformed
-boxes and failed authentication leave the fallback unchanged. Tapping routes on the reference,
-which the phone resolves against the thread IDs it already holds — the one end that can.
+boxes and failed authentication leave the fallback unchanged. The extension tries the per-host
+preview keys and accepts only a unique authenticated match; relay-written host metadata cannot
+select the destination. The app repeats that verification before any lock-screen approval.
+Notification titles remain **Yorozu**. A legacy silent push with no authenticated host selection
+causes catch-up across all hosts; ambiguous thread links never choose an arbitrary host.
 
 Running commentary — deltas, tool traffic — is never notified at all, so a turn's every tool call
 does not become a push. Only a turn arriving somewhere a person has to be told about is worth a
@@ -228,10 +263,10 @@ either. Both relays implement it.
 
 An unpaired phone opens on a splash and offers the two ways in: **Scan QR**, or the code pasted
 into a text field. A tapped `yorozu://pair` link pairs without either, through `onOpenURL` — but
-only a phone with nothing to lose pairs on the spot. One that already holds a pairing is shown
-the link's relay host and the first eight bytes of the Mac key and asked before its keys and
-cached threads are thrown away, because a link is a line of text anyone can send. A client Mac
-asks the same question, and a hosting Mac is told it would stop hosting. Whichever way the code
+only a phone with no pairing pairs on the spot. One that already holds pairings is shown
+the link's relay host and the Mac key fingerprint and asked **Add host**, because a link is a
+line of text anyone can send. A duplicate offers **Repair connection**. A client Mac asks the
+same question, and a hosting Mac is told it would stop hosting. Whichever way the code
 arrived, it must name a `wss://` relay (`ws://` only to loopback), and it is stored together
 with a freshly generated device identity — Ed25519 for frame signatures, X25519 for the session
 key — in the Keychain.
@@ -245,8 +280,10 @@ ciphertext.
 
 ### Cache
 
-`ThreadCache` keeps the thread list and one file per thread under `Application Support/threads`,
-each sealed with AES-GCM under a 32-byte key in the Keychain. Application Support is readable by
+`ThreadCache` keeps the thread list and one file per thread in a host-specific Application
+Support directory, each sealed with AES-GCM under that host's 32-byte cache key in the Keychain.
+The former single-host `Application Support/threads` directory is migrated on upgrade.
+Application Support is readable by
 anything that reaches the container, so the encryption — not the location — is what protects it.
 A cache is only a cache: a missing, tampered or wrong-key file reads back empty, and the
 `sync_request` sent on connect refills it. Unpairing deletes the files and the key.
@@ -287,8 +324,8 @@ directory listing is not a reading list. Nothing about it blocks the thread.
 
 `YorozuShare` puts Yorozu in the share sheet for selected text, a web link or one picture. The
 composer shows what was shared as itself, takes an optional note, and offers the five most recent
-threads plus **New session**, with New session selected: a link is rarely meant for whatever was
-last talked about.
+threads, labeled with their host, plus **New session**. A new session requires an explicit host
+choice before sending; it never silently uses the normal composer's last-used host.
 
 The extension never touches the relay. It writes a `SharePayload` into the App Group container
 (`group.to.yumi.yorozu`) and opens `yorozu://share?token=…`; the app, which owns the socket and
@@ -299,7 +336,8 @@ before it is joined onto a path, and a share is removed as it is read so it is n
 
 The picker's titles are the one thing that has to cross over: the extension cannot read the
 encrypted `ThreadCache`, having no Keychain access group on purpose, so the app writes the five
-IDs and titles into the container and nothing else. Unpairing empties it along with the cache.
+host-qualified IDs, host labels and titles into the container, without pairing secrets or
+transcripts. Removing a host removes its destinations and pending shares alone.
 
 ## The Mac app
 
@@ -311,8 +349,8 @@ A **host** runs OpenClaw and the sidecar, owns the thread logs, and is what phon
 Macs pair with. Only a host spawns the sidecar, offers never-sleep, or shows the Devices and
 Permissions settings sections.
 
-A **client** Mac is the phone's twin: it pairs with a host by pasting a code, talks over the same
-blind relay through the same `RelayClient`, and keeps the same encrypted cache. It runs no
+A **client** Mac is the phone's twin: it pairs with hosts by pasting codes, talks over the same
+blind relay through one `RelayClient` per host, and keeps separate encrypted caches. It runs no
 sidecar, no OpenClaw and no agent.
 
 ### Host: the local socket

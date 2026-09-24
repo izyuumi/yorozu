@@ -198,6 +198,8 @@ final class Sidecar: ObservableObject {
            let helper = Bundle.main.url(forAuxiliaryExecutable: "yorozu-native") {
             environment["YOROZU_NATIVE_CMD"] = Self.shellQuoted(helper.path)
         }
+        environment["YOROZU_APP_VERSION"] = Bundle.main.infoDictionary?["YorozuVersionLabel"] as? String
+            ?? Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Development"
         process.environment = environment
         process.standardOutput = output
         process.standardInput = input
@@ -313,7 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             guard Updates.installing else { return .terminateNow }
             do {
-                try MacChatSession.shared.model.saveForRestart()
+                try MacChatSession.shared.saveForRestart()
                 return .terminateNow
             } catch {
                 Updates.pending.retryAfterSnapshotFailure(error)
@@ -445,8 +447,8 @@ struct YorozuMacApp: App {
             Divider()
             Button("Quit Yorozu") { NSApp.terminate(nil) }
         } label: {
-            Image(systemName: session.model.state == .paired ? "circle.fill" : "circle.dotted")
-                .accessibilityLabel(session.model.state == .paired ? "Yorozu, connected" : "Yorozu, not connected")
+            Image(systemName: (session.role == .client ? session.hosts.sessions.contains { $0.model.canDeliver } : session.model.state == .paired) ? "circle.fill" : "circle.dotted")
+                .accessibilityLabel((session.role == .client ? session.hosts.sessions.contains { $0.model.canDeliver } : session.model.state == .paired) ? "Yorozu, connected" : "Yorozu, not connected")
                 .task {
                     // The setup window's way into the chat: it is an NSWindow outside this
                     // scene graph, and this is the `openWindow` that works.

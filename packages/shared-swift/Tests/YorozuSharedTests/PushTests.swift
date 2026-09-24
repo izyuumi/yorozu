@@ -131,3 +131,40 @@ import Testing
     forged["quick"] = true
     #expect(!NotificationFallback.permitsLockScreenAnswer(body: body, userInfo: forged, key: key, eventRef: "6s82CDjb"))
 }
+
+@Test func twoHostApprovalsResolveOnlyByTheKeyThatAuthenticatesThePreview() throws {
+    let a = SymmetricKey(size: .bits256)
+    let b = SymmetricKey(size: .bits256)
+    let keys = ["host-a": a, "host-b": b]
+    let body = "Run the same command?"
+    let event = YorozuCrypto.threadRef("same-card-on-both-hosts")
+    for (host, key) in keys {
+        let plaintext = #"{"v":1,"body":"\#(body)","event":"\#(event)","quick":true}"#
+        let box = try YorozuCrypto.seal(key: key, plaintext: Data(plaintext.utf8))
+        // Identical thread/card references do not affect host ownership. All routing labels
+        // below can be supplied or forged by a relay and therefore must have no authority.
+        let info: [AnyHashable: Any] = [
+            "preview": ["n": box.nonce.base64URLEncodedString(), "c": box.ciphertext.base64URLEncodedString()],
+            "ref": YorozuCrypto.threadRef("same-thread-on-both-hosts"),
+            "event": event,
+            "hostID": host == "host-a" ? "host-b" : "host-a",
+            NotificationFallback.localHostKey: "forged-host",
+        ]
+        #expect(NotificationFallback.authenticatedPreview(userInfo: info, keys: keys)?.hostID == host)
+        #expect(NotificationFallback.permittedLockScreenHost(body: body, userInfo: info, keys: keys, eventRef: event) == host)
+        #expect(NotificationFallback.permittedLockScreenHost(body: "Forged words", userInfo: info, keys: keys, eventRef: event) == nil)
+        #expect(NotificationFallback.permittedLockScreenHost(body: body, userInfo: info, keys: keys, eventRef: "another-card") == nil)
+        #expect(NotificationFallback.authenticatedPreview(userInfo: info, keys: keys.filter { $0.key != host }) == nil)
+        #expect(NotificationFallback.authenticatedPreview(userInfo: info, keys: ["host-a": key, "host-b": key]) == nil)
+        #expect(NotificationFallback.permittedLockScreenHost(body: body, userInfo: info, keys: ["host-a": key, "host-b": key], eventRef: event) == nil)
+    }
+    #expect(NotificationFallback.authenticatedPreview(userInfo: [NotificationFallback.localHostKey: "host-a"], keys: keys) == nil)
+    #expect(NotificationFallback.title == "Yorozu")
+}
+
+@Test func malformedOrUnsupportedPreviewObjectsCannotAuthorizeAnAction() {
+    #expect(NotificationPreviewContent(plaintext: #"{"v":2,"body":"x","event":"same","quick":true}"#) == nil)
+    #expect(NotificationPreviewContent(plaintext: #"{"v":true,"body":"x","event":"same","quick":true}"#) == nil)
+    #expect(NotificationPreviewContent(plaintext: String(repeating: "x", count: 8_193)) == nil)
+    #expect(NotificationPreviewPayload(userInfo: ["preview": ["n": "n", "c": String(repeating: "x", count: 16_385)]]) == nil)
+}

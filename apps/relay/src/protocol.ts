@@ -319,8 +319,11 @@ const parsePreviews = (value: unknown): Record<string, EncryptedPreview> | null 
   return previews;
 };
 
+// APNs tokens have variable byte lengths; 512 bytes is our resource limit, not an APNs size guarantee.
+// https://developer.apple.com/library/archive/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/HandlingRemoteNotifications.html
 export const parsePush = (msg: Record<string, unknown>): Push | null =>
-  typeof msg.deviceToken === "string" && msg.deviceToken.length === 64 && /^[0-9a-f]{64}$/i.test(msg.deviceToken)
+  typeof msg.deviceToken === "string" && msg.deviceToken.length > 0 && msg.deviceToken.length <= 1024 &&
+    msg.deviceToken.length % 2 === 0 && !/[^0-9a-f]/i.test(msg.deviceToken)
     ? { deviceToken: msg.deviceToken }
     : null;
 
