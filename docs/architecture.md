@@ -65,13 +65,13 @@ frame after that is ChaCha20-Poly1305 sealed. The X25519 secret yields one key p
 relay reflects to its own sender opens under no key it holds. Inside each box the plaintext is
 `{"seq", "event"}`, `seq` counting up from 1 per sender and direction; a receiver drops any box
 at or below the last `seq` it accepted, and both ends keep their counters across a restart —
-the Mac in `devices.json`, the phone in `UserDefaults`, each keyed by the pair of X25519 keys,
-so a phone that unpairs and pairs again under new keys starts from zero, and a stale record dies
-with the device (`device_remove` drops it from `devices.json`). This framing replaced the single
-bidirectional session key without a version bump: a phone and a runtime on opposite sides of it
-cannot open each other's boxes until both are updated, after which an existing pairing carries
-on, its counters starting at zero on both ends. The one shared key `deriveSessionKey` still
-yields is used for push preview boxes only, and opens nothing on the live channel.
+the Mac in `channel-seq.json`, the phone in its Keychain pairing record. A phone that unpairs and
+pairs again under new keys starts from zero, and a stale record dies
+with the device (`device_remove` drops it from `devices.json`). A device waits for the Mac's
+encrypted greeting before sending requests. It accepts the older single-key plain-event format
+when that is what the Mac sends, so devices can sync while the Mac app is being updated. Once a
+directional-key box arrives, old-format boxes cannot switch that connection back. The shared
+`deriveSessionKey` is also used for push preview boxes.
 
 The relay checks each frame's signature — but the relay could have signed it itself, so the
 runtime does not take the relay's word for who is enrolling. The pairing string carries a
@@ -205,8 +205,12 @@ and prints a fresh `QR` line, so the menu bar is always showing a code a second 
 
 Devices outlive a restart in `<state dir>/devices.json`, one record each: the X25519 key the
 channel keys are agreed from, the Ed25519 key the relay knows it by, when it was last heard from,
-and the two `seq` counters — the send counter reserved 1000 ahead so streaming costs no writes.
-The Mac app lists them over the local socket — `device_list`, pushed whenever a device comes or
+and the platform name announced in an encrypted `device_list` request, such as `iPadOS 27.0`.
+The two `seq` counters live
+in `channel-seq.json`; the send counter is reserved 1000 ahead so streaming costs no writes.
+The Mac shows the platform name in Devices, using a short key for older unnamed records, and
+lists them
+over the local socket — `device_list`, pushed whenever a device comes or
 goes — with "online" meaning *said something in the last 90 seconds*, which is the only honest
 answer the runtime has: the relay tells phones whether the Mac is up, never the other way round.
 `device_remove` forgets one, and sends the relay a `revoke` so it cannot rejoin against the nonce

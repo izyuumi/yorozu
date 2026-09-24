@@ -142,6 +142,18 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
 }
 
 @MainActor
+@Test func deviceRequestAnnouncesReadableOSName() async {
+    let transport = FakeTransport()
+    _ = await connected(transport)
+    let requests = await sent(by: transport, atLeast: pairingSends)
+    let name = requests.compactMap { event -> String? in
+        guard case .deviceList(let data) = event.payload else { return nil }
+        return data.name
+    }.first
+    #expect(name?.hasPrefix("macOS ") == true)
+}
+
+@MainActor
 @Test func theModelAppliesWhatTheTransportYieldsWhateverTransportItIs() async throws {
     let transport = FakeTransport()
     let model = ChatModel(transport: transport, device: "mac")

@@ -1,4 +1,7 @@
 import Foundation
+#if os(iOS)
+import UIKit
+#endif
 
 /// Every thread a client knows about: the connection, the events per thread, and whether the
 /// runtime is reachable. Shared by both apps — what differs between them is the
@@ -745,7 +748,15 @@ public final class ChatModel {
 
     /// Asks the runtime who is paired. It also pushes a fresh list whenever one comes or goes.
     public func requestDevices() {
-        emit(.deviceList(DeviceListData(devices: [])), in: "")
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        #if os(iOS)
+        let platform = UIDevice.current.userInterfaceIdiom == .pad ? "iPadOS" : "iOS"
+        #else
+        let platform = "macOS"
+        #endif
+        let patch = version.patchVersion > 0 ? ".\(version.patchVersion)" : ""
+        emit(.deviceList(DeviceListData(devices: [], name:
+            "\(platform) \(version.majorVersion).\(version.minorVersion)\(patch)")), in: "")
     }
 
     /// Forgets a paired device, here and at the relay. Answered with a new list.

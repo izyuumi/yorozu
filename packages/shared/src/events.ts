@@ -520,8 +520,7 @@ export interface SyncDeltaData {
 }
 
 /**
- * One device this Mac is paired with, as the Mac app's Devices tab lists them. Public keys
- * only: they are identifiers here, and the short form of `pub` is what the user sees.
+ * One device this Mac is paired with, as the Mac app's Devices tab lists them.
  */
 export interface DeviceInfo {
   /** X25519 public key, base64url. What the sidecar seals for, and the device's identity. */
@@ -531,6 +530,8 @@ export interface DeviceInfo {
    * `pub` and not derivable from it, so revoking at the relay needs it carried here.
    */
   signingPub?: string;
+  /** Platform and OS version announced by the device, when known. */
+  name?: string;
   /** How the device reaches the runtime: through the relay, or on this Mac's local socket. */
   via: "relay" | "local";
   /** Epoch milliseconds the runtime last heard from it. */
@@ -540,6 +541,8 @@ export interface DeviceInfo {
 
 export interface DeviceListData {
   devices: DeviceInfo[];
+  /** Optional platform name in a device's encrypted request. */
+  name?: string;
 }
 
 /**
