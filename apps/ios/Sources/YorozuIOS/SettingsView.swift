@@ -213,7 +213,7 @@ private struct HostSettingsView: View {
         .yorozuTint()
     }
 
-    /// Pending permission is distinct from an enabled approval bypass.
+    /// Off, or on with its expiry. Pairing is the grant, so the switch applies at once.
     @ViewBuilder private var approvalsFooter: some View {
         if host.model.yoloMode {
             Label {
@@ -226,14 +226,7 @@ private struct HostSettingsView: View {
                     .foregroundStyle(.secondary)
             }
         } else {
-            if host.model.yoloPending {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.mini)
-                    Text("Waiting for the Mac to allow it")
-                }
-                .accessibilityElement(children: .combine)
-            }
-            Text("Uses each agent’s approval settings. Turning this on requests permission from your host Mac.")
+            Text("Uses each agent’s approval settings.")
         }
     }
 }

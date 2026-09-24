@@ -67,8 +67,6 @@ public final class ChatModel {
     public private(set) var yoloMode = false
     /// When the bypass switches itself off, in epoch ms. Nil while it is off.
     public private(set) var yoloUntil: Int?
-    /// True once the runtime answered this device's request to turn it on with "ask the Mac".
-    public private(set) var yoloPending = false
     /// Host-owned developer setting and live PTY list. Never cached in thread history.
     public private(set) var terminalEnabled = false
     public private(set) var terminalSessions: [TerminalSessionData] = []
@@ -179,8 +177,6 @@ public final class ChatModel {
     public var onDevices: (() -> Void)?
     /// Called whenever the runtime sends a new rule list.
     public var onRules: (() -> Void)?
-    /// Called when the runtime relays a phone's request to turn YOLO on; the host Mac confirms it.
-    public var onApprovalSettingsRequest: ((ApprovalSettingsRequestData) -> Void)?
     /// Called for every event kept in a thread, after it has been applied.
     public var onEvent: ((YorozuEvent) -> Void)?
 
@@ -878,14 +874,7 @@ public final class ChatModel {
 
     public func setYoloMode(_ enabled: Bool) {
         yoloMode = enabled
-        yoloPending = false
         emit(control(.approvalSettings(ApprovalSettingsData(yolo: enabled))))
-    }
-
-    /// The Mac's answer to a phone's request: turns the bypass on for `hours`. Local state is
-    /// left alone here; the runtime's broadcast is what switches it, for every device at once.
-    public func allowYolo(hours: Int, requestId: String) {
-        emit(control(.approvalSettings(ApprovalSettingsData(yolo: true, hours: hours, requestId: requestId))))
     }
 
     /// "Not now" on a proposal: nothing is stored either way, so this is view state only.
@@ -1090,7 +1079,6 @@ public final class ChatModel {
                     yoloMode = yolo
                     yoloUntil = yolo ? data.yoloUntil : nil
                 }
-                yoloPending = data.pending == true
             case .terminal(let data):
                 switch data.action {
                 case .state:
@@ -1105,10 +1093,6 @@ public final class ChatModel {
                     onTerminalFrame?(data)
                 default: break
                 }
-            // A phone asking for the bypass, relayed to the Mac for a yes or no. Not a thread's
-            // event either: nothing is stored until the Mac answers.
-            case .approvalSettingsRequest(let data):
-                onApprovalSettingsRequest?(data)
             case .receipt(let data):
                 receipted(data.eventId)
             default:

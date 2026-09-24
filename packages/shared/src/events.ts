@@ -278,33 +278,15 @@ export interface RuleDeleteData {
 }
 
 /**
- * Global approval config. Empty requests current state; `yolo` updates it. Turning YOLO on is
- * only a command over the Mac's own local socket: from a relay device it is a request, which
- * the runtime answers with the unchanged state plus `pending` and raises on the Mac as an
- * `approval_settings_request`. On always carries an expiry.
+ * Global approval config. Empty requests current state; `yolo` updates it, from any paired
+ * device: pairing is the grant. On always carries an expiry.
  */
 export interface ApprovalSettingsData {
   yolo?: boolean;
   /** Epoch milliseconds when YOLO switches itself off. Reported while it is on. */
   yoloUntil?: number;
-  /** The reply to a relay device that asked for `yolo: true`: nothing changed yet. */
-  pending?: boolean;
   /** How long to allow, when turning on. Default 8, capped at 24. */
   hours?: number;
-  /** The `approval_settings_request` this answers, when the Mac is confirming one. */
-  requestId?: string;
-}
-
-/**
- * A relay device asked to turn YOLO on. Sent to local-socket clients only: the Mac in front
- * of the user confirms it, or nothing happens. A lost phone gets no unattended code execution.
- */
-export interface ApprovalSettingsRequestData {
-  requestId: string;
-  /** Who asked: the device's public key, or its name where one is kept. */
-  device: string;
-  yolo: true;
-  hours: number;
 }
 
 /**
@@ -603,7 +585,6 @@ export type EventPayload =
   | { kind: "rule_update"; data: RuleUpdateData }
   | { kind: "rule_delete"; data: RuleDeleteData }
   | { kind: "approval_settings"; data: ApprovalSettingsData }
-  | { kind: "approval_settings_request"; data: ApprovalSettingsRequestData }
   | { kind: "question_card"; data: QuestionCardData }
   | { kind: "question_answer"; data: QuestionAnswerData }
   | { kind: "progress_card"; data: ProgressCardData }

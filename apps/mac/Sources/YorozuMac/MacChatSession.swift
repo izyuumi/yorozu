@@ -256,14 +256,6 @@ final class MacChatSession {
             return
         }
         configure(local)
-        // Only the host answers a phone's request to turn approvals off: the runtime sends it
-        // over the local socket alone, and the person at this keyboard is the one it is asking.
-        // Never on the relay model — a hostile host could otherwise pop consent alerts on a
-        // client Mac, and an Allow there would be sent back to the very host that asked.
-        local.onApprovalSettingsRequest = { [weak model = local] request in
-            guard let model else { return }
-            YoloConsent.ask(request, model: model)
-        }
         Task {
             var waited = 0
             while !FileManager.default.fileExists(atPath: path), waited < 100 {
