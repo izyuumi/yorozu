@@ -170,9 +170,11 @@ operation and leaves the file untouched: restore from backup or repair the origi
 restarting, because logs alone cannot recover native session metadata safely.
 
 Threads are created on demand and nobody is asked to name one. `+` creates a thread with an empty
-title, the lists draw it as "New chat", and as the first message lands the sidecar asks the
-configured model chain for a 3-5 word title from it, alongside the turn rather than after it —
-falling back to the first five words of the message when no model answers within 15 s. Only an
+title, the lists draw it as "New chat", and as the first message lands the sidecar asks the Mac's
+on-device model (Apple's Foundation Models framework, through `yorozu-native`) for a 3-5 word title
+from it, alongside the turn rather than after it — falling back to the first five words of the
+message when the model is unavailable or does not answer within 15 s. Not the configured chain: a
+label is no reason to send the opening message to a cloud model. Only an
 empty title is ever filled in, which is also the whole of the rule that a title typed with Rename
 is never overwritten.
 
