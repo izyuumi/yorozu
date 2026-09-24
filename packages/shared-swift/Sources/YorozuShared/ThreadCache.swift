@@ -45,6 +45,26 @@ public struct ThreadCache: Sendable {
         write(outbox, to: "outbox")
     }
 
+    public struct ComposerState: Codable, Sendable {
+        var drafts: [String: String]
+        var attachments: [String: [MessageAttachment]]
+        var threads: [ThreadSummary]
+        var knownThreads: [ThreadSummary]?
+        var openThread: String?
+    }
+
+    public func composer() -> ComposerState? {
+        read(ComposerState.self, from: "composer")
+    }
+
+    public func save(composer: ComposerState) throws {
+        try writeRequired(composer, to: "composer")
+    }
+
+    public func savePending(_ outbox: [OutboxItem]) throws {
+        try writeRequired(outbox, to: "outbox")
+    }
+
     public func events(threadId: String) -> [YorozuEvent] {
         read(Snapshot.self, from: name(threadId))?.events
             ?? read([YorozuEvent].self, from: name(threadId)) ?? []
@@ -75,11 +95,14 @@ public struct ThreadCache: Sendable {
     }
 
     private func write(_ value: some Encodable, to name: String) {
-        guard let plain = try? JSONEncoder().encode(value),
-            let sealed = try? AES.GCM.seal(plain, using: key).combined
-        else { return }
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? sealed.write(to: url(name), options: .atomic)
+        try? writeRequired(value, to: name)
+    }
+
+    private func writeRequired(_ value: some Encodable, to name: String) throws {
+        let plain = try JSONEncoder().encode(value)
+        let sealed = try AES.GCM.seal(plain, using: key).combined!
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try sealed.write(to: url(name), options: .atomic)
     }
 
     private func read<T: Decodable>(_ type: T.Type, from name: String) -> T? {

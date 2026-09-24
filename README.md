@@ -133,9 +133,11 @@ A host then continues:
 5. Install and configure OpenClaw. Yorozu connects to its loopback Gateway; provider credentials,
    models, tools, permissions, browser and PAIOS all stay in OpenClaw, never in Yorozu.
 
-Updates are Sparkle and install themselves: the app checks hourly, downloads in the background,
-and installs the next time it is not frontmost. State lives outside the bundle, so the room, the
-keys and every paired phone survive an update.
+Updates use Sparkle: the app checks hourly and downloads in the background. Automatic and
+manual installs wait for this Mac's Yorozu agents to finish, then count down 10 idle seconds.
+New tasks take priority; approval waits and unknown agent status keep the update queued.
+Mac and phone show progress and offer **Postpone 1 hour**. Drafts and pending submissions
+survive restart. See [queued updates](docs/queued-updates.md) for the full behavior.
 
 ## Documentation
 

@@ -587,7 +587,25 @@ export type EventPayload =
   | { kind: "sync_delta"; data: SyncDeltaData }
   | { kind: "device_list"; data: DeviceListData }
   | { kind: "device_remove"; data: DeviceRemoveData }
-  | { kind: "receipt"; data: ReceiptData };
+  | { kind: "receipt"; data: ReceiptData }
+  | { kind: "update_status"; data: UpdateStatusData }
+  | { kind: "update_control"; data: UpdateControlData };
+
+export interface UpdateStatusData {
+  phase: "none" | "unknown" | "waiting" | "countdown" | "postponed" | "installing";
+  updateId?: string;
+  version?: string;
+  activeThreads?: number;
+  deadline?: number;
+  postponedUntil?: number;
+  requestId?: string;
+}
+
+export interface UpdateControlData {
+  action: "queue" | "poll" | "cancel" | "postpone" | "status";
+  updateId?: string;
+  version?: string;
+}
 
 export type EventKind = EventPayload["kind"];
 
