@@ -145,7 +145,7 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || [ "$RELEASE_CREATED" = true ]; then
             ./scripts/release.sh
           else
-            VERSION_LABEL="$(git describe --tags --abbrev=0 --match 'v*' | sed 's/^v//') Beta $(git rev-list --count HEAD)" \
+            VERSION_LABEL="$(git describe --tags --abbrev=0 --match 'v*' | sed 's/^v//') Beta" \
               ./scripts/build-mac.sh
           fi
           if [ "$GITHUB_EVENT_NAME" = push ]; then

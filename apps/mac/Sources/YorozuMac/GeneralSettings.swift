@@ -166,9 +166,11 @@ struct GeneralView: View {
 
     private var versionLabel: String {
         let info = Bundle.main.infoDictionary
-        return info?["YorozuVersionLabel"] as? String
+        let version = info?["YorozuVersionLabel"] as? String
             ?? info?["CFBundleShortVersionString"] as? String
             ?? "Development"
+        guard let build = info?["YorozuVersionBuild"] as? String else { return version }
+        return "\(version) (\(build))"
     }
 }
 
