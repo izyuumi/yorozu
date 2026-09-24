@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import {
   CATALOG_TTL_MS,
+  DEFAULT_CATALOG_URL,
   catalogCacheFile,
   catalogOverlayFile,
   loadCatalog,
@@ -37,9 +38,11 @@ const served = (entries: CatalogEntry[]) =>
 
 const offline = () => vi.fn<typeof fetch>().mockRejectedValue(new Error("offline"));
 
-test("the release asset is fetched once, then served from the day-old cache", async () => {
+test("legacy metadata is fetched outside Releases, then served from the day-old cache", async () => {
   const fetchMock = served([row("openai/a")]);
   expect(await loadCatalog({ dir, fetch: fetchMock })).toEqual([row("openai/a")]);
+  expect(DEFAULT_CATALOG_URL).toBe("https://raw.githubusercontent.com/izyuumi/yorozu/main/catalog/models.json");
+  expect(fetchMock).toHaveBeenCalledWith(DEFAULT_CATALOG_URL, expect.objectContaining({ redirect: "manual" }));
   expect(JSON.parse(readFileSync(catalogCacheFile(dir), "utf8"))).toEqual([row("openai/a")]);
 
   // Inside the 24h window nothing is fetched again, even when the network is gone.
@@ -86,7 +89,7 @@ test.each(["http://example.com/models.json", "file:///tmp/models.json", "not a U
   },
 );
 
-test("HTTPS redirects reach the release asset without automatic redirect following", async () => {
+test("HTTPS redirects reach the remote catalog without automatic redirect following", async () => {
   const fetchMock = vi.fn<typeof fetch>()
     .mockResolvedValueOnce(new Response(null, {
       status: 302,

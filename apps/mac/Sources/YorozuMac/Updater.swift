@@ -16,7 +16,7 @@ enum Updates {
     /// forever — the Info.plist keys only supply an initial value, and there already is one.
     private static let configuredKey = "YorozuUpdatesConfigured"
     private static let betaKey = "YorozuBetaUpdates"
-    static let betaFeedURL = "https://github.com/izyuumi/yorozu/releases/download/main-beta/appcast.xml"
+    static let betaFeedURL = "https://yorozu.yumi.to/beta/appcast.xml"
 
     static let controller: SPUStandardUpdaterController? = {
         guard Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil else { return nil }
@@ -250,6 +250,21 @@ private final class UpdaterDelegate: NSObject, SPUUpdaterDelegate {
 
     func allowedChannels(for updater: SPUUpdater) -> Set<String> {
         Updates.beta ? ["beta"] : []
+    }
+
+    func updater(
+        _ updater: SPUUpdater,
+        shouldProceedWithUpdate item: SUAppcastItem,
+        updateCheck: SPUUpdateCheck
+    ) throws {
+        let installed = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        guard ReleaseVersion.allowsUpdate(from: installed, to: item.displayVersionString) else {
+            throw NSError(
+                domain: "to.yumi.yorozu.updates", code: 1,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "Update \(item.displayVersionString) cannot replace installed version \(installed ?? "unknown"). "
+                    + "Older or invalid release versions are not installed."])
+        }
     }
 
     func updater(

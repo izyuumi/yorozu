@@ -8,6 +8,7 @@ private final class RestartSocketServer {
     var ready = false
     private var listener: NWListener?
     private var connections: [NWConnection] = []
+    var hasConnection: Bool { !connections.isEmpty }
 
     func start(path: String) throws {
         let parameters = NWParameters.tcp
@@ -52,7 +53,7 @@ private final class RestartSocketServer {
     #expect(await waitFor { server.ready })
     let model = ChatModel(transport: LocalSocketTransport(path: path))
     model.start()
-    #expect(await waitFor { model.state == .paired })
+    #expect(await waitFor { server.hasConnection && model.state == .paired })
     server.stop()
     #expect(await waitFor { !model.ownerOnline })
     try? FileManager.default.removeItem(atPath: path)
