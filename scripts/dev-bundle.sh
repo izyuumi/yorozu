@@ -23,8 +23,26 @@ cp "$BIN" "$APP/Contents/MacOS/Yorozu"
 # The native tool host ships inside the bundle so it shares the app's signature: TCC keys
 # Accessibility and Screen Recording on that, and the helper is what actually needs them.
 cp "$(dirname "$BIN")/yorozu-native" "$APP/Contents/MacOS/yorozu-native"
+# SwiftPM keeps the provider marks in a companion bundle. AgentMarkView loads it from
+# Contents/Resources; Bundle.module can point at the build directory.
 cp -R "$(dirname "$BIN")/YorozuShared_YorozuShared.bundle" "$APP/Contents/Resources/"
 cp -R "$(dirname "$BIN")/SwiftTerm_SwiftTerm.bundle" "$APP/Contents/Resources/"
+# SwiftPM's CLI build can leave the catalog uncompiled. Match the shipping bundle.
+MARKS="$APP/Contents/Resources/YorozuShared_YorozuShared.bundle"
+if [ ! -f "$MARKS/Contents/Resources/Assets.car" ]; then
+  mkdir -p "$MARKS/Contents/Resources"
+  cat > "$MARKS/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>shared-swift.YorozuShared.resources</string>
+  <key>CFBundleName</key><string>YorozuShared_YorozuShared</string>
+  <key>CFBundlePackageType</key><string>BNDL</string>
+</dict></plist>
+PLIST
+  xcrun actool packages/shared-swift/Sources/YorozuShared/Resources/ProviderMarks.xcassets \
+    --compile "$MARKS/Contents/Resources" --platform macosx \
+    --minimum-deployment-target 15.0 --output-partial-info-plist /dev/null >/dev/null
+fi
 
 # Sparkle, and the rpath that finds it. Same two steps as scripts/build-mac.sh and for the
 # same reason: SwiftPM links the framework as @rpath but only gives the binary @loader_path,
