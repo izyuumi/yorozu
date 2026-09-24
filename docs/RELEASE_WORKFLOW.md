@@ -41,17 +41,22 @@ rules should require verified signatures, pull requests, and successful CI on `m
 | `release-please-config.json` → `packages["."]["release-as"]` | Maintainer-selected next `MAJOR.MINOR.PATCH` version on each source branch |
 | `version.txt`, `.release-please-manifest.json` | Release Please's last prepared version and changelog state |
 | `VERSION` | Candidate's numeric marketing version; defaults to the configured `release-as`, or an explicit dispatch override |
-| `BUILD` | `10000 + github.run_number` from the single `Release` workflow; shared by Mac and iOS |
+| `BUILD` | `10000 + github.run_number` from the `Release` workflow; Mac/Sparkle build and candidate identity |
+| iOS build | Highest App Store Connect build for that marketing version plus one; starts at 1 for a new version |
 | Source SHA | Exact successful-CI commit, pinned before either app is built |
 
 Shipping version selection never depends on whichever `v*` tag appears during a build. The
-build number does not depend on branch history or commit counts. Do not rename/reset the
-canonical workflow or introduce another uploader using its counter; a counter migration must
-start above every already-published build. Gaps from failed/skipped builds are harmless.
+Mac build number does not depend on branch history or commit counts. Do not rename/reset the
+canonical workflow or introduce another Mac uploader using its counter; a counter migration must
+start above every already-published Mac build. Gaps from failed/skipped builds are harmless.
+Candidate runs are serialized across branches while they read the latest iOS build and upload
+the next one. An already-used version such as `0.5.0` (build `10048`) cannot restart at 1;
+the first upload of a new marketing version can.
 
-Candidate app bundles use the final numeric version and build. Beta status belongs to GitHub
-prerelease metadata, Sparkle's beta channel, and TestFlight, allowing promotion without changing
-signed app bytes. Development bundles may still use a beta display label.
+Candidate app bundles share the final numeric marketing version; each platform uses its own
+build number. Beta status belongs to GitHub prerelease metadata, Sparkle's beta channel, and
+TestFlight, allowing promotion without changing signed app bytes. Development bundles may still
+use a beta display label.
 
 Release Please runs separately in PR-only mode on `main` and release branches. It prepares
 `CHANGELOG.md`, `version.txt`, and its manifest for the `packages["."]["release-as"]` version in
@@ -101,8 +106,8 @@ branch ancestry, and exact-note preservation through promotion.
 2. Wait for the `CI` push run for that exact SHA. Successful CI triggers `Release`; failed CI
    cannot publish a candidate. Release also rechecks the selected SHA's CI before building.
 3. `Release` builds/signs/notarizes the Mac DMG, creates a Sparkle appcast with its EdDSA
-   signature, uploads the same version/build to TestFlight, and waits for App Store Connect
-   to identify that exact processed build.
+   signature, uploads the same version with its per-version iOS build to TestFlight, and waits for
+   App Store Connect to identify that exact processed build.
 4. Download the numbered GitHub prerelease's DMG and install its matching TestFlight build.
    Record validation against its manifest, not a moving branch name or rolling beta URL.
 
@@ -119,9 +124,9 @@ selection cannot change the candidate's source. New dispatches receive new build
 An explicit version override does not update Release Please metadata: before stable promotion,
 the candidate SHA's `version.txt` and `.release-please-manifest.json` must both match that version.
 
-Each `candidate-<version>-<build>` release retains exactly one DMG (`yorozu.dmg`), the appcast,
-and `candidate.json` with source SHA, version/build, artifact hashes, and exact App Store Connect
-build ID. Existing published candidate artifacts are not overwritten. Main candidates use the
+Each `candidate-<version>-<Mac build>` release retains exactly one DMG (`yorozu.dmg`), the appcast,
+and `candidate.json` with source SHA, both build numbers, artifact hashes, and exact App Store
+Connect build ID. Existing published candidate artifacts are not overwritten. Main candidates use the
 release title `Yorozu Beta candidate-<version>-<build>`, which identifies them to the website
 endpoint. Before publishing, the workflow checks that their marketing version/build increase
 and their source descends from the previous main candidate. Release-branch candidates do not
@@ -183,7 +188,7 @@ the feed and archive-signature format.
 - Opted-in beta users read `https://yorozu.yumi.to/beta/appcast.xml`, which redirects to the
   newest retained main candidate. `https://yorozu.yumi.to/beta` downloads that candidate's DMG.
   The app rejects lower marketing
-  versions even when their build number is larger, preventing a later stable hotfix from
+  versions even when their Mac build number is larger, preventing a later stable hotfix from
   downgrading a next-version beta.
 - Turning **Receive beta updates** off waits until stable catches up to the installed marketing
   version and has an eligible build. It does not reinstall or downgrade the app.
