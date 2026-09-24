@@ -11,6 +11,8 @@ private actor FakeTransport: ChatTransport {
     private var updates: AsyncStream<TransportUpdate>.Continuation?
     private var held: [TransportUpdate] = []
     private(set) var sent: [YorozuEvent] = []
+    private var holdNextTerminalInput = false
+    private var terminalInputRelease: CheckedContinuation<Void, Never>?
 
     func connect() -> AsyncStream<TransportUpdate> {
         let (stream, continuation) = AsyncStream<TransportUpdate>.makeStream()
@@ -22,7 +24,14 @@ private actor FakeTransport: ChatTransport {
 
     func send(_ event: YorozuEvent) async throws {
         sent.append(event)
+        if case .terminal(let data) = event.payload, data.action == .input, holdNextTerminalInput {
+            holdNextTerminalInput = false
+            await withCheckedContinuation { terminalInputRelease = $0 }
+        }
     }
+
+    func holdTerminalInput() { holdNextTerminalInput = true }
+    func releaseTerminalInput() { terminalInputRelease?.resume(); terminalInputRelease = nil }
 
     func close() {
         updates?.finish()
@@ -226,7 +235,29 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
 /// join asks for the thread list, a sync, the devices and the rules rather than trusting what
 /// was last pushed. Tests that count sends start from here.
 private let pairingSends = pairingKinds.count
-private let pairingKinds: Set<YorozuEvent.Kind> = [.threadList, .syncRequest, .deviceList, .ruleList, .updateControl]
+private let pairingKinds: Set<YorozuEvent.Kind> = [.threadList, .syncRequest, .deviceList, .ruleList, .terminal, .updateControl]
+
+@MainActor
+@Test func disconnectedTerminalInputIsNotReplayedAfterReconnect() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    var state = TerminalData(action: .state, epoch: "host-epoch")
+    state.enabled = true
+    await transport.yield(.event(event("terminal-state", .terminal(state), thread: "")))
+    #expect(await eventually { model.terminalEpoch == "host-epoch" })
+    await transport.holdTerminalInput()
+    model.terminal(.input, sessionId: "s", data: Data([0x41]))
+    _ = await sent(by: transport, atLeast: pairingSends + 1)
+    model.terminal(.input, sessionId: "s", data: Data([0x42]))
+    model.reconnect()
+    await transport.releaseTerminalInput()
+    try? await Task.sleep(for: .milliseconds(30))
+    let inputs = await transport.sent.filter {
+        if case .terminal(let data) = $0.payload { return data.action == .input }
+        return false
+    }
+    #expect(inputs.count == 1)
+}
 
 /// A model with a live link behind it: paired and the Mac awake. Anything less and a send goes
 /// to the outbox instead of to the transport, which is what ``OutboxTests`` is about.
