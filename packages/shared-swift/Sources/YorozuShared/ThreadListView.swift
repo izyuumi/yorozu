@@ -775,24 +775,16 @@ public struct ThreadListView<Destination: View>: View {
                 working: workingThreads.contains(thread.id),
                 preview: preview(thread),
                 highlightQuery: searchNeedle,
+                selected: splitLayout && path.last == thread.id,
                 chevron: !splitLayout,
                 hostLabel: hostLabel(thread.id)
             )
-            Group {
-                if splitLayout {
-                    // The sidebar marks the open thread by selection, not a chevron.
-                    NavigationLink(value: thread.id) { row }
-                } else {
-                    // The list's own chevron sits outside the card; a hidden link keeps the
-                    // row tappable while the card draws its chevron inside.
-                    row.background { NavigationLink(value: thread.id) { EmptyView() }.opacity(0) }
-                }
-            }
-            .simultaneousGesture(TapGesture().onEnded { prepareSearchNavigation(thread.id) })
-            .accessibilityAction {
+            Button {
                 prepareSearchNavigation(thread.id)
                 path = [thread.id]
-            }
+            } label: { row }
+            .buttonStyle(.plain)
+            .tag(thread.id)
             .listRowInsets(EdgeInsets(top: 3, leading: 12, bottom: 3, trailing: 12))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
