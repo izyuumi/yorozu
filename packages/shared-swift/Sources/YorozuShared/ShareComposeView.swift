@@ -79,7 +79,7 @@
 
     /// The composer the share sheet puts up. It asks three questions in the order they are
     /// actually answered — is this the right thing, is there anything to say about it, and where
-    /// does it go — and nothing else. A new session always requires an explicit host choice.
+    /// does it go — and nothing else. With multiple paired hosts, a new session asks which Mac.
     ///
     /// It lives in the shared package rather than in the extension so the app can put it on
     /// screen too: nothing on a simulator can open a share sheet on demand, and a screenshot of
@@ -152,7 +152,7 @@
                             destination = nil
                             newHostID = nil
                         }
-                        if destination == nil {
+                        if destination == nil, hosts.count > 1 {
                             Picker("Host", selection: $newHostID) {
                                 Text("Choose a host").tag(nil as HostID?)
                                 ForEach(hosts) { host in
@@ -164,7 +164,7 @@
                         ForEach(availableThreads.prefix(5), id: \.destination) { thread in
                             ShareThreadRow(
                                 title: thread.title,
-                                subtitle: thread.hostLabel ?? hosts.first { $0.id == thread.hostID }?.label,
+                                subtitle: hosts.count > 1 ? thread.hostLabel ?? hosts.first { $0.id == thread.hostID }?.label : nil,
                                 symbol: "bubble.left.and.bubble.right",
                                 selected: destination == thread.destination
                             ) {
@@ -176,8 +176,10 @@
                     } footer: {
                         if hosts.isEmpty {
                             Text("Open Yorozu to connect a host before sharing.")
-                        } else {
+                        } else if hosts.count > 1 {
                             Text("Choose the Mac that should receive this. If it is offline, this waits securely until it reconnects.")
+                        } else {
+                            Text("If your Mac is offline, this waits securely and sends when it reconnects.")
                         }
                     }
                 }
@@ -211,8 +213,9 @@
         }
 
         private var selectedHostID: HostID? {
-            let hostID = destination?.hostID ?? newHostID
-            return hostID.flatMap { id in hosts.contains { $0.id == id } ? id : nil }
+            ShareDestinations(hosts: hosts, threads: threads).hostID(
+                for: destination, newHostID: newHostID
+            )
         }
 
         /// A note on its own is a message; a shared thing on its own is a message. Only both

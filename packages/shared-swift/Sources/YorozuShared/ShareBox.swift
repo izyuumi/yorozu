@@ -204,6 +204,14 @@ public struct ShareDestinations: Codable, Equatable, Sendable {
         self.hosts = hosts
         self.threads = threads
     }
+
+    /// Published hosts include offline pairings. Only a sole host can be chosen implicitly;
+    /// an explicit destination that disappeared must never fall back to another host.
+    public func hostID(for destination: HostThreadID?, newHostID: HostID?) -> HostID? {
+        if let destination, !threads.contains(where: { $0.destination == destination }) { return nil }
+        let hostID = destination?.hostID ?? newHostID ?? (hosts.count == 1 ? hosts.first?.id : nil)
+        return hostID.flatMap { id in hosts.contains { $0.id == id } ? id : nil }
+    }
 }
 
 /// Only the names and destination IDs the share sheet needs, never the encrypted chat cache.

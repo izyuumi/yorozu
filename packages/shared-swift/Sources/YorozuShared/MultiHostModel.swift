@@ -85,6 +85,9 @@ public final class MultiHostModel {
     public func session(for hostID: HostID) -> HostSession? { sessions.first { $0.id == hostID } }
     public func model(for id: HostThreadID) -> ChatModel? { session(for: id.hostID)?.model }
 
+    /// Connection identity still matters while a saved host is offline or being repaired.
+    public var hasMultipleHosts: Bool { sessions.count > 1 }
+
     public var threads: [HostThread] {
         sessions.flatMap { session in
             session.model.threads.map {

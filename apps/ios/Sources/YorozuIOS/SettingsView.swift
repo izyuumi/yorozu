@@ -33,7 +33,7 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 if !session.isDemo {
-                    Section("Hosts") {
+                    Section(session.hosts.hasMultipleHosts ? "Hosts" : "Connection") {
                         ForEach(session.hosts.sessions) { host in
                             NavigationLink {
                                 HostSettingsView(session: session, host: host) {
@@ -41,9 +41,13 @@ struct SettingsView: View {
                                     addingHost = true
                                 }
                             } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(host.label)
-                                    Text(hostStatus(host)).font(.caption).foregroundStyle(.secondary)
+                                if session.hosts.hasMultipleHosts {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(host.label)
+                                        Text(hostStatus(host)).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                } else {
+                                    LabeledContent("Status", value: hostStatus(host))
                                 }
                             }
                         }
@@ -109,11 +113,13 @@ private struct HostSettingsView: View {
 
     var body: some View {
         List {
-            Section("Host") {
-                TextField("Nickname", text: $nickname)
-                    .autocorrectionDisabled()
-                    .onChange(of: nickname) { _, value in session.setNickname(value, for: host.id) }
-                if let name = host.model.peerInfo?.computerName { LabeledContent("Computer name", value: name) }
+            Section(session.hosts.hasMultipleHosts ? "Host" : "Connection") {
+                if session.hosts.hasMultipleHosts {
+                    TextField("Nickname", text: $nickname)
+                        .autocorrectionDisabled()
+                        .onChange(of: nickname) { _, value in session.setNickname(value, for: host.id) }
+                    if let name = host.model.peerInfo?.computerName { LabeledContent("Computer name", value: name) }
+                }
                 LabeledContent("Status") { Text(hostStatus(host)).foregroundStyle(status.tint) }
                 LabeledContent("Relay", value: host.relayURL)
                 LabeledContent("Mac key", value: QrPayload.fingerprint(ofBase64URLKey: host.id) ?? host.id)
@@ -124,15 +130,18 @@ private struct HostSettingsView: View {
             Section("Compatibility") {
                 switch host.model.compatibility {
                 case .legacy:
-                    Text("Compatible legacy host")
-                    Text("Chat is available. Update this Mac to share its computer name and newer features.").font(.footnote).foregroundStyle(.secondary)
+                    Text(session.hosts.hasMultipleHosts ? "Compatible legacy host" : "Compatible")
+                    Text(session.hosts.hasMultipleHosts
+                         ? "Chat is available. Update this Mac to share its computer name and newer features."
+                         : "Chat is available. Update Yorozu on your Mac for newer features.")
+                        .font(.footnote).foregroundStyle(.secondary)
                 case .compatible(let version, _):
                     LabeledContent("Protocol", value: String(version))
                 case .updateRequired(let reason):
                     Label("Update required", systemImage: "arrow.down.circle")
                     Text(reason).font(.footnote).foregroundStyle(.secondary)
                 }
-                if let version = host.model.peerInfo?.appVersion { LabeledContent("Host version", value: version) }
+                if let version = host.model.peerInfo?.appVersion { LabeledContent(session.hosts.hasMultipleHosts ? "Host version" : "Mac version", value: version) }
             }
             Section {
                 Toggle("Skip approvals for all agents", isOn: Binding(get: { host.model.yoloMode }, set: host.model.setYoloMode))
@@ -147,13 +156,19 @@ private struct HostSettingsView: View {
             }
             Section {
                 Button("Repair connection", action: onRepair)
-                Button("Remove host", role: .destructive) { confirmingRemoval = true }.disabled(removing)
-            } footer: { Text("Nickname is stored on this device. Clear it to use the Mac's computer name.") }
+                Button(session.hosts.hasMultipleHosts ? "Remove host" : "Remove connection", role: .destructive) {
+                    confirmingRemoval = true
+                }.disabled(removing)
+            } footer: {
+                if session.hosts.hasMultipleHosts {
+                    Text("Nickname is stored on this device. Clear it to use the Mac's computer name.")
+                }
+            }
         }
-        .navigationTitle(host.label)
+        .navigationTitle(session.hosts.hasMultipleHosts ? host.label : "Connection")
         .onAppear { nickname = host.nickname ?? ""; host.model.requestApprovalSettings() }
-        .alert("Remove \(host.label)?", isPresented: $confirmingRemoval) {
-            Button("Remove host", role: .destructive) {
+        .alert(session.hosts.hasMultipleHosts ? "Remove \(host.label)?" : "Remove connection?", isPresented: $confirmingRemoval) {
+            Button(session.hosts.hasMultipleHosts ? "Remove host" : "Remove connection", role: .destructive) {
                 removing = true
                 Task {
                     await session.removeHost(host.id)
@@ -163,7 +178,9 @@ private struct HostSettingsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes this host's keys, cached chats, queued sends, and notifications from this device. Scan a new pairing code to connect again.")
+            Text(session.hosts.hasMultipleHosts
+                 ? "This removes this host's keys, cached chats, queued sends, and notifications from this device. Scan a new pairing code to connect again."
+                 : "This removes pairing keys, cached chats, queued sends, and notifications from this device. Scan a new pairing code to connect again.")
         }
     }
 }

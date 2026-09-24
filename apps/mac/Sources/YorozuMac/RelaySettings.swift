@@ -56,7 +56,11 @@ struct HostsView: View {
                             .padding(.top, 10)
                     } label: {
                         HStack {
-                            Label(host.label, systemImage: "desktopcomputer")
+                            if session.hosts.hasMultipleHosts {
+                                Label(host.label, systemImage: "desktopcomputer")
+                            } else {
+                                Text("Connection")
+                            }
                             Spacer()
                             Text(connectionLabel(host)).font(.callout).foregroundStyle(.secondary)
                         }
@@ -92,16 +96,21 @@ struct HostsView: View {
             Button("Cancel", role: .cancel) {}
         } message: { code in
             let pairing = try? QrPayload.decode(code)
-            Text("Relay: \(pairing?.relayUrl ?? "")\nMac key: \(pairing?.macKeyFingerprint ?? "")\n\nRepair replaces this host’s connection. Its chats, drafts, and queued messages stay saved. Other hosts stay connected.")
+            Text("Relay: \(pairing?.relayUrl ?? "")\nMac key: \(pairing?.macKeyFingerprint ?? "")\n\nRepair replaces this connection. Chats, drafts, and queued messages stay saved.")
+            if session.hosts.hasMultipleHosts { Text("Other hosts stay connected.") }
         }
-        .alert("Remove host?", isPresented: Binding(get: { removingHost != nil }, set: { if !$0 { removingHost = nil } }), presenting: removingHost) { host in
-            Button("Remove Host", role: .destructive) {
+        .alert(session.hosts.hasMultipleHosts ? "Remove host?" : "Unpair this Mac?", isPresented: Binding(get: { removingHost != nil }, set: { if !$0 { removingHost = nil } }), presenting: removingHost) { host in
+            Button(session.hosts.hasMultipleHosts ? "Remove Host" : "Unpair", role: .destructive) {
                 busy = true
                 Task { await session.removeHost(host.id); busy = false }
             }
             Button("Cancel", role: .cancel) {}
         } message: { host in
-            Text("Remove \(host.label)’s pairing keys, counters, cached chats, and queued messages from this Mac? Other hosts stay connected.")
+            if session.hosts.hasMultipleHosts {
+                Text("Remove \(host.label)’s pairing keys, counters, cached chats, and queued messages from this Mac? Other hosts stay connected.")
+            } else {
+                Text("Yorozu will remove pairing keys, counters, cached chats, and queued messages from this Mac.")
+            }
         }
     }
 
@@ -125,10 +134,12 @@ private struct HostConnectionDetails: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            LabeledContent("Nickname") {
-                TextField("Optional", text: Binding(get: { host.nickname ?? "" }, set: { session.nickname($0, for: host.id) }))
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 300)
+            if session.hosts.hasMultipleHosts {
+                LabeledContent("Nickname") {
+                    TextField("Optional", text: Binding(get: { host.nickname ?? "" }, set: { session.nickname($0, for: host.id) }))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 300)
+                }
             }
             LabeledContent("Relay", value: host.relayURL).textSelection(.enabled)
             LabeledContent("Mac key", value: QrPayload.fingerprint(ofBase64URLKey: host.id) ?? host.id)
@@ -162,7 +173,7 @@ private struct HostConnectionDetails: View {
                 Text("Every tool request on this host runs without asking, including purchases, messages, commands, and deletes.")
                     .font(.caption).foregroundStyle(.red)
             }
-            Button("Remove Host…", role: .destructive, action: remove)
+            Button(session.hosts.hasMultipleHosts ? "Remove Host…" : "Unpair…", role: .destructive, action: remove)
                 .buttonStyle(.bordered)
         }
         .onAppear { host.model.requestApprovalSettings() }

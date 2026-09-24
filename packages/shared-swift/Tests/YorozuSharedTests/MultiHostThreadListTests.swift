@@ -110,3 +110,32 @@ private actor ListTransport: ChatTransport {
     ]
     #expect(Set(ids.map(\.listID)).count == ids.count)
 }
+
+@MainActor
+@Test func hostIdentityAppearsOnlyWhenThereAreMultipleSavedDestinations() async throws {
+    let first = HostSession(id: "first", model: ChatModel(transport: ListTransport()), relayURL: "wss://relay.test", nickname: "First Mac")
+    let session = MultiHostModel(sessions: [first])
+    let draft = try #require(session.newDraft())
+    #expect(draft.hostID == first.id)
+    #expect(!session.hasMultipleHosts)
+    #expect(HostThreadListAdapter(session: session).hostLabel(draft.listID) == nil)
+
+    let second = HostSession(id: "second", model: ChatModel(transport: ListTransport()), relayURL: "wss://relay.test", nickname: "Second Mac")
+    session.add(second)
+    session.lastUsedHostID = second.id
+    // Neither socket is live: offline destinations still need names and an explicit route.
+    #expect(!first.model.canDeliver && !second.model.canDeliver)
+    #expect(session.hasMultipleHosts)
+    #expect(HostThreadListAdapter(session: session).hostLabel(draft.listID) == "First Mac")
+    let otherDraft = try #require(session.newDraft())
+    #expect(otherDraft.hostID == second.id)
+    #expect(HostThreadListAdapter(session: session).hostLabel(otherDraft.listID) == "Second Mac")
+
+    await session.remove(second.id)
+    let list = HostThreadListAdapter(session: session)
+    #expect(!session.hasMultipleHosts)
+    #expect(list.hostLabel(draft.listID) == nil)
+    #expect(list.resolve(draft.listID)?.id == draft)
+    #expect(session.preferredHostID == first.id)
+    await first.model.shutdown()
+}

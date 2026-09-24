@@ -43,7 +43,7 @@ private struct ClientChatWindowView: View {
                     Button { openSettings() } label: { Label("Settings", systemImage: "gearshape") }
                         .buttonStyle(.plain)
                     Spacer()
-                    Text(hosts.connectionSummary)
+                    Text(connectionLabel)
                         .foregroundStyle(.secondary)
                 }
                 .font(.caption)
@@ -54,7 +54,9 @@ private struct ClientChatWindowView: View {
             NavigationStack {
                 if let selection, let item = hosts.thread(for: selection), let model = hosts.model(for: selection) {
                     ChatView(model: model, thread: item.thread,
-                        offlineNotice: "\(item.hostLabel) is offline. Messages will send when it reconnects.")
+                        offlineNotice: hosts.hasMultipleHosts
+                            ? "\(item.hostLabel) is offline. Messages will send when it reconnects."
+                            : "Connection unavailable. Messages will send when your host Mac reconnects.")
                         .environment(\.threadSearchRequest, searchedThread == selection ? searchRequest : nil)
                         .id(selection)
                 } else {
@@ -90,6 +92,14 @@ private struct ClientChatWindowView: View {
             for host in hosts.sessions { host.model.foreground = false }
         }
         .background(WindowNumberReporter())
+    }
+
+    private var connectionLabel: String {
+        guard !hosts.hasMultipleHosts else { return hosts.connectionSummary }
+        guard let host = hosts.sessions.first else { return "Not connected" }
+        if case .updateRequired = host.model.compatibility { return "Update required" }
+        return ClientConnectionStatus(state: host.model.state, ownerOnline: host.model.ownerOnline,
+            failure: session.hostFailures[host.id] ?? host.model.failure).label
     }
 
     private func updateReading() {
@@ -290,10 +300,15 @@ struct SettingsView: View {
         session.role == .host ? [.general, .devices, .permissions] : [.general, .hosts]
     }
 
+    private func presentation(for section: SettingsSection) -> (title: String, symbol: String) {
+        if section == .hosts, !session.hosts.hasMultipleHosts { return ("Connection", "link") }
+        return section.presentation
+    }
+
     var body: some View {
         NavigationSplitView {
             List(sections, selection: $selection) { section in
-                Label(section.presentation.title, systemImage: section.presentation.symbol)
+                Label(presentation(for: section).title, systemImage: presentation(for: section).symbol)
                     .tag(section)
             }
             .navigationTitle("Settings")
@@ -310,7 +325,7 @@ struct SettingsView: View {
     private func pane(@ViewBuilder content: () -> some View) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text((selection ?? .general).presentation.title)
+                Text(presentation(for: selection ?? .general).title)
                     .font(.title2.weight(.semibold))
                 content()
             }

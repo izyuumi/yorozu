@@ -170,3 +170,23 @@ private func box(_ body: (URL) throws -> Void) throws {
         #expect(remaining.contains(legacy))
     }
 }
+
+@Test func shareHostChoiceIsImplicitOnlyForOnePairedHost() {
+    let a = ShareHost(id: "host-a", label: "Studio")
+    let b = ShareHost(id: "host-b", label: "Laptop")
+    let threadA = ShareThread(id: "same", title: "Chat", hostID: a.id, hostLabel: a.label)
+    let threadB = ShareThread(id: "same", title: "Chat", hostID: b.id, hostLabel: b.label)
+    let none = ShareDestinations(hosts: [], threads: [])
+    let single = ShareDestinations(hosts: [a], threads: [threadA])
+    // Availability is deliberately absent: an offline paired host remains a destination.
+    let multiple = ShareDestinations(hosts: [a, b], threads: [threadA, threadB])
+    #expect(none.hostID(for: nil, newHostID: nil) == nil)
+    #expect(single.hostID(for: nil, newHostID: nil) == a.id)
+    #expect(multiple.hostID(for: nil, newHostID: nil) == nil)
+    #expect(multiple.hostID(for: nil, newHostID: b.id) == b.id)
+    #expect(multiple.hostID(for: threadA.destination, newHostID: b.id) == a.id)
+    #expect(multiple.hostID(for: threadB.destination, newHostID: a.id) == b.id)
+    #expect(single.hostID(for: threadB.destination, newHostID: nil) == nil)
+    #expect(single.hostID(for: nil, newHostID: b.id) == nil)
+    #expect(single.hostID(for: HostThreadID(hostID: a.id, threadID: "missing"), newHostID: nil) == nil)
+}

@@ -22,7 +22,8 @@ exchange, and the relay only ever sees signatures, lengths and timing.
 A Mac is set up as either a **host** — it runs OpenClaw and the sidecar, owns the thread logs, and
 is what everything else pairs with — or a **client**, which pairs with host Macs exactly as a phone
 does and runs no agent of its own. Clients keep all paired hosts connected, with one combined
-thread list and search. **Settings → Hosts** adds or manages connections; each thread and share
+thread list and search. Host labels and pickers appear only with multiple saved Macs; a single
+Mac stays automatic. **Settings → Connection / Hosts** adds or manages connections; each thread and share
 destination stays attached to its owning Mac. A host's own chat skips the relay and talks to its sidecar over
 a `0600` Unix socket.
 

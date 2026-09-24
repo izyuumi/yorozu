@@ -31,7 +31,9 @@ struct HostThreadListAdapter {
         })
     }
 
-    func hostLabel(_ listID: String) -> String? { records[listID]?.hostLabel }
+    func hostLabel(_ listID: String) -> String? {
+        session.hasMultipleHosts ? records[listID]?.hostLabel : nil
+    }
 
     func resolve(_ listID: String) -> HostThread? {
         records[listID].flatMap { session.thread(for: $0.id) }
@@ -86,7 +88,10 @@ public struct MultiHostThreadListView<Destination: View>: View {
             workingThreads: adapter.workingThreads,
             hostLabel: adapter.hostLabel,
             onNewThread: { choosingHost = true },
-            connectionSummary: session.connectionSummary,
+            connection: session.hasMultipleHosts ? nil : session.sessions.first.map {
+                ConnectionState(state: $0.model.state, ownerOnline: $0.model.ownerOnline)
+            },
+            connectionSummary: session.hasMultipleHosts ? session.connectionSummary : nil,
             path: Binding(get: { path.map(\.listID) }, set: { ids in
                 path = ids.compactMap { adapter.resolve($0)?.id }
                 if let id = path.last { session.lastUsedHostID = id.hostID }

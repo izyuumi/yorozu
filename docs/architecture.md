@@ -91,12 +91,16 @@ counts; actions resolve a `(hostID, threadID)` pair back to its owning model. Id
 IDs on different Macs remain separate chats.
 
 All sessions connect while the app is active. iOS suspends their sockets together and uses
-APNs/background catch-up for every paired host. New Thread remembers its last destination and
-offers a host picker; projects and agents come from that destination. Share Sheet New Session
-requires an explicit host choice. Existing share destinations carry both host and thread IDs.
+APNs/background catch-up for every paired host. With one saved host, host names and pickers
+stay hidden and new threads and shares use that destination automatically. With multiple
+saved hosts, rows show host labels and New Thread remembers its last destination and offers
+a host picker; projects and agents come from that destination. Share Sheet New Session then
+requires an explicit host choice. Existing share destinations always carry both host and
+thread IDs. Saved connections still count while offline or being repaired.
 
-Settings → Hosts holds Add Host, nicknames, connection and compatibility states, repair and
-removal. A pairing link opened by a paired client asks to add the host and shows its relay and
+Settings → Connection holds Add Host, connection and compatibility states, repair and removal.
+With multiple saved connections it becomes Hosts and also shows names and nicknames.
+A pairing link opened by a paired client asks to add the host and shows its relay and
 key fingerprint. A duplicate key is detected before its one-time token is consumed and offers
 explicit repair. Removal clears only that host's keys, counters, cache, outbox, preview key and
 pending notifications. Existing single-host records migrate with their keys and persisted

@@ -106,7 +106,7 @@ public struct NewThreadPicker: View {
         .yorozuTint()
         .onChange(of: selectedHostID) { _, _ in path = [] }
         .onChange(of: session?.sessions.map(\.id)) { _, ids in
-            if let selectedHostID, ids?.contains(selectedHostID) != true {
+            if selectedHostID.map({ ids?.contains($0) == true }) != true {
                 self.selectedHostID = session?.preferredHostID
             }
         }
@@ -121,15 +121,17 @@ public struct NewThreadPicker: View {
 
     private var runtimes: some View {
         List {
-            if let session {
+            if let session, session.hasMultipleHosts || selectedHost?.model.canDeliver == false {
                 Section {
-                    Picker("Host", selection: $selectedHostID) {
-                        ForEach(session.sessions) { host in
-                            Text(host.label).tag(Optional(host.id))
+                    if session.hasMultipleHosts {
+                        Picker("Host", selection: $selectedHostID) {
+                            ForEach(session.sessions) { host in
+                                Text(host.label).tag(Optional(host.id))
+                            }
                         }
+                        .pickerStyle(.menu)
+                        .accessibilityHint("The Mac that will receive this new thread")
                     }
-                    .pickerStyle(.menu)
-                    .accessibilityHint("The Mac that will receive this new thread")
                     if let host = selectedHost {
                         if case .updateRequired = host.model.compatibility {
                             Label("Update required — see Settings", systemImage: "exclamationmark.circle")

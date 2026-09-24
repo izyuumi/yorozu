@@ -18,7 +18,8 @@ struct GeneralView: View {
                 }
                 .pickerStyle(.segmented)
                 if session.role == .client {
-                    Text("Manage paired Macs in Hosts.").foregroundStyle(.secondary)
+                    Text(session.hosts.hasMultipleHosts ? "Manage paired Macs in Hosts." : "Manage pairing in Connection.")
+                        .foregroundStyle(.secondary)
                 }
             }
             if session.role == .host { RelayView() }

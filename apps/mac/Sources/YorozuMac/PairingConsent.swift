@@ -37,8 +37,8 @@ enum PairingConsent {
             lines.append(String(localized: "This Mac will stop hosting Yorozu: the runtime shuts down and paired phones lose their connection to it. It becomes a client of the Mac this code came from."))
         } else {
             lines.append(pending.repairsHost != nil
-                ? String(localized: "Repair replaces only this host’s connection. Its chats, drafts, and queued messages stay saved. Other hosts stay connected.")
-                : String(localized: "This Mac will add the host from this code. Existing hosts and their chats stay connected."))
+                ? String(localized: "Repair replaces this connection. Chats, drafts, and queued messages stay saved.")
+                : String(localized: "This Mac will connect to the host from this code. Saved chats stay available."))
         }
         return lines.joined(separator: "\n")
     }

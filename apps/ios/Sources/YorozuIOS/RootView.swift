@@ -241,7 +241,7 @@ final class Session {
                 let payload = try QrPayload.decode(pending.code)
                 guard payload.hostID == hostID else { throw PairingFailure.duplicate }
                 guard changingHosts.insert(hostID).inserted else { return }
-                defer { changingHosts.remove(hostID) }
+                defer { changingHosts.remove(hostID); publishThreads() }
                 let oldKeys = notificationKeys
                 await hosts.remove(hostID)
                 await clearNotifications(for: hostID, keys: oldKeys)
@@ -279,7 +279,7 @@ final class Session {
 
     func removeHost(_ hostID: HostID) async {
         guard hosts.session(for: hostID) != nil, changingHosts.insert(hostID).inserted else { return }
-        defer { changingHosts.remove(hostID) }
+        defer { changingHosts.remove(hostID); publishThreads() }
         let keys = notificationKeys
         await hosts.remove(hostID)
         do {
@@ -305,7 +305,6 @@ final class Session {
         }
         await clearNotifications(for: hostID, keys: keys)
         try? await UNUserNotificationCenter.current().setBadgeCount(hosts.unreadCount)
-        publishThreads()
         #if DEBUG
         print("YOROZU-E2E-REMOVED [\(hostID)] remaining=\(hosts.sessions.count)")
         #endif
@@ -408,6 +407,9 @@ final class Session {
     func clearNotificationOpen() { notificationOpen = nil }
 
     func publishThreads() {
+        // A replacement briefly removes a live model. Keep the complete share destination
+        // snapshot until it finishes, so another host never becomes an implicit destination.
+        guard changingHosts.isEmpty else { return }
         guard let directory = ShareBox.directory(), !isDemo else { return }
         let threads = hosts.threads.filter { item in
             !item.thread.archived && hosts.model(for: item.id)?.isDraft(item.id.threadID) == false
