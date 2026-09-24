@@ -7,6 +7,7 @@
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import FoundationModels
 import ScreenCaptureKit
 import YorozuPermissions
 
@@ -279,6 +280,22 @@ enum Native {
         return ["kind": kind.rawValue, "title": kind.title, "granted": granted, "canPrompt": kind.canPrompt]
     }
 
+    // MARK: - Title
+
+    /// A 3-5 word thread title from its opening message, by the Mac's on-device model, so the
+    /// text a title is made from never leaves the machine. A Mac without Apple Intelligence,
+    /// or with it off, is a Failure the runtime turns into its first-words fallback.
+    static func title(_ text: String) async throws -> [String: Any] {
+        guard #available(macOS 26, *) else { throw Failure("on-device model needs macOS 26") }
+        guard case .available = SystemLanguageModel.default.availability else {
+            throw Failure("on-device model is not available")
+        }
+        let session = LanguageModelSession(
+            instructions: "Reply with a 3-5 word title for this conversation, no quotes, no trailing period"
+        )
+        return ["title": try await session.respond(to: text).content]
+    }
+
     // MARK: - Protocol
 
     static func handle(_ request: [String: Any]) async -> [String: Any] {
@@ -295,6 +312,7 @@ enum Native {
             case "permission.status", "permission.request": return try await permission(cmd, request)
             case "permission.list":
                 return ["kinds": Permission.requestable.map(\.rawValue)]
+            case "title.generate": return try await title(request["text"] as? String ?? "")
             case "ping": return ["pong": true]
             case let other: throw Failure("unknown command: \(other)")
             }
