@@ -184,9 +184,11 @@ new app needs one visit to [App Store Connect](https://appstoreconnect.apple.com
 distribution log. Candidate uploads are automated after this setup; App Review and the
 App Store release remain explicit maintainer actions.
 
-`scripts/asc-listing.mjs` is the historical 0.2.0 listing setup script. It hardcodes that version
-and a build selection; do not run it for current releases. Use App Store Connect to prepare the
-current version and select the exact build recorded in the candidate manifest.
+`node scripts/asc-listing.mjs --check` validates the 0.4.0 listing and screenshots locally from
+[app-store/listing-0.4.0.md](app-store/listing-0.4.0.md). Run with `--apply` to update the existing
+editable listing and attach build 10. It verifies the readback, preserves existing app-wide
+declarations/pricing/availability, and never submits for review. The first App Store release
+cannot publish What’s New; that copy remains in the source document.
 
 ### External testers
 

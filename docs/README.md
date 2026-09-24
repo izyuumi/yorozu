@@ -13,6 +13,7 @@ Start with the [project README](../README.md) for installation and development. 
 | Provider mark sources and licenses | [Provider mark assets](provider-mark-assets.md) |
 | Website capture procedure | [Website screenshots](website-screenshots.md) |
 | Original product specs, still referenced by source | [v1](spec-v1.html), [v1.5](spec-v1.5.md) |
+| App Store 0.4.0 listing copy and submission record | [Listing](app-store/listing-0.4.0.md), [Submission](app-store/submission-0.4.0.json) |
 
 Current UI captures live in [`screens/`](screens/). App Store submission screenshots live in
 [`app-store/screenshots/`](app-store/screenshots/).

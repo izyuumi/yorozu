@@ -1,0 +1,70 @@
+{
+  "appId": "6811274963",
+  "version": "0.4.0",
+  "build": "10",
+  "sourceCommit": "5aea5016c906aba37047682e382619d5bbc3ee77",
+  "versionId": "170d8b17-739e-4df5-8e52-135a10c20fe2",
+  "buildId": "ee3786cc-7e74-476c-b48e-192c8a5d6432",
+  "submissionId": "df22234e-2a71-4d88-86a0-300ae22f65b1",
+  "submittedAt": "2026-09-24T11:19:07.299Z",
+  "state": "WAITING_FOR_REVIEW",
+  "versionState": "WAITING_FOR_REVIEW",
+  "releaseType": "MANUAL",
+  "listingSource": "docs/app-store/listing-0.4.0.md",
+  "listingSha256": "8aa934fee7ef5373b2c935ff681ce345f3602a089a02278b078b2c4f7de0b2cf",
+  "screenshotRuntime": "iOS 26.5",
+  "screenshots": {
+    "APP_IPHONE_67": [
+      {
+        "fileName": "01-t33-thread-list.png",
+        "checksum": "d088b7ef7a8edbf6543e468dfb7e06a3",
+        "deliveryState": "COMPLETE",
+        "error": []
+      },
+      {
+        "fileName": "03-38-approval-card.png",
+        "checksum": "2624c551a68cd339fb9bba44baeb38e4",
+        "deliveryState": "COMPLETE",
+        "error": []
+      },
+      {
+        "fileName": "04-45-progress.png",
+        "checksum": "b358ddcab2f85ac4bb6965a3125a937c",
+        "deliveryState": "COMPLETE",
+        "error": []
+      },
+      {
+        "fileName": "05-45-question.png",
+        "checksum": "003278f9edcebb1aee761fb1cb7e92bc",
+        "deliveryState": "COMPLETE",
+        "error": []
+      },
+      {
+        "fileName": "06-54-pairing.png",
+        "checksum": "1fc377b02c60b8fb46bafe14c99a58c0",
+        "deliveryState": "COMPLETE",
+        "error": []
+      }
+    ],
+    "APP_IPAD_PRO_3GEN_129": [
+      {
+        "fileName": "01-t33-thread-list.png",
+        "checksum": "f34c4f3cc5e960ffeeaa82e7cf2f8306",
+        "deliveryState": "COMPLETE",
+        "error": []
+      },
+      {
+        "fileName": "02-32-chat-markdown.png",
+        "checksum": "3b7182dbe90c429b321d4d869ab73a4c",
+        "deliveryState": "COMPLETE",
+        "error": []
+      },
+      {
+        "fileName": "06-54-pairing.png",
+        "checksum": "0bd4ebd21779d8718e20663ba21dae2d",
+        "deliveryState": "COMPLETE",
+        "error": []
+      }
+    ]
+  }
+}
