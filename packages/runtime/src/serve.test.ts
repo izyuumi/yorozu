@@ -1173,30 +1173,13 @@ test("always runs the action and is permanent: the next one needs no second card
   expect(ran(second)).toBe(true);
 });
 
-test("YOLO on from a phone is a request the Mac hears; the Mac's yes applies it with an expiry; off is anyone's", async () => {
-  const { dir, send, eventsUntil, pub } = await pairedPhone([]);
+test("YOLO on from a phone applies at once with an expiry, everyone hears, and off is anyone's", async () => {
+  const { dir, send, eventsUntil } = await pairedPhone([]);
   const mac = await macClient(dir);
   try {
-    send({ kind: "approval_settings", data: { yolo: true, hours: 8 } });
-    // The phone is told the truth: nothing changed, and its toggle snaps back.
-    const answered = await eventsUntil((event) => event.kind === "approval_settings");
-    expect(answered.at(-1)).toMatchObject({ kind: "approval_settings", data: { yolo: false, pending: true } });
-    expect(answered.some((event) => event.kind === "approval_settings_request")).toBe(false);
-    expect(existsSync(join(dir, "approval.json"))).toBe(false);
-    // The request went to the Mac, and to the Mac alone.
-    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "approval_settings_request")).toBe(true));
-    const request = mac.events.find((event) => event.kind === "approval_settings_request")!;
-    if (request.kind !== "approval_settings_request") throw new Error("unreachable");
-    expect(request.data).toMatchObject({ device: pub, yolo: true, hours: 8 });
-    expect(request.data.requestId).toMatch(/[0-9a-f-]{36}/);
-    send({ kind: "approval_settings", data: {} });
-    const asked = (await eventsUntil((event) => event.kind === "approval_settings")).at(-1)!;
-    if (asked.kind !== "approval_settings") throw new Error("unreachable");
-    expect(asked.data).toEqual({ yolo: false });
-
-    // The Mac says yes: on, for eight hours, and everyone hears so.
+    // Pairing is the grant: on, for eight hours, and everyone hears so.
     const before = Date.now();
-    mac.send({ kind: "approval_settings", data: { yolo: true, hours: 8, requestId: request.data.requestId } });
+    send({ kind: "approval_settings", data: { yolo: true, hours: 8 } });
     const on = (await eventsUntil((event) => event.kind === "approval_settings")).at(-1)!;
     if (on.kind !== "approval_settings") throw new Error("unreachable");
     expect(on.data.yolo).toBe(true);
@@ -1209,7 +1192,7 @@ test("YOLO on from a phone is a request the Mac hears; the Mac's yes applies it 
       data: { yolo: true, yoloUntil: on.data.yoloUntil },
     });
 
-    // Off from the phone needs nobody's leave.
+    // Off from the phone, just the same.
     send({ kind: "approval_settings", data: { yolo: false } });
     expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({ data: { yolo: false } });
     expect(approvalFile(dir)).toMatchObject({ yolo: false });
@@ -2685,7 +2668,6 @@ test.each([["claude-code", "yes"], ["claude-code", "no"], ["codex", "yes"], ["co
   } };
   const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { [agent]: runner } });
   send({ kind: "thread_create", data: { agent, cwd: proj } }, "native");
-  send({ kind: "approval_settings", data: { yolo: true } });
   send({ kind: "message", data: { role: "user", text: "work" } }, "native");
   const approval = (await eventsUntil((e) => e.kind === "approval_card")).at(-1)!;
   if (approval.kind !== "approval_card") throw new Error("missing approval");
@@ -3109,47 +3091,3 @@ test("a seventeenth phone is refused, the list never grows past the cap, and the
   }
 });
 
-test("a phone's YOLO request is one card a minute, and the Mac's yes must name a request still open", async () => {
-  const { dir, send, eventsUntil, pub } = await pairedPhone([]);
-  const mac = await macClient(dir);
-  const requests = () => mac.events.filter((event) => event.kind === "approval_settings_request");
-  try {
-    // Three asks in a row: one card on the Mac, three `pending` answers to the phone.
-    for (let i = 0; i < 3; i++) {
-      send({ kind: "approval_settings", data: { yolo: true, hours: 2 } });
-      expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1))
-        .toMatchObject({ data: { yolo: false, pending: true } });
-    }
-    await vi.waitFor(() => expect(requests()).toHaveLength(1));
-    expect(states.filter((state) => state === "yolo-request-coalesced")).toHaveLength(2);
-    const request = requests()[0]!;
-    if (request.kind !== "approval_settings_request") throw new Error("unreachable");
-    expect(request.data.device).toBe(pub);
-
-    // A yes that names a request nobody has open grants nothing, and the Mac hears the truth.
-    const before = mac.settings().length;
-    mac.send({ kind: "approval_settings", data: { yolo: true, requestId: randomUUID() } });
-    await vi.waitFor(() => expect(mac.settings().length).toBeGreaterThan(before));
-    expect(mac.settings().at(-1)).toMatchObject({ data: { yolo: false } });
-    expect(states).toContain("yolo-grant-refused");
-    expect(existsSync(join(dir, "approval.json"))).toBe(false);
-
-    // The yes that names the open request is the grant, and it closes the request.
-    mac.send({ kind: "approval_settings", data: { yolo: true, hours: 2, requestId: request.data.requestId } });
-    expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({ data: { yolo: true } });
-    send({ kind: "approval_settings", data: { yolo: false } });
-    expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({ data: { yolo: false } });
-    // Spent: the same request id buys nothing a second time.
-    const refused = states.filter((state) => state === "yolo-grant-refused").length;
-    mac.send({ kind: "approval_settings", data: { yolo: true, requestId: request.data.requestId } });
-    await vi.waitFor(() => expect(states.filter((state) => state === "yolo-grant-refused")).toHaveLength(refused + 1));
-    send({ kind: "approval_settings", data: {} });
-    expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({ data: { yolo: false } });
-    // And the phone may ask again: the grant cleared its request rather than leaving it to age out.
-    send({ kind: "approval_settings", data: { yolo: true } });
-    await eventsUntil((event) => event.kind === "approval_settings");
-    await vi.waitFor(() => expect(requests()).toHaveLength(2));
-  } finally {
-    mac.close();
-  }
-});
