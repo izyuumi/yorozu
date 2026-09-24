@@ -57,6 +57,7 @@ private func showcaseImages() -> [MessageAttachment] {
 final class E2EHarness {
     private let autoSend: String
     private let autoThread: String?
+    private var autoDraftID: String?
     private weak var model: ChatModel?
 
     static func attach(to model: ChatModel) {
@@ -193,7 +194,10 @@ final class E2EHarness {
             print("YOROZU-E2E paired")
 
             // A draft, exactly as the `+` button makes one: the message below is what creates it.
-            if let draft = model?.newDraft() { model?.send(autoSend, in: draft.id) }
+            if let draft = model?.newDraft() {
+                autoDraftID = draft.id
+                model?.send(autoSend, in: draft.id)
+            }
             // And a second, named thread, to prove `thread_create` and its sync as well.
             if let autoThread, let id = model?.createThread(title: autoThread) {
                 model?.send(autoSend, in: id)
@@ -204,6 +208,7 @@ final class E2EHarness {
             case .message(let data) where data.role == .agent:
                 let title = model?.title(of: event.threadId) ?? event.threadId
                 print("YOROZU-E2E-REPLY [\(title)] \(data.text)")
+                if event.threadId == autoDraftID { print("YOROZU-E2E-DRAFT-REPLY \(data.text)") }
             case .toolCall(let data):
                 print("YOROZU-E2E-TOOL \(data.name)")
             default:

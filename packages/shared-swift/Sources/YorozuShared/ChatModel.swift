@@ -48,6 +48,8 @@ public final class ChatModel {
     public private(set) var state: TransportState = .connecting
     /// Starts pessimistic: the transport tells us the truth when it connects.
     public private(set) var ownerOnline = false
+    public private(set) var peerInfo: PeerInfoData?
+    public private(set) var compatibility: PeerCompatibility = .legacy
     public private(set) var updateStatus = UpdateStatusData(phase: .none)
     public var onUpdateStatus: ((UpdateStatusData) -> Void)?
     public private(set) var failure: String?
@@ -174,7 +176,7 @@ public final class ChatModel {
     public var onEvent: ((YorozuEvent) -> Void)?
 
     private let transport: any ChatTransport
-    private let cache: ThreadCache?
+    private var cache: ThreadCache?
     @ObservationIgnored private var cacheWrite: Task<Void, Never>?
     @ObservationIgnored private var composerWrite: Task<Void, Never>?
 
@@ -222,6 +224,9 @@ public final class ChatModel {
     /// What this client tags the events it emits with.
     private let device: String
     private var started = false
+    private var stopped = false
+    @ObservationIgnored private var connectionTask: Task<Void, Never>?
+    @ObservationIgnored private var flushTask: Task<Void, Never>?
     /// How many `sync_delta`s have been applied, which is what a background drain waits on.
     private var deltas = 0
     /// One flush at a time: the queue is sent in order, and two loops draining it would not be.
@@ -241,6 +246,7 @@ public final class ChatModel {
         self.cache = cache
         self.device = device
         guard let cache else { return }
+        peerInfo = cache.peerInfo()
         synced = cache.threads()
         syncLastSeen = cache.lastSeen()
         outbox = Outbox.pruned(cache.outbox())
@@ -262,21 +268,50 @@ public final class ChatModel {
         }
         for item in outbox {
             if case .message = item.event.payload { upsert(item.event, persist: false) }
+            applyAnswerState(item.event)
         }
     }
 
     /// Connects and applies updates until the transport ends. Calling it twice does nothing.
     public func start() {
-        guard !started else { return }
+        guard !started, !stopped else { return }
         started = true
-        Task { [weak self] in
+        connectionTask = Task { [weak self] in
             guard let stream = await self?.transport.connect() else { return }
-            for await update in stream { self?.apply(update) }
+            for await update in stream {
+                guard !Task.isCancelled else { break }
+                self?.apply(update)
+            }
         }
     }
 
     public func close() {
         Task { [transport] in await transport.close() }
+    }
+
+    /// Permanently retires this connection before its owner removes or repairs the host.
+    /// Detached cache writes keep their snapshots alive, so cancellation alone is not enough:
+    /// wait for them before allowing the host's keys and files to be erased.
+    public func shutdown() async {
+        flushStreamEvents()
+        do { try saveComposer() }
+        catch { failure = "Could not save draft: \(error.localizedDescription)" }
+        stopped = true
+        foreground = false
+        connectionTask?.cancel()
+        readReport?.cancel()
+        streamFrame?.cancel()
+        composerWrite?.cancel()
+        flushTask?.cancel()
+        emitter?.cancel()
+        cache = nil
+        await transport.close()
+        await connectionTask?.value
+        await emitter?.value
+        await flushTask?.value
+        await cacheWrite?.value
+        state = .closed
+        ownerOnline = false
     }
 
     /// Hangs up ahead of a suspension. iOS freezes the app with whatever socket it holds, and
@@ -352,19 +387,23 @@ public final class ChatModel {
         // from the lock screen, whatever buttons the push happened to draw.
         self.answer(card.actionId, in: threadId, answer, source: .notification)
         // The send is queued behind everything before it; wait for the queue to drain.
-        await emitter?.value
+        await flushTask?.value
         await flushCache()
         return true
     }
 
     /// The approval card whose event id the push referenced, wherever it is.
     private func approvalCard(eventRef: String) -> (String, ApprovalCardData)? {
+        var match: (String, ApprovalCardData)?
         for (threadId, list) in events {
             for event in list where YorozuCrypto.threadRef(event.id) == eventRef {
-                if case .approvalCard(let card) = event.payload { return (threadId, card) }
+                if case .approvalCard(let card) = event.payload {
+                    guard match == nil else { return nil }
+                    match = (threadId, card)
+                }
             }
         }
-        return nil
+        return match
     }
 
     /// Sends what the composer holds — the typed text and any staged file — and empties it.
@@ -383,6 +422,7 @@ public final class ChatModel {
     }
 
     public func send(_ text: String, in threadId: String, attachments: [MessageAttachment]) {
+        guard !stopped else { return }
         // Decided once for the whole send: a thread created here and the message that creates it
         // must not take different routes, or the runtime is told about a message in a thread it
         // has never heard of.
@@ -425,7 +465,10 @@ public final class ChatModel {
     /// Whether an event sent now would actually reach the runtime. Anything else — still
     /// dialling, joined at the relay but not paired, or paired with the Mac asleep — is what
     /// the outbox is for.
-    public var canDeliver: Bool { state == .paired && ownerOnline && updateStatus.phase != .installing }
+    public var canDeliver: Bool {
+        if case .updateRequired = compatibility { return false }
+        return !stopped && state == .paired && ownerOnline && updateStatus.phase != .installing
+    }
 
     @discardableResult
     public func updateControl(_ action: UpdateControlData.Action, updateId: String? = nil, version: String? = nil) -> String {
@@ -479,6 +522,7 @@ public final class ChatModel {
     /// receipt, so a send onto a socket that was quietly dead is sent again rather than lost.
     /// `queue` says whether there was a link to try now.
     private func deliver(_ event: YorozuEvent, queue: Bool) {
+        guard !stopped else { return }
         outbox = Outbox.pruned(outbox + [OutboxItem(event: event)])
         guard saveOutbox() else { return }
         if !queue { flush() }
@@ -497,9 +541,9 @@ public final class ChatModel {
     public func flush() {
         guard !flushing, canDeliver, !outbox.isEmpty, saveOutbox() else { return }
         flushing = true
-        Task { [weak self] in
+        flushTask = Task { [weak self] in
             var sent: Set<String> = []
-            while let self, self.canDeliver,
+            while let self, !Task.isCancelled, self.canDeliver,
                 let item = self.outbox.first(where: { $0.status == .queued && !sent.contains($0.id) })
             {
                 do {
@@ -529,6 +573,7 @@ public final class ChatModel {
 
     @discardableResult
     private func saveOutbox() -> Bool {
+        guard !stopped else { return false }
         outbox = Outbox.pruned(outbox)
         do {
             try cache?.savePending(outbox)
@@ -828,15 +873,18 @@ public final class ChatModel {
     }
 
     private func emit(_ event: YorozuEvent) {
+        guard !stopped else { return }
         switch event.payload {
-        case .threadRecover:
+        case .threadRecover, .threadCreate, .threadRename, .threadPin, .threadSetModel,
+             .threadSetEffort, .threadRead, .approvalAnswer, .questionAnswer:
             deliver(event, queue: !canDeliver)
             return
         default: break
         }
         let previous = emitter
-        emitter = Task { [transport] in
+        emitter = Task { [weak self, transport] in
             await previous?.value
+            guard !Task.isCancelled, self?.stopped == false else { return }
             try? await transport.send(event)
         }
     }
@@ -879,7 +927,14 @@ public final class ChatModel {
     }
 
     private func apply(_ update: TransportUpdate) {
+        guard !stopped else { return }
         switch update {
+        case .peerInfo(let info):
+            guard info.isValid else { return }
+            peerInfo = info
+            cache?.save(peerInfo: info)
+        case .compatibility(let compatibility):
+            self.compatibility = compatibility
         case .state(let state):
             self.state = state
             if state != .paired {
@@ -996,7 +1051,9 @@ public final class ChatModel {
         }
     }
 
-    private func applyEvent(_ event: YorozuEvent) {
+    // Internal so reducer tests can feed one synchronous burst, without AsyncStream actor
+    // hops stretching the fixture over multiple real display frames under parallel load.
+    func applyEvent(_ event: YorozuEvent) {
         let key = "\(event.threadId)\u{0}\(event.id)"
         if case .message(let data) = event.payload, data.role == .agent, data.done != true {
             pendingStreamEvents[key] = event

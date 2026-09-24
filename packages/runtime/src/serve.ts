@@ -8,12 +8,16 @@
  * both the same pairing string. `MINT` on stdin asks the relay for a fresh join token.
  */
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { argv, env, stdin, stdout } from "node:process";
 import {
   acceptsSeq,
+  localPeerInfo,
+  parsePeerInfo,
+  negotiatePeerInfo,
   decodeEnvelope,
   deriveChannelKeys,
   deriveSessionKey,
@@ -41,6 +45,8 @@ import {
   type EventPayload,
   type Keypair,
   type ModelOption,
+  type PeerInfoData,
+  type PeerCompatibility,
   type MessageAttachment,
   type ProgressCardData,
   type ThreadAgent,
@@ -219,6 +225,7 @@ export function loadDevices(file: string): DeviceRecord[] {
           lastSeen: typeof record.lastSeen === "number" ? record.lastSeen : 0,
           ...(isSeq(record.sendSeq) ? { sendSeq: record.sendSeq } : {}),
           ...(isSeq(record.recvSeq) ? { recvSeq: record.recvSeq } : {}),
+          ...(record.peerInfoRequired === true ? { peerInfoRequired: true } : {}),
         },
       ];
     });
@@ -334,6 +341,8 @@ export function parseFrameBody(payload: unknown): FrameBody | null {
  * revoking a device at the relay is addressed to it.
  */
 export interface DeviceRecord {
+  /** Negotiation and replay protection stay required for this pairing once advertised. */
+  peerInfoRequired?: true;
   pub: string;
   signingPub?: string;
   /** Platform and OS version announced by this device. */
@@ -365,9 +374,16 @@ interface PairedDevice {
   /** Last seq sealed to it; `record.sendSeq` is the ceiling written ahead of it. */
   sent: number;
   record: DeviceRecord;
+  peerInfo?: PeerInfoData;
+  compatibility?: PeerCompatibility;
+  peerClaimReceived?: boolean;
 }
 
 export interface ServeOptions {
+  /** Diagnostic version, supplied by the containing Mac app. */
+  appVersion?: string;
+  /** macOS ComputerName; queried again for each authenticated metadata exchange. */
+  computerName?: () => string | undefined;
   relayUrl?: string;
   stateDir?: string;
   /** Defaults to the model chain configured from the environment. */
@@ -424,6 +440,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const log = options.log ?? ((line: string) => void stdout.write(`${line}\n`));
   const heartbeat = options.heartbeat ?? { pingMs: PING_MS, pongMs: PONG_MS };
   const state = (name: string) => log(`STATE ${name}`);
+  const peerInfo = localPeerInfo(options.appVersion ?? env.YOROZU_APP_VERSION ?? "unknown");
+  const computerName = options.computerName ?? (() => {
+    if (process.platform !== "darwin") return undefined;
+    try {
+      return execFileSync("/usr/sbin/scutil", ["--get", "ComputerName"], { encoding: "utf8", timeout: 1_000, maxBuffer: 1_024 }).trim();
+    } catch { return undefined; }
+  });
 
   // A chain nobody is signed in to answers every turn with a 401. Said once, here, so the Mac
   // app can show it instead of leaving the user to read auth errors in a chat bubble. Skipped
@@ -493,11 +516,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const before = devices.get(record.pub);
     record.sendSeq ??= before?.record.sendSeq ?? 0;
     record.recvSeq ??= before?.record.recvSeq ?? 0;
+    record.peerInfoRequired ??= before?.record.peerInfoRequired;
     const theirPub = fromBase64Url(record.pub);
     devices.set(record.pub, {
       key: deriveSessionKey(keys.session.privateKey, theirPub),
       channel: deriveChannelKeys(keys.session.privateKey, theirPub, "mac"),
-      format: null,
+      format: record.peerInfoRequired ? "current" : null,
       // Fresh from disk the ceiling is all there is, and everything up to it counts as used.
       sent: before?.sent ?? record.sendSeq,
       record,
@@ -1599,14 +1623,32 @@ export function serve(options: ServeOptions = {}): Sidecar {
     sendTo = (device: string, event: YorozuEvent): void => {
       const known = devices.get(device);
       if (!known || !relayReady || ws.readyState !== WebSocket.OPEN) return;
+      const awaitingCompatibility = known.record.peerInfoRequired && known.compatibility?.state !== "compatible";
+      if (awaitingCompatibility && event.kind !== "thread_list") return;
       const cutoff = known.record.pairedAt ?? 0;
       if (event.threadId && event.ts < cutoff) return;
-      if (event.kind === "thread_list") event = { ...threadList(cutoff), id: event.id, ts: event.ts };
+      if (event.kind === "thread_list") {
+        const list = threadList(cutoff);
+        if (list.kind !== "thread_list") return;
+        const name = known.compatibility?.state === "compatible" && known.compatibility.capabilities.includes("host-name") ? computerName() : undefined;
+        event = { ...list, id: event.id, ts: event.ts, data: {
+          threads: awaitingCompatibility ? [] : list.data.threads,
+          peerInfoSupported: true,
+          ...(event.data.peerInfoReplyTo ? { peerInfoReplyTo: event.data.peerInfoReplyTo } : {}),
+          ...(known.peerClaimReceived ? { peerInfo: localPeerInfo(peerInfo.appVersion, name) } : {}),
+          ...(known.compatibility?.state === "update-required" ? { peerInfoError: known.compatibility.reason } : {}),
+        } };
+      }
       // A hello carries no format version. Greet both released clients; each ignores the box
       // it cannot open. Once one answers, send only its format. Modern goes first so a client
       // able to read both never settles on the older format.
       if (known.format !== "legacy") sendFrame(sealFor(known, event));
-      if (known.format !== "current") sendFrame(sealLegacyFor(known, event));
+      if (known.format !== "current") {
+        // Legacy uses a bidirectional key: our own greeting can be reflected. Never put
+        // negotiation claims in that format, where direction cannot be authenticated.
+        const legacyEvent = event.kind === "thread_list" ? { ...event, data: { threads: event.data.threads } } : event;
+        sendFrame(sealLegacyFor(known, legacyEvent));
+      }
     };
 
     /**
@@ -1623,7 +1665,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           // An older client used the shared key in both directions.
         }
         if (plain === null) {
-          if (known.format === "current") continue;
+          if (known.format === "current" || known.record.peerInfoRequired) continue;
           try {
             const legacy = open(known.key, fromBase64Url(body.n), fromBase64Url(body.c));
             const event = JSON.parse(Buffer.from(legacy).toString()) as YorozuEvent;
@@ -1723,6 +1765,37 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const known = devices.get(device);
       // Hearing from a device is the only thing that makes it online, so the stamp is kept.
       if (known) known.record.lastSeen = Date.now();
+      if (known && event.kind === "thread_list" &&
+          ("peerInfo" in event.data || "peerInfoSupported" in event.data || "peerInfoError" in event.data || "peerInfoReplyTo" in event.data)) {
+        // Legacy boxes are reflectable. A reflected greeting must not raise the security
+        // floor and permanently disable a released client that cannot negotiate it.
+        if (known.format !== "current") return;
+        known.peerClaimReceived = true;
+        if (!known.record.peerInfoRequired) {
+          known.record.peerInfoRequired = true;
+          try { writeDevices(); }
+          catch (error) { delete known.record.peerInfoRequired; throw error; }
+        }
+        try {
+          if (event.id.length > 128 || !event.id ||
+              ("peerInfoSupported" in event.data && typeof event.data.peerInfoSupported !== "boolean") ||
+              "peerInfoError" in event.data || "peerInfoReplyTo" in event.data) {
+            throw new Error("Invalid peer information");
+          }
+          known.peerInfo = parsePeerInfo(event.data.peerInfo);
+          known.compatibility = negotiatePeerInfo(peerInfo, known.peerInfo);
+        } catch {
+          known.compatibility = { state: "update-required", reason: "Invalid peer information." };
+        }
+        if (known.compatibility.state === "update-required") state("peer-update-required");
+        sendTo(device, control({ kind: "thread_list", data: { threads: [], peerInfoReplyTo: event.id.slice(0, 128) } }));
+        if (known.compatibility.state === "compatible") {
+          sendTo(device, modelList());
+          sendTo(device, projectList());
+        }
+        return;
+      }
+      if (known?.record.peerInfoRequired && known.compatibility?.state !== "compatible") return;
       handleEvent(event, (answer) => sendTo(device, answer), known?.record.pairedAt ?? 0, device);
     }
 

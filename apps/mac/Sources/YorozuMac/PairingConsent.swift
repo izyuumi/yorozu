@@ -1,13 +1,13 @@
 import AppKit
 
-/// The question a pairing link has to get a yes to before it replaces anything on this Mac.
+/// Pairing links require consent to add or explicitly repair their authenticated host.
 ///
 /// An `NSAlert` rather than a SwiftUI alert: the link can arrive with no window open at all —
 /// this is a menu bar app — and a sheet needs a window to hang off. Modal, because nothing
 /// else should happen to the pairing while the question is on screen.
 @MainActor
 enum PairingConsent {
-    /// True only when "Replace pairing" was chosen.
+    /// True only when the explicit add, repair, or role-change button was chosen.
     static func ask(_ pending: MacChatSession.PendingPairing) -> Bool {
         NSApp.activate()
         let alert = NSAlert()
@@ -18,9 +18,9 @@ enum PairingConsent {
         alert.window.level = .floating
         alert.messageText = pending.stopsHosting
             ? String(localized: "Stop hosting and pair with another Mac?")
-            : String(localized: "Replace pairing?")
+            : pending.repairsHost != nil ? String(localized: "Already connected") : String(localized: "Add host?")
         alert.informativeText = informativeText(pending)
-        alert.addButton(withTitle: String(localized: "Replace pairing"))
+        alert.addButton(withTitle: pending.repairsHost != nil ? String(localized: "Repair connection") : String(localized: "Add host"))
         alert.addButton(withTitle: String(localized: "Cancel"))
         return alert.runModal() == .alertFirstButtonReturn
     }
@@ -36,7 +36,9 @@ enum PairingConsent {
         if pending.stopsHosting {
             lines.append(String(localized: "This Mac will stop hosting Yorozu: the runtime shuts down and paired phones lose their connection to it. It becomes a client of the Mac this code came from."))
         } else {
-            lines.append(String(localized: "This Mac will forget its current pairing and cached threads, and connect to the Mac this code came from."))
+            lines.append(pending.repairsHost != nil
+                ? String(localized: "Repair replaces only this host’s connection. Its chats, drafts, and queued messages stay saved. Other hosts stay connected.")
+                : String(localized: "This Mac will add the host from this code. Existing hosts and their chats stay connected."))
         }
         return lines.joined(separator: "\n")
     }

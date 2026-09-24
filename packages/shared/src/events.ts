@@ -1,3 +1,5 @@
+import type { PeerInfoData } from "./peer-info.js";
+
 /**
  * Wire events exchanged between Mac, phone and relay.
  * The relay never reads these: they travel sealed. See docs/spec-v1.html sections 3, 7, 8.
@@ -413,6 +415,14 @@ export interface ThreadSummary {
 
 export interface ThreadListData {
   threads: ThreadSummary[];
+  /** Bootstrap on an existing kind: old clients ignore this optional hint. */
+  peerInfoSupported?: boolean;
+  /** Only sent after the peer advertised support over the encrypted channel. */
+  peerInfo?: PeerInfoData;
+  /** A bounded rejection of this connection's advertised requirements. */
+  peerInfoError?: string;
+  /** Echoes the current peer-information request, distinguishing it from in-flight broadcasts. */
+  peerInfoReplyTo?: string;
 }
 
 /**

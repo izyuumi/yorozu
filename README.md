@@ -20,8 +20,10 @@ can read none of it: frames are ChaCha20-Poly1305 sealed under a key derived fro
 exchange, and the relay only ever sees signatures, lengths and timing.
 
 A Mac is set up as either a **host** — it runs OpenClaw and the sidecar, owns the thread logs, and
-is what everything else pairs with — or a **client**, which pairs with a host exactly as a phone
-does and runs no agent of its own. A host's own chat skips the relay and talks to its sidecar over
+is what everything else pairs with — or a **client**, which pairs with host Macs exactly as a phone
+does and runs no agent of its own. Clients keep all paired hosts connected, with one combined
+thread list and search. **Settings → Hosts** adds or manages connections; each thread and share
+destination stays attached to its owning Mac. A host's own chat skips the relay and talks to its sidecar over
 a `0600` Unix socket.
 
 See [docs/architecture.md](docs/architecture.md) for the pairing handshake, the relay protocol,
@@ -91,13 +93,18 @@ pnpm --filter @yorozu/relay build && node apps/relay/dist/index.js    # PORT, de
 pnpm -r test                                              # runtime, shared, relay
 env -u SDKROOT swift test --package-path packages/shared-swift
 env -u SDKROOT swift test --package-path apps/mac
+scripts/check-mac-multi-host.sh                           # isolated client/session lifecycle
+scripts/test-ios-host-persistence.sh                      # legacy migration and host isolation
 python3 scripts/test-release.py                           # isolated publication checks
 ```
 
 The `env -u SDKROOT` is load-bearing — an inherited `SDKROOT` makes SwiftPM build against the
 wrong SDK. `apps/ios/e2e/run.sh` is the end-to-end proof: it stands up a relay, a fake provider
 and the sidecar, builds the app onto a throwaway simulator, and asserts a streamed reply and a
-tool call reach the phone.
+tool call reach the phone. It also pairs a second host, checks replies from both in the combined
+list, then removes one and confirms the other remains usable.
+Set `SIMULATOR_RUNTIME` to an installed runtime ID (for example,
+`com.apple.CoreSimulator.SimRuntime.iOS-26-4`) to test a specific iOS release.
 
 CI (`.github/workflows/ci.yml`) runs the Node, Swift, and iOS jobs on macOS, plus workflow
 validation, ShellCheck, isolated release-publication tests, and a relay container build and

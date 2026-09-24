@@ -1,3 +1,4 @@
+import CryptoKit
 import SwiftUI
 import UIKit
 import UserNotifications
@@ -79,15 +80,13 @@ struct YorozuApp: App {
     }
 }
 
-/// The phone's pairing lifecycle, which is the one thing about its chat that is not shared: the
-/// stored pairing, and the ``ChatModel`` built over a ``RelayClient`` for it. The model, the
-/// views and the thread cache all come from `YorozuShared`; the Mac builds the same model over
-/// its local socket instead.
+/// Platform persistence, push and share integration around independent host sessions.
 @MainActor
 @Observable
 final class Session {
     struct NotificationOpen: Equatable {
         let id = UUID()
+        let hostID: HostID
         let threadId: String
         let notificationClass: String?
         let eventRef: String?
@@ -95,152 +94,244 @@ final class Session {
         let syncRevision: Int
     }
 
-    /// A pairing code that arrived as a link while this phone already holds a pairing. It waits
-    /// here for the person to say the old one should go; the alert in ``RootView`` asks.
     struct PendingPairing: Identifiable, Equatable {
         let id = UUID()
-        /// The link itself, which is the pairing string.
         let code: String
         let relayHost: String
         let macKeyFingerprint: String
+        let existingHostID: HostID?
     }
 
+    let hosts = MultiHostModel()
     private(set) var model: ChatModel?
     private(set) var failure: String?
     private(set) var isPairing = false
     private(set) var isDemo = false
     private(set) var pendingPairing: PendingPairing?
-    /// What the thread list's navigation stack starts out holding, decided the moment the model
-    /// exists rather than after the list has drawn. The cache is read synchronously in
-    /// ``ChatModel``'s initialiser, so the answer is already known here — and knowing it here is
-    /// what keeps the chat from appearing a frame after the list it was pushed onto.
     private(set) var openPath: [String] = []
-    /// A tap is also a scroll request. Kept separate from the navigation path so tapping while
-    /// that same thread is already on the stack still moves the existing timeline.
+    private(set) var hostPath: [HostThreadID] = []
     private(set) var notificationOpen: NotificationOpen?
-    /// A notification can name a thread missing from the cold cache. Hold only its opaque ref;
-    /// the next authoritative thread list resolves it without trusting push content.
-    private var pendingThreadRef: String?
-    private var pendingNotificationClass: String?
-    private var pendingEventRef: String?
-    /// The transport, kept apart from the model so push tokens have somewhere to be registered:
-    /// the relay is the thing that holds them, because it is the thing that calls APNs.
-    private(set) var relay: RelayClient?
-    /// Why this phone cannot be woken, when it cannot. Nothing shows it yet; it is here so the
-    /// failure is recorded rather than swallowed.
-    var pushFailure: String?
-    /// The device token, kept so a re-pairing can register it with the new relay without
-    /// waiting for iOS to hand out another one — it only does that when it changes.
+    private var pendingNotification: (hostID: HostID, ref: String, kind: String?, event: String?)?
+    private var relays: [HostID: RelayClient] = [:]
+    private(set) var notificationKeys: [HostID: SymmetricKey] = [:]
+    private var pairingHostID: HostID?
     private var deviceToken: String?
-
-    /// One per app, not one per `RootView` value. SwiftUI re-runs a `@State` initializer every
-    /// time it rebuilds the view struct and keeps only the first result, so `Session()` inline
-    /// would leave a second session behind — and now that ``RelayClient`` reconnects forever,
-    /// that second session is a second socket rejoining the room for the life of the process.
+    private var migrationFailed = false
+    private var changingHosts: Set<HostID> = []
+    var pushFailure: String?
     static let shared = Session()
+
+    var allModels: [ChatModel] { isDemo || hosts.sessions.isEmpty ? model.map { [$0] } ?? [] : hosts.sessions.map(\.model) }
+    var unreadCount: Int { isDemo ? model?.unreadCount ?? 0 : hosts.unreadCount }
+    var pairingFailure: String? { failure ?? pairingHostID.flatMap { hosts.session(for: $0)?.model.failure } }
+    var showingHosts: Bool {
+        !hosts.sessions.isEmpty && (hosts.sessions.count > 1 || !isPairing || hosts.sessions.contains {
+            if case .updateRequired = $0.model.compatibility { return true }
+            return false
+        })
+    }
+
+    func finishIncompatiblePairing() {
+        guard let pairingHostID, let host = hosts.session(for: pairingHostID),
+              case .updateRequired = host.model.compatibility else { return }
+        isPairing = false
+    }
 
     private init() {
         #if DEBUG
-        // Screenshot and QA entry into the reviewer demo, without tapping the pairing screen.
-        if launchArgument("yorozuDemo") != nil {
-            startDemo()
-            return
-        }
+        if launchArgument("yorozuDemo") != nil { startDemo(); return }
         if launchArgument("yorozuShowcase") != nil || launchArgument("yorozuScene") != nil {
             let model = ChatModel(transport: ShowcaseTransport())
             E2EHarness.attach(to: model)
             model.start()
             self.model = model
             let showcase = launchArgument("yorozuScene") ?? launchArgument("yorozuShowcase")
-            openPath = showcase == "threads" || showcase == "thread-search"
-                ? [] : model.threads.prefix(1).map(\.id)
+            openPath = showcase == "threads" || showcase == "thread-search" ? [] : model.threads.prefix(1).map(\.id)
             return
         }
         #endif
-        #if DEBUG
-        // The e2e harness's way in: a simulator has no camera to scan with. Debug only, so a
-        // shipped build cannot be paired by whatever launched it.
-        if let injected = launchArgument("yorozuPair") {
-            // Surface the reason rather than silently falling back to the scanner.
-            do { try pair(with: injected) } catch { failure = error.localizedDescription }
-            return
-        }
-        #endif
-        if let stored = PairingStore.load() {
-            isPairing = stored.paired != true
-            connect(stored)
-        }
-    }
-
-    /// Accepts an untrusted QR string, persists it with a fresh device identity, and connects.
-    func pair(with text: String) throws {
         do {
-            let stored = PairingStore.Stored(
-                pairing: try QrPayload.decode(text),
-                identity: .generate()
-            )
-            try PairingStore.save(stored)
-            failure = nil
-            isPairing = true
-            connect(stored)
+            if let legacyHostID = PairingStore.legacyHostID {
+                NotificationPreview.migrateLegacyKey(to: legacyHostID)
+                if let directory = ShareBox.directory(),
+                   !ShareBox.migrateLegacy(to: ShareHost(id: legacyHostID, label: "Mac · \(String(legacyHostID.prefix(12)))"), in: directory) {
+                    throw YorozuCrypto.CryptoError.malformed("Could not migrate pending shares. Restart Yorozu to retry.")
+                }
+            }
+            try PairingStore.migrateLegacy()
+            let records = try PairingStore.loadAllRequired()
+            hosts.lastUsedHostID = UserDefaults.standard.string(forKey: "last-used-host")
+            for stored in records {
+                #if DEBUG
+                connect(stored, start: launchArgument("yorozuRemoveHost") == nil)
+                #else
+                connect(stored)
+                #endif
+            }
+            #if DEBUG
+            if let removed = launchArgument("yorozuRemoveHost") {
+                Task {
+                    await removeHost(removed)
+                    hosts.start()
+                }
+            }
+            #endif
         } catch {
-            failure = String(localized: "Not a Yorozu pairing code.")
-            throw error
+            migrationFailed = true
+            failure = error.localizedDescription
+        }
+        #if DEBUG
+        do {
+            if let injected = launchArgument("yorozuPair") { try pair(with: injected) }
+            if let second = launchArgument("yorozuPairSecond") { try pair(with: second) }
+        } catch { failure = error.localizedDescription }
+        #endif
+    }
+
+    private func pending(code: String, payload: QrPayload, existingHostID: HostID? = nil) -> PendingPairing {
+        PendingPairing(code: code, relayHost: payload.relayHost ?? payload.relayUrl,
+                       macKeyFingerprint: payload.macKeyFingerprint ?? String(localized: "unreadable key"),
+                       existingHostID: existingHostID)
+    }
+
+    /// Duplicate detection happens before creating an identity or redeeming a one-time code.
+    func pair(with text: String) throws {
+        guard !migrationFailed else { throw PairingFailure.migration }
+        let payload = try QrPayload.decode(text)
+        guard let payloadHostID = payload.hostID else { throw YorozuCrypto.CryptoError.malformed("invalid Mac key") }
+        guard !changingHosts.contains(payloadHostID) else { throw PairingFailure.busy }
+        if let existing = PairingStore.loadAll().first(where: { $0.hostID == payloadHostID || $0.pairing.macPubkey == payload.macPubkey }) {
+            pendingPairing = pending(code: text, payload: payload, existingHostID: existing.hostID)
+            throw PairingFailure.duplicate
+        }
+        let stored = PairingStore.Stored(pairing: payload, identity: .generate())
+        try PairingStore.save(stored)
+        failure = nil
+        pairingHostID = stored.hostID
+        isPairing = true
+        connect(stored)
+    }
+
+    enum PairingFailure: LocalizedError {
+        case duplicate, migration, busy
+        var errorDescription: String? {
+            switch self {
+            case .duplicate: String(localized: "Already connected. Choose Repair connection to pair this host again.")
+            case .migration: String(localized: "Could not migrate existing pairing. Restart Yorozu before adding a host.")
+            case .busy: String(localized: "This host is being updated. Try again when it finishes.")
+            }
         }
     }
 
-    /// Where every `yorozu://pair` link lands, whether tapped in Messages or in a chat bubble.
-    ///
-    /// A fresh phone pairs on the spot, as scanning would. One that already holds a pairing is
-    /// asked first: a link is a line of text anyone can send, and following it silently would
-    /// hand the chat — and every reply from then on — to whichever Mac minted the code. Any
-    /// other host, and anything that does not parse as a code, is dropped here.
     func handlePairingLink(_ url: URL) {
-        guard url.host()?.lowercased() == "pair",
-              let payload = try? QrPayload.decode(url.absoluteString)
-        else { return }
-        // The stored pairing is the test, not the model: a demo has a model and nothing to
-        // lose, and a pairing still waiting on the relay is already something to replace.
-        guard PairingStore.load() != nil else {
-            // `pair` builds over whatever model is there; the demo's has to go first, or the
-            // real pairing inherits `isDemo` and never registers for push.
+        guard url.host()?.lowercased() == "pair", let payload = try? QrPayload.decode(url.absoluteString), payload.hostID != nil else { return }
+        if PairingStore.loadAll().isEmpty {
             if isDemo { exitDemo() }
-            do { try pair(with: url.absoluteString) } catch {}
+            do { try pair(with: url.absoluteString) } catch { failure = error.localizedDescription }
             return
         }
-        pendingPairing = PendingPairing(
-            code: url.absoluteString,
-            relayHost: payload.relayHost ?? payload.relayUrl,
-            macKeyFingerprint: payload.macKeyFingerprint ?? String(localized: "unreadable key")
-        )
+        let existing = PairingStore.loadAll().first { $0.hostID == payload.hostID || $0.pairing.macPubkey == payload.macPubkey }
+        pendingPairing = pending(code: url.absoluteString, payload: payload, existingHostID: existing?.hostID)
     }
 
-    /// The confirmed half of ``handlePairingLink(_:)``: the same unpair Settings does, then
-    /// the new code. Takes the pending value rather than reading it back, because the alert's
-    /// dismissal may have cleared it before the button's action runs.
-    func replacePairing(with pending: PendingPairing) {
+    func confirmPairing(_ pending: PendingPairing) async {
         pendingPairing = nil
-        unpair()
-        do { try pair(with: pending.code) } catch {}
+        do {
+            if let hostID = pending.existingHostID, let old = PairingStore.load(hostID: hostID) {
+                let payload = try QrPayload.decode(pending.code)
+                guard payload.hostID == hostID else { throw PairingFailure.duplicate }
+                guard changingHosts.insert(hostID).inserted else { return }
+                defer { changingHosts.remove(hostID) }
+                let oldKeys = notificationKeys
+                await hosts.remove(hostID)
+                await clearNotifications(for: hostID, keys: oldKeys)
+                NotificationPreview.clearKey(hostID: hostID)
+                notificationKeys[hostID] = nil
+                let stored = PairingStore.Stored(pairing: payload, identity: .generate(), nickname: old.nickname)
+                do { try PairingStore.save(stored) }
+                catch { connect(old); throw error }
+                relays[hostID] = nil
+                pairingHostID = hostID
+                isPairing = true
+                failure = nil
+                connect(stored)
+            } else {
+                try pair(with: pending.code)
+            }
+        } catch { failure = error.localizedDescription }
     }
 
     func cancelPendingPairing() { pendingPairing = nil }
 
-    /// Builds a throwaway model over the local demo transport. Its nil cache is intentional:
-    /// nothing shown here can read from or write to a real pairing's encrypted history.
-    func startDemo() {
-        model?.close()
-        model = nil
-        relay = nil
-        failure = nil
-        isPairing = false
-        isDemo = true
-        openPath = []
-        notificationOpen = nil
-        pendingThreadRef = nil
-        pendingNotificationClass = nil
-        pendingEventRef = nil
+    func setNickname(_ nickname: String, for hostID: HostID) {
+        let value = String(nickname.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+        do {
+            try PairingStore.updateNickname(value.isEmpty ? nil : value, hostID: hostID)
+            hosts.session(for: hostID)?.nickname = value.isEmpty ? nil : value
+            publishThreads()
+        } catch { failure = error.localizedDescription }
+    }
 
+    func rememberHost(_ hostID: HostID) {
+        hosts.lastUsedHostID = hostID
+        UserDefaults.standard.set(hostID, forKey: "last-used-host")
+    }
+
+    func removeHost(_ hostID: HostID) async {
+        guard hosts.session(for: hostID) != nil, changingHosts.insert(hostID).inserted else { return }
+        defer { changingHosts.remove(hostID) }
+        let keys = notificationKeys
+        await hosts.remove(hostID)
+        do {
+            try CacheStore.clear(hostID: hostID)
+            try PairingStore.remove(hostID: hostID)
+        } catch {
+            failure = error.localizedDescription
+            if let stored = PairingStore.load(hostID: hostID) { connect(stored) }
+            return
+        }
+        relays[hostID] = nil
+        NotificationPreview.clearKey(hostID: hostID)
+        notificationKeys[hostID] = nil
+        if let directory = ShareBox.directory() { ShareBox.clear(hostID: hostID, in: directory) }
+        if hostPath.contains(where: { $0.hostID == hostID }) { hostPath = [] }
+        if notificationOpen?.hostID == hostID { notificationOpen = nil }
+        if pendingNotification?.hostID == hostID { pendingNotification = nil }
+        if pairingHostID == hostID { pairingHostID = nil; isPairing = false }
+        model = hosts.sessions.first?.model
+        if hosts.lastUsedHostID == hostID {
+            hosts.lastUsedHostID = hosts.sessions.first?.id
+            UserDefaults.standard.set(hosts.lastUsedHostID, forKey: "last-used-host")
+        }
+        await clearNotifications(for: hostID, keys: keys)
+        try? await UNUserNotificationCenter.current().setBadgeCount(hosts.unreadCount)
+        publishThreads()
+        #if DEBUG
+        print("YOROZU-E2E-REMOVED [\(hostID)] remaining=\(hosts.sessions.count)")
+        #endif
+    }
+
+    private func clearNotifications(for hostID: HostID, keys: [HostID: SymmetricKey]) async {
+        let center = UNUserNotificationCenter.current()
+        let delivered = await center.deliveredNotifications()
+        let pending = await center.pendingNotificationRequests()
+        center.removeDeliveredNotifications(withIdentifiers: delivered.filter {
+            NotificationFallback.authenticatedPreview(userInfo: $0.request.content.userInfo, keys: keys)?.hostID == hostID
+        }.map { $0.request.identifier })
+        center.removePendingNotificationRequests(withIdentifiers: pending.filter {
+            NotificationFallback.authenticatedPreview(userInfo: $0.content.userInfo, keys: keys)?.hostID == hostID
+        }.map(\.identifier))
+        if hosts.sessions.isEmpty && PairingStore.loadAll().isEmpty {
+            center.removeAllDeliveredNotifications()
+            center.removeAllPendingNotificationRequests()
+        }
+    }
+
+    func startDemo() {
+        guard hosts.sessions.isEmpty else { return }
+        model?.close()
+        failure = nil; isPairing = false; isDemo = true; openPath = []
+        notificationOpen = nil; pendingNotification = nil
         let model = ChatModel(transport: DemoTransport(), cache: nil)
         model.previewThreads()
         model.previewChat(in: "Invoices")
@@ -251,205 +342,153 @@ final class Session {
         self.model = model
     }
 
-    /// Leaving demo only drops volatile state; it must not alter a real pairing or its cache.
     func exitDemo() {
         guard isDemo else { return }
-        model?.close()
-        model = nil
-        failure = nil
-        isPairing = false
-        isDemo = false
-        openPath = []
-        notificationOpen = nil
-        pendingThreadRef = nil
-        pendingNotificationClass = nil
-        pendingEventRef = nil
+        model?.close(); model = nil
+        failure = nil; isPairing = false; isDemo = false; openPath = []
+        notificationOpen = nil; pendingNotification = nil
     }
 
-    /// Asks for notifications, once, at the moment they start to make sense: something is paired,
-    /// so there is now something that could need to wake you.
     func requestNotifications() {
-        // Never during a screenshot run: the permission alert is modal, so it — and not the
-        // thread underneath it — would be the picture.
         guard !isDemo, launchArgument("yorozuShowcase") == nil, launchArgument("yorozuScene") == nil else { return }
         Task {
-            _ = try? await UNUserNotificationCenter.current()
-                .requestAuthorization(options: [.alert, .sound, .badge])
-            // Registration also enables content-free background catch-up. Alert permission may
-            // be denied while that silent sync remains useful, so these are separate decisions.
+            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
             UIApplication.shared.registerForRemoteNotifications()
         }
     }
 
-    /// The device token, on its way to the relay. Held too, so a later pairing can register it
-    /// without waiting on iOS to reissue one — it only does that when the token changes.
     func registerPush(deviceToken: String) {
-        guard !isDemo else { return }
         self.deviceToken = deviceToken
-        guard let relay else { return }
-        Task { await relay.registerPush(deviceToken: deviceToken) }
+        guard !isDemo else { return }
+        for relay in relays.values { Task { await relay.registerPush(deviceToken: deviceToken) } }
     }
 
-    func unpair() {
-        model?.close()
-        model = nil
-        relay = nil
-        failure = nil
-        isPairing = false
-        isDemo = false
-        pushFailure = nil
-        deviceToken = nil
-        openPath = []
-        notificationOpen = nil
-        pendingThreadRef = nil
-        pendingNotificationClass = nil
-        pendingEventRef = nil
-        PairingStore.clear()
-        NotificationPreview.clearKey()
-        CacheStore.clear()
-        // The thread titles the picker offers, and anything half-shared, belong to the pairing
-        // just as much as the cache does.
-        if let directory = ShareBox.directory() { ShareBox.clear(in: directory) }
-        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
-        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
-        UIApplication.shared.applicationIconBadgeNumber = 0
-    }
-
-    /// Sends everything the share extension has left in the App Group container, oldest first.
-    ///
-    /// Called on the `yorozu://share` open and again every time the app comes to the foreground:
-    /// an extension's `open` is not guaranteed to arrive, and a share that is on disk has been
-    /// confirmed by the person who made it. Nothing is drained before there is a model to send
-    /// it with — the files simply wait for the next foreground.
     func drainShares() {
-        guard !isDemo, let model, let directory = ShareBox.directory() else { return }
-        for payload in ShareBox.takeAll(in: directory) {
-            let thread = payload.threadId.flatMap { id in model.threads.first { $0.id == id } }
-                ?? model.newDraft()
-            // The share sheet carries at most one picture — its activation rule says so — so
-            // this is the one-element case of what the composer sends several of.
-            model.send(payload.text, in: thread.id, attachments: payload.attachment.map { [$0] } ?? [])
-            openPath = [thread.id]
+        guard !isDemo, !migrationFailed, let directory = ShareBox.directory() else { return }
+        let ready = ShareBox.takeAll(in: directory, matching: { payload in
+            guard let id = payload.hostID, let host = hosts.session(for: id) else { return false }
+            return payload.threadId == nil || host.model.threads.contains { $0.id == payload.threadId }
+        })
+        for payload in ready {
+            guard let hostID = payload.hostID, let host = hosts.session(for: hostID) else { continue }
+            let thread: ThreadSummary
+            if let id = payload.threadId {
+                guard let existing = host.model.threads.first(where: { $0.id == id }) else { continue }
+                thread = existing
+            } else { thread = host.model.newDraft() }
+            host.model.send(payload.text, in: thread.id, attachments: payload.attachment.map { [$0] } ?? [])
+            rememberHost(hostID)
+            hostPath = [HostThreadID(hostID: hostID, threadID: thread.id)]
         }
     }
 
-    /// Opens a thread by id, for a `yorozu://thread/<id>`. An id this device has never heard of
-    /// is ignored rather than pushed: an empty chat with no way back to it is worse than the tap
-    /// doing nothing.
-    func open(threadId: String) {
-        guard model?.threads.contains(where: { $0.id == threadId }) == true else { return }
-        openPath = [threadId]
+    /// Legacy unqualified links are usable only with exactly one host.
+    func open(threadId: String, hostID: HostID? = nil) {
+        guard let id = hostID ?? (hosts.sessions.count == 1 ? hosts.sessions.first?.id : nil),
+              let host = hosts.session(for: id), host.model.threads.contains(where: { $0.id == threadId }) else { return }
+        hostPath = [HostThreadID(hostID: id, threadID: threadId)]
+        rememberHost(id)
     }
 
-    /// Opens a thread by the opaque reference a push carries — a tapped notification, which
-    /// knows nothing else about its thread.
-    ///
-    /// The mapping only exists here. The relay sent a reference precisely so that it could not
-    /// do this itself, and the phone resolves it by hashing the thread ids it already holds.
     @discardableResult
-    func open(threadRef: String, notificationClass: String? = nil, eventRef: String? = nil) -> Bool {
-        let match = model?.threads.first { YorozuCrypto.threadRef($0.id) == threadRef }
-        guard let match else {
-            pendingThreadRef = threadRef
-            pendingNotificationClass = notificationClass
-            pendingEventRef = eventRef
+    func open(threadRef: String, hostID: HostID? = nil, notificationClass: String? = nil, eventRef: String? = nil) -> Bool {
+        guard let id = hostID ?? (hosts.sessions.count == 1 ? hosts.sessions.first?.id : nil), let host = hosts.session(for: id) else { return false }
+        guard let match = host.model.threads.first(where: { YorozuCrypto.threadRef($0.id) == threadRef }) else {
+            pendingNotification = (id, threadRef, notificationClass, eventRef)
             return false
         }
-        pendingThreadRef = nil
-        pendingNotificationClass = nil
-        pendingEventRef = nil
-        notificationOpen = NotificationOpen(
-            threadId: match.id,
-            notificationClass: notificationClass,
-            eventRef: eventRef,
-            lastReadAt: match.lastReadAt,
-            syncRevision: model?.syncRevision ?? 0
-        )
-        openPath = [match.id]
+        pendingNotification = nil
+        notificationOpen = NotificationOpen(hostID: id, threadId: match.id, notificationClass: notificationClass,
+                                            eventRef: eventRef, lastReadAt: match.lastReadAt, syncRevision: host.model.syncRevision)
+        hostPath = [HostThreadID(hostID: id, threadID: match.id)]
+        rememberHost(id)
         return true
     }
 
     func clearNotificationOpen() { notificationOpen = nil }
 
-    /// The few threads the share sheet's picker offers, newest first. Archived threads and the
-    /// unsent drafts are left out: neither is somewhere to put a link.
-    private func publishThreads(_ model: ChatModel? = nil) {
-        guard let model = model ?? self.model, let directory = ShareBox.directory() else { return }
-        let threads = model.threads
-            .filter { !$0.archived && !model.isDraft($0.id) }
-            .sorted { $0.lastActivity > $1.lastActivity }
-            .prefix(5)
-        ShareBox.save(threads: Array(threads), in: directory)
+    func publishThreads() {
+        guard let directory = ShareBox.directory(), !isDemo else { return }
+        let threads = hosts.threads.filter { item in
+            !item.thread.archived && hosts.model(for: item.id)?.isDraft(item.id.threadID) == false
+        }.prefix(10).map { item in
+            ShareThread(id: item.id.threadID, title: item.thread.displayTitle, hostID: item.id.hostID, hostLabel: item.hostLabel)
+        }
+        ShareBox.save(hosts: hosts.sessions.map { ShareHost(id: $0.id, label: $0.label) }, threads: threads, in: directory)
     }
 
-    private func connect(_ stored: PairingStore.Stored) {
+    private func connect(_ stored: PairingStore.Stored, start: Bool = true) {
+        let hostID = stored.hostID
         do {
-            let notificationKey = try YorozuCrypto.deriveSessionKey(
-                myPriv: stored.identity.sessionPrivateKey,
-                theirPub: Data(base64URLEncoded: stored.pairing.macPubkey) ?? Data()
-            )
-            NotificationPreview.save(key: notificationKey)
-            let relay = try RelayClient(
-                pairing: stored.pairing,
-                identity: stored.identity,
-                paired: stored.paired == true,
-                counters: PairingCounterStorage(),
-                onPaired: PairingStore.markPaired
-            )
-            // A later pairing attempt replaces the previous reconnect loop as well as its UI.
-            self.model?.onPaired = nil
-            self.model?.onThreads = nil
-            self.model?.close()
-            self.relay = relay
-            // A token that arrived before there was a relay to tell — registration is asked for
-            // at launch, and iOS answers whenever it likes — is told now rather than never.
-            if let deviceToken { Task { await relay.registerPush(deviceToken: deviceToken) } }
-            let model = ChatModel(transport: relay, cache: CacheStore.open())
+            let key = try YorozuCrypto.deriveSessionKey(myPriv: stored.identity.sessionPrivateKey,
+                                                      theirPub: Data(base64URLEncoded: stored.pairing.macPubkey) ?? Data())
+            if !NotificationPreview.save(key: key, hostID: hostID) {
+                pushFailure = String(localized: "Could not save this host’s notification preview key.")
+            }
+            let relay = try RelayClient(pairing: stored.pairing, identity: stored.identity, paired: stored.paired == true,
+                                        counters: PairingCounterStorage(hostID: hostID), onPaired: { PairingStore.markPaired(hostID: hostID, expectedIdentity: stored.identity.sessionPublicKey) })
+            let model = ChatModel(transport: relay, cache: try CacheStore.open(hostID: hostID))
             #if DEBUG
             E2EHarness.attach(to: model)
             #endif
-            // The harness owns `onPaired` when it is running at all, so this is added to
-            // whatever is already there rather than written over it.
             let onPaired = model.onPaired
             model.onPaired = { [weak self] in
                 onPaired?()
-                self?.isPairing = false
-                self?.drainShares()
-                if let deviceToken = self?.deviceToken {
-                    Task { await relay.registerPush(deviceToken: deviceToken) }
-                } else {
-                    self?.requestNotifications()
-                }
+                guard let self else { return }
+                if self.pairingHostID == hostID { self.isPairing = false; self.pairingHostID = nil }
+                self.drainShares()
+                if let token = self.deviceToken { Task { await relay.registerPush(deviceToken: token) } }
+                else { self.requestNotifications() }
             }
-            // The share extension cannot read the encrypted thread cache, so the picker's
-            // titles are put where it can: here at startup from the cache, and again whenever
-            // the runtime sends a fresh list.
             let onThreads = model.onThreads
             model.onThreads = { [weak self] in
                 onThreads?()
-                self?.publishThreads()
-                if let ref = self?.pendingThreadRef {
-                    self?.open(
-                        threadRef: ref,
-                        notificationClass: self?.pendingNotificationClass,
-                        eventRef: self?.pendingEventRef
-                    )
+                guard let self else { return }
+                self.publishThreads()
+                self.drainShares()
+                if let pending = self.pendingNotification, pending.hostID == hostID {
+                    self.open(threadRef: pending.ref, hostID: pending.hostID, notificationClass: pending.kind, eventRef: pending.event)
+                }
+                #if DEBUG
+                if launchArgument("yorozuSend") != nil {
+                print("YOROZU-E2E-HOSTS \(self.hosts.sessions.count)")
+                print("YOROZU-E2E-MERGED threads=\(self.hosts.threads.count) hosts=\(self.hosts.sessions.count)")
+                print("YOROZU-E2E-MERGED-HOSTS \(Set(self.hosts.threads.filter { self.hosts.model(for: $0.id)?.isDraft($0.id.threadID) == false }.map { $0.id.hostID }).count)")
+                }
+                self.removeFirstHostForHarnessIfNeeded()
+                #endif
+            }
+            #if DEBUG
+            let onEvent = model.onEvent
+            model.onEvent = { [weak model] event in
+                onEvent?(event)
+                if launchArgument("yorozuSend") != nil, case .message(let data) = event.payload, data.role == .agent {
+                    print("YOROZU-E2E-HOST-REPLY [\(hostID)] [\(model?.title(of: event.threadId) ?? event.threadId)] \(data.text)")
                 }
             }
-            model.start()
-            self.model = model
-            publishThreads(model)
-            // Land on the thread list; Yumi prefers choosing over being dropped into the latest.
-            // The screenshot harness is the one exception: it opens the thread it seeded,
-            // unless what it seeded is the list itself.
-            let showcase = launchArgument("yorozuScene") ?? launchArgument("yorozuShowcase")
-            openPath =
-                showcase == nil || showcase == "threads" || showcase == "thread-search"
-                ? [] : model.threads.map(\.id).prefix(1).map { $0 }
-        } catch {
-            failure = error.localizedDescription
-        }
+            #endif
+            hosts.add(HostSession(id: hostID, model: model, relayURL: stored.pairing.relayUrl,
+                                  nickname: stored.nickname, pairedAt: stored.pairedAt))
+            relays[hostID] = relay
+            notificationKeys[hostID] = key
+            self.model = hosts.sessions.first?.model
+            if stored.paired != true { pairingHostID = hostID; isPairing = true }
+            if let deviceToken { Task { await relay.registerPush(deviceToken: deviceToken) } }
+            if start { model.start() }
+            publishThreads()
+        } catch { failure = error.localizedDescription }
     }
+
+    #if DEBUG
+    private var harnessRemoved = false
+    private func removeFirstHostForHarnessIfNeeded() {
+        guard !harnessRemoved, launchArgument("yorozuRemoveFirstHost") != nil,
+              hosts.sessions.count > 1, hosts.sessions.allSatisfy({ $0.model.listed }),
+              let first = hosts.sessions.first else { return }
+        harnessRemoved = true
+        Task { await removeHost(first.id) }
+    }
+    #endif
 }
 
 struct RootView: View {
@@ -459,6 +498,7 @@ struct RootView: View {
     /// thread by itself rather than waiting to be tapped. Seeded from the session, which decided
     /// it before this view was ever built, so the first frame is already the chat.
     @State private var path: [String] = Session.shared.openPath
+    @State private var hostPath: [HostThreadID] = Session.shared.hostPath
     @State private var settings = launchArgument("yorozuShowcase") == "settings"
     @State private var connection = ConnectionPresentation(.reconnecting)
     /// Screenshot only: `-yorozuShowcase share` draws the share extension's composer here,
@@ -485,11 +525,11 @@ struct RootView: View {
                 case "thread":
                     // `yorozu://thread/<id>`, so the id is the path with its leading slash off.
                     // Decoded once, by `path`: decoding again would eat a literal `%` in an id.
-                    session.open(threadId: String(url.path(percentEncoded: false).dropFirst()))
+                    session.open(threadId: String(url.path(percentEncoded: false).dropFirst()), hostID: URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "host" }?.value)
                 case "ref":
                     // `yorozu://ref/<threadRef>` — a notification being tapped, which knows the
                     // thread only by the reference a push carried.
-                    session.open(threadRef: String(url.path(percentEncoded: false).dropFirst()))
+                    session.open(threadRef: String(url.path(percentEncoded: false).dropFirst()), hostID: URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "host" }?.value)
                 case "share":
                     // The token names the file, but everything waiting is drained either way —
                     // see ``Session/drainShares()``.
@@ -502,21 +542,8 @@ struct RootView: View {
             }
             // A pairing code tapped inside a chat takes the same road as one tapped in Messages.
             .environment(\.onPairingLink) { session.handlePairingLink($0) }
-            // Replacing a pairing throws away this phone's keys and cached threads for a Mac the
-            // link chose, so the link only says what it is and the person says whether.
-            .alert(
-                "Replace pairing?",
-                isPresented: Binding(
-                    get: { session.pendingPairing != nil },
-                    set: { if !$0 { session.cancelPendingPairing() } }
-                ),
-                presenting: session.pendingPairing
-            ) { pending in
-                Button("Replace pairing", role: .destructive) { session.replacePairing(with: pending) }
-                Button("Cancel", role: .cancel) { session.cancelPendingPairing() }
-            } message: { pending in
-                Text("This link pairs Yorozu with another Mac.\n\nRelay: \(pending.relayHost)\nMac key: \(pending.macKeyFingerprint)\n\nYorozu will forget its current keys and cached threads.")
-            }
+            .modifier(PairingConfirmation(session: session, enabled: !settings))
+            .sheet(isPresented: $settings) { SettingsView(session: session) }
             // iOS suspends the app and its socket with it. Coming back is the moment to re-dial,
             // rather than waiting out a backoff that ran down while nothing was executing — and
             // the moment to pick up anything shared while it was away.
@@ -525,11 +552,12 @@ struct RootView: View {
                 // Hang up before iOS suspends the app with the socket half-open: the relay
                 // would go on counting a frozen socket as a phone that is watching, and so
                 // not worth a silent wake-up. See ``ChatModel/suspend()``.
-                if phase == .background, let model = session.model {
-                    model.suspend()
+                if phase == .background {
+                    let models = session.allModels
+                    for model in models { model.suspend() }
                     let task = UIApplication.shared.beginBackgroundTask(withName: "Save offline history")
                     Task {
-                        await model.flushCache()
+                        for model in models { await model.flushCache() }
                         if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
                     }
                 }
@@ -537,8 +565,7 @@ struct RootView: View {
                 // A background drain hangs up so the OS can suspend the app cleanly, so
                 // coming back may be a fresh dial rather than a reconnect. `start()` does
                 // nothing when a stream is already running.
-                session.model?.start()
-                session.model?.reconnect()
+                for model in session.allModels { model.start(); model.reconnect() }
                 session.drainShares()
             }
             .onChange(of: actualConnection, initial: true) { _, state in
@@ -548,11 +575,19 @@ struct RootView: View {
             // not being read, and must not report that it was. Kept apart from the switch above
             // so the reconnect only happens on an actual transition into `.active`.
             .onChange(of: scenePhase, initial: true) { _, phase in
-                session.model?.foreground = phase == .active
+                session.hosts.foreground = phase == .active && !settings
+                if session.hosts.sessions.isEmpty { session.model?.foreground = phase == .active && !settings }
+            }
+            .onChange(of: settings) { _, shown in
+                session.hosts.foreground = scenePhase == .active && !shown
+                if session.hosts.sessions.isEmpty { session.model?.foreground = scenePhase == .active && !shown }
+            }
+            .onChange(of: session.hosts.sessions.map { $0.model.compatibility }) { _, _ in
+                session.finishIncompatiblePairing()
             }
             // The badge counts threads, not messages: it is the same number the list's dots add
             // up to. Zero clears it rather than drawing a nought.
-            .onChange(of: session.model?.unreadCount ?? 0, initial: true) { _, count in
+            .onChange(of: session.unreadCount, initial: true) { _, count in
                 Task { try? await UNUserNotificationCenter.current().setBadgeCount(count) }
                 // Read state is the runtime's, so this fires when any device reads a thread —
                 // and a notification for a thread nobody is behind on is stale on every device.
@@ -568,13 +603,17 @@ struct RootView: View {
     /// Withdraws delivered notifications whose thread is no longer unread. Threads are matched by
     /// the opaque reference a push carries, so nothing here learns more than the phone already knows.
     private func pruneDeliveredNotifications() {
-        guard let model = session.model else { return }
-        let unread = Set(model.threads.filter(\.isUnread).map { YorozuCrypto.threadRef($0.id) })
+        let unread = Dictionary(uniqueKeysWithValues: session.hosts.sessions.map { host in
+            (host.id, Set(host.model.threads.filter(\.isUnread).map { YorozuCrypto.threadRef($0.id) }))
+        })
+        let keys = session.notificationKeys
         let center = UNUserNotificationCenter.current()
         center.getDeliveredNotifications { delivered in
             let stale = delivered.compactMap { note -> String? in
-                guard let ref = note.request.content.userInfo["ref"] as? String, !unread.contains(ref)
-                else { return nil }
+                let info = note.request.content.userInfo
+                guard let ref = info["ref"] as? String,
+                      let verified = NotificationFallback.authenticatedPreview(userInfo: info, keys: keys),
+                      let unreadRefs = unread[verified.hostID], !unreadRefs.contains(ref) else { return nil }
                 return note.request.identifier
             }
             if !stale.isEmpty { center.removeDeliveredNotifications(withIdentifiers: stale) }
@@ -605,13 +644,17 @@ struct RootView: View {
                     ? String(localized: "Not a Yorozu pairing code.") : showcasePairingError,
                 connecting: pairingScene == "pairing-connecting" || showcasePairingConnecting
             )
+        } else if session.showingHosts {
+            multiHostContent
         } else if let model = session.model, !session.isPairing {
             pairedContent(model)
         } else {
             pairingContent
         }
         #else
-        if let model = session.model, !session.isPairing {
+        if session.showingHosts {
+            multiHostContent
+        } else if let model = session.model, !session.isPairing {
             pairedContent(model)
         } else {
             pairingContent
@@ -680,26 +723,10 @@ struct RootView: View {
                         .accessibilityLabel("Demo")
                 }
             }
-            // Unpairing lives in Settings behind a confirmation now, which is the only place it
-            // belongs: it is not something to do by mistyping a tap in a chat.
-            .sheet(isPresented: $settings) {
-                // Read when the sheet opens rather than held: `markPaired` writes the pairing
-                // date behind our back, and Settings is opened far too rarely for one Keychain
-                // read to be worth caching.
-                let stored = PairingStore.load()
-                SettingsView(
-                    status: connection.state,
-                    relayUrl: stored?.pairing.relayUrl ?? "—",
-                    pairedAt: stored?.pairedAt,
-                    onUnpair: session.unpair,
-                    isDemo: session.isDemo,
-                    onExitDemo: session.exitDemo,
-                    model: model
-                )
-            }
             .sheet(isPresented: $shareShowcase) {
                 ShareComposeView(
-                    threads: model.threads.prefix(5).map(ShareThread.init),
+                    hosts: [ShareHost(id: "showcase", label: "My Mac")],
+                    threads: model.threads.prefix(5).map { ShareThread(id: $0.id, title: $0.displayTitle, hostID: "showcase", hostLabel: "My Mac") },
                     load: { .link(URL(string: "https://cooking.example.com/roast-chicken")!) },
                     send: { _ in },
                     cancel: { shareShowcase = false }
@@ -717,14 +744,38 @@ struct RootView: View {
             }
     }
 
+    private var multiHostContent: some View {
+        MultiHostThreadListView(session: session.hosts, path: $hostPath, onSettings: { settings = true }) { host, thread in
+            let notification = session.notificationOpen.flatMap { $0.hostID == host.id && $0.threadId == thread.id ? $0 : nil }
+            ChatView(model: host.model, thread: thread, resumeRequest: notification?.id,
+                     notificationClass: notification?.notificationClass, notificationEventRef: notification?.eventRef,
+                     lastReadAt: notification?.lastReadAt, notificationSyncRevision: notification?.syncRevision) { agent, cwd in
+                if let draft = session.hosts.newDraft(on: host.id, agent: agent, cwd: cwd) { hostPath = [draft] }
+            }
+        }
+        .onChange(of: session.hostPath) { _, opened in hostPath = opened }
+        .onChange(of: session.hosts.sessions.map(\.id)) { _, ids in hostPath.removeAll { !ids.contains($0.hostID) } }
+        .onChange(of: hostPath, initial: true) { old, new in
+            for left in old where !new.contains(left) { session.hosts.model(for: left)?.discardDraft(left.threadID) }
+            for host in session.hosts.sessions { host.model.openThread = new.last.flatMap { $0.hostID == host.id ? $0.threadID : nil } }
+            if let shown = new.last { session.rememberHost(shown.hostID) }
+            if let notification = session.notificationOpen,
+               new.last != HostThreadID(hostID: notification.hostID, threadID: notification.threadId) { session.clearNotificationOpen() }
+        }
+        .onChange(of: session.hosts.lastUsedHostID) { _, id in
+            if let id { session.rememberHost(id) }
+        }
+        .onChange(of: session.hosts.sessions.map(\.label)) { _, _ in session.publishThreads() }
+    }
+
     private var pairingContent: some View {
         PairingFlowView(
             onPair: pair,
             onDemo: session.startDemo,
-            externalError: session.failure ?? session.model?.failure.map { _ in
+            externalError: session.pairingFailure ?? session.model?.failure.map { _ in
                 String(localized: "Couldn’t connect. Generate a new pairing code and try again.")
             },
-            connecting: session.isPairing && session.failure == nil && session.model?.failure == nil
+            connecting: session.isPairing && session.pairingFailure == nil
         )
     }
 
@@ -734,7 +785,30 @@ struct RootView: View {
             try session.pair(with: text)
             return nil
         } catch {
-            return String(localized: "Not a Yorozu pairing code.")
+            if session.pendingPairing != nil { return nil }
+            return (error as? Session.PairingFailure)?.errorDescription ?? String(localized: "Not a Yorozu pairing code.")
         }
+    }
+}
+
+/// Shared by the root and the presented Add Host flow, so links and duplicate scans ask alike.
+struct PairingConfirmation: ViewModifier {
+    let session: Session
+    var enabled = true
+
+    func body(content: Content) -> some View {
+        content.alert(session.pendingPairing?.existingHostID == nil ? "Add host?" : "Already connected",
+            isPresented: Binding(get: { enabled && session.pendingPairing != nil },
+                                 set: { if !$0 && enabled { session.cancelPendingPairing() } }),
+            presenting: session.pendingPairing) { pending in
+                Button(pending.existingHostID == nil ? "Add host" : "Repair connection") {
+                    Task { await session.confirmPairing(pending) }
+                }
+                Button("Cancel", role: .cancel) { session.cancelPendingPairing() }
+            } message: { pending in
+                Text(pending.existingHostID == nil
+                    ? "Add this Mac to Yorozu?\n\nRelay: \(pending.relayHost)\nMac key: \(pending.macKeyFingerprint)"
+                    : "This Mac is already paired. Repair replaces only its connection.\n\nRelay: \(pending.relayHost)\nMac key: \(pending.macKeyFingerprint)")
+            }
     }
 }

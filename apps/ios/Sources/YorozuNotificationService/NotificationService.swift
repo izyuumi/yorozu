@@ -27,10 +27,13 @@ final class NotificationService: UNNotificationServiceExtension {
         content.body = NotificationFallback.body
         content.categoryIdentifier = ""
         content.interruptionLevel = .active
+        content.userInfo.removeValue(forKey: NotificationFallback.localHostKey)
         bestAttemptContent = content
-        if let preview = NotificationFallback.decryptedPreview(
-            userInfo: content.userInfo, key: NotificationPreview.loadKey()
+        if let match = NotificationFallback.authenticatedPreview(
+            userInfo: content.userInfo, keys: NotificationPreview.loadKeys()
         ) {
+            let preview = match.preview
+            content.userInfo[NotificationFallback.localHostKey] = match.hostID
             content.body = preview.body
             // Allow and Deny appear only when the Mac sealed `quick` into the preview and the
             // preview names the card this push is about. The app checks the same thing again

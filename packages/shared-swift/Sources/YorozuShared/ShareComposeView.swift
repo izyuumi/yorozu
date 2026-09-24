@@ -79,24 +79,26 @@
 
     /// The composer the share sheet puts up. It asks three questions in the order they are
     /// actually answered — is this the right thing, is there anything to say about it, and where
-    /// does it go — and nothing else. Sending is one tap from opening it, because the picker
-    /// already has an answer selected when it appears.
+    /// does it go — and nothing else. A new session always requires an explicit host choice.
     ///
     /// It lives in the shared package rather than in the extension so the app can put it on
     /// screen too: nothing on a simulator can open a share sheet on demand, and a screenshot of
     /// this is worth having.
     public struct ShareComposeView: View {
+        let hosts: [ShareHost]
         let threads: [ShareThread]
         let load: () async -> SharedItem
         let send: (SharePayload) -> Void
         let cancel: () -> Void
 
         public init(
+            hosts: [ShareHost] = [],
             threads: [ShareThread],
             load: @escaping () async -> SharedItem,
             send: @escaping (SharePayload) -> Void,
             cancel: @escaping () -> Void
         ) {
+            self.hosts = hosts
             self.threads = threads
             self.load = load
             self.send = send
@@ -108,7 +110,8 @@
         /// Nil is "New session", which is also where a first-time share goes: offering the newest
         /// thread by default would put a link in whatever was last talked about, which is rarely
         /// where it belongs.
-        @State private var threadId: String?
+        @State private var destination: HostThreadID?
+        @State private var newHostID: HostID?
         @FocusState private var noteFocused: Bool
 
         public var body: some View {
@@ -144,23 +147,38 @@
                         ShareThreadRow(
                             title: String(localized: "New session"),
                             symbol: "plus.bubble",
-                            selected: threadId == nil
+                            selected: destination == nil
                         ) {
-                            threadId = nil
+                            destination = nil
+                            newHostID = nil
                         }
-                        ForEach(threads.prefix(5)) { thread in
+                        if destination == nil {
+                            Picker("Host", selection: $newHostID) {
+                                Text("Choose a host").tag(nil as HostID?)
+                                ForEach(hosts) { host in
+                                    Text(host.label).tag(Optional(host.id))
+                                }
+                            }
+                            .accessibilityIdentifier("share-host-picker")
+                        }
+                        ForEach(availableThreads.prefix(5), id: \.destination) { thread in
                             ShareThreadRow(
                                 title: thread.title,
+                                subtitle: thread.hostLabel ?? hosts.first { $0.id == thread.hostID }?.label,
                                 symbol: "bubble.left.and.bubble.right",
-                                selected: threadId == thread.id
+                                selected: destination == thread.destination
                             ) {
-                                threadId = thread.id
+                                destination = thread.destination
                             }
                         }
                     } header: {
                         Text("Send to")
                     } footer: {
-                        Text("If your Mac is offline, this waits securely and sends when it reconnects.")
+                        if hosts.isEmpty {
+                            Text("Open Yorozu to connect a host before sharing.")
+                        } else {
+                            Text("Choose the Mac that should receive this. If it is offline, this waits securely until it reconnects.")
+                        }
                     }
                 }
                 .navigationTitle("Yorozu")
@@ -185,10 +203,22 @@
             }
         }
 
+        private var availableThreads: [ShareThread] {
+            threads.filter { thread in
+                guard let hostID = thread.hostID else { return false }
+                return hosts.contains { $0.id == hostID }
+            }
+        }
+
+        private var selectedHostID: HostID? {
+            let hostID = destination?.hostID ?? newHostID
+            return hostID.flatMap { id in hosts.contains { $0.id == id } ? id : nil }
+        }
+
         /// A note on its own is a message; a shared thing on its own is a message. Only both
         /// empty, or a picture that cannot go, is nothing to send.
         private var canSend: Bool {
-            guard let item else { return false }
+            guard selectedHostID != nil, let item else { return false }
             if case .tooLarge = item { return false }
             return !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || !item.messageText.isEmpty
@@ -198,10 +228,10 @@
         /// The note first and the shared thing under it, which is the order they were meant in:
         /// the note is what you are saying, the link is what you are saying it about.
         private func hand() {
-            guard let item else { return }
+            guard canSend, let hostID = selectedHostID, let item else { return }
             let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
             let text = [note, item.messageText].filter { !$0.isEmpty }.joined(separator: "\n\n")
-            send(SharePayload(threadId: threadId, text: text, attachment: item.attachment))
+            send(SharePayload(hostID: hostID, threadId: destination?.threadID, text: text, attachment: item.attachment))
         }
     }
 
@@ -286,6 +316,7 @@
     /// one of them chosen, which is what a checkmark means everywhere else on the phone.
     private struct ShareThreadRow: View {
         let title: String
+        var subtitle: String? = nil
         let symbol: String
         let selected: Bool
         let choose: () -> Void
@@ -293,8 +324,19 @@
         var body: some View {
             Button(action: choose) {
                 HStack {
-                    Label(title, systemImage: symbol)
-                        .lineLimit(1)
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(title).lineLimit(1)
+                            if let subtitle {
+                                Text(subtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    } icon: {
+                        Image(systemName: symbol)
+                    }
                     Spacer()
                     if selected {
                         Image(systemName: "checkmark")

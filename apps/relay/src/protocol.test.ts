@@ -150,10 +150,10 @@ test("known devices are capped, and a device already known evicts nobody", () =>
 });
 
 test("push registrations are accepted only in the shape the relay stores", () => {
-  for (const deviceToken of ["a".repeat(64), "0123456789ABCDEF".repeat(4)]) {
+  for (const deviceToken of ["ab", "a".repeat(64), "b".repeat(128), "c".repeat(200), "d".repeat(1024), "0123456789ABCDEF".repeat(4)]) {
     expect(parsePush({ deviceToken })).toEqual({ deviceToken });
   }
-  for (const deviceToken of ["", "abc", "a".repeat(63), "a".repeat(65), "g".repeat(64), "a".repeat(64) + "\n"]) {
+  for (const deviceToken of ["", "abc", "a".repeat(63), "a".repeat(65), "g".repeat(64), "a".repeat(63) + "\n", "a".repeat(1026)]) {
     expect(parsePush({ deviceToken })).toBeNull();
   }
   expect(parsePush({})).toBeNull();

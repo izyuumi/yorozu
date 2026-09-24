@@ -9,6 +9,7 @@ struct PairingFlowView: View {
     let onDemo: () -> Void
     var externalError: String?
     var connecting = false
+    var addingHost = false
 
     private enum Destination: String, Identifiable {
         case scanner, manual
@@ -28,7 +29,7 @@ struct PairingFlowView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                         .accessibilityHidden(true)
                     Text("Yorozu").font(.largeTitle.weight(.semibold))
-                    Text("Your Mac's agent, in your pocket.")
+                    Text(addingHost ? "Connect another Mac." : "Your Mac's agent, in your pocket.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -47,10 +48,12 @@ struct PairingFlowView: View {
                     Button("Enter code manually") { destination = .manual }
                         .frame(minHeight: 44)
                         .disabled(connecting)
-                    Button("Try the demo", action: onDemo)
-                        .buttonStyle(.bordered)
-                        .foregroundStyle(.secondary)
-                        .frame(minHeight: 44)
+                    if !addingHost {
+                        Button("Try the demo", action: onDemo)
+                            .buttonStyle(.bordered)
+                            .foregroundStyle(.secondary)
+                            .frame(minHeight: 44)
+                    }
                     if connecting { ProgressView("Connecting…") }
                     if let error = error ?? externalError {
                         // Red carries the icon, not the words: red footnote text is under 4.5:1.

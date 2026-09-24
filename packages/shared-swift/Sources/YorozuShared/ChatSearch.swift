@@ -15,11 +15,12 @@ public struct SearchHit: Equatable, Sendable, Identifiable {
 
 /// Carries list-search intent into the transcript without changing thread identity.
 public struct ThreadSearchRequest: Equatable, Sendable, Identifiable {
-    public let id = UUID()
+    public let id: UUID
     public let threadId: String
     public let query: String
 
-    public init(threadId: String, query: String) {
+    public init(threadId: String, query: String, id: UUID = UUID()) {
+        self.id = id
         self.threadId = threadId
         self.query = query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -31,14 +32,15 @@ public struct ThreadSearchResults {
     public let messages: [ThreadSummary]
     public var isEmpty: Bool { threads.isEmpty && messages.isEmpty }
 
-    public init(threads: [ThreadSummary], query: String, messageText: (String) -> String) {
+    public init(threads: [ThreadSummary], query: String, metadataText: (String) -> String = { _ in "" }, messageText: (String) -> String) {
         var metadata: [ThreadSummary] = []
         var content: [ThreadSummary] = []
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if !needle.isEmpty {
             for thread in threads.sorted(by: { $0.lastActivity > $1.lastActivity }) {
-                if threadMatches(thread, query: needle) { metadata.append(thread) }
-                else if !searchRanges(in: messageText(thread.id), term: needle).isEmpty { content.append(thread) }
+                if threadMatches(thread, query: needle) || !searchRanges(in: metadataText(thread.id), term: needle).isEmpty {
+                    metadata.append(thread)
+                } else if !searchRanges(in: messageText(thread.id), term: needle).isEmpty { content.append(thread) }
             }
         }
         self.threads = metadata

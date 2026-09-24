@@ -81,8 +81,13 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         // and leave the app sitting disconnected until the next foreground.
         guard application.applicationState != .active else { return .noData }
         // Nothing paired: woken for a room this phone no longer belongs to.
-        guard let model = await MainActor.run(body: { Session.shared.model }) else { return .noData }
-        return await model.drain() ? .newData : .noData
+        let models = await MainActor.run { Session.shared.hosts.sessions.map(\.model) }
+        return await withTaskGroup(of: Bool.self) { group in
+            for model in models { group.addTask { await model.drain() } }
+            var changed = false
+            for await result in group { changed = changed || result }
+            return changed ? .newData : .noData
+        }
     }
 
     /// Suppress only a notification for the chat visibly being read. A live socket does not mean
@@ -91,9 +96,13 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        let ref = notification.request.content.userInfo["ref"] as? String
+        let info = notification.request.content.userInfo
+        let ref = info["ref"] as? String
         let reading = await MainActor.run {
-            ref.map { Session.shared.model?.isReading(threadRef: $0) == true } ?? false
+            let session = Session.shared
+            let verified = NotificationFallback.authenticatedPreview(userInfo: info, keys: session.notificationKeys)
+            guard let ref, let hostID = verified?.hostID else { return false }
+            return session.hosts.session(for: hostID)?.model.isReading(threadRef: ref) == true
         }
         return reading ? [] : [.banner, .list, .sound]
     }
@@ -124,20 +133,29 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         default: nil
         }
         let content = response.notification.request.content
-        if let answer, let eventRef,
-           NotificationFallback.permitsLockScreenAnswer(
-               body: content.body, userInfo: info, key: NotificationPreview.loadKey(), eventRef: eventRef
-           ) {
-            guard let model = await MainActor.run(body: { Session.shared.model }) else { return }
-            if await model.answerFromNotification(eventRef: eventRef, answer) { return }
-        }
-        let model = await MainActor.run { () -> ChatModel? in
+        let (hostID, actionModel) = await MainActor.run { () -> (HostID?, ChatModel?) in
+            // Initialize migration, verify the current key and capture its model without an
+            // actor hop between them: a concurrent repair cannot switch the approved session.
             let session = Session.shared
-            session.open(threadRef: ref, notificationClass: notificationClass, eventRef: eventRef)
-            return session.model
+            let keys = session.notificationKeys
+            let hostID = NotificationFallback.authenticatedPreview(userInfo: info, keys: keys)?.hostID
+            let permittedHostID = answer == nil ? nil : NotificationFallback.permittedLockScreenHost(
+                body: content.body, userInfo: info, keys: keys, eventRef: eventRef
+            )
+            return (hostID, permittedHostID.flatMap { session.hosts.session(for: $0)?.model })
         }
-        // Opened from a lock screen, so what this phone holds of that thread is whatever it had
-        // before the push. Ask for the rest now rather than leaving the chat to be pulled down.
-        await model?.refresh()
+        if let answer, let eventRef, let actionModel,
+           await actionModel.answerFromNotification(eventRef: eventRef, answer) { return }
+        let models = await MainActor.run { () -> [ChatModel] in
+            let session = Session.shared
+            // A relay-written host field is never used. Legacy taps may resolve only when
+            // this device has exactly one possible host; ambiguous taps only catch up.
+            session.open(threadRef: ref, hostID: hostID, notificationClass: notificationClass, eventRef: eventRef)
+            if let hostID { return session.hosts.session(for: hostID).map { [$0.model] } ?? [] }
+            return session.hosts.sessions.map(\.model)
+        }
+        await withTaskGroup(of: Void.self) { group in
+            for model in models { group.addTask { await model.refresh() } }
+        }
     }
 }

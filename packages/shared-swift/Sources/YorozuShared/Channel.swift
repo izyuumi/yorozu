@@ -40,10 +40,13 @@ public struct ChannelEnvelope: Codable, Equatable, Sendable {
 public struct ChannelCounter: Codable, Equatable, Sendable {
     public var send: Int
     public var recv: Int
+    /// Sticky authenticated negotiation requirement; absent for previously released peers.
+    public var peerInfoRequired: Bool?
 
-    public init(send: Int = 0, recv: Int = 0) {
+    public init(send: Int = 0, recv: Int = 0, peerInfoRequired: Bool? = nil) {
         self.send = send
         self.recv = recv
+        self.peerInfoRequired = peerInfoRequired
     }
 
     /// The `seq` for the next box out; the first is 1.

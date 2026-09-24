@@ -14,10 +14,14 @@ import SwiftUI
 /// show this as a sheet from their new-thread buttons and keyboard shortcuts. Both call
 /// `onStart` with a draft's worth of answer and close themselves.
 public struct NewThreadPicker: View {
-    private let projects: [ProjectFolder]
-    private let status: ProjectListStatus
-    private let onRefresh: (() async -> Void)?
+    private let fallbackProjects: [ProjectFolder]
+    private let fallbackStatus: ProjectListStatus
+    private let fallbackRefresh: (() async -> Void)?
     private let onStart: (ThreadAgent, String?) -> Void
+    private let session: MultiHostModel?
+    private let onHostStart: ((HostThreadID) -> Void)?
+
+    @State private var selectedHostID: HostID?
 
     @State private var path: [ThreadAgent] = NewThreadShowcase.agent.map { [$0] } ?? []
     @Environment(\.dismiss) private var dismiss
@@ -28,10 +32,40 @@ public struct NewThreadPicker: View {
         onRefresh: (() async -> Void)? = nil,
         onStart: @escaping (ThreadAgent, String?) -> Void
     ) {
-        self.projects = projects
-        self.status = status
-        self.onRefresh = onRefresh
+        self.fallbackProjects = projects
+        self.fallbackStatus = status
+        self.fallbackRefresh = onRefresh
         self.onStart = onStart
+        self.session = nil
+        self.onHostStart = nil
+    }
+
+    /// Host choice stays inside the existing sheet. Each change replaces the project source
+    /// and pops any agent's folder step before a draft can be created on another Mac.
+    public init(session: MultiHostModel, onStart: @escaping (HostThreadID) -> Void) {
+        self.fallbackProjects = []
+        self.fallbackStatus = .ready
+        self.fallbackRefresh = nil
+        self.onStart = { _, _ in }
+        self.session = session
+        self.onHostStart = onStart
+        self._selectedHostID = State(initialValue: session.preferredHostID)
+    }
+
+    private var selectedHost: HostSession? {
+        selectedHostID.flatMap { session?.session(for: $0) }
+    }
+    private var canStart: Bool {
+        guard session != nil else { return true }
+        guard let selectedHost else { return false }
+        if case .updateRequired = selectedHost.model.compatibility { return false }
+        return true
+    }
+    private var projects: [ProjectFolder] { selectedHost?.model.projects ?? fallbackProjects }
+    private var status: ProjectListStatus { selectedHost?.model.projectListStatus ?? fallbackStatus }
+    private var onRefresh: (() async -> Void)? {
+        if let model = selectedHost?.model { return { await model.refreshProjects() } }
+        return fallbackRefresh
     }
 
     /// The runtime that answers anywhere, and the ones that need a folder on the Mac first.
@@ -70,7 +104,13 @@ public struct NewThreadPicker: View {
                 .navigationDestination(for: ThreadAgent.self) { folders(for: $0) }
         }
         .yorozuTint()
-        .task(id: status == .offline) {
+        .onChange(of: selectedHostID) { _, _ in path = [] }
+        .onChange(of: session?.sessions.map(\.id)) { _, ids in
+            if let selectedHostID, ids?.contains(selectedHostID) != true {
+                self.selectedHostID = session?.preferredHostID
+            }
+        }
+        .task(id: "\(selectedHostID ?? ""):\(status == .offline)") {
             guard status != .offline else { return }
             await onRefresh?()
         }
@@ -81,9 +121,33 @@ public struct NewThreadPicker: View {
 
     private var runtimes: some View {
         List {
+            if let session {
+                Section {
+                    Picker("Host", selection: $selectedHostID) {
+                        ForEach(session.sessions) { host in
+                            Text(host.label).tag(Optional(host.id))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .accessibilityHint("The Mac that will receive this new thread")
+                    if let host = selectedHost {
+                        if case .updateRequired = host.model.compatibility {
+                            Label("Update required — see Settings", systemImage: "exclamationmark.circle")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if !host.model.canDeliver {
+                            Label("Mac offline — messages will queue", systemImage: "wifi.slash")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .listRowBackground(YorozuPalette.paper)
+            }
             Section {
                 ForEach(Self.assistants) { agent in
                     Button { start(agent, nil) } label: { runtime(agent) }
+                        .disabled(!canStart)
                         .listRowBackground(YorozuPalette.paper)
                         .accessibilityHint("Starts a thread now")
                 }
@@ -93,6 +157,7 @@ public struct NewThreadPicker: View {
             Section {
                 ForEach(Self.codingAgents) { agent in
                     NavigationLink(value: agent) { runtime(agent) }
+                        .disabled(!canStart)
                         .listRowBackground(YorozuPalette.paper)
                         .accessibilityHint("Then choose a project folder")
                 }
@@ -274,7 +339,15 @@ public struct NewThreadPicker: View {
     }
 
     private func start(_ agent: ThreadAgent, _ cwd: String?) {
-        onStart(agent, cwd)
+        if let session {
+            guard canStart, !agent.needsFolder || projects.contains(where: { $0.path == cwd }),
+                let selectedHostID, selectedHost != nil,
+                let id = session.newDraft(on: selectedHostID, agent: agent, cwd: cwd)
+            else { return }
+            onHostStart?(id)
+        } else {
+            onStart(agent, cwd)
+        }
         dismiss()
     }
 }

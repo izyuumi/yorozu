@@ -7,8 +7,6 @@ import YorozuShared
 struct GeneralView: View {
     @ObservedObject private var neverSleep = NeverSleep.shared
     @State private var session = MacChatSession.shared
-    @State private var pairingCode = ""
-    @State private var confirmingUnpair = false
     @State private var betaUpdates = Updates.beta
 
     var body: some View {
@@ -20,65 +18,37 @@ struct GeneralView: View {
                 }
                 .pickerStyle(.segmented)
                 if session.role == .client {
-                    if session.relay == nil {
-                        TextField("Pairing code", text: $pairingCode, axis: .vertical)
-                        LabeledContent("") {
-                            Button("Connect") {
-                                if (try? session.pair(with: pairingCode)) != nil { pairingCode = "" }
-                            }
-                            .disabled(pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-                        if let failure = session.failure {
-                            Text(failure).font(.caption).foregroundStyle(.red)
-                        } else if session.model.failure != nil {
-                            Text("Couldn’t connect. Generate a new pairing code and try again.")
-                                .font(.caption).foregroundStyle(.red)
-                        }
-                    } else {
-                        clientConnection
-                        if let pairedAt = session.pairedAt {
-                            LabeledContent("Paired since", value: pairedAt.formatted(date: .abbreviated, time: .shortened))
-                        }
-                        LabeledContent("") {
-                            Button("Unpair…", role: .destructive) { confirmingUnpair = true }
-                        }
-                    }
+                    Text("Manage paired Macs in Hosts.").foregroundStyle(.secondary)
                 }
-            }
-            .alert("Unpair this Mac?", isPresented: $confirmingUnpair) {
-                Button("Unpair", role: .destructive) { session.unpair() }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Yorozu will remove pairing keys and all cached chats from this Mac.")
             }
             if session.role == .host { RelayView() }
             // The one approval setting Yorozu itself still owns: the global bypass the
             // native agents read. Same toggle as the phone's; the runtime stores it.
-            Section {
-                Toggle("YOLO mode — skip all approvals", isOn: Binding(
-                    get: { session.model.yoloMode },
-                    set: { session.model.setYoloMode($0) }
-                ))
-            } header: {
-                Text("Agent runtime")
-            } footer: {
-                Group {
-                    if session.model.yoloMode {
-                        Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
-                            .foregroundStyle(.red)
-                        if let until = session.model.yoloUntil {
-                            Text("until \(Date(timeIntervalSince1970: Double(until) / 1000).formatted(date: .omitted, time: .shortened))")
-                                .foregroundStyle(.secondary)
+            if session.role == .host {
+                Section {
+                    Toggle("YOLO mode — skip all approvals", isOn: Binding(
+                        get: { session.model.yoloMode },
+                        set: { session.model.setYoloMode($0) }
+                    ))
+                } header: {
+                    Text("Agent runtime")
+                } footer: {
+                    Group {
+                        if session.model.yoloMode {
+                            Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
+                                .foregroundStyle(.red)
+                            if let until = session.model.yoloUntil {
+                                Text("until \(Date(timeIntervalSince1970: Double(until) / 1000).formatted(date: .omitted, time: .shortened))")
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Text("OpenClaw owns models, tools, browser access, credentials, and approvals.")
                         }
-                    } else {
-                        Text(session.role == .host
-                            ? "OpenClaw owns models, tools, browser access, credentials, and approvals."
-                            : "This Mac uses the OpenClaw runtime on its paired host Mac.")
                     }
+                    .leadingFooter()
                 }
-                .leadingFooter()
+                .onAppear { session.model.requestApprovalSettings() }
             }
-            .onAppear { session.model.requestApprovalSettings() }
             if session.role == .host {
                 Section {
                     KeepaliveView()
@@ -128,40 +98,6 @@ struct GeneralView: View {
         }
         .formStyle(.grouped)
         .toggleStyle(.switch)
-    }
-
-    private var clientConnection: some View {
-        let failure = session.failure ?? session.model.failure
-        let status = ClientConnectionStatus(
-            state: session.model.state, ownerOnline: session.model.ownerOnline, failure: failure
-        )
-        return VStack(alignment: .leading, spacing: 6) {
-            LabeledContent("Connection", value: status.label)
-            if let failure {
-                Label {
-                    Text(failure).textSelection(.enabled)
-                } icon: {
-                    Image(systemName: "exclamationmark.circle").foregroundStyle(.red)
-                }
-                .font(.caption)
-                Text("Check your network and that Yorozu is open on your host Mac. Yorozu will keep trying to reconnect.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if status == .hostOffline {
-                Text("Open Yorozu on your host Mac. Your conversations will reconnect when it is available.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if status == .connecting {
-                ProgressView().controlSize(.small)
-                    .accessibilityLabel("Connecting to your host Mac")
-            }
-            if status != .connected {
-                Button("Retry connection", action: session.retryConnection)
-                Text("Retrying keeps your pairing and conversations.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
     }
 
     private var versionLabel: String {
