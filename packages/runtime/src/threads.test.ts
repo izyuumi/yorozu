@@ -483,6 +483,16 @@ test("read state is the runtime's, and only moves forward unless it is reset", (
   expect(threadSummaries(dir)[0]!.lastReadAt).toBe(1);
 });
 
+test("a thread waits for approval until its card is answered", () => {
+  const thread = createThread("Deploy", dir);
+  expect(threadSummaries(dir)[0]!.awaitingApproval).toBeUndefined();
+  const base = { threadId: thread.id, ts: 1, agentId: "main" };
+  appendThreadEvent({ ...base, id: "card", kind: "approval_card", data: { actionId: "a", actionClass: "shell", target: "deploy.sh" } }, dir);
+  expect(threadSummaries(dir)[0]!.awaitingApproval).toBe(true);
+  appendThreadEvent({ ...base, id: "ans", kind: "approval_answer", data: { actionId: "a", answer: "yes" } }, dir);
+  expect(threadSummaries(dir)[0]!.awaitingApproval).toBeUndefined();
+});
+
 import { recoverNativeTurns, setNativeTurn } from "./threads.js";
 
 test("restart reconciles a committed final reply and retires dead native prompts", () => {

@@ -411,6 +411,8 @@ export interface ThreadSummary {
    * had been asleep for the reply.
    */
   lastAgentAt?: number;
+  /** An approval card in this thread nobody has answered yet. Absent means none. */
+  awaitingApproval?: boolean;
 }
 
 export interface ThreadListData {
