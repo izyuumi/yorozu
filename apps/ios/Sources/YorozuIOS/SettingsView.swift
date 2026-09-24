@@ -23,6 +23,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var addingHost = false
     @State private var repairHostID: HostID?
+    @State private var reregistered = false
 
     private static var version: String {
         let info = Bundle.main.infoDictionary
@@ -56,6 +57,23 @@ struct SettingsView: View {
                             repairHostID = nil
                             addingHost = true
                         }
+                    }
+                    .listRowBackground(YorozuPalette.paper)
+                }
+                if !session.isDemo {
+                    Section {
+                        Button {
+                            session.reregisterPush()
+                            reregistered = true
+                        } label: {
+                            LabeledContent("Re-register push notifications") {
+                                if reregistered { Image(systemName: "checkmark").foregroundStyle(YorozuPalette.sage) }
+                            }
+                        }
+                    } header: {
+                        Text("Notifications")
+                    } footer: {
+                        Text("Try this if notifications stop arriving or arrive twice.")
                     }
                     .listRowBackground(YorozuPalette.paper)
                 }

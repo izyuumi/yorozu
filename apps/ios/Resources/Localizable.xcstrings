@@ -1,6 +1,30 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Notifications" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Notificaciones" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "通知" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "알림" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "通知" } }
+      }
+    },
+    "Re-register push notifications" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Volver a registrar las notificaciones push" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "プッシュ通知を再登録" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "푸시 알림 다시 등록" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重新注册推送通知" } }
+      }
+    },
+    "Try this if notifications stop arriving or arrive twice." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Prueba esto si las notificaciones dejan de llegar o llegan dos veces." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "通知が届かない、または二重に届く場合にお試しください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "알림이 오지 않거나 두 번씩 올 때 사용해 보세요." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "如果通知不再送达或重复送达，请尝试此操作。" } }
+      }
+    },
     "The most specific matching rule applies. If equally specific rules conflict, Never allow wins." : {
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Se aplica la regla coincidente más específica. Si entran en conflicto reglas igual de específicas, prevalece «No permitir nunca»." } },

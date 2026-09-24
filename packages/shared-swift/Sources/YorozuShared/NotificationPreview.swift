@@ -33,11 +33,14 @@ public struct NotificationPreviewContent: Equatable, Sendable {
     public let event: String?
     /// Whether the Mac judged this card answerable from the lock screen. Never true for a reply.
     public let quick: Bool
+    /// The thread's title, shown as the notification's title; nil when the Mac sent none.
+    public let title: String?
 
-    public init(body: String, event: String?, quick: Bool) {
+    public init(body: String, event: String?, quick: Bool, title: String? = nil) {
         self.body = body
         self.event = event
         self.quick = quick
+        self.title = title
     }
 
     /// Nil for an empty body, which is no preview at all.
@@ -62,7 +65,8 @@ public struct NotificationPreviewContent: Equatable, Sendable {
         } else {
             quick = false
         }
-        self.init(body: body, event: event, quick: quick)
+        let title = (object["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        self.init(body: body, event: event, quick: quick, title: title)
     }
 }
 

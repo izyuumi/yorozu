@@ -486,7 +486,13 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           const push = parsePush(msg);
           if (!push) return ws.close(CLOSE_PROTOCOL, "bad push");
           const pubkey = phoneKeys.get(ws);
-          if (pubkey) conn.room.pushTokens.set(pubkey, push.deviceToken);
+          if (pubkey) {
+            // One token, one device: a re-paired phone's old key must not keep the same token.
+            for (const [other, token] of conn.room.pushTokens) {
+              if (other !== pubkey && token === push.deviceToken) conn.room.pushTokens.delete(other);
+            }
+            conn.room.pushTokens.set(pubkey, push.deviceToken);
+          }
           return;
         }
 
