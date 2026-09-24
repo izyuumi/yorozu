@@ -102,10 +102,14 @@ public final class ChatModel {
         return agentModels[agent.rawValue] ?? []
     }
 
+    /// The efforts a thread may ask for: its model's, or the first model's while it is on Default.
     public func efforts(for thread: ThreadSummary) -> [ReasoningEffort] {
-        guard thread.agent?.needsFolder == true else { return [.low, .medium, .high] }
+        efforts(for: thread, on: thread.model)
+    }
+
+    private func efforts(for thread: ThreadSummary, on model: String?) -> [ReasoningEffort] {
         let models = models(for: thread)
-        return (models.first { $0.id == thread.model } ?? models.first)?.efforts ?? []
+        return (models.first { $0.id == model } ?? models.first)?.efforts ?? []
     }
     /// Where a coding agent's thread can be started, recents first, as the Mac last listed
     /// them. Arrives with the thread list; empty until then.
@@ -150,7 +154,13 @@ public final class ChatModel {
     /// The thread the user is looking at, set by whatever owns the navigation: the top of the
     /// phone's path, or the Mac's sidebar selection. Nil means none is open.
     public var openThread: String? {
-        didSet { if openThread != oldValue { reportRead(); saveComposerSoon() } }
+        didSet {
+            if openThread != oldValue {
+                reportRead()
+                saveComposerSoon()
+                requestOpenHistory()
+            }
+        }
     }
     /// Whether this device is actually in front of somebody: the app is active, and on the Mac
     /// the chat window is the key window as well. Set by whichever app owns the scene.
@@ -203,6 +213,9 @@ public final class ChatModel {
     /// Replay progress follows the runtime's log order, independently of live events and
     /// the timeline's timestamp order. Advancing from either can skip unseen sync pages.
     private var syncLastSeen: [String: String] = [:]
+    private var historyCursors: [String: String] = [:]
+    private var historyLoaded: Set<String> = []
+    private var historyInFlight: Set<String> = []
 
     private func persistEvents(in ids: Set<String>) {
         guard cache != nil else { return }
@@ -213,13 +226,16 @@ public final class ChatModel {
         guard let cache else { return }
         let previous = cacheWrite
         let lastSeen = syncLastSeen
+        let historyCursors = historyCursors
+        let historyLoaded = historyLoaded
         // Value snapshots are sealed and written on a worker, in order. The outbox keeps its
         // separate synchronous durability boundary: unsent user input must never be lost.
         cacheWrite = Task.detached(priority: .utility) {
             await previous?.value
             if let threads { cache.save(threads: threads) }
             for (id, events) in events {
-                cache.save(events: events, threadId: id, lastSeen: lastSeen[id])
+                cache.save(events: events, threadId: id, lastSeen: lastSeen[id],
+                           historyCursor: historyCursors[id], historyLoaded: historyLoaded.contains(id))
             }
         }
     }
@@ -265,6 +281,9 @@ public final class ChatModel {
             }
         }
         for thread in synced {
+            let history = cache.historyState(threadId: thread.id)
+            historyCursors[thread.id] = history.cursor
+            if history.loaded { historyLoaded.insert(thread.id) }
             // Older clients replaced streamed replies in place, leaving their final
             // timestamp ahead of the tool history below them in the saved array.
             let events = cache.events(threadId: thread.id).sorted { $0.ts < $1.ts }
@@ -698,12 +717,14 @@ public final class ChatModel {
     /// yet keeps the choice on the draft — there is no thread on the Mac to set it on until the
     /// first message, which carries it along (see ``send(_:in:attachment:)``).
     public func setModel(_ thread: ThreadSummary, _ model: String?) {
+        // An effort the new model does not offer goes with the switch; one it does is kept.
+        let effort = thread.effort.flatMap { efforts(for: thread, on: model).contains($0) ? $0 : nil }
         if let index = draftThreads.firstIndex(where: { $0.id == thread.id }) {
             draftThreads[index].model = model
-            if thread.agent?.needsFolder == true { draftThreads[index].effort = nil }
+            draftThreads[index].effort = effort
             return
         }
-        set(thread.id) { $0.model = model; if thread.agent?.needsFolder == true { $0.effort = nil } }
+        set(thread.id) { $0.model = model; $0.effort = effort }
         emit(.threadSetModel(ThreadSetModelData(model: model)), in: thread.id)
     }
 
@@ -953,6 +974,17 @@ public final class ChatModel {
         )
     }
 
+    /// Backfill only the opened thread. Its cursor stays separate from routine sync, whose
+    /// post-pairing position may already be ahead of the history this request needs.
+    private func requestOpenHistory() {
+        guard cache != nil, state == .paired, ownerOnline, let id = openThread,
+              synced.contains(where: { $0.id == id }), !historyLoaded.contains(id),
+              historyInFlight.insert(id).inserted else { return }
+        emit(.syncRequest(SyncRequestData(
+            lastSeen: historyCursors[id].map { [id: $0] } ?? [:], threadId: id
+        )), in: "")
+    }
+
     /// What a pull-to-refresh does: ask for a fresh thread list and every event we are behind on.
     ///
     /// The wait is the whole of the "async" here. Both answers arrive over the transport as
@@ -983,6 +1015,7 @@ public final class ChatModel {
                     updateStatus.deadline = nil
                 }
             }
+            historyInFlight.removeAll()
             if state == .paired {
                 failure = nil
                 // Pull is truth. Nothing sent while this socket was down was kept for us —
@@ -990,6 +1023,7 @@ public final class ChatModel {
                 // for all of it again rather than trusting whatever was last pushed.
                 emit(.threadList(ThreadListData(threads: [])), in: "")
                 requestSync()
+                requestOpenHistory()
                 requestDevices()
                 requestRules()
                 if ownerOnline { requestTerminalStatus() }
@@ -999,12 +1033,15 @@ public final class ChatModel {
                 flush()
             }
         case .ownerOnline(let online):
+            let wasOnline = ownerOnline
             ownerOnline = online
             if !online { invalidateTerminalConnection() }
             if !online && updateStatus.phase != .none && updateStatus.phase != .installing {
                 updateStatus.phase = .unknown
                 updateStatus.deadline = nil
             }
+            if !online { historyInFlight.removeAll() }
+            else if !wasOnline { requestOpenHistory() }
             if online {
                 resumeResultRequests()
                 if state == .paired {
@@ -1037,18 +1074,27 @@ public final class ChatModel {
                 }
                 listed = true
                 persist(threads: synced)
+                requestOpenHistory()
                 onThreads?()
             case .syncDelta(let data):
                 for event in data.events {
                     upsert(event, persist: false)
-                    syncLastSeen[event.threadId] = event.syncCursor ?? event.id
+                    if data.threadId == nil { syncLastSeen[event.threadId] = event.syncCursor ?? event.id }
+                    else { historyCursors[event.threadId] = event.syncCursor ?? event.id }
                 }
-                persistEvents(in: Set(data.events.map(\.threadId)))
+                if let id = data.threadId {
+                    historyInFlight.remove(id)
+                    if data.more != true { historyLoaded.insert(id) }
+                }
+                persistEvents(in: Set(data.events.map(\.threadId)).union(data.threadId.map { [$0] } ?? []))
                 if let workingThreadIds = data.workingThreadIds {
                     generating = Set(workingThreadIds)
                 }
-                if data.more == true { requestSync() }
-                else {
+                if data.more == true {
+                    if data.threadId != nil { requestOpenHistory() }
+                    else { requestSync() }
+                }
+                else if data.threadId == nil {
                     syncRevision += 1
                     // Counted only once the sync is whole: a background drain is waiting for
                     // exactly this to know it has caught up and may hang up, and a page with

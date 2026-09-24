@@ -20,6 +20,40 @@ final class KeyboardChooserTests: XCTestCase {
     }
 
     @MainActor
+    func testBackgroundReplyKeepsNewThreadPickerVisible() {
+        checkPickerDuringReply(fromChat: false)
+    }
+
+    @MainActor
+    func testReplyKeepsChatPickerVisible() {
+        checkPickerDuringReply(fromChat: true)
+    }
+
+    @MainActor
+    private func checkPickerDuringReply(fromChat: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["-yorozuShowcase", "threads", "-yorozuPickerReply", "1"]
+        app.launch()
+        if fromChat {
+            let thread = app.buttons["Standup notes. Summarised yesterday's thread."]
+            XCTAssertTrue(thread.waitForExistence(timeout: step))
+            thread.tap()
+        }
+        let compose = app.buttons[fromChat ? "New session" : "New thread"]
+        XCTAssertTrue(compose.waitForExistence(timeout: step))
+        compose.tap()
+        let agent = app.buttons["Claude Code, Anthropic’s coding agent, working in a project on your Mac."]
+        XCTAssertTrue(agent.waitForExistence(timeout: step))
+        agent.tap()
+        let delivered = app.buttons["Reply received, Claude Code"]
+        XCTAssertTrue(delivered.waitForExistence(timeout: 15), "Background reply hid or reset the picker")
+        XCTAssertTrue(delivered.isHittable, "Picker must remain interactive after the reply")
+        delivered.tap()
+        XCTAssertTrue(app.textViews["Message"].waitForExistence(timeout: step), "Folder choice must open the new draft")
+        XCTAssertTrue(delivered.waitForNonExistence(timeout: 5), "Starting a thread must dismiss the picker")
+    }
+
+    @MainActor
     func testChoosingKeepsKeyboardAndDraft() throws {
         let app = launchChat()
         let field = composerField(in: app)

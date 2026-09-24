@@ -4,6 +4,8 @@ import SwiftUI
 /// the second step without a tap.
 @MainActor public enum NewThreadShowcase {
     public static var agent: ThreadAgent?
+    /// UI tests deliver an incoming reply once the folder step is actually on screen.
+    public static var onFoldersAppear: (() -> Void)?
 }
 
 /// Who should answer a new thread, and — for a coding agent — where. Two steps at most, and a
@@ -238,6 +240,7 @@ public struct NewThreadPicker: View {
         }
         .paperList()
         .navigationTitle(agent.label)
+        .onAppear { NewThreadShowcase.onFoldersAppear?() }
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
         #endif

@@ -160,8 +160,8 @@ Want changes from `main` before the next stable release? Install the [Mac beta](
 
 ## Documentation
 
-See the [documentation index](docs/README.md) for current guides and referenced specs. For
-guided device setup, use [Start.md](Start.md).
+See the [documentation index](docs/README.md) for guides, design references, and App Store
+material. For guided device setup, use [Start.md](Start.md).
 
 ## License
 

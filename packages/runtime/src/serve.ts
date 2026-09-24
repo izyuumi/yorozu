@@ -47,6 +47,7 @@ import {
   type ModelOption,
   type PeerInfoData,
   type PeerCompatibility,
+  type ReasoningEffort,
   type MessageAttachment,
   type ProgressCardData,
   type ThreadAgent,
@@ -350,7 +351,7 @@ export interface DeviceRecord {
   signingPub?: string;
   /** Platform and OS version announced by this device. */
   name?: string;
-  /** First pairing time. Sync never backfills events older than this device relationship. */
+  /** First pairing time. Routine sync and live delivery start here; opening a thread can fetch its older log. */
   pairedAt?: number;
   /** Epoch milliseconds we last heard from it; 0 for a device paired before this was kept. */
   lastSeen: number;
@@ -764,11 +765,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * at that point would draw an empty menu first.
    */
   const agentModels: Partial<Record<Exclude<ThreadAgent, "yorozu">, ModelOption[]>> = {};
+  const modelsFor = (agent: ThreadAgent): ModelOption[] =>
+    agent === "yorozu" ? (provider ? legacy?.models() ?? [] : openclawModels) : agentModels[agent] ?? [];
+  /** The efforts a thread may ask for: its model's, or the first model's while it is on Default. */
+  const effortsFor = (agent: ThreadAgent, model: string | undefined): ReasoningEffort[] =>
+    (modelsFor(agent).find((m) => m.id === model) ?? modelsFor(agent)[0])?.efforts ?? [];
   const modelList = (): YorozuEvent =>
-    control({
-      kind: "model_list",
-      data: { models: provider ? legacy?.models() ?? [] : openclawModels, agentModels },
-    });
+    control({ kind: "model_list", data: { models: modelsFor("yorozu"), agentModels } });
 
   for (const agent of ["claude-code", "codex"] as const) {
     void nativeRunners[agent]?.models?.().then((models) => {
@@ -845,10 +848,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
   };
 
   let openclawModels: ModelOption[] = [];
-  void openclaw?.listModels().then((models) => {
-    openclawModels = models;
-    broadcast(modelList());
-  }).catch((error: unknown) => state(`model-list-error ${String(error)}`));
+  /** Asked again on every `thread_list`, so a provider added to OpenClaw shows up without a relaunch. */
+  const refreshModels = (): void => {
+    void openclaw?.listModels().then((models) => {
+      if (JSON.stringify(models) === JSON.stringify(openclawModels)) return;
+      openclawModels = models;
+      broadcast(modelList());
+    }).catch((error: unknown) => state(`model-list-error ${String(error)}`));
+  };
+  refreshModels();
 
   /**
    * Every device this Mac answers, the local socket's clients included: the Mac app is one more
@@ -889,18 +897,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
     pushDevices();
   };
 
-  /**
-   * What the device has not seen, across every live thread, in one frame — up to a page. A
-   * page is cut where the next event would take it past `SYNC_PAGE_BYTES`, and `more` tells
-   * the phone to ask again: its `lastSeen` has moved to the end of what it got, so the next
-   * page carries on from there, and the threads this one never reached.
-   */
-  const syncDelta = (lastSeen: Record<string, string>, pairedAt = 0): YorozuEvent => {
+  /** A bounded replay page. An explicit thread request includes its pre-pairing history. */
+  const syncDelta = (lastSeen: Record<string, string>, pairedAt = 0, threadId?: string): YorozuEvent => {
     const events: YorozuEvent[] = [];
     let bytes = 0;
     let more = false;
-    threads: for (const thread of listThreads(dir).filter((thread) => !thread.archived)) {
-      const page = eventsAfter(thread.id, lastSeen?.[thread.id], dir, pairedAt);
+    const selected = listThreads(dir).filter((thread) => threadId ? thread.id === threadId : !thread.archived);
+    threads: for (const thread of selected) {
+      const page = eventsAfter(thread.id, lastSeen?.[thread.id], dir, threadId ? 0 : pairedAt);
       if (page.length === SYNC_LIMIT) more = true;
       for (const event of page) {
         const size = Buffer.byteLength(JSON.stringify(event));
@@ -914,7 +918,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     return control({
       kind: "sync_delta",
-      data: { events, workingThreadIds: [...running.keys()], ...(more ? { more: true } : {}) },
+      data: { events, workingThreadIds: [...running.keys()], ...(threadId ? { threadId } : {}), ...(more ? { more: true } : {}) },
     });
   };
 
@@ -1471,6 +1475,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       case "thread_list":
         reply(threadList());
         reply(modelList());
+        refreshModels();
         return reply(projectList());
       case "project_list":
         return reply(projectList());
@@ -1484,21 +1489,23 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (event.data.action === "continue") void enqueueTurn(event.threadId, "Continue the interrupted turn.");
         return;
       }
+      // A pick is only ever one of the published options, whichever agent the thread is on. An
+      // effort the new model does not offer is dropped with the switch, and one it does is kept.
       case "thread_set_model": {
         const agent = threadAgent(event.threadId, dir);
         const model = event.data.model;
         if (model != null && typeof model !== "string") return;
-        if (agent !== "yorozu" && model && !agentModels[agent]?.some((m) => m.id === model)) return;
-        if (setThreadModel(event.threadId, model ?? null, dir) && agent !== "yorozu") setThreadEffort(event.threadId, null, dir);
+        if (model && !modelsFor(agent).some((m) => m.id === model)) return;
+        if (!setThreadModel(event.threadId, model ?? null, dir)) return;
+        const effort = threadEffort(event.threadId, dir);
+        if (effort && !effortsFor(agent, model ?? undefined).includes(effort)) setThreadEffort(event.threadId, null, dir);
         return broadcast(threadList());
       }
       case "thread_set_effort": {
         const agent = threadAgent(event.threadId, dir);
         const effort = event.data.effort;
         if (effort != null && !REASONING_EFFORTS.includes(effort)) return;
-        const choices = agent === "yorozu" ? ["low", "medium", "high"] :
-          (agentModels[agent]?.find((m) => m.id === threadModel(event.threadId, dir)) ?? agentModels[agent]?.[0])?.efforts ?? [];
-        if (effort && !choices.includes(effort)) return;
+        if (effort && !effortsFor(agent, threadModel(event.threadId, dir)).includes(effort)) return;
         setThreadEffort(event.threadId, effort ?? null, dir);
         return broadcast(threadList());
       }
@@ -1516,7 +1523,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
       case "device_remove":
         return forgetDevice(event.data.pub);
       case "sync_request":
-        return reply(syncDelta(event.data.lastSeen, pairedAt));
+        if (event.data.threadId !== undefined && (typeof event.data.threadId !== "string" || !event.data.threadId)) return;
+        return reply(syncDelta(event.data.lastSeen, pairedAt, event.data.threadId));
     }
 
     if (event.kind !== "message" || event.data.role !== "user") return;

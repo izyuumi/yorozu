@@ -8,7 +8,7 @@
  * id and hands back the one to store, so a later prompt resumes where the agent left off.
  */
 
-import { query as sdkQuery, type Options, type Query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query as sdkQuery, type ModelInfo, type Options, type Query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { EventPayload, ModelOption, ReasoningEffort } from "@yorozu/shared";
 
 export interface NativeTurn {
@@ -98,6 +98,13 @@ export type QueryFn = typeof sdkQuery;
 export const claudeEffort = (effort?: ReasoningEffort): Options["effort"] =>
   effort && ["low", "medium", "high", "xhigh", "max"].includes(effort) ? effort as Options["effort"] : undefined;
 
+function claudeModelLabel(model: ModelInfo): string {
+  const family = model.displayName.match(/^[A-Za-z]+/)?.[0];
+  if (!family || !model.resolvedModel) return model.displayName;
+  const version = model.resolvedModel.match(new RegExp(`^claude-${family.toLowerCase()}-(\\d+)(?:-(\\d+))?`));
+  return version ? model.displayName.replace(family, `${family} ${version[1]}${version[2] ? `.${version[2]}` : ""}`) : model.displayName;
+}
+
 /**
  * Claude Code through the Agent SDK. The CLI's own tools, settings and permission model apply
  * — this is a coding session, not Yorozu's loop — and `resume` carries the thread's session.
@@ -111,7 +118,7 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
       const session = query({ prompt: (async function* () {})(), options: { tools: [], env: childEnv() } });
       try {
         return (await session.supportedModels()).map((model) => ({
-          id: model.value, label: model.displayName, providerLabel: "Claude Code",
+          id: model.value, label: claudeModelLabel(model), providerLabel: "Claude Code",
           efforts: model.supportedEffortLevels ?? [],
         }));
       } finally { session.close(); }

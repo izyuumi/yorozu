@@ -39,6 +39,24 @@ enum Showcase {
         }
         model.onThreads = seed
         seed()
+        // `-yorozuWindow settings|setup`: the window a screenshot is of when it is not the
+        // chat. Opened once the chat window is up, and its number printed the same way.
+        if let extra = launchArgument("yorozuWindow") {
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1.5))
+                switch extra {
+                // Settings is opened by ``ChatWindowView``, which has the environment action.
+                case "settings": break
+                case "setup": OnboardingWindow.show()
+                default: return
+                }
+                try? await Task.sleep(for: .seconds(1.5))
+                for window in NSApp.windows where window.isVisible {
+                    print("YOROZU-MAC extra=\(window.windowNumber) \(window.title)")
+                }
+                fflush(stdout)
+            }
+        }
     }
 
     /// The draft the approval scenes seed into. Remembered, so re-seeding on a later thread

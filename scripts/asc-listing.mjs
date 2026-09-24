@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Apply Yorozu iOS 0.2.0 listing. Never creates a review submission.
+// Validate locally by default; --apply updates Yorozu iOS 0.4.0. Never submits for review.
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -8,29 +8,50 @@ import { asc } from "./asc.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const appId = "6811274963";
-const versionString = "0.2.0";
-const listing = {
-  description: `Yorozu connects your iPhone to the AI agents running on your own Mac, OpenClaw, Claude Code and Codex, so you can start a task from the couch, approve a command from the lock screen, and pick the thread up again at your desk.
-
-• End-to-end encrypted: messages are sealed on your devices. Yorozu's relay only passes ciphertext it has no key for.
-• Approvals on the lock screen: when an agent needs a yes or no, answer from the notification.
-• Threads that follow you: conversations stay in sync between your Mac and iPhone, with search, pinning and archive.
-• Coding agents too: start a Claude Code or Codex session in a project folder on your Mac and watch it work.
-• No Yorozu account: pair once with a QR code. Your agents, models and credentials stay on your Mac.
-
-Yorozu needs the free Yorozu app for Mac (macOS 15 or later, Apple silicon) with OpenClaw installed: yorozu.yumi.to. To look around first, tap "Try the demo" on the pairing screen.
-
-Important: Anthropic and OpenAI set their own rules for using their subscriptions with third-party tools. Driving Claude Code or Codex through Yorozu with a subscription login may put that account at risk. See yorozu.yumi.to/terms.
-
-Yorozu is open source under the MIT license. It is not affiliated with OpenClaw, Anthropic or OpenAI.`,
-  keywords: "AI agent,remote,Mac,assistant,coding,approvals,encrypted,automation,companion,tasks",
-  promotionalText: "Start tasks, answer approvals from the lock screen, and follow progress from your iPhone while OpenClaw, Claude Code or Codex work on your Mac.",
-  supportUrl: "https://github.com/izyuumi/yorozu/issues",
-  marketingUrl: "https://yorozu.yumi.to",
-  subtitle: "Your Mac's AI agents, anywhere",
-  privacyPolicyUrl: "https://yorozu.yumi.to/privacy/",
-  notes: "Yorozu is a remote for AI agents that run on the user's own Mac, so a real session needs the free Yorozu Mac app, which is distributed outside the Mac App Store at https://yorozu.yumi.to/mac. To review without a Mac, tap \"Try the demo\" on the first screen. It opens sample threads, including a Claude Code and a Codex thread, a pending approval card, a progress card and a question card. Sending a message in the demo returns an explanatory reply. No account or sign-in is needed. Pairing with a real Mac uses a one-time code that expires after 10 minutes, which is why we provide the demo instead of a code. Encryption uses Apple's CryptoKit only. Source code: https://github.com/izyuumi/yorozu",
-};
+const versionString = "0.4.0";
+const versionId = "170d8b17-739e-4df5-8e52-135a10c20fe2";
+const infoId = "742a0425-c931-4ec4-97c0-d7f26a4ed936";
+const buildId = "ee3786cc-7e74-476c-b48e-192c8a5d6432";
+const buildNumber = "10";
+const sourcePath = join(root, `docs/app-store/listing-${versionString}.md`);
+const source = readFileSync(sourcePath, "utf8");
+const fields = [
+  ["Name", "name", 30], ["Subtitle", "subtitle", 30],
+  ["Promotional text", "promotionalText", 170], ["Description", "description", 4000],
+  ["Keywords", "keywords", 100], ["What's new", "whatsNew", 4000],
+  ["Support URL", "supportUrl", 1000], ["Marketing URL", "marketingUrl", 1000],
+  ["Privacy policy URL", "privacyPolicyUrl", 1000], ["Review notes", "notes", 4000],
+];
+const listing = {};
+const lengths = {};
+const screenshotSpecs = [
+  { type: "APP_IPHONE_67", dir: "docs/app-store/screenshots/iphone-6.9", width: 1320, height: 2868 },
+  { type: "APP_IPAD_PRO_3GEN_129", dir: "docs/app-store/screenshots/ipad-13", width: 2064, height: 2752 },
+];
+const editable = new Set(["PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "METADATA_REJECTED", "REJECTED", "INVALID_BINARY"]);
+function check(condition, message) { if (!condition) throw new Error(message); }
+function validateLocal() {
+  check(source.split("\n")[0] === `# App Store listing — Yorozu ${versionString} (iOS)`, "Listing source/version mismatch");
+  const sections = [...source.matchAll(/^## ([^\n]+)\n([\s\S]*?)(?=^## |$(?![\s\S]))/gm)];
+  for (const [heading, key, limit] of fields) {
+    const matches = sections.filter((section) => section[1] === heading);
+    check(matches.length === 1, `Expected exactly one ## ${heading} section`);
+    listing[key] = matches[0][2].trim();
+    const byteLimit = key === "keywords" || key === "notes";
+    lengths[key] = byteLimit ? Buffer.byteLength(listing[key]) : Array.from(listing[key]).length;
+    check(lengths[key] > 0 && lengths[key] <= limit, `${heading}: ${lengths[key]}/${limit} ${byteLimit ? "bytes" : "characters"}`);
+    if (key.endsWith("Url")) check(new URL(listing[key]).protocol === "https:", `${heading} must be HTTPS`);
+  }
+  for (const spec of screenshotSpecs) {
+    spec.files = files(spec.dir);
+    check(spec.files.length >= 1 && spec.files.length <= 10, `${spec.dir}: expected 1–10 screenshots`);
+    for (const file of spec.files) {
+      const bytes = readFileSync(file.path);
+      check(bytes.length >= 24 && bytes.subarray(0, 8).toString("hex") === "89504e470d0a1a0a", `${file.name}: invalid PNG`);
+      check(bytes.readUInt32BE(16) === spec.width && bytes.readUInt32BE(20) === spec.height, `${file.name}: expected ${spec.width}×${spec.height}`);
+    }
+  }
+}
 const result = {};
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const data = (type, id, attributes, relationships) => ({ data: { type, ...(id && { id }), ...(attributes && { attributes }), ...(relationships && { relationships }) } });
@@ -40,40 +61,30 @@ const list = async (path) => (await asc("GET", path)).data;
 const patch = (type, id, attributes, relationships) => asc("PATCH", `/v1/${type}/${id}`, data(type, id, attributes, relationships));
 const mask = (phone) => phone ? `${"*".repeat(Math.max(0, phone.length - 2))}${phone.slice(-2)}` : null;
 
-async function findPhone() {
-  const apps = await list("/v1/apps?limit=200");
-  const candidates = [];
-  for (const app of apps.filter((app) => app.id !== appId)) {
-    const versions = await list(`/v1/apps/${app.id}/appStoreVersions?include=appStoreReviewDetail&fields[appStoreReviewDetails]=contactPhone&limit=200`);
-    for (const version of versions) {
-      const detail = await get(`/v1/appStoreVersions/${version.id}/appStoreReviewDetail`);
-      if (detail?.attributes.contactPhone) candidates.push({ createdDate: version.attributes.createdDate, phone: detail.attributes.contactPhone });
-    }
-  }
-  return candidates.sort((a, b) => b.createdDate.localeCompare(a.createdDate))[0]?.phone;
+async function preflight() {
+  const [versions, infos, build, release, buildApp] = await Promise.all([
+    list(`/v1/apps/${appId}/appStoreVersions?limit=200`), list(`/v1/apps/${appId}/appInfos?limit=200`),
+    get(`/v1/builds/${buildId}`), get(`/v1/builds/${buildId}/preReleaseVersion`), get(`/v1/builds/${buildId}/app`),
+  ]);
+  const version = versions.find((item) => item.id === versionId);
+  check(version?.attributes.platform === "IOS", "Expected existing iOS version not found");
+  const { versionString: currentVersion, appStoreState } = version.attributes;
+  check(editable.has(appStoreState), `Version is not editable: ${appStoreState}`);
+  check(currentVersion === versionString || (currentVersion === "0.2.0" && appStoreState === "DEVELOPER_REJECTED"), `Refusing to rename unexpected version ${currentVersion}`);
+  check(!versions.some((item) => item.id !== versionId && item.attributes.platform === "IOS" && item.attributes.versionString === versionString), "Another 0.4.0 version already exists");
+  const info = infos.find((item) => item.id === infoId);
+  check(info && editable.has(info.attributes.appStoreState), "Expected editable app information not found");
+  check(buildApp.id === appId && release.attributes.version === versionString && release.attributes.platform === "IOS", "Build app/version/platform mismatch");
+  check(build.attributes.version === buildNumber && build.attributes.processingState === "VALID" && !build.attributes.expired && build.attributes.buildAudienceType === "APP_STORE_ELIGIBLE", "Build 10 is not ready for App Store submission");
+  const detail = await get(`/v1/appStoreVersions/${versionId}/appStoreReviewDetail`);
+  check(detail?.attributes.contactPhone && detail.attributes.contactEmail && !detail.attributes.demoAccountRequired, "Expected App Review contact/demo settings missing");
+  return { version, info };
 }
 
-async function ensureVersion() {
-  const versions = await list(`/v1/apps/${appId}/appStoreVersions?limit=200`);
-  const editable = new Set(["PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "METADATA_REJECTED", "REJECTED", "INVALID_BINARY"]);
-  let version = versions.find((v) => v.attributes.platform === "IOS" && v.attributes.versionString === versionString && editable.has(v.attributes.appStoreState));
-  let action = "skipped-already-set";
-  if (!version) {
-    version = versions.find((v) => v.attributes.platform === "IOS" && editable.has(v.attributes.appStoreState));
-    if (version) {
-      await patch("appStoreVersions", version.id, { versionString, releaseType: "MANUAL", copyright: "2026 Yumi Izumi" });
-      action = "done-renamed";
-    } else {
-      version = (await asc("POST", "/v1/appStoreVersions", data("appStoreVersions", null, { platform: "IOS", versionString, releaseType: "MANUAL", copyright: "2026 Yumi Izumi" }, { app: { data: { type: "apps", id: appId } } }))).data;
-      action = "done-created";
-    }
-  }
+async function ensureVersion(version) {
   const desired = { versionString, releaseType: "MANUAL", copyright: "2026 Yumi Izumi" };
-  if (changed(version.attributes, desired)) {
-    await patch("appStoreVersions", version.id, desired);
-    action = action === "skipped-already-set" ? "done" : action;
-  }
-  result.version = action;
+  result.version = changed(version.attributes, desired) ? "done" : "skipped-already-set";
+  if (changed(version.attributes, desired)) await patch("appStoreVersions", version.id, desired);
   return get(`/v1/appStoreVersions/${version.id}`);
 }
 
@@ -90,80 +101,29 @@ async function ensureVersionLocalization(version) {
 }
 const listingFields = () => ({ description: listing.description, keywords: listing.keywords, promotionalText: listing.promotionalText, supportUrl: listing.supportUrl, marketingUrl: listing.marketingUrl });
 
-async function ensureAppInfo() {
-  const info = (await list(`/v1/apps/${appId}/appInfos?limit=200`))[0];
+async function ensureAppInfo(info) {
   let localization = (await list(`/v1/appInfos/${info.id}/appInfoLocalizations?filter[locale]=en-US&limit=1`))[0];
-  const fields = { subtitle: listing.subtitle, privacyPolicyUrl: listing.privacyPolicyUrl };
+  const fields = { name: listing.name, subtitle: listing.subtitle, privacyPolicyUrl: listing.privacyPolicyUrl };
   if (!localization) {
-    localization = (await asc("POST", "/v1/appInfoLocalizations", data("appInfoLocalizations", null, { locale: "en-US", name: "Yorozu", ...fields }, { appInfo: { data: { type: "appInfos", id: info.id } } }))).data;
+    localization = (await asc("POST", "/v1/appInfoLocalizations", data("appInfoLocalizations", null, { locale: "en-US", ...fields }, { appInfo: { data: { type: "appInfos", id: info.id } } }))).data;
     result.appInfoLocalization = "done-created";
   } else {
-    const update = { ...fields, ...(localization.attributes.name === "Yorozu" ? {} : { name: "Yorozu" }) };
+    const update = fields;
     if (changed(localization.attributes, update)) {
       await patch("appInfoLocalizations", localization.id, update);
       result.appInfoLocalization = "done";
     } else result.appInfoLocalization = "skipped-already-set";
   }
-  const [primary, secondary] = await Promise.all([get(`/v1/appInfos/${info.id}/primaryCategory`), get(`/v1/appInfos/${info.id}/secondaryCategory`)]);
-  if (primary?.id !== "PRODUCTIVITY" || secondary?.id !== "DEVELOPER_TOOLS") {
-    await patch("appInfos", info.id, null, { primaryCategory: { data: { type: "appCategories", id: "PRODUCTIVITY" } }, secondaryCategory: { data: { type: "appCategories", id: "DEVELOPER_TOOLS" } } });
-    result.categories = "done";
-  } else result.categories = "skipped-already-set";
   return get(`/v1/appInfos/${info.id}`);
 }
 
-async function ensureDeclarations(info) {
-  const app = await get(`/v1/apps/${appId}`);
-  if (app.attributes.contentRightsDeclaration !== "DOES_NOT_USE_THIRD_PARTY_CONTENT") {
-    await patch("apps", appId, { contentRightsDeclaration: "DOES_NOT_USE_THIRD_PARTY_CONTENT" });
-    result.contentRights = "done";
-  } else result.contentRights = "skipped-already-set";
-  const declaration = await get(`/v1/appInfos/${info.id}/ageRatingDeclaration`);
-  const attributes = {
-    advertising: false, alcoholTobaccoOrDrugUseOrReferences: "NONE", contests: "NONE", gambling: false, gamblingSimulated: "NONE",
-    gunsOrOtherWeapons: "NONE", healthOrWellnessTopics: false, lootBox: false, medicalOrTreatmentInformation: "NONE", messagingAndChat: false,
-    parentalControls: false, profanityOrCrudeHumor: "NONE", sexualContentGraphicAndNudity: "NONE", sexualContentOrNudity: "NONE",
-    ageAssurance: false, socialMedia: false, socialMediaAgeRestricted: false, horrorOrFearThemes: "NONE", matureOrSuggestiveThemes: "NONE",
-    unrestrictedWebAccess: true, userGeneratedContent: false, violenceCartoonOrFantasy: "NONE", violenceRealisticProlongedGraphicOrSadistic: "NONE", violenceRealistic: "NONE",
-  };
-  if (changed(declaration.attributes, attributes)) {
-    await patch("ageRatingDeclarations", declaration.id, attributes);
-    result.ageRating = "done";
-  } else result.ageRating = "skipped-already-set";
-}
-
 async function ensureReviewDetail(version) {
-  let detail = await get(`/v1/appStoreVersions/${version.id}/appStoreReviewDetail`);
-  const phone = detail?.attributes.contactPhone || await findPhone();
-  if (!phone) throw new Error("blocked: no App Review contact phone exists on Yorozu or another app");
-  const attributes = { contactFirstName: "Yumi", contactLastName: "Izumi", contactEmail: "mail@yumi.to", contactPhone: phone, demoAccountRequired: false, notes: listing.notes };
-  if (!detail) {
-    detail = (await asc("POST", "/v1/appStoreReviewDetails", data("appStoreReviewDetails", null, attributes, { appStoreVersion: { data: { type: "appStoreVersions", id: version.id } } }))).data;
-    result.reviewDetail = "done-created";
-  } else if (changed(detail.attributes, attributes)) {
+  const detail = await get(`/v1/appStoreVersions/${version.id}/appStoreReviewDetail`);
+  const attributes = { notes: listing.notes };
+  if (changed(detail.attributes, attributes)) {
     await patch("appStoreReviewDetails", detail.id, attributes);
     result.reviewDetail = "done";
   } else result.reviewDetail = "skipped-already-set";
-  return get(`/v1/appStoreReviewDetails/${detail.id}`);
-}
-
-async function ensureAvailabilityAndPricing() {
-  const price = await get(`/v1/apps/${appId}/appPriceSchedule`);
-  result.pricing = price ? "skipped-already-set" : "blocked: no price schedule";
-  try {
-    await get(`/v1/apps/${appId}/appAvailabilityV2`);
-    result.availability = "skipped-already-set";
-  } catch (error) {
-    if (!error.message.includes("NOT_FOUND")) throw error;
-    const territories = await list("/v1/territories?limit=200");
-    const localId = (territory) => `\${${territory.id}}`;
-    const included = territories.map((territory) => ({ type: "territoryAvailabilities", id: localId(territory), attributes: { available: true }, relationships: { territory: { data: { type: "territories", id: territory.id } } } }));
-    await asc("POST", "/v2/appAvailabilities", {
-      data: { type: "appAvailabilities", attributes: { availableInNewTerritories: true }, relationships: { app: { data: { type: "apps", id: appId } }, territoryAvailabilities: { data: territories.map((territory) => ({ type: "territoryAvailabilities", id: localId(territory) })) } } },
-      included,
-    });
-    result.availability = "done-all-territories";
-  }
 }
 
 const md5 = (file) => createHash("md5").update(readFileSync(file)).digest("hex");
@@ -184,11 +144,13 @@ async function waitForScreenshots(ids) {
   const final = [];
   for (const id of ids) {
     let screenshot;
+    const deadline = Date.now() + 10 * 60 * 1000;
     for (;;) {
       screenshot = await get(`/v1/appScreenshots/${id}`);
       const state = screenshot.attributes.assetDeliveryState?.state;
-      if (state === "COMPLETE") break;
+      if (state === "COMPLETE" && screenshot.attributes.sourceFileChecksum) break;
       if (state === "FAILED") throw new Error(`screenshot ${screenshot.attributes.fileName} FAILED: ${JSON.stringify(screenshot.attributes.assetDeliveryState)}`);
+      check(Date.now() < deadline, `Screenshot processing timed out: ${screenshot.attributes.fileName}`);
       await sleep(5000);
     }
     final.push(screenshot);
@@ -197,20 +159,18 @@ async function waitForScreenshots(ids) {
 }
 
 async function ensureScreenshots(localization) {
-  for (const spec of [
-    { type: "APP_IPHONE_67", dir: "docs/app-store/screenshots/iphone-6.9" },
-    { type: "APP_IPAD_PRO_3GEN_129", dir: "docs/app-store/screenshots/ipad-13" },
-  ]) {
-    const expected = files(spec.dir);
+  for (const spec of screenshotSpecs) {
+    const expected = spec.files;
     let set = (await list(`/v1/appStoreVersionLocalizations/${localization.id}/appScreenshotSets?filter[screenshotDisplayType]=${spec.type}&limit=1`))[0];
     let touched = false;
     if (!set) {
       set = (await asc("POST", "/v1/appScreenshotSets", data("appScreenshotSets", null, { screenshotDisplayType: spec.type }, { appStoreVersionLocalization: { data: { type: "appStoreVersionLocalizations", id: localization.id } } }))).data;
       touched = true;
     }
-    let existing = await list(`/v1/appScreenshotSets/${set.id}/appScreenshots?limit=50`);
+    const existing = await list(`/v1/appScreenshotSets/${set.id}/appScreenshots?limit=50`);
     const keep = new Map(existing.filter((shot) => expected.some((file) => file.name === shot.attributes.fileName && file.checksum === shot.attributes.sourceFileChecksum && shot.attributes.assetDeliveryState?.state !== "FAILED")).map((shot) => [shot.attributes.fileName, shot]));
-    for (const shot of existing.filter((shot) => !keep.has(shot.attributes.fileName))) {
+    const keepIds = new Set([...keep.values()].map((shot) => shot.id));
+    for (const shot of existing.filter((shot) => !keepIds.has(shot.id))) {
       await asc("DELETE", `/v1/appScreenshots/${shot.id}`);
       touched = true;
     }
@@ -231,24 +191,9 @@ async function ensureScreenshots(localization) {
 }
 
 async function attachBuild(version) {
-  const deadline = Date.now() + 40 * 60 * 1000;
-  let build;
-  do {
-    const builds = await asc("GET", `/v1/builds?filter[app]=${appId}&include=preReleaseVersion&fields[builds]=version,processingState,preReleaseVersion&fields[preReleaseVersions]=version&limit=200`);
-    const releaseVersions = new Map((builds.included || []).filter((item) => item.type === "preReleaseVersions").map((item) => [item.id, item.attributes.version]));
-    build = builds.data.find((item) => item.attributes.version === "220" && releaseVersions.get(item.relationships.preReleaseVersion?.data?.id) === versionString);
-    const state = build?.attributes.processingState || "NOT_FOUND";
-    console.log(`build 220: ${state}`);
-    if (state === "VALID") break;
-    if (Date.now() >= deadline) {
-      result.build = `blocked: ${state}`;
-      return;
-    }
-    await sleep(60000);
-  } while (true);
   const attached = await get(`/v1/appStoreVersions/${version.id}/build`);
-  if (attached?.id !== build.id) await asc("PATCH", `/v1/appStoreVersions/${version.id}/relationships/build`, { data: { type: "builds", id: build.id } });
-  result.build = attached?.id === build.id ? "skipped-already-set" : "done-attached";
+  if (attached?.id !== buildId) await asc("PATCH", `/v1/appStoreVersions/${version.id}/relationships/build`, { data: { type: "builds", id: buildId } });
+  result.build = attached?.id === buildId ? "skipped-already-set" : "done-attached";
 }
 
 async function readback(version, localization, info) {
@@ -261,32 +206,49 @@ async function readback(version, localization, info) {
   const baseTerritory = price && await get(`/v1/appPriceSchedules/${price.id}/baseTerritory`).catch(() => null);
   const sets = await list(`/v1/appStoreVersionLocalizations/${localization.id}/appScreenshotSets?limit=200`);
   const screenshots = {};
-  for (const set of sets.filter((set) => ["APP_IPHONE_67", "APP_IPAD_PRO_3GEN_129"].includes(set.attributes.screenshotDisplayType))) screenshots[set.attributes.screenshotDisplayType] = (await list(`/v1/appScreenshotSets/${set.id}/appScreenshots?limit=50`)).map((shot) => ({ fileName: shot.attributes.fileName, deliveryState: shot.attributes.assetDeliveryState?.state, error: shot.attributes.assetDeliveryState?.errors || null }));
+  for (const set of sets.filter((set) => ["APP_IPHONE_67", "APP_IPAD_PRO_3GEN_129"].includes(set.attributes.screenshotDisplayType))) screenshots[set.attributes.screenshotDisplayType] = (await list(`/v1/appScreenshotSets/${set.id}/appScreenshots?limit=50`)).map((shot) => ({ fileName: shot.attributes.fileName, checksum: shot.attributes.sourceFileChecksum, deliveryState: shot.attributes.assetDeliveryState?.state, error: shot.attributes.assetDeliveryState?.errors || null }));
   const state = {
+    source: { path: sourcePath, sha256: createHash("sha256").update(source).digest("hex") },
     app: { id: app.id, bundleId: app.attributes.bundleId, contentRightsDeclaration: app.attributes.contentRightsDeclaration },
     version: versionNow.attributes, versionLocalization: versionLoc.attributes,
     appInfoLocalization: infoLoc[0]?.attributes, categories: { primary: primary?.id, secondary: secondary?.id },
     ageRatingDeclaration: age.attributes, computedAgeRating: infoNow.attributes.appStoreAgeRating,
     reviewDetail: review && { ...review.attributes, contactPhone: mask(review.attributes.contactPhone) },
     priceSchedule: price && { id: price.id, baseTerritory: baseTerritory && { id: baseTerritory.id, currency: baseTerritory.attributes.currency }, price: "pre-existing schedule left unchanged" }, availability: availability?.attributes,
-    screenshots, attachedBuild: build?.attributes.version || null, results: result,
+    screenshots, attachedBuild: build?.attributes.version || null, attachedBuildId: build?.id || null, results: result,
   };
-  mkdirSync("/tmp/asc-review", { recursive: true });
-  writeFileSync("/tmp/asc-review/state.json", `${JSON.stringify(state, null, 2)}\n`);
+  mkdirSync("/tmp/yorozu-040-review", { recursive: true });
+  writeFileSync("/tmp/yorozu-040-review/listing-readback.json", `${JSON.stringify(state, null, 2)}\n`);
+  check(!changed(versionNow.attributes, { versionString, releaseType: "MANUAL" }), "Version readback mismatch");
+  check(!changed(versionLoc.attributes, listingFields()), "Listing readback differs from Markdown source");
+  check(!changed(infoLoc[0]?.attributes || {}, { name: listing.name, subtitle: listing.subtitle, privacyPolicyUrl: listing.privacyPolicyUrl }), "App information readback mismatch");
+  check(review?.attributes.notes === listing.notes && build?.id === buildId, "Review notes/build readback mismatch");
+  for (const spec of screenshotSpecs) {
+    const actual = screenshots[spec.type] || [];
+    check(actual.length === spec.files.length && actual.every((shot, i) => shot.fileName === spec.files[i].name && shot.checksum === spec.files[i].checksum && shot.deliveryState === "COMPLETE"), `${spec.type}: screenshot readback mismatch`);
+  }
   return state;
 }
 
 async function main() {
-  const version = await ensureVersion();
+  const args = process.argv.slice(2);
+  check(args.length <= 1 && (!args.length || ["--check", "--apply"].includes(args[0])), "Usage: node scripts/asc-listing.mjs [--check|--apply]");
+  validateLocal();
+  // This is the first App Store release: Apple does not accept What's New yet.
+  result.whatsNew = "skipped-first-app-store-release";
+  if (args[0] !== "--apply") {
+    console.log(JSON.stringify({ mode: "local-check-only", version: versionString, build: buildNumber, source: sourcePath, lengths, screenshots: screenshotSpecs.map(({ type, files }) => ({ type, files: files.map(({ name, checksum }) => ({ name, checksum })) })), results: result }, null, 2));
+    return;
+  }
+  const target = await preflight();
+  const version = await ensureVersion(target.version);
   const localization = await ensureVersionLocalization(version);
-  const info = await ensureAppInfo();
-  await ensureDeclarations(info);
+  const info = await ensureAppInfo(target.info);
   await ensureReviewDetail(version);
-  await ensureAvailabilityAndPricing();
   await ensureScreenshots(localization);
   await attachBuild(version);
   const state = await readback(version, localization, info);
-  console.log(JSON.stringify({ results: result, computedAgeRating: state.computedAgeRating, attachedBuild: state.attachedBuild, reviewState: "/tmp/asc-review/state.json" }, null, 2));
+  console.log(JSON.stringify({ results: result, computedAgeRating: state.computedAgeRating, attachedBuild: state.attachedBuild, reviewState: "/tmp/yorozu-040-review/listing-readback.json" }, null, 2));
 }
 
 main().catch((error) => { console.error(error.stack || error.message); process.exitCode = 1; });

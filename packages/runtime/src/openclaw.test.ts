@@ -637,7 +637,7 @@ describe("OpenClawRunner", () => {
       ],
     } : {});
     await expect(new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).listModels()).resolves.toEqual([
-      { id: "openai/gpt-6-astra", label: "Astra", providerLabel: "openai" },
+      { id: "openai/gpt-6-astra", label: "Astra", providerLabel: "openai", efforts: ["low", "medium", "high"] },
     ]);
     expect(gateway.request).toHaveBeenCalledWith("models.list", {});
   });

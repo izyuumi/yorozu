@@ -223,10 +223,20 @@ test("bypass toggles on and off in one resumed session, while questions still ne
 
 test("Claude publishes SDK models and passes selected model/effort on each resumed turn", async () => {
   const { query, calls } = fakeQuery([result("s-model", "ok")]);
-  const models = vi.fn().mockResolvedValue([{ value: "opus", displayName: "Opus", supportedEffortLevels: ["low", "high", "max"] }]);
+  const models = vi.fn().mockResolvedValue([
+    { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus", description: "", supportedEffortLevels: ["low", "high", "max"] },
+    { value: "fable", resolvedModel: "claude-fable-5-1", displayName: "Fable", description: "" },
+    { value: "haiku[1m]", resolvedModel: "claude-haiku-4-5-20251001", displayName: "Haiku (1M context)", description: "" },
+    { value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default (recommended)", description: "" },
+  ]);
   const catalogQuery: QueryFn = (params) => Object.assign(query(params), { supportedModels: models });
   const runner = claudeCodeRunner(catalogQuery);
-  expect(await runner.models!()).toEqual([{ id: "opus", label: "Opus", providerLabel: "Claude Code", efforts: ["low", "high", "max"] }]);
+  expect(await runner.models!()).toEqual([
+    { id: "opus", label: "Opus 5.5", providerLabel: "Claude Code", efforts: ["low", "high", "max"] },
+    { id: "fable", label: "Fable 5.1", providerLabel: "Claude Code", efforts: [] },
+    { id: "haiku[1m]", label: "Haiku 4.5 (1M context)", providerLabel: "Claude Code", efforts: [] },
+    { id: "default", label: "Default (recommended)", providerLabel: "Claude Code", efforts: [] },
+  ]);
   expect(calls[0]).toMatchObject({ tools: [], env: childEnv() });
   for (const effort of ["low", "max"] as const) {
     await runner.run({ threadId: "cc", cwd: "/tmp/proj", text: "go", sessionId: "s-model", model: "opus", effort, signal: new AbortController().signal });

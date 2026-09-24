@@ -62,6 +62,8 @@ public struct WorkRowView: View {
                 if work.running { ProgressView().controlSize(.small).tint(YorozuPalette.vermilion) }
             }
             .frame(minHeight: controlTarget)
+            .contentShape(.rect)
+            .onTapGesture { withAnimation(.snappy) { expanded.toggle() } }
             .accessibilityLabel(summary)
         }
         .buttonStyle(.plain)

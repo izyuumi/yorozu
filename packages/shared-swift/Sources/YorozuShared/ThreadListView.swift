@@ -615,6 +615,12 @@ public struct ThreadListView<Destination: View>: View {
         .onChange(of: path) { _, value in
             if searchRequest?.threadId != value.last { searchRequest = nil }
         }
+        // Incoming replies change the toolbar's unread actions. Keep the presenter on the
+        // navigation container so rebuilding a button cannot hide or reset an open picker.
+        .sheet(isPresented: $choosingAgent) {
+            NewThreadPicker(projects: projects, status: projectListStatus, onRefresh: onRefreshProjects, onStart: onCreate)
+                .presentationDetents([.medium, .large])
+        }
     }
 
     private func newThread() {
@@ -753,10 +759,6 @@ public struct ThreadListView<Destination: View>: View {
             #if os(iOS)
                 .keyboardShortcut("n")
             #endif
-            .sheet(isPresented: $choosingAgent) {
-                NewThreadPicker(projects: projects, status: projectListStatus, onRefresh: onRefreshProjects, onStart: onCreate)
-                    .presentationDetents([.medium, .large])
-            }
     }
 
     /// The archive: shut by default, and the only place a thread comes back from.
@@ -1025,10 +1027,7 @@ public struct ThreadSidebar: View {
             }
             // The same compose glyph the phone's list and every Mac mail or notes app use. It
             // asks who should answer in the same modal as the keyboard shortcut.
-            Button("New thread", systemImage: "square.and.pencil", action: newThread)
-                .sheet(isPresented: $choosingAgent) {
-                    NewThreadPicker(projects: projects, status: projectListStatus, onRefresh: onRefreshProjects, onStart: onCreate)
-                }
+            Button("New thread", systemImage: "square.and.pencil") { choosingAgent = true }
         }
         .renameAlert($renaming, onRename: onRename)
         .onChange(of: selection) { _, id in
@@ -1036,6 +1035,9 @@ public struct ThreadSidebar: View {
                 searchThreadID = nil
                 onSearchSelect?(nil)
             }
+        }
+        .sheet(isPresented: $choosingAgent) {
+            NewThreadPicker(projects: projects, status: projectListStatus, onRefresh: onRefreshProjects, onStart: onCreate)
         }
         #if os(macOS)
             // What the Mac's File menu acts on. Published from here because a new thread is the

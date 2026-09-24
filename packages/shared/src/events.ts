@@ -450,6 +450,8 @@ export interface ThreadSetModelData {
 
 export const REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"] as const;
 export type ReasoningEffort = typeof REASONING_EFFORTS[number];
+/** What a `yorozu` thread may ask for: the Gateway publishes no per-model levels, so every model offers these. */
+export const YOROZU_EFFORTS: ReasoningEffort[] = ["low", "medium", "high"];
 
 /** Sets one thread's reasoning effort. Null or absent resets to the provider default. */
 export interface ThreadSetEffortData {
@@ -507,10 +509,14 @@ export type InterruptData = Record<string, never>;
 /** Last sync cursor the device already holds, per thread. Event ids support older peers. */
 export interface SyncRequestData {
   lastSeen: Record<string, string>;
+  /** Explicitly opened thread: replay its complete history, including before pairing. */
+  threadId?: string;
 }
 
 export interface SyncDeltaData {
   events: YorozuEvent[];
+  /** Present when this page answers a request for one opened thread. */
+  threadId?: string;
   /** Threads with a turn still running on the Mac when this page was made. */
   workingThreadIds?: string[];
   /** Another bounded page is available; request again after applying this one. */

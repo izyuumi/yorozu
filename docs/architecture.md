@@ -219,6 +219,12 @@ per thread, and cut where the next event would take the frame past 512 KB. A tru
 `more`, which tells the phone to ask again: its `lastSeen` has moved to the end of what it got, so
 the next page carries on from there and reaches the threads this one did not.
 
+Routine sync starts at pairing time on a new device. Opening a thread sends a scoped
+`sync_request` with `threadId`: the sidecar pages that thread's complete log, including events
+before pairing. The client tracks this history cursor separately from routine sync and saves
+completion in its encrypted cache, so unopened threads are not backfilled and reopening a loaded
+thread does not fetch it again.
+
 Replayed events carry an opaque `syncCursor` identifying their exact log occurrence,
 so updates that reuse a progress card's ID cannot skip intervening history. Phones advance their
 cursor only from replayed events and save it with the encrypted history, so live replies and

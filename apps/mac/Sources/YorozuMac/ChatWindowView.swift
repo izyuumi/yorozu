@@ -221,7 +221,11 @@ private struct LocalChatWindowView: View {
         .onChange(of: controlActiveState, initial: true) { _, state in
             model.foreground = state == .key
         }
-        .onAppear { if model.listed { open() } }
+        .onAppear {
+            if model.listed { open() }
+            // Screenshot harness only — see ``Showcase``.
+            if launchArgument("yorozuWindow") == "settings" { openSettings() }
+        }
         .onChange(of: model.listed) { _, listed in if listed { open() } }
         // Screenshot harness only: prints the window number `screencapture -l` wants. Inert
         // unless a showcase argument was passed — see ``Showcase``.
@@ -245,8 +249,11 @@ private struct LocalChatWindowView: View {
                     YorozuMark(dimension: 15)
                     Text("Yorozu")
                 }
+                .foregroundStyle(.primary)
             }
-            .menuStyle(.borderlessButton)
+            // Plain, so the label keeps its own colour: borderless would draw it in the tint.
+            .menuStyle(.button)
+            .buttonStyle(.plain)
             .fixedSize()
             Spacer(minLength: 0)
             Label {
