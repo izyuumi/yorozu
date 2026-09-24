@@ -167,6 +167,7 @@ private struct LocalChatWindowView: View {
                 onRead: { thread, read in
                     read ? model.markRead(thread.id) : model.markUnread(thread)
                 },
+                onReadAll: model.markAllRead,
                 // Search reaches into this Mac's own thread logs, which is every word of them.
                 messageText: { id in
                     (model.events[id] ?? []).compactMap {

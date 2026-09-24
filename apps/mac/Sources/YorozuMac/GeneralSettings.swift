@@ -49,6 +49,7 @@ struct GeneralView: View {
                     .leadingFooter()
                 }
                 .onAppear { session.model.requestApprovalSettings() }
+                TerminalAccessSettings(model: session.model)
             }
             if session.role == .host {
                 Section {

@@ -7,6 +7,7 @@
 # in it. This one is what a stranger downloads, so everything it needs has to be inside.
 set -eu
 cd "$(dirname "$0")/.."
+. ./scripts/build-version.sh
 
 # Capture the caller's CI policy before enabling pnpm's non-interactive mode locally.
 NOTARIZATION_REQUIRED=${REQUIRE_NOTARIZATION:-0}
@@ -20,14 +21,7 @@ if ! command -v pnpm >/dev/null 2>&1; then
   pnpm() { corepack pnpm "$@"; }
 fi
 
-# Sparkle needs CFBundleVersion to rise across marketing versions and beta builds. Keep
-# that machine number global; show the build count since this version's tag to users.
-TAG=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
-VERSION=${VERSION:-${TAG#v}}
-VERSION=${VERSION:-0.1.0}
-VERSION_LABEL=${VERSION_LABEL:-$VERSION}
-BUILD=${BUILD:-$(git rev-list --count HEAD)}
-VERSION_BUILD=$(( $(git rev-list --count ${TAG:+$TAG..}HEAD) + 1 ))
+# Sparkle needs globally increasing builds, allocated before either platform is built.
 DIST=${DIST:-dist}
 IDENTITY=${IDENTITY:-"Developer ID Application: Yumi Izumi (AN5KM8QGEF)"}
 # Overridable so a test install can be built with an id of its own. Two bundles sharing one
@@ -41,9 +35,8 @@ FEED_URL=${FEED_URL:-https://yorozu.yumi.to/appcast.xml}
 SU_PUBLIC_KEY=${SU_PUBLIC_KEY:-pD6gPv1CP/XDvIJXbztjQRTIkgR/kfMMYT/Mpp8aQvI=}
 
 APP="$DIST/Yorozu.app"
-# The build number is in the name: two builds of the same tag are two different files, so
-# neither the appcast nor a CDN can serve one where the other was meant.
-DMG="$DIST/Yorozu-$VERSION-$BUILD.dmg"
+# The retained candidate tag gives each build a permanent URL; the filename stays simple.
+DMG="$DIST/yorozu.dmg"
 STAGE="$DIST/stage"
 
 # The app embeds shared + runtime. Relay is deployed separately and compiling it here adds work
@@ -66,6 +59,7 @@ cp -R "$BIN/Sparkle.framework" "$APP/Contents/Frameworks/"
 # Contents/Resources instead. Omitting it makes the first provider mark render trap even
 # though the executable itself built and signed successfully.
 cp -R "$BIN/YorozuShared_YorozuShared.bundle" "$APP/Contents/Resources/"
+cp -R "$BIN/SwiftTerm_SwiftTerm.bundle" "$APP/Contents/Resources/"
 # Which layout that bundle has depends on the toolchain. Swift 6.4 emits an Xcode-style
 # bundle (Contents/Resources) and compiles the asset catalog itself; the CI toolchain behind
 # build 282 emitted a flat bundle with the catalog copied raw, as the .xcassets folder of
@@ -155,6 +149,8 @@ rm -rf "$APP/Contents/Resources/runtime"
 # link in bundle"). Hoisted is the flat node_modules the signature can cover.
 pnpm --filter @yorozu/runtime --prod --legacy --config.node-linker=hoisted \
   deploy "$APP/Contents/Resources/runtime"
+# pnpm deploy copies package file modes; node-pty's published helper needs execute permission.
+sh scripts/fix-pty-helper.sh "$APP/Contents/Resources/runtime/node_modules/node-pty"
 # --prod above leaves the *workspace* modules directory pruned to production too, which
 # breaks the next `pnpm -r build` (no typescript). Put the dev dependencies back.
 pnpm install --frozen-lockfile

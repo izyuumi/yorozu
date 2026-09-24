@@ -501,6 +501,7 @@ struct RootView: View {
     /// it before this view was ever built, so the first frame is already the chat.
     @State private var path: [String] = Session.shared.openPath
     @State private var hostPath: [HostThreadID] = Session.shared.hostPath
+    @State private var choosingThreadHost = false
     @State private var settings = launchArgument("yorozuShowcase") == "settings"
     @State private var connection = ConnectionPresentation(.reconnecting)
     /// Screenshot only: `-yorozuShowcase share` draws the share extension's composer here,
@@ -702,10 +703,11 @@ struct RootView: View {
                     notificationClass: notification?.notificationClass,
                     notificationEventRef: notification?.eventRef,
                     lastReadAt: notification?.lastReadAt,
-                    notificationSyncRevision: notification?.syncRevision
-                ) { agent, cwd in
-                    path = [model.newDraft(agent: agent, cwd: cwd).id]
-                }
+                    notificationSyncRevision: notification?.syncRevision,
+                    onCreate: { agent, cwd in
+                        path = [model.newDraft(agent: agent, cwd: cwd).id]
+                    }
+                )
             }
             .safeAreaInset(edge: .top) {
                 if path.isEmpty {
@@ -751,9 +753,15 @@ struct RootView: View {
             let notification = session.notificationOpen.flatMap { $0.hostID == host.id && $0.threadId == thread.id ? $0 : nil }
             ChatView(model: host.model, thread: thread, resumeRequest: notification?.id,
                      notificationClass: notification?.notificationClass, notificationEventRef: notification?.eventRef,
-                     lastReadAt: notification?.lastReadAt, notificationSyncRevision: notification?.syncRevision) { agent, cwd in
-                if let draft = session.hosts.newDraft(on: host.id, agent: agent, cwd: cwd) { hostPath = [draft] }
-            }
+                     lastReadAt: notification?.lastReadAt, notificationSyncRevision: notification?.syncRevision,
+                     onNewThread: session.hosts.hasMultipleHosts ? { choosingThreadHost = true } : nil,
+                     onCreate: { agent, cwd in
+                         if let draft = session.hosts.newDraft(on: host.id, agent: agent, cwd: cwd) { hostPath = [draft] }
+                     })
+        }
+        .sheet(isPresented: $choosingThreadHost) {
+            NewThreadPicker(session: session.hosts) { hostPath = [$0] }
+                .presentationDetents([.medium, .large])
         }
         .onChange(of: session.hostPath) { _, opened in hostPath = opened }
         .onChange(of: session.hosts.sessions.map(\.id)) { _, ids in hostPath.removeAll { !ids.contains($0.hostID) } }

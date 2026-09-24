@@ -179,6 +179,7 @@ public struct MultiHostThreadSidebar: View {
                     read ? model.markRead(original.id) : model.markUnread(original)
                 }
             },
+            onReadAll: session.markAllRead,
             messageText: adapter.messageText,
             exportMarkdown: adapter.markdown,
             onSearchSelect: { request in

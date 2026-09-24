@@ -1,7 +1,7 @@
 name: CI
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/*']
   pull_request:
 
 # One run per ref: a newer push cancels the one it supersedes.
@@ -29,11 +29,17 @@ jobs:
       - name: Lint workflows and release scripts
         run: |
           "$(go env GOPATH)/bin/actionlint"
-          shellcheck scripts/release.sh scripts/beta-release.sh scripts/appcast.sh scripts/build-mac.sh scripts/build-ios.sh scripts/dev-bundle.sh
+          shellcheck scripts/release.sh scripts/appcast.sh scripts/build-version.sh scripts/build-mac.sh scripts/build-ios.sh scripts/dev-bundle.sh
       - name: Check publication success and failure paths
         run: |
           python3 scripts/test-release.py
-          python3 scripts/test-beta-release.py
+          python3 scripts/test-release-notes.py
+          python3 scripts/test-build-version.py
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26
+      - name: Verify App Store candidate checks without credentials
+        run: node --test scripts/asc-candidate.test.mjs
 
   relay-image:
     runs-on: ubuntu-latest
@@ -121,6 +127,7 @@ jobs:
           xcodebuild build \
             -workspace apps/ios/Yorozu.xcworkspace \
             -scheme YorozuIOS \
+            -skipPackagePluginValidation \
             -destination 'generic/platform=iOS Simulator' \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO

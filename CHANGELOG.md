@@ -1,23 +1,28 @@
 # Changelog
 
-## [0.4.0](https://github.com/izyuumi/yorozu/compare/v0.3.0...v0.4.0) (2026-09-24)
-
+## [0.4.0](https://github.com/izyuumi/yorozu/releases/tag/v0.4.0) (2026-09-24)
 
 ### Features
 
-* **mac:** queue updates until local agents finish ([25727bb](https://github.com/izyuumi/yorozu/commit/25727bb0f308ea626407743d3a7f620e7a974fe3))
-* **mac:** queue updates until local agents finish ([56abaad](https://github.com/izyuumi/yorozu/commit/56abaadfddeafc83e90ed588e856ba0edae42609))
-* **runtime:** title threads with the Mac's on-device model ([f3dc9d6](https://github.com/izyuumi/yorozu/commit/f3dc9d69e256c0d450130b5958ef3e48c09ce0c4))
-* **runtime:** title threads with the Mac's on-device model ([2824093](https://github.com/izyuumi/yorozu/commit/282409321a99e82e3bb409d8dd4c2c87f10f0778)), closes [#2](https://github.com/izyuumi/yorozu/issues/2)
-
+- **runtime:** title threads with the Mac's on-device model ([2824093](https://github.com/izyuumi/yorozu/commit/282409321a99e82e3bb409d8dd4c2c87f10f0778))
+- **mac:** queue updates until local agents finish ([56abaad](https://github.com/izyuumi/yorozu/commit/56abaadfddeafc83e90ed588e856ba0edae42609))
 
 ### Bug Fixes
 
-* **ios:** restart the TestFlight build number at 1 for each version ([0491379](https://github.com/izyuumi/yorozu/commit/0491379588b6c927ca86942c51b8f350194ec4be))
-* **ios:** restart the TestFlight build number at 1 for each version ([e387028](https://github.com/izyuumi/yorozu/commit/e387028ebe4667fb0b2324034b4a2e72f71636a2)), closes [#25](https://github.com/izyuumi/yorozu/issues/25)
-* **mac:** find the shared resource bundle where build-mac.sh puts it ([#31](https://github.com/izyuumi/yorozu/issues/31)) ([4e79a16](https://github.com/izyuumi/yorozu/commit/4e79a163888bb6a58410d7797f1153c95eeaa167))
+- **ios:** restart the TestFlight build number at 1 for each version ([e387028](https://github.com/izyuumi/yorozu/commit/e387028ebe4667fb0b2324034b4a2e72f71636a2))
+- **mac:** find the shared resource bundle where build-mac.sh puts it \(\#31\) ([4e79a16](https://github.com/izyuumi/yorozu/commit/4e79a163888bb6a58410d7797f1153c95eeaa167))
 
-## [0.3.0](https://github.com/izyuumi/yorozu/compare/v0.2.3...v0.3.0) (2026-09-24)
+### Documentation
+
+- **release:** record native agent bridge release evidence for 0.3.0 \(282\) ([c89cce1](https://github.com/izyuumi/yorozu/commit/c89cce14e59d4e10703498a51e587115d39481e8))
+
+### Maintenance
+
+- **main:** release 0.4.0 ([b9d686e](https://github.com/izyuumi/yorozu/commit/b9d686eb28f82a775c75f6ef38f9a244f17b8aaa))
+
+**Full history:** https://github.com/izyuumi/yorozu/compare/f78492cfc1494b1676cfd8a3f6b200a9293f39a2...3e281df0640c39e89f490d8803c27aa064263cd2
+
+## [0.3.0](https://github.com/izyuumi/yorozu/commit/f78492cfc1494b1676cfd8a3f6b200a9293f39a2) (2026-09-24)
 
 
 ### Features

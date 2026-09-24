@@ -106,6 +106,7 @@ fi
 xcodebuild build \
   -workspace "$IOS/Yorozu.xcworkspace" \
   -scheme YorozuIOS \
+  -skipPackagePluginValidation \
   -destination "id=$UDID" \
   -derivedDataPath "$DERIVED_DATA" >"$WORK/xcodebuild.log" 2>&1 ||
   { tail -40 "$WORK/xcodebuild.log" >&2; exit 1; }
@@ -153,6 +154,7 @@ xcrun simctl terminate "$UDID" "$BUNDLE_ID"
 xcodebuild build \
   -workspace "$IOS/Yorozu.xcworkspace" \
   -scheme YorozuIOS \
+  -skipPackagePluginValidation \
   -destination "id=$UDID" \
   -derivedDataPath "$DERIVED_DATA" >>"$WORK/xcodebuild.log" 2>&1 ||
   { tail -40 "$WORK/xcodebuild.log" >&2; exit 1; }

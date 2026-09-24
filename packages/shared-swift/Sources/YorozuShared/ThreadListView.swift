@@ -296,6 +296,7 @@ struct ThreadRow: View {
                     .accessibilityHidden(true)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, LayoutMetrics.stack)
         .padding(.vertical, 10)
         .background(
@@ -439,7 +440,7 @@ struct ConnectionPill: View {
 /// flash of the list on the way in. The path holds thread ids rather than summaries, so a draft
 /// that becomes a real thread mid-push keeps drawing.
 ///
-/// `onSettings` puts a gear beside the `+`. It is a callback rather than a view slot because the
+/// `onSettings` puts a gear in the list toolbar. It is a callback rather than a view slot because the
 /// bar belongs to the navigation stack this view owns, so a caller cannot reach it from outside;
 /// optional because only the phone has a settings screen to open.
 ///
@@ -481,14 +482,26 @@ public struct ThreadListView<Destination: View>: View {
         @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
 
-    /// An iPad with room for two columns draws the list beside the chat, as the Mac does,
-    /// rather than pushing the chat over it. A phone — and an iPad squeezed into Slide Over or
-    /// a third of the screen — keeps the stack, so the same `path` drives both.
+    /// Regular width draws the list beside the chat, including on iPhone Duo's inner display.
+    /// Compact width keeps the stack; the same `path` drives both layouts during resizing.
     private var splitLayout: Bool {
         #if os(iOS)
-            UIDevice.current.userInterfaceIdiom == .pad && sizeClass == .regular
+            sizeClass == .regular
         #else
             false
+        #endif
+    }
+
+    private var hasSelectedThread: Bool {
+        guard let id = path.last else { return false }
+        return threads.contains { $0.id == id }
+    }
+
+    private var settingsPlacement: ToolbarItemPlacement {
+        #if os(iOS)
+            .topBarTrailing
+        #else
+            .navigation
         #endif
     }
 
@@ -686,7 +699,7 @@ public struct ThreadListView<Destination: View>: View {
         .toolbarTitleDisplayMode(.inline)
         .toolbar {
             if let onSettings {
-                ToolbarItem(placement: .navigation) {
+                ToolbarItem(placement: settingsPlacement) {
                     Button(action: onSettings) {
                         ZStack(alignment: .bottomTrailing) {
                             Image(systemName: "gearshape")
@@ -703,15 +716,19 @@ public struct ThreadListView<Destination: View>: View {
                 }
             }
             #if os(iOS)
-                // One trailing group shaped like the chat's — see ``ChatView`` — with the compose
-                // glyph last in both: pushing a thread then swaps the buttons in place instead of
-                // animating a lone item into a group and back, and a second `.primaryAction`
-                // would fold into a "…" overflow menu anyway.
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    if threads.contains(where: \.isUnread), let onReadAll {
+                if threads.contains(where: \.isUnread), let onReadAll {
+                    ToolbarItem(placement: .topBarTrailing) {
                         Button("Mark all as read", systemImage: "envelope.open", action: onReadAll)
                     }
-                    newThreadButton
+                }
+                // A selected chat already has New session in its own toolbar.
+                if !splitLayout || !hasSelectedThread {
+                    if #available(iOS 27.1, *), !splitLayout {
+                        // The compact Duo bar puts this at the reachable lower edge.
+                        ToolbarItem(placement: .bottomBar) { newThreadButton }
+                    } else {
+                        ToolbarItem(placement: .topBarTrailing) { newThreadButton }
+                    }
                 }
             #endif
             #if os(macOS)
@@ -897,13 +914,13 @@ public struct ThreadSidebar: View {
     private let onPin: (ThreadSummary, Bool) -> Void
     /// Marks a thread read, or back to unread. The runtime is the one that decides either way.
     private let onRead: (ThreadSummary, Bool) -> Void
+    private let onReadAll: (() -> Void)?
     private let messageText: (String) -> String
     private let exportMarkdown: ((ThreadSummary) -> String)?
     private let onSearchSelect: ((ThreadSearchRequest?) -> Void)?
 
     @State private var renaming: ThreadSummary?
     @State private var query = ThreadListShowcase.query
-    @State private var hoveredThreadID: String?
     @State private var searchThreadID: String?
     /// The archive opens closed: it is where threads go to stop being in the way.
     @State private var showArchived = false
@@ -923,6 +940,7 @@ public struct ThreadSidebar: View {
         onArchive: @escaping (ThreadSummary, Bool) -> Void,
         onPin: @escaping (ThreadSummary, Bool) -> Void = { _, _ in },
         onRead: @escaping (ThreadSummary, Bool) -> Void = { _, _ in },
+        onReadAll: (() -> Void)? = nil,
         messageText: @escaping (String) -> String = { _ in "" },
         exportMarkdown: ((ThreadSummary) -> String)? = nil,
         onSearchSelect: ((ThreadSearchRequest?) -> Void)? = nil
@@ -940,16 +958,20 @@ public struct ThreadSidebar: View {
         self.onArchive = onArchive
         self.onPin = onPin
         self.onRead = onRead
+        self.onReadAll = onReadAll
         self.messageText = messageText
         self.exportMarkdown = exportMarkdown
         self.onSearchSelect = onSearchSelect
     }
 
     private var groups: ThreadGroups {
-        ThreadGroups(threads.filter {
-            threadMatches($0, query: query, body: messageText($0.id))
-                || !searchRanges(in: hostLabel($0.id) ?? "", term: query).isEmpty
-        })
+        ThreadGroups(threads)
+    }
+
+    private var searchNeedle: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var searchResults: ThreadSearchResults {
+        ThreadSearchResults(threads: threads, query: query, metadataText: { hostLabel($0) ?? "" }, messageText: messageText)
     }
 
     private var navigationSelection: Binding<String?> {
@@ -966,30 +988,42 @@ public struct ThreadSidebar: View {
     public var body: some View {
         let groups = groups
         List(selection: navigationSelection) {
-            if !groups.pinned.isEmpty {
-                Section("Pinned") { rows(groups.pinned) }
-            }
-            ForEach(groups.sections) { section in
-                Section(section.title) { rows(section.threads) }
-            }
-            if !groups.archived.isEmpty {
-                if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if searchNeedle.isEmpty {
+                if !groups.pinned.isEmpty {
+                    Section("Pinned") { rows(groups.pinned) }
+                }
+                ForEach(groups.sections) { section in
+                    Section(section.title) { rows(section.threads) }
+                }
+                if !groups.archived.isEmpty {
                     Section { archive(groups.archived) }
-                } else {
-                    Section("Archived") { rows(groups.archived) }
+                }
+            } else {
+                let results = searchResults
+                if !results.threads.isEmpty {
+                    Section("Threads") { rows(results.threads) }
+                }
+                if !results.messages.isEmpty {
+                    Section("Messages") {
+                        rows(results.messages) { searchExcerpt(in: messageText($0.id), matching: searchNeedle) }
+                    }
                 }
             }
         }
-        .listStyle(.sidebar)
+        .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(YorozuPalette.canvas)
+        .contentMargins(.vertical, LayoutMetrics.inner)
         .animation(.default, value: threads)
         .overlay { empty(groups) }
         // In the sidebar itself rather than in the toolbar: the chat next to it has a search
         // field of its own, and two searchable views in one window fight over the toolbar.
         .searchable(text: $query, placement: .sidebar, prompt: "Search threads")
-        .navigationTitle("Yorozu")
+        .navigationTitle("Threads")
         .toolbar {
+            if threads.contains(where: \.isUnread), let onReadAll {
+                Button("Mark all as read", systemImage: "envelope.open", action: onReadAll)
+            }
             // The same compose glyph the phone's list and every Mac mail or notes app use. It
             // asks who should answer in the same modal as the keyboard shortcut.
             Button("New thread", systemImage: "square.and.pencil", action: newThread)
@@ -1038,48 +1072,49 @@ public struct ThreadSidebar: View {
         onSearchSelect?(request)
     }
 
-    private func archive(_ threads: [ThreadSummary]) -> some View {
-        DisclosureGroup(isExpanded: $showArchived) {
-            rows(threads)
-        } label: {
-            Label("Archived (\(threads.count))", systemImage: "archivebox").font(.subheadline)
+    @ViewBuilder private func archive(_ threads: [ThreadSummary]) -> some View {
+        // DisclosureGroup makes the entire Mac list an outline and indents every thread.
+        Button { showArchived.toggle() } label: {
+            HStack {
+                Image(systemName: showArchived ? "chevron.down" : "chevron.right")
+                    .accessibilityHidden(true)
+                Label("Archived (\(threads.count))", systemImage: "archivebox")
+            }
+            .font(.subheadline)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(.rect)
         }
+        .buttonStyle(.plain)
+        .accessibilityValue(showArchived ? "Expanded" : "Collapsed")
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        if showArchived { rows(threads) }
     }
 
-    @ViewBuilder private func rows(_ threads: [ThreadSummary]) -> some View {
+    @ViewBuilder private func rows(
+        _ threads: [ThreadSummary],
+        preview: @escaping (ThreadSummary) -> String? = { _ in nil }
+    ) -> some View {
         ForEach(threads) { thread in
-            HStack(spacing: LayoutMetrics.tight) {
-                ThreadRow(
-                    thread: thread,
-                    working: workingThreads.contains(thread.id),
-                    preview: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        ? nil : searchExcerpt(in: messageText(thread.id), matching: query),
-                    highlightQuery: query,
-                    selected: selection == thread.id,
-                    hostLabel: hostLabel(thread.id)
-                )
-                Menu { menu(thread) } label: {
-                    Image(systemName: "ellipsis")
-                        .frame(width: 20, height: 20)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .opacity(hoveredThreadID == thread.id || selection == thread.id ? 1 : 0)
-                .allowsHitTesting(hoveredThreadID == thread.id || selection == thread.id)
-                .accessibilityLabel("Thread actions")
-            }
+            ThreadRow(
+                thread: thread,
+                working: workingThreads.contains(thread.id),
+                preview: preview(thread),
+                highlightQuery: searchNeedle,
+                selected: selection == thread.id,
+                hostLabel: hostLabel(thread.id)
+            )
             .tag(thread.id)
             .simultaneousGesture(TapGesture().onEnded { prepareSearchNavigation(thread.id) })
             .accessibilityAction {
                 prepareSearchNavigation(thread.id)
                 selection = thread.id
             }
-            .listRowInsets(EdgeInsets(top: 3, leading: 8, bottom: 3, trailing: 8))
+            // The plain Mac list already supplies 8 points around its row content.
+            .listRowInsets(EdgeInsets(top: 3, leading: 4, bottom: 3, trailing: 4))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
             .contentShape(.rect)
-            .onHover { hoveredThreadID = $0 ? thread.id : nil }
             .contextMenu { menu(thread) }
         }
     }
@@ -1112,8 +1147,8 @@ public struct ThreadSidebar: View {
     }
 
     @ViewBuilder private func empty(_ groups: ThreadGroups) -> some View {
-        if groups.isEmpty {
-            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if searchNeedle.isEmpty ? groups.isEmpty : searchResults.isEmpty {
+            if searchNeedle.isEmpty {
                 ContentUnavailableView(
                     "No threads yet",
                     systemImage: "bubble.left.and.bubble.right",

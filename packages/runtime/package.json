@@ -20,7 +20,10 @@
     "@openai/codex-sdk": "^0.155.1",
     "@openclaw/gateway-client": "2026.9.5",
     "@openclaw/gateway-protocol": "2026.9.5",
+    "@xterm/addon-serialize": "0.14.0",
+    "@xterm/headless": "6.0.0",
     "@yorozu/shared": "workspace:*",
+    "node-pty": "1.1.0",
     "ws": "^8.21.3",
     "zod": "^4.6.5"
   },

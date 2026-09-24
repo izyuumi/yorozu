@@ -1565,7 +1565,7 @@ async function pairPhone(port: number, qr: QrPayload) {
       phone.frame(channel.box(event), keys);
     },
     /** The next event of `kind` this phone can open: frames for the other device are not ours. */
-    async next(kind: EventKind): Promise<YorozuEvent> {
+    async next(kind: EventKind, observed?: YorozuEvent[]): Promise<YorozuEvent> {
       for (;;) {
         const frame = await phone.next();
         if (frame?.type !== "frame") continue;
@@ -1576,11 +1576,46 @@ async function pairPhone(port: number, qr: QrPayload) {
         } catch {
           continue; // Sealed for the other phone.
         }
+        observed?.push(event);
         if (event.kind === kind) return event;
       }
     },
   };
 }
+
+test("terminal broadcasts reach only paired clients that requested terminal status", async () => {
+  relay = await startRelay(0);
+  const qrs = qrQueue();
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${relay.port}`,
+    stateDir: mkdtempSync(join(tmpdir(), "yorozu-terminal-opt-in-")),
+    log: (line) => { if (line.startsWith("QR ")) qrs.push(line.slice(3)); },
+  });
+  const ordinary = await pairPhone(relay.port, await qrs.next());
+  await ordinary.next("device_list");
+  const subscribed = await pairPhone(relay.port, await qrs.next());
+  await subscribed.next("device_list");
+
+  // Both clients predate peer-info negotiation. The terminal request itself opts one in.
+  subscribed.send("", { kind: "terminal", data: { action: "status" } });
+  const initial = await subscribed.next("terminal");
+  expect(initial).toMatchObject({ data: { action: "state", enabled: false, sessions: [], epoch: expect.any(String) } });
+  if (initial.kind !== "terminal") throw new Error("missing terminal state");
+  const epoch = initial.data.epoch!;
+  expect(epoch).not.toBe("");
+
+  for (const action of ["enable", "disable"] as const) {
+    subscribed.send("", { kind: "terminal", data: { action, epoch } });
+    expect(await subscribed.next("terminal")).toMatchObject({
+      data: { action: "state", enabled: action === "enable", sessions: [], epoch },
+    });
+    // A response to a later command bounds the negative check without timers or transport mocks.
+    ordinary.send("", { kind: "sync_request", data: { lastSeen: {} } });
+    const observed: YorozuEvent[] = [];
+    await ordinary.next("sync_delta", observed);
+    expect(observed.filter((event) => event.kind === "terminal")).toEqual([]);
+  }
+});
 
 test.each([true, false])("peer metadata follows an encrypted handshake (host-name=%s)", async (hostName) => {
   relay = await startRelay(0);

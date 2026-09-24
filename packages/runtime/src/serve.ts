@@ -50,6 +50,7 @@ import {
   type MessageAttachment,
   type ProgressCardData,
   type ThreadAgent,
+  type TerminalData,
   type YorozuEvent,
 } from "@yorozu/shared";
 import WebSocket from "ws";
@@ -110,6 +111,7 @@ import { claudeCodeRunner, type NativeAgentRunner } from "./native.js";
 import { isProjectFolder, listProjects } from "./projects.js";
 import { questionDesk } from "./tools/cards.js";
 import { OpenClawRunner, type StoredPendingTurn } from "./openclaw.js";
+import { TerminalSessions } from "./terminal.js";
 import { appendTranscript, readTranscripts, transcriptDir } from "./transcripts.js";
 
 const DEFAULT_STATE_DIR = join(homedir(), "Library", "Application Support", "Yorozu");
@@ -606,8 +608,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
     notifyRelay(event);
   };
 
+  const currentUpdateStatus = (requestId?: string) =>
+    ({ ...updateGate.status, openTerminals: terminals.count(), ...(requestId ? { requestId } : {}) });
+
   function pushUpdateStatus(): void {
-    const event = control({ kind: "update_status", data: updateGate.status });
+    const event = control({ kind: "update_status", data: currentUpdateStatus() });
     for (const device of updateSubscribers) {
       const send = locals.get(device);
       if (send) send(event);
@@ -787,6 +792,67 @@ export function serve(options: ServeOptions = {}): Sidecar {
    */
   const projectList = (): YorozuEvent => control({ kind: "project_list", data: { projects: listProjects(undefined, dir) } });
 
+  // Terminal state belongs to the host, never a chat log. A paired device still needs the
+  // explicit developer setting before any PTY command is accepted.
+  const terminalSettingsFile = join(dir, "terminal-settings.json");
+  const terminalSubscribers = new Set<string>();
+  let terminalEpoch = randomUUID();
+  let terminalEnabled = false;
+  try { terminalEnabled = JSON.parse(readFileSync(terminalSettingsFile, "utf8")).enabled === true; }
+  catch { /* Absent or malformed settings fail closed. */ }
+  const sendTerminal = (device: string, data: TerminalData): void => {
+    const event = control({ kind: "terminal", data });
+    const local = locals.get(device);
+    if (local) local(event);
+    else if (devices.has(device)) sendTo(device, event);
+  };
+  // Keep sealed frames far below the relay's 1 MiB payload limit.
+  const terminalChunks = (value: string): string[] => {
+    const chunks: string[] = [];
+    for (let at = 0; at < value.length;) {
+      let end = Math.min(at + 8192, value.length);
+      if (end < value.length && /[\uD800-\uDBFF]/.test(value[end - 1]!)) end--;
+      chunks.push(value.slice(at, end));
+      at = end;
+    }
+    return chunks.length ? chunks : [""];
+  };
+  let reportedTerminalCount = 0;
+  const terminals = new TerminalSessions(
+    (id, output, sequence, viewers) => {
+      for (const chunk of terminalChunks(output)) {
+        for (const device of viewers) sendTerminal(device, { action: "output", sessionId: id, data: chunk, sequence });
+      }
+    },
+    () => {
+      broadcastTerminalState();
+      const count = terminals.count();
+      if (count !== reportedTerminalCount) {
+        reportedTerminalCount = count;
+        if (count > 0) updateGate.activity();
+        pushUpdateStatus();
+      }
+    },
+  );
+  const sendTerminalState = (device: string): void =>
+    sendTerminal(device, { action: "state", enabled: terminalEnabled, sessions: terminals.list(device), epoch: terminalEpoch });
+  const broadcastTerminalState = (): void => {
+    for (const device of devices.keys()) sendTerminalState(device);
+    for (const device of locals.keys()) sendTerminalState(device);
+  };
+  const sendTerminalSnapshot = (id: string, device: string): void => {
+    void terminals.attach(id, device).then((snapshot) => {
+      const snapshotId = randomUUID();
+      const chunks = terminalChunks(snapshot.content);
+      chunks.forEach((chunk, index) => sendTerminal(device, {
+        action: "snapshot", sessionId: id, snapshotId, data: chunk,
+        sequence: snapshot.sequence, last: index === chunks.length - 1,
+      }));
+    }).catch((error: unknown) => sendTerminal(device, {
+      action: "error", sessionId: id, error: error instanceof Error ? error.message : String(error),
+    }));
+  };
+
   let openclawModels: ModelOption[] = [];
   void openclaw?.listModels().then((models) => {
     openclawModels = models;
@@ -824,6 +890,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const known = devices.get(pub);
     if (!known) return;
     devices.delete(pub);
+    terminalSubscribers.delete(pub);
+    terminals.forgetDevice(pub);
     yoloRequests.delete(pub);
     saveDevices();
     if (known.record.signingPub) revokeAtRelay(known.record.signingPub);
@@ -1192,20 +1260,70 @@ export function serve(options: ServeOptions = {}): Sidecar {
           try {
             active = new Set([...running.keys(), ...turnQueues.keys(), ...archiveUpdates.keys(),
               ...listThreads(dir).filter((thread) => thread.nativeTurn?.state === "interrupted").map((thread) => thread.id),
-              ...(openclaw?.pendingTurns(true) ?? []).map((turn) => turn.threadId)]).size;
+              ...(openclaw?.pendingTurns(true) ?? []).map((turn) => turn.threadId)]).size + terminals.count();
           } catch { active = null; }
           updateGate.poll(active, Date.now());
         }
       }
       if (data.action !== "status") pushUpdateStatus();
-      reply(control({ kind: "update_status", data: { ...updateGate.status, requestId: event.id } }));
+      reply(control({ kind: "update_status", data: currentUpdateStatus(event.id) }));
       return;
+    }
+    // PTY frames are live control, not thread events or outbox commands. A disconnected client
+    // never replays input after the session or writer may have changed.
+    if (event.kind === "terminal") {
+      const device = localDevice ?? from;
+      if (!device) return;
+      const data = event.data;
+      // An encrypted client request proves this connection understands terminal frames,
+      // including clients released before peer-info negotiation. Server events cannot opt in.
+      if (!["status", "enable", "disable", "create", "attach", "detach", "takeover", "input", "resize", "close"].includes(data.action)) return;
+      if (from) terminalSubscribers.add(from);
+      const id = data.sessionId;
+      try {
+        if (data.action === "status") return sendTerminalState(device);
+        if (data.epoch !== terminalEpoch) throw new Error("terminal connection changed; reconnect first");
+        if (data.action === "enable" || data.action === "disable") {
+          terminalEnabled = data.action === "enable";
+          writeFileAtomic(terminalSettingsFile, JSON.stringify({ enabled: terminalEnabled }));
+          if (!terminalEnabled) terminals.closeAll();
+          return broadcastTerminalState();
+        }
+        if (!terminalEnabled) throw new Error("terminal access is disabled");
+        if (data.action === "create") {
+          if (updateGate.status.phase === "installing") throw new Error("update installing");
+          const thread = listThreads(dir).find((item) => item.id === event.threadId);
+          if (!thread) throw new Error("open a chat thread before starting a terminal");
+          const cwd = thread.agent ? thread.cwd : homedir();
+          if (!cwd || (thread.agent && !isProjectFolder(cwd))) {
+            throw new Error("thread project folder is unavailable");
+          }
+          const sessionId = randomUUID();
+          terminals.create(sessionId, cwd, device, data.cols!, data.rows!);
+          return sendTerminal(device, { action: "created", sessionId });
+        }
+        if (typeof id !== "string" || !id) throw new Error("terminal session required");
+        switch (data.action) {
+          case "attach": return sendTerminalSnapshot(id, device);
+          case "detach": return terminals.detach(id, device);
+          case "takeover":
+            terminals.takeover(id, device, data.cols!, data.rows!);
+            return sendTerminalSnapshot(id, device);
+          case "input": return terminals.input(id, device, data.data ?? "");
+          case "resize": return terminals.resize(id, device, data.cols!, data.rows!);
+          case "close": return terminals.close(id, device, localDevice !== undefined);
+          default: return;
+        }
+      } catch (error) {
+        return sendTerminal(device, { action: "error", sessionId: id,
+          error: error instanceof Error ? error.message : String(error) });
+      }
     }
     const requiresAdmission = event.kind === "message" && event.data.role === "user" ||
       event.kind === "thread_create" || event.kind === "thread_archive" ||
       event.kind === "thread_recover" && event.data.action === "continue";
     if (updateGate.status.phase === "installing" && requiresAdmission) {
-      if (updateSubscribers.has(localDevice ?? from ?? "")) reply(control({ kind: "update_status", data: updateGate.status }));
+      if (updateSubscribers.has(localDevice ?? from ?? "")) reply(control({ kind: "update_status", data: currentUpdateStatus() }));
       return;
     }
     if (event.kind === "message" && !attachmentsWithinLimits(event.data.attachments ?? [])) {
@@ -1487,6 +1605,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     onClose: (device) => {
       locals.delete(device);
+      terminals.forgetDevice(device);
       updateSubscribers.delete(device);
       if (updateOwner === device) {
         updateOwner = undefined;
@@ -1623,6 +1742,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     sendTo = (device: string, event: YorozuEvent): void => {
       const known = devices.get(device);
       if (!known || !relayReady || ws.readyState !== WebSocket.OPEN) return;
+      if (event.kind === "terminal" && !terminalSubscribers.has(device)) return;
       const awaitingCompatibility = known.record.peerInfoRequired && known.compatibility?.state !== "compatible";
       if (awaitingCompatibility && event.kind !== "thread_list") return;
       const cutoff = known.record.pairedAt ?? 0;
@@ -1737,6 +1857,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         }
         if (proved) pairingSecrets.clear();
         const changed = !known || signingPub !== known.record.signingPub;
+        terminalSubscribers.delete(body.pub);
         remember({
           pub: body.pub,
           ...(signingPub ? { signingPub } : {}),
@@ -1919,6 +2040,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
     ws.on("close", () => {
       relayReady = false;
+      terminalSubscribers.clear();
+      // Frames buffered by the relay while the host was offline may arrive after reconnect.
+      // A fresh epoch rejects them, including old keystrokes and stale close/toggle commands.
+      terminalEpoch = randomUUID();
+      for (const device of devices.keys()) terminals.forgetDevice(device);
+      broadcastTerminalState();
       stopHeartbeat();
       state("disconnected");
       if (!stopped) retry = setTimeout(connect, RECONNECT_MS);
@@ -1997,6 +2124,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     close: async () => {
       stopped = true;
+      terminals.closeAll();
       for (const turn of running.values()) turn.abort();
       if (retry) clearTimeout(retry);
       await local.close();

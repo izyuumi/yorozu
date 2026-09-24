@@ -567,6 +567,27 @@ export interface DeviceRemoveData {
   pub: string;
 }
 
+/** Transient host terminal control and display data. Never part of a chat transcript. */
+export interface TerminalData {
+  action: "status" | "enable" | "disable" | "create" | "created" | "attach" | "detach" | "takeover"
+    | "input" | "resize" | "close" | "state" | "snapshot" | "output" | "error";
+  sessionId?: string;
+  enabled?: boolean;
+  sessions?: { id: string; title: string; cwd: string; writable: boolean; cols: number; rows: number }[];
+  cols?: number;
+  rows?: number;
+  /** Base64 for input; UTF-8 terminal text for snapshots and output. */
+  data?: string;
+  /** Output sequence at snapshot or chunk emission. */
+  sequence?: number;
+  /** Snapshot chunks have one id and end with `last: true`. */
+  snapshotId?: string;
+  last?: boolean;
+  error?: string;
+  /** Host connection generation. Mutating controls from an older relay connection are refused. */
+  epoch?: string;
+}
+
 /** Kind tag paired with its payload. Discriminates on `kind`. */
 export type EventPayload =
   | { kind: "message"; data: MessageData }
@@ -601,6 +622,7 @@ export type EventPayload =
   | { kind: "sync_delta"; data: SyncDeltaData }
   | { kind: "device_list"; data: DeviceListData }
   | { kind: "device_remove"; data: DeviceRemoveData }
+  | { kind: "terminal"; data: TerminalData }
   | { kind: "receipt"; data: ReceiptData }
   | { kind: "update_status"; data: UpdateStatusData }
   | { kind: "update_control"; data: UpdateControlData };
@@ -610,6 +632,7 @@ export interface UpdateStatusData {
   updateId?: string;
   version?: string;
   activeThreads?: number;
+  openTerminals?: number;
   deadline?: number;
   postponedUntil?: number;
   requestId?: string;

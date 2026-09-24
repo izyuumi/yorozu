@@ -154,6 +154,7 @@ private struct HostSettingsView: View {
                     }
                 }
             }
+            TerminalAccessSettings(model: host.model)
             Section {
                 Button("Repair connection", action: onRepair)
                 Button(session.hosts.hasMultipleHosts ? "Remove host" : "Remove connection", role: .destructive) {

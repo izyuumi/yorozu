@@ -10,6 +10,7 @@ import SwiftUI
 public struct ChatView: View {
     public let model: ChatModel
     public let thread: ThreadSummary
+    private let onNewThread: (() -> Void)?
     private let onCreate: ((ThreadAgent, String?) -> Void)?
     private let resumeRequest: UUID?
     private let notificationClass: String?
@@ -52,6 +53,7 @@ public struct ChatView: View {
     #endif
     @State private var searching = false
     @State private var choosingAgent = false
+    @State private var showingTerminal = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var search = ""
     /// Which hit the arrows are on. Reset whenever the term changes.
@@ -72,6 +74,7 @@ public struct ChatView: View {
         notificationEventRef: String? = nil,
         lastReadAt: Double? = nil,
         notificationSyncRevision: Int? = nil,
+        onNewThread: (() -> Void)? = nil,
         onCreate: ((ThreadAgent, String?) -> Void)? = nil,
         offlineNotice: String = "Mac offline — what you send waits on this phone until it's back."
     ) {
@@ -82,6 +85,7 @@ public struct ChatView: View {
         self.notificationEventRef = notificationEventRef
         self.lastReadAt = lastReadAt
         self.notificationSyncRevision = notificationSyncRevision
+        self.onNewThread = onNewThread
         self.onCreate = onCreate
         self.offlineNotice = offlineNotice
     }
@@ -123,6 +127,11 @@ public struct ChatView: View {
     /// The timeline's link policy, built here because the phone's rows are hosted in UIKit
     /// cells that do not inherit this view's environment and have to be handed it per row.
     private var linkAction: OpenURLAction { .chatLinks(onPairingLink: onPairingLink) }
+
+    private func newThread() {
+        if let onNewThread { onNewThread() }
+        else { choosingAgent = true }
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -178,6 +187,14 @@ public struct ChatView: View {
                     .presentationDetents([.medium, .large])
             }
         }
+        .sheet(isPresented: $showingTerminal) {
+            TerminalSheet(model: model, thread: thread)
+                #if os(iOS)
+                .presentationDetents([.medium])
+                #else
+                .frame(minWidth: 700, minHeight: 450)
+                #endif
+        }
         .onChange(of: model.state, initial: true) { _, state in
             if state == .paired { model.requestApprovalSettings() }
         }
@@ -187,8 +204,7 @@ public struct ChatView: View {
         #else
             // A thread on a model of its own says so beside its title. Only then — the default
             // is the case that needs no caption. The Mac has a title bar subtitle for exactly
-            // this; the phone's stacked `.principal` item is squeezed between the title it
-            // repeats and the buttons next to it when a window toolbar draws it.
+            // this; the phone uses a compact identity in its `.principal` item.
             .navigationSubtitle(macModelCaption)
         #endif
         #if os(iOS)
@@ -212,18 +228,45 @@ public struct ChatView: View {
                             .foregroundStyle(.secondary)
                         }
                     }
+                    // The split-view bar can propose only a few points on Duo's inner display.
+                    .fixedSize(horizontal: true, vertical: false)
                     .accessibilityElement(children: .combine)
                     .accessibilityValue(model.ownerOnline ? String(localized: "Mac online") : String(localized: "Mac offline"))
                 }
-                // One group, not two `.primaryAction` items: iOS folds a second primary action
-                // into a "…" overflow menu, which is exactly the button this replaced.
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
-                        .keyboardShortcut("f")
-                    if onCreate != nil {
-                        Button("New session", systemImage: "square.and.pencil") { choosingAgent = true }
+                if #available(iOS 27.1, *) {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        if model.terminalEnabled {
+                            Button("Open terminal", systemImage: "terminal") { showingTerminal = true }
+                        }
+                        Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
+                            .keyboardShortcut("f")
+                    }
+                    if onNewThread != nil || onCreate != nil {
+                        // Duo places bottom-bar actions at the lower end of its vertical bar.
+                        ToolbarItem(placement: .bottomBar) {
+                            Button("New session", systemImage: "square.and.pencil", action: newThread)
+                        }
+                    }
+                } else {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        if model.terminalEnabled {
+                            Button("Open terminal", systemImage: "terminal") { showingTerminal = true }
+                        }
+                        Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
+                            .keyboardShortcut("f")
+                        if onNewThread != nil || onCreate != nil {
+                            Button("New session", systemImage: "square.and.pencil", action: newThread)
+                        }
                     }
                 }
+        }
+        #else
+        .toolbar {
+            if model.terminalEnabled {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Open terminal", systemImage: "terminal") { showingTerminal = true }
+                }
+            }
         }
         #endif
         // Opened from the magnifier rather than always on show: a thread is for reading, and
