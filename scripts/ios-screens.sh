@@ -117,6 +117,7 @@ UDID=$(xcrun simctl create yorozu-screens "$DEVICE_TYPE")
 # Signed, like the e2e run: ad-hoc simulator signing is what gives the app its
 # application-identifier entitlement, without which the Keychain fails with -34018.
 xcodebuild build \
+  -skipPackagePluginValidation \
   -workspace "$IOS/Yorozu.xcworkspace" \
   -scheme YorozuIOS \
   -destination "id=$UDID" \
