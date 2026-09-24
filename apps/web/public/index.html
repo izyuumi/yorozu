@@ -42,7 +42,10 @@
           <p class="fine">Mac: macOS 15+ · Apple silicon · <a href="https://openclaw.ai">OpenClaw</a> required on the host<br>iPhone: iOS 18+ · <a href="#setup-with-an-agent">Set up with an agent</a> · <a href="https://github.com/izyuumi/yorozu">Open source, MIT</a></p>
         </div>
         <figure class="phone">
-          <img src="/assets/iphone-chat.webp" alt="Yorozu on iPhone answering whether an invoice was paid, with a table of invoices and a written explanation" width="804" height="1748" fetchpriority="high">
+          <div class="iphone-device">
+            <img class="iphone-screen" src="/assets/iphone-chat.webp" alt="Yorozu on iPhone 18 Pro planning a Moon Picnic Club outing, with a snack budget and an emergency-cookie request" width="804" height="1748" fetchpriority="high">
+            <img class="iphone-bezel" src="/assets/iphone-18-pro-bezel.webp" alt="" aria-hidden="true" width="1350" height="2760">
+          </div>
         </figure>
       </div>
     </section>
@@ -64,6 +67,19 @@
           <a href="https://github.com/izyuumi/yorozu#development">Open the development guide</a>
         </article>
       </div>
+    </section>
+
+    <section class="agent-setup" id="setup-with-an-agent" aria-labelledby="agent-setup-title">
+      <div class="agent-setup-text">
+        <h2 id="agent-setup-title">Or let an agent set it up.</h2>
+        <p>Already using Claude Code, Codex or another coding agent? Paste this into it. The guide checks what is installed, asks what you want, and walks you through pairing, permissions and OpenClaw without deciding anything for you.</p>
+      </div>
+      <div class="prompt">
+        <pre><code id="agent-prompt">Read https://raw.githubusercontent.com/izyuumi/yorozu/main/Start.md and follow it to set up Yorozu on my devices. Ask me before configuring anything.</code></pre>
+        <button type="button" class="copy" data-copy="agent-prompt" hidden>Copy</button>
+      </div>
+      <p class="copy-status" id="agent-prompt-status" role="status" aria-atomic="true"></p>
+      <p class="fine">The guide is <a href="https://github.com/izyuumi/yorozu/blob/main/Start.md">Start.md</a> in the repository. Read it yourself first if you want to know what the agent will ask.</p>
     </section>
 
     <section class="steps" aria-labelledby="steps-title">
@@ -95,7 +111,10 @@
         <p>Say <em>Discuss first</em> and the agent explains before it acts.</p>
       </div>
       <figure class="shot phone-shot">
-        <img src="/assets/iphone-approval.webp" alt="Yorozu on iPhone asking to run rm on old Desktop screenshots, with Allow once, For this task, Don't allow and Discuss first buttons" width="804" height="1748" loading="lazy">
+        <div class="iphone-device">
+          <img class="iphone-screen" src="/assets/iphone-approval.webp" alt="Yorozu on iPhone 18 Pro asking permission to send a playful Moon Picnic Club invitation, with Allow once, For this task, Don't allow and Discuss first buttons" width="804" height="1748" loading="lazy">
+          <img class="iphone-bezel" src="/assets/iphone-18-pro-bezel.webp" alt="" aria-hidden="true" width="1350" height="2760" loading="lazy">
+        </div>
       </figure>
     </section>
 
@@ -107,51 +126,43 @@
       </div>
       <figure class="shot mac-shot">
         <picture>
-          <source srcset="/assets/mac-progress-dark.webp" media="(prefers-color-scheme: dark)" width="900" height="620">
-          <img src="/assets/mac-chat-light.webp" alt="Yorozu on the Mac, with a sidebar of threads beside an agent conversation" width="900" height="620" loading="lazy">
+          <source srcset="/assets/mac-demo-dark.webp" media="(prefers-color-scheme: dark)" width="820" height="540">
+          <img src="/assets/mac-demo-light.webp" alt="Yorozu on a Mac desktop with demo threads and a playful Saturday adventure plan, including a park stroll and an emergency snack fund" width="820" height="540" loading="lazy">
         </picture>
+      </figure>
+    </section>
+
+    <section class="proof duo-support" id="duo" aria-labelledby="duo-title">
+      <div class="proof-text">
+        <h2 id="duo-title">Also supports iPhone Duo.</h2>
+        <p>Open your iPhone Duo to see your sessions and conversation side by side.</p>
+      </div>
+      <figure class="shot duo-shot">
+        <div class="duo-device">
+          <picture>
+            <source srcset="/assets/iphone-duo-dark.webp" media="(prefers-color-scheme: dark)" width="1440" height="1013">
+            <img src="/assets/iphone-duo-light.webp" alt="Yorozu on iPhone Duo fully open in landscape, with demo sessions on the left, a dinner-planning conversation on the right, and New session at the lower right" width="1440" height="1013" loading="lazy">
+          </picture>
+          <img class="duo-bezel" src="/assets/iphone-duo-bezel.webp" alt="" aria-hidden="true" width="3093" height="2247" loading="lazy">
+        </div>
+        <figcaption class="fine">iPhone Duo, fully open in landscape.</figcaption>
       </figure>
     </section>
 
     <section class="relay" aria-labelledby="relay-title">
       <h2 id="relay-title">The relay can't read a word of it.</h2>
-      <svg class="diagram" viewBox="0 0 720 150" role="img" aria-labelledby="diagram-title">
-        <title id="diagram-title">Your iPhone and your Mac exchange sealed messages through a relay that sees only size and timing.</title>
-        <g fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="30" y="30" width="60" height="100" rx="12"/>
-          <line x1="50" y1="40" x2="70" y2="40" stroke-linecap="round"/>
-          <rect x="612" y="40" width="90" height="62" rx="8"/>
-          <line x1="640" y1="112" x2="674" y2="112" stroke-linecap="round"/>
-          <path d="M310 88 a24 24 0 0 1 8 -46 a30 30 0 0 1 58 -6 a26 26 0 0 1 34 52 z"/>
-          <path d="M110 80 H300 M410 80 H600" stroke-dasharray="4 8" stroke-linecap="round"/>
-          <path d="M594 74 l8 6 l-8 6 M116 74 l-8 6 l8 6" stroke-linecap="round" stroke-linejoin="round"/>
-        </g>
-        <g font-family="ui-monospace, SF Mono, Menlo, monospace" font-size="12" fill="currentColor" text-anchor="middle">
-          <text x="205" y="70">ChaCha20-Poly1305</text>
-          <text x="505" y="70">ChaCha20-Poly1305</text>
-          <text x="60" y="145">iPhone</text>
-          <text x="657" y="145">Mac</text>
-          <text x="360" y="120" class="muted-text">sees size and timing</text>
-        </g>
-      </svg>
+      <figure class="diagram" role="img" aria-label="Your iPhone and your Mac exchange messages encrypted with ChaCha20-Poly1305 through a relay that sees only size and timing.">
+        <span class="diagram-art" aria-hidden="true"></span>
+        <figcaption aria-hidden="true">
+          <span class="diagram-encryption">ChaCha20-Poly1305 · End-to-end encrypted</span>
+          <span class="diagram-labels"><span>iPhone</span><span class="diagram-relay">sees size and timing</span><span>Mac</span></span>
+        </figcaption>
+      </figure>
       <dl>
         <div><dt>Keys never leave your devices</dt><dd>An X25519 exchange at pairing time. The relay stores public keys and a room id, nothing it could open.</dd></div>
         <div><dt>No Yorozu account</dt><dd>No email, no password, no analytics. Your provider logins stay in OpenClaw, Claude Code and Codex on the Mac.</dd></div>
         <div><dt>Run it yourself if you like</dt><dd>The relay is a few hundred lines. Put it on a Mac mini over Tailscale and change one URL in Settings.</dd></div>
       </dl>
-    </section>
-
-    <section class="agent-setup" id="setup-with-an-agent" aria-labelledby="agent-setup-title">
-      <div class="agent-setup-text">
-        <h2 id="agent-setup-title">Or let an agent set it up.</h2>
-        <p>Already using Claude Code, Codex or another coding agent? Paste this into it. The guide checks what is installed, asks what you want, and walks you through pairing, permissions and OpenClaw without deciding anything for you.</p>
-      </div>
-      <div class="prompt">
-        <pre><code id="agent-prompt">Read https://raw.githubusercontent.com/izyuumi/yorozu/main/Start.md and follow it to set up Yorozu on my devices. Ask me before configuring anything.</code></pre>
-        <button type="button" class="copy" data-copy="agent-prompt" hidden>Copy</button>
-      </div>
-      <p class="copy-status" id="agent-prompt-status" role="status" aria-atomic="true"></p>
-      <p class="fine">The guide is <a href="https://github.com/izyuumi/yorozu/blob/main/Start.md">Start.md</a> in the repository. Read it yourself first if you want to know what the agent will ask.</p>
     </section>
 
     <section class="warning" id="before-you-install" aria-labelledby="risk-title">
