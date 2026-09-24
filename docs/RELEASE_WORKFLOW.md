@@ -74,6 +74,26 @@ signed Conventional Commit before the next release cycle. If a release branch ke
 awaits review. Release Please waits to prepare its next version PR until promotion clears the
 earlier pending PR; a subsequent push can then start that preparation.
 
+## Automatic release notes
+
+Candidate preparation generates notes directly from Git history through its exact source SHA.
+The base is the highest earlier version with a published stable release whose commit is an
+ancestor of that SHA. Drafts, prereleases, orphan tags, and releases on a divergent hotfix branch
+cannot accidentally hide changes. An initial release includes all reachable history.
+
+Every Conventional Commit type is included: features, fixes, performance, refactoring, docs,
+build, CI, tests, style, maintenance, reverts, and custom types. Scopes, `!`, `BREAKING CHANGE:`,
+and `BREAKING-CHANGE:` are preserved. Synthetic merge wrappers are skipped so their PR titles
+do not repeat the underlying commits; actual Conventional Commit merge subjects remain.
+Historical nonconventional subjects appear under **Other Changes**, never silently disappear.
+Each entry links its commit, and the full-history link uses permanent SHAs.
+
+These notes are saved in `candidate.json` and used verbatim for the candidate, the rolling main
+beta, and its stable release. Commits merged after Release Please's version PR are included. `CHANGELOG.md` remains
+the version-PR preview, not the source of final GitHub notes; its standard commit sections are
+also configured to stay visible. CI checks type coverage, breaking footers, merge duplication,
+branch ancestry, and exact-note preservation through promotion.
+
 ## Build and test a candidate
 
 1. Merge signed changes into `main` or `release/<major>.<minor>` with the intended version in
@@ -99,12 +119,12 @@ selection cannot change the candidate's source. New dispatches receive new build
 An explicit version override does not update Release Please metadata: before stable promotion,
 the candidate SHA's `version.txt` and `.release-please-manifest.json` must both match that version.
 
-Each `candidate-<version>-<build>` release retains the DMG, appcast, model-catalog snapshot,
+Each `candidate-<version>-<build>` release retains exactly one DMG (`yorozu.dmg`), the appcast,
 and `candidate.json` with source SHA, version/build, artifact hashes, and exact App Store Connect
 build ID. Existing published candidate artifacts are not overwritten. Only a candidate from `main`
-updates `main-beta`'s mutable `Yorozu.dmg` and `appcast.xml` pointer assets. Its legacy tag stays
+updates `main-beta`'s mutable `yorozu.dmg` and `appcast.xml` pointer assets. Its legacy tag stays
 in place; the numbered candidate and manifest identify the actual source. Old versioned DMGs
-on `main-beta` remain available for installed clients with cached feeds.
+and uppercase `Yorozu.dmg` aliases remain available for legacy download links and cached feeds.
 
 ## Promote to stable
 
@@ -144,6 +164,19 @@ compatible, and decide launch timing with this overlap in mind.
 
 ## Stable and beta downloads
 
+New candidate and stable releases have three assets:
+
+| Asset | Purpose |
+| --- | --- |
+| `yorozu.dmg` | The only installer; version/build identity is in the retained tag URL and app bundle |
+| `appcast.xml` | Sparkle's update feed: eligible version/build, DMG URL, size, and EdDSA signature |
+| `candidate.json` | Exact source/build identity, generated release notes, hashes, and Apple build ID needed for promotion |
+
+`appcast.xml` is required for **Check for Updates** and automatic Mac updates. Removing it would
+strand installed clients. The XML describes the signed DMG; it is not another installer.
+The [Sparkle publishing guide](https://sparkle-project.org/documentation/publishing/) describes
+the feed and archive-signature format.
+
 - Stable users read `https://yorozu.yumi.to/appcast.xml`; the website's Mac download follows the
   latest stable GitHub Release.
 - Opted-in beta users read the separate `main-beta` appcast. The app rejects lower marketing
@@ -153,13 +186,23 @@ compatible, and decide launch timing with this overlap in mind.
   version and has an eligible build. It does not reinstall or downgrade the app.
 - Appcast enclosure URLs point directly to retained numbered release assets. A later release
   does not break a cached appcast's download URL. Stable and candidate releases are preserved.
-- Deploy the website redirect changes before the first promotion. They pin the previously shipped
-  `0.4.0 (293)` download URL to `v0.4.0`, preserving the legacy cached appcast during migration.
-- `https://yorozu.yumi.to/models.json` follows `main/catalog/models.json`. Each release also
-  retains its catalog snapshot; ongoing catalog changes do not mutate release assets.
+- Pin the previously shipped `0.4.0 (293)` download redirect to `v0.4.0` before first promotion,
+  preserving the legacy cached appcast during migration. Do not delete its versioned asset.
+- Coordinate the lowercase download-link deployment with the first new candidate/stable
+  publication. Before changing live links, make `yorozu.dmg` available in both the current
+  stable release and `main-beta` (copy the existing signed DMG for a one-time compatibility
+  alias if needed). Then deploy the updated `/mac` redirect and beta link. New releases need
+  only the lowercase DMG; old aliases remain for existing links.
+- Model lists come live from OpenClaw's `models.list`, Claude SDK's `supportedModels()`, and
+  Codex's paginated `model/list`. No release `models.json` asset is needed. The dormant
+  direct-provider catalog reads `main/catalog/models.json` directly with cache/bundled fallback;
+  `/models.json` remains a compatibility redirect for older legacy consumers.
 
-The rolling `main-beta` pointer deliberately has mutable assets. Do not enable repository-wide
-GitHub release immutability without first replacing that pointer design.
+The rolling **Yorozu Beta** (`main-beta`) release is still required: shipped Mac binaries have
+its appcast URL built in. Do not delete it until those clients have migrated to another feed.
+It deliberately has mutable assets; do not enable repository-wide GitHub release immutability
+without first replacing that pointer design. The obsolete `v0.3.0` tag is not a feed or notes
+baseline; historical references use its retained commit SHA instead.
 
 ## Parallel stabilization and hotfixes
 

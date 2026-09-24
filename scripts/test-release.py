@@ -27,7 +27,7 @@ def feed(version="0.5.0", build="10042", tag=None):
             f'<sparkle:version>{build}</sparkle:version>'
             f'<sparkle:shortVersionString>{version}</sparkle:shortVersionString>'
             '<sparkle:channel>beta</sparkle:channel>'
-            f'<enclosure url="https://github.com/fixture/yorozu/releases/download/{tag}/Yorozu-{version}-{build}.dmg" '
+            f'<enclosure url="https://github.com/fixture/yorozu/releases/download/{tag}/yorozu.dmg" '
             f'length="10" sparkle:edSignature="{SIGNATURE}"/>'
             '</item></channel></rss>').encode()
 
@@ -101,6 +101,7 @@ class FakeGitHub(publication.GitHub):
             assert "--draft" in args and "--latest=false" in args
             self.add_release(tag, draft=True, prerelease="--prerelease" in args,
                              source=args[args.index("--target") + 1])
+            self.releases[tag]["notes"] = args[args.index("--notes") + 1]
         elif action == "download":
             name = args[args.index("--pattern") + 1]
             path = Path(args[args.index("--dir") + 1]) / name
@@ -117,6 +118,8 @@ class FakeGitHub(publication.GitHub):
                 raise RuntimeError("simulated publish failure")
             self.releases[tag]["isDraft"] = False
             self.releases[tag]["isPrerelease"] = "--prerelease=true" in args
+            if "--notes" in args:
+                self.releases[tag]["notes"] = args[args.index("--notes") + 1]
         else:
             raise AssertionError(f"unexpected mutation: {args}")
         return ""
@@ -129,8 +132,6 @@ class ReleaseFixture(unittest.TestCase):
         self.root = Path(temporary.name)
         self.dist = self.root / "dist"
         self.dist.mkdir()
-        (self.root / "catalog").mkdir()
-        (self.root / "catalog/models.json").write_text('{"models": []}\n')
         (self.root / "release-please-config.json").write_text(json.dumps({"packages": {".": {"release-as": "0.5.0"}}}))
         self.original_cwd = Path.cwd()
         os.chdir(self.root)
@@ -140,13 +141,14 @@ class ReleaseFixture(unittest.TestCase):
         checkout.start()
         self.addCleanup(checkout.stop)
         self.data = {"schema": 1, "version": "0.5.0", "build": "10042", "source_sha": SHA,
-                     "source_branch": "main", "tag": "candidate-0.5.0-10042", "run_id": "42", "ci_run_id": "7"}
+                     "source_branch": "main", "tag": "candidate-0.5.0-10042", "run_id": "42", "ci_run_id": "7",
+                     "notes": "## Changes in 0.5.0\n\n- fix: retain exact candidate notes\n"}
         self.ios = {"app_id": "123", "build_id": "a-b-c", "version": "0.5.0", "build": "10042",
                     "uploaded_date": "2026-09-24T00:00:00Z"}
         self.tag = self.data["tag"]
         publication.write_json(self.dist / "candidate.json", self.data)
         publication.write_json(self.dist / "ios.json", self.ios)
-        (self.dist / "Yorozu-0.5.0-10042.dmg").write_bytes(b"signed DMG")
+        (self.dist / "yorozu.dmg").write_bytes(b"signed DMG")
         (self.dist / "appcast.xml").write_bytes(feed())
 
     def publish(self):
@@ -168,8 +170,12 @@ class ReleaseTests(ReleaseFixture):
         self.assertEqual(set(self.gh.releases), {"v0.4.0", self.tag, "v0.5.0"})
         stable = self.gh.releases["v0.5.0"]
         self.assertFalse(stable["isDraft"] or stable["isPrerelease"])
-        self.assertEqual(stable["files"]["Yorozu.dmg"], b"signed DMG")
+        self.assertEqual(set(stable["files"]), {"yorozu.dmg", "appcast.xml", "candidate.json"})
+        self.assertEqual(set(original["files"]), set(stable["files"]))
+        self.assertEqual(stable["files"]["yorozu.dmg"], b"signed DMG")
         self.assertEqual(stable["files"]["candidate.json"], original["files"]["candidate.json"])
+        self.assertEqual(stable["notes"], self.data["notes"])
+        self.assertEqual(stable["notes"], original["notes"])
         self.assertNotIn(b"sparkle:channel", stable["files"]["appcast.xml"])
         self.assertIn(self.tag.encode(), stable["files"]["appcast.xml"])
         self.assertIn(SIGNATURE.encode(), stable["files"]["appcast.xml"])
@@ -194,7 +200,7 @@ class ReleaseTests(ReleaseFixture):
         self.gh.events.clear()
         self.promote()
         uploads = [event[5] for event in self.gh.events if event[:2] == ("release", "upload")]
-        self.assertEqual([Path(path).name for path in uploads], ["appcast.xml", "models.json"])
+        self.assertEqual([Path(path).name for path in uploads], ["appcast.xml"])
 
     def test_digest_or_tag_mismatch_blocks_promotion_before_mutation(self):
         self.publish()
@@ -202,7 +208,7 @@ class ReleaseTests(ReleaseFixture):
             with self.subTest(corrupt=corrupt):
                 saved = copy.deepcopy((self.gh.releases, self.gh.tags))
                 if corrupt == "digest":
-                    self.gh.releases[self.tag]["files"]["Yorozu-0.5.0-10042.dmg"] = b"replacement"
+                    self.gh.releases[self.tag]["files"]["yorozu.dmg"] = b"replacement"
                 else:
                     self.gh.tags[self.tag] = OTHER
                 self.gh.events.clear()
@@ -249,7 +255,7 @@ class ReleaseTests(ReleaseFixture):
         self.gh.events.clear()
         self.publish()
         self.assertEqual(self.mutations(), [])
-        (self.dist / "Yorozu-0.5.0-10042.dmg").write_bytes(b"other DMG!")
+        (self.dist / "yorozu.dmg").write_bytes(b"other DMG!")
         with self.assertRaisesRegex(ValueError, "immutable asset differs"):
             self.publish()
         self.assertEqual(self.mutations(), [])
@@ -269,9 +275,12 @@ class ReleaseTests(ReleaseFixture):
     def test_prepare_deterministic_version_build_and_existing_identity_refusal(self):
         args = SimpleNamespace(version=None, source=SHA, branch="main", run_number="42", run_id="42",
                                ci_run_id="7", output=self.dist / "prepared.json")
-        with patch.dict(os.environ, {"GITHUB_RUN_ATTEMPT": "1"}):
+        with patch.dict(os.environ, {"GITHUB_RUN_ATTEMPT": "1"}), \
+                patch.object(publication, "generate_release_notes", return_value=self.data["notes"]) as notes:
             result = publication.prepare(self.gh, args)
             self.assertEqual((result["version"], result["build"], result["tag"]), ("0.5.0", "10042", self.tag))
+            notes.assert_called_once_with(self.gh, "0.5.0", SHA)
+            self.assertEqual(result["notes"], self.data["notes"])
             self.gh.tags[self.tag] = SHA
             with self.assertRaisesRegex(ValueError, "already exists"):
                 publication.prepare(self.gh, args)

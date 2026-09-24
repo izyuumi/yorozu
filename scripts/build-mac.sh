@@ -35,9 +35,8 @@ FEED_URL=${FEED_URL:-https://yorozu.yumi.to/appcast.xml}
 SU_PUBLIC_KEY=${SU_PUBLIC_KEY:-pD6gPv1CP/XDvIJXbztjQRTIkgR/kfMMYT/Mpp8aQvI=}
 
 APP="$DIST/Yorozu.app"
-# The build number is in the name: two builds of the same tag are two different files, so
-# neither the appcast nor a CDN can serve one where the other was meant.
-DMG="$DIST/Yorozu-$VERSION-$BUILD.dmg"
+# The retained candidate tag gives each build a permanent URL; the filename stays simple.
+DMG="$DIST/yorozu.dmg"
 STAGE="$DIST/stage"
 
 # The app embeds shared + runtime. Relay is deployed separately and compiling it here adds work
