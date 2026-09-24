@@ -5,6 +5,10 @@ and an approval engine — that **a shipped Yorozu never runs**. It predates the
 OpenClaw Gateway. It is still built, still tested, and still the backend the end-to-end harness
 drives, which is why it has not been deleted.
 
+One exception: a shipped launch still passes `titler: chainFromEnv()` to `serve()` (`serve.ts`,
+the no-argument branch), so thread auto-titling runs on the legacy chain — probing the CLIs and
+seeding `providers.json` the first time a thread needs a name. Nothing else below is reached.
+
 This page exists so that nobody reads that code, or its tests, as a description of what the app
 does.
 

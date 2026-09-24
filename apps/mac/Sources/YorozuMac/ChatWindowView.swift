@@ -249,8 +249,11 @@ private struct LocalChatWindowView: View {
                     YorozuMark(dimension: 15)
                     Text("Yorozu")
                 }
+                .foregroundStyle(.primary)
             }
-            .menuStyle(.borderlessButton)
+            // Plain, so the label keeps its own colour: borderless would draw it in the tint.
+            .menuStyle(.button)
+            .buttonStyle(.plain)
             .fixedSize()
             Spacer(minLength: 0)
             Label {

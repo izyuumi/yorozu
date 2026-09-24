@@ -308,7 +308,7 @@ struct CheckForUpdatesButton: View {
 }
 
 /// The automatic-updates toggle, next to the button that checks right now. Hidden with the
-/// button in a build that has no feed.
+/// button in a build that has no feed. Its caption is the Updates section footer in ``GeneralView``.
 struct AutomaticUpdatesToggle: View {
     @State private var automatic = Updates.automatic
 
