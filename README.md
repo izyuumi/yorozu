@@ -76,7 +76,7 @@ open apps/mac/.build/Yorozu.app
 ```sh
 tuist generate --no-open --path apps/ios
 xcodebuild build -workspace apps/ios/Yorozu.xcworkspace -scheme YorozuIOS \
-  -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO
+  -destination 'generic/platform=iOS Simulator' -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO
 ```
 
 **Relay**, locally:

@@ -23,6 +23,8 @@ cp "$BIN" "$APP/Contents/MacOS/Yorozu"
 # The native tool host ships inside the bundle so it shares the app's signature: TCC keys
 # Accessibility and Screen Recording on that, and the helper is what actually needs them.
 cp "$(dirname "$BIN")/yorozu-native" "$APP/Contents/MacOS/yorozu-native"
+cp -R "$(dirname "$BIN")/YorozuShared_YorozuShared.bundle" "$APP/Contents/Resources/"
+cp -R "$(dirname "$BIN")/SwiftTerm_SwiftTerm.bundle" "$APP/Contents/Resources/"
 
 # Sparkle, and the rpath that finds it. Same two steps as scripts/build-mac.sh and for the
 # same reason: SwiftPM links the framework as @rpath but only gives the binary @loader_path,
