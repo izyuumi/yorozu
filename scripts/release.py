@@ -12,12 +12,13 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 from urllib.parse import quote, urlencode
 import xml.etree.ElementTree as ET
+
+from release_notes import generate_release_notes
 
 SPARKLE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 ET.register_namespace("sparkle", SPARKLE)
@@ -47,16 +48,6 @@ def checkout_sha():
     return subprocess.check_output(["git", "rev-parse", "--verify", "HEAD"], text=True).strip()
 
 
-def release_notes(release_version):
-    path = Path("CHANGELOG.md")
-    if path.is_file():
-        match = re.search(r"^## \[" + re.escape(release_version) + r"\].*?(?=^## |\Z)",
-                          path.read_text(), re.MULTILINE | re.DOTALL)
-        if match:
-            return match.group().strip()
-    return f"Yorozu {release_version}. See docs/RELEASE_WORKFLOW.md for candidate testing and promotion."
-
-
 def write_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -75,10 +66,11 @@ def validate_manifest(data, complete=True):
         require(re.fullmatch(r"[1-9]\d*", str(data.get(key, ""))), f"invalid {key}")
     if not complete:
         return
+    require(isinstance(data.get("notes"), str) and data["notes"].strip(), "candidate requires generated release notes")
     mac = data.get("mac", {})
-    require(mac.get("asset") == f"Yorozu-{data['version']}-{data['build']}.dmg", "invalid Mac asset name")
+    require(mac.get("asset") == "yorozu.dmg", "invalid Mac asset name")
     require(isinstance(mac.get("size"), int) and mac["size"] > 0, "invalid Mac asset size")
-    for key in ("sha256", "appcast_sha256", "models_sha256"):
+    for key in ("sha256", "appcast_sha256"):
         require(re.fullmatch(r"[a-f0-9]{64}", mac.get(key, "")), f"invalid Mac {key}")
     ios = data.get("ios", {})
     require(ios.get("version") == data["version"] and str(ios.get("build")) == data["build"], "iOS version/build does not match candidate")
@@ -146,9 +138,12 @@ class GitHub:
             args.append("--clobber")
         self.call(*args)
 
-    def publish(self, tag, prerelease, latest=False):
-        self.call("release", "edit", tag, "--repo", self.repo, "--draft=false",
-                  f"--prerelease={str(prerelease).lower()}", f"--latest={str(latest).lower()}")
+    def publish(self, tag, prerelease, latest=False, notes=None):
+        args = ["release", "edit", tag, "--repo", self.repo, "--draft=false",
+                f"--prerelease={str(prerelease).lower()}", f"--latest={str(latest).lower()}"]
+        if notes is not None:
+            args += ["--notes", notes]
+        self.call(*args)
 
 
 def check_ci(gh, source, branch, run_id=None):
@@ -184,7 +179,7 @@ def prepare(gh, args):
     require(gh.release(data["tag"]) is None and gh.tag_sha(data["tag"]) is None,
             "candidate already exists; dispatch a fresh build instead of rebuilding its identity")
     check_ci(gh, data["source_sha"], data["source_branch"], data["ci_run_id"])
-    data["notes"] = release_notes(data["version"])
+    data["notes"] = generate_release_notes(gh, data["version"], data["source_sha"])
     write_json(args.output, data)
     return data
 
@@ -251,19 +246,16 @@ def publish_candidate(gh, manifest_path, ios_path, directory):
     validate_manifest(data, complete=False)
     require(checkout_sha() == data["source_sha"], "checkout HEAD does not match candidate source")
     data["ios"] = json.loads(Path(ios_path).read_text())
-    asset = f"Yorozu-{data['version']}-{data['build']}.dmg"
+    asset = "yorozu.dmg"
     dmg = directory / asset
     require(dmg.is_file() and dmg.stat().st_size > 0, f"candidate DMG missing: {dmg}")
-    shutil.copyfile("catalog/models.json", directory / "models.json")
     data["mac"] = {"asset": asset, "sha256": sha256(dmg), "size": dmg.stat().st_size,
-                   "appcast_sha256": sha256(directory / "appcast.xml"),
-                   "models_sha256": sha256(directory / "models.json")}
+                   "appcast_sha256": sha256(directory / "appcast.xml")}
     validate_manifest(data)
     appcast(directory / "appcast.xml", data, gh.repo, beta=True)
     check_ci(gh, data["source_sha"], data["source_branch"], data["ci_run_id"])
     write_json(directory / "candidate.json", data)
-    shutil.copyfile(dmg, directory / "Yorozu.dmg")
-    paths = [directory / name for name in ("candidate.json", asset, "Yorozu.dmg", "appcast.xml", "models.json")]
+    paths = [directory / name for name in ("candidate.json", asset, "appcast.xml")]
     immutable_assets(gh, data["tag"], data["source_sha"], paths, prerelease=True, notes=data.get("notes"))
     return data
 
@@ -278,7 +270,7 @@ def fetch(gh, tag, directory):
     require(data["tag"] == tag, "manifest belongs to another candidate")
     require(gh.tag_sha(tag) == data["source_sha"], "candidate tag source does not match manifest")
     check_ci(gh, data["source_sha"], data["source_branch"], data["ci_run_id"])
-    for name, digest in ((data["mac"]["asset"], "sha256"), ("appcast.xml", "appcast_sha256"), ("models.json", "models_sha256")):
+    for name, digest in ((data["mac"]["asset"], "sha256"), ("appcast.xml", "appcast_sha256")):
         path = gh.download(tag, name, directory)
         require(sha256(path) == data["mac"][digest], f"candidate asset digest mismatch: {name}")
     require((directory / data["mac"]["asset"]).stat().st_size == data["mac"]["size"], "candidate DMG size mismatch")
@@ -315,11 +307,10 @@ def rolling_beta(gh, tag, directory):
     else:
         gh.create(rolling, data["source_sha"], prerelease=True)
     # Old versioned beta assets remain available to cached legacy feeds. The tag stays fixed.
-    shutil.copyfile(directory / data["mac"]["asset"], directory / "Yorozu.dmg")
-    gh.upload(rolling, directory / "Yorozu.dmg", replace=True)
+    gh.upload(rolling, directory / "yorozu.dmg", replace=True)
     gh.upload(rolling, directory / "candidate.json", replace=True)
     gh.upload(rolling, directory / "appcast.xml", replace=True)  # Commit the pointer last.
-    gh.publish(rolling, prerelease=True)
+    gh.publish(rolling, prerelease=True, notes=data["notes"])
     return data
 
 
@@ -381,8 +372,7 @@ def promote(gh, tag, directory, expected=None):
             item.remove(channel)
     tree.write(directory / "appcast.xml", encoding="utf-8", xml_declaration=True)
     appcast(directory / "appcast.xml", data, gh.repo, beta=False)
-    shutil.copyfile(directory / data["mac"]["asset"], directory / "Yorozu.dmg")
-    paths = [directory / name for name in ("candidate.json", data["mac"]["asset"], "Yorozu.dmg", "appcast.xml", "models.json")]
+    paths = [directory / name for name in ("candidate.json", data["mac"]["asset"], "appcast.xml")]
     immutable_assets(gh, stable_tag, data["source_sha"], paths, prerelease=False, notes=data.get("notes"))
     finish_release_pr(gh, data, publish=True)
     return data

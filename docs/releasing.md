@@ -34,6 +34,10 @@ and the sidecar plus its production dependencies deployed next to it — so the 
 installed to run. `YOROZU_RUNTIME_CMD` defaults to that bundled pair whenever the app finds it,
 and falls back to the dev checkout layout otherwise.
 
+The installer is `dist/yorozu.dmg`. Each retained candidate tag provides a unique download URL,
+so neither a second alias nor a version/build suffix is needed. Generate an appcast from a clean
+output directory, without DMGs left over from earlier builds.
+
 It is deliberately not *this machine's* `node`. A Homebrew node is a stub linked against
 `@rpath/libnode.<abi>.dylib` and a dozen other Homebrew dylibs that no `.app` carries, so a bundle
 built around one dies at launch with "Library not loaded" — and because the app only checks that

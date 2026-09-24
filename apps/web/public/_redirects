@@ -1,6 +1,6 @@
 # Downloads live on the latest versioned GitHub release: DMGs exceed the static-asset
 # limit. Keep these public URLs stable for installed apps and website download links.
-/mac https://github.com/izyuumi/yorozu/releases/latest/download/Yorozu.dmg 302
+/mac https://github.com/izyuumi/yorozu/releases/latest/download/yorozu.dmg 302
 /appcast.xml https://github.com/izyuumi/yorozu/releases/latest/download/appcast.xml 302
 # Preserve the shipped pre-candidate feed's latest-relative URL during migration.
 /download/Yorozu-0.4.0-293.dmg https://github.com/izyuumi/yorozu/releases/download/v0.4.0/Yorozu-0.4.0-293.dmg 302

@@ -1,9 +1,9 @@
 /**
- * The model catalog: price, context and strengths per model, fetched from the rolling
- * GitHub release and cached for a day. Offline, yesterday's cache is used, and failing
- * that the copy bundled with the repo. `catalog.overlay.json` in the state directory is
- * merged over it by id — research mode writes there, and the catalog itself is never
- * rewritten. See docs/spec-v1.html section 2.
+ * The legacy auto-assign catalog: price, context and strengths per model, fetched from
+ * the repository and cached for a day. Shipped app model pickers query their backends
+ * directly; this catalog is only used by the direct-provider runtime. Offline, yesterday's
+ * cache is used, then the bundled copy. `catalog.overlay.json` in the state directory is
+ * merged over it by id. See docs/legacy-runtime.md.
  */
 
 import { Buffer } from "node:buffer";
@@ -42,9 +42,9 @@ const catalogEntrySchema = z.object({
 
 export const CATALOG_URL_ENV = "YOROZU_CATALOG_URL";
 
-/** The asset `.github/workflows/catalog.yml` keeps up to date. */
+/** Legacy metadata follows the repository independently of application releases. */
 export const DEFAULT_CATALOG_URL =
-  "https://yorozu.yumi.to/models.json";
+  "https://raw.githubusercontent.com/izyuumi/yorozu/main/catalog/models.json";
 
 export const CATALOG_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -87,7 +87,7 @@ const isFresh = (file: string): boolean => {
   }
 };
 
-/** More than any plausible catalog; a hostile or broken asset is cut off, not buffered. */
+/** More than any plausible catalog; a hostile or broken response is cut off, not buffered. */
 export const CATALOG_MAX_BYTES = 256 * 1024;
 
 /**
@@ -154,7 +154,7 @@ export async function loadCatalog(options: CatalogOptions = {}): Promise<Catalog
       mkdirSync(dir, { recursive: true });
       writeFileSync(cache, `${JSON.stringify(entries, null, 2)}\n`);
     } catch {
-      // Offline, or a broken release asset: a stale cache beats nothing, and the copy
+      // Offline, or a broken remote catalog: a stale cache beats nothing, and the copy
       // shipped with the runtime beats having no catalog at all.
       entries = readEntries(cache) ?? readEntries(BUNDLED) ?? [];
     }
