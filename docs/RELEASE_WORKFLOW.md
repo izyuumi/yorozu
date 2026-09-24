@@ -38,9 +38,9 @@ rules should require verified signatures, pull requests, and successful CI on `m
 
 | Value | Owner and meaning |
 | --- | --- |
-| `release-version.txt` | Maintainer-selected next `MAJOR.MINOR.PATCH` version on each source branch |
+| `release-please-config.json` → `packages["."]["release-as"]` | Maintainer-selected next `MAJOR.MINOR.PATCH` version on each source branch |
 | `version.txt`, `.release-please-manifest.json` | Release Please's last prepared version and changelog state |
-| `VERSION` | Candidate's numeric marketing version; defaults to `release-version.txt`, or an explicit dispatch override |
+| `VERSION` | Candidate's numeric marketing version; defaults to the configured `release-as`, or an explicit dispatch override |
 | `BUILD` | `10000 + github.run_number` from the single `Release` workflow; shared by Mac and iOS |
 | Source SHA | Exact successful-CI commit, pinned before either app is built |
 
@@ -54,24 +54,30 @@ prerelease metadata, Sparkle's beta channel, and TestFlight, allowing promotion 
 signed app bytes. Development bundles may still use a beta display label.
 
 Release Please runs separately in PR-only mode on `main` and release branches. It prepares
-`CHANGELOG.md`, `version.txt`, and its manifest for the version selected in `release-version.txt`.
+`CHANGELOG.md`, `version.txt`, and its manifest for the `packages["."]["release-as"]` version in
+`release-please-config.json`. This config value is the shared intended-version source for both
+Release Please and candidate builds; edit it independently on each source branch.
 Review and merge its signed version PR before choosing the final candidate. Promotion requires
 `version.txt` and the Release Please manifest at the candidate SHA to match its version.
 Merging the PR does not create a stable tag or release. After successful promotion, the
-workflow reconciles matching merged release-PR labels for the promoted version/source.
+workflow reconciles the merged preparation PR whose version and ancestry match the candidate,
+including a PR originally merged into `main` before the release branch was cut.
 
 Release Please uses `GITHUB_TOKEN`; allow GitHub Actions to create pull requests in repository
 settings. Bot-created PR events do not automatically start CI with that token. A maintainer can
 close and reopen the PR to trigger its checks; verify those checks and commit signatures before
 merging.
 
-After releasing, advance `release-version.txt` in a signed Conventional Commit before the next
-release cycle. If a release branch keeps `0.5.0`, `main` can advance independently to `0.6.0`.
+After releasing, advance `packages["."]["release-as"]` in `release-please-config.json` with a
+signed Conventional Commit before the next release cycle. If a release branch keeps `0.5.0`,
+`main` can advance independently to `0.6.0`. Those betas can build while the earlier version
+awaits review. Release Please waits to prepare its next version PR until promotion clears the
+earlier pending PR; a subsequent push can then start that preparation.
 
 ## Build and test a candidate
 
 1. Merge signed changes into `main` or `release/<major>.<minor>` with the intended version in
-   `release-version.txt`.
+   `release-please-config.json` under `packages["."]["release-as"]`.
 2. Wait for the `CI` push run for that exact SHA. Successful CI triggers `Release`; failed CI
    cannot publish a candidate. Release also rechecks the selected SHA's CI before building.
 3. `Release` builds/signs/notarizes the Mac DMG, creates a Sparkle appcast with its EdDSA
@@ -90,6 +96,8 @@ gh workflow run release.yml --ref main -f source_branch=release/0.5 -f version=0
 
 The workflow resolves the selected branch to one SHA and verifies its CI. A branch change after
 selection cannot change the candidate's source. New dispatches receive new build numbers.
+An explicit version override does not update Release Please metadata: before stable promotion,
+the candidate SHA's `version.txt` and `.release-please-manifest.json` must both match that version.
 
 Each `candidate-<version>-<build>` release retains the DMG, appcast, model-catalog snapshot,
 and `candidate.json` with source SHA, version/build, artifact hashes, and exact App Store Connect
@@ -116,9 +124,11 @@ on `main-beta` remain available for installed clients with cached feeds.
    production downloads. Promotion verifies Apple's selected build/state; it does not submit
    App Review or release the iOS app through the API.
 
-Promotion downloads the candidate, checks artifact hashes and source CI, and verifies the exact
-iOS build's approved selection with App Store Connect. It creates `v<version>` at the candidate
-SHA, uploads the identical Mac DMG, removes the beta channel marker from the stable appcast,
+Promotion downloads the candidate, checks artifact hashes and source CI, requires matching
+release metadata at its source SHA, and verifies the exact iOS build's approved selection with
+App Store Connect. The `scripts/release.py promote` command performs this Apple verification
+itself, including when invoked locally. It creates `v<version>` at the candidate SHA, uploads
+the identical Mac DMG, removes the beta channel marker from the stable appcast,
 and makes the release latest only after its assets are ready. The stable manifest records the
 candidate identity. Sparkle signs the DMG, so changing the feed channel preserves that signature.
 Promotion never recompiles either app.
@@ -153,18 +163,29 @@ GitHub release immutability without first replacing that pointer design.
 
 ## Parallel stabilization and hotfixes
 
-To stabilize the current main version, branch `release/0.5` from its chosen commit, retain
-`release-version.txt` as `0.5.0`, then advance `main` to its next intended version. Both branches
-use the same build counter and promotion flow.
+To stabilize the current main version, branch `release/0.5` from its chosen commit, keep
+`packages["."]["release-as"]` in `release-please-config.json` at `0.5.0`, then advance the same
+config value on `main` to its next intended version. Both branches use the same build counter
+and promotion flow.
 
 For a `0.4.1` hotfix while `main` develops `0.5.0`:
 
 1. Create `release/0.4` from `v0.4.0`.
 2. If that tag predates this pipeline, first bring in the release tooling/workflow changes as
    signed commits. A branch needs the new CI and explicit version inputs before it can build.
-3. Set `release-version.txt` to `0.4.1`, apply the minimal fix in signed Conventional Commits,
-   and push for CI. Bring the fix to `main` as a signed backport too.
+3. Set `packages["."]["release-as"]` in `release-please-config.json` to `0.4.1`, apply the minimal
+   fix in signed Conventional Commits, and push for CI. Bring the fix to `main` as a signed
+   backport too.
 4. Test and promote the resulting candidate through the same App Store and Mac process.
+5. Dispatch a fresh next-version candidate from `main` after the hotfix publication:
+
+   ```sh
+   gh workflow run release.yml --ref main -f source_branch=main
+   ```
+
+   This gives the public beta a build number above the hotfix. Otherwise a stable
+   `0.4.1 (10124)` user opting into beta cannot see the older `0.5.0 (10123)` build. Test that
+   switching the freshly installed hotfix to beta offers and installs the refreshed candidate.
 
 Do not merge an entire hotfix branch into `main` just to transfer its old version metadata.
 
@@ -196,6 +217,7 @@ and the candidate under review:
 | Candidate | Candidate/TestFlight |
 
 Check pairing/reconnection, streamed conversation, tool approval, queued updates, and persisted
-data migrations. Check a stable Mac can update through the stable feed, a beta Mac stays on its
-intended version, and a cached older appcast still downloads its referenced DMG. These device
+data migrations. Check a stable Mac can update through the stable feed, a stable hotfix can opt
+into the refreshed next-version beta, a beta Mac stays on its intended version, and a cached
+older appcast still downloads its referenced DMG. These device
 checks are maintainer validation; passing automated CI does not perform them.

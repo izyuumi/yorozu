@@ -13,7 +13,7 @@ on:
         required: true
         type: string
       version:
-        description: 'Optional X.Y.Z override; otherwise release-version.txt at source SHA'
+        description: 'Optional X.Y.Z override; otherwise release-as in source release-please-config.json'
         required: false
         type: string
 

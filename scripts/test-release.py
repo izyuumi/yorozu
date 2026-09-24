@@ -78,13 +78,14 @@ class FakeGitHub(publication.GitHub):
                 value = json.dumps({".": self.source_version}) if ".json?" in endpoint else self.source_version
                 result = {"content": base64.b64encode(value.encode()).decode()}
             elif endpoint.startswith("compare/"):
-                result = {"status": self.compare_status}
+                result = {"status": self.compare_status.get(endpoint, "ahead") if isinstance(self.compare_status, dict) else self.compare_status}
             else:
                 raise AssertionError(f"unexpected API request: {args}")
             return json.dumps(result)
         if args[0:2] == ("pr", "edit"):
             for pull in self.pulls:
-                pull["labels"] = [{"name": "autorelease: tagged"}]
+                if str(pull["number"]) == args[2]:
+                    pull["labels"] = [{"name": "autorelease: tagged"}]
             return ""
         assert args[0] == "release", args
         action, tag = args[1:3]
@@ -130,7 +131,7 @@ class ReleaseFixture(unittest.TestCase):
         self.dist.mkdir()
         (self.root / "catalog").mkdir()
         (self.root / "catalog/models.json").write_text('{"models": []}\n')
-        (self.root / "release-version.txt").write_text("0.5.0\n")
+        (self.root / "release-please-config.json").write_text(json.dumps({"packages": {".": {"release-as": "0.5.0"}}}))
         self.original_cwd = Path.cwd()
         os.chdir(self.root)
         self.addCleanup(os.chdir, self.original_cwd)
@@ -306,7 +307,7 @@ class ReleaseTests(ReleaseFixture):
 
     def test_release_pr_ancestry_checked_before_publish_and_label_updated_after(self):
         self.publish()
-        self.gh.pulls = [{"number": 123, "merged_at": "2026-09-24", "title": "chore(main): release 0.5.0",
+        self.gh.pulls = [{"number": 123, "merged_at": "2026-09-24", "title": "chore(main): release 0.5.0", "base": {"ref": "main"},
                           "merge_commit_sha": OTHER, "labels": [{"name": "autorelease: pending"}]}]
         self.gh.compare_status = "diverged"
         self.gh.events.clear()
@@ -319,6 +320,28 @@ class ReleaseTests(ReleaseFixture):
         publish = next(event for event in self.gh.events if event[:3] == ("release", "edit", "v0.5.0"))
         self.assertLess(self.gh.events.index(publish), self.gh.events.index(edit))
         self.assertEqual(self.gh.pulls[0]["labels"], [{"name": "autorelease: tagged"}])
+
+    def test_release_branch_clears_inherited_main_preparation_prs(self):
+        self.data["source_branch"] = "release/0.5"
+        self.gh.runs["7"]["head_branch"] = "release/0.5"
+        publication.write_json(self.dist / "candidate.json", self.data)
+        self.publish()
+        self.gh.pulls = [
+            {"number": number, "merged_at": "2026-09-24", "base": {"ref": branch},
+             "title": f"chore({branch}): release 0.5.0", "merge_commit_sha": merged,
+             "labels": [{"name": "autorelease: pending"}]}
+            for number, branch, merged in ((123, "main", OTHER), (124, "release/0.5", SHA),
+                                            (125, "main", "b" * 40), (126, "release/0.6", SHA))
+        ]
+        self.gh.compare_status = {f"compare/{'b' * 40}...{SHA}": "diverged"}
+        self.gh.events.clear()
+        self.promote()
+        edits = [event for event in self.gh.events if event[:2] == ("pr", "edit")]
+        self.assertEqual([event[2] for event in edits], ["123", "124"])
+        self.assertEqual(self.gh.pulls[2]["labels"], [{"name": "autorelease: pending"}])
+        self.assertEqual(self.gh.pulls[3]["labels"], [{"name": "autorelease: pending"}])
+        publish = next(event for event in self.gh.events if event[:3] == ("release", "edit", "v0.5.0"))
+        self.assertTrue(all(self.gh.events.index(publish) < self.gh.events.index(edit) for edit in edits))
 
     def test_cli_checks_asc_before_any_stable_mutation(self):
         self.publish()
