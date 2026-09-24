@@ -1681,7 +1681,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
       // A reply's words, or a card's one line, each sealed once per phone under its own key,
       // together with the reference of the event they are about and the quick judgement.
       const body = notificationPreviewBody(event);
-      const plaintext = body ? encodeNotificationPreview({ body, event: threadRef(event.id), quick }) : null;
+      // The thread's title rides inside the sealed box, never beside it: the relay sees none of it.
+      let title: string | undefined;
+      try {
+        title = body ? listThreads(dir).find((thread) => thread.id === event.threadId)?.title : undefined;
+      } catch {
+        // An unreadable index costs the title, not the notification.
+      }
+      const plaintext = body ? encodeNotificationPreview({ body, event: threadRef(event.id), quick, title }) : null;
       const previews = plaintext
         ? Object.fromEntries(
             [...devices.values()].flatMap(({ key, record }) => {

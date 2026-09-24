@@ -557,6 +557,29 @@ test("one APNs network failure does not block another phone", async () => {
   );
 });
 
+test("a token registered under a new key is no longer woken under the old one", async () => {
+  apns.resetToken();
+  const calls: string[] = [];
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+    calls.push(String(input));
+    return new Response(null, { status: 200 });
+  });
+  const { mac, phone, keys, room } = await paired();
+  // The same phone, paired again under a fresh key, registers the same APNs token.
+  const again = await connectPhone(room, await mintToken(mac));
+  await again.phone.next();
+  again.phone.send({ type: "push", deviceToken: DEVICE_TOKEN });
+  await settled(again.phone);
+  expect(await record(room, keys.pub)).toBeUndefined();
+  phone.ws.close();
+  again.phone.ws.close();
+
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
+  await macSettled(mac);
+  // One alert and its silent wake, not two alerts.
+  expect(calls).toHaveLength(2);
+});
+
 test("an APNs request that never answers does not delay the next frame", async () => {
   apns.resetToken();
   const pending: string[] = [];
