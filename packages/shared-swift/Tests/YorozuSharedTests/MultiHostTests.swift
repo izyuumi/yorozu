@@ -56,6 +56,11 @@ private func multiHostEventually(_ condition: @MainActor () -> Bool) async -> Bo
     return condition()
 }
 
+/// What one host sends on joining: the thread list, a sync, the devices, the rules, the terminal
+/// status and the update status. Waiting for fewer leaves a frame still in flight to land after a
+/// test has taken its "before" snapshot. Mirrors `pairingKinds` in ChatModelTests.
+private let multiHostPairingSends = 6
+
 private func multiHostSent(_ transport: MultiHostTransport, atLeast count: Int) async -> [YorozuEvent] {
     for _ in 0..<300 {
         let events = await transport.sent
@@ -126,7 +131,7 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
     for transport in [firstTransport, secondTransport] {
         await transport.online()
         await transport.yield(.event(multiHostEvent("list", .threadList(ThreadListData(threads: [thread])))))
-        _ = await multiHostSent(transport, atLeast: 5)
+        _ = await multiHostSent(transport, atLeast: multiHostPairingSends)
     }
     #expect(await multiHostEventually { hosts.unreadCount == 2 && first.model.canDeliver && second.model.canDeliver })
     let secondBefore = await secondTransport.sent
@@ -139,7 +144,7 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
     owner.archive(thread)
     owner.markRead(ref.threadID)
 
-    let emitted = await multiHostSent(firstTransport, atLeast: 10)
+    let emitted = await multiHostSent(firstTransport, atLeast: multiHostPairingSends + 5)
     let actions = emitted.filter { $0.threadId == thread.id }
     #expect(Set(actions.map(\.payload.kind)) == [.message, .approvalAnswer, .threadRename, .threadArchive, .threadRead])
     #expect(actions.contains { $0.payload == .threadRename(ThreadRenameData(title: "Desk title")) })
