@@ -1,8 +1,8 @@
 name: Release
-# Release Please opens version PRs; merging one builds a Mac release (TestFlight
-# builds go from every push to main; see
-# testflight.yml): scripts/release.sh on a hosted runner, with the signing identity, the
-# notary key and the Sparkle key coming from repository secrets. Only a push to this repo
+# Release Please opens version PRs; every main push builds a Mac beta, and merging
+# a version PR also publishes the stable release. TestFlight builds go from every
+# push to main; see testflight.yml. Signing identity, notary key, and Sparkle key
+# come from repository secrets. Only a push to this repo
 # triggers it — never a fork's pull request — so secrets are never in a stranger's job.
 #
 # DEVELOPER_ID_P12 is the "Developer ID Application" identity with its private key, exported
@@ -49,14 +49,15 @@ jobs:
 
   mac:
     needs: release-please
-    # GITHUB_TOKEN-created tags do not trigger another workflow. Build here instead.
+    # GITHUB_TOKEN-created release tags do not trigger another workflow. Build here.
     if: >-
       always() && !cancelled() &&
-      (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch')
+      (github.event_name == 'workflow_dispatch' || needs.release-please.result == 'success')
     permissions:
       contents: write
     env:
-      RELEASE_TAG: ${{ needs.release-please.outputs.tag_name || inputs.tag }}
+      RELEASE_TAG: ${{ (needs.release-please.outputs.release_created == 'true' && needs.release-please.outputs.tag_name) || inputs.tag }}
+      RELEASE_CREATED: ${{ needs.release-please.outputs.release_created }}
     runs-on: macos-latest
     timeout-minutes: 90
     steps:
@@ -65,7 +66,7 @@ jobs:
           # The version is the latest v* tag and the build number the commit count; both need
           # the whole history.
           fetch-depth: 0
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ env.RELEASE_TAG || github.sha }}
       - name: Check out release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -135,11 +136,21 @@ jobs:
           umask 077
           printf '%s' "$SPARKLE_ED_KEY" > "$RUNNER_TEMP/sparkle.key"
 
-      - name: Build, notarize, sign the appcast, publish
+      - name: Build, notarize, and publish
         env:
           GH_TOKEN: ${{ github.token }}
           SPARKLE_ED_KEY_FILE: ${{ runner.temp }}/sparkle.key
-        run: ./scripts/release.sh
+        run: |
+          set -eu
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || [ "$RELEASE_CREATED" = true ]; then
+            ./scripts/release.sh
+          else
+            VERSION_LABEL="$(git describe --tags --abbrev=0 --match 'v*' | sed 's/^v//') Beta $(git rev-list --count HEAD)" \
+              ./scripts/build-mac.sh
+          fi
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            ./scripts/beta-release.sh
+          fi
 
       - name: Forget the secrets
         if: always()

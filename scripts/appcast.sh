@@ -22,9 +22,8 @@ TOOL="$(find apps/mac/.build/artifacts -name generate_appcast -type f -perm -u+x
 # invisible dialog — export it once into a file only this run can read:
 #
 #   KEY=$(mktemp -d)/ed && generate_keys -x "$KEY" && SPARKLE_ED_KEY_FILE=$KEY ./scripts/appcast.sh; rm -rf "$(dirname "$KEY")"
-if [ -n "${SPARKLE_ED_KEY_FILE:-}" ]; then
-  "$TOOL" --ed-key-file "$SPARKLE_ED_KEY_FILE" --download-url-prefix "$DOWNLOAD_PREFIX" "$DIST"
-else
-  "$TOOL" --download-url-prefix "$DOWNLOAD_PREFIX" "$DIST"
-fi
+set -- --download-url-prefix "$DOWNLOAD_PREFIX"
+[ -z "${CHANNEL:-}" ] || set -- "$@" --channel "$CHANNEL"
+[ -z "${SPARKLE_ED_KEY_FILE:-}" ] || set -- "$@" --ed-key-file "$SPARKLE_ED_KEY_FILE"
+"$TOOL" "$@" "$DIST"
 echo "$DIST/appcast.xml"

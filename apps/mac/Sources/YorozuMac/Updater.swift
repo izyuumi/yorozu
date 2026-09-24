@@ -15,6 +15,8 @@ enum Updates {
     /// build's "check for updates automatically?" prompt would otherwise keep answering no
     /// forever — the Info.plist keys only supply an initial value, and there already is one.
     private static let configuredKey = "YorozuUpdatesConfigured"
+    private static let betaKey = "YorozuBetaUpdates"
+    static let betaFeedURL = "https://github.com/izyuumi/yorozu/releases/download/main-beta/appcast.xml"
 
     static let controller: SPUStandardUpdaterController? = {
         guard Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil else { return nil }
@@ -90,6 +92,16 @@ enum Updates {
         set {
             controller?.updater.automaticallyChecksForUpdates = newValue
             controller?.updater.automaticallyDownloadsUpdates = newValue
+        }
+    }
+
+    static var beta: Bool {
+        get { UserDefaults.standard.bool(forKey: betaKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: betaKey)
+            if controller?.updater.canCheckForUpdates == true {
+                controller?.updater.checkForUpdatesInBackground()
+            }
         }
     }
 }
@@ -232,6 +244,14 @@ final class PendingUpdate {
 
 @MainActor
 private final class UpdaterDelegate: NSObject, SPUUpdaterDelegate {
+    func feedURLString(for updater: SPUUpdater) -> String? {
+        Updates.beta ? Updates.betaFeedURL : nil
+    }
+
+    func allowedChannels(for updater: SPUUpdater) -> Set<String> {
+        Updates.beta ? ["beta"] : []
+    }
+
     func updater(
         _ updater: SPUUpdater,
         willInstallUpdateOnQuit item: SUAppcastItem,
@@ -280,13 +300,8 @@ struct AutomaticUpdatesToggle: View {
 
     var body: some View {
         if Updates.controller != nil {
-            VStack(alignment: .leading, spacing: 4) {
-                Toggle("Update automatically", isOn: $automatic)
-                    .onChange(of: automatic) { Updates.automatic = automatic }
-                Text("Downloads updates in the background. Installs after this Mac’s agents finish and stay idle for 10 seconds.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Toggle("Update automatically", isOn: $automatic)
+                .onChange(of: automatic) { Updates.automatic = automatic }
         }
     }
 }
