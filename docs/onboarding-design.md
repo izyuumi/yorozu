@@ -63,9 +63,9 @@ secret." The thread-list handoff is unchanged.
 
 ## Verification
 
-Isolated commit checked on 2026-09-25 against GitHub `main` (`e04f67b`):
+Isolated commit checked on 2026-09-25 against GitHub `main` (`966c81a`):
 
-- Mac build/tests: 11 passed. iOS Simulator build passed.
+- Mac build/tests: 10 passed after integrating the latest watchdog tests. iOS Simulator build passed.
 - Shared Swift: 273 passed. An existing reconnect test was corrected to wait for its
   update-status event and queued-message delivery, rather than count unrelated protocol
   frames. The focused test failed before the repair and passed afterward. No shared

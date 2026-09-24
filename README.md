@@ -152,16 +152,8 @@ Want changes from `main` before the next stable release? Install the [Mac beta](
 
 ## Documentation
 
-| Document | What it covers |
-| --- | --- |
-| [docs/architecture.md](docs/architecture.md) | pairing and crypto, relay protocol, blind push, threads and sync, both apps |
-| [docs/RELEASE_WORKFLOW.md](docs/RELEASE_WORKFLOW.md) | branches, versions, candidate builds, App Store review, promotion, retries |
-| [docs/releasing.md](docs/releasing.md) | credentials, local DMG packaging, notarization, Sparkle, TestFlight setup, relay hosting |
-| [docs/legacy-runtime.md](docs/legacy-runtime.md) | the dormant in-house provider loop and what it still backs |
-| [docs/spec-v1.5.md](docs/spec-v1.5.md), [docs/spec-v1.html](docs/spec-v1.html) | the original product specs |
-| [docs/app-store/listing-0.2.0.md](docs/app-store/listing-0.2.0.md) | App Store Connect listing copy |
-| [docs/provider-mark-assets.md](docs/provider-mark-assets.md) | provenance of the provider marks |
-| [docs/history/](docs/history/) | dated point-in-time records; not current documentation |
+See the [documentation index](docs/README.md) for current guides and referenced specs. For
+guided device setup, use [Start.md](Start.md).
 
 ## License
 
