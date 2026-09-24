@@ -229,12 +229,4 @@ public enum Watchdog {
         guard FileManager.default.fileExists(atPath: pauseURL.path) else { return }
         try? FileManager.default.removeItem(at: pauseURL)
     }
-
-    /// The script's own rule, in Swift, so it can be tested: paused only by a deadline in the
-    /// future. Anything unreadable is not a pause — the safe answer is to supervise.
-    static func isPaused(contents: String?, now: Date = Date()) -> Bool {
-        guard let deadline = contents.flatMap({ Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) })
-        else { return false }
-        return Double(deadline) > now.timeIntervalSince1970
-    }
 }
