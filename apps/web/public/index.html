@@ -69,6 +69,19 @@
       </div>
     </section>
 
+    <section class="agent-setup" id="setup-with-an-agent" aria-labelledby="agent-setup-title">
+      <div class="agent-setup-text">
+        <h2 id="agent-setup-title">Or let an agent set it up.</h2>
+        <p>Already using Claude Code, Codex or another coding agent? Paste this into it. The guide checks what is installed, asks what you want, and walks you through pairing, permissions and OpenClaw without deciding anything for you.</p>
+      </div>
+      <div class="prompt">
+        <pre><code id="agent-prompt">Read https://raw.githubusercontent.com/izyuumi/yorozu/main/Start.md and follow it to set up Yorozu on my devices. Ask me before configuring anything.</code></pre>
+        <button type="button" class="copy" data-copy="agent-prompt" hidden>Copy</button>
+      </div>
+      <p class="copy-status" id="agent-prompt-status" role="status" aria-atomic="true"></p>
+      <p class="fine">The guide is <a href="https://github.com/izyuumi/yorozu/blob/main/Start.md">Start.md</a> in the repository. Read it yourself first if you want to know what the agent will ask.</p>
+    </section>
+
     <section class="steps" aria-labelledby="steps-title">
       <h2 id="steps-title">Installed both apps? Pair once.</h2>
       <p class="steps-intro">You’ll need Yorozu on your iPhone and an Apple silicon Mac with macOS 15 or later and OpenClaw configured. Keep your host Mac awake and online to reach it from your phone.</p>
@@ -150,19 +163,6 @@
         <div><dt>No Yorozu account</dt><dd>No email, no password, no analytics. Your provider logins stay in OpenClaw, Claude Code and Codex on the Mac.</dd></div>
         <div><dt>Run it yourself if you like</dt><dd>The relay is a few hundred lines. Put it on a Mac mini over Tailscale and change one URL in Settings.</dd></div>
       </dl>
-    </section>
-
-    <section class="agent-setup" id="setup-with-an-agent" aria-labelledby="agent-setup-title">
-      <div class="agent-setup-text">
-        <h2 id="agent-setup-title">Or let an agent set it up.</h2>
-        <p>Already using Claude Code, Codex or another coding agent? Paste this into it. The guide checks what is installed, asks what you want, and walks you through pairing, permissions and OpenClaw without deciding anything for you.</p>
-      </div>
-      <div class="prompt">
-        <pre><code id="agent-prompt">Read https://raw.githubusercontent.com/izyuumi/yorozu/main/Start.md and follow it to set up Yorozu on my devices. Ask me before configuring anything.</code></pre>
-        <button type="button" class="copy" data-copy="agent-prompt" hidden>Copy</button>
-      </div>
-      <p class="copy-status" id="agent-prompt-status" role="status" aria-atomic="true"></p>
-      <p class="fine">The guide is <a href="https://github.com/izyuumi/yorozu/blob/main/Start.md">Start.md</a> in the repository. Read it yourself first if you want to know what the agent will ask.</p>
     </section>
 
     <section class="warning" id="before-you-install" aria-labelledby="risk-title">
