@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>macOS pairing sheet states</title>
+<style>
+body{margin:0}
+a{color:var(--verm);text-decoration:none}a:hover{color:var(--verm);text-decoration:underline}
+[data-theme=light]{--canvas:#F8F4EA;--paper:#FFFDF7;--ink:#252320;--ink2:#6F6C65;--ink3:#8E8A80;--verm:#BC2D1C;--sage:#597553;--stone:#DFD7C9;--rule:#D2C8B7;--warn:#9A5200;--danger:#C7281B;--sel:#EFE9DB;--scrim:rgba(37,35,30,.38);--knob:#FFFFFF;--onverm:#FFFFFF;--shadow:0 1px 1.5px rgba(0,0,0,.035);--menu:rgba(255,253,247,.96);--mshadow:0 8px 32px rgba(37,35,30,.18),0 0 0 .5px rgba(37,35,30,.12)}
+[data-theme=dark]{--canvas:#1B1A17;--paper:#252320;--ink:#F3ECDC;--ink2:#A5A095;--ink3:#7E7A70;--verm:#F06047;--sage:#96B58C;--stone:#433F37;--rule:#4F493F;--warn:#F0A340;--danger:#FF6B5E;--sel:#3A3630;--scrim:rgba(0,0,0,.55);--knob:#FFFFFF;--onverm:#1B1A17;--shadow:0 1px 1.5px rgba(0,0,0,.25);--menu:rgba(43,41,36,.97);--mshadow:0 8px 32px rgba(0,0,0,.5),0 0 0 .5px rgba(255,255,255,.12)}
+[data-theme]{font-family:-apple-system, ui-sans-serif, 'SF Pro Text', 'Helvetica Neue', sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased;line-height:1.3}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer;line-height:inherit}
+input,textarea{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;outline:none;width:100%}
+input::placeholder,textarea::placeholder{color:var(--ink3)}
+.serif{font-family:ui-serif, 'New York', 'Iowan Old Style', Georgia, serif}
+.mono{font-family:ui-monospace, 'SF Mono', Menlo, monospace}
+.card{background:var(--paper);border-radius:14px;border:.75px solid var(--rule);box-shadow:var(--shadow);overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;min-height:44px;padding:10px 16px;font-size:17px;box-sizing:border-box;width:100%}
+.row+.row{border-top:.5px solid var(--rule)}
+.hd{font-size:13px;color:var(--ink2);padding:0 16px 7px;margin-top:22px}
+.ft{font-size:13px;color:var(--ink2);padding:7px 16px 0;line-height:1.35}
+.val{margin-left:auto;color:var(--ink2);text-align:right}
+.sub{font-size:13px;color:var(--ink2);line-height:1.3}
+.tile{width:36px;height:36px;border-radius:9px;background:var(--canvas);border:.75px solid var(--rule);display:flex;align-items:center;justify-content:center;flex:none}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.sw{width:51px;height:31px;border-radius:16px;position:relative;flex:none;margin-left:auto}
+.sw i{position:absolute;top:2px;width:27px;height:27px;border-radius:50%;background:var(--knob);box-shadow:0 2px 4px rgba(0,0,0,.25)}
+.sw.on{background:var(--verm)}.sw.on i{left:22px}.sw.off{background:var(--stone)}.sw.off i{left:2px}
+.nav{height:52px;display:flex;align-items:center;padding:0 16px;font-size:17px;position:relative;flex:none}
+.nav .t{position:absolute;left:0;right:0;text-align:center;font-weight:600;pointer-events:none}
+.act{color:var(--verm);font-size:17px;min-height:44px;display:flex;align-items:center}
+.grab{width:36px;height:5px;border-radius:3px;background:var(--rule);margin:6px auto 0}
+.mac{font-size:13px;line-height:1.3}
+.mrow{display:flex;align-items:center;gap:10px;padding:7px 12px;min-height:34px;box-sizing:border-box;width:100%}
+.mrow+.mrow{border-top:.5px solid var(--rule)}
+.mhd{font-size:13px;font-weight:600;padding:0 12px 6px;margin-top:18px;display:flex;align-items:center;gap:8px}
+.mft{font-size:11px;color:var(--ink2);padding:6px 12px 0;line-height:1.35}
+.mcard{background:var(--paper);border-radius:8px;border:.75px solid var(--rule);box-shadow:var(--shadow);overflow:hidden}
+.mbtn{font-size:13px;line-height:1;padding:5px 10px;border-radius:6px;background:var(--paper);border:.5px solid var(--rule);box-shadow:0 .5px 1px rgba(0,0,0,.12);color:var(--ink);white-space:nowrap}
+.mbtn.primary{background:var(--verm);color:var(--onverm);border-color:transparent}
+.mbtn.small{font-size:11px;padding:4px 8px}
+.mbtn.danger{color:var(--danger)}
+.mbtn[disabled]{opacity:.45}
+.msw{width:26px;height:15px;border-radius:8px;position:relative;flex:none}
+.msw i{position:absolute;top:1px;width:13px;height:13px;border-radius:50%;background:var(--knob);box-shadow:0 1px 2px rgba(0,0,0,.3)}
+.msw.on{background:var(--verm)}.msw.on i{left:12px}.msw.off{background:var(--stone)}.msw.off i{left:1px}
+.badge{display:flex;align-items:center;gap:5px;font-size:13px}
+.menu{background:var(--menu);border-radius:13px;box-shadow:var(--mshadow);overflow:hidden;backdrop-filter:blur(20px)}
+.mi{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 16px;font-size:17px;box-sizing:border-box;width:100%}
+.mi+.mi{border-top:.33px solid var(--rule)}
+.msec{height:8px;background:var(--stone);opacity:.6}
+.mhead{font-size:12px;color:var(--ink2);padding:8px 16px 4px;text-transform:none}
+.nsmenu{background:var(--menu);border-radius:7px;box-shadow:var(--mshadow);padding:5px;font-size:13px;width:max-content}
+.ni{display:flex;align-items:center;gap:6px;height:22px;padding:0 10px 0 22px;border-radius:4px;position:relative;white-space:nowrap}
+.ni.hl{background:var(--verm);color:var(--onverm)}
+.ni.dis{color:var(--ink3)}
+.ni .ck{position:absolute;left:6px;top:4px}
+.nsep{height:1px;background:var(--rule);margin:5px 8px}
+.nhead{font-size:11px;font-weight:600;color:var(--ink2);padding:4px 10px 2px 22px}
+.lbl{font-size:11px;color:var(--ink2);letter-spacing:.02em;text-transform:uppercase;margin:0 0 8px}
+.cu{display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px;padding:40px 24px;color:var(--ink2)}
+.cu b{font-size:20px;font-weight:600;color:var(--ink);margin-top:6px}
+.cu p{margin:0;font-size:15px;max-width:280px;line-height:1.35}
+.spin{width:20px;height:20px;border-radius:50%;border:2.5px solid var(--rule);border-top-color:var(--ink2);flex:none}
+html,body{background:#888;}body{padding:24px}</style></head>
+<body><div data-theme="light" style="width:1260px;height:520px;box-sizing:border-box;background:var(--canvas);display:flex;flex-direction:column;overflow:hidden;position:relative;border-radius:0px;"><div style="padding:24px 24px 8px"><div class="serif" style="font-size:22px;font-weight:600">Pairing sheet states</div><div class="sub" style="margin-top:4px">One sheet, not a tab. Esc closes it; the code is never shown before the current device list is known.</div></div><div style="display:flex;gap:24px;padding:16px 24px 24px;align-items:flex-start"><div style="display:flex;flex-direction:column"><div class="lbl">Fresh code</div><div class="mac" role="dialog" style="width:380px;box-sizing:border-box;padding:24px;background:var(--paper);border-radius:10px;box-shadow:var(--mshadow);display:flex;flex-direction:column;align-items:center;gap:14px;min-height:180px"><div style="font-weight:600;font-size:13px">Pair a device</div><div style="width:220px;height:220px;border-radius:8px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;border:.5px solid var(--rule)"><svg width="160" height="160" viewBox="0 0 24 24" fill="none" stroke="#252320" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM19 14h2M14 19h2M19 19h2v2"/></svg></div><div class="sub" style="font-size:11px">Scan with Yorozu on your iPhone or iPad.</div><div style="display:flex;gap:8px;align-items:center;width:100%"><code class="mono" style="flex:1;font-size:11px;padding:5px 6px;border:1px solid var(--rule);border-radius:5px;background:var(--canvas);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">yorozu-pair:v1:relay.yumi.to:…:9f2c</code><button class="mbtn">Copy</button></div><div class="sub" style="font-size:11px;text-align:center">Or paste this code into Yorozu on your iPhone, iPad, or another Mac.</div><div style="display:flex;width:100%;justify-content:space-between;margin-top:4px"><button class="mbtn">New code</button><button class="mbtn primary">Close</button></div></div></div><div style="display:flex;flex-direction:column"><div class="lbl">Paired (closes after 1.2 s)</div><div class="mac" role="dialog" style="width:380px;box-sizing:border-box;padding:24px;background:var(--paper);border-radius:10px;box-shadow:var(--mshadow);display:flex;flex-direction:column;align-items:center;gap:14px;min-height:180px"><svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="var(--sage)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none;"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16.5 9"/></svg><div style="font-weight:600;font-size:13px">Device paired</div><div class="sub" style="font-size:12px;text-align:center">Your device is connected and ready to use.</div></div></div><div style="display:flex;flex-direction:column"><div class="lbl">Relay stopped or restarting</div><div class="mac" role="dialog" style="width:380px;box-sizing:border-box;padding:24px;background:var(--paper);border-radius:10px;box-shadow:var(--mshadow);display:flex;flex-direction:column;align-items:center;gap:14px;min-height:180px"><div style="font-weight:600;font-size:13px">Pair a device</div><div style="height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--ink2)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none;"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><circle cx="12" cy="16.3" r=".7"/></svg><div style="font-weight:600;font-size:13px">Pairing is temporarily unavailable</div><div class="sub" style="font-size:12px;max-width:300px">Check the connection in General settings. When Yorozu reconnects, request a new code.</div></div><div style="display:flex;width:100%;justify-content:space-between"><button class="mbtn" disabled>New code</button><button class="mbtn primary">Close</button></div></div></div></div></div></body></html>

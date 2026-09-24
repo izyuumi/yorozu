@@ -164,65 +164,30 @@ struct ChatWindowView: View {
 /// Everything that is not chat. These used to be stacked in the menu bar window itself; the
 /// window is the chat now, so they live in the standard Settings scene where ⌘, and the gear
 /// menu both find them.
+///
+/// A toolbar of tabs, as every Mac app's Settings is: a sidebar split view in a Settings
+/// window grew a blank toolbar strip and a second selection colour, for three panes.
 struct SettingsView: View {
-    private enum SettingsSection: String, CaseIterable, Identifiable {
-        case general, devices, permissions
-
-        var id: Self { self }
-        var presentation: (title: String, symbol: String) {
-            switch self {
-            case .general: ("General", "gearshape")
-            case .devices: ("Devices", "iphone.and.arrow.forward")
-            case .permissions: ("Permissions", "lock.shield")
-            }
-        }
-    }
-
     @ObservedObject var sidecar: Sidecar
     @State private var session = MacChatSession.shared
-    @State private var selection: SettingsSection? = .general
-
-    private var sections: [SettingsSection] {
-        session.role == .host ? SettingsSection.allCases : [.general]
-    }
+    // The pane, or the one a screenshot asked for — see ``Showcase``.
+    @State private var selection = launchArgument("yorozuSettingsPane") ?? "general"
 
     var body: some View {
-        NavigationSplitView {
-            List(sections, selection: $selection) { section in
-                Label(section.presentation.title, systemImage: section.presentation.symbol)
-                    .tag(section)
+        TabView(selection: $selection) {
+            Tab("General", systemImage: "gearshape", value: "general") { GeneralView() }
+            if session.role == .host {
+                Tab("Devices", systemImage: "iphone.and.arrow.forward", value: "devices") {
+                    DevicesView(sidecar: sidecar)
+                }
+                Tab("Permissions", systemImage: "lock.shield", value: "permissions") {
+                    PermissionsView()
+                }
             }
-            .navigationTitle("Settings")
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 230)
-        } detail: {
-            pane { selectedView }
         }
-        .frame(minWidth: 760, idealWidth: 820, minHeight: 520, idealHeight: 580)
+        .frame(width: 600, height: 620)
         .onChange(of: session.role) { _, role in
-            if role != .host { selection = .general }
-        }
-    }
-
-    private func pane(@ViewBuilder content: () -> some View) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text((selection ?? .general).presentation.title)
-                    .font(.title2.weight(.semibold))
-                content()
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 20)
-            .frame(maxWidth: 680, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-        }
-        .background(YorozuPalette.canvas)
-    }
-
-    @ViewBuilder private var selectedView: some View {
-        switch selection ?? .general {
-        case .general: GeneralView()
-        case .devices: DevicesView(sidecar: sidecar)
-        case .permissions: PermissionsView(showsTitle: false)
+            if role != .host { selection = "general" }
         }
     }
 }

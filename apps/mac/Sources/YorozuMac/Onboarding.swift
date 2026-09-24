@@ -119,7 +119,7 @@ struct OnboardingView: View {
     private var hostPermissions: some View {
         VStack(alignment: .leading, spacing: 12) {
             setupHeader("Choose what Yorozu can do", detail: "Optional. Grant only capabilities you want; you can return anytime.")
-            ScrollView { PermissionsView(showSetupButton: false, showsTitle: false, scope: .onboarding) }
+            PermissionsView(showSetupButton: false, scope: .onboarding)
             HStack {
                 Button("Back") { step = .hostPair }
                 Spacer()

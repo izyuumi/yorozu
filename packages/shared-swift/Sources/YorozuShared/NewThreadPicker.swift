@@ -236,8 +236,10 @@ public struct NewThreadPicker: View {
                             .foregroundStyle(YorozuPalette.ink)
                             .lineLimit(nil)
                             .fixedSize(horizontal: false, vertical: true)
+                        // Monospaced so a path reads as a path, and wrapping so a long one is
+                        // shown whole rather than losing its middle to an ellipsis.
                         Text(folder.path)
-                            .font(.caption)
+                            .font(.caption.monospaced())
                             .foregroundStyle(YorozuPalette.ink.opacity(0.62))
                             .lineLimit(nil)
                             .fixedSize(horizontal: false, vertical: true)
