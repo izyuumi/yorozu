@@ -135,6 +135,7 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         case .receipt: .receipt(ReceiptData(eventId: "e0"))
         case .updateStatus: .updateStatus(UpdateStatusData(phase: .countdown, updateId: "u1", version: "1.0", deadline: 12345))
         case .updateControl: .updateControl(UpdateControlData(action: .queue, updateId: "u1", version: "1.0"))
+        case .terminal: .terminal(TerminalData(action: .status))
         }
     let event = YorozuEvent(
         id: "e1",

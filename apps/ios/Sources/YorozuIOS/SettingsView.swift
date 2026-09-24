@@ -83,6 +83,7 @@ struct SettingsView: View {
                         }
                     }
                 }
+                if !isDemo { TerminalAccessSettings(model: model) }
                 Section("App") {
                     LabeledContent("Version", value: Self.version)
                     Link("Source on GitHub", destination: Self.repo)

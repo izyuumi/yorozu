@@ -55,6 +55,7 @@ PLIST
 # env -u SDKROOT: a SDKROOT inherited from the shell points xcodebuild at the wrong SDK.
 env -u SDKROOT xcodebuild archive \
   -workspace apps/ios/Yorozu.xcworkspace -scheme YorozuIOS \
+  -skipPackagePluginValidation \
   -destination 'generic/platform=iOS' -archivePath "$ARCHIVE" \
   -allowProvisioningUpdates \
   -authenticationKeyPath "$ASC_KEY_PATH" \

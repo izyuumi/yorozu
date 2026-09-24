@@ -4,6 +4,7 @@ packages:
 
 allowBuilds:
   esbuild: true
+  node-pty: true
   # Only wrangler's image-asset path needs sharp, which the relay Worker has none of.
   sharp: false
   workerd: true
