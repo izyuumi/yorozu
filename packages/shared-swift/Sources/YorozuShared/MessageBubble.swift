@@ -34,13 +34,13 @@ extension Image {
 /// One message in a thread. The user's is drawn as they typed it — plain text, right-aligned,
 /// tinted — and the agent's is rendered Markdown, because that is what models reply in.
 ///
-/// On the Mac, right-click or the hover control offers Copy, Listen, Retry and Delete. On the
-/// phone a long press selects text, as it does everywhere else on iOS. Every message is always
-/// shown in full.
+/// A separate menu offers message actions on both platforms, without taking over native text
+/// selection. Every message is always shown in full.
 public struct MessageBubble: View {
     /// The event id, which is what says whether this is the bubble being read aloud.
     private let id: String
     private let data: MessageData
+    private let agent: ThreadAgent
     /// Whether this is the reply still being written, which is what earns the caret.
     private let streaming: Bool
     /// Set while the message is waiting in the outbox, which is what puts a caption under it.
@@ -50,8 +50,7 @@ public struct MessageBubble: View {
     /// Sends the queued message again, for a message the outbox has given up on.
     private let onResend: (() -> Void)?
 
-    /// Mac only: whether the pointer is over this message, which is what shows its actions.
-    @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Set by the thread's search field; every hit inside this bubble is drawn highlighted.
     @Environment(\.searchHighlight) private var highlight
 
@@ -62,10 +61,12 @@ public struct MessageBubble: View {
         status: OutboxStatus? = nil,
         onRetry: (() -> Void)? = nil,
         onDelete: (() -> Void)? = nil,
-        onResend: (() -> Void)? = nil
+        onResend: (() -> Void)? = nil,
+        agent: ThreadAgent = .yorozu
     ) {
         self.id = id
         self.data = data
+        self.agent = agent
         self.streaming = streaming
         self.status = status
         self.onRetry = onRetry
@@ -88,8 +89,8 @@ public struct MessageBubble: View {
             }
             if (!data.text.isEmpty || streaming), !isUser {
                 HStack(spacing: 6) {
-                    YorozuMark(dimension: 13)
-                    Text("YOROZU")
+                    AgentMarkView(agent, size: 13)
+                    Text(agent.label)
                         .font(.caption2.weight(.semibold))
                         .tracking(0.8)
                 }
@@ -97,7 +98,7 @@ public struct MessageBubble: View {
                 // Left audible: alignment is the only other thing saying who spoke, and
                 // VoiceOver cannot hear alignment.
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Yorozu")
+                .accessibilityLabel(agent.label)
             }
             if !data.text.isEmpty || streaming {
                 bubble
@@ -108,29 +109,30 @@ public struct MessageBubble: View {
                 LinkPreviewRow(url: link)
             }
             if speaking {
-                SpeakingChip().transition(.scale(scale: 0.9).combined(with: .opacity))
+                SpeakingChip().transition(reduceMotion ? .identity : .scale(scale: 0.9).combined(with: .opacity))
             }
             if let status {
                 caption(status)
             }
+            if !data.text.isEmpty || onRetry != nil || onDelete != nil {
+                messageActions
+                    .frame(maxWidth: bubbleMaxWidth, alignment: .trailing)
+            }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
-        .animation(.easeOut(duration: 0.18), value: speaking)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: speaking)
         #if os(macOS)
             // Mac only: on the phone the long press belongs to text selection.
             .contextMenu { actions }
-            // An explicit shape, so the whole row tracks the pointer and not only the parts
-            // of it something is drawn in.
-            .contentShape(.rect)
-            .onHover { hovering = $0 }
         #endif
     }
 
-    /// Everything that can be done to one message. Shared by the context menu and, on the Mac,
-    /// by the hover control — the two are the same list, not two lists that have to agree.
+    /// The explicit menu and the Mac's contextual menu share the same available actions.
     @ViewBuilder private var actions: some View {
-        Button("Copy", systemImage: "doc.on.doc") { copyToPasteboard(data.text) }
-        if !isUser, !id.isEmpty {
+        if !data.text.isEmpty {
+            Button("Copy", systemImage: "doc.on.doc") { copyToPasteboard(data.text) }
+        }
+        if !isUser, !id.isEmpty, !data.text.isEmpty {
             // One utterance at a time, so this is a toggle rather than a second voice.
             Button(speaking ? String(localized: "Stop") : String(localized: "Listen"), systemImage: speaking ? "stop" : "speaker.wave.2") {
                 if speaking {
@@ -150,22 +152,21 @@ public struct MessageBubble: View {
         }
     }
 
-    @ViewBuilder private var hoverActions: some View {
+    private var messageActions: some View {
+        Menu { actions } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.body)
+                .frame(minWidth: controlTarget, minHeight: controlTarget)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel("Message actions")
+        .accessibilityIdentifier("messageActions-\(id)")
         #if os(macOS)
-            Menu { actions } label: {
-                Image(systemName: "ellipsis.circle.fill")
-                    .symbolRenderingMode(.hierarchical)
-                    .font(.title3)
-            }
-            // The same styling as the composer's own menu button.
             .menuStyle(.button)
-            .buttonStyle(.plain)
             .menuIndicator(.hidden)
-            .fixedSize()
-            .opacity(hovering ? 1 : 0)
-            .allowsHitTesting(hovering)
-            .animation(.easeOut(duration: 0.12), value: hovering)
-            .accessibilityLabel("Message actions")
+            .help("Message actions")
         #endif
     }
 
@@ -206,28 +207,12 @@ public struct MessageBubble: View {
         }
         .padding(.horizontal, isUser ? LayoutMetrics.stack : 0)
         .padding(.vertical, isUser ? LayoutMetrics.inner : 0)
-        #if os(macOS)
-            // Flat assistant prose has no bubble inset to absorb its hover control. Reserve
-            // the trailing control lane so the menu never covers selectable text.
-            .padding(.trailing, isUser ? 0 : controlTarget + LayoutMetrics.tight)
-        #endif
         .fontDesign(isUser ? .default : .serif)
         .foregroundStyle(isUser ? AnyShapeStyle(Color.white) : AnyShapeStyle(YorozuPalette.ink))
         // Links draw in the tint, and the user capsule is filled with it: accent on accent.
         .tint(isUser ? Color.white : YorozuPalette.vermilion)
         .background(isUser ? bubbleBackground : AnyShapeStyle(.clear),
                     in: RoundedRectangle(cornerRadius: LayoutMetrics.bubbleRadius, style: .continuous))
-        // The message's actions as a control of their own, because on the Mac the context
-        // menu never opens: the text is selectable, selectable text brings AppKit's own
-        // contextual menu — Look Up, Translate, Copy, Font — and that menu wins over this
-        // view's. Listen, Read full message and Remove had no way in at all.
-        //
-        // Here rather than on the row, and above the frame below rather than under it: this
-        // is the bubble's own outline, and the frame below is only as wide as a bubble may
-        // get — hanging the button off that put it half a window away from a short message.
-        #if os(macOS)
-            .overlay(alignment: isUser ? .topLeading : .topTrailing) { hoverActions }
-        #endif
         // A bubble stops short of the far edge, so which side it is on stays readable as
         // who said it even when the message is long.
         .frame(maxWidth: bubbleMaxWidth, alignment: isUser ? .trailing : .leading)

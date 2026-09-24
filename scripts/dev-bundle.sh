@@ -11,8 +11,8 @@ CONFIG=${CONFIG:-debug}
 APP=${APP:-apps/mac/.build/Yorozu.app}
 BUNDLE_ID=${BUNDLE_ID:-to.yumi.yorozu.beta}
 DISPLAY_NAME=${DISPLAY_NAME:-Yorozu Beta}
-SHORT_VERSION=${SHORT_VERSION:-0.2.0}
-VERSION_LABEL=${VERSION_LABEL:-0.2.0-beta}
+SHORT_VERSION=${SHORT_VERSION:-$(cat version.txt)}
+VERSION_LABEL=${VERSION_LABEL:-$SHORT_VERSION-beta}
 
 swift build --package-path apps/mac -c "$CONFIG"
 BIN="$(swift build --package-path apps/mac -c "$CONFIG" --show-bin-path)/YorozuMac"

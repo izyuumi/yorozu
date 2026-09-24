@@ -11,6 +11,9 @@ apps/ios/e2e/.logs/
 apps/ios/e2e/.screens/
 *.dmg
 
+# Local Cloudflare deployment state and cache.
+.wrangler/
+
 # Signing credentials and local environment secrets.
 *.p12
 *.p8

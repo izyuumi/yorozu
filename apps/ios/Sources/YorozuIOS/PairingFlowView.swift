@@ -10,63 +10,80 @@ struct PairingFlowView: View {
     var externalError: String?
     var connecting = false
 
-    @State private var scanning = false
-    @State private var enteringCode = false
+    private enum Destination: String, Identifiable {
+        case scanner, manual
+        var id: String { rawValue }
+    }
+    @State private var destination: Destination?
     @State private var error: String?
 
     var body: some View {
-        VStack(spacing: 12) {
-            Spacer()
-            Image("AppIconImage")
-                .resizable()
-                .frame(width: 96, height: 96)
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .accessibilityHidden(true)
-            Text("Yorozu").font(.largeTitle.weight(.semibold))
-            Text("Your Mac's agent, in your pocket.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Text("On your host Mac, open Yorozu, then choose Settings › Devices › Pair Another Device.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.top, 4)
-                .frame(maxWidth: 320)
-            Spacer()
-            Button("Scan pairing code", systemImage: "qrcode.viewfinder") { scanning = true }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .frame(maxWidth: .infinity)
-            Button("Enter code manually") { enteringCode = true }
-                .frame(minHeight: 44)
-            Button("Try the demo", action: onDemo)
-                .buttonStyle(.bordered)
-                .foregroundStyle(.secondary)
-                .frame(minHeight: 44)
-            if connecting { ProgressView("Connecting…") }
-            if let error = error ?? externalError {
-                // Red carries the icon, not the words: red footnote text is under 4.5:1.
-                Label { Text(error) } icon: {
-                    Image(systemName: "exclamationmark.circle").foregroundStyle(.red)
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 12) {
+                    Spacer()
+                    Image("AppIconImage")
+                        .resizable()
+                        .frame(width: 96, height: 96)
+                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .accessibilityHidden(true)
+                    Text("Yorozu").font(.largeTitle.weight(.semibold))
+                    Text("Your Mac's agent, in your pocket.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Text("On your host Mac, open Yorozu, then choose Settings › Devices › Pair Another Device.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 4)
+                        .frame(maxWidth: 320)
+                    Spacer()
+                    Button("Scan pairing code", systemImage: "qrcode.viewfinder") { destination = .scanner }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .frame(maxWidth: .infinity)
+                        .disabled(connecting)
+                    Button("Enter code manually") { destination = .manual }
+                        .frame(minHeight: 44)
+                        .disabled(connecting)
+                    Button("Try the demo", action: onDemo)
+                        .buttonStyle(.bordered)
+                        .foregroundStyle(.secondary)
+                        .frame(minHeight: 44)
+                    if connecting { ProgressView("Connecting…") }
+                    if let error = error ?? externalError {
+                        // Red carries the icon, not the words: red footnote text is under 4.5:1.
+                        Label { Text(error) } icon: {
+                            Image(systemName: "exclamationmark.circle").foregroundStyle(.red)
+                        }
+                        .font(.footnote)
+                        .multilineTextAlignment(.leading)
+                    }
                 }
-                .font(.footnote)
-                .multilineTextAlignment(.leading)
+                .frame(minHeight: max(0, geometry.size.height - 40))
+                .padding(.horizontal, 24)
+                .padding(.vertical, 20)
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 20)
-        .sheet(isPresented: $scanning) {
-            ScannerView { text in
-                let failure = onPair(text)
-                error = failure
-                if failure == nil { scanning = false }
-                return failure
+        .sheet(item: $destination) { shown in
+            switch shown {
+            case .scanner:
+                ScannerView(onScan: { text in
+                    let failure = submit(text)
+                    if failure == nil { destination = nil }
+                    return failure
+                }, onManualEntry: { destination = .manual })
+            case .manual:
+                PairView(onPair: submit)
             }
         }
-        .sheet(isPresented: $enteringCode) {
-            PairView(onPair: onPair)
-        }
+    }
+
+    private func submit(_ text: String) -> String? {
+        let failure = onPair(text)
+        error = failure
+        return failure
     }
 }
 
@@ -77,6 +94,7 @@ struct PairView: View {
 
     @State private var code = ""
     @State private var error: String?
+    @State private var submitted = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -106,8 +124,18 @@ struct PairView: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Connect") { error = onPair(code) }
-                        .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("Connect") {
+                        guard !submitted else { return }
+                        submitted = true
+                        error = onPair(code)
+                        if error == nil {
+                            // Progress and network failures belong to the presenting flow.
+                            dismiss()
+                        } else {
+                            submitted = false
+                        }
+                    }
+                    .disabled(submitted || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }

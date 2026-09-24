@@ -170,6 +170,7 @@ public final class LinkPreviewStore {
 public struct LinkPreviewRow: View {
     private let url: URL
     private let store: LinkPreviewStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @ScaledMetric(relativeTo: .caption) private var iconSize = 16
 
@@ -206,11 +207,11 @@ public struct LinkPreviewRow: View {
                 .frame(maxWidth: 420, alignment: .leading)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Link: \(preview.title), \(preview.host)")
-                .transition(.opacity)
+                .transition(reduceMotion ? .identity : .opacity)
             }
         }
         .task(id: url) { await store.load(url) }
-        .animation(.easeOut(duration: 0.2), value: store.cached(url))
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: store.cached(url))
     }
 
     @ViewBuilder private func icon(_ preview: LinkPreview) -> some View {
