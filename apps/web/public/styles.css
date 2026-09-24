@@ -180,10 +180,15 @@ section[id] { scroll-margin-top: 24px; }
 .shot { margin: 0; }
 .phone-shot { justify-self: center; width: min(100%, 300px); padding: 8px; background: var(--ink); border-radius: 46px; box-shadow: var(--shadow); }
 .phone-shot img { border-radius: 38px; }
-.mac-shot img { border-radius: 12px; border: 1px solid var(--line); box-shadow: var(--shadow); }
+.mac-shot { padding: 7%; border-radius: 20px; background: url("/assets/mac-default-wallpaper.webp") center / cover no-repeat; box-shadow: var(--shadow); }
+.mac-shot img { border-radius: 10px; box-shadow: 0 0 0 0.5px oklch(0 0 0 / 0.45), 0 24px 60px -16px oklch(0 0 0 / 0.6); }
 .duo-support { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
 .duo-support h2 { font-size: 30px; }
-.duo-shot img { border-radius: 12px; border: 1px solid var(--line); box-shadow: var(--shadow); }
+.duo-device { position: relative; aspect-ratio: 3093 / 2247; }
+/* Apple's inner-open landscape bezel has a 2853 × 2007 screen at (120, 120). */
+.duo-device picture { position: absolute; inset: 5.34045% 3.87973%; overflow: hidden; border-radius: 5.9% / 8.4%; }
+.duo-device picture img { width: 100%; height: 100%; }
+.duo-bezel { position: relative; width: 100%; height: auto; pointer-events: none; }
 .duo-shot figcaption { margin-top: 12px; }
 
 /* Relay */
