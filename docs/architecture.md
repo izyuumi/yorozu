@@ -68,10 +68,11 @@ at or below the last `seq` it accepted, and both ends keep their counters across
 the Mac in `channel-seq.json`, the phone in its Keychain pairing record. A phone that unpairs and
 pairs again under new keys starts from zero, and a stale record dies
 with the device (`device_remove` drops it from `devices.json`). A device waits for the Mac's
-encrypted greeting before sending requests. It accepts the older single-key plain-event format
-when that is what the Mac sends, so devices can sync while the Mac app is being updated. Once a
-directional-key box arrives, old-format boxes cannot switch that connection back. The shared
-`deriveSessionKey` is also used for push preview boxes.
+encrypted greeting before sending requests. Public 0.2.3 clients used one shared key and plain
+events instead. The Mac greets an unidentified device in both formats, modern first, then sends
+only the format it answers in. A modern box upgrades a legacy connection; old-format boxes cannot
+switch that connection back. The current device client also accepts either greeting, so it works
+with a Mac still on 0.2.3. The shared `deriveSessionKey` is also used for push preview boxes.
 
 The relay checks each frame's signature — but the relay could have signed it itself, so the
 runtime does not take the relay's word for who is enrolling. The pairing string carries a
@@ -194,7 +195,7 @@ temporary 10,000-event fixture.
 
 ## Several phones at once
 
-The sidecar keeps one pair of channel keys per device, keyed by the X25519 key that phone
+The sidecar keeps directional and legacy shared keys per device, keyed by the X25519 key that phone
 announced in its `hello`. Agent events are sealed once per device and broadcast; relay frames
 carry no sender, so an inbound box is attributed to whichever device's receive key opens it,
 which is also how a `sync_request` is answered to just the phone that asked. Because every phone receives the copies meant for the
