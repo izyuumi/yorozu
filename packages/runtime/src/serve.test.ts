@@ -39,7 +39,9 @@ import { localSocketPath } from "./local.js";
 import { SYNC_PAGE_BYTES, setNativeTurn, setThreadSession, appendThreadEvent, createThread, listThreads, readThreadEvents } from "./threads.js";
 import { readTranscripts, transcriptDir } from "./transcripts.js";
 
-const serve = (options: ServeOptions): Sidecar => startSidecar({ nativeRunners: {}, ...options });
+/** No native helper here: a thread takes its first words unless a test brings its own titler. */
+const serve = (options: ServeOptions): Sidecar =>
+  startSidecar({ nativeRunners: {}, titler: async () => "", ...options });
 
 let relay: Relay;
 let sidecar: Sidecar;
@@ -1456,6 +1458,9 @@ test("a newly paired phone syncs only events created after it paired", async () 
   relay = await startRelay(0);
   const qrs = qrQueue();
   sidecar = serve({
+    // A title is thread metadata every device is meant to see; it is the events under test,
+    // so the title is kept clear of the prompt's words.
+    titler: async () => "Earlier chat",
     relayUrl: `ws://127.0.0.1:${relay.port}`,
     stateDir: mkdtempSync(join(tmpdir(), "yorozu-serve-")),
     provider: openaiCompat({
@@ -1511,13 +1516,13 @@ const storedThreads = (dir: string): { title: string }[] =>
   JSON.parse(readFileSync(join(dir, "threads.json"), "utf8")) as { title: string }[];
 
 test("the first message names an untitled thread, and no later turn renames it", async () => {
-  const { dir, send, eventsUntil, isReply } = await pairedPhone([
-    // The titler asks first, alongside the turn — with the quotes and the full stop it was
-    // told not to use.
-    () => sse('"Groceries for the week."\n'),
-    () => sse("Sure — milk and eggs."),
-    () => sse("Added bread."),
-  ]);
+  const { dir, send, eventsUntil, isReply } = await pairedPhone(
+    [() => sse("Sure — milk and eggs."), () => sse("Added bread.")],
+    false,
+    // The on-device model answers alongside the turn — with the quotes and the full stop it
+    // was told not to use.
+    { titler: async () => '"Groceries for the week."\n' },
+  );
 
   // Nobody is asked for a title: the thread arrives empty and the lists draw a placeholder.
   send({ kind: "thread_create", data: {} });
@@ -1533,7 +1538,7 @@ test("the first message names an untitled thread, and no later turn renames it",
   expect(seen.at(-1)).toMatchObject({ data: { threads: [expect.objectContaining({ id: created!.id })] } });
   if (!seen.some(isReply)) await eventsUntil(isReply);
 
-  // A second turn spends no completion on titling, so the queued third response is its reply.
+  // Titling spends no completion on the chain, so the queued second response is this reply.
   send({ kind: "message", data: { role: "user", text: "and bread" } }, created!.id);
   const second = await eventsUntil(isReply);
   expect(second.at(-1)).toMatchObject({ data: { role: "agent", text: "Added bread." } });
@@ -1541,8 +1546,10 @@ test("the first message names an untitled thread, and no later turn renames it",
 });
 
 test("a thread the user renamed keeps that title through its first turn", async () => {
-  // One response only: a named thread never asks for a second, so a titler call would hang.
-  const { dir, send, eventsUntil, isReply } = await pairedPhone([() => sse("Noted.")]);
+  // A named thread is never titled: a titler that answered would show up as the wrong title.
+  const { dir, send, eventsUntil, isReply } = await pairedPhone([() => sse("Noted.")], false, {
+    titler: async () => "Wrong",
+  });
 
   send({ kind: "thread_create", data: {} });
   const [created] = await threadsAfter(eventsUntil);

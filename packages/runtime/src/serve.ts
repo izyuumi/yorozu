@@ -68,7 +68,7 @@ import type { TurnContext } from "./index.js";
 import type { createLegacyRunner } from "./legacy.js";
 import { localSocketPath, startLocalChannel, type Send } from "./local.js";
 import type { Provider } from "./provider.js";
-import { autoTitle } from "./title.js";
+import { autoTitle, onDeviceTitler, type Titler } from "./title.js";
 // Mirrors PING in apps/relay/src/protocol.ts; the shipped runtime must not depend on the relay package.
 const PING = JSON.stringify({ type: "ping" });
 import {
@@ -371,8 +371,11 @@ export interface ServeOptions {
   stateDir?: string;
   /** Defaults to the model chain configured from the environment. */
   provider?: Provider;
-  /** Names new threads after their first reply. Defaults to `provider`; absent, the first five words serve. */
-  titler?: Provider;
+  /**
+   * Names a new thread from its first message. Defaults to the Mac's on-device model through
+   * `yorozu-native`; whatever it is, its first five words serve when it does not answer.
+   */
+  titler?: Titler;
   /** Defaults to stdout. */
   log?: (line: string) => void;
   /**
@@ -408,7 +411,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   recoverNativeTurns(dir);
   const keys = loadKeys(dir);
   const provider = options.provider;
-  const titler = options.titler ?? provider;
+  const titler = options.titler ?? onDeviceTitler;
   const openclaw = provider ? undefined : options.openclawRunner ?? new OpenClawRunner({ stateDir: dir });
   /**
    * Whether this thread's turns, stops and archives go through the OpenClaw bridge. Only a
@@ -1882,7 +1885,7 @@ if (import.meta.main) {
       // Test rigs can pin a deterministic provider instead of talking to the live OpenClaw
       // gateway. Ordinary launches have no argument and keep OpenClaw as their backend.
       const { chainFromEnv } = await import("./chain.js");
-      const sidecar = serve(command === "--direct-provider" ? { provider: chainFromEnv() } : { titler: chainFromEnv() });
+      const sidecar = serve(command === "--direct-provider" ? { provider: chainFromEnv() } : {});
       // The Mac app's "New code" button, and the only thing stdin is for. Skipped on a
       // terminal: reading one from a backgrounded shell job earns a SIGTTIN, and a person
       // running the sidecar by hand has no button to press anyway.
