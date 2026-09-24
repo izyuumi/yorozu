@@ -26,14 +26,14 @@ public struct AgentMarkView: View {
             case .yorozu:
                 YorozuMark(dimension: size)
             case .claude:
-                Image("ClaudeMark", bundle: .module)
+                Image("ClaudeMark", bundle: ResourceBundle.shared)
                     .resizable()
                     .renderingMode(.original)
                     .scaledToFit()
             case .openAI:
                 // The official file carries clear space: the Blossom fills about half its canvas,
                 // so the canvas is drawn at twice the size and left to overflow the frame.
-                Image("OpenAIBlossom", bundle: .module)
+                Image("OpenAIBlossom", bundle: ResourceBundle.shared)
                     .resizable()
                     .renderingMode(.original)
                     .scaledToFit()
