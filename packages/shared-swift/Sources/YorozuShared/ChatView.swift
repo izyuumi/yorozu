@@ -948,7 +948,9 @@ public struct ChatView: View {
         .frame(width: controlTarget, height: controlTarget)
         .hoverHighlight()
         .disabled(!canSend)
-        .macKey(.return, modifiers: sendWithCommandReturn ? .command : [])
+        #if os(macOS)
+            .macKey(.return, modifiers: sendWithCommandReturn ? .command : [])
+        #endif
         .accessibilityLabel("Send")
     }
 
