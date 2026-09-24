@@ -8,6 +8,9 @@ public struct MarkdownText: View {
     /// Drawn after the last block while the reply is still arriving.
     private let cursor: Bool
     @Environment(\.searchHighlight) private var highlight
+    #if os(iOS)
+        @Environment(\.proseStyle) private var proseStyle
+    #endif
 
     public init(_ markdown: String, cursor: Bool = false) {
         self.blocks = markdownBlocks(markdown)
@@ -15,6 +18,21 @@ public struct MarkdownText: View {
     }
 
     public var body: some View {
+        #if os(iOS)
+            // Inside a message bubble on the phone the reply is one UITextView, so a long press
+            // selects by word and letter and the selection runs across blocks.
+            if let proseStyle, !cursor {
+                SelectableReply(blocks: blocks, highlight: highlight, style: proseStyle)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                stack
+            }
+        #else
+            stack
+        #endif
+    }
+
+    private var stack: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { offset, _ in
                 view(at: offset)
@@ -35,10 +53,12 @@ public struct MarkdownText: View {
             (Text(AttributedString.chatInline(text, highlight: highlight)) + Text(" "))
                 .overlayCursor(true)
         case .paragraph(let text):
-            Prose(.chatInline(text, highlight: highlight))
+            Text(AttributedString.chatInline(text, highlight: highlight))
         case .heading(let level, let text):
-            Prose(.chatInline(text, highlight: highlight), heading: level)
+            Text(AttributedString.chatInline(text, highlight: highlight))
+                .font(headingFont(level))
                 .padding(.top, offset == 0 ? 0 : 4)
+                .accessibilityAddTraits(.isHeader)
         case .code(let language, let text):
             CodeBlock(language: language, code: text)
         case .list(let ordered, let items):
@@ -48,42 +68,6 @@ public struct MarkdownText: View {
         case .rule:
             Divider()
         }
-    }
-
-}
-
-/// A paragraph, heading or list item. A `Text`, except on the phone inside a message bubble,
-/// where it is a `UITextView` so a long press selects by word and letter rather than taking
-/// the whole block; the bubble says so by setting a ``ProseStyle`` in the environment.
-private struct Prose: View {
-    let text: AttributedString
-    /// Heading level, or nil for body prose.
-    let level: Int?
-    #if os(iOS)
-        @Environment(\.proseStyle) private var style
-    #endif
-
-    init(_ text: AttributedString, heading level: Int? = nil) {
-        self.text = text
-        self.level = level
-    }
-
-    var body: some View {
-        #if os(iOS)
-            if let style {
-                SelectableProse(text: text, level: level, style: style)
-            } else {
-                label
-            }
-        #else
-            label
-        #endif
-    }
-
-    private var label: some View {
-        Text(text)
-            .font(level.map(headingFont))
-            .accessibilityAddTraits(level == nil ? [] : .isHeader)
     }
 
     /// Relative sizes, so every heading tracks Dynamic Type instead of pinning a point size.
@@ -132,7 +116,7 @@ private struct TypingCursor: ViewModifier {
 }
 
 /// A fenced block: monospaced, scrolled sideways rather than wrapped, and copyable in one tap.
-private struct CodeBlock: View {
+struct CodeBlock: View {
     let language: String?
     let code: String
     @State private var copied = false
@@ -197,7 +181,7 @@ private struct MarkdownList: View {
                         .foregroundStyle(.secondary)
                         // Numbers line up their own column; a wide list stays a list.
                         .monospacedDigit()
-                    Prose(.chatInline(item, highlight: highlight))
+                    Text(AttributedString.chatInline(item, highlight: highlight))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
@@ -207,7 +191,7 @@ private struct MarkdownList: View {
 
 /// A pipe table as a grid. A table wider than the bubble scrolls sideways, as a code block
 /// does, rather than degrading into something that is no longer a table.
-private struct MarkdownTable: View {
+struct MarkdownTable: View {
     let header: [String]
     let rows: [[String]]
     @Environment(\.searchHighlight) private var highlight
