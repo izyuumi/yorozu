@@ -148,7 +148,7 @@ New tasks take priority; approval waits and unknown agent status keep the update
 Mac and phone show progress and offer **Postpone 1 hour**. Drafts and pending submissions
 survive restart. See [queued updates](docs/queued-updates.md) for the full behavior.
 
-Want changes from `main` before the next stable release? Install the [Mac beta](https://github.com/izyuumi/yorozu/releases/download/main-beta/yorozu.dmg), then enable **Settings → Updates → Receive beta updates**. Successful main CI publishes a signed, notarized candidate and matching TestFlight build. Turn the setting off to receive stable updates once the stable marketing version catches up; it does not downgrade an installed beta.
+Want changes from `main` before the next stable release? Install the [Mac beta](https://yorozu.yumi.to/beta), then enable **Settings → Updates → Receive beta updates**. Successful main CI publishes a signed, notarized candidate and matching TestFlight build. Turn the setting off to receive stable updates once the stable marketing version catches up; it does not downgrade an installed beta.
 
 ## Documentation
 

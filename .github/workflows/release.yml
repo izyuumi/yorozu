@@ -167,13 +167,10 @@ jobs:
           set -eu
           ./scripts/build-ios.sh
           node scripts/asc-candidate.mjs resolve "$VERSION" "$BUILD" dist/ios.json
-      - name: Publish retained candidate and beta pointer
+      - name: Publish retained candidate
         run: |
           set -eu
           python3 scripts/release.py candidate --manifest dist/candidate.json --ios dist/ios.json --dist dist
-          if [ "$SOURCE_BRANCH" = main ]; then
-            python3 scripts/release.py beta --candidate "$CANDIDATE_TAG"
-          fi
           printf 'Candidate: [%s](https://github.com/%s/releases/tag/%s)\n' \
             "$CANDIDATE_TAG" "$GITHUB_REPOSITORY" "$CANDIDATE_TAG" >> "$GITHUB_STEP_SUMMARY"
       - name: Forget signing credentials

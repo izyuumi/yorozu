@@ -29,8 +29,14 @@ features, two fixes, one documentation change, and one release-preparation commi
 `c89cce1` and `b9d686e` and removes three synthetic merge duplicates. The local changelog agrees.
 The comparison uses full SHAs, so removing the old tag cannot break the history link.
 
-The obsolete `v0.3.0` tag points to `f78492cfc1494b1676cfd8a3f6b200a9293f39a2`, an ancestor of
-`v0.4.0`; it has no GitHub Release. Deletion was blocked by the repository's active
+The obsolete `v0.3.0` tag pointed to `f78492cfc1494b1676cfd8a3f6b200a9293f39a2`, an ancestor
+of `v0.4.0`; it had no GitHub Release. Initial deletion was blocked by the repository's active
 [`release tags: signed, immutable` ruleset](https://github.com/izyuumi/yorozu/rules/23879938).
-No protection setting was changed. A temporary exception for this exact tag requires separate
-maintainer authorization; ordinary release automation never deletes retained releases/tags.
+After explicit authorization, only `refs/tags/v0.3.0` was temporarily excluded, the tag deleted,
+and the exact original active protection restored and verified field-for-field.
+
+The owner then confirmed this is a single-user development project and waived legacy beta
+compatibility. The old `main-beta` release/tag is removed. New beta discovery lives at the
+website's `/beta` and `/beta/appcast.xml` endpoints, which select retained main candidates.
+Candidate publication now performs the version/build/source progression guard previously
+owned by the rolling pointer. This supersedes the earlier retention decision above.
