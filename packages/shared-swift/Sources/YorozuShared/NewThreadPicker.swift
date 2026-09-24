@@ -154,7 +154,7 @@ public struct NewThreadPicker: View {
                         .accessibilityHint("Starts a thread now")
                 }
             } header: {
-                question("Who should answer?")
+                YorozuQuestion("Who should answer?")
             }
             Section {
                 ForEach(Self.codingAgents) { agent in
@@ -174,16 +174,10 @@ public struct NewThreadPicker: View {
 
     private func runtime(_ agent: ThreadAgent) -> some View {
         HStack(spacing: 12) {
-            Group {
+            YorozuGlyphTile {
                 // Yorozu's own knot rather than the generic chip the thread list uses: this is
                 // the one place the runtimes are introduced side by side.
                 if agent == .yorozu { YorozuMark(dimension: 22) } else { AgentMarkView(agent) }
-            }
-            .frame(width: 36, height: 36)
-            .background(YorozuPalette.canvas, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(YorozuPalette.rule.opacity(0.72), lineWidth: 0.75)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(agent.label)
@@ -215,7 +209,7 @@ public struct NewThreadPicker: View {
                     rows(recent, agent: agent)
                 } header: {
                     VStack(alignment: .leading, spacing: 12) {
-                        question("Where should \(agent.label) work?")
+                        YorozuQuestion("Where should \(agent.label) work?")
                         Text("Recent")
                     }
                 }
@@ -224,7 +218,7 @@ public struct NewThreadPicker: View {
                 Section {
                     rows(other, agent: agent)
                 } header: {
-                    if recent.isEmpty { question("Where should \(agent.label) work?") } else { Text("Other folders") }
+                    if recent.isEmpty { YorozuQuestion("Where should \(agent.label) work?") } else { Text("Other folders") }
                 }
             }
             Section {
@@ -331,17 +325,6 @@ public struct NewThreadPicker: View {
         }
     }
 
-    /// The sheet's one editorial moment: the question it asks, in the serif agent replies use.
-    private func question(_ text: LocalizedStringKey) -> some View {
-        Text(text)
-            .font(.title3.weight(.semibold))
-            .fontDesign(.serif)
-            .foregroundStyle(YorozuPalette.ink)
-            .textCase(nil)
-            .padding(.top, 8)
-            .accessibilityAddTraits(.isHeader)
-    }
-
     private func start(_ agent: ThreadAgent, _ cwd: String?) {
         if let session {
             guard canStart, !agent.needsFolder || projects.contains(where: { $0.path == cwd }),
@@ -353,19 +336,5 @@ public struct NewThreadPicker: View {
             onStart(agent, cwd)
         }
         dismiss()
-    }
-}
-
-private extension View {
-    /// Paper rows on the warm canvas, as the thread list draws them.
-    func paperList() -> some View {
-        self
-            #if os(macOS)
-                .listStyle(.inset)
-            #else
-                .listStyle(.insetGrouped)
-            #endif
-            .scrollContentBackground(.hidden)
-            .background(YorozuPalette.canvas)
     }
 }

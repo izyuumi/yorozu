@@ -10,9 +10,9 @@ env -u SDKROOT xcodebuild test \
 
 Also run on an iPad simulator. These tests use the debug offline chat showcase: no pairing,
 account, network, or real message. Keep the simulator software keyboard enabled. Assertions
-cover keyboard presence while the native menu opens, model/effort changes, draft
+cover keyboard presence while the model and effort card opens, model/effort changes, draft
 preservation and continued typing after selection, and no keyboard appearing when initially unfocused.
-A retained screenshot shows the native menu and keyboard together. Real-device keyboard/IME and
+A retained screenshot shows the card and keyboard together. Real-device keyboard/IME and
 hardware-keyboard behavior still require device validation; these are not proven by compilation.
 
 `PairingFlowTests` uses the offline pairing showcases and never writes pairing keys or contacts

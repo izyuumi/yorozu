@@ -41,11 +41,13 @@ final class KeyboardChooserTests: XCTestCase {
         add(openShot)
         app.buttons["Auto"].tap()
         XCTAssertTrue(app.keyboards.firstMatch.exists, "Model selection must preserve keyboard")
-        app.buttons["Model and effort"].tap()
+        // The card stays open across both choices: effort is picked without reopening it.
         let effort = app.buttons["Low"]
         XCTAssertTrue(effort.waitForExistence(timeout: step))
         effort.tap()
         XCTAssertTrue(app.keyboards.firstMatch.exists, "Effort selection must preserve keyboard")
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "Closing the card must preserve keyboard")
         expectValue(app.buttons["Model and effort"], "Auto, Low")
         expectValue(field, "Keyboard regression draft")
         field.typeText(" continues")

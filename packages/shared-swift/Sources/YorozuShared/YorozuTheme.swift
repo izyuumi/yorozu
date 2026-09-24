@@ -95,6 +95,62 @@ public struct YorozuMark: View {
     }
 }
 
+/// A question asked in the app's serif voice: the heading over a choice the user is about to
+/// make, as the new-thread picker and the composer's model card ask theirs.
+public struct YorozuQuestion: View {
+    private let text: LocalizedStringKey
+
+    public init(_ text: LocalizedStringKey) { self.text = text }
+
+    public var body: some View {
+        Text(text)
+            .font(.title3.weight(.semibold))
+            .fontDesign(.serif)
+            .foregroundStyle(YorozuPalette.ink)
+            .textCase(nil)
+            .padding(.top, 8)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// A dot and a word in one colour, so a state is never told by colour alone.
+public struct YorozuStatusLabel: View {
+    private let text: String
+    private let tint: Color
+
+    public init(_ text: String, tint: Color) {
+        self.text = text
+        self.tint = tint
+    }
+
+    public var body: some View {
+        HStack(spacing: 7) {
+            Circle().fill(tint).frame(width: 8, height: 8)
+                .accessibilityHidden(true)
+            Text(text)
+        }
+        .foregroundStyle(tint)
+    }
+}
+
+/// A mark or symbol set in a small canvas tile with a hairline edge: how a list introduces a
+/// thing (a runtime, a Mac) rather than just naming it.
+public struct YorozuGlyphTile<Glyph: View>: View {
+    private let glyph: Glyph
+
+    public init(@ViewBuilder glyph: () -> Glyph) { self.glyph = glyph() }
+
+    public var body: some View {
+        glyph
+            .frame(width: 36, height: 36)
+            .background(YorozuPalette.canvas, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(YorozuPalette.rule.opacity(0.72), lineWidth: 0.75)
+            }
+    }
+}
+
 private struct YorozuPaperCard: ViewModifier {
     let padding: CGFloat
     let radius: CGFloat
@@ -123,5 +179,17 @@ public extension View {
     /// Applies Yorozu's action colour without replacing semantic warning/error colours.
     func yorozuTint() -> some View {
         tint(YorozuPalette.vermilion)
+    }
+
+    /// Paper rows on the warm canvas, as the thread list draws them.
+    func paperList() -> some View {
+        self
+            #if os(macOS)
+                .listStyle(.inset)
+            #else
+                .listStyle(.insetGrouped)
+            #endif
+            .scrollContentBackground(.hidden)
+            .background(YorozuPalette.canvas)
     }
 }
