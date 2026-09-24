@@ -221,7 +221,11 @@ private struct LocalChatWindowView: View {
         .onChange(of: controlActiveState, initial: true) { _, state in
             model.foreground = state == .key
         }
-        .onAppear { if model.listed { open() } }
+        .onAppear {
+            if model.listed { open() }
+            // Screenshot harness only — see ``Showcase``.
+            if launchArgument("yorozuWindow") == "settings" { openSettings() }
+        }
         .onChange(of: model.listed) { _, listed in if listed { open() } }
         // Screenshot harness only: prints the window number `screencapture -l` wants. Inert
         // unless a showcase argument was passed — see ``Showcase``.
