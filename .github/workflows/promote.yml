@@ -1,0 +1,45 @@
+name: Promote
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: 'Tested candidate tag, for example candidate-0.5.0-10042'
+        required: true
+        type: string
+
+# Independent from beta builds and catalog changes. Dispatch one promotion at a time;
+# GitHub replaces an older pending run if a third promotion is queued.
+concurrency:
+  group: stable-promotion
+  cancel-in-progress: false
+permissions: {}
+
+jobs:
+  promote:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+      issues: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PUBLIC: ${{ github.repository }}
+      CANDIDATE: ${{ inputs.candidate }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26
+      - name: Verify approved iOS build and promote exact Mac artifact
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          set -eu
+          python3 scripts/release.py promote --candidate "$CANDIDATE" --dist dist/promotion
+          printf 'Promoted tested candidate `%s`. Check App Store availability separately.\n' \
+            "$CANDIDATE" >> "$GITHUB_STEP_SUMMARY"

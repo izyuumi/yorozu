@@ -1,45 +1,29 @@
-# Releasing
+# Release setup and local builds
 
-Release Please runs on pushes to `main`, collecting Conventional Commits into a version and
-changelog PR. Every push builds a signed, notarized Mac beta from that commit and publishes it
-to the rolling [`main-beta` prerelease](https://github.com/izyuumi/yorozu/releases/tag/main-beta).
-Merging a version PR also publishes the tagged Mac build as stable. After signing,
-notarization and asset upload succeed, the stable release becomes latest and older stable
-releases are deleted. The beta prerelease and version tags are preserved.
+[RELEASE_WORKFLOW.md](RELEASE_WORKFLOW.md) is the release runbook: source branches, candidate
+builds, TestFlight, App Store review, promotion, retries, and signed Conventional Commits.
+This guide covers credentials, packaging, and local tools.
 
-The workflow uses `GITHUB_TOKEN`; no personal access token is needed. Repository Actions
-settings must allow GitHub Actions to create pull requests. Bot-created PRs do not trigger
-`pull_request` CI automatically; close and reopen the PR as a maintainer to run those checks
-before merging. Builds run in the same workflow because bot-created tags do not trigger CI.
+CI publishes a numbered Mac prerelease and uploads the matching iOS build only after successful
+CI for the exact source commit. Stable publication is a separate, explicit promotion of those
+same artifacts. Release Please prepares version/changelog PRs; merging one does not publish stable.
 
 ## Versions
 
-Neither number is typed. The marketing version is the latest `v*` tag on both platforms. The build
-number comes from git on both too, but each counts differently, because each platform's consumer
-asks something different of it.
+`release-version.txt` holds the intended next numeric `MAJOR.MINOR.PATCH` version. A manual
+candidate dispatch can override it explicitly. Release Please owns `version.txt` and
+`.release-please-manifest.json`, which record its last prepared version; neither selects shipping
+versions. Production build scripts require explicit `VERSION` and `BUILD`.
 
-On the Mac, `CFBundleVersion` is the whole commit count, which rises with every commit and never
-repeats. Sparkle compares `CFBundleVersion` *across* versions, so that is what makes one build
-newer than another and it has to stay globally monotonic. It is also in the DMG's name so two
-builds of one tag are two files rather than one URL with two meanings.
-Mac Settings shows a separate per-version count: the tagged commit is `(1)`, then each main
-commit is `(2)`, `(3)`, and so on. Beta builds use the same count. This keeps the number people
-see useful while preserving Sparkle's update ordering, including across version changes.
-
-On iOS, `scripts/build-ios.sh` counts commits since that tag, plus one so the tagged commit is
-build 1 (Apple rejects `0`): `0.2.4 (1)`, `0.2.4 (2)`, ... then `0.2.5 (1)`. Apple only needs the
-number unique and rising *within* one marketing version, and TestFlight groups builds by version,
-so a tester can read `(2)` as the second build of that version, which the global count never said.
-Otherwise the same properties: no file to bump, and the same number on any checkout of a commit.
-
-`apps/ios/Project.swift` and `scripts/dev-bundle.sh` read `version.txt` for development builds
-and append `-beta` to the display label. Release Please maintains that file. Shipping builds
-continue to use the release tag and explicit build-script overrides.
+The single `Release` workflow assigns `BUILD = 10000 + github.run_number` to both platforms.
+That number identifies the Mac DMG, iOS archive, and TestFlight upload. Do not upload local builds
+using a number allocated by CI, or reset the counter by replacing the workflow. A failed candidate
+build needs a fresh dispatch; promotion retries reuse the existing candidate.
 
 ## The Mac DMG
 
 ```sh
-./scripts/build-mac.sh          # prints dist/Yorozu-0.2.1-<n>.dmg
+VERSION=0.5.0 BUILD=9999 ./scripts/build-mac.sh  # local packaging only; never upload this example
 ```
 
 It builds the workspace and the Swift release binaries, then assembles `Yorozu.app` with the
@@ -81,13 +65,15 @@ xcrun notarytool store-credentials yorozu-notary \
   --key ~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8 --key-id <KEYID> --issuer <ISSUER-UUID>
 ```
 
-Without one it prints `notarization skipped: no profile` and carries on, leaving the DMG Developer
-ID signed but not notarized — Gatekeeper then asks on first launch instead of opening silently.
+A local build without a usable profile prints `notarization skipped: no profile` and leaves the
+DMG signed but unnotarized. CI requires notarization and fails when credentials are unusable;
+it cannot publish an unnotarized candidate.
 
 ### Sparkle
 
-The update feed is signed with an EdDSA key kept in the login keychain locally and provided
-to CI through the `SPARKLE_ED_KEY` repository secret:
+Sparkle signs each update archive with an EdDSA key kept in the login keychain locally and
+provided to CI through the `SPARKLE_ED_KEY` repository secret. The appcast carries the archive
+signature; the XML itself is not signed:
 
 ```sh
 ./apps/mac/.build/artifacts/sparkle/Sparkle/bin/generate_keys   # once, prints the public key
@@ -109,36 +95,15 @@ than two intervals is nudged with `checkForUpdatesInBackground()`. Installing do
 quit: with no chat window open Sparkle is told to install immediately, and never to postpone the
 relaunch.
 
-### Cutting a release
+### CI credentials
 
-Use `fix:` for patch releases, `feat:` for minor releases, and `!` or `BREAKING CHANGE:` for
-breaking changes (minor bumps while below 1.0). Review and merge the Release Please PR. It
-updates `version.txt`, `.release-please-manifest.json`, and `CHANGELOG.md`; the shipping app
-continues to derive its version from the tag and its build number from the commit count.
+The candidate workflow imports both signing identities, notarizes the Mac DMG, generates its
+Sparkle archive signature, then uploads the matching iOS build. It records the exact processed App Store
+Connect build ID in the candidate manifest. Stable promotion requires the App Store Connect
+key to verify that this same build was selected for the approved App Store version; it does
+not rebuild, sign, or upload the iOS app again.
 
-`scripts/release.sh` uploads the appcast's DMGs, stable `Yorozu.dmg`, `appcast.xml`, and model
-catalog to the versioned release. `yorozu.yumi.to/mac`, `/appcast.xml`, and `/download/*` point to
-GitHub's `releases/latest/download` URLs. Older stable releases are removed only after upload
-and publication succeed; the `main-beta` prerelease is excluded from that cleanup. The catalog
-workflow updates the latest stable release without creating another.
-
-`scripts/beta-release.sh` uploads the same signed build to `main-beta` after a stable release,
-or a beta-labeled main build on other pushes. Its separate appcast is signed with the same
-Sparkle key, marks the update as channel
-`beta`, and points at versioned DMGs on that prerelease. The app switches feeds when the user
-enables **Receive beta updates** in Mac Settings. A stable user can join via the public
-[`Yorozu.dmg` beta download](https://github.com/izyuumi/yorozu/releases/download/main-beta/Yorozu.dmg).
-
-To retry a failed build using the current workflow and the original source tag:
-
-```sh
-gh workflow run release.yml -f tag=v0.2.2
-```
-
-A failed build leaves a draft and the previous download intact. The same publication script
-can run locally from the release tag with `gh` authenticated and the signing keys available.
-
-#### The secrets, set once
+#### Secrets, set once
 
 Eight repository secrets, all set with `gh secret set`, which encrypts them on this machine with
 the repo's public key before anything leaves it. Nothing is pasted into a browser and nothing is
@@ -149,7 +114,7 @@ committed.
 # Export as an encrypted .p12 from Keychain Access, then upload the base64 file:
 base64 -i developer-id.p12 | gh secret set DEVELOPER_ID_P12
 gh secret set DEVELOPER_ID_PASSWORD       # prompts for the export password
-# TestFlight separately uses an Apple Development identity and its private key.
+# The same candidate job also needs the Apple Development identity and its private key.
 base64 -i apple-development.p12 | gh secret set MAC_CERT_P12
 gh secret set MAC_CERT_PASSWORD
 # The App Store Connect API key notarization uses — the same one as TestFlight.
@@ -161,24 +126,23 @@ KEY=$(mktemp -d)/ed && ./apps/mac/.build/artifacts/sparkle/Sparkle/bin/generate_
   && gh secret set SPARKLE_ED_KEY < "$KEY"; rm -rf "$(dirname "$KEY")"
 ```
 
-The runner imports the identity into a keychain of its own, stores the notary key as the
+The runner imports both identities into a temporary keychain, stores the notary key as the
 `yorozu-notary` profile `build-mac.sh` looks for, and hands the Sparkle key to `appcast.sh` as
-`SPARKLE_ED_KEY_FILE`; all three are deleted at the end of the job, and the VM with them.
+`SPARKLE_ED_KEY_FILE`. Credentials and the keychain are deleted at the end of the job.
 
 ## TestFlight
 
 Internal testing only: team members are added to the "Internal" beta group in App Store Connect
 and install through the TestFlight app. No public link.
 
-The `ios` job in `testflight.yml` runs this on every push to `main`, with the
-`ASC_*` secrets above plus the same `.p12` (the archive step wants an Apple Development
-identity on the machine; without one Xcode mints a new certificate per run until the team hits
-Apple's cap). The version comes from the tag and the build number from the commit count. To
-run it by hand instead:
+The `Release` workflow owns both platforms. There is no separate TestFlight workflow or build
+counter. The archive step needs the Apple Development identity imported from `MAC_CERT_P12`;
+without one Xcode can mint a certificate per run until the team reaches Apple's limit.
 
-```sh
-ASC_KEY_ID=<KEYID> ASC_ISSUER_ID=<ISSUER-UUID> VERSION=0.2.1 ./scripts/build-ios.sh
-```
+Use the canonical workflow for any distributable build. `scripts/build-ios.sh` requires explicit
+`VERSION` and `BUILD`, plus `ASC_KEY_ID`, `ASC_ISSUER_ID`, and the private key described below.
+Running it locally performs a real upload and is not a dry run; choose an unused Apple build
+number without colliding with the CI sequence.
 
 Signing is automatic. `apps/ios/Project.swift` carries `DEVELOPMENT_TEAM` and
 `CODE_SIGN_STYLE = Automatic`, and given `-allowProvisioningUpdates` plus an App Store Connect
@@ -188,10 +152,6 @@ which is why the export options say `destination: upload` rather than writing an
 second tool to send: one invocation, one credential, nothing on disk to leak. The key may be a
 path (`ASC_KEY_PATH`, defaulting to `~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8`) or
 base64 in `ASC_KEY_P8`, which is written out at mode 600 and removed on exit.
-
-The build number is `git rev-list --count HEAD`. It has to rise with every upload and never
-repeat, and the commit count does both without a file to bump and without differing between two
-checkouts of the same commit.
 
 ### The app record has to be made by hand, once
 
@@ -211,10 +171,12 @@ new app needs one visit to [App Store Connect](https://appstoreconnect.apple.com
 **New App**: iOS, name **Yorozu**, primary language English (U.S.), the bundle ID above, SKU
 `yorozu-ios`. Until that exists `xcodebuild -exportArchive` stops before it uploads, with
 `IDEDistributionFetchAppRecordStep … missingApp(bundleId: "to.yumi.yorozu.ios")` in its
-distribution log. Everything after it is automatic.
+distribution log. Candidate uploads are automated after this setup; App Review and the
+App Store release remain explicit maintainer actions.
 
-`scripts/asc-listing.mjs` writes the App Store listing idempotently from
-[app-store/listing-0.2.0.md](app-store/listing-0.2.0.md).
+`scripts/asc-listing.mjs` is the historical 0.2.0 listing setup script. It hardcodes that version
+and a build selection; do not run it for current releases. Use App Store Connect to prepare the
+current version and select the exact build recorded in the candidate manifest.
 
 ### External testers
 
@@ -230,7 +192,7 @@ node scripts/asc.mjs GET '/v1/apps/<APP-ID>/betaGroups'   # publicLink is in the
 ```
 
 The link only starts working once the build passes Beta App Review, which is a separate submission
-from App Review and usually a day or less.
+from App Review. Review and processing times vary.
 
 ## Hosting the relay
 

@@ -1,111 +1,83 @@
 #!/usr/bin/env python3
-"""Exercise rolling beta publication without GitHub or a real DMG."""
+"""Rolling pointer checks reuse the exact candidate fixture from publication tests."""
 
-import json
-import os
+import copy
+import importlib.util
 from pathlib import Path
-import shutil
-import subprocess
-import tempfile
 import unittest
 
-
-SCRIPT = Path(__file__).with_name("beta-release.sh")
-FAKE = r'''#!/usr/bin/env python3
-import json
-import os
-from pathlib import Path
-import sys
-
-root = Path(os.environ["FIXTURE_ROOT"])
-command = Path(sys.argv[0]).name
-args = sys.argv[1:]
-with (root / "commands.jsonl").open("a") as log:
-    log.write(json.dumps([command, *args]) + "\n")
-
-if command == "git":
-    if args[0] == "describe": print("v0.4.0")
-    elif args[0] == "rev-list": print("294")
-elif command == "appcast.sh":
-    assert os.environ["CHANNEL"] == "beta"
-    assert os.environ["DOWNLOAD_PREFIX"].endswith("/main-beta/")
-    if os.environ.get("FAIL_APPCAST"): sys.exit(1)
-    Path(os.environ["DIST"], "appcast.xml").write_text("<sparkle:channel>beta</sparkle:channel>\n")
-elif command == "gh":
-    if args[:2] == ["release", "view"]:
-        if "--json" in args:
-            print("Yorozu-0.4.0-293.dmg\nYorozu-0.4.0-294.dmg\nYorozu.dmg\nappcast.xml")
-        elif not (root / "release-exists").exists():
-            sys.exit(1)
-    elif args[:2] == ["release", "create"]:
-        (root / "release-exists").touch()
-    elif args[:2] == ["release", "upload"]:
-        assert Path(args[5]).is_file(), args
-'''
+spec = importlib.util.spec_from_file_location("release_tests", Path(__file__).with_name("test-release.py"))
+fixtures = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixtures)
+publication = fixtures.publication
 
 
-class BetaReleaseTests(unittest.TestCase):
-    def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="yorozu-beta-test-")
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
-        for directory in ("scripts", "bin", "dist"):
-            (self.root / directory).mkdir()
-        shutil.copy2(SCRIPT, self.root / "scripts/beta-release.sh")
-        for name in ("git", "gh", "appcast.sh"):
-            path = self.root / ("scripts" if name == "appcast.sh" else "bin") / name
-            path.write_text(FAKE)
-            path.chmod(0o755)
-        (self.root / "dist/Yorozu-0.4.0-294.dmg").write_text("signed DMG")
-        self.env = {
-            **os.environ,
-            "PATH": str(self.root / "bin") + os.pathsep + os.environ["PATH"],
-            "FIXTURE_ROOT": str(self.root),
-            "DIST": "dist",
-            "PUBLIC": "fixture/yorozu",
-            "BETA_REMOTE": "github",
-        }
+class BetaReleaseTests(fixtures.ReleaseFixture):
+    def beta(self):
+        return publication.rolling_beta(self.gh, self.tag, self.root / "beta")
 
-    def run_beta(self, **environment):
-        result = subprocess.run(
-            ["sh", str(self.root / "scripts/beta-release.sh")],
-            cwd=self.root,
-            env={**self.env, **environment},
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-        self.events = [json.loads(line) for line in (self.root / "commands.jsonl").read_text().splitlines()]
-        return result
+    def test_beta_keeps_legacy_downloads_and_fixed_tag_with_feed_last(self):
+        legacy = {"Yorozu-0.4.0-290.dmg": b"legacy signed DMG", "appcast.xml": fixtures.feed("0.4.0", "290", "main-beta")}
+        self.gh.add_release("main-beta", copy.deepcopy(legacy), prerelease=True, source=fixtures.OTHER)
+        self.publish()
+        self.gh.events.clear()
+        self.beta()
+        beta = self.gh.releases["main-beta"]
+        self.assertEqual(beta["files"]["Yorozu-0.4.0-290.dmg"], legacy["Yorozu-0.4.0-290.dmg"])
+        self.assertEqual(self.gh.tags["main-beta"], fixtures.OTHER)
+        uploads = [event for event in self.mutations() if event[1] == "upload"]
+        self.assertEqual([Path(event[5]).name for event in uploads], ["Yorozu.dmg", "candidate.json", "appcast.xml"])
+        self.assertIn(self.tag.encode(), beta["files"]["appcast.xml"])
 
-    def test_existing_beta_updates_feed_then_tag_and_prunes_old_archive(self):
-        (self.root / "release-exists").touch()
-        result = self.run_beta()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        uploads = [event for event in self.events if event[:2] == ["gh", "release"] and event[2] == "upload"]
-        self.assertEqual([Path(event[6]).name for event in uploads], [
-            "Yorozu-0.4.0-294.dmg", "Yorozu.dmg", "appcast.xml"
-        ])
-        self.assertEqual((self.root / "dist/beta/appcast.xml").read_text(), "<sparkle:channel>beta</sparkle:channel>\n")
-        self.assertLess(self.events.index(uploads[-1]), self.events.index(["git", "tag", "-f", "main-beta", "HEAD"]))
-        self.assertIn(["gh", "release", "delete-asset", "main-beta", "Yorozu-0.4.0-293.dmg", "--repo", "fixture/yorozu", "--yes"], self.events)
-        self.assertNotIn(["gh", "release", "delete-asset", "main-beta", "Yorozu-0.4.0-294.dmg", "--repo", "fixture/yorozu", "--yes"], self.events)
+    def test_new_beta_publishes_only_after_assets_exist(self):
+        self.publish()
+        self.gh.events.clear()
+        self.beta()
+        mutations = self.mutations()
+        self.assertEqual(mutations[0][:2], ("release", "create"))
+        self.assertEqual(mutations[-1][:2], ("release", "edit"))
+        self.assertFalse(self.gh.releases["main-beta"]["isDraft"])
 
-    def test_new_beta_stays_draft_until_uploads_finish(self):
-        result = self.run_beta()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        create = next(i for i, event in enumerate(self.events) if event[:3] == ["gh", "release", "create"])
-        publish = next(i for i, event in enumerate(self.events) if event[:3] == ["gh", "release", "edit"])
-        uploads = [i for i, event in enumerate(self.events) if event[:3] == ["gh", "release", "upload"]]
-        self.assertLess(create, min(uploads))
-        self.assertLess(max(uploads), publish)
-        self.assertIn("--draft", self.events[create])
-        self.assertIn("--prerelease", self.events[create])
+    def test_older_version_or_build_cannot_replace_beta(self):
+        self.publish()
+        for short, build in (("0.6.0", "10000"), ("0.4.9", "10099"), ("0.5.0", "10099")):
+            with self.subTest(short=short, build=build):
+                self.gh.add_release("main-beta", {"appcast.xml": fixtures.feed(short, build)}, prerelease=True)
+                self.gh.events.clear()
+                with self.assertRaisesRegex(ValueError, "backwards"):
+                    self.beta()
+                self.assertEqual(self.mutations(), [])
 
-    def test_appcast_failure_does_not_touch_release(self):
-        result = self.run_beta(FAIL_APPCAST="1")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(any(event[0] == "gh" for event in self.events))
+    def test_delayed_older_source_cannot_move_beta_even_with_larger_build(self):
+        data = self.publish()
+        previous = {**data, "source_sha": fixtures.OTHER, "build": "10041", "tag": "candidate-0.5.0-10041",
+                    "mac": {**data["mac"], "asset": "Yorozu-0.5.0-10041.dmg"}, "ios": {**data["ios"], "build": "10041"}}
+        self.gh.add_release("main-beta", {"appcast.xml": fixtures.feed("0.5.0", "10041"),
+                            "candidate.json": fixtures.json.dumps(previous).encode()}, prerelease=True)
+        self.gh.compare_status = "behind"
+        self.gh.events.clear()
+        with self.assertRaisesRegex(ValueError, "source backwards"):
+            self.beta()
+        self.assertEqual(self.mutations(), [])
+
+    def test_release_branch_candidate_never_moves_beta(self):
+        self.data["source_branch"] = "release/0.5"
+        self.gh.runs["7"]["head_branch"] = "release/0.5"
+        publication.write_json(self.dist / "candidate.json", self.data)
+        self.publish()
+        self.gh.events.clear()
+        with self.assertRaisesRegex(ValueError, "only main"):
+            self.beta()
+        self.assertEqual(self.mutations(), [])
+
+    def test_failed_alias_upload_leaves_previous_feed_and_legacy_dmg(self):
+        legacy = {"appcast.xml": fixtures.feed("0.4.0", "290"), "Yorozu-0.4.0-290.dmg": b"old"}
+        self.gh.add_release("main-beta", copy.deepcopy(legacy), prerelease=True)
+        self.publish()
+        self.gh.fail_upload = "Yorozu.dmg"
+        with self.assertRaisesRegex(RuntimeError, "upload failure"):
+            self.beta()
+        self.assertEqual(self.gh.releases["main-beta"]["files"], legacy)
 
 
 if __name__ == "__main__":
