@@ -146,6 +146,8 @@ New tasks take priority; approval waits and unknown agent status keep the update
 Mac and phone show progress and offer **Postpone 1 hour**. Drafts and pending submissions
 survive restart. See [queued updates](docs/queued-updates.md) for the full behavior.
 
+Want changes from `main` before the next stable release? Install the [Mac beta](https://github.com/izyuumi/yorozu/releases/download/main-beta/Yorozu.dmg), then enable **Settings → Updates → Receive beta updates**. Each main push publishes a signed, notarized beta build. Turn the setting off to return to stable updates when a newer stable build is available.
+
 ## Documentation
 
 | Document | What it covers |

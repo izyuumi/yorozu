@@ -24,7 +24,7 @@ if [ "${ALLOW_UNTAGGED:-0}" != 1 ] && [ "$HEAD_SHA" != "$TAG_SHA" ]; then
   exit 1
 fi
 # Refuse to replace a newer published version when an old workflow is rerun.
-PUBLISHED_TAGS=$(gh api "repos/$PUBLIC/releases" --paginate --jq '.[] | select(.draft == false) | .tag_name')
+PUBLISHED_TAGS=$(gh api "repos/$PUBLIC/releases" --paginate --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name')
 python3 - "$TAG" "$PUBLISHED_TAGS" <<'PY_VERSION'
 import re
 import sys
@@ -78,7 +78,7 @@ gh release edit "$TAG" --repo "$PUBLIC" --draft=false --latest
 # Only retire previous releases after publishing every asset. Preserve Git tags for
 # Release Please's version history, and leave unrelated drafts alone. Paginate so the
 # repository converges to one published release even if it has more than 100 releases.
-RELEASES=$(gh api "repos/$PUBLIC/releases" --paginate --jq '.[] | select(.draft == false) | .tag_name')
+RELEASES=$(gh api "repos/$PUBLIC/releases" --paginate --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name')
 while IFS= read -r old_tag; do
   [ -n "$old_tag" ] || continue
   [ "$old_tag" = "$TAG" ] && continue
