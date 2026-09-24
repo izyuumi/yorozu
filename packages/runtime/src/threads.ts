@@ -349,23 +349,27 @@ const PREVIEW_LIMIT = 140;
  * Both are undefined in a thread nothing has been said in yet, so the row draws nothing rather
  * than "" and the thread reads as read rather than as unread-since-the-epoch.
  */
-function logSummary(threadId: string, dir: string, minTs = 0): { preview?: string; lastAgentAt?: number } {
+function logSummary(threadId: string, dir: string, minTs = 0): { preview?: string; lastAgentAt?: number; awaitingApproval?: true } {
   const events = readThreadEvents(threadId, dir).filter((event) => event.ts >= minTs);
   const last = events.findLast((event) => event.kind === "message");
   const lastAgent = events.findLast(
     (event) => event.kind === "message" && event.data.role === "agent",
   );
   const line = last?.kind === "message" ? last.data.text.replace(/\s+/gu, " ").trim() : "";
+  // The same answer state the chat's cards draw from: a card is open until its answer is logged.
+  const answered = new Set(events.flatMap((e) => (e.kind === "approval_answer" ? [e.data.actionId] : [])));
+  const awaiting = events.some((e) => e.kind === "approval_card" && !answered.has(e.data.actionId));
   return {
     ...(line ? { preview: line.slice(0, PREVIEW_LIMIT) } : {}),
     ...(lastAgent ? { lastAgentAt: lastAgent.ts } : {}),
+    ...(awaiting ? { awaitingApproval: true } : {}),
   };
 }
 
 /** What the phone's thread list renders. */
 export const threadSummaries = (dir = stateDir(), minTs = 0): ThreadSummary[] =>
   listThreads(dir).map((thread) => {
-    const { preview, lastAgentAt } = logSummary(thread.id, dir, minTs);
+    const { preview, lastAgentAt, awaitingApproval } = logSummary(thread.id, dir, minTs);
     return {
       id: thread.id,
       title: thread.title,
@@ -384,6 +388,7 @@ export const threadSummaries = (dir = stateDir(), minTs = 0): ThreadSummary[] =>
       // thread nobody has read and nobody has been answered in is not permanently bold.
       ...(thread.lastReadAt === undefined ? {} : { lastReadAt: thread.lastReadAt }),
       ...(lastAgentAt === undefined ? {} : { lastAgentAt }),
+      ...(awaitingApproval ? { awaitingApproval } : {}),
     };
   });
 

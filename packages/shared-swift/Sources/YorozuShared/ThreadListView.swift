@@ -283,7 +283,13 @@ struct ThreadRow: View {
                         .lineLimit(1)
                 }
             }
-            if thread.isUnread {
+            // A card waiting on the user outranks an unread reply: it is the one asking.
+            if thread.awaitingApproval == true {
+                Image(systemName: "hand.raised")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tint)
+                    .accessibilityLabel("Waiting for your approval")
+            } else if thread.isUnread {
                 Circle()
                     .fill(.tint)
                     .frame(width: dot, height: dot)
@@ -322,7 +328,8 @@ struct ThreadRow: View {
         parts.append(thread.displayTitle)
         if working { parts.append(String(localized: "Working")) }
         else if let preview = preview ?? thread.lastMessage, !preview.isEmpty { parts.append(preview) }
-        if thread.isUnread { parts.append(String(localized: "Unread")) }
+        if thread.awaitingApproval == true { parts.append(String(localized: "Waiting for your approval")) }
+        else if thread.isUnread { parts.append(String(localized: "Unread")) }
         return parts.joined(separator: ". ")
     }
 

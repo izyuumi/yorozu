@@ -643,6 +643,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
       appendThreadEvent(event, dir);
     }
     broadcast(event);
+    // A raised card shows on the list as well as in the chat, so the list follows it.
+    if (event.kind === "approval_card") broadcast(threadList());
   }
 
   /** Final event owns recovery marker: persist once, then acknowledge, then publish. */
@@ -1352,6 +1354,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (!admitted) {
       appendTranscript(event, transcripts);
       appendThreadEvent(event, dir);
+      if (event.kind === "approval_answer") broadcast(threadList());
     }
     receipt();
 

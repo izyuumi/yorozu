@@ -869,6 +869,8 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     public var lastReadAt: Double?
     /// `ts` of the newest agent message in the thread. Nil where the agent has not spoken yet.
     public var lastAgentAt: Double?
+    /// An approval card in this thread nobody has answered yet. Nil means none.
+    public var awaitingApproval: Bool?
 
     public init(
         id: String,
@@ -883,6 +885,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         cwd: String? = nil,
         lastReadAt: Double? = nil,
         lastAgentAt: Double? = nil,
+        awaitingApproval: Bool? = nil,
         bypass: Bool? = nil,
         interruptedTurnId: String? = nil
     ) {
@@ -898,6 +901,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         self.cwd = cwd
         self.lastReadAt = lastReadAt
         self.lastAgentAt = lastAgentAt
+        self.awaitingApproval = awaitingApproval
         self.bypass = bypass
         self.interruptedTurnId = interruptedTurnId
     }
@@ -923,6 +927,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         interruptedTurnId = try c.decodeIfPresent(String.self, forKey: .interruptedTurnId)
         lastReadAt = try c.decodeIfPresent(Double.self, forKey: .lastReadAt)
         lastAgentAt = try c.decodeIfPresent(Double.self, forKey: .lastAgentAt)
+        awaitingApproval = try c.decodeIfPresent(Bool.self, forKey: .awaitingApproval)
     }
 
     /// What a list draws: an untitled thread is one the runtime has not named yet.
