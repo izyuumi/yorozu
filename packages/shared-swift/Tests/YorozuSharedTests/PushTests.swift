@@ -78,6 +78,9 @@ import Testing
     // An event that is not a name is no event.
     #expect(NotificationPreviewContent(plaintext: #"{"v":1,"body":"x","event":"","quick":true}"#)?.event == nil)
     #expect(NotificationPreviewContent(plaintext: #"{"v":1,"body":"x","event":null,"quick":true}"#)?.event == nil)
+    // The thread title, when the Mac sealed one; an empty one is none.
+    #expect(NotificationPreviewContent(plaintext: #"{"v":1,"body":"x","title":"Trip plans"}"#)?.title == "Trip plans")
+    #expect(NotificationPreviewContent(plaintext: #"{"v":1,"body":"x","title":""}"#)?.title == nil)
     // Nothing to say is no preview.
     #expect(NotificationPreviewContent(plaintext: #"{"v":1,"body":""}"#) == nil)
     #expect(NotificationPreviewContent(plaintext: #"{"v":1}"#) == nil)

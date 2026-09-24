@@ -569,22 +569,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
    */
   const locals = new Map<string, Send>();
 
-  /**
-   * The one YOLO request each relay device may have open, by device key. A phone that asks
-   * again inside a minute is told `pending` again and the Mac hears nothing new; after that a
-   * fresh request replaces the old one, since the Mac may have missed it. An entry outlives
-   * its usefulness after five minutes and a grant clears them all: the Mac's yes must name a
-   * request that is still open, or name none — the user turning YOLO on from Settings.
-   */
-  const yoloRequests = new Map<string, { requestId: string; at: number }>();
-  const YOLO_REQUEST_REPEAT_MS = 60_000;
-  const YOLO_REQUEST_TTL_MS = 5 * 60_000;
-  const pruneYoloRequests = (now: number): void => {
-    for (const [device, request] of yoloRequests) {
-      if (now - request.at >= YOLO_REQUEST_TTL_MS) yoloRequests.delete(device);
-    }
-  };
-
   let socket: WebSocket | null = null;
   // OPEN only means transport connected; the relay accepts application traffic after register.
   let relayReady = false;
@@ -899,7 +883,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
     devices.delete(pub);
     terminalSubscribers.delete(pub);
     terminals.forgetDevice(pub);
-    yoloRequests.delete(pub);
     saveDevices();
     if (known.record.signingPub) revokeAtRelay(known.record.signingPub);
     state("revoked");
@@ -1416,47 +1399,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
       case "rule_delete":
         deleteRule(event.data.ruleId, dir);
         return broadcast(ruleList());
-      case "approval_settings": {
+      case "approval_settings":
+        // Pairing is the grant: a paired device is the user's own, so on and off are both
+        // applied at once from anywhere. On still carries an expiry.
         if (typeof event.data.yolo !== "boolean") return reply(approvalSettingsEvent());
-        // Off is anyone's to say, at once. On from a phone is a request: the phone might be in
-        // someone else's hand, and YOLO is code execution as the user. The Mac in front of the
-        // user is asked, and the phone is told nothing changed yet, so its toggle snaps back.
-        if (event.data.yolo && from !== undefined) {
-          const now = Date.now();
-          pruneYoloRequests(now);
-          const open = yoloRequests.get(from);
-          // Asked a moment ago: the Mac already has the card. Once more is one more card;
-          // a phone re-sending every second is not.
-          if (open && now - open.at < YOLO_REQUEST_REPEAT_MS) {
-            state("yolo-request-coalesced");
-            return reply(approvalSettingsEvent({ pending: true }));
-          }
-          const requestId = randomUUID();
-          yoloRequests.set(from, { requestId, at: now });
-          const request = control({
-            kind: "approval_settings_request",
-            data: { requestId, device: from, yolo: true, hours: yoloHours(event.data.hours) },
-          });
-          for (const send of locals.values()) send(request);
-          return reply(approvalSettingsEvent({ pending: true }));
-        }
-        if (event.data.yolo) {
-          // The Mac's yes to a phone's request names the request; one that names a request
-          // nobody has open — expired, granted already, or made up — grants nothing. The Mac
-          // turning YOLO on for itself from Settings names none, and needs nobody's request.
-          const requestId = event.data.requestId;
-          if (requestId !== undefined) {
-            pruneYoloRequests(Date.now());
-            const open = [...yoloRequests.values()].some((request) => request.requestId === requestId);
-            if (typeof requestId !== "string" || !open) {
-              state("yolo-grant-refused");
-              return reply(approvalSettingsEvent());
-            }
-          }
-          yoloRequests.clear();
-        }
         return setYolo(event.data.yolo, event.data.hours);
-      }
       case "rule_proposal":
         // Emitted by the runtime, never accepted from a device: a proposal is not a decision.
         return;
@@ -1698,7 +1645,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
       // A reply's words, or a card's one line, each sealed once per phone under its own key,
       // together with the reference of the event they are about and the quick judgement.
       const body = notificationPreviewBody(event);
-      const plaintext = body ? encodeNotificationPreview({ body, event: threadRef(event.id), quick }) : null;
+      // The thread's title rides inside the sealed box, never beside it: the relay sees none of it.
+      let title: string | undefined;
+      try {
+        title = body ? listThreads(dir).find((thread) => thread.id === event.threadId)?.title : undefined;
+      } catch {
+        // An unreadable index costs the title, not the notification.
+      }
+      const plaintext = body ? encodeNotificationPreview({ body, event: threadRef(event.id), quick, title }) : null;
       const previews = plaintext
         ? Object.fromEntries(
             [...devices.values()].flatMap(({ key, record }) => {

@@ -22,6 +22,35 @@ async function verifyApp(request, appId) {
   requireValue(data?.id === appId && data.attributes?.bundleId === bundleId, `App ${appId} must be ${bundleId}`);
 }
 
+export async function nextBuild(version, { request = asc, appId = process.env.ASC_APP_ID || appIdDefault } = {}) {
+  validateVersion(version, "1");
+  await verifyApp(request, appId);
+  let path = query("/v1/builds", {
+    "filter[app]": appId, "filter[preReleaseVersion.version]": version,
+    "filter[preReleaseVersion.platform]": "IOS", "fields[builds]": "version", limit: "200",
+  });
+  let highest = 0;
+  while (path) {
+    const response = await request("GET", path);
+    requireValue(Array.isArray(response.data), "ASC returned an invalid builds response");
+    for (const item of response.data) {
+      const build = item.attributes?.version;
+      requireValue(typeof build === "string" && /^[1-9]\d*$/.test(build) && Number.isSafeInteger(Number(build)),
+        "ASC returned an invalid build number");
+      highest = Math.max(highest, Number(build));
+    }
+    const next = response.links?.next;
+    if (next) {
+      const url = new URL(next, "https://api.appstoreconnect.apple.com");
+      requireValue(url.origin === "https://api.appstoreconnect.apple.com" && url.pathname === "/v1/builds",
+        "ASC returned an invalid builds page URL");
+      path = `${url.pathname}${url.search}`;
+    } else path = null;
+  }
+  requireValue(Number.isSafeInteger(highest + 1), "ASC build number is too large");
+  return String(highest + 1);
+}
+
 function buildMetadata(data, included, { appId, version, build }, now) {
   requireValue(data?.type === "builds" && typeof data.id === "string" && data.id.length > 0, "ASC returned no build ID");
   requireValue(data.relationships?.app?.data?.id === appId, "Build belongs to a different app");
@@ -71,9 +100,10 @@ export async function resolveCandidate(version, build, {
 }
 
 export async function verifyCandidate(candidate, { request = asc, appId = process.env.ASC_APP_ID || appIdDefault, now = Date.now } = {}) {
-  const { version, build, ios } = candidate ?? {};
-  validateVersion(version, build);
-  requireValue(ios?.app_id === appId && ios.version === version && ios.build === build, "Candidate iOS metadata does not match version, build, or app");
+  const { version, ios } = candidate ?? {};
+  const iosBuild = ios?.build;
+  validateVersion(version, iosBuild);
+  requireValue(ios?.app_id === appId && ios.version === version && ios.build === iosBuild, "Candidate iOS metadata does not match version, build, or app");
   requireValue(typeof ios.build_id === "string" && /^[A-Za-z0-9-]+$/.test(ios.build_id), "Candidate has no valid ASC build ID");
   requireValue(typeof ios.uploaded_date === "string" && Number.isFinite(Date.parse(ios.uploaded_date)), "Candidate has no valid iOS upload date");
   await verifyApp(request, appId);
@@ -81,7 +111,7 @@ export async function verifyCandidate(candidate, { request = asc, appId = proces
     include: "preReleaseVersion,app", "fields[builds]": buildFields,
     "fields[preReleaseVersions]": "version,platform", "fields[apps]": "bundleId",
   }));
-  const actual = buildMetadata(response.data, response.included, { appId, version, build }, now());
+  const actual = buildMetadata(response.data, response.included, { appId, version, build: iosBuild }, now());
   requireValue(actual.build_id === ios.build_id && actual.uploaded_date === ios.uploaded_date, "ASC build ID or upload date does not match candidate");
   const versions = await request("GET", query(`/v1/apps/${appId}/appStoreVersions`, {
     "filter[versionString]": version, "filter[platform]": "IOS", include: "build",
@@ -101,7 +131,9 @@ export async function verifyCandidate(candidate, { request = asc, appId = proces
 if (import.meta.filename === process.argv[1]) {
   const [command, ...args] = process.argv.slice(2);
   try {
-    if (command === "resolve" && args.length === 3) {
+    if (command === "next-build" && args.length === 1) {
+      console.log(await nextBuild(args[0]));
+    } else if (command === "resolve" && args.length === 3) {
       const result = await resolveCandidate(args[0], args[1]);
       writeFileSync(args[2], `${JSON.stringify(result, null, 2)}\n`);
       console.log(`Resolved iOS ${result.version} (${result.build}): ${result.build_id}`);
@@ -109,7 +141,7 @@ if (import.meta.filename === process.argv[1]) {
       const result = await verifyCandidate(JSON.parse(readFileSync(args[0], "utf8")));
       console.log(`Verified iOS ${result.version} (${result.build}): ${result.state}`);
     } else {
-      throw new Error("Usage: asc-candidate.mjs resolve VERSION BUILD OUTPUT | verify CANDIDATE_JSON");
+      throw new Error("Usage: asc-candidate.mjs next-build VERSION | resolve VERSION BUILD OUTPUT | verify CANDIDATE_JSON");
     }
   } catch (error) {
     console.error(error.message);

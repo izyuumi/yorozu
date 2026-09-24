@@ -131,6 +131,17 @@ test("a preview's plaintext is a versioned object, and decodes back to what was 
   expect(decodeNotificationPreview('{"v":1,"event":"e","quick":true}')).toBeNull();
 });
 
+test("a preview carries the thread title, and fits the relay's box whatever the body", () => {
+  const titled = { body: "hi", event: "e", quick: false, title: "Trip plans" };
+  expect(decodeNotificationPreview(encodeNotificationPreview(titled))).toEqual(titled);
+  // The relay refuses a box over 256 plaintext bytes, so a long reply is cut to fit, not dropped.
+  for (const body of ["a".repeat(256), "é".repeat(128), '"\\n'.repeat(100)]) {
+    const plaintext = encodeNotificationPreview({ body, event: "6s82CDjb", quick: false, title: "t".repeat(200) });
+    expect(Buffer.byteLength(plaintext)).toBeLessThanOrEqual(NOTIFY_PREVIEW_BYTES);
+    expect(body.startsWith(decodeNotificationPreview(plaintext)!.body)).toBe(true);
+  }
+});
+
 test("a plaintext from before the object was a bare body, and permits no button", () => {
   expect(decodeNotificationPreview("the secret reply")).toEqual({ body: "the secret reply", event: null, quick: false });
   // JSON, but not the object: still the words as they are.

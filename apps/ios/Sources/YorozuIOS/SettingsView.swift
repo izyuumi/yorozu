@@ -30,6 +30,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var addingHost = false
     @State private var repairHostID: HostID?
+    @State private var reregistered = false
 
     private static var version: String {
         let info = Bundle.main.infoDictionary
@@ -72,6 +73,23 @@ struct SettingsView: View {
                             repairHostID = nil
                             addingHost = true
                         }
+                    }
+                    .listRowBackground(YorozuPalette.paper)
+                }
+                if !session.isDemo {
+                    Section {
+                        Button {
+                            session.reregisterPush()
+                            reregistered = true
+                        } label: {
+                            LabeledContent("Re-register push notifications") {
+                                if reregistered { Image(systemName: "checkmark").foregroundStyle(YorozuPalette.sage) }
+                            }
+                        }
+                    } header: {
+                        Text("Notifications")
+                    } footer: {
+                        Text("Try this if notifications stop arriving or arrive twice.")
                     }
                     .listRowBackground(YorozuPalette.paper)
                 }
@@ -237,7 +255,7 @@ private struct HostSettingsView: View {
         .yorozuTint()
     }
 
-    /// Pending permission is distinct from an enabled approval bypass.
+    /// Off, or on with its expiry. Pairing is the grant, so the switch applies at once.
     @ViewBuilder private var approvalsFooter: some View {
         if host.model.yoloMode {
             Label {
@@ -250,14 +268,7 @@ private struct HostSettingsView: View {
                     .foregroundStyle(.secondary)
             }
         } else {
-            if host.model.yoloPending {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.mini)
-                    Text("Waiting for the Mac to allow it")
-                }
-                .accessibilityElement(children: .combine)
-            }
-            Text("Uses each agent’s approval settings. Turning this on requests permission from your host Mac.")
+            Text("Uses each agent’s approval settings.")
         }
     }
 }

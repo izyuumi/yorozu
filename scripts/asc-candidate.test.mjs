@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveCandidate, verifyCandidate } from "./asc-candidate.mjs";
+import { nextBuild, resolveCandidate, verifyCandidate } from "./asc-candidate.mjs";
 
 const appId = "6811274963";
 const version = "0.5.0";
@@ -60,6 +60,23 @@ test("resolve waits for exact upload to become VALID and records stable identity
   assert.equal(calls, 3);
 });
 
+test("iOS build allocation starts at 1 for a new version and advances past all uploads for an existing version", async () => {
+  const request = async (method, path) => {
+    assert.equal(method, "GET");
+    const url = new URL(path, "https://api.appstoreconnect.apple.com");
+    if (url.pathname === `/v1/apps/${appId}`) return { data: { id: appId, attributes: { bundleId: "to.yumi.yorozu.ios" } } };
+    assert.equal(url.searchParams.get("filter[preReleaseVersion.version]"), version);
+    assert.equal(url.searchParams.get("filter[preReleaseVersion.platform]"), "IOS");
+    if (url.searchParams.has("page")) return { data: [{ attributes: { version: "10048" } }] };
+    return { data: [{ attributes: { version: "10047" } }], links: { next: "/v1/builds?page=2&filter%5BpreReleaseVersion.version%5D=0.5.0&filter%5BpreReleaseVersion.platform%5D=IOS" } };
+  };
+  assert.equal(await nextBuild(version, { request }), "10049");
+  assert.equal(await nextBuild("0.6.0", { request: async (method, path) =>
+    path.startsWith(`/v1/apps/${appId}`)
+      ? { data: { id: appId, attributes: { bundleId: "to.yumi.yorozu.ios" } } }
+      : { data: [] } }), "1");
+});
+
 test("resolve never guesses another build and has a bounded wait", async () => {
   const wrongVersion = buildResponse();
   wrongVersion.included[0].attributes.version = "0.4.1";
@@ -82,11 +99,17 @@ test("verify accepts approved exact candidate and current or legacy released sta
   }
 });
 
+test("verify uses iOS build from candidate when Mac build differs", async () => {
+  assert.deepEqual(await verifyCandidate({ ...candidate(), build: "10042" },
+    { request: fakeAsc(), now: () => currentTime }),
+  { ...metadata, app_store_version_id: "store-version-id", state: "PENDING_DEVELOPER_RELEASE" });
+});
+
 test("verify rejects changed candidate metadata before contacting ASC", async () => {
   for (const field of ["version", "build", "app_id"]) {
     const invalid = candidate();
     invalid.ios[field] = "wrong";
-    await assert.rejects(verifyCandidate(invalid, { request: () => assert.fail("Invalid manifest must not reach ASC") }), /metadata does not match/);
+    await assert.rejects(verifyCandidate(invalid, { request: () => assert.fail("Invalid manifest must not reach ASC") }), /metadata does not match|build must be a positive integer/);
   }
 });
 

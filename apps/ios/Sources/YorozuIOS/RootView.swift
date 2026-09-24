@@ -362,6 +362,15 @@ final class Session {
         for relay in relays.values { Task { await relay.registerPush(deviceToken: deviceToken) } }
     }
 
+    /// Settings' "Re-register": asks APNs for the token again and tells every relay, which drops
+    /// any other record holding the same token — a stale one from an earlier pairing is what
+    /// doubles each alert with a "New activity" copy.
+    func reregisterPush() {
+        pushFailure = nil
+        if let deviceToken { registerPush(deviceToken: deviceToken) }
+        requestNotifications()
+    }
+
     func drainShares() {
         guard !isDemo, !migrationFailed, let directory = ShareBox.directory() else { return }
         let ready = ShareBox.takeAll(in: directory, matching: { payload in

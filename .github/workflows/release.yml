@@ -1,5 +1,5 @@
 name: Release
-# One build allocator for Mac + iOS. CI success produces candidates, never stable releases.
+# One Mac/candidate identity per run; iOS allocates within its marketing version.
 on:
   workflow_run:
     workflows: [CI]
@@ -19,7 +19,7 @@ on:
 
 # Superseded pending beta builds may be skipped; never interrupt signing/upload mid-run.
 concurrency:
-  group: candidate-${{ github.event.workflow_run.head_branch || inputs.source_branch || 'main' }}
+  group: candidate
   cancel-in-progress: false
 permissions: {}
 
@@ -165,8 +165,9 @@ jobs:
           ASC_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
         run: |
           set -eu
-          ./scripts/build-ios.sh
-          node scripts/asc-candidate.mjs resolve "$VERSION" "$BUILD" dist/ios.json
+          IOS_BUILD=$(node scripts/asc-candidate.mjs next-build "$VERSION")
+          BUILD="$IOS_BUILD" ./scripts/build-ios.sh
+          node scripts/asc-candidate.mjs resolve "$VERSION" "$IOS_BUILD" dist/ios.json
       - name: Publish retained candidate
         run: |
           set -eu

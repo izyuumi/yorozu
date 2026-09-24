@@ -69,14 +69,13 @@ test("every spec'd kind exists", () => {
     "thread_set_effort",
     "model_list",
     "approval_settings",
-    "approval_settings_request",
     "sync_request",
     "sync_delta",
     "device_list",
     "device_remove",
     "receipt",
   ];
-  expect(kinds).toHaveLength(22);
+  expect(kinds).toHaveLength(21);
 });
 
 test("a thread summary carries what a list row draws", () => {
@@ -174,25 +173,16 @@ test("reasoning effort and YOLO settings cross the device wire", () => {
   expect(settings.data.yolo).toBe(true);
 });
 
-test("YOLO on carries an expiry, a phone's request is answered pending, and the Mac is asked", () => {
+test("YOLO on carries an expiry and hours", () => {
   // Old payloads stay valid: every new field is optional.
   const bare: YorozuEvent = { ...base, kind: "approval_settings", data: { yolo: false } };
   const report: YorozuEvent = { ...base, kind: "approval_settings", data: { yolo: true, yoloUntil: 1_757_640_000_000 } };
-  const pending: YorozuEvent = { ...base, kind: "approval_settings", data: { yolo: false, pending: true } };
-  const confirm: YorozuEvent = { ...base, kind: "approval_settings", data: { yolo: true, hours: 8, requestId: "req-1" } };
-  const request: YorozuEvent = {
-    ...base,
-    kind: "approval_settings_request",
-    data: { requestId: "req-1", device: "phone-pub", yolo: true, hours: 8 },
-  };
+  const on: YorozuEvent = { ...base, kind: "approval_settings", data: { yolo: true, hours: 8 } };
   if (bare.kind !== "approval_settings" || report.kind !== "approval_settings") throw new Error("unreachable");
-  if (pending.kind !== "approval_settings" || confirm.kind !== "approval_settings") throw new Error("unreachable");
-  if (request.kind !== "approval_settings_request") throw new Error("unreachable");
+  if (on.kind !== "approval_settings") throw new Error("unreachable");
   expect(bare.data.yoloUntil).toBeUndefined();
   expect(report.data.yoloUntil).toBe(1_757_640_000_000);
-  expect(pending.data.pending).toBe(true);
-  expect(confirm.data).toEqual({ yolo: true, hours: 8, requestId: "req-1" });
-  expect(JSON.parse(JSON.stringify(request)).data).toEqual(request.data);
+  expect(on.data).toEqual({ yolo: true, hours: 8 });
 });
 
 test("the model list names every spec a thread can be put on", () => {

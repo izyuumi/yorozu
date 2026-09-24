@@ -144,7 +144,7 @@ class ReleaseFixture(unittest.TestCase):
         self.data = {"schema": 1, "version": "0.5.0", "build": "10042", "source_sha": SHA,
                      "source_branch": "main", "tag": "candidate-0.5.0-10042", "run_id": "42", "ci_run_id": "7",
                      "notes": "## Changes in 0.5.0\n\n- fix: retain exact candidate notes\n"}
-        self.ios = {"app_id": "123", "build_id": "a-b-c", "version": "0.5.0", "build": "10042",
+        self.ios = {"app_id": "123", "build_id": "a-b-c", "version": "0.5.0", "build": "10049",
                     "uploaded_date": "2026-09-24T00:00:00Z"}
         self.tag = self.data["tag"]
         publication.write_json(self.dist / "candidate.json", self.data)
@@ -172,7 +172,7 @@ class ReleaseTests(ReleaseFixture):
             with self.subTest(short=short, build=build, status=status):
                 tag = f"candidate-{short}-{build}"
                 previous = {**data, "version": short, "build": build, "tag": tag, "source_sha": OTHER,
-                            "ios": {**data["ios"], "version": short, "build": build}}
+                            "ios": {**data["ios"], "version": short}}
                 self.gh.add_release(tag, {"candidate.json": json.dumps(previous).encode()},
                                     prerelease=True, source=OTHER, name=f"Yorozu Beta {tag}")
                 self.gh.compare_status = status
@@ -189,7 +189,7 @@ class ReleaseTests(ReleaseFixture):
         self.gh.tags.clear()
         tag = "candidate-0.5.0-10041"
         previous = {**data, "build": "10041", "tag": tag, "source_sha": OTHER,
-                    "ios": {**data["ios"], "build": "10041"}}
+                    "ios": {**data["ios"]}}
         self.gh.add_release(tag, {"candidate.json": json.dumps(previous).encode()},
                             prerelease=True, source=OTHER, name=f"Yorozu Beta {tag}")
         self.gh.add_release("candidate-0.5.0-10099", prerelease=True)
@@ -286,10 +286,16 @@ class ReleaseTests(ReleaseFixture):
                     self.publish()
                 self.assertEqual(self.mutations(), [])
         (self.dist / "appcast.xml").write_bytes(good)
-        publication.write_json(self.dist / "ios.json", {**self.ios, "build": "10043"})
+        publication.write_json(self.dist / "ios.json", {**self.ios, "version": "0.4.9"})
         with self.assertRaisesRegex(ValueError, "iOS version/build"):
             self.publish()
         self.assertEqual(self.mutations(), [])
+
+    def test_candidate_keeps_distinct_ios_and_mac_builds(self):
+        data = self.publish()
+        self.assertEqual(data["build"], "10042")
+        self.assertEqual(data["ios"]["build"], "10049")
+        self.promote()
 
     def test_existing_published_candidate_is_identical_or_rejected(self):
         self.publish()

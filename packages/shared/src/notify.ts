@@ -29,6 +29,8 @@ export interface NotificationPreviewContent {
   event: string | null;
   /** Whether the Mac judged this card answerable from the lock screen. Never true for a reply. */
   quick: boolean;
+  /** The thread's title, shown as the notification's title; null when unknown. */
+  title?: string | null;
 }
 
 /** What kind of thing happened, which is the whole of what a notification says. */
@@ -81,13 +83,13 @@ export function notifyFor(event: YorozuEvent): NotifyClass | null {
   }
 }
 
-/** The first `NOTIFY_PREVIEW_BYTES` of a text, cut between characters so no glyph is split. */
-function boundedBytes(text: string): string {
+/** The first `limit` bytes of a text, cut between characters so no glyph is split. */
+function boundedBytes(text: string, limit = NOTIFY_PREVIEW_BYTES): string {
   let bytes = 0;
   let preview = "";
   for (const character of text) {
     const size = Buffer.byteLength(character);
-    if (bytes + size > NOTIFY_PREVIEW_BYTES) break;
+    if (bytes + size > limit) break;
     preview += character;
     bytes += size;
   }
@@ -140,14 +142,32 @@ export function notificationPreviewBody(event: YorozuEvent): string | null {
   }
 }
 
-/** The plaintext that is sealed into a preview box: the versioned JSON object. */
+/** How much of a preview's bytes a thread title may take from the body. */
+const NOTIFY_TITLE_BYTES = 64;
+
+/**
+ * The plaintext that is sealed into a preview box: the versioned JSON object, as a whole within
+ * `NOTIFY_PREVIEW_BYTES` — the relay refuses a bigger box. The body gives way to fit.
+ */
 export function encodeNotificationPreview(content: NotificationPreviewContent): string {
-  return JSON.stringify({
-    v: NOTIFY_PREVIEW_VERSION,
-    body: content.body,
-    event: content.event,
-    quick: content.quick === true,
-  });
+  const title = boundedBytes(content.title?.trim().replace(/\s+/g, " ") ?? "", NOTIFY_TITLE_BYTES);
+  const encode = (body: string): string =>
+    JSON.stringify({
+      v: NOTIFY_PREVIEW_VERSION,
+      body,
+      event: content.event,
+      quick: content.quick === true,
+      ...(title ? { title } : {}),
+    });
+  let body = [...content.body];
+  let plaintext = encode(content.body);
+  // Escapes make the encoded size differ from the text's, so trim and re-measure.
+  while (Buffer.byteLength(plaintext) > NOTIFY_PREVIEW_BYTES && body.length > 1) {
+    const over = Buffer.byteLength(plaintext) - NOTIFY_PREVIEW_BYTES;
+    body = body.slice(0, Math.max(1, body.length - Math.ceil(over / 4)));
+    plaintext = encode(body.join(""));
+  }
+  return plaintext;
 }
 
 /**
@@ -172,5 +192,6 @@ export function decodeNotificationPreview(plaintext: string): NotificationPrevie
     body,
     event: typeof object.event === "string" && object.event !== "" ? object.event : null,
     quick: object.quick === true,
+    ...(typeof object.title === "string" && object.title !== "" ? { title: object.title } : {}),
   };
 }

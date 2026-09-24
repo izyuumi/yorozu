@@ -35,6 +35,8 @@ final class NotificationService: UNNotificationServiceExtension {
             let preview = match.preview
             content.userInfo[NotificationFallback.localHostKey] = match.hostID
             content.body = preview.body
+            // Sealed by the Mac alongside the body, so it is as trustworthy as the words under it.
+            if let title = preview.title { content.title = title }
             // Allow and Deny appear only when the Mac sealed `quick` into the preview and the
             // preview names the card this push is about. The app checks the same thing again
             // before an Allow counts — see `PushDelegate` and

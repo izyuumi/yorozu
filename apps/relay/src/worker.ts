@@ -712,14 +712,24 @@ export class Room implements DurableObject {
         const push = parsePush(msg);
         if (!push) return this.drop(ws, CLOSE_PROTOCOL, "bad push");
         const key = pushPrefix + conn.key;
-        // Merged rather than written over: a phone re-registers its token on every launch, and
-        // that must not hand it a fresh background budget it has already spent.
-        const record = await storage.get<PushRecord>(key);
-        const next: PushRecord = { ...record, deviceToken: push.deviceToken };
-        // A new token may be from either environment — the phone moved from an Xcode build to
-        // TestFlight, or back — so what was learnt about the old one does not carry over.
-        if (record?.deviceToken !== push.deviceToken) delete next.sandbox;
-        await storage.put(key, next);
+        await storage.transaction(async (storage) => {
+          // One token, one device. A phone that paired again under a new signing key leaves
+          // its old record holding the same token, and every alert then reaches it twice —
+          // the second with a preview sealed under a key it no longer has. The newest claim wins.
+          const records = await storage.list<PushRecord>({ prefix: pushPrefix });
+          const stale = [...records]
+            .filter(([other, record]) => other !== key && record.deviceToken === push.deviceToken)
+            .map(([other]) => other);
+          if (stale.length > 0) await storage.delete(stale);
+          // Merged rather than written over: a phone re-registers its token on every launch, and
+          // that must not hand it a fresh background budget it has already spent.
+          const record = records.get(key);
+          const next: PushRecord = { ...record, deviceToken: push.deviceToken };
+          // A new token may be from either environment — the phone moved from an Xcode build to
+          // TestFlight, or back — so what was learnt about the old one does not carry over.
+          if (record?.deviceToken !== push.deviceToken) delete next.sandbox;
+          await storage.put(key, next);
+        });
         return;
       }
 

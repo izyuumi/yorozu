@@ -65,6 +65,7 @@ public struct ChatView: View {
     @State private var supersededNotificationResume: UUID?
     #if os(macOS)
         @FocusState private var composerFocused: Bool
+        @AppStorage(ChatView.sendWithCommandReturnKey) private var sendWithCommandReturn = false
     #endif
     @State private var searching = false
     @State private var choosingAgent = false
@@ -995,7 +996,9 @@ public struct ChatView: View {
         .frame(width: controlTarget, height: controlTarget)
         .hoverHighlight()
         .disabled(!canSend)
-        .macKey(.return)
+        #if os(macOS)
+            .macKey(.return, modifiers: sendWithCommandReturn ? .command : [])
+        #endif
         .accessibilityLabel("Send")
     }
 
@@ -1424,17 +1427,23 @@ extension View {
     /// `NSTextField` underneath and handles its keys in AppKit, below the pipeline SwiftUI
     /// delivers key presses through. A key equivalent on the button is consulted first, by
     /// AppKit, so this is the one place the keystroke can be caught — and one with no
-    /// modifiers leaves Shift-Return to the field, where it still inserts a newline.
+    /// modifiers leaves Shift-Return to the field, where it still inserts a newline. With
+    /// ⌘ as the modifier, a plain Return reaches the field too and inserts a newline.
     ///
     /// On iOS the composer's own text view catches Return and a key equivalent would double
     /// up, so there this does nothing.
-    @ViewBuilder fileprivate func macKey(_ key: KeyEquivalent) -> some View {
+    @ViewBuilder fileprivate func macKey(_ key: KeyEquivalent, modifiers: EventModifiers = []) -> some View {
         #if os(macOS)
-            keyboardShortcut(key, modifiers: [])
+            keyboardShortcut(key, modifiers: modifiers)
         #else
             self
         #endif
     }
+}
+
+extension ChatView {
+    /// `UserDefaults` key for the Mac's choice of send key: true for ⌘Return, false for Return.
+    public static let sendWithCommandReturnKey = "sendWithCommandReturn"
 }
 
 /// What "the thread changed" means for a view that has to notice a reply growing in place.

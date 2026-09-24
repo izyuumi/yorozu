@@ -73,7 +73,7 @@ def validate_manifest(data, complete=True):
     for key in ("sha256", "appcast_sha256"):
         require(re.fullmatch(r"[a-f0-9]{64}", mac.get(key, "")), f"invalid Mac {key}")
     ios = data.get("ios", {})
-    require(ios.get("version") == data["version"] and str(ios.get("build")) == data["build"], "iOS version/build does not match candidate")
+    require(ios.get("version") == data["version"] and re.fullmatch(r"[1-9]\d*", str(ios.get("build", ""))), "invalid iOS version/build")
     for key in ("app_id", "build_id", "uploaded_date"):
         require(isinstance(ios.get(key), str) and ios[key].strip(), f"missing iOS {key}")
 
