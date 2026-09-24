@@ -1887,7 +1887,7 @@ test("two phones pair at once and see the same threads, events and deltas", asyn
   });
 });
 
-test("a newly paired phone syncs only events created after it paired", async () => {
+test("a newly paired phone fetches old history only for an opened thread", async () => {
   relay = await startRelay(0);
   const qrs = qrQueue();
   sidecar = serve({
@@ -1914,6 +1914,12 @@ test("a newly paired phone syncs only events created after it paired", async () 
   first.send(chat, { kind: "message", data: { role: "user", text: "old prompt" } });
   await first.next("message");
   await first.next("message");
+  const other = "unopened-thread";
+  first.send(other, { kind: "thread_create", data: {} });
+  await first.next("thread_list");
+  first.send(other, { kind: "message", data: { role: "user", text: "private to unopened thread" } });
+  await first.next("message");
+  await first.next("message");
 
   await new Promise((resolve) => setTimeout(resolve, 2));
   const second = await pairPhone(relay.port, await qrs.next());
@@ -1921,6 +1927,12 @@ test("a newly paired phone syncs only events created after it paired", async () 
   expect(JSON.stringify(greeting)).not.toContain("old prompt");
   second.send(chat, { kind: "sync_request", data: { lastSeen: {} } });
   expect(await second.next("sync_delta")).toMatchObject({ data: { events: [] } });
+  second.send(chat, { kind: "sync_request", data: { lastSeen: {}, threadId: chat } });
+  const history = await second.next("sync_delta");
+  expect(history).toMatchObject({ data: { threadId: chat } });
+  expect(history.kind === "sync_delta" && history.data.events.map((event) => event.threadId)).toEqual([chat, chat]);
+  expect(JSON.stringify(history)).toContain("old prompt");
+  expect(JSON.stringify(history)).not.toContain("private to unopened thread");
 
   // An older offline outbox message must not evade the cutoff through live broadcast.
   first.send(chat, { kind: "message", data: { role: "user", text: "old offline prompt" } }, 1);

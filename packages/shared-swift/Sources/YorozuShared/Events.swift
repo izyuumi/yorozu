@@ -1036,16 +1036,22 @@ public struct InterruptData: Codable, Equatable, Sendable {
 /// Last event id the device already holds, per thread.
 public struct SyncRequestData: Codable, Equatable, Sendable {
     public var lastSeen: [String: String]
-    public init(lastSeen: [String: String]) { self.lastSeen = lastSeen }
+    public var threadId: String?
+    public init(lastSeen: [String: String], threadId: String? = nil) {
+        self.lastSeen = lastSeen
+        self.threadId = threadId
+    }
 }
 
 public struct SyncDeltaData: Codable, Equatable, Sendable {
     public var events: [YorozuEvent]
+    public var threadId: String?
     /// Threads with a turn still running on the Mac when this page was made.
     public var workingThreadIds: [String]?
     public var more: Bool?
-    public init(events: [YorozuEvent], workingThreadIds: [String]? = nil, more: Bool? = nil) {
+    public init(events: [YorozuEvent], threadId: String? = nil, workingThreadIds: [String]? = nil, more: Bool? = nil) {
         self.events = events
+        self.threadId = threadId
         self.workingThreadIds = workingThreadIds
         self.more = more
     }

@@ -15,6 +15,8 @@ public struct ThreadCache: Sendable {
     private struct Snapshot: Codable {
         var events: [YorozuEvent]
         var lastSeen: String?
+        var historyCursor: String?
+        var historyLoaded: Bool?
     }
 
     public init(directory: URL, key: SymmetricKey) {
@@ -98,9 +100,18 @@ public struct ThreadCache: Sendable {
             ?? read([YorozuEvent].self, from: name(threadId)) ?? []
     }
 
-    public func save(events: [YorozuEvent], threadId: String, lastSeen: String? = nil) {
+    public func save(
+        events: [YorozuEvent], threadId: String, lastSeen: String? = nil,
+        historyCursor: String? = nil, historyLoaded: Bool = false
+    ) {
         // Keep the replay cursor and the events it covers in one atomic encrypted write.
-        write(Snapshot(events: events, lastSeen: lastSeen), to: name(threadId))
+        write(Snapshot(events: events, lastSeen: lastSeen, historyCursor: historyCursor,
+                       historyLoaded: historyLoaded), to: name(threadId))
+    }
+
+    public func historyState(threadId: String) -> (cursor: String?, loaded: Bool) {
+        let snapshot = read(Snapshot.self, from: name(threadId))
+        return (snapshot?.historyCursor, snapshot?.historyLoaded == true)
     }
 
     /// Last replayed event per thread. A newer live or optimistic event does not prove that
