@@ -450,6 +450,8 @@ export interface ThreadSetModelData {
 
 export const REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"] as const;
 export type ReasoningEffort = typeof REASONING_EFFORTS[number];
+/** What a `yorozu` thread may ask for: the Gateway publishes no per-model levels, so every model offers these. */
+export const YOROZU_EFFORTS: ReasoningEffort[] = ["low", "medium", "high"];
 
 /** Sets one thread's reasoning effort. Null or absent resets to the provider default. */
 export interface ThreadSetEffortData {

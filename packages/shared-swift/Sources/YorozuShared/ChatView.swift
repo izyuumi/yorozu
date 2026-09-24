@@ -69,6 +69,10 @@ public struct ChatView: View {
     @State private var searching = false
     @State private var choosingAgent = false
     @State private var showingTerminal = false
+    #if os(iOS)
+        /// The model and effort card, open over the chat. Seeded open for the screenshot scene.
+        @State private var runSettings = ChatShowcase.modelMenu
+    #endif
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var search = ""
     /// Which hit the arrows are on. Reset whenever the term changes.
@@ -210,6 +214,31 @@ public struct ChatView: View {
                 .frame(minWidth: 700, minHeight: 450)
                 #endif
         }
+        #if os(iOS)
+            // In the view tree, not a sheet: a presented sheet resigns the composer, and the
+            // keyboard and caret must survive choosing a model mid-sentence.
+            .overlay(alignment: .bottom) {
+                if runSettings {
+                    ZStack(alignment: .bottom) {
+                        Color.black.opacity(0.28)
+                            .ignoresSafeArea()
+                            .onTapGesture { setRunSettings(false) }
+                            .accessibilityLabel("Close model and effort")
+                            .accessibilityAddTraits(.isButton)
+                        RunSettingsCard(
+                            models: model.models(for: thread),
+                            efforts: model.efforts(for: thread),
+                            model: modelBinding,
+                            effort: effortBinding
+                        ) { setRunSettings(false) }
+                            .padding(.horizontal, LayoutMetrics.stack)
+                            .padding(.bottom, LayoutMetrics.inner)
+                            .frame(maxWidth: LayoutMetrics.composerWidth)
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+            }
+        #endif
         .onChange(of: model.state, initial: true) { _, state in
             if state == .paired { model.requestApprovalSettings() }
         }
@@ -849,13 +878,26 @@ public struct ChatView: View {
         }
     }
 
+    #if os(iOS)
+        private func setRunSettings(_ open: Bool) {
+            withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) { runSettings = open }
+        }
+
+        /// Opens the model and effort card. The Mac keeps its native menu below: an NSMenu is
+        /// what a Mac control like this is expected to drop.
+        private var runSettingsButton: some View {
+            Button { setRunSettings(!runSettings) } label: { runSettingsChip }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("runSettingsMenu")
+                .accessibilityLabel("Model and effort")
+                .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? "Default effort")")
+        }
+    #else
     private var runSettingsButton: some View {
         Menu {
-            #if os(macOS)
-                Text("Current model: \(composerModelLabel)")
-                Text("Effort: \(thread.effort?.label ?? String(localized: "Default"))")
-                Divider()
-            #endif
+            Text("Current model: \(composerModelLabel)")
+            Text("Effort: \(thread.effort?.label ?? String(localized: "Default"))")
+            Divider()
 
             Picker("Model", selection: modelBinding) {
                 Text("Auto").tag(String?.none)
@@ -877,14 +919,7 @@ public struct ChatView: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
-                Text(composerChipLabel).font(.subheadline).lineLimit(1)
-                Image(systemName: "chevron.down").font(.caption2)
-            }
-            // A caption, not an action: the send button is the one thing here in the tint.
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 8)
-            .frame(minHeight: controlTarget)
+            runSettingsChip
         }
         // A plain button, so the label above is what is drawn: the Mac's borderless menu
         // style drops the label's chevron, adds its own on the other side and tints the text.
@@ -894,6 +929,19 @@ public struct ChatView: View {
         .accessibilityIdentifier("runSettingsMenu")
         .accessibilityLabel("Model and effort")
         .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? "Default effort")")
+    }
+    #endif
+
+    private var runSettingsChip: some View {
+        HStack(spacing: 4) {
+            Text(composerChipLabel).font(.subheadline).lineLimit(1)
+            Image(systemName: "chevron.down").font(.caption2)
+        }
+        // A caption, not an action: the send button is the one thing here in the tint.
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 8)
+        .frame(minHeight: controlTarget)
+        .contentShape(Rectangle())
     }
 
     private var composerModelLabel: String {

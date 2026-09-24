@@ -102,10 +102,14 @@ public final class ChatModel {
         return agentModels[agent.rawValue] ?? []
     }
 
+    /// The efforts a thread may ask for: its model's, or the first model's while it is on Default.
     public func efforts(for thread: ThreadSummary) -> [ReasoningEffort] {
-        guard thread.agent?.needsFolder == true else { return [.low, .medium, .high] }
+        efforts(for: thread, on: thread.model)
+    }
+
+    private func efforts(for thread: ThreadSummary, on model: String?) -> [ReasoningEffort] {
         let models = models(for: thread)
-        return (models.first { $0.id == thread.model } ?? models.first)?.efforts ?? []
+        return (models.first { $0.id == model } ?? models.first)?.efforts ?? []
     }
     /// Where a coding agent's thread can be started, recents first, as the Mac last listed
     /// them. Arrives with the thread list; empty until then.
@@ -698,12 +702,14 @@ public final class ChatModel {
     /// yet keeps the choice on the draft — there is no thread on the Mac to set it on until the
     /// first message, which carries it along (see ``send(_:in:attachment:)``).
     public func setModel(_ thread: ThreadSummary, _ model: String?) {
+        // An effort the new model does not offer goes with the switch; one it does is kept.
+        let effort = thread.effort.flatMap { efforts(for: thread, on: model).contains($0) ? $0 : nil }
         if let index = draftThreads.firstIndex(where: { $0.id == thread.id }) {
             draftThreads[index].model = model
-            if thread.agent?.needsFolder == true { draftThreads[index].effort = nil }
+            draftThreads[index].effort = effort
             return
         }
-        set(thread.id) { $0.model = model; if thread.agent?.needsFolder == true { $0.effort = nil } }
+        set(thread.id) { $0.model = model; $0.effort = effort }
         emit(.threadSetModel(ThreadSetModelData(model: model)), in: thread.id)
     }
 

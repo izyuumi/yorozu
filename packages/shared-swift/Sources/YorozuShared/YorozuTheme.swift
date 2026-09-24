@@ -95,6 +95,24 @@ public struct YorozuMark: View {
     }
 }
 
+/// A question asked in the app's serif voice: the heading over a choice the user is about to
+/// make, as the new-thread picker and the composer's model card ask theirs.
+public struct YorozuQuestion: View {
+    private let text: LocalizedStringKey
+
+    public init(_ text: LocalizedStringKey) { self.text = text }
+
+    public var body: some View {
+        Text(text)
+            .font(.title3.weight(.semibold))
+            .fontDesign(.serif)
+            .foregroundStyle(YorozuPalette.ink)
+            .textCase(nil)
+            .padding(.top, 8)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
 private struct YorozuPaperCard: ViewModifier {
     let padding: CGFloat
     let radius: CGFloat

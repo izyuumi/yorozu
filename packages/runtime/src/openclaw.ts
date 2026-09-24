@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { GatewayClient, type DeviceIdentity, type GatewayClientHostDeps } from "@openclaw/gateway-client";
 import type { EventFrame } from "@openclaw/gateway-protocol/frame-guards";
-import { ATTACHMENT_MAX_BYTES, type EventPayload, type MessageAttachment, type ModelOption, type ReasoningEffort, type YorozuEvent } from "@yorozu/shared";
+import { ATTACHMENT_MAX_BYTES, YOROZU_EFFORTS, type EventPayload, type MessageAttachment, type ModelOption, type ReasoningEffort, type YorozuEvent } from "@yorozu/shared";
 
 const DEFAULT_GATEWAY_URL = "ws://127.0.0.1:18789";
 
@@ -117,6 +117,7 @@ export class OpenClawRunner {
         id: `${provider}/${id}`,
         label: typeof model.alias === "string" && model.alias ? model.alias : id,
         providerLabel: provider,
+        efforts: [...YOROZU_EFFORTS],
       }];
     });
   }

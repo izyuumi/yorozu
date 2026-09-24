@@ -8,7 +8,7 @@
  * Keychain, and the sidecar reads it from the environment under ``keyEnvVar(keyRef)``.
  */
 
-import type { ModelOption } from "@yorozu/shared";
+import { YOROZU_EFFORTS, type ModelOption } from "@yorozu/shared";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "node:process";
@@ -139,10 +139,11 @@ export const modelOptions = (entries: ProviderEntry[]): ModelOption[] =>
             id: `${entry.id}/${model}`,
             label: model,
             providerLabel: entry.label,
+            efforts: [...YOROZU_EFFORTS],
           }))
         : // An entry with no models offers whatever it is already configured to use, which has
           // no name of its own to show: the provider's own is the honest label for it.
-          [{ id: `${entry.id}/`, label: entry.label, providerLabel: entry.label }],
+          [{ id: `${entry.id}/`, label: entry.label, providerLabel: entry.label, efforts: [...YOROZU_EFFORTS] }],
     );
 
 /**
