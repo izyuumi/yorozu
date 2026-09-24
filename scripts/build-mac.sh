@@ -20,14 +20,14 @@ if ! command -v pnpm >/dev/null 2>&1; then
   pnpm() { corepack pnpm "$@"; }
 fi
 
-# The version is derived, never typed: the marketing version is the latest v* tag and the
-# build number is the commit count, which rises with every commit, never repeats, and is the
-# same number on any checkout of that commit. Sparkle compares CFBundleVersion, so this is
-# what makes an update an update. Same derivation as scripts/build-ios.sh.
-VERSION=${VERSION:-$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//' || true)}
+# Sparkle needs CFBundleVersion to rise across marketing versions and beta builds. Keep
+# that machine number global; show the build count since this version's tag to users.
+TAG=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+VERSION=${VERSION:-${TAG#v}}
 VERSION=${VERSION:-0.1.0}
 VERSION_LABEL=${VERSION_LABEL:-$VERSION}
 BUILD=${BUILD:-$(git rev-list --count HEAD)}
+VERSION_BUILD=$(( $(git rev-list --count ${TAG:+$TAG..}HEAD) + 1 ))
 DIST=${DIST:-dist}
 IDENTITY=${IDENTITY:-"Developer ID Application: Yumi Izumi (AN5KM8QGEF)"}
 # Overridable so a test install can be built with an id of its own. Two bundles sharing one
@@ -177,6 +177,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$BUILD</string>
+  <key>YorozuVersionBuild</key><string>$VERSION_BUILD</string>
   <key>YorozuVersionLabel</key><string>$VERSION_LABEL</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
