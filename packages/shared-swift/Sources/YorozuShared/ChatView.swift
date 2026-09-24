@@ -126,7 +126,8 @@ public struct ChatView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            if !model.ownerOnline {
+            UpdateStatusView(status: model.updateStatus) { model.updateControl(.postpone) }
+            if !model.ownerOnline && model.updateStatus.phase != .installing {
                 Banner(text: offlineNotice, systemImage: "desktopcomputer.trianglebadge.exclamationmark")
             }
             if let failure = model.failure {

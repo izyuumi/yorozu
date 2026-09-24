@@ -15,6 +15,9 @@ struct DevicesView: View {
 
     /// A paired remote device, not this Mac's own client: only those are ours to revoke.
     private func removable(_ device: DeviceInfo) -> Bool { device.via == .relay }
+    private func isMac(_ device: DeviceInfo) -> Bool {
+        device.via == .local || device.name?.hasPrefix("macOS") == true
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -30,12 +33,10 @@ struct DevicesView: View {
             }
             List(model.devices) { device in
                 HStack(spacing: 8) {
-                    // The protocol reports the connection, not the device's hardware type.
-                    Image(systemName: device.via == .local ? "laptopcomputer" : "network")
-                        .accessibilityHidden(true)
+                    Image(systemName: isMac(device) ? "laptopcomputer" : device.name?.hasPrefix("iPadOS") == true ? "ipad" : "iphone")
+                        .accessibilityLabel(isMac(device) ? "Mac" : device.name?.hasPrefix("iPadOS") == true ? "iPad" : "Phone")
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(device.via == .local ? "This Mac" : "Paired device")
-                            .fontWeight(.medium)
+                        Text(device.via == .local ? "This Mac" : device.name ?? device.shortId).font(.body)
                         Button {
                             if !expandedDeviceIDs.insert(device.pub).inserted {
                                 expandedDeviceIDs.remove(device.pub)
@@ -116,10 +117,14 @@ struct DevicesView: View {
     }
 
     private func subtitle(_ device: DeviceInfo) -> String {
-        if device.online { return String(localized: "Online now") }
-        guard device.lastSeen > 0 else { return String(localized: "Paired") }
-        let seen = Date(timeIntervalSince1970: device.lastSeen / 1000)
-        return String(localized: "Last seen \(seen.formatted(.relative(presentation: .named)))")
+        if device.via == .local { return "Connected locally" }
+        let status: String
+        if device.online { status = "Online now" }
+        else if device.lastSeen > 0 {
+            let seen = Date(timeIntervalSince1970: device.lastSeen / 1000)
+            status = "Last seen \(seen.formatted(.relative(presentation: .named)))"
+        } else { status = "Paired" }
+        return device.name == nil ? status : "\(status) · \(device.shortId)"
     }
 }
 

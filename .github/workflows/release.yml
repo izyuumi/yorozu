@@ -26,20 +26,22 @@ on:
 
 concurrency: release
 
-permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+# Nothing by default; each job asks for exactly what it needs.
+permissions: {}
 
 jobs:
   release-please:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release
         with:
           config-file: release-please-config.json
@@ -58,22 +60,22 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The version is the latest v* tag and the build number the commit count; both need
           # the whole history.
           fetch-depth: 0
           ref: ${{ env.RELEASE_TAG }}
       - name: Check out release tooling
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: .release-tooling
       - name: Use current publication script
         run: cp .release-tooling/scripts/release.sh scripts/release.sh
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with: { xcode-version: latest-stable }
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 26
           cache: pnpm
@@ -114,6 +116,9 @@ jobs:
           security default-keychain -s "$KEYCHAIN"
           # Names and fingerprints only, nothing secret: this is what codesign will be able to find.
           security find-identity -v -p codesigning "$KEYCHAIN"
+          # Fail here, not after a long build, if the .p12 was the wrong identity.
+          security find-identity -v -p codesigning "$KEYCHAIN" | grep -q "Developer ID Application" \
+            || { echo "DEVELOPER_ID_P12 holds no Developer ID Application identity" >&2; exit 1; }
           # The profile build-mac.sh looks for, stored in the default keychain set just above.
           printf '%s' "$ASC_KEY_P8" | base64 -d > "$RUNNER_TEMP/AuthKey.p8"
           chmod 600 "$RUNNER_TEMP/AuthKey.p8"
@@ -126,6 +131,7 @@ jobs:
           SPARKLE_ED_KEY: ${{ secrets.SPARKLE_ED_KEY }}
         run: |
           set -eu
+          : "${SPARKLE_ED_KEY:?SPARKLE_ED_KEY secret is empty}"
           umask 077
           printf '%s' "$SPARKLE_ED_KEY" > "$RUNNER_TEMP/sparkle.key"
 

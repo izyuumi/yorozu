@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { claudeCodeRunner, type QueryFn } from "./native.js";
+import { CHILD_ENV_KEYS, CHILD_ENV_PREFIXES, childEnv, claudeCodeRunner, type QueryFn } from "./native.js";
 
 /** A stand-in for the SDK's Query: the messages it will yield, plus close(). */
 function fakeQuery(messages: unknown[] | ((options: Record<string, unknown>) => unknown[])) {
@@ -41,6 +41,8 @@ test("a turn runs in the thread's folder and hands back the session to resume", 
   // The agent keeps its own tools and settings: Yorozu names none of them.
   expect(calls[0]).not.toHaveProperty("tools");
   expect(calls[0]).not.toHaveProperty("mcpServers");
+  // The CLI gets an explicit allowlisted env, not Yorozu's own.
+  expect(calls[0]!.env).toEqual(childEnv());
   expect(closes).toHaveLength(1);
 
   // The next prompt resumes that session, in the same folder, and is told the new one.
@@ -49,11 +51,20 @@ test("a turn runs in the thread's folder and hands back the session to resume", 
   expect(second.sessionId).toBe("s-1");
 });
 
+test.each([{ cwd: "" }, { cwd: "   " }, {}])("a turn without a folder is refused before the SDK is asked anything (%o)", async (folder) => {
+  const { query, calls } = fakeQuery([init("s-none"), result("s-none", "ran anyway")]);
+  // The type requires cwd; the cast stands in for a JS caller or a thread record from before it did.
+  const turn = { threadId: "cc", text: "hi", signal: new AbortController().signal, ...folder } as never;
+  await expect(claudeCodeRunner(query).run(turn)).rejects.toThrow("needs a working directory");
+  expect(query).not.toHaveBeenCalled();
+  expect(calls).toHaveLength(0);
+});
+
 test("streamed deltas redraw the whole reply so far", async () => {
   const delta = (text: string) => ({ type: "stream_event", session_id: "s-2", event: { type: "content_block_delta", delta: { type: "text_delta", text } } });
   const { query } = fakeQuery([init("s-2"), { type: "stream_event", session_id: "s-2", event: { type: "message_start" } }, delta("hel"), delta("lo"), result("s-2", "hello")]);
   const updates: string[] = [];
-  const done = await claudeCodeRunner(query).run({ threadId: "cc", text: "hi", signal: new AbortController().signal, onUpdate: (text) => updates.push(text) });
+  const done = await claudeCodeRunner(query).run({ threadId: "cc", cwd: "/tmp/proj", text: "hi", signal: new AbortController().signal, onUpdate: (text) => updates.push(text) });
   expect(updates).toEqual(["hel", "hello"]);
   expect(done.text).toBe("hello");
 });
@@ -85,7 +96,7 @@ test("thoughts, tool calls and results become the trace the work row draws; suba
     result("s-5", "Fixed."),
   ]);
   const activity: [string, unknown][] = [];
-  const done = await claudeCodeRunner(query).run({ threadId: "cc", text: "fix", signal: new AbortController().signal, onActivity: (id, payload) => activity.push([id, payload]) });
+  const done = await claudeCodeRunner(query).run({ threadId: "cc", cwd: "/tmp/proj", text: "fix", signal: new AbortController().signal, onActivity: (id, payload) => activity.push([id, payload]) });
   expect(done.text).toBe("Fixed.");
   expect(activity).toEqual([
     ["u1:thinking", { kind: "thought", data: { text: "look at the tests first" } }],
@@ -117,20 +128,20 @@ test("stop aborts the SDK query, says nothing, and keeps the session resumable",
       },
     });
   });
-  const done = await claudeCodeRunner(query).run({ threadId: "cc", text: "long job", signal: turn.signal });
+  const done = await claudeCodeRunner(query).run({ threadId: "cc", cwd: "/tmp/proj", text: "long job", signal: turn.signal });
   expect(done).toEqual({ text: "", sessionId: "s-3" });
   expect(calls).toHaveLength(1);
 });
 
 test("a failure the agent reports is the reply; a transport failure is thrown", async () => {
   const failed = fakeQuery([init("s-4"), { type: "result", subtype: "error_max_turns", session_id: "s-4", is_error: true }]);
-  const reported = await claudeCodeRunner(failed.query).run({ threadId: "cc", text: "x", signal: new AbortController().signal });
+  const reported = await claudeCodeRunner(failed.query).run({ threadId: "cc", cwd: "/tmp/proj", text: "x", signal: new AbortController().signal });
   expect(reported).toEqual({ text: "Claude Code stopped: max turns.", sessionId: "s-4" });
 
   const broken = fakeQuery(() => {
     throw new Error("claude is not installed");
   });
-  await expect(claudeCodeRunner(broken.query).run({ threadId: "cc", text: "x", signal: new AbortController().signal }))
+  await expect(claudeCodeRunner(broken.query).run({ threadId: "cc", cwd: "/tmp/proj", text: "x", signal: new AbortController().signal }))
     .rejects.toThrow("claude is not installed");
 });
 
@@ -149,7 +160,7 @@ test.each(["yes", "no"] as const)("native SDK permission %s holds the turn and r
     yield result("permission-session", "finished");
   })(), { close() {} }) as Query;
   const finished = vi.fn();
-  const running = claudeCodeRunner(query).run({ threadId: "cc", text: "run", signal: new AbortController().signal,
+  const running = claudeCodeRunner(query).run({ threadId: "cc", cwd: "/tmp/proj", text: "run", signal: new AbortController().signal,
     approve: (tool, input, signal) => cards.approve("cc", "claude-code", tool, input, signal),
   }).then(finished);
   await vi.waitFor(() => expect(events).toHaveLength(1));
@@ -173,7 +184,7 @@ test.each(["Option A", "My own answer"])("SDK question accepts %s", async (answe
   const fake = fakeQuery([]);
   const query: QueryFn = (params) => { options = params.options!; return fake.query(params); };
   const ask = vi.fn().mockResolvedValue(answer);
-  await claudeCodeRunner(query).run({ threadId: "cc", text: "ask", signal: new AbortController().signal, ask });
+  await claudeCodeRunner(query).run({ threadId: "cc", cwd: "/tmp/proj", text: "ask", signal: new AbortController().signal, ask });
   const input = { questions: [{ question: "Which?", options: [{ label: "Option A" }, { label: "Option B" }] }] };
   expect(await options.canUseTool!("AskUserQuestion", input, { signal: new AbortController().signal, toolUseID: "q" }))
     .toEqual({ behavior: "allow", updatedInput: { ...input, answers: { "Which?": answer } } });
@@ -201,7 +212,7 @@ test("bypass toggles on and off in one resumed session, while questions still ne
   const runner = claudeCodeRunner(query);
   const approve = vi.fn().mockResolvedValue(false);
   for (const bypass of [false, true, false]) {
-    await runner.run({ threadId: "cc", sessionId: "s-bypass", text: "work", bypass, approve, signal: new AbortController().signal });
+    await runner.run({ threadId: "cc", cwd: "/tmp/proj", sessionId: "s-bypass", text: "work", bypass, approve, signal: new AbortController().signal });
     const options = calls.at(-1)! as unknown as Options;
     expect(options.permissionMode).toBe(bypass ? "bypassPermissions" : "default");
     const decision = await options.canUseTool!("Bash", {}, { signal: new AbortController().signal, toolUseID: "t" });
@@ -216,8 +227,9 @@ test("Claude publishes SDK models and passes selected model/effort on each resum
   const catalogQuery: QueryFn = (params) => Object.assign(query(params), { supportedModels: models });
   const runner = claudeCodeRunner(catalogQuery);
   expect(await runner.models!()).toEqual([{ id: "opus", label: "Opus", providerLabel: "Claude Code", efforts: ["low", "high", "max"] }]);
+  expect(calls[0]).toMatchObject({ tools: [], env: childEnv() });
   for (const effort of ["low", "max"] as const) {
-    await runner.run({ threadId: "cc", text: "go", sessionId: "s-model", model: "opus", effort, signal: new AbortController().signal });
+    await runner.run({ threadId: "cc", cwd: "/tmp/proj", text: "go", sessionId: "s-model", model: "opus", effort, signal: new AbortController().signal });
     expect(calls.at(-1)).toMatchObject({ model: "opus", effort, resume: "s-model" });
   }
 });
@@ -225,7 +237,7 @@ test("Claude publishes SDK models and passes selected model/effort on each resum
 test.each([true, false])("Claude questions use PreToolUse even when permission callback is skipped (bypass=%s)", async (bypass) => {
   const { query, calls } = fakeQuery([]);
   const ask = vi.fn().mockResolvedValueOnce("A").mockResolvedValueOnce("custom");
-  await claudeCodeRunner(query).run({ threadId: "cc", text: "go", bypass, ask, signal: new AbortController().signal });
+  await claudeCodeRunner(query).run({ threadId: "cc", cwd: "/tmp/proj", text: "go", bypass, ask, signal: new AbortController().signal });
   const hooks = calls[0]!.hooks as { PreToolUse: { hooks: Function[] }[] };
   const input = { questions: [{ question: "Pick", options: [{ label: "A" }] }, { question: "Name", options: [] }] };
   const answer = await hooks.PreToolUse[0]!.hooks[0]!({ hook_event_name: "PreToolUse", tool_input: input }, "id", { signal: new AbortController().signal });
@@ -233,4 +245,35 @@ test.each([true, false])("Claude questions use PreToolUse even when permission c
   const stopped = new AbortController(); stopped.abort();
   expect((await hooks.PreToolUse[0]!.hooks[0]!({ hook_event_name: "PreToolUse", tool_input: input }, "id", { signal: stopped.signal })).hookSpecificOutput.permissionDecision).toBe("deny");
   expect(ask).toHaveBeenCalledTimes(2);
+});
+
+test("childEnv keeps the shell basics and the agents' own variables", () => {
+  const source = {
+    PATH: "/usr/bin:/bin", HOME: "/Users/me", LANG: "en_US.UTF-8", LC_ALL: "C", XDG_CONFIG_HOME: "/Users/me/.config",
+    CLAUDE_CODE_X: "1", ANTHROPIC_API_KEY: "sk-ant", CODEX_HOME: "/Users/me/.codex", OPENAI_API_KEY: "sk-oa",
+  };
+  expect(childEnv(source)).toEqual(source);
+  expect(CHILD_ENV_KEYS).toEqual(expect.arrayContaining(["PATH", "HOME", "TMPDIR", "LANG", "USER", "SHELL", "TERM"]));
+  expect(CHILD_ENV_PREFIXES).toEqual(expect.arrayContaining(["LC_", "XDG_", "CLAUDE_", "ANTHROPIC_", "CODEX_", "OPENAI_"]));
+});
+
+test("childEnv drops Yorozu's own variables and unrelated provider keys", () => {
+  const env = childEnv({
+    PATH: "/bin", YOROZU_STATE_DIR: "/state", YOROZU_RELAY_URL: "wss://relay", GOOGLE_API_KEY: "g",
+    AWS_SECRET_ACCESS_KEY: "aws", GITHUB_TOKEN: "ghp", SOME_API_KEY: "k",
+  });
+  expect(env).toEqual({ PATH: "/bin" });
+});
+
+test("childEnv skips undefined values, lets extra win, and reads process.env by default", () => {
+  expect(childEnv({ PATH: undefined, HOME: "/h", TERM: "xterm" }, { TERM: "dumb", CLAUDE_AGENT_SDK_CLIENT_APP: "yorozu" }))
+    .toEqual({ HOME: "/h", TERM: "dumb", CLAUDE_AGENT_SDK_CLIENT_APP: "yorozu" });
+  vi.stubEnv("YOROZU_TEST_SECRET", "hidden");
+  vi.stubEnv("PATH", "/stubbed/bin");
+  try {
+    const env = childEnv();
+    expect(env.PATH).toBe("/stubbed/bin");
+    expect(Object.keys(env).some((key) => key.startsWith("YOROZU_"))).toBe(false);
+    expect(Object.values(env).every((value) => typeof value === "string")).toBe(true);
+  } finally { vi.unstubAllEnvs(); }
 });

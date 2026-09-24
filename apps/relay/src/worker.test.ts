@@ -2,10 +2,10 @@
 
 import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, expect, test, vi } from "vitest";
-import { MAX_DEVICES, NOTIFY_BODY, type Notify } from "./protocol.js";
+import { AUTH_TIMEOUT_MS, CLOSE_POLICY, MAX_DEVICES, NOTIFY_BODY, type Notify } from "./protocol.js";
 import * as apns from "./apns.js";
 import { Room, type Env } from "./worker.js";
-import { conformance } from "./conformance.test.js";
+import { conformance, fakeRoom } from "./conformance.test.js";
 
 /**
  * The Durable Object relay, exercised the way a client does: one websocket per device
@@ -144,6 +144,66 @@ test("a plain GET answers without upgrading, and an upgrade needs a room", async
   expect(await (await SELF.fetch("https://relay.test/")).text()).toBe("yorozu relay\n");
   const missing = await SELF.fetch("https://relay.test/", { headers: { Upgrade: "websocket" } });
   expect(missing.status).toBe(400);
+});
+
+test.each([
+  "short",
+  "A".repeat(42),
+  "A".repeat(44),
+  "A".repeat(42) + "=",
+  "A".repeat(42) + "+",
+  "A".repeat(42) + "/",
+  "A".repeat(42) + " ",
+])("a room that no key could hash to is refused before any object is touched (%s)", async (room) => {
+  const rooms = (env as unknown as Env).ROOM;
+  const named = vi.spyOn(rooms, "idFromName");
+  try {
+    const response = await SELF.fetch(`https://relay.test/?room=${encodeURIComponent(room)}`, {
+      headers: { Upgrade: "websocket" },
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("bad ?room");
+    expect(named).not.toHaveBeenCalled();
+  } finally {
+    named.mockRestore();
+  }
+});
+
+test("a socket that never registers or joins is closed at the auth deadline", async () => {
+  const name = fakeRoom("auth-timeout");
+  const stranger = await connect(name);
+  await stranger.next(); // nonce
+  // Accepting the socket scheduled a sweep for its deadline, so hibernation cannot lose it.
+  await runInDurableObject(room(name), async (instance, state) => {
+    const alarm = await state.storage.getAlarm();
+    expect(alarm).not.toBeNull();
+    expect(alarm! - Date.now()).toBeLessThanOrEqual(AUTH_TIMEOUT_MS);
+    // Before the deadline the sweep leaves it alone.
+    await (instance as unknown as { alarm(): Promise<void> }).alarm();
+    expect(state.getWebSockets()).toHaveLength(1);
+    // The clock cannot be moved under workerd, so the socket's own record of when it arrived
+    // is aged instead — the same thing the alarm would see ten seconds from now.
+    const socket = state.getWebSockets()[0]!;
+    const conn = socket.deserializeAttachment() as Record<string, unknown>;
+    socket.serializeAttachment({ ...conn, since: Date.now() - AUTH_TIMEOUT_MS });
+    await (instance as unknown as { alarm(): Promise<void> }).alarm();
+  });
+  expect(await stranger.closed()).toBe(CLOSE_POLICY);
+});
+
+test("a socket that registered in time survives the auth sweep", async () => {
+  const keys = await keypair();
+  const name = await roomId(keys.pub);
+  const mac = await connectMac(keys);
+  await runInDurableObject(room(name), async (instance, state) => {
+    const socket = state.getWebSockets()[0]!;
+    const conn = socket.deserializeAttachment() as Record<string, unknown>;
+    socket.serializeAttachment({ ...conn, since: Date.now() - AUTH_TIMEOUT_MS });
+    await (instance as unknown as { alarm(): Promise<void> }).alarm();
+    expect(state.getWebSockets()).toHaveLength(1);
+  });
+  mac.send({ type: "ping" });
+  expect(await mac.next()).toEqual({ type: "pong" });
 });
 
 test("a key may only register in its own room", async () => {
@@ -685,7 +745,7 @@ test("a token production APNs refuses as bad is retried through sandbox, and tha
 });
 
 test.each([false, true])("messages over one MiB close before parsing (binary: %s)", async (binary) => {
-  const name = `payload-limit-${binary}`;
+  const name = fakeRoom(`payload-limit-${binary}`);
   const client = await connect(name);
   await client.next();
   // The wire cap counts bytes, including JSON and multi-byte UTF-8 characters.
@@ -700,16 +760,16 @@ test.each([false, true])("messages over one MiB close before parsing (binary: %s
 });
 
 test("a message exactly one MiB is accepted", async () => {
-  const client = await connect("payload-boundary");
+  const client = await connect(fakeRoom("payload-boundary"));
   await client.next();
   client.raw(JSON.stringify({ type: "ping" }).padEnd(1_048_576));
   expect(await client.next()).toEqual({ type: "pong" });
 });
 
 test("the socket bucket survives an object being reconstructed", async () => {
-  const client = await connect("bucket-hibernation");
+  const client = await connect(fakeRoom("bucket-hibernation"));
   await client.next();
-  await runInDurableObject(room("bucket-hibernation"), async (_instance, state) => {
+  await runInDurableObject(room(fakeRoom("bucket-hibernation")), async (_instance, state) => {
     const socket = state.getWebSockets()[0]!;
     const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
     try {
@@ -725,7 +785,7 @@ test("the socket bucket survives an object being reconstructed", async () => {
 });
 
 test("heartbeats are answered at the edge and never spend the bucket", async () => {
-  const client = await connect("ping-free");
+  const client = await connect(fakeRoom("ping-free"));
   await client.next();
   // Far more than one second's burst: pings are matched by the edge auto-response and never
   // reach the bucket, so the socket stays open and every one gets its pong.

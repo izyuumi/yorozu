@@ -275,9 +275,34 @@ export interface RuleDeleteData {
   ruleId: string;
 }
 
-/** Global approval config. Empty requests current state; `yolo` updates it. */
+/**
+ * Global approval config. Empty requests current state; `yolo` updates it. Turning YOLO on is
+ * only a command over the Mac's own local socket: from a relay device it is a request, which
+ * the runtime answers with the unchanged state plus `pending` and raises on the Mac as an
+ * `approval_settings_request`. On always carries an expiry.
+ */
 export interface ApprovalSettingsData {
   yolo?: boolean;
+  /** Epoch milliseconds when YOLO switches itself off. Reported while it is on. */
+  yoloUntil?: number;
+  /** The reply to a relay device that asked for `yolo: true`: nothing changed yet. */
+  pending?: boolean;
+  /** How long to allow, when turning on. Default 8, capped at 24. */
+  hours?: number;
+  /** The `approval_settings_request` this answers, when the Mac is confirming one. */
+  requestId?: string;
+}
+
+/**
+ * A relay device asked to turn YOLO on. Sent to local-socket clients only: the Mac in front
+ * of the user confirms it, or nothing happens. A lost phone gets no unattended code execution.
+ */
+export interface ApprovalSettingsRequestData {
+  requestId: string;
+  /** Who asked: the device's public key, or its name where one is kept. */
+  device: string;
+  yolo: true;
+  hours: number;
 }
 
 /**
@@ -499,8 +524,7 @@ export interface SyncDeltaData {
 }
 
 /**
- * One device this Mac is paired with, as the Mac app's Devices tab lists them. Public keys
- * only: they are identifiers here, and the short form of `pub` is what the user sees.
+ * One device this Mac is paired with, as the Mac app's Devices tab lists them.
  */
 export interface DeviceInfo {
   /** X25519 public key, base64url. What the sidecar seals for, and the device's identity. */
@@ -510,6 +534,8 @@ export interface DeviceInfo {
    * `pub` and not derivable from it, so revoking at the relay needs it carried here.
    */
   signingPub?: string;
+  /** Platform and OS version announced by the device, when known. */
+  name?: string;
   /** How the device reaches the runtime: through the relay, or on this Mac's local socket. */
   via: "relay" | "local";
   /** Epoch milliseconds the runtime last heard from it. */
@@ -519,6 +545,8 @@ export interface DeviceInfo {
 
 export interface DeviceListData {
   devices: DeviceInfo[];
+  /** Optional platform name in a device's encrypted request. */
+  name?: string;
 }
 
 /**
@@ -542,6 +570,7 @@ export type EventPayload =
   | { kind: "rule_update"; data: RuleUpdateData }
   | { kind: "rule_delete"; data: RuleDeleteData }
   | { kind: "approval_settings"; data: ApprovalSettingsData }
+  | { kind: "approval_settings_request"; data: ApprovalSettingsRequestData }
   | { kind: "question_card"; data: QuestionCardData }
   | { kind: "question_answer"; data: QuestionAnswerData }
   | { kind: "progress_card"; data: ProgressCardData }
@@ -562,7 +591,25 @@ export type EventPayload =
   | { kind: "sync_delta"; data: SyncDeltaData }
   | { kind: "device_list"; data: DeviceListData }
   | { kind: "device_remove"; data: DeviceRemoveData }
-  | { kind: "receipt"; data: ReceiptData };
+  | { kind: "receipt"; data: ReceiptData }
+  | { kind: "update_status"; data: UpdateStatusData }
+  | { kind: "update_control"; data: UpdateControlData };
+
+export interface UpdateStatusData {
+  phase: "none" | "unknown" | "waiting" | "countdown" | "postponed" | "installing";
+  updateId?: string;
+  version?: string;
+  activeThreads?: number;
+  deadline?: number;
+  postponedUntil?: number;
+  requestId?: string;
+}
+
+export interface UpdateControlData {
+  action: "queue" | "poll" | "cancel" | "postpone" | "status";
+  updateId?: string;
+  version?: string;
+}
 
 export type EventKind = EventPayload["kind"];
 

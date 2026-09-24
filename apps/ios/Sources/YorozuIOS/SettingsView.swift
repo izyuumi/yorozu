@@ -67,8 +67,20 @@ struct SettingsView: View {
                     } header: {
                         Text("Approvals")
                     } footer: {
-                        Text("Applies to all agents and conversations on the host Mac and its paired devices. Tool requests can run without asking, including purchases, messages, commands, and deletes.")
-                            .foregroundStyle(model.yoloMode ? Color.red : Color.secondary)
+                        if model.yoloPending {
+                            Text("Waiting for the Mac to allow it").foregroundStyle(.secondary)
+                        }
+                        if model.yoloMode {
+                            Label {
+                                Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
+                            } icon: {
+                                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                            }
+                            if let until = model.yoloUntil {
+                                Text("until \(Date(timeIntervalSince1970: Double(until) / 1000).formatted(date: .omitted, time: .shortened))")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 }
                 Section("App") {

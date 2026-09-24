@@ -60,7 +60,19 @@ The QR encodes that same string, so one parser — `decodePairingString` in `pac
 `yorozu://` link a phone opens when the code is tapped in Messages.
 
 The phone joins the room, announces its own X25519 key in one cleartext `hello` frame, and every
-frame after that is ChaCha20-Poly1305 sealed under the derived session key.
+frame after that is ChaCha20-Poly1305 sealed. The X25519 secret yields one key per direction
+(`deriveChannelKeys`: HKDF info `yorozu-channel/mac->device` and `device->mac`), so a box the
+relay reflects to its own sender opens under no key it holds. Inside each box the plaintext is
+`{"seq", "event"}`, `seq` counting up from 1 per sender and direction; a receiver drops any box
+at or below the last `seq` it accepted, and both ends keep their counters across a restart —
+the Mac in `channel-seq.json`, the phone in its Keychain pairing record. A phone that unpairs and
+pairs again under new keys starts from zero, and a stale record dies
+with the device (`device_remove` drops it from `devices.json`). A device waits for the Mac's
+encrypted greeting before sending requests. Public 0.2.3 clients used one shared key and plain
+events instead. The Mac greets an unidentified device in both formats, modern first, then sends
+only the format it answers in. A modern box upgrades a legacy connection; old-format boxes cannot
+switch that connection back. The current device client also accepts either greeting, so it works
+with a Mac still on 0.2.3. The shared `deriveSessionKey` is also used for push preview boxes.
 
 The relay checks each frame's signature — but the relay could have signed it itself, so the
 runtime does not take the relay's word for who is enrolling. The pairing string carries a
@@ -158,9 +170,11 @@ operation and leaves the file untouched: restore from backup or repair the origi
 restarting, because logs alone cannot recover native session metadata safely.
 
 Threads are created on demand and nobody is asked to name one. `+` creates a thread with an empty
-title, the lists draw it as "New chat", and as the first message lands the sidecar asks the
-configured model chain for a 3-5 word title from it, alongside the turn rather than after it —
-falling back to the first five words of the message when no model answers within 15 s. Only an
+title, the lists draw it as "New chat", and as the first message lands the sidecar asks the Mac's
+on-device model (Apple's Foundation Models framework, through `yorozu-native`) for a 3-5 word title
+from it, alongside the turn rather than after it — falling back to the first five words of the
+message when the model is unavailable or does not answer within 15 s. Not the configured chain: a
+label is no reason to send the opening message to a cloud model. Only an
 empty title is ever filled in, which is also the whole of the rule that a title typed with Rename
 is never overwritten.
 
@@ -183,18 +197,23 @@ temporary 10,000-event fixture.
 
 ## Several phones at once
 
-The sidecar keeps one session key per device, keyed by the X25519 key that phone announced in its
-`hello`. Agent events are sealed once per device and broadcast; relay frames carry no sender, so
-an inbound box is attributed to whichever session key opens it, which is also how a `sync_request`
-is answered to just the phone that asked. Because every phone receives the copies meant for the
+The sidecar keeps directional and legacy shared keys per device, keyed by the X25519 key that phone
+announced in its `hello`. Agent events are sealed once per device and broadcast; relay frames
+carry no sender, so an inbound box is attributed to whichever device's receive key opens it,
+which is also how a `sync_request` is answered to just the phone that asked. Because every phone receives the copies meant for the
 others, `RelayClient` drops a frame it cannot open silently rather than reporting it.
 
 Join tokens stay one-time, but a burnt one is replaced immediately: pairing mints the next token
 and prints a fresh `QR` line, so the menu bar is always showing a code a second device can use.
 
 Devices outlive a restart in `<state dir>/devices.json`, one record each: the X25519 key the
-session is agreed from, the Ed25519 key the relay knows it by, and when it was last heard from.
-The Mac app lists them over the local socket — `device_list`, pushed whenever a device comes or
+channel keys are agreed from, the Ed25519 key the relay knows it by, when it was last heard from,
+and the platform name announced in an encrypted `device_list` request, such as `iPadOS 27.0`.
+The two `seq` counters live
+in `channel-seq.json`; the send counter is reserved 1000 ahead so streaming costs no writes.
+The Mac shows the platform name in Devices, using a short key for older unnamed records, and
+lists them
+over the local socket — `device_list`, pushed whenever a device comes or
 goes — with "online" meaning *said something in the last 90 seconds*, which is the only honest
 answer the runtime has: the relay tells phones whether the Mac is up, never the other way round.
 `device_remove` forgets one, and sends the relay a `revoke` so it cannot rejoin against the nonce
@@ -400,6 +419,16 @@ parks the turn until an `approval_answer` or `question_answer` comes back, and s
 card on interrupt. These carry no Yorozu rules, floors or task grants — the SDK is asking, and the
 card is how the question reaches a phone. The **YOLO** toggle in Settings → General is passed to
 these agents as a bypass.
+
+YOLO is code execution as the user, so a phone cannot grant it to itself. `approval_settings
+{ yolo: true }` arriving through the relay is a request: the runtime leaves the setting alone,
+answers the phone with the unchanged state plus `pending: true` (its toggle snaps back and it shows
+"Waiting for the Mac to allow it"), and sends an `approval_settings_request` to local-socket clients
+only. The Mac app shows a modal (`YoloConsent.swift`); Allow sends `{ yolo: true, hours, requestId }`
+over the local socket, which is applied at once because that socket is the user's own machine. On is
+never for good: every grant stores `yoloUntil` (default 8 h, cap 24 h), `loadSettings` reads a passed
+expiry as off, one timer in `serve.ts` flips it off and broadcasts the change (re-armed at start),
+and `yolo: false` from any device applies immediately.
 
 An approval can be answered from the notification. The Mac marks a `notify` with `actions: true`
 when the action is quick-approvable, and the relay sets the notification category to

@@ -106,6 +106,8 @@ actor HarnessTransport: ChatTransport {
             for dark in [false, true] {
                 let scene = VStack(alignment: .leading, spacing: 16) {
                     Text("Native agent bridge").font(.title2)
+                    UpdateStatusView(status: UpdateStatusData(phase: .countdown, version: "1.0",
+                        deadline: (Date().timeIntervalSince1970 + 10) * 1000)) {}
                     ApprovalCardView(card: card) { _, _ in }
                     QuestionCardView(card: QuestionCardData(questionId: "question", question: "Which test should run next?", options: ["Shared Swift tests", "Runtime tests"], allowOther: true)) { _ in }
                     WorkRowView(work: TurnWork(startEventId: "work", entries: [], startedAt: 0, lastAt: 2000, running: false))

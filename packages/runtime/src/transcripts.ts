@@ -20,8 +20,8 @@ export function transcriptDir(dir = stateDir()): string {
 const day = (ts: number): string => new Date(ts).toISOString().slice(0, 10);
 
 export function appendTranscript(event: YorozuEvent, dir = transcriptDir()): void {
-  mkdirSync(dir, { recursive: true });
-  appendFileSync(join(dir, `${day(event.ts)}.jsonl`), `${JSON.stringify(event)}\n`);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  appendFileSync(join(dir, `${day(event.ts)}.jsonl`), `${JSON.stringify(event)}\n`, { mode: 0o600 });
 }
 
 /** Every logged event at or after `since`, oldest first. Unreadable lines are skipped. */

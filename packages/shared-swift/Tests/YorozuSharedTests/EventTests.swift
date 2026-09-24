@@ -64,6 +64,10 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         case .ruleUpdate: .ruleUpdate(RuleUpdateData(rule: sampleRule))
         case .ruleDelete: .ruleDelete(RuleDeleteData(ruleId: "r1"))
         case .approvalSettings: .approvalSettings(ApprovalSettingsData(yolo: true))
+        case .approvalSettingsRequest:
+            .approvalSettingsRequest(
+                ApprovalSettingsRequestData(requestId: "y1", device: "phone-key", yolo: true, hours: 8)
+            )
         case .questionCard:
             .questionCard(
                 QuestionCardData(
@@ -129,6 +133,8 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
             ]))
         case .deviceRemove: .deviceRemove(DeviceRemoveData(pub: "k1"))
         case .receipt: .receipt(ReceiptData(eventId: "e0"))
+        case .updateStatus: .updateStatus(UpdateStatusData(phase: .countdown, updateId: "u1", version: "1.0", deadline: 12345))
+        case .updateControl: .updateControl(UpdateControlData(action: .queue, updateId: "u1", version: "1.0"))
         }
     let event = YorozuEvent(
         id: "e1",
@@ -405,6 +411,48 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     #expect(card.items == nil)
     #expect(card.mustConfirm == nil)
     #expect(card.suggestedRule == nil)
+}
+
+/// The bypass payload an older runtime sends is just `yolo`: the expiry, pending and request
+/// fields all decode as absent.
+@Test func anOldStyleApprovalSettingsPayloadStillDecodes() throws {
+    let wire = Data(
+        #"{"id":"e1","threadId":"","ts":1,"agentId":"main","kind":"approval_settings","data":{"yolo":true}}"#.utf8
+    )
+    let event = try JSONDecoder().decode(YorozuEvent.self, from: wire)
+    #expect(event.payload == .approvalSettings(ApprovalSettingsData(yolo: true)))
+    guard case .approvalSettings(let data) = event.payload else { return }
+    #expect(data.yoloUntil == nil)
+    #expect(data.pending == nil)
+    #expect(data.hours == nil)
+    #expect(data.requestId == nil)
+}
+
+/// A phone asking for the bypass gets the unchanged state back with `pending`; the Mac gets the
+/// request itself, with who asked and for how long.
+@Test func aYoloRequestIsPendingOnThePhoneAndAQuestionOnTheMac() throws {
+    let reply = Data(
+        #"{"id":"e2","threadId":"","ts":2,"agentId":"main","kind":"approval_settings","data":{"yolo":false,"pending":true}}"#
+            .utf8
+    )
+    guard case .approvalSettings(let settings) = try JSONDecoder().decode(YorozuEvent.self, from: reply).payload
+    else { Issue.record("not approval_settings"); return }
+    #expect(settings.yolo == false)
+    #expect(settings.pending == true)
+    #expect(settings.yoloUntil == nil)
+
+    let ask = Data(
+        #"{"id":"e3","threadId":"","ts":3,"agentId":"main","kind":"approval_settings_request","data":{"requestId":"y1","device":"AbCdEfGh12345678","yolo":true,"hours":8}}"#
+            .utf8
+    )
+    let event = try JSONDecoder().decode(YorozuEvent.self, from: ask)
+    #expect(event.payload.kind == .approvalSettingsRequest)
+    #expect(
+        event.payload
+            == .approvalSettingsRequest(
+                ApprovalSettingsRequestData(requestId: "y1", device: "AbCdEfGh12345678", yolo: true, hours: 8)
+            )
+    )
 }
 
 /// What the card draws of a scope: the fields that were filled in, in a fixed order, and

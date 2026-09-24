@@ -60,10 +60,45 @@ cp "$BIN/YorozuMac" "$APP/Contents/MacOS/Yorozu"
 # Accessibility and Screen Recording on that, and the helper is what needs them.
 cp "$BIN/yorozu-native" "$APP/Contents/MacOS/yorozu-native"
 cp -R "$BIN/Sparkle.framework" "$APP/Contents/Frameworks/"
-# SwiftPM keeps processed package assets in a companion bundle. The generated Bundle.module
-# accessor looks for it under the app's resourceURL; omitting it makes the first provider mark
-# render trap even though the executable itself built and signed successfully.
+# SwiftPM keeps package resources in a companion bundle. The Bundle.module accessor that
+# `swift build` generates looks for it only at the app bundle's root, and codesign refuses a
+# resource there, so YorozuShared's own accessor (ResourceBundle.swift) resolves it from
+# Contents/Resources instead. Omitting it makes the first provider mark render trap even
+# though the executable itself built and signed successfully.
 cp -R "$BIN/YorozuShared_YorozuShared.bundle" "$APP/Contents/Resources/"
+# Which layout that bundle has depends on the toolchain. Swift 6.4 emits an Xcode-style
+# bundle (Contents/Resources) and compiles the asset catalog itself; the CI toolchain behind
+# build 282 emitted a flat bundle with the catalog copied raw, as the .xcassets folder of
+# SVGs, and Image("ClaudeMark", bundle:) finds nothing in a folder. Only the raw layout
+# needs help: compile it to Assets.car with actool, then drop the folder so only the
+# compiled one ships. A bundle with no raw folder already has its catalog compiled.
+SHARED_BUNDLE="$APP/Contents/Resources/YorozuShared_YorozuShared.bundle"
+if [ -d "$SHARED_BUNDLE/ProviderMarks.xcassets" ]; then
+  xcrun actool "$SHARED_BUNDLE/ProviderMarks.xcassets" --compile "$SHARED_BUNDLE" \
+    --platform macosx --minimum-deployment-target 15.0 \
+    --output-format human-readable-text --output-partial-info-plist "$(mktemp)" >/dev/null
+  # actool exits 0 even when it compiled nothing (it only warns); a missing marks catalog
+  # should end the build here, not show up as an empty provider row on a user's Mac.
+  [ -f "$SHARED_BUNDLE/Assets.car" ] || { echo "actool produced no Assets.car" >&2; exit 1; }
+  rm -rf "$SHARED_BUNDLE/ProviderMarks.xcassets"
+  # That flat bundle also carries no Info.plist, and CoreUI will not look inside a catalog
+  # whose bundle has no identifier: image(forResource:) quietly returns nil. Build 282
+  # shipped exactly that. The Xcode-style layout brings Contents/Info.plist of its own.
+  if [ ! -f "$SHARED_BUNDLE/Info.plist" ]; then
+    cat >"$SHARED_BUNDLE/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>$BUNDLE_ID.YorozuShared</string>
+  <key>CFBundleName</key><string>YorozuShared</string>
+  <key>CFBundlePackageType</key><string>BNDL</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+</dict>
+</plist>
+PLIST
+  fi
+fi
 
 # The icon. Xcode compiles apps/ios/Resources/AppIcon.icon straight into an asset catalog
 # for iOS, but this bundle is assembled by hand and has no catalog, so it takes the .icns
@@ -169,8 +204,10 @@ PLIST
 # contains it, and every binary should get only the entitlements it needs. `find -depth`
 # lists a bundle after its contents; -type f skips the framework's symlinks (Sparkle ->
 # Versions/Current/Sparkle), and a .framework path signs the Versions/Current bundle.
-# Sparkle's helpers and XPC services keep their own sandbox entitlements. The loop body is
-# a subshell: `|| exit 1` makes a failed codesign end the pipeline, and set -e the script.
+# Sparkle's helpers and XPC services keep their own sandbox entitlements. The Agent SDK's
+# vendored `claude` is a Bun-built Mach-O with a JIT of its own, so it takes the same
+# entitlements as node; every other nested binary gets none. The loop body is a subshell:
+# `|| exit 1` makes a failed codesign end the pipeline, and set -e the script.
 find "$APP/Contents" -depth \( -type f -o -type d \) -print | while IFS= read -r code; do
   case "$code" in
     "$APP/Contents/Resources/node"|"$APP/Contents/MacOS/yorozu-native"|"$APP/Contents/MacOS/Yorozu") continue ;;
@@ -184,6 +221,10 @@ find "$APP/Contents" -depth \( -type f -o -type d \) -print | while IFS= read -r
     "$APP/Contents/Frameworks/Sparkle.framework"|"$APP/Contents/Frameworks/Sparkle.framework/"*)
       codesign --force --options runtime --timestamp \
         --preserve-metadata=entitlements,requirements,flags --sign "$IDENTITY" "$code" || exit 1
+      ;;
+    "$APP/Contents/Resources/runtime/node_modules/@anthropic-ai/claude-agent-sdk-darwin-"*/claude)
+      codesign --force --options runtime --timestamp \
+        --entitlements apps/mac/Node.entitlements --sign "$IDENTITY" "$code" || exit 1
       ;;
     *) codesign --force --options runtime --timestamp --sign "$IDENTITY" "$code" || exit 1 ;;
   esac

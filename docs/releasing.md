@@ -12,11 +12,20 @@ before merging. Builds run in the same workflow because bot-created tags do not 
 
 ## Versions
 
-Neither number is typed. The marketing version is the latest `v*` tag and `CFBundleVersion` is the
-commit count, which rises with every commit and never repeats. Sparkle compares `CFBundleVersion`,
-so that is what makes one build newer than another, and the build number is in the DMG's name so
-two builds of one tag are two files rather than one URL with two meanings. `scripts/build-ios.sh`
-derives both the same way.
+Neither number is typed. The marketing version is the latest `v*` tag on both platforms. The build
+number comes from git on both too, but each counts differently, because each platform's consumer
+asks something different of it.
+
+On the Mac, `CFBundleVersion` is the whole commit count, which rises with every commit and never
+repeats. Sparkle compares `CFBundleVersion` *across* versions, so that is what makes one build
+newer than another and it has to stay globally monotonic. It is also in the DMG's name so two
+builds of one tag are two files rather than one URL with two meanings.
+
+On iOS, `scripts/build-ios.sh` counts commits since that tag, plus one so the tagged commit is
+build 1 (Apple rejects `0`): `0.2.4 (1)`, `0.2.4 (2)`, ... then `0.2.5 (1)`. Apple only needs the
+number unique and rising *within* one marketing version, and TestFlight groups builds by version,
+so a tester can read `(2)` as the second build of that version, which the global count never said.
+Otherwise the same properties: no file to bump, and the same number on any checkout of a commit.
 
 `apps/ios/Project.swift` and `scripts/dev-bundle.sh` read `version.txt` for development builds
 and append `-beta` to the display label. Release Please maintains that file. Shipping builds
@@ -42,9 +51,16 @@ and the menu bar sits at `starting`. The nodejs.org build links nothing but syst
 tarball is cached in `dist/`, and the build runs `node --version` once before signing so a node
 that cannot start fails the build rather than the user.
 
-The bundle is Developer ID signed with the hardened runtime and `apps/mac/Yorozu.entitlements`,
-which is only the three exceptions Node needs: JIT, unsigned executable memory, and library
-validation off. There is no sandbox — the agent drives the whole Mac. The DMG is signed too.
+The bundle is Developer ID signed with the hardened runtime, inside out and without `--deep`,
+so each binary carries only the entitlements it needs. `apps/mac/Yorozu.entitlements`, for the
+app and the `yorozu-native` helper, holds only the privacy usage entitlements (Apple Events,
+camera, microphone, contacts, calendars, location, photos) — no hardened-runtime exceptions, so
+the app and helper cannot load unsigned code or write executable memory. The bundled `node` and
+the Agent SDK's vendored Bun-built `claude` are signed with `apps/mac/Node.entitlements`, which
+grants the two exceptions their JITs need: JIT and unsigned executable memory, no library
+validation exception and no TCC keys. Sparkle's framework, helpers and XPC services keep the
+entitlements they shipped with. There is no sandbox — the agent drives the whole Mac. The DMG
+is signed too.
 
 The bundled runtime is large: `@openai/codex` and `@anthropic-ai/claude-agent-sdk` vendor ~277 MB
 and ~194 MB of platform binaries respectively, which is most of the DMG.

@@ -1,4 +1,7 @@
 import Foundation
+#if os(iOS)
+import UIKit
+#endif
 
 /// Every thread a client knows about: the connection, the events per thread, and whether the
 /// runtime is reachable. Shared by both apps — what differs between them is the
@@ -45,6 +48,8 @@ public final class ChatModel {
     public private(set) var state: TransportState = .connecting
     /// Starts pessimistic: the transport tells us the truth when it connects.
     public private(set) var ownerOnline = false
+    public private(set) var updateStatus = UpdateStatusData(phase: .none)
+    public var onUpdateStatus: ((UpdateStatusData) -> Void)?
     public private(set) var failure: String?
     /// Action IDs already answered from this device, so the card stops offering buttons.
     public private(set) var answered: Set<String> = []
@@ -58,12 +63,16 @@ public final class ChatModel {
     public private(set) var rules: [ApprovalRule] = []
     /// Global bypass reported by the Mac runtime. Off until explicitly reported otherwise.
     public private(set) var yoloMode = false
+    /// When the bypass switches itself off, in epoch ms. Nil while it is off.
+    public private(set) var yoloUntil: Int?
+    /// True once the runtime answered this device's request to turn it on with "ask the Mac".
+    public private(set) var yoloPending = false
     /// What this device chose for each answered action, so the card can say so afterwards.
     public private(set) var choices: [String: ApprovalAnswerData.Answer] = [:]
     /// One composer draft per thread, so switching threads does not lose what was typed.
-    public var drafts: [String: String] = [:]
+    public var drafts: [String: String] = [:] { didSet { saveComposerSoon() } }
     /// Files staged in each thread's composer but not yet sent, alongside its draft text.
-    public var attachments: [String: [MessageAttachment]] = [:]
+    public var attachments: [String: [MessageAttachment]] = [:] { didSet { saveComposerSoon() } }
     /// Threads with a turn in flight, so the composer offers Stop rather than Send.
     ///
     /// Set when this device sends, cleared by the agent message flagged `done` that ends the
@@ -132,7 +141,7 @@ public final class ChatModel {
     /// The thread the user is looking at, set by whatever owns the navigation: the top of the
     /// phone's path, or the Mac's sidebar selection. Nil means none is open.
     public var openThread: String? {
-        didSet { if openThread != oldValue { reportRead() } }
+        didSet { if openThread != oldValue { reportRead(); saveComposerSoon() } }
     }
     /// Whether this device is actually in front of somebody: the app is active, and on the Mac
     /// the chat window is the key window as well. Set by whichever app owns the scene.
@@ -159,12 +168,31 @@ public final class ChatModel {
     public var onDevices: (() -> Void)?
     /// Called whenever the runtime sends a new rule list.
     public var onRules: (() -> Void)?
+    /// Called when the runtime relays a phone's request to turn YOLO on; the host Mac confirms it.
+    public var onApprovalSettingsRequest: ((ApprovalSettingsRequestData) -> Void)?
     /// Called for every event kept in a thread, after it has been applied.
     public var onEvent: ((YorozuEvent) -> Void)?
 
     private let transport: any ChatTransport
     private let cache: ThreadCache?
     @ObservationIgnored private var cacheWrite: Task<Void, Never>?
+    @ObservationIgnored private var composerWrite: Task<Void, Never>?
+
+    private func saveComposerSoon() {
+        guard cache != nil else { return }
+        composerWrite?.cancel()
+        composerWrite = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, let self else { return }
+            do { try self.saveComposer() }
+            catch { self.failure = "Could not save draft: \(error.localizedDescription)" }
+        }
+    }
+
+    private func saveComposer() throws {
+        try cache?.save(composer: .init(drafts: drafts, attachments: attachments, threads: draftThreads,
+                                       knownThreads: synced, openThread: openThread))
+    }
     /// Replay progress follows the runtime's log order, independently of live events and
     /// the timeline's timestamp order. Advancing from either can skip unseen sync pages.
     private var syncLastSeen: [String: String] = [:]
@@ -216,12 +244,24 @@ public final class ChatModel {
         synced = cache.threads()
         syncLastSeen = cache.lastSeen()
         outbox = Outbox.pruned(cache.outbox())
+        if let composer = cache.composer() {
+            drafts = composer.drafts
+            attachments = composer.attachments
+            draftThreads = composer.threads
+            openThread = composer.openThread
+            for thread in composer.knownThreads ?? [] where !synced.contains(where: { $0.id == thread.id }) {
+                synced.append(thread)
+            }
+        }
         for thread in synced {
             // Older clients replaced streamed replies in place, leaving their final
             // timestamp ahead of the tool history below them in the saved array.
             let events = cache.events(threadId: thread.id).sorted { $0.ts < $1.ts }
             timeline(thread.id).events = events
             for event in events { applyAnswerState(event) }
+        }
+        for item in outbox {
+            if case .message = item.event.payload { upsert(item.event, persist: false) }
         }
     }
 
@@ -385,7 +425,20 @@ public final class ChatModel {
     /// Whether an event sent now would actually reach the runtime. Anything else — still
     /// dialling, joined at the relay but not paired, or paired with the Mac asleep — is what
     /// the outbox is for.
-    public var canDeliver: Bool { state == .paired && ownerOnline }
+    public var canDeliver: Bool { state == .paired && ownerOnline && updateStatus.phase != .installing }
+
+    @discardableResult
+    public func updateControl(_ action: UpdateControlData.Action, updateId: String? = nil, version: String? = nil) -> String {
+        let request = event(.updateControl(UpdateControlData(action: action, updateId: updateId, version: version)), in: "")
+        emit(request)
+        return request.id
+    }
+
+    public func saveForRestart() throws {
+        guard let cache else { throw CocoaError(.fileWriteUnknown) }
+        try cache.savePending(outbox)
+        try saveComposer()
+    }
 
     /// What a bubble says about a message, or nil for one that went out normally. A message sent
     /// on a live link and waiting for its receipt is going out normally: the caption appears
@@ -427,7 +480,7 @@ public final class ChatModel {
     /// `queue` says whether there was a link to try now.
     private func deliver(_ event: YorozuEvent, queue: Bool) {
         outbox = Outbox.pruned(outbox + [OutboxItem(event: event)])
-        saveOutbox()
+        guard saveOutbox() else { return }
         if !queue { flush() }
     }
 
@@ -442,7 +495,7 @@ public final class ChatModel {
     /// leaves when the runtime's `receipt` names it (``apply(_:)``), and until then every flush
     /// sends it again — the runtime keys on the id, so a copy that did land is dropped there.
     public func flush() {
-        guard !flushing, canDeliver, !outbox.isEmpty else { return }
+        guard !flushing, canDeliver, !outbox.isEmpty, saveOutbox() else { return }
         flushing = true
         Task { [weak self] in
             var sent: Set<String> = []
@@ -474,9 +527,17 @@ public final class ChatModel {
         outbox[index].tries += 1
     }
 
-    private func saveOutbox() {
+    @discardableResult
+    private func saveOutbox() -> Bool {
         outbox = Outbox.pruned(outbox)
-        cache?.save(outbox: outbox)
+        do {
+            try cache?.savePending(outbox)
+            try saveComposer()
+            return true
+        } catch {
+            failure = "Could not save pending messages: \(error.localizedDescription)"
+            return false
+        }
     }
 
     /// Stops the turn running in a thread. The runtime cancels the agent and every agent it
@@ -510,6 +571,7 @@ public final class ChatModel {
             cwd: agent == .yorozu ? nil : cwd
         )
         draftThreads.insert(thread, at: 0)
+        saveComposerSoon()
         return thread
     }
 
@@ -722,7 +784,14 @@ public final class ChatModel {
 
     public func setYoloMode(_ enabled: Bool) {
         yoloMode = enabled
+        yoloPending = false
         emit(control(.approvalSettings(ApprovalSettingsData(yolo: enabled))))
+    }
+
+    /// The Mac's answer to a phone's request: turns the bypass on for `hours`. Local state is
+    /// left alone here; the runtime's broadcast is what switches it, for every device at once.
+    public func allowYolo(hours: Int, requestId: String) {
+        emit(control(.approvalSettings(ApprovalSettingsData(yolo: true, hours: hours, requestId: requestId))))
     }
 
     /// "Not now" on a proposal: nothing is stored either way, so this is view state only.
@@ -759,6 +828,12 @@ public final class ChatModel {
     }
 
     private func emit(_ event: YorozuEvent) {
+        switch event.payload {
+        case .threadRecover:
+            deliver(event, queue: !canDeliver)
+            return
+        default: break
+        }
         let previous = emitter
         emitter = Task { [transport] in
             await previous?.value
@@ -768,7 +843,15 @@ public final class ChatModel {
 
     /// Asks the runtime who is paired. It also pushes a fresh list whenever one comes or goes.
     public func requestDevices() {
-        emit(.deviceList(DeviceListData(devices: [])), in: "")
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        #if os(iOS)
+        let platform = UIDevice.current.userInterfaceIdiom == .pad ? "iPadOS" : "iOS"
+        #else
+        let platform = "macOS"
+        #endif
+        let patch = version.patchVersion > 0 ? ".\(version.patchVersion)" : ""
+        emit(.deviceList(DeviceListData(devices: [], name:
+            "\(platform) \(version.majorVersion).\(version.minorVersion)\(patch)")), in: "")
     }
 
     /// Forgets a paired device, here and at the relay. Answered with a new list.
@@ -799,6 +882,13 @@ public final class ChatModel {
         switch update {
         case .state(let state):
             self.state = state
+            if state != .paired {
+                ownerOnline = false
+                if updateStatus.phase != .none && updateStatus.phase != .installing {
+                    updateStatus.phase = .unknown
+                    updateStatus.deadline = nil
+                }
+            }
             if state == .paired {
                 failure = nil
                 // Pull is truth. Nothing sent while this socket was down was kept for us —
@@ -808,17 +898,31 @@ public final class ChatModel {
                 requestSync()
                 requestDevices()
                 requestRules()
+                if ownerOnline { updateControl(.status) }
                 resumeResultRequests()
                 onPaired?()
                 flush()
             }
         case .ownerOnline(let online):
             ownerOnline = online
-            if online { resumeResultRequests() }
+            if !online && updateStatus.phase != .none && updateStatus.phase != .installing {
+                updateStatus.phase = .unknown
+                updateStatus.deadline = nil
+            }
+            if online {
+                resumeResultRequests()
+                if state == .paired { updateControl(.status) }
+            }
             // The Mac waking up is the other half of "there is somewhere to send to".
             if online { flush() }
         case .event(let event):
             switch event.payload {
+            case .updateStatus(let data):
+                updateStatus = data
+                onUpdateStatus?(data)
+                if data.phase != .installing { flush() }
+            case .updateControl:
+                break
             case .threadList(let data):
                 // Archived threads are kept: the phone's list draws them in a section of their
                 // own, which is also the only place they can be brought back from.
@@ -872,7 +976,15 @@ public final class ChatModel {
                 rules = data.rules
                 onRules?()
             case .approvalSettings(let data):
-                if let yolo = data.yolo { yoloMode = yolo }
+                if let yolo = data.yolo {
+                    yoloMode = yolo
+                    yoloUntil = yolo ? data.yoloUntil : nil
+                }
+                yoloPending = data.pending == true
+            // A phone asking for the bypass, relayed to the Mac for a yes or no. Not a thread's
+            // event either: nothing is stored until the Mac answers.
+            case .approvalSettingsRequest(let data):
+                onApprovalSettingsRequest?(data)
             case .receipt(let data):
                 receipted(data.eventId)
             default:

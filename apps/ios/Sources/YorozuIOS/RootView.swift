@@ -157,10 +157,16 @@ final class Session {
             return
         }
         #endif
+        #if DEBUG
+        // The e2e harness's way in: a simulator has no camera to scan with. Debug only, so a
+        // shipped build cannot be paired by whatever launched it.
         if let injected = launchArgument("yorozuPair") {
             // Surface the reason rather than silently falling back to the scanner.
             do { try pair(with: injected) } catch { failure = error.localizedDescription }
-        } else if let stored = PairingStore.load() {
+            return
+        }
+        #endif
+        if let stored = PairingStore.load() {
             isPairing = stored.paired != true
             connect(stored)
         }
@@ -387,6 +393,7 @@ final class Session {
                 pairing: stored.pairing,
                 identity: stored.identity,
                 paired: stored.paired == true,
+                counters: PairingCounterStorage(),
                 onPaired: PairingStore.markPaired
             )
             // A later pairing attempt replaces the previous reconnect loop as well as its UI.
@@ -398,7 +405,9 @@ final class Session {
             // at launch, and iOS answers whenever it likes — is told now rather than never.
             if let deviceToken { Task { await relay.registerPush(deviceToken: deviceToken) } }
             let model = ChatModel(transport: relay, cache: CacheStore.open())
+            #if DEBUG
             E2EHarness.attach(to: model)
+            #endif
             // The harness owns `onPaired` when it is running at all, so this is added to
             // whatever is already there rather than written over it.
             let onPaired = model.onPaired
@@ -651,6 +660,11 @@ struct RootView: View {
                     notificationSyncRevision: notification?.syncRevision
                 ) { agent, cwd in
                     path = [model.newDraft(agent: agent, cwd: cwd).id]
+                }
+            }
+            .safeAreaInset(edge: .top) {
+                if path.isEmpty {
+                    UpdateStatusView(status: model.updateStatus) { model.updateControl(.postpone) }
                 }
             }
             .overlay(alignment: .topTrailing) {

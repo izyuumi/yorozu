@@ -7,6 +7,8 @@ public enum YorozuCrypto {
     /// Part of the wire contract: both languages must feed HKDF these exact bytes.
     static let hkdfSalt = Data("yorozu-v1".utf8)
     static let hkdfInfo = Data("yorozu-session".utf8)
+    static let channelInfoMacToDevice = Data("yorozu-channel/mac->device".utf8)
+    static let channelInfoDeviceToMac = Data("yorozu-channel/device->mac".utf8)
     static let tagBytes = 16
 
     public struct Keypair: Sendable {
@@ -26,6 +28,11 @@ public enum YorozuCrypto {
     public enum CryptoError: Error {
         case malformed(String)
     }
+
+    /// Which end of the live channel a peer is. The Mac seals with the mac->device key and
+    /// opens with device->mac; a device does the reverse. Mirrors `ChannelRole` in
+    /// packages/shared/src/crypto.ts.
+    public enum ChannelRole: Sendable { case mac, device }
 
     /// X25519 keypair for the session key agreement.
     public static func generateKeypair() -> Keypair {
@@ -50,6 +57,34 @@ public enum YorozuCrypto {
                 sharedInfo: hkdfInfo,
                 outputByteCount: 32
             )
+    }
+
+    /// One key per direction, both from the same X25519 agreement. With a single shared key a
+    /// blind relay could hand a box back to the peer that sealed it and it would open as if the
+    /// other end had sent it; a box sealed under the send key never opens under the recv key,
+    /// so a reflected frame is dropped like any stranger's.
+    public static func deriveChannelKeys(
+        myPriv: Data,
+        theirPub: Data,
+        role: ChannelRole
+    ) throws -> (send: SymmetricKey, recv: SymmetricKey) {
+        let priv = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: myPriv)
+        let pub = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: theirPub)
+        let secret = try priv.sharedSecretFromKeyAgreement(with: pub)
+        func key(_ info: Data) -> SymmetricKey {
+            secret.hkdfDerivedSymmetricKey(
+                using: SHA256.self,
+                salt: hkdfSalt,
+                sharedInfo: info,
+                outputByteCount: 32
+            )
+        }
+        let macToDevice = key(channelInfoMacToDevice)
+        let deviceToMac = key(channelInfoDeviceToMac)
+        switch role {
+        case .mac: return (send: macToDevice, recv: deviceToMac)
+        case .device: return (send: deviceToMac, recv: macToDevice)
+        }
     }
 
     public static func seal(key: SymmetricKey, plaintext: Data) throws -> SealedBox {

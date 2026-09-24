@@ -1,6 +1,12 @@
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { expect, test, vi } from "vitest";
-import { codexNativeRunner, type CodexHandlers, type ConnectCodex } from "./codex-native.js";
-import type { NativeTurn } from "./native.js";
+import { codexNativeRunner, connectCodex, type CodexHandlers, type ConnectCodex } from "./codex-native.js";
+import { childEnv, type NativeTurn } from "./native.js";
+
+// No test may start a real `codex`: the one test that reaches spawn gets this stand-in child.
+const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
+vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 
 function fakeCodex(work: (handlers: CodexHandlers) => Promise<void> = async (h) => {
   h.notify("item/completed", { threadId: "native", item: { type: "agentMessage", id: "reply", text: "Done" } });
@@ -44,6 +50,16 @@ test("Codex starts/resumes native threads with cwd, models, effort and independe
   }
   expect(fake.close).toHaveBeenCalledTimes(3);
   expect(await runner.models!()).toEqual([{ id: "model-a", label: "Model A", providerLabel: "Codex", efforts: ["high", "ultra"] }]);
+});
+
+test.each([{ cwd: "" }, { cwd: "   " }, { cwd: undefined }])("Codex refuses a turn without a folder before the app server is spawned (%o)", async (folder) => {
+  const spawned = vi.fn();
+  const fake = fakeCodex();
+  const connect: ConnectCodex = (handlers) => { spawned(); return fake.connect(handlers); };
+  // The type requires cwd; the cast stands in for a JS caller or a thread record from before it did.
+  await expect(codexNativeRunner(connect).run(turn(folder as never))).rejects.toThrow("needs a working directory");
+  expect(spawned).not.toHaveBeenCalled();
+  expect(fake.calls).toEqual([]);
 });
 
 test.each([true, false])("Codex permission %s and multiple-choice/free-text answers return to native server", async (allow) => {
@@ -114,4 +130,23 @@ test("Codex Auto effort catalog uses the actual default even when it is not firs
     ] } : {}, notify() {}, close() {},
   });
   expect((await codexNativeRunner(connect).models!()).map((m) => [m.id, m.efforts])).toEqual([["default", ["high"]], ["first", ["low"]]]);
+});
+
+test("the Codex app server is spawned with the allowlisted env, never Yorozu's own", () => {
+  vi.stubEnv("YOROZU_STATE_DIR", "/private/state");
+  vi.stubEnv("GITHUB_TOKEN", "ghp_secret");
+  const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stdin: new PassThrough(), kill: vi.fn() });
+  spawnMock.mockReturnValueOnce(child);
+  try {
+    const ended = vi.fn();
+    connectCodex({ notify() {}, request: async () => ({}), ended }).close();
+    expect(spawnMock).toHaveBeenCalledOnce();
+    const [command, args, options] = spawnMock.mock.calls[0] as [string, string[], { env: Record<string, string>; stdio: unknown }];
+    expect([command, args, options.stdio]).toEqual(["codex", ["app-server"], ["pipe", "pipe", "ignore"]]);
+    expect(options.env).toEqual(childEnv());
+    expect(Object.keys(options.env).some((key) => key.startsWith("YOROZU_"))).toBe(false);
+    expect(options.env).not.toHaveProperty("GITHUB_TOKEN");
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(ended).toHaveBeenCalledOnce();
+  } finally { vi.unstubAllEnvs(); }
 });

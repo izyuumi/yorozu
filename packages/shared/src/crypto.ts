@@ -36,6 +36,11 @@ export interface SealedBox {
 /** Salt and info are part of the wire contract: both languages must use these bytes. */
 const HKDF_SALT = Buffer.from("yorozu-v1", "utf8");
 const HKDF_INFO = Buffer.from("yorozu-session", "utf8");
+/** One info string per direction of the live channel, so the two keys are never the same. */
+const CHANNEL_INFO = {
+  "mac->device": Buffer.from("yorozu-channel/mac->device", "utf8"),
+  "device->mac": Buffer.from("yorozu-channel/device->mac", "utf8"),
+} as const;
 
 const NONCE_BYTES = 12;
 const TAG_BYTES = 16;
@@ -81,13 +86,41 @@ export const generateKeypair = (): Keypair => rawPair(generateKeyPairSync("x2551
 /** Ed25519 keypair for signing relay frames. */
 export const generateSigningKeypair = (): Keypair => rawPair(generateKeyPairSync("ed25519"));
 
-/** 32-byte symmetric key. Both peers derive the same one from opposite halves. */
-export function deriveSessionKey(myPriv: Uint8Array, theirPub: Uint8Array): Uint8Array {
-  const shared = diffieHellman({
+const sharedSecret = (myPriv: Uint8Array, theirPub: Uint8Array): Buffer =>
+  diffieHellman({
     privateKey: importPrivate("x25519", myPriv),
     publicKey: importPublic("x25519", theirPub),
   });
-  return new Uint8Array(hkdfSync("sha256", shared, HKDF_SALT, HKDF_INFO, 32));
+
+/**
+ * 32-byte symmetric key. Both peers derive the same one from opposite halves. Push preview
+ * boxes are sealed under it; the live channel uses `deriveChannelKeys`.
+ */
+export function deriveSessionKey(myPriv: Uint8Array, theirPub: Uint8Array): Uint8Array {
+  return new Uint8Array(hkdfSync("sha256", sharedSecret(myPriv, theirPub), HKDF_SALT, HKDF_INFO, 32));
+}
+
+/** Which end of the live channel a peer is; the Mac app's client half is a `device` too. */
+export type ChannelRole = "mac" | "device";
+
+export interface ChannelKeys {
+  /** What this peer seals with. */
+  send: Uint8Array;
+  /** What it opens the other peer's boxes with. */
+  recv: Uint8Array;
+}
+
+/**
+ * The live channel's keys, one per direction from the same X25519 secret. A box the Mac sealed
+ * cannot be reflected back and pass as the phone's: the phone's key does not open it. The Mac's
+ * `send` is the device's `recv` and vice versa.
+ */
+export function deriveChannelKeys(myPriv: Uint8Array, theirPub: Uint8Array, role: ChannelRole): ChannelKeys {
+  const shared = sharedSecret(myPriv, theirPub);
+  const derive = (info: Buffer): Uint8Array => new Uint8Array(hkdfSync("sha256", shared, HKDF_SALT, info, 32));
+  const macToDevice = derive(CHANNEL_INFO["mac->device"]);
+  const deviceToMac = derive(CHANNEL_INFO["device->mac"]);
+  return role === "mac" ? { send: macToDevice, recv: deviceToMac } : { send: deviceToMac, recv: macToDevice };
 }
 
 export function seal(key: Uint8Array, plaintext: Uint8Array): SealedBox {

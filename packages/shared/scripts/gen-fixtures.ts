@@ -5,6 +5,7 @@
 import { writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import {
+  deriveChannelKeys,
   deriveSessionKey,
   generateKeypair,
   generateSigningKeypair,
@@ -13,14 +14,17 @@ import {
   toBase64Url,
 } from "../src/crypto.ts";
 import { encodePairingString, type QrPayload } from "../src/events.ts";
-import { VECTOR_PLAINTEXT, vectorsPath, type Vectors } from "../src/vectors.ts";
+import { encodeEnvelope } from "../src/channel.ts";
+import { VECTOR_EVENT, VECTOR_PLAINTEXT, VECTOR_SEQ, vectorsPath, type Vectors } from "../src/vectors.ts";
 
 const alice = generateKeypair();
 const bob = generateKeypair();
 const signer = generateSigningKeypair();
 const sessionKey = deriveSessionKey(alice.privateKey, bob.publicKey);
+const channel = deriveChannelKeys(alice.privateKey, bob.publicKey, "mac");
 const plaintext = Buffer.from(VECTOR_PLAINTEXT, "utf8");
 const { nonce, ciphertext } = seal(sessionKey, plaintext);
+const channelBox = seal(channel.send, encodeEnvelope(VECTOR_SEQ, VECTOR_EVENT));
 
 const qr: QrPayload = {
   v: 1,
@@ -36,6 +40,11 @@ const vectors: Vectors = {
   bobPriv: toBase64Url(bob.privateKey),
   bobPub: toBase64Url(bob.publicKey),
   sessionKey: toBase64Url(sessionKey),
+  channelMacToDevice: toBase64Url(channel.send),
+  channelDeviceToMac: toBase64Url(channel.recv),
+  channelSeq: VECTOR_SEQ,
+  channelNonce: toBase64Url(channelBox.nonce),
+  channelCiphertext: toBase64Url(channelBox.ciphertext),
   nonce: toBase64Url(nonce),
   plaintext: toBase64Url(plaintext),
   ciphertext: toBase64Url(ciphertext),

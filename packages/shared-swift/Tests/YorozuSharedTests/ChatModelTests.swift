@@ -85,6 +85,105 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
 }
 
 @MainActor
+@Test func updateRestartPreservesDraftsAttachmentsSelectionAndPendingMessages() async throws {
+    let cache = ThreadCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString), key: SymmetricKey(size: .bits256))
+    defer { try? FileManager.default.removeItem(at: cache.directory) }
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    model.start()
+    await transport.yield(.ownerOnline(true))
+    await transport.yield(.state(.paired))
+    #expect(await eventually { model.canDeliver })
+    await transport.yield(.event(event("update", .updateStatus(UpdateStatusData(phase: .installing, updateId: "u1")))))
+    #expect(await eventually { !model.canDeliver })
+    let queuedThread = model.newDraft()
+    model.send("during restart", in: queuedThread.id)
+    let pending = model.outbox.map(\.id)
+    #expect(pending.count == 2)
+    let draft = model.newDraft(agent: .codex, cwd: "/project")
+    model.drafts[draft.id] = "unfinished draft"
+    model.attachments[draft.id] = [MessageAttachment(name: "p.png", mime: "image/png", data: "aGk=")]
+    model.openThread = draft.id
+    try model.saveForRestart()
+    let restoredTransport = FakeTransport()
+    let restored = ChatModel(transport: restoredTransport, cache: cache)
+    #expect(restored.drafts[draft.id] == "unfinished draft")
+    #expect(restored.attachments[draft.id] == model.attachments[draft.id])
+    #expect(restored.openThread == draft.id)
+    #expect(restored.draft == draft)
+    #expect(restored.outbox.map(\.id) == pending)
+    #expect(restored.events[queuedThread.id]?.count == 1)
+    restored.start()
+    await restoredTransport.yield(.ownerOnline(true))
+    await restoredTransport.yield(.state(.paired))
+    #expect(await eventually { restored.canDeliver })
+    var commands: [YorozuEvent] = []
+    for _ in 0..<100 {
+        commands = await restoredTransport.sent.filter { pending.contains($0.id) }
+        if commands.count == 2 { break }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(commands.map(\.id) == pending)
+    for id in pending { await restoredTransport.yield(.event(event("receipt-" + id, .receipt(ReceiptData(eventId: id))))) }
+    #expect(await eventually { restored.outbox.isEmpty })
+    model.close(); restored.close()
+}
+
+@MainActor
+@Test func failedRestartSnapshotIsReportedInsteadOfLosingDrafts() throws {
+    let file = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    try Data().write(to: file)
+    defer { try? FileManager.default.removeItem(at: file) }
+    let cache = ThreadCache(directory: file, key: SymmetricKey(size: .bits256))
+    let model = ChatModel(transport: FakeTransport(), cache: cache)
+    #expect(throws: (any Error).self) { try model.saveForRestart() }
+}
+
+@MainActor
+@Test func returningHostClearsInstallingWithoutReconnectingPhoneAndReplaysOutbox() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    await transport.yield(.event(event("installing", .updateStatus(UpdateStatusData(phase: .installing, updateId: "u1")))))
+    #expect(await eventually { !model.canDeliver })
+    await transport.yield(.ownerOnline(false))
+    #expect(await eventually { !model.ownerOnline })
+    model.send("while updating", in: "home")
+    let messageId = model.outbox.first!.id
+    let before = await sent(by: transport, atLeast: pairingSends).count
+    await transport.yield(.ownerOnline(true))
+    let requests = await sent(by: transport, atLeast: before + 1)
+    #expect(requests.last?.payload == .updateControl(UpdateControlData(action: .status)))
+    #expect(!requests.contains { $0.id == messageId })
+    await transport.yield(.event(event("restarted", .updateStatus(UpdateStatusData(phase: .none)))))
+    #expect(await eventually { model.canDeliver })
+    let delivered = await sent(by: transport, atLeast: before + 2)
+    #expect(delivered.filter { $0.id == messageId }.count == 1)
+    model.close()
+}
+
+@MainActor
+@Test func taskRecoveryRemainsDurableDuringInstallation() async throws {
+    let cache = ThreadCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString), key: SymmetricKey(size: .bits256))
+    defer { try? FileManager.default.removeItem(at: cache.directory) }
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    model.start()
+    await transport.yield(.state(.paired))
+    await transport.yield(.ownerOnline(true))
+    #expect(await eventually { model.canDeliver })
+    await transport.yield(.event(event("install", .updateStatus(UpdateStatusData(phase: .installing)))))
+    #expect(await eventually { !model.canDeliver })
+    var thread = ThreadSummary(id: "work", title: "Work", archived: false, lastActivity: 1)
+    thread.interruptedTurnId = "turn"
+    model.recover(thread, action: .continue)
+    try model.saveForRestart()
+    let restored = ChatModel(transport: FakeTransport(), cache: cache)
+    #expect(restored.outbox.map(\.event.payload.kind) == [.threadRecover])
+    #expect(restored.outbox.map(\.id) == model.outbox.map(\.id))
+    model.close()
+}
+
+@MainActor
 @Test func connectionPresentationFreezesInBackgroundAndDelaysDisconnection() async throws {
     // Delays are long next to the short "not yet" checks, and the final change is polled for,
     // so a slow CI VM that oversleeps cannot flip either kind of expectation.
@@ -126,8 +225,8 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
 /// What pairing itself puts on the wire before a test sends anything: pull is truth, so every
 /// join asks for the thread list, a sync, the devices and the rules rather than trusting what
 /// was last pushed. Tests that count sends start from here.
-private let pairingSends = 4
-private let pairingKinds: Set<YorozuEvent.Kind> = [.threadList, .syncRequest, .deviceList, .ruleList]
+private let pairingSends = pairingKinds.count
+private let pairingKinds: Set<YorozuEvent.Kind> = [.threadList, .syncRequest, .deviceList, .ruleList, .updateControl]
 
 /// A model with a live link behind it: paired and the Mac awake. Anything less and a send goes
 /// to the outbox instead of to the transport, which is what ``OutboxTests`` is about.
@@ -139,6 +238,18 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     model.start()
     _ = await eventually { model.canDeliver }
     return model
+}
+
+@MainActor
+@Test func deviceRequestAnnouncesReadableOSName() async {
+    let transport = FakeTransport()
+    _ = await connected(transport)
+    let requests = await sent(by: transport, atLeast: pairingSends)
+    let name = requests.compactMap { event -> String? in
+        guard case .deviceList(let data) = event.payload else { return nil }
+        return data.name
+    }.first
+    #expect(name?.hasPrefix("macOS ") == true)
 }
 
 @MainActor

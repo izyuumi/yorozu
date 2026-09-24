@@ -1,5 +1,13 @@
 import { expect, test } from "vitest";
-import { notificationPreview, notifyFor, NOTIFY_BODY, NOTIFY_PREVIEW_BYTES } from "./notify.js";
+import {
+  approvalCardSummary,
+  decodeNotificationPreview,
+  encodeNotificationPreview,
+  notificationPreviewBody,
+  notifyFor,
+  NOTIFY_BODY,
+  NOTIFY_PREVIEW_BYTES,
+} from "./notify.js";
 import { threadRef } from "./crypto.js";
 import type { YorozuEvent } from "./events.js";
 
@@ -31,7 +39,7 @@ test("deltas, delegated finals and tool traffic wake nobody", () => {
   // A tool result, cut or whole, is never a notification: nothing of it reaches a lock screen.
   const cut = event({ kind: "tool_result", data: { callId: "c", ok: true, output: "x".repeat(4096), truncated: true } });
   expect(notifyFor(cut)).toBeNull();
-  expect(notificationPreview(cut)).toBeNull();
+  expect(notificationPreviewBody(cut)).toBeNull();
 });
 
 test("cards are the class worth interrupting someone for, and a stop is a failure", () => {
@@ -69,15 +77,66 @@ test("a thread reference is short, stable, and says nothing about the thread", (
   expect(threadRef(id)).toMatch(/^[A-Za-z0-9_-]{8}$/);
 });
 
-test("only a completed reply gets a byte-bounded preview", () => {
-  expect(notificationPreview(event({ kind: "message", data: { role: "agent", text: "  hello  ", done: true } })))
+test("a completed reply and a card get a byte-bounded preview body; nothing else does", () => {
+  expect(notificationPreviewBody(event({ kind: "message", data: { role: "agent", text: "  hello  ", done: true } })))
     .toBe("hello");
-  expect(notificationPreview(event({ kind: "message", data: { role: "agent", text: "partial" } })))
+  expect(notificationPreviewBody(event({ kind: "message", data: { role: "agent", text: "partial" } })))
     .toBeNull();
-  const preview = notificationPreview(event({
+  expect(notificationPreviewBody(event({ kind: "message", data: { role: "agent", text: "  ", done: true } })))
+    .toBeNull();
+  expect(notificationPreviewBody(event({ kind: "interrupt", data: {} }))).toBeNull();
+  const preview = notificationPreviewBody(event({
     kind: "message",
     data: { role: "agent", text: "界".repeat(200), done: true },
   }))!;
   expect(Buffer.byteLength(preview)).toBeLessThanOrEqual(NOTIFY_PREVIEW_BYTES);
   expect(preview.endsWith("�")).toBe(false);
+
+  // A card's line is what it wants to do and to what, so "Allow?" has a subject.
+  expect(notificationPreviewBody(event({
+    kind: "approval_card",
+    data: { actionId: "a", actionClass: "run-command", target: "  echo   hi\n" },
+  }))).toBe("Run a command: echo hi");
+  expect(notificationPreviewBody(event({
+    kind: "question_card",
+    data: { questionId: "q", question: "Which one? ", options: ["a"] },
+  }))).toBe("Which one?");
+  const long = notificationPreviewBody(event({
+    kind: "approval_card",
+    data: { actionId: "a", actionClass: "edit-file", target: "界".repeat(200) },
+  }))!;
+  expect(Buffer.byteLength(long)).toBeLessThanOrEqual(NOTIFY_PREVIEW_BYTES);
+});
+
+test("a card summary speaks the card's verb, or the tool a native agent named", () => {
+  expect(approvalCardSummary({ actionId: "a", actionClass: "send-message", target: "bob@example.com" }))
+    .toBe("Send a message: bob@example.com");
+  expect(approvalCardSummary({ actionId: "a", actionClass: "read-page", target: "" })).toBe("Read page");
+  expect(approvalCardSummary({ actionId: "a", actionClass: "Bash", target: '{ "command": "pwd" }', nativeAgent: "claude-code" }))
+    .toBe('Bash: { "command": "pwd" }');
+});
+
+test("a preview's plaintext is a versioned object, and decodes back to what was put in", () => {
+  const content = { body: "Run a command: echo hi", event: "6s82CDjb", quick: true };
+  const plaintext = encodeNotificationPreview(content);
+  expect(JSON.parse(plaintext)).toEqual({ v: 1, body: "Run a command: echo hi", event: "6s82CDjb", quick: true });
+  expect(decodeNotificationPreview(plaintext)).toEqual(content);
+  // A reply is about nothing answerable, and says so in both fields.
+  expect(decodeNotificationPreview(encodeNotificationPreview({ body: "hi", event: null, quick: false })))
+    .toEqual({ body: "hi", event: null, quick: false });
+  // Only a boolean true is quick; only a non-empty string is an event; an empty body is no preview.
+  expect(decodeNotificationPreview('{"v":1,"body":"x","event":"","quick":"true"}'))
+    .toEqual({ body: "x", event: null, quick: false });
+  expect(decodeNotificationPreview('{"v":1,"body":"","event":"e","quick":true}')).toBeNull();
+  expect(decodeNotificationPreview('{"v":1,"event":"e","quick":true}')).toBeNull();
+});
+
+test("a plaintext from before the object was a bare body, and permits no button", () => {
+  expect(decodeNotificationPreview("the secret reply")).toEqual({ body: "the secret reply", event: null, quick: false });
+  // JSON, but not the object: still the words as they are.
+  expect(decodeNotificationPreview('"quoted"')).toEqual({ body: '"quoted"', event: null, quick: false });
+  expect(decodeNotificationPreview("[1]")).toEqual({ body: "[1]", event: null, quick: false });
+  expect(decodeNotificationPreview('{"body":"no version","quick":true}'))
+    .toEqual({ body: '{"body":"no version","quick":true}', event: null, quick: false });
+  expect(decodeNotificationPreview("")).toBeNull();
 });

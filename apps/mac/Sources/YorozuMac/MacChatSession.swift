@@ -2,6 +2,7 @@ import AppKit
 import CryptoKit
 import Foundation
 import Security
+import YorozuKeepalive
 import YorozuShared
 
 enum MacRole: String, CaseIterable, Identifiable { case host, client; var id: Self { self } }
@@ -25,7 +26,7 @@ final class MacChatSession {
             UserDefaults.standard.set(MacRole.host.rawValue, forKey: Self.roleKey)
         }
         role = initialRole
-        model = initialRole == .host ? Self.localModel() : Self.idleModel()
+        model = initialRole == .host ? (try? Self.localModel()) ?? Self.idleModel() : Self.idleModel()
     }
 
     func start() {
@@ -139,6 +140,9 @@ final class MacChatSession {
         model.reconnect()
     }
 
+    /// Drops the client pairing: keys, counters and cache together. The counters live in the
+    /// same Keychain item as the keys, so clearing the record clears them; what an older build
+    /// left in `UserDefaults` goes with it.
     func unpair() {
         model.close(); relay = nil; model = Self.idleModel()
         pairedAt = nil; failure = nil
@@ -153,7 +157,22 @@ final class MacChatSession {
         let path = LocalSocketTransport.defaultPath()
         try? FileManager.default.removeItem(atPath: path)
         Sidecar.shared.start()
-        model = Self.localModel(); configure(model)
+        do { model = try Self.localModel() }
+        catch {
+            failure = "Could not open encrypted local cache: \(error.localizedDescription)"
+            Log.write(failure!)
+            model = Self.idleModel()
+            return
+        }
+        configure(model)
+        // Only the host answers a phone's request to turn approvals off: the runtime sends it
+        // over the local socket alone, and the person at this keyboard is the one it is asking.
+        // Never on the relay model — a hostile host could otherwise pop consent alerts on a
+        // client Mac, and an Allow there would be sent back to the very host that asked.
+        model.onApprovalSettingsRequest = { [weak model] request in
+            guard let model else { return }
+            YoloConsent.ask(request, model: model)
+        }
         Task {
             var waited = 0
             while !FileManager.default.fileExists(atPath: path), waited < 100 {
@@ -167,9 +186,10 @@ final class MacChatSession {
         do {
             model.close()
             let relay = try RelayClient(pairing: stored.pairing, identity: stored.identity,
-                paired: stored.paired == true, onPaired: MacPairingStore.markPaired)
+                paired: stored.paired == true, counters: MacPairingCounterStorage(),
+                onPaired: MacPairingStore.markPaired)
             self.relay = relay; pairedAt = stored.pairedAt
-            let model = ChatModel(transport: relay, cache: MacCacheStore.open(), device: "mac")
+            let model = ChatModel(transport: relay, cache: try MacCacheStore.open(), device: "mac")
             model.onPaired = { [weak self] in
                 Task { @MainActor in self?.pairedAt = MacPairingStore.load()?.pairedAt }
             }
@@ -179,13 +199,18 @@ final class MacChatSession {
         }
     }
 
+    /// What both roles share. The YOLO consent hook is deliberately not here: see `startHost`.
     private func configure(_ model: ChatModel) {
         model.onThreads = { NSApp.dockTile.badgeLabel = model.unreadCount == 0 ? nil : String(model.unreadCount) }
+        model.onUpdateStatus = { [weak model] status in
+            guard let model else { return }
+            Updates.pending.receive(status, from: model)
+        }
     }
-    private static func localModel() -> ChatModel {
-        ChatModel(transport: LocalSocketTransport(path: LocalSocketTransport.defaultPath()), device: "mac")
+    private static func localModel() throws -> ChatModel {
+        ChatModel(transport: LocalSocketTransport(path: LocalSocketTransport.defaultPath()), cache: try MacCacheStore.openLocal(), device: "mac")
     }
-    private static func idleModel() -> ChatModel { ChatModel(transport: IdleTransport(), device: "mac") }
+    private static func idleModel() -> ChatModel { ChatModel(transport: IdleTransport(), cache: try? MacCacheStore.openLocal(), device: "mac") }
 }
 
 private actor IdleTransport: ChatTransport {
@@ -204,6 +229,17 @@ private enum MacClientKeychain {
         var q = query(account); q[kSecReturnData as String] = true; var item: CFTypeRef?
         return SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess ? item as? Data : nil
     }
+    static func loadRequired(_ account: String) throws -> Data? {
+        var query = query(account)
+        query[kSecReturnData as String] = true
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = item as? Data else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
+        return data
+    }
     static func save(_ data: Data, account: String) throws {
         clear(account); var q = query(account); q[kSecValueData as String] = data
         q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
@@ -214,25 +250,69 @@ private enum MacClientKeychain {
 }
 
 private enum MacPairingStore {
-    struct Stored: Codable { var pairing: QrPayload; var identity: PhoneIdentity; var paired: Bool?; var pairedAt: Date? }
+    /// `counters` is the live channel's sequence numbers, kept with the keys they count for
+    /// rather than in `UserDefaults`, and optional so a record from before it existed decodes.
+    struct Stored: Codable {
+        var pairing: QrPayload; var identity: PhoneIdentity; var paired: Bool?; var pairedAt: Date?
+        var counters: ChannelCounter?
+    }
     private static let account = "pairing"
     static func load() -> Stored? { MacClientKeychain.load(account).flatMap { try? JSONDecoder().decode(Stored.self, from: $0) } }
     static func save(_ value: Stored) throws { try MacClientKeychain.save(JSONEncoder().encode(value), account: account) }
-    static func clear() { MacClientKeychain.clear(account) }
+    /// The record and, with it, the counters; plus what an older build left in `UserDefaults`.
+    static func clear() { try? MacPairingCounterStorage().clearLegacy(); MacClientKeychain.clear(account) }
     static func markPaired() {
         guard var value = load(), value.paired != true else { return }
         value.paired = true; value.pairedAt = Date(); value.pairing.token = ""; try? save(value)
     }
 }
 
+/// The client Mac's channel counters, kept in the pairing record in the Keychain: the same
+/// arrangement as the phone's `PairingCounterStorage`, for the same reason. A record from a
+/// build that kept them in `UserDefaults` is read from there once, so an upgrade does not
+/// restart the sequence.
+private struct MacPairingCounterStorage: ChannelCounterStorage {
+    struct NoPairing: Error {}
+    func load() throws -> ChannelCounter? {
+        guard let stored = MacPairingStore.load() else { return nil }
+        if let counters = stored.counters { return counters }
+        return try legacyStore(for: stored)?.load()
+    }
+    func save(_ counter: ChannelCounter) throws {
+        guard var stored = MacPairingStore.load() else { throw NoPairing() }
+        stored.counters = counter; try MacPairingStore.save(stored)
+        legacyStore(for: stored)?.clear()
+    }
+    func clear() throws {
+        try clearLegacy()
+        guard var stored = MacPairingStore.load() else { return }
+        stored.counters = nil; try MacPairingStore.save(stored)
+    }
+    func clearLegacy() throws {
+        guard let stored = MacPairingStore.load() else { return }
+        legacyStore(for: stored)?.clear()
+    }
+    private func legacyStore(for stored: MacPairingStore.Stored) -> ChannelCounterStore? {
+        guard let macPub = Data(base64URLEncoded: stored.pairing.macPubkey) else { return nil }
+        return ChannelCounterStore(defaults: .standard, ownPub: stored.identity.sessionPublicKey, peerPub: macPub)
+    }
+}
+
 private enum MacCacheStore {
     private static let account = "thread-cache-key"
     private static var directory: URL { URL.applicationSupportDirectory.appending(path: "client-threads") }
-    static func open() -> ThreadCache { ThreadCache(directory: directory, key: key()) }
+    static func open() throws -> ThreadCache { ThreadCache(directory: directory, key: try key()) }
+    static func openLocal() throws -> ThreadCache {
+        let directory = URL(fileURLWithPath: LocalSocketTransport.defaultPath()).deletingLastPathComponent().appending(path: "host-client-cache")
+        return ThreadCache(directory: directory, key: try key(account: "host-thread-cache-key"))
+    }
     static func clear() { try? FileManager.default.removeItem(at: directory); MacClientKeychain.clear(account) }
-    private static func key() -> SymmetricKey {
-        if let data = MacClientKeychain.load(account), data.count == 32 { return SymmetricKey(data: data) }
+    private static func key(account: String = account) throws -> SymmetricKey {
+        if let data = try MacClientKeychain.loadRequired(account) {
+            guard data.count == 32 else { throw CocoaError(.fileReadCorruptFile) }
+            return SymmetricKey(data: data)
+        }
         let key = SymmetricKey(size: .bits256); let data = key.withUnsafeBytes { Data($0) }
-        try? MacClientKeychain.save(data, account: account); return key
+        try MacClientKeychain.save(data, account: account); return key
     }
 }

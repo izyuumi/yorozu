@@ -14,6 +14,23 @@ import Testing
     #expect(a == b)
 }
 
+/// The two directions must never share a key, or the relay could reflect a box back to its
+/// sender; and each end's send key must be the other end's recv key, or nothing would open.
+@Test func channelKeysAreDirectionalAndMirrorAcrossTheExchange() throws {
+    let mac = YorozuCrypto.generateKeypair()
+    let phone = YorozuCrypto.generateKeypair()
+    let macSide = try YorozuCrypto.deriveChannelKeys(
+        myPriv: mac.privateKey, theirPub: phone.publicKey, role: .mac)
+    let phoneSide = try YorozuCrypto.deriveChannelKeys(
+        myPriv: phone.privateKey, theirPub: mac.publicKey, role: .device)
+    let session = try YorozuCrypto.deriveSessionKey(myPriv: mac.privateKey, theirPub: phone.publicKey)
+    #expect(macSide.send != macSide.recv)
+    #expect(macSide.send != session)
+    #expect(macSide.recv != session)
+    #expect(macSide.send == phoneSide.recv)
+    #expect(macSide.recv == phoneSide.send)
+}
+
 @Test func sealThenOpenRoundTrips() throws {
     let key = SymmetricKey(size: .bits256)
     let plaintext = Data("hello from the Mac".utf8)
@@ -63,7 +80,11 @@ import Testing
     let sealed = try YorozuCrypto.seal(key: key, plaintext: Data("秘密の返事".utf8))
     let nonce = sealed.nonce.base64URLEncodedString()
     let ciphertext = sealed.ciphertext.base64URLEncodedString()
-    #expect(NotificationPreview.decrypt(nonce: nonce, ciphertext: ciphertext, key: key) == "秘密の返事")
+    // A bare string is a preview from before the object existed: all body, about no card.
+    let opened = NotificationPreview.decrypt(nonce: nonce, ciphertext: ciphertext, key: key)
+    #expect(opened?.body == "秘密の返事")
+    #expect(opened?.event == nil)
+    #expect(opened?.quick == false)
     #expect(NotificationPreview.decrypt(nonce: nonce, ciphertext: ciphertext, key: other) == nil)
     #expect(NotificationPreview.decrypt(nonce: "bad", ciphertext: ciphertext, key: key) == nil)
 }

@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import os
 
 /// Long-lived device identity for a paired phone: the Ed25519 key the relay checks on every
 /// frame, and the X25519 key the session key is agreed from. Stored as JSON by the caller
@@ -64,7 +65,7 @@ private struct Inbound: Decodable {
 
 /// Phone side of the blind relay: join a room with the one-time token from the pairing QR,
 /// announce our X25519 key in one cleartext `hello` frame, then exchange sealed
-/// ``YorozuEvent``s under the derived session key.
+/// ``ChannelEnvelope``s, one key per direction and a sequence number inside each box.
 ///
 /// The socket is not expected to last: a phone is backgrounded, changes network and is
 /// relaunched. So the token is spent exactly once — after the first accepted join the relay
@@ -92,7 +93,17 @@ public actor RelayClient: ChatTransport {
     private let identity: PhoneIdentity
     private let session: URLSession
     private let dial: URL
-    private let sessionKey: SymmetricKey
+    /// `send` is device->mac, `recv` mac->device; see ``YorozuCrypto/deriveChannelKeys``.
+    private let channelKeys: (send: SymmetricKey, recv: SymmetricKey)
+    /// Older Mac runtimes sealed plain events with one key in both directions.
+    private let legacyKey: SymmetricKey
+    private enum ChannelFormat { case current, legacy }
+    private var channelFormat: ChannelFormat?
+    /// Where each direction stands, persisted before every send and after every accept so a
+    /// relaunch can neither reuse a `seq` nor accept one it already saw.
+    private var counter: ChannelCounter
+    private let counterStore: any ChannelCounterStorage
+    private let logger = Logger(subsystem: "to.yumi.yorozu", category: "relay")
     private var updates: AsyncStream<Update>.Continuation?
 
     /// Where this device can be woken, kept so every join can say it again. The relay files it
@@ -116,12 +127,18 @@ public actor RelayClient: ChatTransport {
     private var pinger: Task<Void, Never>?
     private var pongDeadline: Task<Void, Never>?
 
-    /// Throws if the QR payload is not usable: a bad relay URL, a missing room, or a Mac
-    /// public key the session key cannot be agreed from.
+    /// Throws if the QR payload is not usable — a bad relay URL, a missing room, or a Mac
+    /// public key the channel keys cannot be agreed from — or if `counters` holds something it
+    /// cannot read: a counter that starts over is a channel the Mac drops every box from, and
+    /// that is better said now than discovered as a chat that never answers.
     ///
     /// - Parameters:
     ///   - paired: whether the relay already knows this device, so the one-time token in
     ///     `pairing` has been spent and must not be sent again.
+    ///   - session: the URLSession the socket is dialled on.
+    ///   - counters: where the sequence counters for this pairing are kept across relaunches.
+    ///     The apps pass storage that keeps them in the pairing record next to the identity;
+    ///     nil falls back to `UserDefaults.standard`, which an iOS reinstall does not keep.
     ///   - onPaired: called once, the first time the relay accepts this device, so the caller
     ///     can persist that fact. Called off the main actor.
     public init(
@@ -129,6 +146,7 @@ public actor RelayClient: ChatTransport {
         identity: PhoneIdentity,
         paired: Bool = false,
         session: URLSession = .shared,
+        counters: (any ChannelCounterStorage)? = nil,
         onPaired: (@Sendable () -> Void)? = nil
     ) throws {
         guard let url = URL(string: pairing.relayUrl), url.scheme?.hasPrefix("ws") == true else {
@@ -157,10 +175,21 @@ public actor RelayClient: ChatTransport {
         self.dial = dial
         self.paired = paired
         self.onPaired = onPaired
-        self.sessionKey = try YorozuCrypto.deriveSessionKey(
+        self.channelKeys = try YorozuCrypto.deriveChannelKeys(
+            myPriv: identity.sessionPrivateKey,
+            theirPub: macPub,
+            role: .device
+        )
+        self.legacyKey = try YorozuCrypto.deriveSessionKey(
             myPriv: identity.sessionPrivateKey,
             theirPub: macPub
         )
+        self.counterStore = counters ?? ChannelCounterStore(
+            defaults: .standard,
+            ownPub: identity.sessionPublicKey,
+            peerPub: macPub
+        )
+        self.counter = try counterStore.load() ?? ChannelCounter()
     }
 
     /// Dials, and keeps re-dialling after every drop, yielding every update until ``close()``.
@@ -209,6 +238,7 @@ public actor RelayClient: ChatTransport {
         while !stopped {
             updates?.yield(.state(.connecting))
             joined = false
+            channelFormat = nil
             nonce = ""
             let socket = session.webSocketTask(with: dial)
             self.socket = socket
@@ -266,9 +296,24 @@ public actor RelayClient: ChatTransport {
         socket.cancel()
     }
 
-    /// Seals `event` under the session key and sends it as one signed frame.
+    /// Seals `event` under the device->mac key, numbered, and sends it as one signed frame.
+    /// The counter is persisted before the frame leaves: a `seq` that went out and was then
+    /// forgotten would be reused after a relaunch, and the Mac would drop the reuse as a replay.
     public func send(_ event: YorozuEvent) async throws {
-        let box = try YorozuCrypto.seal(key: sessionKey, plaintext: try JSONEncoder().encode(event))
+        guard let channelFormat else {
+            throw YorozuCrypto.CryptoError.malformed("Mac has not answered pairing")
+        }
+        if channelFormat == .legacy {
+            let box = try YorozuCrypto.seal(key: legacyKey, plaintext: JSONEncoder().encode(event))
+            try await sendFrame(FrameBody(t: "box", n: box.nonce.base64URLEncodedString(),
+                c: box.ciphertext.base64URLEncodedString()))
+            return
+        }
+        let envelope = ChannelEnvelope(seq: counter.next(), event: event)
+        // Recorded before it is sealed, and not sent at all if it cannot be: the counter in
+        // memory has moved on either way, so a retry takes the next `seq`, never this one.
+        try counterStore.save(counter)
+        let box = try YorozuCrypto.seal(key: channelKeys.send, plaintext: try envelope.encoded())
         try await sendFrame(
             FrameBody(
                 t: "box",
@@ -327,7 +372,7 @@ public actor RelayClient: ChatTransport {
         case "owner":
             updates?.yield(.ownerOnline(message.online ?? false))
         case "frame":
-            open(message.payload)
+            acceptFrame(message.payload)
         default:
             break
         }
@@ -384,13 +429,12 @@ public actor RelayClient: ChatTransport {
             // secret's hash and nothing else, and the hash is bound to these two keys alone.
             let proof = pairing.secret.map { YorozuCrypto.helloProof(secret: $0, pub: pub, spub: spub) }
             try await sendFrame(FrameBody(t: "hello", pub: pub, spub: spub, proof: proof))
-            updates?.yield(.state(.paired))
         } catch {
             updates?.yield(.failed(error.localizedDescription))
         }
     }
 
-    private func open(_ payload: String?) {
+    func acceptFrame(_ payload: String?) {
         guard let payload, let raw = Data(base64URLEncoded: payload),
             let body = try? JSONDecoder().decode(FrameBody.self, from: raw),
             body.t == "box",
@@ -399,14 +443,49 @@ public actor RelayClient: ChatTransport {
         else { return }
         // Several phones can be paired at once: the Mac seals a copy per device and the relay
         // broadcasts all of them, so a frame we cannot open is simply another device's and is
-        // dropped without a word.
-        guard let plain = try? YorozuCrypto.open(key: sessionKey, nonce: nonce, ciphertext: ciphertext)
-        else { return }
-        do {
-            updates?.yield(.event(try JSONDecoder().decode(YorozuEvent.self, from: plain)))
-        } catch {
-            updates?.yield(.failed("undecodable event: \(error.localizedDescription)"))
+        // dropped without a word. Our own boxes, reflected, fail the same way: they were
+        // sealed under the other direction's key.
+        let current = try? YorozuCrypto.open(key: channelKeys.recv, nonce: nonce, ciphertext: ciphertext)
+        if current == nil {
+            // The first old-format box must be the Mac's greeting. Once a modern box has
+            // arrived, old captured boxes cannot switch this connection back.
+            if channelFormat == .current { return }
+            guard let plain = try? YorozuCrypto.open(key: legacyKey, nonce: nonce, ciphertext: ciphertext),
+                let event = try? JSONDecoder().decode(YorozuEvent.self, from: plain)
+            else { return }
+            if channelFormat == nil {
+                guard case .threadList = event.payload else { return }
+                channelFormat = .legacy
+                updates?.yield(.state(.paired))
+            }
+            updates?.yield(.event(event))
+            return
         }
+        guard let plain = current else { return }
+        // A replay or a malformed envelope is logged, not surfaced: `.failed` would put an error
+        // banner in front of the user for something the relay, not the Mac, did.
+        guard let envelope = try? ChannelEnvelope.decode(plain) else {
+            logger.notice("dropped box with a malformed envelope")
+            return
+        }
+        guard counter.accept(envelope.seq) else {
+            logger.notice("dropped box with seq \(envelope.seq) at or below \(self.counter.recv)")
+            return
+        }
+        // Written before the event is handed on, so a relaunch between the two cannot be made
+        // to take the same box again; a box whose acceptance cannot be recorded is not handed
+        // on at all. Only the numbers are logged, never what the box carried.
+        do {
+            try counterStore.save(counter)
+        } catch {
+            logger.error("dropped box with seq \(envelope.seq): counter could not be saved")
+            return
+        }
+        if channelFormat != .current {
+            channelFormat = .current
+            updates?.yield(.state(.paired))
+        }
+        updates?.yield(.event(envelope.event))
     }
 
     /// The relay verifies the signature over the base64url `payload` string itself.
