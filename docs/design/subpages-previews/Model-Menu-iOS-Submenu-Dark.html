@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Model and effort · iOS model list · OS flattens sections, rows name the provider · dark</title>
+<style>
+body{margin:0}
+a{color:var(--verm);text-decoration:none}a:hover{color:var(--verm);text-decoration:underline}
+[data-theme=light]{--canvas:#F8F4EA;--paper:#FFFDF7;--ink:#252320;--ink2:#6F6C65;--ink3:#8E8A80;--verm:#BC2D1C;--sage:#597553;--stone:#DFD7C9;--rule:#D2C8B7;--warn:#9A5200;--danger:#C7281B;--sel:#EFE9DB;--scrim:rgba(37,35,30,.38);--knob:#FFFFFF;--onverm:#FFFFFF;--shadow:0 1px 1.5px rgba(0,0,0,.035);--menu:rgba(255,253,247,.96);--mshadow:0 8px 32px rgba(37,35,30,.18),0 0 0 .5px rgba(37,35,30,.12)}
+[data-theme=dark]{--canvas:#1B1A17;--paper:#252320;--ink:#F3ECDC;--ink2:#A5A095;--ink3:#7E7A70;--verm:#F06047;--sage:#96B58C;--stone:#433F37;--rule:#4F493F;--warn:#F0A340;--danger:#FF6B5E;--sel:#3A3630;--scrim:rgba(0,0,0,.55);--knob:#FFFFFF;--onverm:#1B1A17;--shadow:0 1px 1.5px rgba(0,0,0,.25);--menu:rgba(43,41,36,.97);--mshadow:0 8px 32px rgba(0,0,0,.5),0 0 0 .5px rgba(255,255,255,.12)}
+[data-theme]{font-family:-apple-system, ui-sans-serif, 'SF Pro Text', 'Helvetica Neue', sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased;line-height:1.3}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer;line-height:inherit}
+input,textarea{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;outline:none;width:100%}
+input::placeholder,textarea::placeholder{color:var(--ink3)}
+.serif{font-family:ui-serif, 'New York', 'Iowan Old Style', Georgia, serif}
+.mono{font-family:ui-monospace, 'SF Mono', Menlo, monospace}
+.card{background:var(--paper);border-radius:14px;border:.75px solid var(--rule);box-shadow:var(--shadow);overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;min-height:44px;padding:10px 16px;font-size:17px;box-sizing:border-box;width:100%}
+.row+.row{border-top:.5px solid var(--rule)}
+.hd{font-size:13px;color:var(--ink2);padding:0 16px 7px;margin-top:22px}
+.ft{font-size:13px;color:var(--ink2);padding:7px 16px 0;line-height:1.35}
+.val{margin-left:auto;color:var(--ink2);text-align:right}
+.sub{font-size:13px;color:var(--ink2);line-height:1.3}
+.tile{width:36px;height:36px;border-radius:9px;background:var(--canvas);border:.75px solid var(--rule);display:flex;align-items:center;justify-content:center;flex:none}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.sw{width:51px;height:31px;border-radius:16px;position:relative;flex:none;margin-left:auto}
+.sw i{position:absolute;top:2px;width:27px;height:27px;border-radius:50%;background:var(--knob);box-shadow:0 2px 4px rgba(0,0,0,.25)}
+.sw.on{background:var(--verm)}.sw.on i{left:22px}.sw.off{background:var(--stone)}.sw.off i{left:2px}
+.nav{height:52px;display:flex;align-items:center;padding:0 16px;font-size:17px;position:relative;flex:none}
+.nav .t{position:absolute;left:0;right:0;text-align:center;font-weight:600;pointer-events:none}
+.act{color:var(--verm);font-size:17px;min-height:44px;display:flex;align-items:center}
+.grab{width:36px;height:5px;border-radius:3px;background:var(--rule);margin:6px auto 0}
+.mac{font-size:13px;line-height:1.3}
+.mrow{display:flex;align-items:center;gap:10px;padding:7px 12px;min-height:34px;box-sizing:border-box;width:100%}
+.mrow+.mrow{border-top:.5px solid var(--rule)}
+.mhd{font-size:13px;font-weight:600;padding:0 12px 6px;margin-top:18px;display:flex;align-items:center;gap:8px}
+.mft{font-size:11px;color:var(--ink2);padding:6px 12px 0;line-height:1.35}
+.mcard{background:var(--paper);border-radius:8px;border:.75px solid var(--rule);box-shadow:var(--shadow);overflow:hidden}
+.mbtn{font-size:13px;line-height:1;padding:5px 10px;border-radius:6px;background:var(--paper);border:.5px solid var(--rule);box-shadow:0 .5px 1px rgba(0,0,0,.12);color:var(--ink);white-space:nowrap}
+.mbtn.primary{background:var(--verm);color:var(--onverm);border-color:transparent}
+.mbtn.small{font-size:11px;padding:4px 8px}
+.mbtn.danger{color:var(--danger)}
+.mbtn[disabled]{opacity:.45}
+.msw{width:26px;height:15px;border-radius:8px;position:relative;flex:none}
+.msw i{position:absolute;top:1px;width:13px;height:13px;border-radius:50%;background:var(--knob);box-shadow:0 1px 2px rgba(0,0,0,.3)}
+.msw.on{background:var(--verm)}.msw.on i{left:12px}.msw.off{background:var(--stone)}.msw.off i{left:1px}
+.badge{display:flex;align-items:center;gap:5px;font-size:13px}
+.menu{background:var(--menu);border-radius:13px;box-shadow:var(--mshadow);overflow:hidden;backdrop-filter:blur(20px)}
+.mi{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 16px;font-size:17px;box-sizing:border-box;width:100%}
+.mi+.mi{border-top:.33px solid var(--rule)}
+.msec{height:8px;background:var(--stone);opacity:.6}
+.mhead{font-size:12px;color:var(--ink2);padding:8px 16px 4px;text-transform:none}
+.nsmenu{background:var(--menu);border-radius:7px;box-shadow:var(--mshadow);padding:5px;font-size:13px;width:max-content}
+.ni{display:flex;align-items:center;gap:6px;height:22px;padding:0 10px 0 22px;border-radius:4px;position:relative;white-space:nowrap}
+.ni.hl{background:var(--verm);color:var(--onverm)}
+.ni.dis{color:var(--ink3)}
+.ni .ck{position:absolute;left:6px;top:4px}
+.nsep{height:1px;background:var(--rule);margin:5px 8px}
+.nhead{font-size:11px;font-weight:600;color:var(--ink2);padding:4px 10px 2px 22px}
+.lbl{font-size:11px;color:var(--ink2);letter-spacing:.02em;text-transform:uppercase;margin:0 0 8px}
+.cu{display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px;padding:40px 24px;color:var(--ink2)}
+.cu b{font-size:20px;font-weight:600;color:var(--ink);margin-top:6px}
+.cu p{margin:0;font-size:15px;max-width:280px;line-height:1.35}
+.spin{width:20px;height:20px;border-radius:50%;border:2.5px solid var(--rule);border-top-color:var(--ink2);flex:none}
+html,body{background:#888;}body{padding:24px}</style></head>
+<body><div data-theme="dark" style="width:390px;height:844px;box-sizing:border-box;background:var(--canvas);display:flex;flex-direction:column;overflow:hidden;position:relative;border-radius:0px;"><div class="grab"></div><header class="nav"><button class="act" aria-label="‹ Threads">‹ Threads</button><span class="t">Weeknight dinners</span><button class="act" style="margin-left:auto;" >•••</button></header><div style="flex:1;padding:16px 16px 0;opacity:.55;display:flex;flex-direction:column;gap:12px"><div style="align-self:flex-end;background:var(--stone);border-radius:16px;padding:8px 12px;font-size:16px;max-width:75%">Did we ever pay the Kitanoya invoice?</div><div style="font-size:11px;color:var(--ink2);letter-spacing:.08em">YOROZU</div><div style="font-size:16px;line-height:1.4">Yes — the Kitanoya invoice was paid on 3 March. The receipt is filed under Documents/Invoices/2026.</div></div><div style="position:absolute;left:52px;bottom:78px"><div role="menu" class="menu" style="width:300px"><button class="mi" style="font-weight:600;gap:4px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none;"><path d="M15 6l-6 6 6 6"/></svg><span>Model</span></button><div class="msec"></div><button role="menuitem" class="mi" style=""><span style="display:flex;flex-direction:column;gap:1px;min-width:0"><span>Auto</span></span><span style="margin-left:auto"></span><span style="width:18px;flex:none"></span></button><div class="msec"></div><button role="menuitem" class="mi" style=""><span style="display:flex;flex-direction:column;gap:1px;min-width:0"><span>Claude · claude-opus-5</span></span><span style="margin-left:auto"></span><span style="width:18px;flex:none"></span></button><button role="menuitem" class="mi" style=""><span style="display:flex;flex-direction:column;gap:1px;min-width:0"><span>Claude · claude-sonnet-5</span></span><span style="margin-left:auto"></span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none;"><path d="M5 12.5l4.5 4.5L19 7"/></svg></button><div class="msec"></div><button role="menuitem" class="mi" style=""><span style="display:flex;flex-direction:column;gap:1px;min-width:0"><span>Codex · gpt-5.6</span></span><span style="margin-left:auto"></span><span style="width:18px;flex:none"></span></button></div></div><div style="margin:0 12px 8px;background:var(--paper);border-radius:14px;border:.8px solid var(--rule);display:flex;flex-direction:column"><label style="padding:12px 12px 6px;font-size:17px;color:var(--ink3)"><span style="position:absolute;width:1px;height:1px;overflow:hidden">Message Yorozu</span><input placeholder="Message Yorozu"></label><div style="display:flex;align-items:center;gap:4px;padding:0 4px 4px"><button aria-label="Attach" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--ink2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none;"><path d="M12 5v14M5 12h14"/></svg></button><button aria-label="Model and effort" aria-haspopup="menu" style="display:flex;align-items:center;gap:4px;padding:0 8px;min-height:44px;color:var(--ink2);font-size:15px"><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px">Claude · claude-sonnet-5 · High</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--ink2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none;"><path d="M6 9l6 6 6-6"/></svg></button><span style="flex:1"></span><button aria-label="Send" disabled style="width:44px;height:44px;display:flex;align-items:center;justify-content:center"><span style="width:30px;height:30px;border-radius:50%;border:1.5px solid var(--rule);display:flex;align-items:center;justify-content:center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ink3)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none;"><path d="M12 19V5M5 12l7-7 7 7"/></svg></span></button></div></div></div></body></html>

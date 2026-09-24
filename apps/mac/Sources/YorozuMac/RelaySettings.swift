@@ -21,14 +21,13 @@ struct RelayView: View {
     @AppStorage(RelaySettings.key) private var url = RelaySettings.defaultUrl
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Relay").font(.headline)
-            TextField("Relay URL", text: $url)
-                .textFieldStyle(.roundedBorder)
-                .labelsHidden()
-            Text("The blind relay your phone reaches this Mac through. Restart to apply.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        Section {
+            TextField("Relay", text: $url)
+        } footer: {
+            Group {
+                Text("The blind relay your phone reaches this Mac through. Restart to apply.")
+            }
+            .leadingFooter()
         }
     }
 }

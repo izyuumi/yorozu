@@ -30,6 +30,12 @@ public enum YorozuPalette {
         light: (0.349, 0.459, 0.325),
         dark: (0.588, 0.710, 0.549)
     )
+    /// Amber for a state that needs attention without being an error: an offline Mac, a picture
+    /// too big to send. Darker than the system orange so it holds 4.5:1 as text on paper.
+    public static let warning = adaptive(
+        light: (0.604, 0.322, 0.000),
+        dark: (0.941, 0.639, 0.251)
+    )
     public static let stone = adaptive(
         light: (0.875, 0.843, 0.788),
         dark: (0.263, 0.247, 0.216)

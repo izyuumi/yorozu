@@ -4,6 +4,21 @@ import SwiftUI
     import UIKit
 #endif
 
+extension ModelOption {
+    /// Preserves provider first appearance and each provider's model order.
+    static func groupedByProvider(_ options: [ModelOption]) -> [(label: String, options: [ModelOption])] {
+        var groups: [(label: String, options: [ModelOption])] = []
+        for option in options {
+            if let index = groups.firstIndex(where: { $0.label == option.providerLabel }) {
+                groups[index].options.append(option)
+            } else {
+                groups.append((option.providerLabel, [option]))
+            }
+        }
+        return groups
+    }
+}
+
 /// One thread's messages, shared by both apps: the phone pushes it from ``ThreadListView``, the
 /// Mac shows it as the detail half of its split view. Either way it has to sit inside a
 /// navigation stack, which is what the trace drill-down pushes onto.
@@ -836,8 +851,15 @@ public struct ChatView: View {
 
             Picker("Model", selection: modelBinding) {
                 Text("Auto").tag(String?.none)
-                ForEach(model.models(for: thread)) { option in
-                    Text(option.menuLabel).tag(Optional(option.id))
+                // Grouped under the provider, but every row still names it: the OS owns the
+                // menu's layout and is free to flatten the sections (iOS 27 does), and a row
+                // that reads "claude-sonnet-5" alone would then have lost who runs it.
+                ForEach(ModelOption.groupedByProvider(model.models(for: thread)), id: \.label) { group in
+                    Section(group.label) {
+                        ForEach(group.options) { option in
+                            Text(option.menuLabel).tag(Optional(option.id))
+                        }
+                    }
                 }
             }
             Picker("Effort", selection: effortBinding) {
@@ -851,14 +873,16 @@ public struct ChatView: View {
                 Text(composerChipLabel).font(.subheadline).lineLimit(1)
                 Image(systemName: "chevron.down").font(.caption2)
             }
+            // A caption, not an action: the send button is the one thing here in the tint.
+            .foregroundStyle(.secondary)
             .padding(.horizontal, 8)
             .frame(minHeight: controlTarget)
         }
-        .menuStyle(.borderlessButton)
-        #if os(macOS)
-            .menuIndicator(.hidden)
-            .help(composerChipLabel)
-        #endif
+        // A plain button, so the label above is what is drawn: the Mac's borderless menu
+        // style drops the label's chevron, adds its own on the other side and tints the text.
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .accessibilityIdentifier("runSettingsMenu")
         .accessibilityLabel("Model and effort")
         .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? "Default effort")")
