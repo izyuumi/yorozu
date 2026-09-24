@@ -78,7 +78,13 @@ private func thread(_ id: String, _ date: Date, pinned: Bool = false, archived: 
 
 @Test func threadTimesStayCompactWithoutAgo() {
     let cases: [(TimeInterval, String)] = [
-        (30, "now"),
+        (0, "0s"),
+        (30, "30s"),
+        (59, "59s"),
+        (60, "1m 0s"),
+        (90, "1m 30s"),
+        (119, "1m 59s"),
+        (120, "2m"),
         (29 * 60, "29m"),
         (5 * 3_600, "5h"),
         (3 * 86_400, "3d"),
