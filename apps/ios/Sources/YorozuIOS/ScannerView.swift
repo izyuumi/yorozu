@@ -56,6 +56,12 @@ struct ScannerView: View {
                         .buttonStyle(.bordered)
                     }
 
+                    // The host and the relay both handle parts of a code, so the true advice is
+                    // about whose code it is, not who reads it.
+                    Text("Scan a code from a Mac you trust. Pairing codes are secret.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                     if let error {
                         Label { Text(error) } icon: {
                             Image(systemName: "exclamationmark.circle").foregroundStyle(.red)

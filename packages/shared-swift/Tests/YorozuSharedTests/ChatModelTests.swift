@@ -65,12 +65,12 @@ private func event(_ id: String, _ payload: YorozuEvent.Payload, thread: String 
 /// The model applies updates from a task of its own, so a test waits for the effect rather than
 /// assuming it has already happened.
 @MainActor
-private func eventually(_ condition: @MainActor () -> Bool) async -> Bool {
+private func eventually(_ condition: @MainActor () async -> Bool) async -> Bool {
     for _ in 0..<300 {
-        if condition() { return true }
+        if await condition() { return true }
         try? await Task.sleep(for: .milliseconds(10))
     }
-    return condition()
+    return await condition()
 }
 
 /// The model emits from a task of its own onto the transport's actor, so a test waits for the
@@ -160,12 +160,17 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
     let messageId = model.outbox.first!.id
     let before = await sent(by: transport, atLeast: pairingSends).count
     await transport.yield(.ownerOnline(true))
-    let requests = await sent(by: transport, atLeast: before + 1)
-    #expect(requests.last?.payload == .updateControl(UpdateControlData(action: .status)))
+    #expect(await eventually {
+        await transport.sent.dropFirst(before).contains {
+            $0.payload == .updateControl(UpdateControlData(action: .status))
+        }
+    })
+    let requests = await transport.sent
     #expect(!requests.contains { $0.id == messageId })
     await transport.yield(.event(event("restarted", .updateStatus(UpdateStatusData(phase: .none)))))
     #expect(await eventually { model.canDeliver })
-    let delivered = await sent(by: transport, atLeast: before + 2)
+    #expect(await eventually { await transport.sent.contains { $0.id == messageId } })
+    let delivered = await transport.sent
     #expect(delivered.filter { $0.id == messageId }.count == 1)
     model.close()
 }
