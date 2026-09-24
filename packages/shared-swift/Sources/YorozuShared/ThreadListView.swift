@@ -488,9 +488,10 @@ public struct ThreadListView<Destination: View>: View {
 
     private var settingsPlacement: ToolbarItemPlacement {
         #if os(iOS)
-            if #available(iOS 27.0, *) { return .topBarPinnedTrailing }
+            .topBarTrailing
+        #else
+            .navigation
         #endif
-        return .navigation
     }
 
     /// The split view's selection is the top of the stack, so opening a thread from a
