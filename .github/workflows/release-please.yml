@@ -1,0 +1,36 @@
+name: Release Please
+on:
+  push:
+    branches: [main, 'release/*']
+
+concurrency:
+  group: release-please-${{ github.ref }}
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  version-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read intended release version
+        id: version
+        run: |
+          python3 - <<'PY_VERSION'
+          import os, re
+          from pathlib import Path
+          version = Path("release-version.txt").read_text().strip()
+          assert re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version), "invalid release-version.txt"
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print(f"version={version}", file=output)
+          PY_VERSION
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          target-branch: ${{ github.ref_name }}
+          release-as: ${{ steps.version.outputs.version }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          # Version PRs are preparation. Only Promote creates stable releases/tags.
+          skip-github-release: true

@@ -2,5 +2,7 @@
 # limit. Keep these public URLs stable for installed apps and website download links.
 /mac https://github.com/izyuumi/yorozu/releases/latest/download/Yorozu.dmg 302
 /appcast.xml https://github.com/izyuumi/yorozu/releases/latest/download/appcast.xml 302
+# Preserve the shipped pre-candidate feed's latest-relative URL during migration.
+/download/Yorozu-0.4.0-293.dmg https://github.com/izyuumi/yorozu/releases/download/v0.4.0/Yorozu-0.4.0-293.dmg 302
 /download/* https://github.com/izyuumi/yorozu/releases/latest/download/:splat 302
-/models.json https://github.com/izyuumi/yorozu/releases/latest/download/models.json 302
+/models.json https://raw.githubusercontent.com/izyuumi/yorozu/main/catalog/models.json 302

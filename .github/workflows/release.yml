@@ -1,78 +1,82 @@
 name: Release
-# Release Please opens version PRs; every main push builds a Mac beta, and merging
-# a version PR also publishes the stable release. TestFlight builds go from every
-# push to main; see testflight.yml. Signing identity, notary key, and Sparkle key
-# come from repository secrets. Only a push to this repo
-# triggers it — never a fork's pull request — so secrets are never in a stranger's job.
-#
-# DEVELOPER_ID_P12 is the "Developer ID Application" identity with its private key, exported
-# from the maintainer's login keychain, base64; DEVELOPER_ID_PASSWORD is the .p12 password.
-# (MAC_CERT_P12 holds the Apple Development identity the TestFlight archive needs; it does
-# not carry Developer ID, which is why this job has a secret of its own.) To refresh:
-#   security export -k ~/Library/Keychains/login.keychain-db -t identities -f pkcs12 \
-#     -P "$PW" -o developer-id.p12      # click Allow in the keychain dialog
-#   base64 -i developer-id.p12 | gh secret set DEVELOPER_ID_P12
-#   gh secret set DEVELOPER_ID_PASSWORD --body "$PW" && rm developer-id.p12
+# One build allocator for Mac + iOS. CI success produces candidates, never stable releases.
 on:
-  push:
-    branches: [main]
-  # Retry a failed build with the current workflow and the original source tag.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main, 'release/*']
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Existing release tag to build (for example v0.2.2)'
+      source_branch:
+        description: 'Source branch (main or release/X.Y); successful CI required'
+        default: main
         required: true
         type: string
+      version:
+        description: 'Optional X.Y.Z override; otherwise release-version.txt at source SHA'
+        required: false
+        type: string
 
-concurrency: release
-
-# Nothing by default; each job asks for exactly what it needs.
+# Superseded pending beta builds may be skipped; never interrupt signing/upload mid-run.
+concurrency:
+  group: candidate-${{ github.event.workflow_run.head_branch || inputs.source_branch || 'main' }}
+  cancel-in-progress: false
 permissions: {}
 
 jobs:
-  release-please:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      issues: write
-      pull-requests: write
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
-    steps:
-      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
-        id: release
-        with:
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
-
-  mac:
-    needs: release-please
-    # GITHUB_TOKEN-created release tags do not trigger another workflow. Build here.
+  candidate:
     if: >-
-      always() && !cancelled() &&
-      (github.event_name == 'workflow_dispatch' || needs.release-please.result == 'success')
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: macos-latest
+    timeout-minutes: 180
     permissions:
       contents: write
+      actions: read
     env:
-      RELEASE_TAG: ${{ (needs.release-please.outputs.release_created == 'true' && needs.release-please.outputs.tag_name) || inputs.tag }}
-      RELEASE_CREATED: ${{ needs.release-please.outputs.release_created }}
-    runs-on: macos-latest
-    timeout-minutes: 90
+      GH_TOKEN: ${{ github.token }}
+      PUBLIC: ${{ github.repository }}
+      SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch || inputs.source_branch }}
+      SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+      REQUESTED_VERSION: ${{ inputs.version }}
     steps:
+      - name: Resolve trusted source
+        id: source
+        run: |
+          set -eu
+          python3 - <<'PY_SOURCE'
+          import os, re
+          assert re.fullmatch(r"main|release/[0-9]+\.[0-9]+", os.environ["SOURCE_BRANCH"]), "use main or release/X.Y"
+          assert os.environ["GITHUB_RUN_ATTEMPT"] == "1", "dispatch a fresh Release run to rebuild; use Promote for publication retries"
+          PY_SOURCE
+          if [ -z "$SOURCE_SHA" ]; then
+            SOURCE_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$SOURCE_BRANCH" --jq .object.sha)
+          fi
+          printf 'sha=%s\n' "$SOURCE_SHA" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The version is the latest v* tag and the build number the commit count; both need
-          # the whole history.
+          ref: ${{ steps.source.outputs.sha }}
           fetch-depth: 0
-          ref: ${{ env.RELEASE_TAG || github.sha }}
-      - name: Check out release tooling
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: .release-tooling
-      - name: Use current publication script
-        run: cp .release-tooling/scripts/release.sh scripts/release.sh
+      - name: Verify CI and allocate candidate
+        id: candidate
+        env:
+          CANDIDATE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -eu
+          CI_RUN_ID=$(python3 scripts/release.py check-ci --source "$CANDIDATE_SHA" --branch "$SOURCE_BRANCH")
+          set -- --source "$CANDIDATE_SHA" --branch "$SOURCE_BRANCH" \
+            --run-number "$GITHUB_RUN_NUMBER" --run-id "$GITHUB_RUN_ID" --ci-run-id "$CI_RUN_ID"
+          if [ -n "$REQUESTED_VERSION" ]; then set -- "$@" --version "$REQUESTED_VERSION"; fi
+          python3 scripts/release.py prepare "$@" --output dist/candidate.json
+          python3 - <<'PY_METADATA'
+          import json, os
+          candidate = json.load(open("dist/candidate.json"))
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              for key, field in [("VERSION", "version"), ("BUILD", "build"), ("CANDIDATE_TAG", "tag")]:
+                  print(f"{key}={candidate[field]}", file=output)
+          PY_METADATA
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with: { xcode-version: latest-stable }
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -88,6 +92,8 @@ jobs:
         env:
           DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
           DEVELOPER_ID_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
@@ -101,7 +107,9 @@ jobs:
           : "${DEVELOPER_ID_P12:?set the DEVELOPER_ID_P12 secret; see the top of this file}"
           printf '%s' "$DEVELOPER_ID_P12" | base64 -d > "$RUNNER_TEMP/cert.p12"
           security import "$RUNNER_TEMP/cert.p12" -P "$DEVELOPER_ID_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
-          rm "$RUNNER_TEMP/cert.p12"
+          printf '%s' "$MAC_CERT_P12" | base64 -d > "$RUNNER_TEMP/ios-cert.p12"
+          security import "$RUNNER_TEMP/ios-cert.p12" -P "$MAC_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          rm "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/ios-cert.p12"
           # A Developer ID certificate is only an identity codesign will use if its chain
           # validates, and a fresh runner has no Apple intermediates. Both are public.
           curl -fsSL -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
@@ -125,7 +133,6 @@ jobs:
           chmod 600 "$RUNNER_TEMP/AuthKey.p8"
           xcrun notarytool store-credentials yorozu-notary \
             --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID"
-          rm "$RUNNER_TEMP/AuthKey.p8"
 
       - name: Prepare Sparkle key
         env:
@@ -136,24 +143,41 @@ jobs:
           umask 077
           printf '%s' "$SPARKLE_ED_KEY" > "$RUNNER_TEMP/sparkle.key"
 
-      - name: Build, notarize, and publish
+      - name: Install Tuist 4.209.0
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          command -v mise >/dev/null || brew install mise
+          mise use -g tuist@4.209.0
+          mise bin-paths tuist@4.209.0 >> "$GITHUB_PATH"
+      - name: Build signed and notarized Mac candidate
+        env:
           SPARKLE_ED_KEY_FILE: ${{ runner.temp }}/sparkle.key
         run: |
           set -eu
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || [ "$RELEASE_CREATED" = true ]; then
-            ./scripts/release.sh
-          else
-            VERSION_LABEL="$(git describe --tags --abbrev=0 --match 'v*' | sed 's/^v//') Beta" \
-              ./scripts/build-mac.sh
+          ./scripts/build-mac.sh
+          CHANNEL=beta DOWNLOAD_PREFIX="https://github.com/$GITHUB_REPOSITORY/releases/download/$CANDIDATE_TAG/" \
+            ./scripts/appcast.sh
+      - name: Upload and identify the iOS candidate
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
+        run: |
+          set -eu
+          ./scripts/build-ios.sh
+          node scripts/asc-candidate.mjs resolve "$VERSION" "$BUILD" dist/ios.json
+      - name: Publish retained candidate and beta pointer
+        run: |
+          set -eu
+          python3 scripts/release.py candidate --manifest dist/candidate.json --ios dist/ios.json --dist dist
+          if [ "$SOURCE_BRANCH" = main ]; then
+            python3 scripts/release.py beta --candidate "$CANDIDATE_TAG"
           fi
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            ./scripts/beta-release.sh
-          fi
-
-      - name: Forget the secrets
+          printf 'Candidate: [%s](https://github.com/%s/releases/tag/%s)\n' \
+            "$CANDIDATE_TAG" "$GITHUB_REPOSITORY" "$CANDIDATE_TAG" >> "$GITHUB_STEP_SUMMARY"
+      - name: Forget signing credentials
         if: always()
         run: |
-          rm -f "$RUNNER_TEMP/sparkle.key" "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/cert.p12"
+          rm -f "$RUNNER_TEMP/sparkle.key" "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/ios-cert.p12"
           security delete-keychain "$RUNNER_TEMP/release.keychain-db" 2>/dev/null || true

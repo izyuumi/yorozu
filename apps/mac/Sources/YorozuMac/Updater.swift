@@ -254,6 +254,21 @@ private final class UpdaterDelegate: NSObject, SPUUpdaterDelegate {
 
     func updater(
         _ updater: SPUUpdater,
+        shouldProceedWithUpdate item: SUAppcastItem,
+        updateCheck: SPUUpdateCheck
+    ) throws {
+        let installed = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        guard ReleaseVersion.allowsUpdate(from: installed, to: item.displayVersionString) else {
+            throw NSError(
+                domain: "to.yumi.yorozu.updates", code: 1,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "Update \(item.displayVersionString) cannot replace installed version \(installed ?? "unknown"). "
+                    + "Older or invalid release versions are not installed."])
+        }
+    }
+
+    func updater(
+        _ updater: SPUUpdater,
         willInstallUpdateOnQuit item: SUAppcastItem,
         immediateInstallationBlock: @escaping () -> Void
     ) -> Bool {
