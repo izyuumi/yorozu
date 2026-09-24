@@ -59,8 +59,10 @@ these legacy features. The Mac app also sets `YOROZU_NATIVE_CMD` and uses the `y
 helper directly from Swift for permission checks: the helper is live, while the runtime's
 legacy tool wrappers around it are not.
 
-`.github/workflows/catalog.yml` uploads `catalog/models.json` to the latest versioned release
-on every push that touches it. The feed's consumer remains inside the dormant catalog code.
+The legacy catalog reads `catalog/models.json` directly from the repository's `main` branch,
+with cached and bundled copies as offline fallbacks. Releases no longer carry this catalog,
+and there is no catalog-publishing workflow. Shipped model pickers instead use OpenClaw's
+`models.list`, Claude SDK's `supportedModels()`, and Codex's paginated `model/list`.
 
 ## Two things that look live and are not
 
@@ -86,5 +88,5 @@ threads belong to OpenClaw.
 The loop is self-contained behind `legacy.ts` and the `--direct-provider` flag. Deleting it would
 mean replacing the end-to-end harness's fake backend with something that speaks the Gateway
 protocol, and dropping the `probe`, `models`, `assign`, `assign-revert` and `assign-cron`
-subcommands along with `catalog.yml`. Preserve the provider chain used by automatic thread
+subcommands. Preserve the provider chain used by automatic thread
 titles, or migrate titling first. Until then, treat the dormant subsystems above as historical.

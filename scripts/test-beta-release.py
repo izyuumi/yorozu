@@ -26,8 +26,9 @@ class BetaReleaseTests(fixtures.ReleaseFixture):
         self.assertEqual(beta["files"]["Yorozu-0.4.0-290.dmg"], legacy["Yorozu-0.4.0-290.dmg"])
         self.assertEqual(self.gh.tags["main-beta"], fixtures.OTHER)
         uploads = [event for event in self.mutations() if event[1] == "upload"]
-        self.assertEqual([Path(event[5]).name for event in uploads], ["Yorozu.dmg", "candidate.json", "appcast.xml"])
+        self.assertEqual([Path(event[5]).name for event in uploads], ["yorozu.dmg", "candidate.json", "appcast.xml"])
         self.assertIn(self.tag.encode(), beta["files"]["appcast.xml"])
+        self.assertEqual(beta["notes"], self.data["notes"])
 
     def test_new_beta_publishes_only_after_assets_exist(self):
         self.publish()
@@ -51,7 +52,7 @@ class BetaReleaseTests(fixtures.ReleaseFixture):
     def test_delayed_older_source_cannot_move_beta_even_with_larger_build(self):
         data = self.publish()
         previous = {**data, "source_sha": fixtures.OTHER, "build": "10041", "tag": "candidate-0.5.0-10041",
-                    "mac": {**data["mac"], "asset": "Yorozu-0.5.0-10041.dmg"}, "ios": {**data["ios"], "build": "10041"}}
+                    "ios": {**data["ios"], "build": "10041"}}
         self.gh.add_release("main-beta", {"appcast.xml": fixtures.feed("0.5.0", "10041"),
                             "candidate.json": fixtures.json.dumps(previous).encode()}, prerelease=True)
         self.gh.compare_status = "behind"
@@ -74,7 +75,7 @@ class BetaReleaseTests(fixtures.ReleaseFixture):
         legacy = {"appcast.xml": fixtures.feed("0.4.0", "290"), "Yorozu-0.4.0-290.dmg": b"old"}
         self.gh.add_release("main-beta", copy.deepcopy(legacy), prerelease=True)
         self.publish()
-        self.gh.fail_upload = "Yorozu.dmg"
+        self.gh.fail_upload = "yorozu.dmg"
         with self.assertRaisesRegex(RuntimeError, "upload failure"):
             self.beta()
         self.assertEqual(self.gh.releases["main-beta"]["files"], legacy)
