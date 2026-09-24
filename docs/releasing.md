@@ -1,9 +1,11 @@
 # Releasing
 
 Release Please runs on pushes to `main`, collecting Conventional Commits into a version and
-changelog PR. Merging that PR creates a tagged draft release and builds the Mac app in the same
-workflow. After signing, notarization and asset upload succeed, it publishes the release as
-latest and deletes older published releases. Git tags and draft releases are preserved.
+changelog PR. Every push builds a signed, notarized Mac beta from that commit and publishes it
+to the rolling [`main-beta` prerelease](https://github.com/izyuumi/yorozu/releases/tag/main-beta).
+Merging a version PR also publishes the tagged Mac build as stable. After signing,
+notarization and asset upload succeed, the stable release becomes latest and older stable
+releases are deleted. The beta prerelease and version tags are preserved.
 
 The workflow uses `GITHUB_TOKEN`; no personal access token is needed. Repository Actions
 settings must allow GitHub Actions to create pull requests. Bot-created PRs do not trigger
@@ -113,8 +115,16 @@ continues to derive its version from the tag and its build number from the commi
 
 `scripts/release.sh` uploads the appcast's DMGs, stable `Yorozu.dmg`, `appcast.xml`, and model
 catalog to the versioned release. `yorozu.yumi.to/mac`, `/appcast.xml`, and `/download/*` point to
-GitHub's `releases/latest/download` URLs. Older releases are removed only after upload and
-publication succeed. The catalog workflow updates the latest release without creating another.
+GitHub's `releases/latest/download` URLs. Older stable releases are removed only after upload
+and publication succeed; the `main-beta` prerelease is excluded from that cleanup. The catalog
+workflow updates the latest stable release without creating another.
+
+`scripts/beta-release.sh` uploads the same signed build to `main-beta` after a stable release,
+or a beta-labeled main build on other pushes. Its separate appcast is signed with the same
+Sparkle key, marks the update as channel
+`beta`, and points at versioned DMGs on that prerelease. The app switches feeds when the user
+enables **Receive beta updates** in Mac Settings. A stable user can join via the public
+[`Yorozu.dmg` beta download](https://github.com/izyuumi/yorozu/releases/download/main-beta/Yorozu.dmg).
 
 To retry a failed build using the current workflow and the original source tag:
 

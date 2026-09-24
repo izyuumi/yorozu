@@ -9,6 +9,7 @@ struct GeneralView: View {
     @State private var session = MacChatSession.shared
     @State private var pairingCode = ""
     @State private var confirmingUnpair = false
+    @State private var betaUpdates = Updates.beta
 
     var body: some View {
         Form {
@@ -102,6 +103,8 @@ struct GeneralView: View {
                 LabeledContent("Version", value: versionLabel)
                 AutomaticUpdatesToggle()
                 if Updates.controller != nil {
+                    Toggle("Receive beta updates", isOn: $betaUpdates)
+                        .onChange(of: betaUpdates) { Updates.beta = betaUpdates }
                     LabeledContent("") { CheckForUpdatesButton() }
                 }
             } header: {
@@ -109,7 +112,10 @@ struct GeneralView: View {
             } footer: {
                 Group {
                     if Updates.controller != nil {
-                        Text("Downloads new versions in the background and installs them while you are away.")
+                        Text("Downloads updates in the background. Installs after this Mac’s agents finish and stay idle for 10 seconds.")
+                        if betaUpdates {
+                            Text("Beta builds include changes from main before a stable release. Turning beta off waits for a newer stable build.")
+                        }
                     }
                 }
                 .leadingFooter()

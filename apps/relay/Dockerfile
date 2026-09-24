@@ -5,6 +5,7 @@
 FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS build
 WORKDIR /app
 COPY apps/relay/package.json apps/relay/tsconfig.json ./
+COPY tsconfig.base.json /tsconfig.base.json
 RUN npm install --no-package-lock --ignore-scripts
 COPY apps/relay/src ./src
 # Compiled rather than type-stripped: the sources import each other as `./x.js`, which
