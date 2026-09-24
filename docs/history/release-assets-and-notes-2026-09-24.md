@@ -40,3 +40,7 @@ compatibility. The old `main-beta` release/tag is removed. New beta discovery li
 website's `/beta` and `/beta/appcast.xml` endpoints, which select retained main candidates.
 Candidate publication now performs the version/build/source progression guard previously
 owned by the rolling pointer. This supersedes the earlier retention decision above.
+
+Stable `v0.4.0` also uses one lowercase installer. Its appcast now names that permanent asset;
+the old website download path redirects to the identical signed bytes, preserving cached feeds.
+The duplicate numbered DMG and release catalog snapshot are removed after verifying this route.
