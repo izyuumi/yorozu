@@ -607,14 +607,155 @@ async function macClient(dir: string) {
     for (const line of lines) if (line) events.push(JSON.parse(line));
   });
   await new Promise<void>((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
-  const send = (event: Omit<YorozuEvent, "id" | "threadId" | "ts" | "agentId">): void => {
-    socket.write(`${JSON.stringify({ id: randomUUID(), threadId: "", ts: Date.now(), agentId: "mac", ...event })}\n`);
+  const send = (event: Omit<YorozuEvent, "id" | "threadId" | "ts" | "agentId">): string => {
+    const id = randomUUID();
+    socket.write(`${JSON.stringify({ id, threadId: "", ts: Date.now(), agentId: "mac", ...event })}\n`);
+    return id;
   };
   const settings = (): YorozuEvent[] => events.filter((event) => event.kind === "approval_settings");
   return { events, settings, send, close: () => socket.destroy() };
 }
 
 const HOUR_MS = 3_600_000;
+
+test("queued updates wait for approvals and queued turns, prioritize new work, and fence replay at install", async () => {
+  const run = vi.fn<NativeAgentRunner["run"]>(async (turn) => {
+    if (turn.text === "approval") await turn.approve!("Bash", { command: "echo done" }, turn.signal);
+    if (turn.text === "failure") throw new Error("final failure");
+    return { text: "done", sessionId: "session" };
+  });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } });
+  let mac = await macClient(dir);
+  const stranger = await macClient(dir);
+  send({ kind: "update_control", data: { action: "status" } });
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  async function control(action: "queue" | "poll" | "cancel" = "poll") {
+    const requestId = mac.send({ kind: "update_control", data: { action, updateId: "u1", version: "1.0" } });
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "update_status" && event.data.requestId === requestId)).toBe(true));
+    const event = mac.events.find((event) => event.kind === "update_status" && event.data.requestId === requestId)!;
+    if (event.kind !== "update_status") throw new Error("missing status");
+    return event.data;
+  }
+  try {
+    send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "work");
+    send({ kind: "message", data: { role: "user", text: "approval" } }, "work");
+    const card = (await eventsUntil((event) => event.kind === "approval_card")).at(-1)!;
+    if (card.kind !== "approval_card") throw new Error("missing approval");
+    expect(await control("queue")).toMatchObject({ phase: "waiting", activeThreads: 1 });
+    now += 86_400_000;
+    expect((await control()).phase).toBe("waiting");
+    send({ kind: "message", data: { role: "user", text: "failure" } }, "work");
+    send({ kind: "message", data: { role: "user", text: "after failure" } }, "work");
+    send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "other");
+    send({ kind: "message", data: { role: "user", text: "new task" } }, "other");
+    await eventsUntil((event) => event.kind === "message" && event.data.done === true && event.threadId === "other");
+    expect((await control()).phase).toBe("waiting");
+    send({ kind: "approval_answer", data: { actionId: card.data.actionId, answer: "yes" } }, "work");
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
+    expect((await control()).phase).toBe("countdown");
+    for (let second = 0; second < 9; second++) { now += 1_000; expect((await control()).phase).toBe("countdown"); }
+    send({ kind: "message", data: { role: "user", text: "last second" } }, "other");
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(5));
+    now += 1_000;
+    expect((await control()).deadline).toBe(now + 10_000);
+    stranger.send({ kind: "update_control", data: { action: "cancel", updateId: "u1" } });
+    send({ kind: "update_control", data: { action: "cancel", updateId: "u1" } });
+    expect((await control()).phase).toBe("countdown");
+    for (let second = 0; second < 10; second++) { now += 1_000; await control(); }
+    expect((await control()).phase).toBe("installing");
+    mac.close();
+    mac = await macClient(dir);
+    expect((await control("queue")).phase).toBe("installing");
+    const late: YorozuEvent = { id: "late-message", threadId: "other", ts: now, agentId: "phone",
+      kind: "message", data: { role: "user", text: "after cutoff" } };
+    sendRaw(late);
+    send({ kind: "update_control", data: { action: "status" } });
+    await eventsUntil((event) => event.kind === "update_status" && event.data.requestId !== undefined && event.data.phase === "installing");
+    expect(readThreadEvents("other", dir).some((event) => event.id === late.id)).toBe(false);
+    expect(run).toHaveBeenCalledTimes(5);
+    const archive: YorozuEvent = { id: "late-archive", threadId: "other", ts: now, agentId: "phone",
+      kind: "thread_archive", data: { archived: true } };
+    sendRaw(archive);
+    send({ kind: "update_control", data: { action: "status" } });
+    await eventsUntil((event) => event.kind === "update_status" && event.data.requestId !== undefined && event.data.phase === "installing");
+    expect(listThreads(dir).find((thread) => thread.id === "other")?.archived).toBe(false);
+    mac.close();
+    mac = await macClient(dir);
+    expect((await control("cancel")).phase).toBe("none");
+    sendRaw(late);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(6));
+    sendRaw(late);
+    await vi.waitFor(() => expect(states).toContain("duplicate-command"));
+    expect(run).toHaveBeenCalledTimes(6);
+    expect(readThreadEvents("other", dir).filter((event) => event.id === late.id)).toHaveLength(1);
+    sendRaw(archive);
+    await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === "other")?.archived).toBe(true));
+  } finally { mac.close(); stranger.close(); }
+});
+
+test("phone postponement persists and losing the update controller releases admission", async () => {
+  const { dir, send, eventsUntil } = await pairedPhone([]);
+  const mac = await macClient(dir);
+  send({ kind: "update_control", data: { action: "status" } });
+  mac.send({ kind: "update_control", data: { action: "queue", updateId: "u2", version: "1.0" } });
+  await eventsUntil((event) => event.kind === "update_status" && event.data.phase === "countdown");
+  send({ kind: "update_control", data: { action: "postpone" } });
+  const postponed = (await eventsUntil((event) => event.kind === "update_status" && event.data.phase === "postponed")).at(-1)!;
+  if (postponed.kind !== "update_status") throw new Error("missing status");
+  expect(JSON.parse(readFileSync(join(dir, "update-postponed-until.json"), "utf8"))).toBe(postponed.data.postponedUntil);
+  mac.close();
+  await eventsUntil((event) => event.kind === "update_status" && event.data.phase === "none");
+  const reconnected = await macClient(dir);
+  reconnected.send({ kind: "update_control", data: { action: "queue", updateId: "u2", version: "1.0" } });
+  expect((await eventsUntil((event) => event.kind === "update_status" && event.data.phase === "postponed")).at(-1))
+    .toMatchObject({ data: { postponedUntil: postponed.data.postponedUntil } });
+  reconnected.close();
+});
+
+test("unreadable agent state blocks updates and a failed postponement can be retried", async () => {
+  const { dir } = await pairedPhone([], true);
+  const mac = await macClient(dir);
+  const status = async () => {
+    const requestId = mac.send({ kind: "update_control", data: { action: "queue", updateId: "u3", version: "1.0" } });
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "update_status" && event.data.requestId === requestId)).toBe(true));
+    return mac.events.find((event) => event.kind === "update_status" && event.data.requestId === requestId)!;
+  };
+  try {
+    writeFileSync(join(dir, "openclaw-pending.json"), "broken");
+    expect(await status()).toMatchObject({ data: { phase: "unknown" } });
+    writeFileSync(join(dir, "openclaw-pending.json"), "[]");
+    expect(await status()).toMatchObject({ data: { phase: "countdown" } });
+    const postponeFile = join(dir, "update-postponed-until.json");
+    mkdirSync(postponeFile);
+    const command: YorozuEvent = { id: "postpone-retry", threadId: "", ts: Date.now(), agentId: "phone",
+      kind: "update_control", data: { action: "postpone" } };
+    sendRaw(command);
+    await vi.waitFor(() => expect(states.some((state) => state.startsWith("frame-error"))).toBe(true));
+    expect(await status()).toMatchObject({ data: { phase: "countdown" } });
+    rmSync(postponeFile, { recursive: true });
+    sendRaw(command);
+    await vi.waitFor(() => expect(existsSync(postponeFile)).toBe(true));
+    expect(await status()).toMatchObject({ data: { phase: "postponed" } });
+  } finally { mac.close(); }
+});
+
+test("native recovery awaiting Continue or Dismiss blocks a queued update", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-update-recovery-"));
+  createThread("Work", dir, "native-recovery", { agent: "codex", cwd: proj });
+  setNativeTurn("native-recovery", { id: "interrupted", state: "running" }, dir);
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir });
+  const mac = await macClient(dir);
+  send({ kind: "update_control", data: { action: "status" } });
+  mac.send({ kind: "update_control", data: { action: "queue", updateId: "u4", version: "1.0" } });
+  const waiting = (await eventsUntil((event) => event.kind === "update_status" && event.data.phase === "waiting")).at(-1);
+  expect(waiting).toMatchObject({ data: { activeThreads: 1 } });
+  send({ kind: "thread_recover", data: { turnId: "interrupted", action: "dismiss" } }, "native-recovery");
+  await eventsUntil((event) => event.kind === "thread_list" && !event.data.threads.find((thread) => thread.id === "native-recovery")?.interruptedTurnId);
+  mac.send({ kind: "update_control", data: { action: "poll", updateId: "u4" } });
+  await eventsUntil((event) => event.kind === "update_status" && event.data.phase === "countdown");
+  mac.close();
+});
 const approvalFile = (dir: string): { yolo?: boolean; yoloUntil?: number } =>
   JSON.parse(readFileSync(join(dir, "approval.json"), "utf8"));
 

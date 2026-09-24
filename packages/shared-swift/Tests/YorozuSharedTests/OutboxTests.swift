@@ -244,7 +244,7 @@ private func reconnect(_ transport: QueueTransport) async {
     #expect(await transport.messages.map(\.id) == [id, id])
 }
 
-@Test func theQueueStopsTryingAfterTwoDaysAndHoldsOnlyFifty() {
+@Test func theQueueStopsTryingAfterTwoDaysWithoutDroppingUnsentMessages() {
     let now = Date(timeIntervalSince1970: 1_000_000)
     func item(_ id: String, hoursAgo: Double) -> OutboxItem {
         OutboxItem(
@@ -266,10 +266,9 @@ private func reconnect(_ transport: QueueTransport) async {
     // A message exactly at the edge is still one to send.
     #expect(Outbox.pruned([item("edge", hoursAgo: 48)], now: now).map(\.status) == [.queued])
 
-    // Sixty queued messages are the newest fifty: a queue is not an archive.
     let many = (0..<60).map { item("m\($0)", hoursAgo: Double(60 - $0)) }
     let capped = Outbox.pruned(many, now: now)
-    #expect(capped.count == Outbox.capacity)
-    #expect(capped.first?.id == "m10")
+    #expect(capped.count == 60)
+    #expect(capped.first?.id == "m0")
     #expect(capped.last?.id == "m59")
 }

@@ -638,6 +638,11 @@ struct RootView: View {
                     path = [model.newDraft(agent: agent, cwd: cwd).id]
                 }
             }
+            .safeAreaInset(edge: .top) {
+                if path.isEmpty {
+                    UpdateStatusView(status: model.updateStatus) { model.updateControl(.postpone) }
+                }
+            }
             .overlay(alignment: .topTrailing) {
                 if session.isDemo && path.isEmpty {
                     Text("Demo")
