@@ -139,8 +139,8 @@ export class OpenClawRunner {
       throw error;
     }
   }
-  pendingTurns(): StoredPendingTurn[] {
-    return this.readPending().sort((a, b) => a.startedAt - b.startedAt);
+  pendingTurns(requireKnown = false): StoredPendingTurn[] {
+    return this.readPending(requireKnown).sort((a, b) => a.startedAt - b.startedAt);
   }
 
   /** Durably owns a user turn before its visible event is accepted. Replays repair either side. */
@@ -653,10 +653,13 @@ export class OpenClawRunner {
     this.storePending(pending);
   }
 
-  private readPending(): StoredPendingTurn[] {
+  private readPending(requireKnown = false): StoredPendingTurn[] {
     try {
       const value = JSON.parse(readFileSync(this.#pendingFile, "utf8"));
-      if (!Array.isArray(value)) return [];
+      if (!Array.isArray(value)) {
+        if (requireKnown) throw new Error("Unknown pending agent state");
+        return [];
+      }
       const turns = value.filter((item): item is StoredPendingTurn =>
         item && typeof item.threadId === "string" && typeof item.sessionKey === "string" &&
         typeof item.runId === "string" && typeof item.startedAt === "number")
@@ -668,8 +671,10 @@ export class OpenClawRunner {
           input: storedInput(item.input),
           state: item.state === "queued" ? "queued" as const : "active" as const,
         }));
+      if (requireKnown && turns.length !== value.length) throw new Error("Unknown pending agent state");
       return turns;
-    } catch {
+    } catch (error) {
+      if (requireKnown && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       return [];
     }
   }

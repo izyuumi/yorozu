@@ -2,17 +2,12 @@ import AppKit
 import Sparkle
 import SwiftUI
 import YorozuKeepalive
+import YorozuShared
 
 /// Sparkle, whole. The feed URL and the public EdDSA key live in `Info.plist`, written by
 /// `scripts/build-mac.sh`; a build without them (`swift run`, the dev bundle) has no feed
 /// to check, so the updater is not started and the menu item is not shown rather than
 /// greeting the user with Sparkle's "update feed URL is not set" alert.
-///
-/// Updates install themselves: this is a menu bar app with no document to lose and no
-/// window to interrupt, so the user should never have to know a release happened. The
-/// sidecar it relaunches comes back onto the same state directory
-/// (`~/Library/Application Support/Yorozu`, which has nothing version-shaped in it), so
-/// the room and every paired phone survive the swap.
 @MainActor
 enum Updates {
     /// Marks that this build has already forced the automatic-update preferences on. Sparkle
@@ -35,6 +30,7 @@ enum Updates {
     }()
 
     private static let delegate = UpdaterDelegate()
+    static let pending = PendingUpdate()
 
     /// Set while Sparkle is installing and about to relaunch us. Quitting for an update is not
     /// the user quitting, so it must not pause the watchdog — see ``AppDelegate``.
@@ -98,12 +94,142 @@ enum Updates {
     }
 }
 
-/// Why this exists at all: once an update is downloaded, Sparkle's default is to sit on it
-/// until the app quits. A menu bar app is quit about once a month, so "automatic" would mean
-/// "eventually". Returning true here takes the installation over and runs it now — no UI,
-/// the app relaunches itself — but only while there is no chat window open. An open chat is
-/// the one thing a relaunch would cut off mid-stream; with none, there is nothing on screen
-/// to interrupt, whether or not the app happens to be the active one.
+@MainActor @Observable
+final class PendingUpdate {
+    private(set) var status = UpdateStatusData(phase: .none)
+    private(set) var failure: String?
+    private var handler: (() -> Void)?
+    private var timer: Timer?
+    private var requestId: String?
+    private var cancellationId: String?
+    private var cancellationRequestId: String?
+    private var lastTick = Date.distantPast
+    private var preparing = false
+    private var installStarted = false
+    private var postponedUntil: Double {
+        get { UserDefaults.standard.double(forKey: "updatePostponedUntil") }
+        set { UserDefaults.standard.set(newValue, forKey: "updatePostponedUntil") }
+    }
+
+    func queue(version: String, handler: @escaping () -> Void) {
+        if status.phase == .none {
+            status = UpdateStatusData(phase: .unknown, updateId: UUID().uuidString, version: version)
+        }
+        self.handler = handler
+        startTimer()
+        tick()
+    }
+
+    private func startTimer() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+    }
+
+    private func tick() {
+        let session = MacChatSession.shared
+        if session.role != .host { cancellationId = nil; cancellationRequestId = nil }
+        if let cancellationId, session.role == .host {
+            guard session.model.state == .paired && session.model.ownerOnline else { return }
+            cancellationRequestId = session.model.updateControl(.cancel, updateId: cancellationId)
+            return
+        }
+        guard handler != nil, !preparing else { return }
+        let now = Date()
+        defer { lastTick = now }
+        if session.role == .host {
+            guard session.model.state == .paired && session.model.ownerOnline else {
+                status.phase = .unknown
+                status.deadline = nil
+                requestId = nil
+                return
+            }
+            requestId = session.model.updateControl(.queue, updateId: status.updateId, version: status.version)
+        } else {
+            if postponedUntil > now.timeIntervalSince1970 * 1000 {
+                status.phase = .postponed
+                status.postponedUntil = postponedUntil
+                return
+            }
+            if status.phase != .countdown || now.timeIntervalSince(lastTick) > 3 {
+                status.phase = .countdown
+                status.deadline = (now.timeIntervalSince1970 + 10) * 1000
+            }
+            if now.timeIntervalSince1970 * 1000 >= (status.deadline ?? .infinity) { install() }
+        }
+    }
+
+    func receive(_ status: UpdateStatusData, from model: ChatModel) {
+        guard MacChatSession.shared.role == .host, model === MacChatSession.shared.model,
+              model.state == .paired && model.ownerOnline else { return }
+        if cancellationId != nil, status.phase == .none, status.requestId == cancellationRequestId {
+            cancellationId = nil
+            cancellationRequestId = nil
+            if handler == nil { timer?.invalidate() }
+            else { tick() }
+            return
+        }
+        guard cancellationId == nil, status.updateId == self.status.updateId, handler != nil else { return }
+        self.status = status
+        if let until = status.postponedUntil { postponedUntil = until }
+        if status.phase == .installing, status.requestId == requestId,
+           model.state == .paired && model.ownerOnline { install() }
+    }
+
+    func postpone() {
+        guard status.phase != .installing else { return }
+        if MacChatSession.shared.role == .host {
+            MacChatSession.shared.model.updateControl(.postpone)
+        } else {
+            postponedUntil = (Date().timeIntervalSince1970 + 3600) * 1000
+            status.phase = .postponed
+            status.deadline = nil
+            status.postponedUntil = postponedUntil
+        }
+    }
+
+    private func install() {
+        guard !preparing, !installStarted, handler != nil else { return }
+        preparing = true
+        let model = MacChatSession.shared.model
+        defer { preparing = false }
+        do {
+            try model.saveForRestart()
+            UserDefaults.standard.set(WindowPresence.isOpen, forKey: "restoreChatAfterUpdate")
+            status.phase = .installing
+            Updates.installing = true
+            installStarted = true
+            failure = nil
+            timer?.invalidate()
+            handler?()
+        } catch {
+            retryAfterSnapshotFailure(error)
+        }
+    }
+
+    func retryAfterSnapshotFailure(_ error: Error) {
+        let version = status.version ?? ""
+        let retryHandler = handler
+        cancel()
+        failure = "Update waiting: could not save drafts. \(error.localizedDescription)"
+        Log.write(failure!)
+        if let retryHandler { queue(version: version, handler: retryHandler) }
+    }
+
+    func cancel() {
+        if cancellationId == nil, MacChatSession.shared.role == .host, let updateId = status.updateId { cancellationId = updateId }
+        timer?.invalidate()
+        timer = nil
+        handler = nil
+        requestId = nil
+        status = UpdateStatusData(phase: .none)
+        Updates.installing = false
+        installStarted = false
+        if cancellationId != nil { startTimer(); tick() }
+    }
+}
+
 @MainActor
 private final class UpdaterDelegate: NSObject, SPUUpdaterDelegate {
     func updater(
@@ -111,27 +237,18 @@ private final class UpdaterDelegate: NSObject, SPUUpdaterDelegate {
         willInstallUpdateOnQuit item: SUAppcastItem,
         immediateInstallationBlock: @escaping () -> Void
     ) -> Bool {
-        guard !WindowPresence.isOpen else {
-            Log.write("updates: \(item.displayVersionString) held, a chat window is open")
-            return false
-        }
-        Log.write("updates: installing \(item.displayVersionString) now")
-        Updates.installing = true
-        immediateInstallationBlock()
+        Updates.pending.queue(version: item.displayVersionString, handler: immediateInstallationBlock)
         return true
     }
 
-    /// Never postpone the relaunch. Sparkle asks in case the app has something to finish; this
-    /// one does not, and a postponed relaunch on a Mac with nobody at it is an app that is
-    /// simply gone until somebody notices. If the relaunch itself fails, the watchdog has it.
     func updater(
         _ updater: SPUUpdater,
         shouldPostponeRelaunchForUpdate item: SUAppcastItem,
         untilInvokingBlock installHandler: @escaping () -> Void
     ) -> Bool {
-        Updates.installing = true
-        Log.write("updates: relaunching into \(item.displayVersionString)")
-        return false
+        if Updates.installing { return false }
+        Updates.pending.queue(version: item.displayVersionString, handler: installHandler)
+        return true
     }
 
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
@@ -143,6 +260,7 @@ private final class UpdaterDelegate: NSObject, SPUUpdaterDelegate {
     }
 
     func updater(_ updater: SPUUpdater, didAbortWithError error: any Error) {
+        Updates.pending.cancel()
         Log.write("updates: aborted — \(error.localizedDescription)")
     }
 }
@@ -165,7 +283,7 @@ struct AutomaticUpdatesToggle: View {
             VStack(alignment: .leading, spacing: 4) {
                 Toggle("Update automatically", isOn: $automatic)
                     .onChange(of: automatic) { Updates.automatic = automatic }
-                Text("Downloads new versions in the background and installs them while you are away.")
+                Text("Downloads updates in the background. Installs after this Mac’s agents finish and stay idle for 10 seconds.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

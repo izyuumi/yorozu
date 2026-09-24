@@ -16,8 +16,6 @@ public protocol ChatTransport: Sendable {
 }
 
 extension ChatTransport {
-    /// Nothing to do for a transport that reconnects on its own, which is every local one:
-    /// Network framework re-dials a Unix socket by itself.
     public func reconnect() async {}
 }
 
@@ -46,12 +44,17 @@ public enum TransportUpdate: Sendable {
 /// No pairing, no keys and no relay: the sidecar runs on this machine as this user, so being
 /// connected is being paired.
 public actor LocalSocketTransport: ChatTransport {
-    private let connection: NWConnection
+    private var connection: NWConnection
+    private let path: String
+    private var generation = 0
+    private var closed = true
+    private var retry: Task<Void, Never>?
     private var updates: AsyncStream<TransportUpdate>.Continuation?
     /// Bytes received that are not yet a whole line.
     private var buffer = Data()
 
     public init(path: String) {
+        self.path = path
         // `.tcp` is how Network framework asks for a stream; the endpoint is what makes it a
         // Unix socket. The connection waits rather than failing when the socket is not there
         // yet, so starting the app before the sidecar is not an error.
@@ -69,13 +72,24 @@ public actor LocalSocketTransport: ChatTransport {
     public func connect() -> AsyncStream<TransportUpdate> {
         let (stream, continuation) = AsyncStream<TransportUpdate>.makeStream()
         updates = continuation
-        continuation.yield(.state(.connecting))
+        closed = false
+        dial()
+        return stream
+    }
+
+    private func dial() {
+        guard !closed else { return }
+        generation += 1
+        let current = generation
+        connection.cancel()
+        connection = NWConnection(to: .unix(path: path), using: .tcp)
+        buffer = Data()
+        updates?.yield(.state(.connecting))
         connection.stateUpdateHandler = { [weak self] state in
-            Task { await self?.changed(state) }
+            Task { await self?.changed(state, generation: current) }
         }
         connection.start(queue: .global())
-        receive()
-        return stream
+        receive(generation: current)
     }
 
     public func send(_ event: YorozuEvent) async throws {
@@ -92,11 +106,24 @@ public actor LocalSocketTransport: ChatTransport {
     }
 
     public func close() {
+        closed = true
+        generation += 1
+        retry?.cancel()
+        retry = nil
         connection.cancel()
         finish()
     }
 
-    private func changed(_ state: NWConnection.State) {
+    public func reconnect() {
+        guard !closed else { return }
+        if case .ready = connection.state { return }
+        retry?.cancel()
+        retry = nil
+        dial()
+    }
+
+    private func changed(_ state: NWConnection.State, generation: Int) {
+        guard generation == self.generation, !closed else { return }
         switch state {
         case .ready:
             updates?.yield(.ownerOnline(true))
@@ -108,9 +135,9 @@ public actor LocalSocketTransport: ChatTransport {
             updates?.yield(.failed("runtime not reachable: \(error.localizedDescription)"))
         case .failed(let error):
             updates?.yield(.failed(error.localizedDescription))
-            finish()
+            redial()
         case .cancelled:
-            finish()
+            redial()
         default:
             break
         }
@@ -118,21 +145,40 @@ public actor LocalSocketTransport: ChatTransport {
 
     /// One receive in flight at a time, re-armed only after the bytes it delivered have been
     /// handled, so lines reach the stream in the order they arrived.
-    private func receive() {
+    private func receive(generation: Int) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) {
             [weak self] data, _, isComplete, error in
             guard let self else { return }
-            Task { await self.received(data, isComplete: isComplete, error: error) }
+            Task { await self.received(data, isComplete: isComplete, error: error, generation: generation) }
         }
     }
 
-    private func received(_ data: Data?, isComplete: Bool, error: NWError?) {
+    private func received(_ data: Data?, isComplete: Bool, error: NWError?, generation: Int) {
+        guard generation == self.generation, !closed else { return }
         if let data, !data.isEmpty { absorb(data) }
         guard !isComplete, error == nil else {
             if let error { updates?.yield(.failed(error.localizedDescription)) }
-            return finish()
+            return redial()
         }
-        receive()
+        receive(generation: generation)
+    }
+
+    private func redial() {
+        guard !closed, retry == nil else { return }
+        generation += 1
+        connection.cancel()
+        updates?.yield(.ownerOnline(false))
+        updates?.yield(.state(.closed))
+        retry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, let self else { return }
+            await self.retryConnection()
+        }
+    }
+
+    private func retryConnection() {
+        retry = nil
+        dial()
     }
 
     private func absorb(_ data: Data) {
@@ -151,6 +197,7 @@ public actor LocalSocketTransport: ChatTransport {
     }
 
     private func finish() {
+        updates?.yield(.ownerOnline(false))
         updates?.yield(.state(.closed))
         updates?.finish()
         updates = nil

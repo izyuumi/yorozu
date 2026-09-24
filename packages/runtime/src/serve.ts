@@ -47,6 +47,7 @@ import {
   type YorozuEvent,
 } from "@yorozu/shared";
 import WebSocket from "ws";
+import { UpdateGate } from "./update-gate.js";
 import { MAIN_AGENT } from "./agents.js";
 import {
   cardFor,
@@ -430,6 +431,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const running = new Map<string, AbortController>();
   const turnQueues = new Map<string, Promise<void>>();
   const admittedTurns = new Map<string, Promise<void>>();
+  const postponeFile = join(dir, "update-postponed-until.json");
+  let postponedUntil = 0;
+  try {
+    const stored: unknown = JSON.parse(readFileSync(postponeFile, "utf8"));
+    if (typeof stored === "number" && Number.isFinite(stored)) postponedUntil = stored;
+  } catch {}
+  const updateGate = new UpdateGate(postponedUntil);
+  let updateOwner: string | undefined;
+  const updateSubscribers = new Set<string>();
   let legacy: ReturnType<typeof createLegacyRunner> | undefined;
 
   /**
@@ -568,6 +578,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // suspended iOS app; foreground presentation is suppressed by the app itself.
     notifyRelay(event);
   };
+
+  function pushUpdateStatus(): void {
+    const event = control({ kind: "update_status", data: updateGate.status });
+    for (const device of updateSubscribers) {
+      const send = locals.get(device);
+      if (send) send(event);
+      else if (devices.has(device)) sendTo(device, event);
+    }
+  }
 
   /** Asks the relay to forget a device, so a revoked phone cannot rejoin against the nonce. */
   let revokeAtRelay: (signingPub: string) => void = () => {};
@@ -985,6 +1004,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     userEventId?: string,
     acceptedEvent?: YorozuEvent,
   ): Promise<void> {
+    if (updateGate.status.phase === "installing") return Promise.reject(new Error("Mac is installing an update"));
+    updateGate.activity();
     if (viaOpenClaw(threadId)) {
       userEventId ??= randomUUID();
       const event = acceptedEvent ?? { id: userEventId, threadId, ts: Date.now(), agentId: MAIN_AGENT,
@@ -1003,7 +1024,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const admitted = userEventId ? admittedTurns.get(userEventId) : undefined;
     if (admitted) return admitted;
     const previous = turnQueues.get(threadId) ?? Promise.resolve();
-    const next = previous.then(() => stopped ? undefined : runTurn(threadId, text, recorded, attachments, userEventId));
+    const next = previous.catch(() => {}).then(() => stopped ? undefined : runTurn(threadId, text, recorded, attachments, userEventId));
     turnQueues.set(threadId, next);
     if (userEventId) admittedTurns.set(userEventId, next);
     void next.finally(() => {
@@ -1109,7 +1130,57 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * clients are this Mac's own user: that difference is what decides whether turning YOLO on
    * is a command or a request.
    */
-  function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0, from?: string): void {
+  function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0, from?: string, localDevice?: string): void {
+    if (event.kind === "update_status") return;
+    if (event.kind === "update_control") {
+      const subscriber = localDevice ?? from;
+      if (subscriber) updateSubscribers.add(subscriber);
+      const data = event.data;
+      if (data.action === "postpone") {
+        if (!seenCommands.has(event.id) && updateGate.status.phase !== "none" && updateGate.status.phase !== "installing") {
+          const now = Date.now();
+          writeFileAtomic(postponeFile, JSON.stringify(now + 3_600_000));
+          updateGate.postpone(now);
+          alreadySeen(event.id);
+        }
+      } else if (data.action !== "status") {
+        if (!localDevice) return;
+        if (data.action === "queue") {
+          if (typeof data.updateId !== "string" || !data.updateId || data.updateId.length > 128 ||
+              typeof data.version !== "string" || !data.version || data.version.length > 128) return;
+          if (updateOwner && updateOwner !== localDevice) return;
+          if (updateGate.status.phase === "installing" && updateGate.status.updateId !== data.updateId) return;
+          updateOwner = localDevice;
+          updateGate.queue(data.updateId, data.version);
+        } else {
+          if (data.action === "cancel") {
+            if (updateOwner && updateOwner !== localDevice) return;
+            if (updateGate.status.phase !== "none" && data.updateId !== updateGate.status.updateId) return;
+            updateGate.cancel();
+            updateOwner = undefined;
+          } else if (data.action !== "poll" || updateOwner !== localDevice || data.updateId !== updateGate.status.updateId) return;
+        }
+        if (data.action !== "cancel") {
+          let active: number | null;
+          try {
+            active = new Set([...running.keys(), ...turnQueues.keys(), ...archiveUpdates.keys(),
+              ...listThreads(dir).filter((thread) => thread.nativeTurn?.state === "interrupted").map((thread) => thread.id),
+              ...(openclaw?.pendingTurns(true) ?? []).map((turn) => turn.threadId)]).size;
+          } catch { active = null; }
+          updateGate.poll(active, Date.now());
+        }
+      }
+      if (data.action !== "status") pushUpdateStatus();
+      reply(control({ kind: "update_status", data: { ...updateGate.status, requestId: event.id } }));
+      return;
+    }
+    const requiresAdmission = event.kind === "message" && event.data.role === "user" ||
+      event.kind === "thread_create" || event.kind === "thread_archive" ||
+      event.kind === "thread_recover" && event.data.action === "continue";
+    if (updateGate.status.phase === "installing" && requiresAdmission) {
+      if (updateSubscribers.has(localDevice ?? from ?? "")) reply(control({ kind: "update_status", data: updateGate.status }));
+      return;
+    }
     if (event.kind === "message" && !attachmentsWithinLimits(event.data.attachments ?? [])) {
       return state("rejected-oversized-attachments");
     }
@@ -1132,6 +1203,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       receipt();
       return state("duplicate-message");
     }
+    if (event.kind === "thread_create" || event.kind === "message" || event.kind === "thread_recover") updateGate.activity();
     if (!admitted) {
       appendTranscript(event, transcripts);
       appendThreadEvent(event, dir);
@@ -1381,13 +1453,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     onEvent: (device, event) => {
       try {
-        handleEvent(event, locals.get(device) ?? (() => {}));
+        handleEvent(event, locals.get(device) ?? (() => {}), 0, undefined, device);
       } catch (e) {
         state(`local-event-error ${e instanceof Error ? e.message : String(e)}`);
       }
     },
     onClose: (device) => {
       locals.delete(device);
+      updateSubscribers.delete(device);
+      if (updateOwner === device) {
+        updateOwner = undefined;
+        if (updateGate.status.phase !== "installing") updateGate.cancel();
+        pushUpdateStatus();
+      }
       pushDevices();
     },
     onError: state,
@@ -1818,6 +1896,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       turnQueues.set(stored.threadId, recovery);
       if (stored.userEventId) admittedTurns.set(stored.userEventId, recovery);
       void recovery.finally(() => {
+        if (turnQueues.get(stored.threadId) === recovery) turnQueues.delete(stored.threadId);
         if (stored.userEventId && admittedTurns.get(stored.userEventId) === recovery) admittedTurns.delete(stored.userEventId);
       }).catch(() => {});
     } else {

@@ -2,6 +2,7 @@ import AppKit
 import CryptoKit
 import Foundation
 import Security
+import YorozuKeepalive
 import YorozuShared
 
 enum MacRole: String, CaseIterable, Identifiable { case host, client; var id: Self { self } }
@@ -25,7 +26,7 @@ final class MacChatSession {
             UserDefaults.standard.set(MacRole.host.rawValue, forKey: Self.roleKey)
         }
         role = initialRole
-        model = initialRole == .host ? Self.localModel() : Self.idleModel()
+        model = initialRole == .host ? (try? Self.localModel()) ?? Self.idleModel() : Self.idleModel()
     }
 
     func start() {
@@ -150,7 +151,14 @@ final class MacChatSession {
         let path = LocalSocketTransport.defaultPath()
         try? FileManager.default.removeItem(atPath: path)
         Sidecar.shared.start()
-        model = Self.localModel(); configure(model)
+        do { model = try Self.localModel() }
+        catch {
+            failure = "Could not open encrypted local cache: \(error.localizedDescription)"
+            Log.write(failure!)
+            model = Self.idleModel()
+            return
+        }
+        configure(model)
         // Only the host answers a phone's request to turn approvals off: the runtime sends it
         // over the local socket alone, and the person at this keyboard is the one it is asking.
         // Never on the relay model — a hostile host could otherwise pop consent alerts on a
@@ -175,7 +183,7 @@ final class MacChatSession {
                 paired: stored.paired == true, counters: MacPairingCounterStorage(),
                 onPaired: MacPairingStore.markPaired)
             self.relay = relay; pairedAt = stored.pairedAt
-            let model = ChatModel(transport: relay, cache: MacCacheStore.open(), device: "mac")
+            let model = ChatModel(transport: relay, cache: try MacCacheStore.open(), device: "mac")
             model.onPaired = { [weak self] in
                 Task { @MainActor in self?.pairedAt = MacPairingStore.load()?.pairedAt }
             }
@@ -188,11 +196,15 @@ final class MacChatSession {
     /// What both roles share. The YOLO consent hook is deliberately not here: see `startHost`.
     private func configure(_ model: ChatModel) {
         model.onThreads = { NSApp.dockTile.badgeLabel = model.unreadCount == 0 ? nil : String(model.unreadCount) }
+        model.onUpdateStatus = { [weak model] status in
+            guard let model else { return }
+            Updates.pending.receive(status, from: model)
+        }
     }
-    private static func localModel() -> ChatModel {
-        ChatModel(transport: LocalSocketTransport(path: LocalSocketTransport.defaultPath()), device: "mac")
+    private static func localModel() throws -> ChatModel {
+        ChatModel(transport: LocalSocketTransport(path: LocalSocketTransport.defaultPath()), cache: try MacCacheStore.openLocal(), device: "mac")
     }
-    private static func idleModel() -> ChatModel { ChatModel(transport: IdleTransport(), device: "mac") }
+    private static func idleModel() -> ChatModel { ChatModel(transport: IdleTransport(), cache: try? MacCacheStore.openLocal(), device: "mac") }
 }
 
 private actor IdleTransport: ChatTransport {
@@ -210,6 +222,17 @@ private enum MacClientKeychain {
     static func load(_ account: String) -> Data? {
         var q = query(account); q[kSecReturnData as String] = true; var item: CFTypeRef?
         return SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess ? item as? Data : nil
+    }
+    static func loadRequired(_ account: String) throws -> Data? {
+        var query = query(account)
+        query[kSecReturnData as String] = true
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = item as? Data else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
+        return data
     }
     static func save(_ data: Data, account: String) throws {
         clear(account); var q = query(account); q[kSecValueData as String] = data
@@ -272,11 +295,18 @@ private struct MacPairingCounterStorage: ChannelCounterStorage {
 private enum MacCacheStore {
     private static let account = "thread-cache-key"
     private static var directory: URL { URL.applicationSupportDirectory.appending(path: "client-threads") }
-    static func open() -> ThreadCache { ThreadCache(directory: directory, key: key()) }
+    static func open() throws -> ThreadCache { ThreadCache(directory: directory, key: try key()) }
+    static func openLocal() throws -> ThreadCache {
+        let directory = URL(fileURLWithPath: LocalSocketTransport.defaultPath()).deletingLastPathComponent().appending(path: "host-client-cache")
+        return ThreadCache(directory: directory, key: try key(account: "host-thread-cache-key"))
+    }
     static func clear() { try? FileManager.default.removeItem(at: directory); MacClientKeychain.clear(account) }
-    private static func key() -> SymmetricKey {
-        if let data = MacClientKeychain.load(account), data.count == 32 { return SymmetricKey(data: data) }
+    private static func key(account: String = account) throws -> SymmetricKey {
+        if let data = try MacClientKeychain.loadRequired(account) {
+            guard data.count == 32 else { throw CocoaError(.fileReadCorruptFile) }
+            return SymmetricKey(data: data)
+        }
         let key = SymmetricKey(size: .bits256); let data = key.withUnsafeBytes { Data($0) }
-        try? MacClientKeychain.save(data, account: account); return key
+        try MacClientKeychain.save(data, account: account); return key
     }
 }
