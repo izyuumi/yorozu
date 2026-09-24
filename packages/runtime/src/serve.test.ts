@@ -98,6 +98,30 @@ function channelFor(priv: Uint8Array, macPub: Uint8Array) {
 }
 type PhoneChannel = ReturnType<typeof channelFor>;
 
+async function nextModernEnvelope(
+  client: { next: () => Promise<{ payload: string }> }, channel: PhoneChannel,
+) {
+  for (;;) {
+    const body = frameBody((await client.next()).payload);
+    try { return channel.envelope(body); }
+    catch { /* Older-format box or another device's box. */ }
+  }
+}
+
+/** The live wire format in public Mac/iOS 0.2.3: one key, plain events, no seq envelope. */
+function legacyChannelFor(priv: Uint8Array, macPub: Uint8Array) {
+  const key = deriveSessionKey(priv, macPub);
+  return {
+    box(event: YorozuEvent): string {
+      const sealed = seal(key, Buffer.from(JSON.stringify(event)));
+      return encodeBody({ t: "box", n: toBase64Url(sealed.nonce), c: toBase64Url(sealed.ciphertext) });
+    },
+    open(body: { n: string; c: string }): YorozuEvent {
+      return JSON.parse(Buffer.from(open(key, fromBase64Url(body.n), fromBase64Url(body.c))).toString()) as YorozuEvent;
+    },
+  };
+}
+
 /**
  * The next event sealed for this phone that is not a receipt. Every command is receipted
  * before it is answered, and a test reading frames one at a time is after the answer.
@@ -107,7 +131,7 @@ async function nextEvent(
   channel: PhoneChannel,
 ): Promise<YorozuEvent> {
   for (;;) {
-    const event = channel.open(frameBody((await client.next()).payload));
+    const event = (await nextModernEnvelope(client, channel)).event;
     if (event.kind !== "receipt") return event;
   }
 }
@@ -209,13 +233,18 @@ test("a sealed message from a phone round-trips through the agent loop", async (
 
   // A box the Mac sealed, reflected back by the relay, opens under no device's key: it is
   // nobody's command, so nothing is receipted for it.
-  const reflected = frameBody((await phone.next()).payload);
-  const reflectedId = channel.open(reflected).id;
+  let reflected!: { n: string; c: string };
+  let reflectedId!: string;
+  for (;;) {
+    const body = frameBody((await phone.next()).payload);
+    try { reflectedId = channel.open(body).id; reflected = body; break; }
+    catch { /* Legacy box. */ }
+  }
   phone.frame(encodeBody(reflected), keys);
   phone.frame(channel.box({ ...sent, id: "e2", data: { role: "user", text: "ping again" } }), keys);
   const receipts: string[] = [];
   for (;;) {
-    const event = channel.open(frameBody((await phone.next()).payload));
+    const event = (await nextModernEnvelope(phone, channel)).event;
     if (event.kind === "receipt") receipts.push(event.data.eventId);
     if (event.kind === "message" && event.data.role === "agent" && event.data.done) break;
   }
@@ -224,16 +253,95 @@ test("a sealed message from a phone round-trips through the agent loop", async (
 
   // A phone says `hello` on every join. Saying it again resets no counter on either side: the
   // old box is still a replay, and the Mac's seqs carry on from where they were.
-  const before = channel.envelope(frameBody((await (async () => {
-    phone.frame(channel.box({ ...sent, id: "e3", threadId: "", kind: "sync_request", data: { lastSeen: {} } } as YorozuEvent), keys);
-    return phone.next();
-  })()).payload)).seq;
+  phone.frame(channel.box({ ...sent, id: "e3", threadId: "", kind: "sync_request", data: { lastSeen: {} } } as YorozuEvent), keys);
+  const before = (await nextModernEnvelope(phone, channel)).seq;
   phone.frame(hello(qr, toBase64Url(phoneKeys.publicKey), keys.pub), keys);
   await vi.waitFor(() => expect(lines.filter((l) => l === "STATE paired")).toHaveLength(2));
   expect(loadDevices(join(stateDir, "devices.json"))[0]?.name).toBe("iPadOS 27.0");
-  expect(channel.envelope(frameBody((await phone.next()).payload)).seq).toBeGreaterThan(before);
+  expect((await nextModernEnvelope(phone, channel)).seq).toBeGreaterThan(before);
   phone.frame(box, keys);
   await vi.waitFor(() => expect(lines.filter((l) => l === "STATE replayed-frame")).toHaveLength(2));
+});
+
+test("public 0.2.3 phone syncs with current Mac runtime", async () => {
+  relay = await startRelay(0);
+  const qrs = qrQueue();
+  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-legacy-phone-"));
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${relay.port}`,
+    stateDir,
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m",
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => sse("pong")) }),
+    log: (line) => { if (line.startsWith("QR ")) qrs.push(line.slice(3)); },
+  });
+  const qr = await qrs.next();
+  const { phone, keys } = await connectPhone(relay.port, qr.roomId!, qr.token);
+  expect(await phone.next()).toMatchObject({ type: "joined" });
+  const identity = generateKeypair();
+  const channel = legacyChannelFor(identity.privateKey, fromBase64Url(qr.macPubkey));
+  phone.frame(hello(qr, toBase64Url(identity.publicKey), keys.pub), keys);
+
+  const next = async (attempts = 4): Promise<YorozuEvent> => {
+    // Released client ignores boxes it cannot open. Bound attempts keep this test fast and red
+    // if the Mac never sends its older wire format.
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try { return channel.open(frameBody((await phone.next()).payload)); }
+      catch { /* New-format box belongs to another protocol. */ }
+    }
+    throw new Error("Mac sent no legacy greeting");
+  };
+  expect(await next()).toMatchObject({ kind: "thread_list", data: { threads: [] } });
+  expect(await next()).toMatchObject({ kind: "model_list" });
+  expect(await next()).toMatchObject({ kind: "project_list", data: { projects: [{ name: "proj" }] } });
+  expect(await next()).toMatchObject({ kind: "device_list" });
+  phone.frame(channel.box({ id: "legacy-device-list", threadId: "", ts: Date.now(),
+    agentId: "phone", kind: "device_list", data: { devices: [] } }), keys);
+  expect(await next()).toMatchObject({ kind: "receipt", data: { eventId: "legacy-device-list" } });
+  expect(await next()).toMatchObject({ kind: "device_list" });
+  phone.frame(channel.box({ id: "legacy-sync", threadId: "", ts: Date.now(),
+    agentId: "phone", kind: "sync_request", data: { lastSeen: {} } }), keys);
+  expect(await next()).toMatchObject({ kind: "receipt", data: { eventId: "legacy-sync" } });
+  expect(await next()).toMatchObject({ kind: "sync_delta", data: { events: [] } });
+
+  // A newer phone can share this Mac without changing the older one's format.
+  const nextQr = await qrs.next();
+  const modern = await connectPhone(relay.port, nextQr.roomId!, nextQr.token);
+  expect(await modern.phone.next()).toMatchObject({ type: "joined" });
+  const modernIdentity = generateKeypair();
+  const modernChannel = channelFor(modernIdentity.privateKey, fromBase64Url(nextQr.macPubkey));
+  modern.phone.frame(hello(nextQr, toBase64Url(modernIdentity.publicKey), modern.keys.pub), modern.keys);
+  expect(await nextEvent(modern.phone, modernChannel)).toMatchObject({ kind: "thread_list" });
+  expect(await nextEvent(modern.phone, modernChannel)).toMatchObject({ kind: "model_list" });
+  expect(await nextEvent(modern.phone, modernChannel)).toMatchObject({ kind: "project_list" });
+  expect(await nextEvent(modern.phone, modernChannel)).toMatchObject({ kind: "device_list" });
+  expect(await next(16)).toMatchObject({ kind: "device_list" });
+  modern.phone.frame(modernChannel.box({ id: "modern-device-list", threadId: "", ts: Date.now(),
+    agentId: "phone", kind: "device_list", data: { devices: [] } }), modern.keys);
+  expect(await nextEvent(modern.phone, modernChannel)).toMatchObject({ kind: "device_list" });
+  const oldBoxForModern = legacyChannelFor(modernIdentity.privateKey, fromBase64Url(nextQr.macPubkey));
+  modern.phone.frame(oldBoxForModern.box({ id: "downgrade", threadId: "downgrade-thread", ts: Date.now(),
+    agentId: "phone", kind: "message", data: { role: "user", text: "replayed" } }), modern.keys);
+  modern.phone.frame(modernChannel.box({ id: "after-downgrade", threadId: "", ts: Date.now(),
+    agentId: "phone", kind: "device_list", data: { devices: [] } }), modern.keys);
+  for (;;) {
+    const event = (await nextModernEnvelope(modern.phone, modernChannel)).event;
+    if (event.kind === "receipt" && event.data.eventId === "after-downgrade") break;
+  }
+  expect(readThreadEvents("downgrade-thread", stateDir)).toEqual([]);
+
+  phone.frame(channel.box({ id: "old-phone-hi", threadId: "old-phone-thread", ts: Date.now(),
+    agentId: "phone", kind: "message", data: { role: "user", text: "Hi" } }), keys);
+  expect(await next(16)).toMatchObject({ kind: "receipt", data: { eventId: "old-phone-hi" } });
+  expect(await next(16)).toMatchObject({ kind: "message", data: { role: "user", text: "Hi" } });
+  expect(await next(16)).toMatchObject({ kind: "message", data: { role: "agent", text: "pong" } });
+  for (;;) {
+    const event = await nextEvent(modern.phone, modernChannel);
+    if (event.kind === "message" && event.data.role === "user") {
+      expect(event.data.text).toBe("Hi");
+      break;
+    }
+  }
+  expect(readThreadEvents("old-phone-thread", stateDir).some((event) => event.kind === "message" && event.data.text === "Hi")).toBe(true);
 });
 
 test.each([false, true])("a phone rejoins without hello and preserves a safe cutoff (legacy=%s)", async (legacy) => {
@@ -276,7 +384,7 @@ test.each([false, true])("a phone rejoins without hello and preserves a safe cut
   phone.frame(early, keys);
   let lastMacSeq = 0;
   for (;;) {
-    const envelope = channel.envelope(frameBody((await phone.next()).payload));
+    const envelope = await nextModernEnvelope(phone, channel);
     lastMacSeq = Math.max(lastMacSeq, envelope.seq);
     if (envelope.event.kind === "sync_delta") break;
   }
@@ -317,7 +425,7 @@ test.each([false, true])("a phone rejoins without hello and preserves a safe cut
   again.frame(early, keys);
   await vi.waitFor(() => expect(lines).toContain("STATE replayed-frame"));
   again.frame(channel.box({ id: "sync", threadId: "", ts: Date.now(), agentId: "phone", kind: "sync_request", data: { lastSeen: {} } }), keys);
-  const receipt = channel.envelope(frameBody((await again.next()).payload));
+  const receipt = await nextModernEnvelope(again, channel);
   expect(receipt.event.kind).toBe("receipt");
   expect(receipt.seq).toBeGreaterThan(lastMacSeq);
   expect(await nextEvent(again, channel)).toMatchObject({ kind: "sync_delta", data: { events: [] } });
@@ -440,7 +548,7 @@ async function pairedPhone(responses: (() => Response)[], openclaw = false, extr
   async function eventsUntil(done: (event: YorozuEvent) => boolean): Promise<YorozuEvent[]> {
     const seen: YorozuEvent[] = [];
     for (;;) {
-      const event = channel.open(frameBody((await phone.next()).payload));
+      const event = (await nextModernEnvelope(phone, channel)).event;
       seen.push(event);
       if (done(event)) return seen;
     }
@@ -1645,7 +1753,10 @@ test("an open relay socket holds notifications until registration completes", as
     const request = channel.box({ id: "catch-up", threadId: "", ts: Date.now(), agentId: "phone", kind: "sync_request", data: { lastSeen: {} } });
     macSocket.send(JSON.stringify({ type: "frame", payload: request }));
     await vi.waitFor(() => {
-      const events = seen.filter((msg) => msg.type === "frame").map((msg) => channel.open(frameBody(msg.payload as string)));
+      const events = seen.filter((msg) => msg.type === "frame").flatMap((msg) => {
+        try { return [channel.open(frameBody(msg.payload as string))]; }
+        catch { return []; }
+      });
       expect(events.find((event) => event.kind === "sync_delta")).toMatchObject({ data: { events: expect.arrayContaining([expect.objectContaining({ kind: "message", data: { role: "agent", text: "answered before registration", done: true } })]) } });
     });
   } finally {

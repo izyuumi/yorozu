@@ -355,10 +355,12 @@ const SEND_SEQ_RESERVE = 1_000;
 
 /** A phone paired over the relay, as the runtime holds it. */
 interface PairedDevice {
-  /** The one shared key, kept for push preview boxes only. */
+  /** The one shared key, used for push previews and released 0.2.3 live-channel boxes. */
   key: Uint8Array;
   /** Live-channel keys, one per direction. */
   channel: ChannelKeys;
+  /** Set by the first box after hello; a modern box can upgrade a legacy connection. */
+  format: "current" | "legacy" | null;
   /** Last seq sealed to it; `record.sendSeq` is the ceiling written ahead of it. */
   sent: number;
   record: DeviceRecord;
@@ -482,6 +484,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     devices.set(record.pub, {
       key: deriveSessionKey(keys.session.privateKey, theirPub),
       channel: deriveChannelKeys(keys.session.privateKey, theirPub, "mac"),
+      format: null,
       // Fresh from disk the ceiling is all there is, and everything up to it counts as used.
       sent: before?.sent ?? record.sendSeq,
       record,
@@ -1507,29 +1510,53 @@ export function serve(options: ServeOptions = {}): Sidecar {
       return { t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) };
     };
 
+    const sealLegacyFor = (known: PairedDevice, event: YorozuEvent): FrameBody => {
+      const box = seal(known.key, Buffer.from(JSON.stringify(event)));
+      return { t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) };
+    };
+
     sendTo = (device: string, event: YorozuEvent): void => {
       const known = devices.get(device);
       if (!known || !relayReady || ws.readyState !== WebSocket.OPEN) return;
       const cutoff = known.record.pairedAt ?? 0;
       if (event.threadId && event.ts < cutoff) return;
       if (event.kind === "thread_list") event = { ...threadList(cutoff), id: event.id, ts: event.ts };
-      sendFrame(sealFor(known, event));
+      // A hello carries no format version. Greet both released clients; each ignores the box
+      // it cannot open. Once one answers, send only its format. Modern goes first so a client
+      // able to read both never settles on the older format.
+      if (known.format !== "legacy") sendFrame(sealFor(known, event));
+      if (known.format !== "current") sendFrame(sealLegacyFor(known, event));
     };
 
     /**
-     * Frames carry no sender, so the device that sent one is whichever device's `recv` key
-     * opens it. A box sealed for another phone is simply not ours to read, and one we sealed
-     * ourselves and got reflected opens under no `recv` key at all. Once a key has named the
-     * sender the seq is judged against that device alone: at or below the last accepted is a
-     * replay, dropped without a receipt — the phone re-sends under a fresh seq if it must.
+     * Frames carry no sender, so whichever paired key opens one identifies its device.
+     * Modern boxes retain the per-direction replay check. Legacy boxes have no seq; accepting
+     * them ends once a modern box from that device has been seen on this connection.
      */
     function openFrom(body: { n: string; c: string }): [string, YorozuEvent] | null {
       for (const [device, known] of devices) {
-        let plain: Uint8Array;
+        let plain: Uint8Array | null = null;
         try {
           plain = open(known.channel.recv, fromBase64Url(body.n), fromBase64Url(body.c));
         } catch {
-          continue; // Not sealed for us: try the next paired device.
+          // An older client used the shared key in both directions.
+        }
+        if (plain === null) {
+          if (known.format === "current") continue;
+          try {
+            const legacy = open(known.key, fromBase64Url(body.n), fromBase64Url(body.c));
+            const event = JSON.parse(Buffer.from(legacy).toString()) as YorozuEvent;
+            if (typeof event?.id !== "string" || typeof event?.kind !== "string" ||
+              typeof event?.threadId !== "string" || typeof event?.ts !== "number" ||
+              typeof event?.data !== "object" || event.data === null) {
+              state("malformed-frame");
+              return null;
+            }
+            known.format = "legacy";
+            return [device, event];
+          } catch {
+            continue; // Not sealed for this device: try the next one.
+          }
         }
         let envelope: ReturnType<typeof decodeEnvelope>;
         try {
@@ -1553,6 +1580,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           known.record.recvSeq = accepted;
           throw e;
         }
+        known.format = "current";
         return [device, envelope.event];
       }
       return null;
