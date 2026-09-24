@@ -52,6 +52,7 @@ public struct ChatView: View {
     #endif
     @State private var searching = false
     @State private var choosingAgent = false
+    @State private var showingTerminal = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var search = ""
     /// Which hit the arrows are on. Reset whenever the term changes.
@@ -178,6 +179,14 @@ public struct ChatView: View {
                     .presentationDetents([.medium, .large])
             }
         }
+        .sheet(isPresented: $showingTerminal) {
+            TerminalSheet(model: model, thread: thread)
+                #if os(iOS)
+                .presentationDetents([.medium])
+                #else
+                .frame(minWidth: 700, minHeight: 450)
+                #endif
+        }
         .onChange(of: model.state, initial: true) { _, state in
             if state == .paired { model.requestApprovalSettings() }
         }
@@ -218,12 +227,23 @@ public struct ChatView: View {
                 // One group, not two `.primaryAction` items: iOS folds a second primary action
                 // into a "…" overflow menu, which is exactly the button this replaced.
                 ToolbarItemGroup(placement: .topBarTrailing) {
+                    if model.terminalEnabled {
+                        Button("Open terminal", systemImage: "terminal") { showingTerminal = true }
+                    }
                     Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
                         .keyboardShortcut("f")
                     if onCreate != nil {
                         Button("New session", systemImage: "square.and.pencil") { choosingAgent = true }
                     }
                 }
+        }
+        #else
+        .toolbar {
+            if model.terminalEnabled {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Open terminal", systemImage: "terminal") { showingTerminal = true }
+                }
+            }
         }
         #endif
         // Opened from the magnifier rather than always on show: a thread is for reading, and

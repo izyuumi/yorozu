@@ -67,6 +67,15 @@ public final class ChatModel {
     public private(set) var yoloUntil: Int?
     /// True once the runtime answered this device's request to turn it on with "ask the Mac".
     public private(set) var yoloPending = false
+    /// Host-owned developer setting and live PTY list. Never cached in thread history.
+    public private(set) var terminalEnabled = false
+    public private(set) var terminalSessions: [TerminalSessionData] = []
+    public private(set) var terminalEpoch: String?
+    public private(set) var terminalError: String?
+    /// Only the open terminal sheet consumes display frames; reattach fetches a fresh snapshot.
+    public var onTerminalFrame: ((TerminalData) -> Void)?
+    private var terminalConnectionRevision = 0
+    private var terminalEmitter: Task<Void, Never>?
     /// What this device chose for each answered action, so the card can say so afterwards.
     public private(set) var choices: [String: ApprovalAnswerData.Answer] = [:]
     /// One composer draft per thread, so switching threads does not lose what was typed.
@@ -276,6 +285,7 @@ public final class ChatModel {
     }
 
     public func close() {
+        invalidateTerminalConnection()
         Task { [transport] in await transport.close() }
     }
 
@@ -293,6 +303,7 @@ public final class ChatModel {
     /// Called when the app comes back to the foreground: a socket that dropped while it was
     /// suspended is re-dialled now instead of after the transport's backoff.
     public func reconnect() {
+        invalidateTerminalConnection()
         Task { [transport] in await transport.reconnect() }
     }
 
@@ -782,6 +793,37 @@ public final class ChatModel {
         emit(control(.approvalSettings(ApprovalSettingsData())))
     }
 
+    public func requestTerminalStatus() {
+        emit(control(.terminal(TerminalData(action: .status))))
+    }
+
+    public var terminalCanHostClose: Bool { transport is LocalSocketTransport }
+
+    /// Terminal controls are deliberately live-only: never stored in the message outbox.
+    public func terminal(
+        _ action: TerminalData.Action, in threadId: String = "", sessionId: String? = nil,
+        cols: Int? = nil, rows: Int? = nil, data: Data? = nil
+    ) {
+        guard canDeliver, let terminalEpoch else { return }
+        terminalError = nil
+        let frame = event(.terminal(TerminalData(
+            action: action, sessionId: sessionId, cols: cols, rows: rows,
+            data: data?.base64EncodedString(), epoch: terminalEpoch
+        )), in: threadId)
+        let revision = terminalConnectionRevision
+        let previous = terminalEmitter
+        terminalEmitter = Task { [weak self, transport] in
+            await previous?.value
+            guard let self, self.terminalConnectionRevision == revision, self.canDeliver else { return }
+            try? await transport.send(frame)
+        }
+    }
+
+    private func invalidateTerminalConnection() {
+        terminalConnectionRevision &+= 1
+        terminalEpoch = nil
+    }
+
     public func setYoloMode(_ enabled: Bool) {
         yoloMode = enabled
         yoloPending = false
@@ -883,6 +925,7 @@ public final class ChatModel {
         case .state(let state):
             self.state = state
             if state != .paired {
+                invalidateTerminalConnection()
                 ownerOnline = false
                 if updateStatus.phase != .none && updateStatus.phase != .installing {
                     updateStatus.phase = .unknown
@@ -898,6 +941,7 @@ public final class ChatModel {
                 requestSync()
                 requestDevices()
                 requestRules()
+                if ownerOnline { requestTerminalStatus() }
                 if ownerOnline { updateControl(.status) }
                 resumeResultRequests()
                 onPaired?()
@@ -905,13 +949,17 @@ public final class ChatModel {
             }
         case .ownerOnline(let online):
             ownerOnline = online
+            if !online { invalidateTerminalConnection() }
             if !online && updateStatus.phase != .none && updateStatus.phase != .installing {
                 updateStatus.phase = .unknown
                 updateStatus.deadline = nil
             }
             if online {
                 resumeResultRequests()
-                if state == .paired { updateControl(.status) }
+                if state == .paired {
+                    requestTerminalStatus()
+                    updateControl(.status)
+                }
             }
             // The Mac waking up is the other half of "there is somewhere to send to".
             if online { flush() }
@@ -981,6 +1029,20 @@ public final class ChatModel {
                     yoloUntil = yolo ? data.yoloUntil : nil
                 }
                 yoloPending = data.pending == true
+            case .terminal(let data):
+                switch data.action {
+                case .state:
+                    terminalEnabled = data.enabled == true
+                    terminalSessions = data.sessions ?? []
+                    terminalEpoch = data.epoch
+                    terminalError = nil
+                case .error:
+                    terminalError = data.error
+                    onTerminalFrame?(data)
+                case .created, .snapshot, .output:
+                    onTerminalFrame?(data)
+                default: break
+                }
             // A phone asking for the bypass, relayed to the Mac for a yes or no. Not a thread's
             // event either: nothing is stored until the Mac answers.
             case .approvalSettingsRequest(let data):
