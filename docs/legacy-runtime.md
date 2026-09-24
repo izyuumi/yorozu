@@ -35,12 +35,12 @@ no remaining caller:
 | PAIOS memory indexing and the `remember` tool | `memory.ts` (except `stateDir()`, which is live) |
 | Scheduler, cron and the `schedule` tools | `scheduler.ts`, `cron.ts` |
 | Agent markdown files, delegation, skills | `agents.ts`, `delegate.ts`, `skills.ts`, `agents/*.md` |
-| Native tools as *runtime tools* | `tools/native.ts`, `shell.ts`, `fs.ts`, `apple.ts` |
+| Native tools as *runtime tools* | `tools/native.ts`, `fs.ts`, `apple.ts` (`shell.ts` is live: see below) |
 | Browser over CDP | `tools/browser.ts` |
 | `fetch` and `web_search` | `tools/fetch.ts`, `tools/search.ts` |
 | Model catalog and auto-assign | `catalog.ts`, `assign.ts`, `catalog/models.json` |
 | Rolling thread summaries | `summary.ts` |
-| The approval gate, task grants, rule proposals | `checkApproval`/`verifyApproved` in `index.ts` |
+| Task grants and `verifyApproved` | `index.ts` (`checkApproval` itself is live: see below) |
 | `ask_user` / `report_progress` tools | `tools/cards.ts` |
 
 The environment variables `YOROZU_MODEL_CHAIN`, `YOROZU_BASE_URL`, `YOROZU_API_KEY`,
@@ -58,9 +58,13 @@ release on every push that touches it. That feed only has a consumer inside this
 no rule can reach, structured action scopes, rules with `always`/`never` precedence, batches,
 `lastUsed`/`useCount`, and rule proposals after repeated approvals. The wire protocol carries
 `rule_list`, `rule_update` and `rule_delete`, the runtime serves them, and `RuleEditorView` exists
-in `packages/shared-swift`. But the engine is only consulted by `checkApproval` inside the legacy
-loop, and neither app currently links to the editor. **Rules can be stored and are never
-enforced.** The `yolo` setting *is* live — it is passed to native coding agents as a bypass.
+in `packages/shared-swift`. But no agent turn consults the engine, and neither app currently links
+to the editor. **For agent work, rules can be stored and are never enforced.** The `yolo` setting
+*is* live — it is passed to native coding agents as a bypass.
+
+The one live caller of `checkApproval` is the host shell: a message starting with `!` is run by
+`serve.ts` through `shellTool` and `execShell` (see [architecture.md](architecture.md), "Host
+shell"), so YOLO, the floor and any stored `run-command` rule do apply to those commands.
 
 What does raise real approval and question cards on a shipped build is `native-cards.ts`,
 translating a `claude-code` or `codex` SDK prompt. That path has no rules, floors or task grants

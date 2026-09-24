@@ -26,6 +26,21 @@ A native-agent thread is the opposite: its own SDK session, in its own working d
 `~/Projects` chosen at creation, with that agent's own tools and its own permission prompts.
 Yorozu's dispatch does not sit in the middle of it.
 
+### Host shell
+
+A message that starts with `!` is not a prompt: the sidecar runs the rest as a `/bin/sh -c`
+command on the Mac itself, as the user, and no agent sees it. It travels like any other message,
+sealed through the relay or over the local socket, and comes back as the `tool_call` /
+`tool_result` pair every client already draws — so there is no terminal UI and nothing new on
+the wire. The command runs in the thread's working directory when the thread is a coding agent's,
+otherwise in `$HOME`; it is one shot, killed after 60 s or on Stop, and its output is capped and
+paged the way any long tool result is.
+
+Every command goes through the runtime's approval gate (`checkApproval`): the card shows the
+command verbatim and where it would run, YOLO skips the card while it is on, and a `run-command`
+rule saved from the card stands afterwards. There is no PTY and no streaming; a command that
+needs an interactive terminal is a follow-up, not this.
+
 ## The sidecar
 
 `packages/runtime` builds `yorozu-serve`, which the Mac app spawns and supervises. It loads or

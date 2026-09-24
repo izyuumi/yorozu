@@ -3,7 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { defaultTools } from "../index.js";
-import { MAX_OUTPUT, expandHome, runShell, shellTool, truncate } from "./shell.js";
+import { MAX_OUTPUT, execShell, expandHome, runShell, shellTool, truncate } from "./shell.js";
 
 test("returns combined stdout and stderr", async () => {
   expect(await runShell({ cmd: "echo out; echo err 1>&2" })).toBe("out\nerr");
@@ -82,6 +82,23 @@ test("a call with no cmd at all never reaches a shell", () => {
 
 test("unicode survives the round trip through the shell", async () => {
   expect(await runShell({ cmd: "printf '%s' '日本語 🎌 ünïcode'" })).toBe("日本語 🎌 ünïcode");
+});
+
+test("execShell keeps the exit status beside the output the model reads", async () => {
+  expect(await execShell({ cmd: "true" })).toEqual({ output: "(no output)", ok: true });
+  expect(await execShell({ cmd: "echo out; exit 2" })).toEqual({ output: "out\n[exit 2]", ok: false });
+});
+
+test("aborting kills the command, and the result says it was stopped rather than timed out", async () => {
+  const stop = new AbortController();
+  const pending = execShell({ cmd: "sleep 5", signal: stop.signal });
+  stop.abort();
+  expect(await pending).toEqual({ output: "[stopped]", ok: false });
+});
+
+test("the card's consequence names the folder the command would run in", () => {
+  expect(shellTool.action!({ cmd: "ls", cwd: "/tmp" }).consequence).toContain("in /tmp");
+  expect(shellTool.action!({ cmd: "ls" }).consequence).toContain("on the Mac");
 });
 
 test("the registry dispatches `shell` to this implementation", async () => {

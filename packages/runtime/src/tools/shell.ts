@@ -29,13 +29,22 @@ export interface ShellOptions {
   cmd: string;
   cwd?: string;
   timeoutMs?: number;
+  /** Aborting kills the command; the result then says it was stopped. */
+  signal?: AbortSignal;
+}
+
+export interface ShellResult {
+  /** Combined stdout and stderr, truncated, with the status on its last line when not `ok`. */
+  output: string;
+  /** Exited zero. */
+  ok: boolean;
 }
 
 /**
- * Combined stdout and stderr, truncated. A non-zero exit is a result, not a throw: the
- * model asked what happens, and the output plus the status is the answer.
+ * A non-zero exit, a timeout and a stop are all results, not throws: whoever asked wants to
+ * know what happened, and the output plus the status is the answer.
  */
-export function runShell(options: ShellOptions): Promise<string> {
+export function execShell(options: ShellOptions): Promise<ShellResult> {
   const timeout = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return new Promise((resolve) => {
     execFile(
@@ -43,30 +52,34 @@ export function runShell(options: ShellOptions): Promise<string> {
       ["-c", options.cmd],
       {
         ...(options.cwd ? { cwd: expandHome(options.cwd) } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
         timeout,
         maxBuffer: MAX_BUFFER,
         encoding: "utf8",
       },
       (error, stdout, stderr) => {
         const combined = `${stdout}${stderr}`.trimEnd();
-        if (!error) return resolve(truncate(combined) || "(no output)");
+        if (!error) return resolve({ output: truncate(combined) || "(no output)", ok: true });
         const { code, killed } = error as Error & { code?: number | string; killed?: boolean };
-        const status = killed ? `killed after ${timeout}ms` : `exit ${code ?? "?"}`;
-        resolve(`${truncate(combined)}\n[${status}]`.trimStart());
+        const status = options.signal?.aborted ? "stopped" : killed ? `killed after ${timeout}ms` : `exit ${code ?? "?"}`;
+        resolve({ output: `${truncate(combined)}\n[${status}]`.trimStart(), ok: false });
       },
     );
   });
 }
+
+/** `execShell` as the one string the model reads. */
+export const runShell = async (options: ShellOptions): Promise<string> => (await execShell(options)).output;
 
 export const shellTool: Tool = {
   name: "shell",
   description:
     "Run a shell command on the user's Mac and return its combined output and exit status.",
   actionClass: "run-command",
-  action: ({ cmd }) => ({
+  action: ({ cmd, cwd }) => ({
     target: String(cmd ?? ""),
     operation: "run",
-    consequence: "Runs this command on the Mac with the user's own permissions.",
+    consequence: `Runs this command ${cwd ? `in ${String(cwd)}` : "on the Mac"} with the user's own permissions.`,
   }),
   parameters: {
     type: "object",

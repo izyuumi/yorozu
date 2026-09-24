@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { startRelay, type Relay } from "@yorozu/relay";
 import { connectPhone, rejoinPhone } from "@yorozu/relay/dist/testing.js";
@@ -25,13 +25,13 @@ import {
   type QrPayload,
   type YorozuEvent,
 } from "@yorozu/shared";
-import { listRules, type AskResult, type Rule } from "./approval.js";
+import { listRules, loadSettings, saveSettings, type AskResult, type Rule } from "./approval.js";
 import type { AddressInfo } from "node:net";
 import { createConnection } from "node:net";
 import { afterEach, expect, test, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import { openaiCompat } from "./provider.js";
-import { ensureStateDir, loadChannelSeqs, loadDevices, loadKeys, parseFrameBody, serve as startSidecar, typedAnswer, type ServeOptions, type Sidecar } from "./serve.js";
+import { ensureStateDir, hostCommand, loadChannelSeqs, loadDevices, loadKeys, parseFrameBody, serve as startSidecar, typedAnswer, type ServeOptions, type Sidecar } from "./serve.js";
 import type { NativeAgentRunner, NativeTurn } from "./native.js";
 import * as schedulerModule from "./scheduler.js";
 import { OpenClawRunner, type OpenClawTurn } from "./openclaw.js";
@@ -2260,6 +2260,71 @@ test("a lock-screen answer never settles a native card the runtime did not judge
   send({ kind: "approval_answer", data: { actionId: card.data.actionId, answer: "no" } }, "native");
   expect((await eventsUntil((e) => e.kind === "message" && e.data.done === true)).at(-1))
     .toMatchObject({ data: { text: "sent:false" } });
+});
+
+test.each([
+  ["!ls -la", "ls -la"], ["!  pwd ", "pwd"], ["!", null], ["! ", null], ["ls", null], ["hey!", null],
+])("hostCommand(%j) is %j", (text, command) => {
+  expect(hostCommand(text)).toBe(command);
+});
+
+test("a `!` message runs on this Mac after its card, in the thread's folder, and comes back as a tool row", async () => {
+  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
+  const run = vi.spyOn(OpenClawRunner.prototype, "run").mockResolvedValue("from openclaw");
+  const { dir, send, eventsUntil } = await pairedPhone([], true, { nativeRunners: {} });
+  send({ kind: "thread_create", data: { agent: "claude-code", cwd: proj } }, "cc");
+  send({ kind: "thread_create", data: {} }, "t1");
+  await eventsUntil((e) => e.kind === "thread_list" && e.data.threads.some((t) => t.id === "t1"));
+
+  // The card carries the command verbatim and where it would run; nothing runs until it is answered.
+  const cmd = "pwd -P; echo err 1>&2";
+  send({ kind: "message", data: { role: "user", text: `!${cmd}` } }, "cc");
+  const card = cardOf(await eventsUntil((e) => e.kind === "approval_card"));
+  expect(card).toMatchObject({ actionClass: "run-command", target: cmd, scope: { operation: "run" } });
+  expect(card.scope?.consequence).toContain(proj);
+  expect(readThreadEvents("cc", dir).map((e) => e.kind)).toEqual(["message", "approval_card"]);
+  send({ kind: "approval_answer", data: { actionId: card.actionId, answer: "yes" } }, "cc");
+  const events = await eventsUntil((e) => e.kind === "message" && e.data.done === true);
+  const call = events.find((e) => e.kind === "tool_call");
+  expect(call).toMatchObject({ threadId: "cc", data: { name: "shell", args: { cmd, cwd: proj } } });
+  expect(events.find((e) => e.kind === "tool_result")).toMatchObject({
+    data: { callId: call!.data.callId, ok: true, output: `${realpathSync(proj)}\nerr` },
+  });
+  // Finished with nothing to say: the row is the answer.
+  expect(events.at(-1)).toMatchObject({ threadId: "cc", data: { role: "agent", text: "", done: true } });
+  expect(readThreadEvents("cc", dir).map((e) => e.kind)).toEqual(
+    ["message", "approval_card", "approval_answer", "tool_call", "tool_result", "message"],
+  );
+  // It ran here: no agent saw it, and the Mac app's log never did either.
+  expect(run).not.toHaveBeenCalled();
+  expect(states.join("\n")).not.toContain("pwd");
+
+  // A plain thread runs at home, and a refusal is a row that says so, never a run.
+  send({ kind: "message", data: { role: "user", text: "!echo nope" } }, "t1");
+  const second = cardOf(await eventsUntil((e) => e.kind === "approval_card"));
+  send({ kind: "approval_answer", data: { actionId: second.actionId, answer: "no" } }, "t1");
+  const refused = await eventsUntil((e) => e.kind === "message" && e.data.done === true);
+  expect(refused.find((e) => e.kind === "tool_call")).toMatchObject({ data: { args: { cmd: "echo nope", cwd: homedir() } } });
+  expect(refused.find((e) => e.kind === "tool_result")).toMatchObject({ data: { ok: false, output: "Not run." } });
+  expect(run).not.toHaveBeenCalled();
+  expect(readThreadEvents("t1", dir)[0]).toMatchObject({ kind: "message", data: { role: "user", text: "!echo nope" } });
+});
+
+test("under YOLO a `!` message runs without a card, and Stop kills it", async () => {
+  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
+  const { dir, send, eventsUntil } = await pairedPhone([], true, { nativeRunners: {} });
+  saveSettings({ ...loadSettings(dir), yolo: true, yoloUntil: Date.now() + 60_000 }, dir);
+  send({ kind: "thread_create", data: {} }, "t1");
+  send({ kind: "message", data: { role: "user", text: "!echo yolo" } }, "t1");
+  const events = await eventsUntil((e) => e.kind === "message" && e.data.done === true);
+  expect(events.some((e) => e.kind === "approval_card")).toBe(false);
+  expect(events.find((e) => e.kind === "tool_result")).toMatchObject({ data: { ok: true, output: "yolo" } });
+
+  send({ kind: "message", data: { role: "user", text: "!sleep 30" } }, "t1");
+  await eventsUntil((e) => e.kind === "tool_call");
+  send({ kind: "interrupt", data: {} }, "t1");
+  const stopped = await eventsUntil((e) => e.kind === "tool_result");
+  expect(stopped.at(-1)).toMatchObject({ data: { ok: false, output: "[stopped]" } });
 });
 
 test.each(["claude-code", "codex"] as const)("%s native bypass shares global YOLO on new and resumed turns", async (agent) => {

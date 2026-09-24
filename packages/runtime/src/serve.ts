@@ -38,6 +38,7 @@ import {
   type ApprovalCardData,
   type ChannelKeys,
   type DeviceInfo,
+  type EventBase,
   type EventPayload,
   type Keypair,
   type ModelOption,
@@ -50,6 +51,7 @@ import WebSocket from "ws";
 import { MAIN_AGENT } from "./agents.js";
 import {
   cardFor,
+  checkApproval,
   deleteRule,
   addRule,
   loadSettings,
@@ -102,6 +104,7 @@ import { NativeCards } from "./native-cards.js";
 import { claudeCodeRunner, type NativeAgentRunner } from "./native.js";
 import { isProjectFolder, listProjects } from "./projects.js";
 import { questionDesk } from "./tools/cards.js";
+import { execShell, shellTool } from "./tools/shell.js";
 import { OpenClawRunner, type StoredPendingTurn } from "./openclaw.js";
 import { appendTranscript, readTranscripts, transcriptDir } from "./transcripts.js";
 
@@ -124,6 +127,15 @@ const APPROVAL_TIMEOUT_MS = 10 * 60_000;
  * which is the only honest answer the runtime has.
  */
 const ONLINE_MS = 90_000;
+
+/**
+ * A message that is a command for this Mac's shell rather than a prompt: `!` and the command,
+ * the way a coding agent's own composer takes one. Null for anything else, a bare `!` included.
+ */
+export function hostCommand(text: string): string | null {
+  const command = text.startsWith("!") ? text.slice(1).trim() : "";
+  return command ? command : null;
+}
 
 /**
  * A one-off or task-bounded answer typed in the thread instead of tapped on the card. Permanent
@@ -1002,8 +1014,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     const admitted = userEventId ? admittedTurns.get(userEventId) : undefined;
     if (admitted) return admitted;
+    return chain(threadId, () => runTurn(threadId, text, recorded, attachments, userEventId), userEventId);
+  }
+
+  /** Runs `job` after everything already queued in the thread. */
+  function chain(threadId: string, job: () => Promise<void>, userEventId?: string): Promise<void> {
     const previous = turnQueues.get(threadId) ?? Promise.resolve();
-    const next = previous.then(() => stopped ? undefined : runTurn(threadId, text, recorded, attachments, userEventId));
+    const next = previous.then(() => stopped ? undefined : job());
     turnQueues.set(threadId, next);
     if (userEventId) admittedTurns.set(userEventId, next);
     void next.finally(() => {
@@ -1011,6 +1028,36 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (userEventId && admittedTurns.get(userEventId) === next) admittedTurns.delete(userEventId);
     }).catch(() => {});
     return next;
+  }
+
+  /**
+   * A command the user typed for this Mac's shell, run here rather than handed to any agent.
+   * It goes through the gate every tool call goes through — YOLO, the user's rules, the card
+   * with the command on it verbatim — and what it printed comes back as the tool row every
+   * client already draws, so nothing about it is new on the wire. It runs in the thread's
+   * folder when the thread has one, else at home; one shot, bounded, killed on Stop.
+   * ponytail: no PTY and no streaming; add a pty when someone needs an interactive shell.
+   */
+  async function runHostCommand(threadId: string, cmd: string): Promise<void> {
+    const turn = new AbortController();
+    running.set(threadId, turn);
+    const base = (): EventBase => ({ id: randomUUID(), threadId, ts: Date.now(), agentId: MAIN_AGENT });
+    const at = (payload: EventPayload): YorozuEvent => ({ ...base(), ...payload });
+    try {
+      const cwd = threadHome(threadId, dir).cwd ?? homedir();
+      const args = { cmd, cwd };
+      const gate = await checkApproval(shellTool, args, { ask, context: { threadId, agentId: MAIN_AGENT }, onProposal: proposeRule, dir });
+      const callId = randomUUID();
+      emit(at({ kind: "tool_call", data: { callId, name: shellTool.name, args } }));
+      const result = gate.refusal === null
+        ? await execShell({ ...args, signal: turn.signal })
+        : { output: "Not run.", ok: false };
+      emit(stashToolResult({ ...base(), kind: "tool_result", data: { callId, ...result } }, dir));
+      // Stop is an answer of its own, as it is for a native turn: nothing more is said.
+      if (!turn.signal.aborted) emit(at({ kind: "message", data: { role: "agent", text: "", done: true } }));
+    } finally {
+      if (running.get(threadId) === turn) running.delete(threadId);
+    }
   }
 
   /**
@@ -1347,6 +1394,20 @@ export function serve(options: ServeOptions = {}): Sidecar {
         appendThreadEvent(event, dir);
       }
       return oldest.settle(typed);
+    }
+    const command = hostCommand(event.data.text);
+    if (command !== null) {
+      // Already in the log means already run: a re-sent frame must not run it twice.
+      if (duplicateMessage) return state("duplicate-message");
+      if (admitted) {
+        appendTranscript(event, transcripts);
+        appendThreadEvent(event, dir);
+      }
+      broadcast(event);
+      // The command is never logged: stdout is the Mac app's log, and the transcript has it.
+      void chain(event.threadId, () => runHostCommand(event.threadId, command))
+        .catch((e: unknown) => state(`shell-error ${e instanceof Error ? e.name : "error"}`));
+      return;
     }
     const queued = enqueueTurn(event.threadId, event.data.text, true, event.data.attachments ?? [], event.id, event);
     // Admission is durable now. Echoing by id is harmless and converges all clients.
