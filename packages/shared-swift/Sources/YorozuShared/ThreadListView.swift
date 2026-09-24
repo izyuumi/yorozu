@@ -289,6 +289,7 @@ struct ThreadRow: View {
                     .accessibilityHidden(true)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, LayoutMetrics.stack)
         .padding(.vertical, 10)
         .background(
@@ -863,13 +864,13 @@ public struct ThreadSidebar: View {
     private let onPin: (ThreadSummary, Bool) -> Void
     /// Marks a thread read, or back to unread. The runtime is the one that decides either way.
     private let onRead: (ThreadSummary, Bool) -> Void
+    private let onReadAll: (() -> Void)?
     private let messageText: (String) -> String
     private let exportMarkdown: ((ThreadSummary) -> String)?
     private let onSearchSelect: ((ThreadSearchRequest?) -> Void)?
 
     @State private var renaming: ThreadSummary?
     @State private var query = ThreadListShowcase.query
-    @State private var hoveredThreadID: String?
     @State private var searchThreadID: String?
     /// The archive opens closed: it is where threads go to stop being in the way.
     @State private var showArchived = false
@@ -887,6 +888,7 @@ public struct ThreadSidebar: View {
         onArchive: @escaping (ThreadSummary, Bool) -> Void,
         onPin: @escaping (ThreadSummary, Bool) -> Void = { _, _ in },
         onRead: @escaping (ThreadSummary, Bool) -> Void = { _, _ in },
+        onReadAll: (() -> Void)? = nil,
         messageText: @escaping (String) -> String = { _ in "" },
         exportMarkdown: ((ThreadSummary) -> String)? = nil,
         onSearchSelect: ((ThreadSearchRequest?) -> Void)? = nil
@@ -902,13 +904,20 @@ public struct ThreadSidebar: View {
         self.onArchive = onArchive
         self.onPin = onPin
         self.onRead = onRead
+        self.onReadAll = onReadAll
         self.messageText = messageText
         self.exportMarkdown = exportMarkdown
         self.onSearchSelect = onSearchSelect
     }
 
     private var groups: ThreadGroups {
-        ThreadGroups(threads.filter { threadMatches($0, query: query, body: messageText($0.id)) })
+        ThreadGroups(threads)
+    }
+
+    private var searchNeedle: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var searchResults: ThreadSearchResults {
+        ThreadSearchResults(threads: threads, query: query, messageText: messageText)
     }
 
     private var navigationSelection: Binding<String?> {
@@ -925,30 +934,42 @@ public struct ThreadSidebar: View {
     public var body: some View {
         let groups = groups
         List(selection: navigationSelection) {
-            if !groups.pinned.isEmpty {
-                Section("Pinned") { rows(groups.pinned) }
-            }
-            ForEach(groups.sections) { section in
-                Section(section.title) { rows(section.threads) }
-            }
-            if !groups.archived.isEmpty {
-                if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if searchNeedle.isEmpty {
+                if !groups.pinned.isEmpty {
+                    Section("Pinned") { rows(groups.pinned) }
+                }
+                ForEach(groups.sections) { section in
+                    Section(section.title) { rows(section.threads) }
+                }
+                if !groups.archived.isEmpty {
                     Section { archive(groups.archived) }
-                } else {
-                    Section("Archived") { rows(groups.archived) }
+                }
+            } else {
+                let results = searchResults
+                if !results.threads.isEmpty {
+                    Section("Threads") { rows(results.threads) }
+                }
+                if !results.messages.isEmpty {
+                    Section("Messages") {
+                        rows(results.messages) { searchExcerpt(in: messageText($0.id), matching: searchNeedle) }
+                    }
                 }
             }
         }
-        .listStyle(.sidebar)
+        .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(YorozuPalette.canvas)
+        .contentMargins(.vertical, LayoutMetrics.inner)
         .animation(.default, value: threads)
         .overlay { empty(groups) }
         // In the sidebar itself rather than in the toolbar: the chat next to it has a search
         // field of its own, and two searchable views in one window fight over the toolbar.
         .searchable(text: $query, placement: .sidebar, prompt: "Search threads")
-        .navigationTitle("Yorozu")
+        .navigationTitle("Threads")
         .toolbar {
+            if threads.contains(where: \.isUnread), let onReadAll {
+                Button("Mark all as read", systemImage: "envelope.open", action: onReadAll)
+            }
             // The same compose glyph the phone's list and every Mac mail or notes app use. It
             // asks who should answer in the same modal as the keyboard shortcut.
             Button("New thread", systemImage: "square.and.pencil") { choosingAgent = true }
@@ -992,47 +1013,48 @@ public struct ThreadSidebar: View {
         onSearchSelect?(request)
     }
 
-    private func archive(_ threads: [ThreadSummary]) -> some View {
-        DisclosureGroup(isExpanded: $showArchived) {
-            rows(threads)
-        } label: {
-            Label("Archived (\(threads.count))", systemImage: "archivebox").font(.subheadline)
+    @ViewBuilder private func archive(_ threads: [ThreadSummary]) -> some View {
+        // DisclosureGroup makes the entire Mac list an outline and indents every thread.
+        Button { showArchived.toggle() } label: {
+            HStack {
+                Image(systemName: showArchived ? "chevron.down" : "chevron.right")
+                    .accessibilityHidden(true)
+                Label("Archived (\(threads.count))", systemImage: "archivebox")
+            }
+            .font(.subheadline)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(.rect)
         }
+        .buttonStyle(.plain)
+        .accessibilityValue(showArchived ? "Expanded" : "Collapsed")
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        if showArchived { rows(threads) }
     }
 
-    @ViewBuilder private func rows(_ threads: [ThreadSummary]) -> some View {
+    @ViewBuilder private func rows(
+        _ threads: [ThreadSummary],
+        preview: @escaping (ThreadSummary) -> String? = { _ in nil }
+    ) -> some View {
         ForEach(threads) { thread in
-            HStack(spacing: LayoutMetrics.tight) {
-                ThreadRow(
-                    thread: thread,
-                    working: workingThreads.contains(thread.id),
-                    preview: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        ? nil : searchExcerpt(in: messageText(thread.id), matching: query),
-                    highlightQuery: query,
-                    selected: selection == thread.id
-                )
-                Menu { menu(thread) } label: {
-                    Image(systemName: "ellipsis")
-                        .frame(width: 20, height: 20)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .opacity(hoveredThreadID == thread.id || selection == thread.id ? 1 : 0)
-                .allowsHitTesting(hoveredThreadID == thread.id || selection == thread.id)
-                .accessibilityLabel("Thread actions")
-            }
+            ThreadRow(
+                thread: thread,
+                working: workingThreads.contains(thread.id),
+                preview: preview(thread),
+                highlightQuery: searchNeedle,
+                selected: selection == thread.id
+            )
             .tag(thread.id)
             .simultaneousGesture(TapGesture().onEnded { prepareSearchNavigation(thread.id) })
             .accessibilityAction {
                 prepareSearchNavigation(thread.id)
                 selection = thread.id
             }
-            .listRowInsets(EdgeInsets(top: 3, leading: 8, bottom: 3, trailing: 8))
+            // The plain Mac list already supplies 8 points around its row content.
+            .listRowInsets(EdgeInsets(top: 3, leading: 4, bottom: 3, trailing: 4))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
             .contentShape(.rect)
-            .onHover { hoveredThreadID = $0 ? thread.id : nil }
             .contextMenu { menu(thread) }
         }
     }
@@ -1065,8 +1087,8 @@ public struct ThreadSidebar: View {
     }
 
     @ViewBuilder private func empty(_ groups: ThreadGroups) -> some View {
-        if groups.isEmpty {
-            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if searchNeedle.isEmpty ? groups.isEmpty : searchResults.isEmpty {
+            if searchNeedle.isEmpty {
                 ContentUnavailableView(
                     "No threads yet",
                     systemImage: "bubble.left.and.bubble.right",
