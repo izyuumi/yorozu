@@ -138,8 +138,11 @@ header nav a.button:hover { background: var(--red); color: var(--on-red); }
 .fine { font-size: 14px; color: var(--muted); }
 .hero .fine { color: var(--amber-ink); }
 
-.phone { margin: 0; justify-self: center; width: min(100%, 340px); padding: 10px; background: oklch(0.15 0.03 60); border-radius: 52px; margin-bottom: -22%; box-shadow: var(--shadow); }
-.phone img { border-radius: 42px; }
+.phone { margin: 0; justify-self: center; width: min(100%, 340px); margin-bottom: -22%; }
+/* Apple's iPhone 18 Pro screen is 1206 × 2622 at (72, 69). */
+.iphone-device { position: relative; aspect-ratio: 1350 / 2760; }
+.iphone-screen { position: absolute; top: 2.5%; left: 5.333333%; width: 89.333333%; height: 95%; border-radius: 12% / 5.52%; }
+.iphone-bezel { position: relative; width: 100%; height: auto; pointer-events: none; }
 
 @media (prefers-reduced-motion: no-preference) {
   .hero h1, .hero .lede, .hero .actions, .hero .fine, .phone { animation: rise 0.9s var(--ease) both; }
@@ -178,8 +181,7 @@ section[id] { scroll-margin-top: 24px; }
 .proof-text p { margin-top: 20px; color: var(--muted); }
 .proof-text strong { color: var(--ink); }
 .shot { margin: 0; }
-.phone-shot { justify-self: center; width: min(100%, 300px); padding: 8px; background: var(--ink); border-radius: 46px; box-shadow: var(--shadow); }
-.phone-shot img { border-radius: 38px; }
+.phone-shot { justify-self: center; width: min(100%, 300px); }
 .mac-shot { padding: 7%; border-radius: 20px; background: url("/assets/mac-default-wallpaper.webp") center / cover no-repeat; box-shadow: var(--shadow); }
 .mac-shot img { border-radius: 10px; box-shadow: 0 0 0 0.5px oklch(0 0 0 / 0.45), 0 24px 60px -16px oklch(0 0 0 / 0.6); }
 .duo-support { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
