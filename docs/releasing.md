@@ -22,6 +22,9 @@ On the Mac, `CFBundleVersion` is the whole commit count, which rises with every 
 repeats. Sparkle compares `CFBundleVersion` *across* versions, so that is what makes one build
 newer than another and it has to stay globally monotonic. It is also in the DMG's name so two
 builds of one tag are two files rather than one URL with two meanings.
+Mac Settings shows a separate per-version count: the tagged commit is `(1)`, then each main
+commit is `(2)`, `(3)`, and so on. Beta builds use the same count. This keeps the number people
+see useful while preserving Sparkle's update ordering, including across version changes.
 
 On iOS, `scripts/build-ios.sh` counts commits since that tag, plus one so the tagged commit is
 build 1 (Apple rejects `0`): `0.2.4 (1)`, `0.2.4 (2)`, ... then `0.2.5 (1)`. Apple only needs the
