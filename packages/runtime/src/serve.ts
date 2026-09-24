@@ -60,6 +60,7 @@ import {
   cardFor,
   deleteRule,
   addRule,
+  hitsFloor,
   loadSettings,
   listRules,
   narrowestRule,
@@ -660,7 +661,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   /** Cards on screen somewhere, waiting to be answered, by action ID. */
   const pending = new Map<
     string,
-    { card: ApprovalCardData; threadId: string; settle: (result: AskResult) => void }
+    { card: ApprovalCardData; threadId: string; floored: boolean; settle: (result: AskResult) => void }
   >();
   /** Whether each pending card may be answered from a notification button. */
   const quickActions = new Map<string, boolean>();
@@ -675,7 +676,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const card = cardFor(actionId, action);
     const threadId = context?.threadId ?? currentThread(dir);
     // Judged here, where the action is, and read by `notifyRelay` when the card goes out.
-    quickActions.set(actionId, quickApprovable(action, loadSettings(dir), dir));
+    const settings = loadSettings(dir);
+    quickActions.set(actionId, quickApprovable(action, settings, dir));
+    // YOLO turned on later answers this card, unless the floor is why it was raised.
+    const floored = hitsFloor(action, settings, dir);
     return new Promise<AskResult>((resolve) => {
       const timer = setTimeout(() => {
         pending.delete(actionId);
@@ -686,6 +690,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       pending.set(actionId, {
         card,
         threadId,
+        floored,
         settle: (result) => {
           clearTimeout(timer);
           pending.delete(actionId);
@@ -1019,7 +1024,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
           effort: threadEffort(threadId, dir),
           signal: turn.signal,
           onSession: (sessionId) => { setThreadSession(threadId, sessionId, dir); },
-          approve: (tool, input, signal) => nativeCards.approve(threadId, agent, tool, input, signal),
+          // YOLO is read per prompt, not per turn: switching it on mid-turn stops the asking.
+          approve: async (tool, input, signal) =>
+            loadSettings(dir).yolo || nativeCards.approve(threadId, agent, tool, input, signal),
           ask: (question, options, signal) => nativeCards.ask(threadId, question, options, signal),
           onUpdate: (reply) => broadcast(message(reply)),
           // The agent's trace, under ids stable per step, so a replayed step is one row. A
@@ -1217,6 +1224,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const { yoloUntil: _stale, ...settings } = loadSettings(dir);
     saveSettings(on ? { ...settings, yolo: true, yoloUntil: yoloExpiry(hours) } : { ...settings, yolo: false }, dir);
     armYoloExpiry();
+    // A turn started before YOLO should not keep waiting on cards YOLO would never have raised.
+    if (on) {
+      nativeCards.approveAll();
+      for (const [actionId, card] of [...pending]) {
+        if (card.floored) continue;
+        emit({ id: randomUUID(), threadId: card.threadId, ts: Date.now(), agentId: MAIN_AGENT,
+          kind: "approval_answer", data: { actionId, answer: "yes" } });
+        card.settle({ answer: "yes" });
+      }
+    }
     broadcast(threadList());
     broadcast(approvalSettingsEvent());
   };

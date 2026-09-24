@@ -31,6 +31,11 @@ export class NativeCards {
     return true;
   }
 
+  /** Allows every waiting approval card: YOLO was switched on while they waited. */
+  approveAll(): void {
+    for (const pending of [...this.waiting.values()]) if (pending.kind === "approval_answer") pending.settle("yes");
+  }
+
   async approve(threadId: string, agent: Exclude<ThreadAgent, "yorozu">, tool: string, input: Record<string, unknown>, signal: AbortSignal): Promise<boolean> {
     const actionId = randomUUID();
     const answer = await this.request(threadId, actionId, "approval_answer", {
