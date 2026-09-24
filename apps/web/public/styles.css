@@ -196,8 +196,11 @@ section[id] { scroll-margin-top: 24px; }
 /* Relay */
 
 .relay { color: var(--ink); }
-.diagram { max-width: 720px; margin: 40px auto 0; color: var(--ink); }
-.diagram .muted-text { fill: var(--muted); }
+.diagram { position: relative; max-width: 720px; margin: 40px auto 0; color: var(--ink); font: clamp(10px, 1.5vw, 12px) ui-monospace, SFMono-Regular, Menlo, monospace; }
+.diagram-art { display: block; aspect-ratio: 2164 / 727; background: currentColor; mask: url("/assets/relay-diagram.webp") center / contain no-repeat; }
+.diagram-encryption { position: absolute; top: 6%; inset-inline: 0; text-align: center; }
+.diagram-labels { position: absolute; bottom: 7%; inset-inline: 0; display: grid; grid-template-columns: 16% 64% 20%; text-align: center; }
+.diagram-relay { color: var(--muted); }
 .relay dl { margin: clamp(32px, 5vw, 56px) 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 32px clamp(24px, 4vw, 56px); }
 .relay dt { font-weight: 650; font-size: 18px; }
 .relay dd { margin: 6px 0 0; color: var(--muted); }
