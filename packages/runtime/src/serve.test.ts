@@ -1311,6 +1311,21 @@ test("19: the phone saves the rule its editor produced, widened past the one com
   expect(tail.at(-1)?.data.output).toContain("yorozu-editor-two");
 });
 
+test("YOLO granted while a card waits answers it, and the turn runs on", async () => {
+  const cmd = "echo yorozu-yolo-late";
+  const { dir, send, eventsUntil, isReply } = await pairedPhone([() => shellTurn(cmd), () => sse("Done.")]);
+  const mac = await macClient(dir);
+
+  send({ kind: "message", data: { role: "user", text: "tidy up" } });
+  const shown = cardOf(await eventsUntil((event) => event.kind === "approval_card"));
+  mac.send({ kind: "approval_settings", data: { yolo: true } });
+
+  const rest = await eventsUntil(isReply);
+  expect(rest).toContainEqual(expect.objectContaining({ kind: "approval_answer", data: { actionId: shown.actionId, answer: "yes" } }));
+  expect(rest.find((event) => event.kind === "tool_result")?.data.output).toContain("yorozu-yolo-late");
+  mac.close();
+});
+
 test("18: allow for this task covers the rest of the turn and expires with it", async () => {
   const cmd = "echo yorozu-task-ok";
   const { dir, send, eventsUntil, isReply } = await pairedPhone([
@@ -2702,6 +2717,26 @@ test("a lock-screen answer never settles a native card the runtime did not judge
   send({ kind: "approval_answer", data: { actionId: card.data.actionId, answer: "no" } }, "native");
   expect((await eventsUntil((e) => e.kind === "message" && e.data.done === true)).at(-1))
     .toMatchObject({ data: { text: "sent:false" } });
+});
+
+test.each(["claude-code", "codex"] as const)("%s native card waiting when YOLO is granted is allowed, and later prompts are not asked", async (agent) => {
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    const first = await turn.approve!("Bash", { command: "pwd" }, turn.signal);
+    const second = await turn.approve!("Bash", { command: "ls" }, turn.signal);
+    return { text: `${first}:${second}`, sessionId: "s" };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { [agent]: runner } });
+  const mac = await macClient(dir);
+  send({ kind: "thread_create", data: { agent, cwd: proj } }, "late");
+  send({ kind: "message", data: { role: "user", text: "work" } }, "late");
+  const card = (await eventsUntil((e) => e.kind === "approval_card")).at(-1)!;
+  if (card.kind !== "approval_card") throw new Error("missing approval");
+  mac.send({ kind: "approval_settings", data: { yolo: true } });
+  const rest = await eventsUntil((e) => e.kind === "message" && e.data.done === true);
+  expect(rest.at(-1)).toMatchObject({ data: { text: "true:true" } });
+  expect(rest.filter((e) => e.kind === "approval_card")).toEqual([]);
+  expect(rest).toContainEqual(expect.objectContaining({ kind: "approval_answer", data: { actionId: card.data.actionId, answer: "yes" } }));
+  mac.close();
 });
 
 test.each(["claude-code", "codex"] as const)("%s native bypass shares global YOLO on new and resumed turns", async (agent) => {
