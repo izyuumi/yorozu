@@ -91,9 +91,9 @@ test("the models offered to a phone are the enabled specs, with names to draw", 
       { id: "off", kind: "codex-cli", label: "Codex", models: ["gpt-5.6"], enabled: false },
     ]),
   ).toEqual([
-    { id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude" },
-    { id: "claude/claude-sonnet-5", label: "claude-sonnet-5", providerLabel: "Claude" },
+    { id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude", efforts: ["low", "medium", "high"] },
+    { id: "claude/claude-sonnet-5", label: "claude-sonnet-5", providerLabel: "Claude", efforts: ["low", "medium", "high"] },
     // An entry with no models of its own offers the one it is already configured to use.
-    { id: "local/", label: "LM Studio", providerLabel: "LM Studio" },
+    { id: "local/", label: "LM Studio", providerLabel: "LM Studio", efforts: ["low", "medium", "high"] },
   ]);
 });

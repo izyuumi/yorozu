@@ -335,15 +335,7 @@ public struct NewThreadPicker: View {
     }
 
     /// The sheet's one editorial moment: the question it asks, in the serif agent replies use.
-    private func question(_ text: LocalizedStringKey) -> some View {
-        Text(text)
-            .font(.title3.weight(.semibold))
-            .fontDesign(.serif)
-            .foregroundStyle(YorozuPalette.ink)
-            .textCase(nil)
-            .padding(.top, 8)
-            .accessibilityAddTraits(.isHeader)
-    }
+    private func question(_ text: LocalizedStringKey) -> some View { YorozuQuestion(text) }
 
     private func start(_ agent: ThreadAgent, _ cwd: String?) {
         if let session {

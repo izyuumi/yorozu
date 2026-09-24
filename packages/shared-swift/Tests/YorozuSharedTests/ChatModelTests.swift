@@ -1323,7 +1323,7 @@ func finalStreamedReplyFollowsToolHistory(finalTimestamp: Int) async throws {
 @Test func modelAndEffortChoicesBelongToTheThreadsAgent() async throws {
     let transport = FakeTransport()
     let model = await connected(transport)
-    let ordinary = ModelOption(id: "provider/model", label: "Model", providerLabel: "Provider")
+    let ordinary = ModelOption(id: "provider/model", label: "Model", providerLabel: "Provider", efforts: [.low, .medium, .high])
     let native = ModelOption(id: "opus", label: "Opus", providerLabel: "Claude Code", efforts: [.low, .max])
     await transport.yield(.event(event("models", .modelList(ModelListData(models: [ordinary], agentModels: ["claude-code": [native]])))))
     #expect(await eventually { model.agentModels["claude-code"] == [native] })

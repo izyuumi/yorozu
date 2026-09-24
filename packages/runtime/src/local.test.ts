@@ -9,7 +9,7 @@ import { localSocketPath, startLocalChannel } from "./local.js";
 import { openaiCompat } from "./provider.js";
 import { serve, type Sidecar } from "./serve.js";
 import { OpenClawRunner } from "./openclaw.js";
-import { appendThreadEvent, createThread, readThreadEvents, threadModel } from "./threads.js";
+import { appendThreadEvent, createThread, readThreadEvents, setThreadModel, threadModel } from "./threads.js";
 import { readTranscripts, transcriptDir } from "./transcripts.js";
 
 let relay: Relay;
@@ -549,13 +549,16 @@ test("the models a thread can run on arrive with the thread list, and one can be
   // Published unasked, alongside the list: a picker has names before it is ever opened.
   const models = await events.nextOf("model_list");
   expect(models.kind === "model_list" && models.data.models).toEqual([
-    { id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude" },
-    { id: "codex/gpt-5.6", label: "gpt-5.6", providerLabel: "Codex" },
+    { id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude", efforts: ["low", "medium", "high"] },
+    { id: "codex/gpt-5.6", label: "gpt-5.6", providerLabel: "Codex", efforts: ["low", "medium", "high"] },
   ]);
 
   send(socket, "t1", { kind: "thread_create", data: { title: "Kyoto" } });
   await events.nextOf("thread_list");
 
+  // A spec the runtime never published is not a pick: nothing changes and nothing is listed,
+  // so the next list is the one the real pick below produces.
+  send(socket, "t1", { kind: "thread_set_model", data: { model: "gone/x" } });
   send(socket, "t1", { kind: "thread_set_model", data: { model: "codex/gpt-5.6" } });
   const listed = await events.nextOf("thread_list");
   expect(listed.kind === "thread_list" && listed.data.threads[0]?.model).toBe("codex/gpt-5.6");
@@ -569,15 +572,15 @@ test("the models a thread can run on arrive with the thread list, and one can be
 });
 
 test("a thread set to a model the user has since deleted still gets an answer", async () => {
-  const { path } = await localSidecar();
+  const { dir, path } = await localSidecar();
   socket = await connectLocal(path);
   const events = reader(socket);
   await events.nextOf("thread_list");
 
   send(socket, "t1", { kind: "thread_create", data: { title: "Kyoto" } });
   await events.nextOf("thread_list");
-  send(socket, "t1", { kind: "thread_set_model", data: { model: "gone/x" } });
-  await events.nextOf("thread_list");
+  // Set while it existed, deleted from the providers since: the picker would refuse it now.
+  setThreadModel("t1", "gone/x", dir);
 
   // The spec cannot be built at all, so the turn falls all the way back to the configured
   // chain: an answer from the default beats no answer.

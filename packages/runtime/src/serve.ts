@@ -47,6 +47,7 @@ import {
   type ModelOption,
   type PeerInfoData,
   type PeerCompatibility,
+  type ReasoningEffort,
   type MessageAttachment,
   type ProgressCardData,
   type ThreadAgent,
@@ -764,11 +765,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * at that point would draw an empty menu first.
    */
   const agentModels: Partial<Record<Exclude<ThreadAgent, "yorozu">, ModelOption[]>> = {};
+  const modelsFor = (agent: ThreadAgent): ModelOption[] =>
+    agent === "yorozu" ? (provider ? legacy?.models() ?? [] : openclawModels) : agentModels[agent] ?? [];
+  /** The efforts a thread may ask for: its model's, or the first model's while it is on Default. */
+  const effortsFor = (agent: ThreadAgent, model: string | undefined): ReasoningEffort[] =>
+    (modelsFor(agent).find((m) => m.id === model) ?? modelsFor(agent)[0])?.efforts ?? [];
   const modelList = (): YorozuEvent =>
-    control({
-      kind: "model_list",
-      data: { models: provider ? legacy?.models() ?? [] : openclawModels, agentModels },
-    });
+    control({ kind: "model_list", data: { models: modelsFor("yorozu"), agentModels } });
 
   for (const agent of ["claude-code", "codex"] as const) {
     void nativeRunners[agent]?.models?.().then((models) => {
@@ -845,10 +848,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
   };
 
   let openclawModels: ModelOption[] = [];
-  void openclaw?.listModels().then((models) => {
-    openclawModels = models;
-    broadcast(modelList());
-  }).catch((error: unknown) => state(`model-list-error ${String(error)}`));
+  /** Asked again on every `thread_list`, so a provider added to OpenClaw shows up without a relaunch. */
+  const refreshModels = (): void => {
+    void openclaw?.listModels().then((models) => {
+      if (JSON.stringify(models) === JSON.stringify(openclawModels)) return;
+      openclawModels = models;
+      broadcast(modelList());
+    }).catch((error: unknown) => state(`model-list-error ${String(error)}`));
+  };
+  refreshModels();
 
   /**
    * Every device this Mac answers, the local socket's clients included: the Mac app is one more
@@ -1467,6 +1475,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       case "thread_list":
         reply(threadList());
         reply(modelList());
+        refreshModels();
         return reply(projectList());
       case "project_list":
         return reply(projectList());
@@ -1480,21 +1489,23 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (event.data.action === "continue") void enqueueTurn(event.threadId, "Continue the interrupted turn.");
         return;
       }
+      // A pick is only ever one of the published options, whichever agent the thread is on. An
+      // effort the new model does not offer is dropped with the switch, and one it does is kept.
       case "thread_set_model": {
         const agent = threadAgent(event.threadId, dir);
         const model = event.data.model;
         if (model != null && typeof model !== "string") return;
-        if (agent !== "yorozu" && model && !agentModels[agent]?.some((m) => m.id === model)) return;
-        if (setThreadModel(event.threadId, model ?? null, dir) && agent !== "yorozu") setThreadEffort(event.threadId, null, dir);
+        if (model && !modelsFor(agent).some((m) => m.id === model)) return;
+        if (!setThreadModel(event.threadId, model ?? null, dir)) return;
+        const effort = threadEffort(event.threadId, dir);
+        if (effort && !effortsFor(agent, model ?? undefined).includes(effort)) setThreadEffort(event.threadId, null, dir);
         return broadcast(threadList());
       }
       case "thread_set_effort": {
         const agent = threadAgent(event.threadId, dir);
         const effort = event.data.effort;
         if (effort != null && !REASONING_EFFORTS.includes(effort)) return;
-        const choices = agent === "yorozu" ? ["low", "medium", "high"] :
-          (agentModels[agent]?.find((m) => m.id === threadModel(event.threadId, dir)) ?? agentModels[agent]?.[0])?.efforts ?? [];
-        if (effort && !choices.includes(effort)) return;
+        if (effort && !effortsFor(agent, threadModel(event.threadId, dir)).includes(effort)) return;
         setThreadEffort(event.threadId, effort ?? null, dir);
         return broadcast(threadList());
       }
