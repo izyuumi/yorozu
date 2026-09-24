@@ -196,8 +196,7 @@ public struct ChatView: View {
         #else
             // A thread on a model of its own says so beside its title. Only then — the default
             // is the case that needs no caption. The Mac has a title bar subtitle for exactly
-            // this; the phone's stacked `.principal` item is squeezed between the title it
-            // repeats and the buttons next to it when a window toolbar draws it.
+            // this; the phone uses a compact identity in its `.principal` item.
             .navigationSubtitle(macModelCaption)
         #endif
         #if os(iOS)
@@ -221,19 +220,35 @@ public struct ChatView: View {
                             .foregroundStyle(.secondary)
                         }
                     }
+                    // The split-view bar can propose only a few points on Duo's inner display.
+                    .fixedSize(horizontal: true, vertical: false)
                     .accessibilityElement(children: .combine)
                     .accessibilityValue(model.ownerOnline ? String(localized: "Mac online") : String(localized: "Mac offline"))
                 }
-                // One group, not two `.primaryAction` items: iOS folds a second primary action
-                // into a "…" overflow menu, which is exactly the button this replaced.
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    if model.terminalEnabled {
-                        Button("Open terminal", systemImage: "terminal") { showingTerminal = true }
+                if #available(iOS 27.1, *) {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        if model.terminalEnabled {
+                            Button("Open terminal", systemImage: "terminal") { showingTerminal = true }
+                        }
+                        Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
+                            .keyboardShortcut("f")
                     }
-                    Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
-                        .keyboardShortcut("f")
                     if onCreate != nil {
-                        Button("New session", systemImage: "square.and.pencil") { choosingAgent = true }
+                        // Duo places bottom-bar actions at the lower end of its vertical bar.
+                        ToolbarItem(placement: .bottomBar) {
+                            Button("New session", systemImage: "square.and.pencil") { choosingAgent = true }
+                        }
+                    }
+                } else {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        if model.terminalEnabled {
+                            Button("Open terminal", systemImage: "terminal") { showingTerminal = true }
+                        }
+                        Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
+                            .keyboardShortcut("f")
+                        if onCreate != nil {
+                            Button("New session", systemImage: "square.and.pencil") { choosingAgent = true }
+                        }
                     }
                 }
         }
