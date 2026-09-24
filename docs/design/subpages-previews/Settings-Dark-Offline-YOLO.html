@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>iOS Settings · dark · Mac offline · bypass active</title>
+<style>
+body{margin:0}
+a{color:var(--verm);text-decoration:none}a:hover{color:var(--verm);text-decoration:underline}
+[data-theme=light]{--canvas:#F8F4EA;--paper:#FFFDF7;--ink:#252320;--ink2:#6F6C65;--ink3:#8E8A80;--verm:#BC2D1C;--sage:#597553;--stone:#DFD7C9;--rule:#D2C8B7;--warn:#9A5200;--danger:#C7281B;--sel:#EFE9DB;--scrim:rgba(37,35,30,.38);--knob:#FFFFFF;--onverm:#FFFFFF;--shadow:0 1px 1.5px rgba(0,0,0,.035);--menu:rgba(255,253,247,.96);--mshadow:0 8px 32px rgba(37,35,30,.18),0 0 0 .5px rgba(37,35,30,.12)}
+[data-theme=dark]{--canvas:#1B1A17;--paper:#252320;--ink:#F3ECDC;--ink2:#A5A095;--ink3:#7E7A70;--verm:#F06047;--sage:#96B58C;--stone:#433F37;--rule:#4F493F;--warn:#F0A340;--danger:#FF6B5E;--sel:#3A3630;--scrim:rgba(0,0,0,.55);--knob:#FFFFFF;--onverm:#1B1A17;--shadow:0 1px 1.5px rgba(0,0,0,.25);--menu:rgba(43,41,36,.97);--mshadow:0 8px 32px rgba(0,0,0,.5),0 0 0 .5px rgba(255,255,255,.12)}
+[data-theme]{font-family:-apple-system, ui-sans-serif, 'SF Pro Text', 'Helvetica Neue', sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased;line-height:1.3}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer;line-height:inherit}
+input,textarea{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;outline:none;width:100%}
+input::placeholder,textarea::placeholder{color:var(--ink3)}
+.serif{font-family:ui-serif, 'New York', 'Iowan Old Style', Georgia, serif}
+.mono{font-family:ui-monospace, 'SF Mono', Menlo, monospace}
+.card{background:var(--paper);border-radius:14px;border:.75px solid var(--rule);box-shadow:var(--shadow);overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;min-height:44px;padding:10px 16px;font-size:17px;box-sizing:border-box;width:100%}
+.row+.row{border-top:.5px solid var(--rule)}
+.hd{font-size:13px;color:var(--ink2);padding:0 16px 7px;margin-top:22px}
+.ft{font-size:13px;color:var(--ink2);padding:7px 16px 0;line-height:1.35}
+.val{margin-left:auto;color:var(--ink2);text-align:right}
+.sub{font-size:13px;color:var(--ink2);line-height:1.3}
+.tile{width:36px;height:36px;border-radius:9px;background:var(--canvas);border:.75px solid var(--rule);display:flex;align-items:center;justify-content:center;flex:none}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.sw{width:51px;height:31px;border-radius:16px;position:relative;flex:none;margin-left:auto}
+.sw i{position:absolute;top:2px;width:27px;height:27px;border-radius:50%;background:var(--knob);box-shadow:0 2px 4px rgba(0,0,0,.25)}
+.sw.on{background:var(--verm)}.sw.on i{left:22px}.sw.off{background:var(--stone)}.sw.off i{left:2px}
+.nav{height:52px;display:flex;align-items:center;padding:0 16px;font-size:17px;position:relative;flex:none}
+.nav .t{position:absolute;left:0;right:0;text-align:center;font-weight:600;pointer-events:none}
+.act{color:var(--verm);font-size:17px;min-height:44px;display:flex;align-items:center}
+.grab{width:36px;height:5px;border-radius:3px;background:var(--rule);margin:6px auto 0}
+.mac{font-size:13px;line-height:1.3}
+.mrow{display:flex;align-items:center;gap:10px;padding:7px 12px;min-height:34px;box-sizing:border-box;width:100%}
+.mrow+.mrow{border-top:.5px solid var(--rule)}
+.mhd{font-size:13px;font-weight:600;padding:0 12px 6px;margin-top:18px;display:flex;align-items:center;gap:8px}
+.mft{font-size:11px;color:var(--ink2);padding:6px 12px 0;line-height:1.35}
+.mcard{background:var(--paper);border-radius:8px;border:.75px solid var(--rule);box-shadow:var(--shadow);overflow:hidden}
+.mbtn{font-size:13px;line-height:1;padding:5px 10px;border-radius:6px;background:var(--paper);border:.5px solid var(--rule);box-shadow:0 .5px 1px rgba(0,0,0,.12);color:var(--ink);white-space:nowrap}
+.mbtn.primary{background:var(--verm);color:var(--onverm);border-color:transparent}
+.mbtn.small{font-size:11px;padding:4px 8px}
+.mbtn.danger{color:var(--danger)}
+.mbtn[disabled]{opacity:.45}
+.msw{width:26px;height:15px;border-radius:8px;position:relative;flex:none}
+.msw i{position:absolute;top:1px;width:13px;height:13px;border-radius:50%;background:var(--knob);box-shadow:0 1px 2px rgba(0,0,0,.3)}
+.msw.on{background:var(--verm)}.msw.on i{left:12px}.msw.off{background:var(--stone)}.msw.off i{left:1px}
+.badge{display:flex;align-items:center;gap:5px;font-size:13px}
+.menu{background:var(--menu);border-radius:13px;box-shadow:var(--mshadow);overflow:hidden;backdrop-filter:blur(20px)}
+.mi{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 16px;font-size:17px;box-sizing:border-box;width:100%}
+.mi+.mi{border-top:.33px solid var(--rule)}
+.msec{height:8px;background:var(--stone);opacity:.6}
+.mhead{font-size:12px;color:var(--ink2);padding:8px 16px 4px;text-transform:none}
+.nsmenu{background:var(--menu);border-radius:7px;box-shadow:var(--mshadow);padding:5px;font-size:13px;width:max-content}
+.ni{display:flex;align-items:center;gap:6px;height:22px;padding:0 10px 0 22px;border-radius:4px;position:relative;white-space:nowrap}
+.ni.hl{background:var(--verm);color:var(--onverm)}
+.ni.dis{color:var(--ink3)}
+.ni .ck{position:absolute;left:6px;top:4px}
+.nsep{height:1px;background:var(--rule);margin:5px 8px}
+.nhead{font-size:11px;font-weight:600;color:var(--ink2);padding:4px 10px 2px 22px}
+.lbl{font-size:11px;color:var(--ink2);letter-spacing:.02em;text-transform:uppercase;margin:0 0 8px}
+.cu{display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px;padding:40px 24px;color:var(--ink2)}
+.cu b{font-size:20px;font-weight:600;color:var(--ink);margin-top:6px}
+.cu p{margin:0;font-size:15px;max-width:280px;line-height:1.35}
+.spin{width:20px;height:20px;border-radius:50%;border:2.5px solid var(--rule);border-top-color:var(--ink2);flex:none}
+html,body{background:#888;}body{padding:24px}</style></head>
+<body><div data-theme="dark" style="width:390px;height:844px;box-sizing:border-box;background:var(--canvas);display:flex;flex-direction:column;overflow:hidden;position:relative;border-radius:0px;"><div class="grab"></div><header style="padding:4px 16px 0;flex:none"><div style="display:flex;justify-content:flex-end"><button class="act" style="font-weight:600">Done</button></div><h1 style="margin:2px 0 0;font-size:34px;font-weight:700;letter-spacing:-.01em">Settings</h1></header><main style="flex:1;overflow:hidden;padding:0 16px 24px;display:flex;flex-direction:column"><div class="hd" role="heading" aria-level="2">Your Mac</div><div class="card"><div class="row"><span>Status</span><span class="val" style="color:var(--warn);display:flex;align-items:center;gap:7px;max-width:62%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="dot" style="background:var(--warn)"></span><span style="overflow:hidden;text-overflow:ellipsis">Mac offline</span></span></div><div class="row" style="flex-direction:column;align-items:flex-start;gap:3px;padding:10px 16px"><span>Relay</span><span class="mono" style="font-size:15px;color:var(--ink2);word-break:break-all;line-height:1.3;user-select:text">wss://relay.yumi.to</span></div><div class="row"><span>Paired since</span><span class="val" style="display:flex;align-items:center;gap:7px;max-width:62%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span style="overflow:hidden;text-overflow:ellipsis">12 Sep 2026, 9:41</span></span></div></div><div class="hd" role="heading" aria-level="2">Approvals</div><div class="card"><label class="row"><span style="display:flex;flex-direction:column;gap:2px"><span>Skip approvals for all agents</span></span><span class="sw on" aria-hidden="true"><i></i></span></label></div><div class="ft"><div style="display:flex;gap:8px;align-items:flex-start;color:var(--ink)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none;margin-top:1px"><path d="M12 3.5L21.5 20h-19z"/><path d="M12 9.5v4.5"/><circle cx="12" cy="16.8" r=".7"/></svg><span>Every tool request runs without asking, including purchases, messages, commands, and deletes.</span></div><div style="margin-top:6px">Until 6:30 PM</div></div><div class="hd" role="heading" aria-level="2">App</div><div class="card"><div class="row"><span>Version</span><span class="val" style="display:flex;align-items:center;gap:7px;max-width:62%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span style="overflow:hidden;text-overflow:ellipsis">0.4.0 (12)</span></span></div><a class="row" href="https://github.com/izyuumi/yorozu" style="color:var(--verm)">Source on GitHub</a></div><div class="ft">Claude and Claude Code are trademarks of Anthropic, PBC. OpenAI and Codex are trademarks of OpenAI. Their marks identify the selected agent only; Yorozu is independent and is not affiliated with or endorsed by either provider.</div><div style="height:22px"></div><div class="card"><button class="row" style="color:var(--danger)"><span>Unpair</span></button></div><div class="ft">Forgets this phone’s keys and cached threads. Pair again by scanning a new code on your Mac.</div></main></div></body></html>

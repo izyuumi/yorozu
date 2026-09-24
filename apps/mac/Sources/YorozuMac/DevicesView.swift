@@ -20,68 +20,80 @@ struct DevicesView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Spacer()
-                Text(sidecar.state).font(.caption).foregroundStyle(.secondary)
-            }
-
-            if model.devices.isEmpty {
-                Text("No devices yet. Pair an iPhone, iPad, or another Mac to chat with this Mac.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            List(model.devices) { device in
-                HStack(spacing: 8) {
-                    Image(systemName: isMac(device) ? "laptopcomputer" : device.name?.hasPrefix("iPadOS") == true ? "ipad" : "iphone")
-                        .accessibilityLabel(isMac(device) ? "Mac" : device.name?.hasPrefix("iPadOS") == true ? "iPad" : "Phone")
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(device.via == .local ? "This Mac" : device.name ?? device.shortId).font(.body)
-                        Button {
-                            if !expandedDeviceIDs.insert(device.pub).inserted {
-                                expandedDeviceIDs.remove(device.pub)
+        Form {
+            Section {
+                if model.devices.isEmpty {
+                    Text("No devices yet. Pair your phone to chat with this Mac from it.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(model.devices) { device in
+                    HStack(spacing: 10) {
+                        Image(systemName: isMac(device) ? "laptopcomputer" : device.name?.hasPrefix("iPadOS") == true ? "ipad" : "iphone")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20)
+                            .accessibilityLabel(isMac(device) ? "Mac" : device.name?.hasPrefix("iPadOS") == true ? "iPad" : "Phone")
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(device.via == .local ? "This Mac" : device.name ?? device.shortId)
+                                .font(.body)
+                            Button {
+                                if !expandedDeviceIDs.insert(device.pub).inserted {
+                                    expandedDeviceIDs.remove(device.pub)
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: expandedDeviceIDs.contains(device.pub) ? "chevron.down" : "chevron.right")
+                                        .font(.caption2)
+                                        .accessibilityHidden(true)
+                                    Text("Device ID: \(device.shortId)")
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
                             }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: expandedDeviceIDs.contains(device.pub) ? "chevron.down" : "chevron.right")
-                                    .font(.caption2)
-                                    .accessibilityHidden(true)
-                                Text("Device ID: \(device.shortId)")
+                            .font(.caption)
+                            .buttonStyle(.plain)
+                            .accessibilityValue(expandedDeviceIDs.contains(device.pub) ? Text("Expanded") : Text("Collapsed"))
+                            if expandedDeviceIDs.contains(device.pub) {
+                                Text(device.pub)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
+                            Text(subtitle(device)).font(.caption).foregroundStyle(.secondary)
                         }
-                        .font(.caption)
-                        .buttonStyle(.plain)
-                        .accessibilityValue(expandedDeviceIDs.contains(device.pub) ? Text("Expanded") : Text("Collapsed"))
-                        if expandedDeviceIDs.contains(device.pub) {
-                            Text(device.pub)
-                                .font(.system(.caption, design: .monospaced))
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                        Circle()
+                            .fill(device.online ? YorozuPalette.sage : Color.secondary.opacity(0.4))
+                            .frame(width: 8, height: 8)
+                            .accessibilityLabel(device.online ? "online" : "offline")
+                        if removable(device) {
+                            Button("Remove…", role: .destructive) { confirmingRemoval = device }
+                                .accessibilityLabel("Remove device \(device.shortId)")
                         }
-                        Text(subtitle(device)).font(.caption).foregroundStyle(.secondary)
                     }
+                    .padding(.vertical, 2)
+                }
+            } header: {
+                HStack {
+                    Text("Devices")
                     Spacer()
-                    Image(systemName: device.online ? "circle.fill" : "circle")
-                        .foregroundStyle(device.online ? .green : .secondary)
-                        .accessibilityLabel(device.online ? "online" : "offline")
-                    if removable(device) {
-                        Button("Remove", role: .destructive) { confirmingRemoval = device }
-                            .accessibilityLabel("Remove device \(device.shortId)")
+                    Button("Pair Another Device…") {
+                        sidecar.newCode()
+                        pairing = true
                     }
                 }
+            } footer: {
+                Group {
+                    Text("Removing a device forgets its key here and at the relay: it has to pair again.")
+                }
+                .leadingFooter()
             }
-            .listStyle(.inset)
-            .frame(minHeight: 160)
-
-            Button("Pair Another Device…") {
-                pairing = true
+            Section("Relay") {
+                LabeledContent("Status", value: sidecar.state)
             }
-            Text("Removing a device forgets its key here and at the relay: it has to pair again.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(YorozuPalette.canvas)
         // Online is "has said something recently", so the list goes stale on its own; the
         // runtime pushes a new one whenever a device comes or goes.
         .task {
@@ -150,7 +162,7 @@ struct PairingSheet: View {
             if paired {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 56))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(YorozuPalette.sage)
                     .accessibilityHidden(true)
                 Text("Device paired").font(.headline)
                 Text("Your device is connected and ready to use.")
@@ -238,6 +250,7 @@ struct PairingSheet: View {
         .padding(24)
         .frame(width: 380)
         .frame(minHeight: 180)
+        .background(YorozuPalette.paper)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: paired)
         .task(id: attempt) {
             // Do not expose a code until a fresh list establishes which devices already exist.

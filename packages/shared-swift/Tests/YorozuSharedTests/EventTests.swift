@@ -634,6 +634,19 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     #expect(explicitNull.model == nil)
 }
 
+/// The composer menu preserves each provider's first appearance and its model order.
+@Test func theModelMenuGroupsTheCatalogByProviderInCatalogOrder() {
+    let groups = ModelOption.groupedByProvider([
+        ModelOption(id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude"),
+        ModelOption(id: "codex/gpt-5.6", label: "gpt-5.6", providerLabel: "Codex"),
+        ModelOption(id: "claude/claude-sonnet-5", label: "claude-sonnet-5", providerLabel: "Claude"),
+    ])
+    #expect(groups.map(\.label) == ["Claude", "Codex"])
+    #expect(groups[0].options.map(\.id) == ["claude/claude-opus-5", "claude/claude-sonnet-5"])
+    #expect(groups[1].options.map(\.id) == ["codex/gpt-5.6"])
+    #expect(ModelOption.groupedByProvider([]).isEmpty)
+}
+
 /// A menu row names the provider as well as the model, unless that would say it twice.
 @Test func aModelOptionNamesItsProvider() {
     #expect(

@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import YorozuKeepalive
 import YorozuPermissions
+import YorozuShared
 
 /// Whether one grant is in place. The onboarding wizard and the Permissions tab draw the same
 /// one, so "granted" never looks like two different things.
@@ -14,8 +15,8 @@ struct PermissionBadge: View {
             Label("Asking macOS…", systemImage: "hourglass")
                 .foregroundStyle(.secondary)
         } else {
-            Label(granted ? "Granted" : "Not granted", systemImage: granted ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(granted ? .green : .secondary)
+            Label(granted ? "Granted" : "Waiting…", systemImage: granted ? "checkmark.circle.fill" : "circle.dotted")
+                .foregroundStyle(granted ? YorozuPalette.sage : Color.secondary)
         }
     }
 }
@@ -66,12 +67,13 @@ struct PermissionStatusRow: View {
                             .disabled(asking)
                     }
                     if let url = permission.settingsURL {
-                        Button("Open System Settings") { NSWorkspace.shared.open(url) }
+                        Button("Open System Settings…") { NSWorkspace.shared.open(url) }
                     }
                 }
+                .controlSize(.small)
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 2)
         .task {
             while !Task.isCancelled {
                 granted = await permission.isGranted()
@@ -132,7 +134,6 @@ struct PermissionsView: View {
     enum Scope { case onboarding, all }
 
     var showSetupButton = true
-    var showsTitle = true
     var scope: Scope = .all
 
     private var sections: [PermissionSection] {
@@ -140,33 +141,32 @@ struct PermissionsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            if showsTitle {
-                HStack {
-                    Text("Permissions").font(.headline)
-                    Spacer()
-                    if showSetupButton {
-                        Button("Run Setup Wizard…") { OnboardingWindow.show() }
-                            .fixedSize()
-                            .layoutPriority(1)
+        Form {
+            ForEach(sections) { section in
+                Section {
+                    ForEach(section.permissions, id: \.self) { permission in
+                        PermissionStatusRow(permission: permission)
+                    }
+                } header: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label(section.title, systemImage: section.systemImage)
+                        Text(section.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
-            ForEach(sections) { section in
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(section.title, systemImage: section.systemImage)
-                        .font(.headline)
-                    Text(section.detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    VStack(spacing: 0) {
-                        ForEach(Array(section.permissions.enumerated()), id: \.element) { index, permission in
-                            if index > 0 { Divider() }
-                            PermissionStatusRow(permission: permission)
-                        }
+            if showSetupButton {
+                Section {
+                    LabeledContent("Setup wizard") {
+                        Button("Run Again…") { OnboardingWindow.show() }
                     }
                 }
             }
         }
+        .formStyle(.grouped)
+        .toggleStyle(.switch)
+        .scrollContentBackground(.hidden)
+        .background(YorozuPalette.canvas)
     }
 }

@@ -129,6 +129,18 @@ struct GeneralView: View {
         }
         .formStyle(.grouped)
         .toggleStyle(.switch)
+        .scrollContentBackground(.hidden)
+        .background(YorozuPalette.canvas)
+    }
+
+    /// One colour per state, and a dot beside the word so the state is never colour alone.
+    private static func tint(_ status: ClientConnectionStatus) -> Color {
+        switch status {
+        case .connected: YorozuPalette.sage
+        case .hostOffline, .offline: YorozuPalette.warning
+        case .failed: .red
+        case .connecting: .secondary
+        }
     }
 
     private var clientConnection: some View {
@@ -137,7 +149,14 @@ struct GeneralView: View {
             state: session.model.state, ownerOnline: session.model.ownerOnline, failure: failure
         )
         return VStack(alignment: .leading, spacing: 6) {
-            LabeledContent("Connection", value: status.label)
+            LabeledContent("Connection") {
+                HStack(spacing: 6) {
+                    Circle().fill(Self.tint(status)).frame(width: 8, height: 8)
+                        .accessibilityHidden(true)
+                    Text(status.label)
+                }
+                .foregroundStyle(Self.tint(status))
+            }
             if let failure {
                 Label {
                     Text(failure).textSelection(.enabled)

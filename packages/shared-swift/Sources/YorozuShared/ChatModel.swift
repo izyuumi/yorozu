@@ -1146,9 +1146,9 @@ public final class ChatModel {
     /// already put on the second of them — which is what a screenshot of the picker is about.
     public func previewModels(in threadId: String) {
         models = [
-            ModelOption(id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude"),
-            ModelOption(id: "claude/claude-sonnet-5", label: "claude-sonnet-5", providerLabel: "Claude"),
-            ModelOption(id: "codex/gpt-5.6", label: "gpt-5.6", providerLabel: "Codex"),
+            ModelOption(id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude", efforts: [.low, .medium, .high]),
+            ModelOption(id: "claude/claude-sonnet-5", label: "claude-sonnet-5", providerLabel: "Claude", efforts: [.low, .medium, .high]),
+            ModelOption(id: "codex/gpt-5.6", label: "gpt-5.6", providerLabel: "Codex", efforts: [.low, .medium, .high]),
         ]
         set(threadId) { $0.model = "claude/claude-sonnet-5" }
     }

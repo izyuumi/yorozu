@@ -122,23 +122,35 @@
                         } else {
                             // Rare and brief — reading a photo out of another app's container —
                             // but a blank sheet with a live Send button would be worse than a line.
-                            Label("Reading what you shared…", systemImage: "ellipsis")
-                                .foregroundStyle(.secondary)
+                            HStack(spacing: 10) {
+                                ProgressView().controlSize(.small)
+                                Text("Reading what you shared…")
+                            }
+                            .foregroundStyle(.secondary)
+                            .accessibilityElement(children: .combine)
                         }
                     }
+                    .listRowBackground(YorozuPalette.paper)
 
                     Section {
                         TextField("Add a note", text: $note, axis: .vertical)
                             .lineLimit(1...5)
                             .focused($noteFocused)
                     } footer: {
-                        if case .tooLarge? = item {
+                        switch item {
+                        case .tooLarge?:
                             Text(
                                 "That picture is over \(MessageAttachment.maxBytes / 1_048_576) MB. Send it from the app instead."
                             )
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(YorozuPalette.warning)
+                        case .unsupported?:
+                            // Send stays off until there is a note: the note alone is the message.
+                            Text("Nothing here Yorozu can carry, but a note on its own is a message.")
+                        default:
+                            EmptyView()
                         }
                     }
+                    .listRowBackground(YorozuPalette.paper)
 
                     Section {
                         ShareThreadRow(
@@ -160,9 +172,15 @@
                     } header: {
                         Text("Send to")
                     } footer: {
-                        Text("If your Mac is offline, this waits securely and sends when it reconnects.")
+                        // The truth of `ShareViewController.hand(over:)`: the share is written
+                        // first and the app drains it on its next foreground if iOS refuses to
+                        // open it now; once in the app it queues until the Mac is reachable.
+                        Text("If Yorozu doesn’t open, open the app to finish sending. Shares wait for your Mac to reconnect.")
                     }
+                    .listRowBackground(YorozuPalette.paper)
                 }
+                .scrollContentBackground(.hidden)
+                .background(YorozuPalette.canvas)
                 .navigationTitle("Yorozu")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -176,6 +194,7 @@
                     }
                 }
             }
+            .yorozuTint()
             .task {
                 item = await load()
                 // The note is the only thing left to type, so the keyboard comes up on it — but
@@ -293,15 +312,21 @@
         var body: some View {
             Button(action: choose) {
                 HStack {
-                    Label(title, systemImage: symbol)
-                        .lineLimit(1)
+                    Label {
+                        Text(title).lineLimit(1)
+                    } icon: {
+                        // Quiet ink rather than the tint: the checkmark is the one thing in the
+                        // row that says "chosen", and the symbols must not compete with it.
+                        Image(systemName: symbol).foregroundStyle(YorozuPalette.ink.opacity(0.62))
+                    }
                     Spacer()
                     if selected {
                         Image(systemName: "checkmark")
                             .font(.body.weight(.semibold))
-                            .foregroundStyle(.tint)
+                            .foregroundStyle(YorozuPalette.vermilion)
                     }
                 }
+                .contentShape(Rectangle())
             }
             .tint(.primary)
             .accessibilityAddTraits(selected ? [.isSelected] : [])
