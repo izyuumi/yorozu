@@ -32,7 +32,8 @@ struct ChatWindowView: View {
     /// recent thread while it is still warm, and start a fresh draft once it is not. The first
     /// open of a launch happens before the sidecar has answered, so it waits for the list.
     private func open() {
-        selection = threadToOpen(model.threads) ?? model.newDraft().id
+        selection = model.openThread.flatMap { id in model.threads.contains { $0.id == id } ? id : nil }
+            ?? threadToOpen(model.threads) ?? model.draft?.id ?? model.newDraft().id
     }
 
     var body: some View {
@@ -82,13 +83,18 @@ struct ChatWindowView: View {
         // stay legible at the narrowest a window is worth having.
         .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
         .background(YorozuPalette.canvas)
+        .safeAreaInset(edge: .top) {
+            if session.role != .host {
+                UpdateStatusView(status: Updates.pending.status) { Updates.pending.postpone() }
+            }
+        }
         .yorozuTint()
         // Selecting something else discards empty drafts, keeps input, and
         // tells the model which thread is being read — a reply landing in the open thread is
         // read on arrival, and one landing anywhere else raises a dot in the sidebar.
         .onChange(of: selection, initial: true) { old, new in
             if let old, old != new { model.discardDraft(old) }
-            model.openThread = new
+            if new != nil || old != nil { model.openThread = new }
         }
         // A window sitting on a thread behind everything else is nobody reading it, so the
         // thread is only reported read while this window is the key one of the active app.

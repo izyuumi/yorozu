@@ -301,6 +301,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// updates, and phone connectivity keep running until the user explicitly chooses Quit.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated {
+            if Updates.pending.status.phase != .none && !Updates.installing {
+                let alert = NSAlert()
+                alert.messageText = "Update is waiting"
+                alert.informativeText = "Yorozu will restart after this Mac’s agents finish, any postponement expires, and the 10-second countdown completes."
+                alert.addButton(withTitle: "Keep Yorozu Running")
+                alert.runModal()
+                return .terminateCancel
+            }
+            guard Updates.installing else { return .terminateNow }
+            do {
+                try MacChatSession.shared.model.saveForRestart()
+                return .terminateNow
+            } catch {
+                Updates.pending.retryAfterSnapshotFailure(error)
+                return .terminateCancel
+            }
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
             let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev"
@@ -404,6 +425,13 @@ struct YorozuMacApp: App {
             Divider()
             SettingsLink { Text("Settings…") }
             CheckForUpdatesButton()
+            if Updates.pending.status.phase != .none {
+                Text(Updates.pending.status.label()).disabled(true)
+                if let failure = Updates.pending.failure { Text(failure).disabled(true) }
+                if Updates.pending.status.phase != .installing {
+                    Button("Postpone update 1 hour") { Updates.pending.postpone() }
+                }
+            }
             Divider()
             // Not a control: the sidecar's own word for where the relay stands, which is the
             // one thing worth knowing without opening anything.
@@ -413,6 +441,12 @@ struct YorozuMacApp: App {
         } label: {
             Image(systemName: session.model.state == .paired ? "circle.fill" : "circle.dotted")
                 .accessibilityLabel(session.model.state == .paired ? "Yorozu, connected" : "Yorozu, not connected")
+                .task {
+                    if UserDefaults.standard.bool(forKey: "restoreChatAfterUpdate") {
+                        UserDefaults.standard.removeObject(forKey: "restoreChatAfterUpdate")
+                        openWindow(id: Self.chatWindow)
+                    }
+                }
         }
 
         Settings { SettingsView(sidecar: sidecar) }

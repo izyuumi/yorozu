@@ -49,9 +49,6 @@ public enum OutboxStatus: String, Sendable, Equatable {
 
 /// The queue's rules, kept out of the model so they can be checked without one.
 public enum Outbox {
-    /// Most messages held at once. Older ones are dropped: a queue that grows without bound is
-    /// a cache of a conversation nobody is having any more.
-    public static let capacity = 50
     public static let maxTries = 3
     /// How long a message is worth sending by itself. Past that it is not dropped — the bubble
     /// is in the transcript and has to say something honest — but it stops being sent on a
@@ -67,7 +64,6 @@ public enum Outbox {
             item.tries = max(item.tries, maxTries)
             return item
         }
-        // Oldest first, so the tail is the newest `capacity` of them.
-        return Array(aged.suffix(capacity))
+        return aged
     }
 }

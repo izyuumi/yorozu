@@ -67,6 +67,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case deviceList = "device_list"
         case deviceRemove = "device_remove"
         case receipt
+        case updateStatus = "update_status"
+        case updateControl = "update_control"
     }
 
     public enum Payload: Equatable, Sendable {
@@ -103,6 +105,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case deviceList(DeviceListData)
         case deviceRemove(DeviceRemoveData)
         case receipt(ReceiptData)
+        case updateStatus(UpdateStatusData)
+        case updateControl(UpdateControlData)
 
         public var kind: Kind {
             switch self {
@@ -139,6 +143,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .deviceList: .deviceList
             case .deviceRemove: .deviceRemove
             case .receipt: .receipt
+            case .updateStatus: .updateStatus
+            case .updateControl: .updateControl
             }
         }
     }
@@ -190,6 +196,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .deviceList: payload = .deviceList(try c.decode(DeviceListData.self, forKey: .data))
         case .deviceRemove: payload = .deviceRemove(try c.decode(DeviceRemoveData.self, forKey: .data))
         case .receipt: payload = .receipt(try c.decode(ReceiptData.self, forKey: .data))
+        case .updateStatus: payload = .updateStatus(try c.decode(UpdateStatusData.self, forKey: .data))
+        case .updateControl: payload = .updateControl(try c.decode(UpdateControlData.self, forKey: .data))
         }
     }
 
@@ -236,6 +244,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .deviceList(let d): try c.encode(d, forKey: .data)
         case .deviceRemove(let d): try c.encode(d, forKey: .data)
         case .receipt(let d): try c.encode(d, forKey: .data)
+        case .updateStatus(let data): try c.encode(data, forKey: .data)
+        case .updateControl(let data): try c.encode(data, forKey: .data)
         }
     }
 }
