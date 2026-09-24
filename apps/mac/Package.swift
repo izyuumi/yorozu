@@ -17,8 +17,7 @@ let package = Package(
         .target(name: "YorozuPermissions"),
         // The login item, the watchdog LaunchAgent and the log all three write to. A library
         // rather than part of the app because the parts worth testing — the agent it writes
-        // and the pause a deliberate Quit leaves — are pure text, and a test cannot import
-        // an executable target.
+        // and the pause a deliberate Quit leaves — are pure text.
         .target(name: "YorozuKeepalive"),
         .executableTarget(
             name: "YorozuMac",
@@ -46,6 +45,6 @@ let package = Package(
                 ])
             ]
         ),
-        .testTarget(name: "YorozuKeepaliveTests", dependencies: ["YorozuKeepalive"])
+        .testTarget(name: "YorozuKeepaliveTests", dependencies: ["YorozuKeepalive", "YorozuMac"])
     ]
 )

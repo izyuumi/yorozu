@@ -359,7 +359,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // `LocalChat.start`, whose thread hook it chains onto.
             Showcase.attach(to: MacChatSession.shared.model)
             #endif
-            OnboardingWindow.showIfFirstLaunch()
+            // First-launch setup is shown from the `MenuBarExtra` label's task, once the
+            // window has a way into the chat — see ``OnboardingWindow/openChat``.
         }
     }
 
@@ -389,6 +390,8 @@ struct YorozuMacApp: App {
     @StateObject private var sidecar = Sidecar.shared
     @State private var session = MacChatSession.shared
     @Environment(\.openWindow) private var openWindow
+    /// Whether setup was finished, so the menu can offer the way back to it until it was.
+    @AppStorage(OnboardingWindow.completedKey) private var onboardingCompleted = false
 
     /// The chat window's id, so the status item can ask for it by name.
     static let chatWindow = "chat"
@@ -422,6 +425,9 @@ struct YorozuMacApp: App {
         MenuBarExtra {
             Button("Open Yorozu") { openWindow(id: Self.chatWindow) }
                 .keyboardShortcut("o")
+            if session.role == nil || !onboardingCompleted {
+                Button("Finish Setup…") { OnboardingWindow.show() }
+            }
             Divider()
             SettingsLink { Text("Settings…") }
             CheckForUpdatesButton()
@@ -442,6 +448,10 @@ struct YorozuMacApp: App {
             Image(systemName: session.model.state == .paired ? "circle.fill" : "circle.dotted")
                 .accessibilityLabel(session.model.state == .paired ? "Yorozu, connected" : "Yorozu, not connected")
                 .task {
+                    // The setup window's way into the chat: it is an NSWindow outside this
+                    // scene graph, and this is the `openWindow` that works.
+                    OnboardingWindow.openChat = { openWindow(id: Self.chatWindow) }
+                    OnboardingWindow.showIfFirstLaunch()
                     if UserDefaults.standard.bool(forKey: "restoreChatAfterUpdate") {
                         UserDefaults.standard.removeObject(forKey: "restoreChatAfterUpdate")
                         openWindow(id: Self.chatWindow)
