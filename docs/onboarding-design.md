@@ -63,27 +63,20 @@ secret." The thread-list handoff is unchanged.
 
 ## Verification
 
-Recorded on 2026-09-24:
+Isolated commit checked on 2026-09-25 against GitHub `main` (`e04f67b`):
 
-- Mac build and `env -u SDKROOT swift test --package-path apps/mac`: 8 tests passed,
-  including role routing and the requirement for a live host handshake.
-- iOS Simulator build passed. `PairingFlowTests` on iPhone 17e / iOS 27: 5 tests passed,
+- Mac build/tests: 11 passed. iOS Simulator build passed.
+- Shared Swift: 273 passed. An existing reconnect test was corrected to wait for its
+  update-status event and queued-message delivery, rather than count unrelated protocol
+  frames. The focused test failed before the repair and passed afterward. No shared
+  production source changed.
+- Five offline iOS pairing UI tests passed on 2026-09-24 in the original workspace,
   covering manual input, asynchronous failure, scanner fallback, connecting state, and
   largest Dynamic Type in landscape. Portrait screenshot inspected. Landscape accessibility
   frames passed, but the simulator screenshot was malformed, so visual QA there is limited.
-- Shared suite: 273 tests run, 1 failure in
-  `rapidStreamingDeltasAreCoalescedBeforeTheyInvalidateTheChat` (`rendered <= 3`, observed 5).
-  This is outside onboarding. No shared source was changed for this task.
+- Broader settings and shared/runtime edits were excluded. Permissions use the existing
+  rows in a scroll view rather than the concurrent settings Form redesign.
 - Design artboards reviewed in light and dark appearance. Live relay pairing, macOS privacy
   prompts, and the installed Mac app were not exercised against the user's existing state.
 
 Logs and simulator attachments are in `/tmp/yorozu-onboarding-design/`.
-
-Commit isolation checked on 2026-09-25 against GitHub `main` (`e04f67b`):
-
-- Mac build/tests: 11 passed. iOS Simulator build passed.
-- Shared suite: 272 passed, 1 failed. The unchanged reconnect test
-  `returningHostClearsInstallingWithoutReconnectingPhoneAndReplaysOutbox` expects update
-  status as the final request, but terminal status is now also requested.
-- Broader settings and shared/runtime edits were excluded. Permissions use the existing
-  rows in a scroll view rather than the concurrent settings Form redesign.
