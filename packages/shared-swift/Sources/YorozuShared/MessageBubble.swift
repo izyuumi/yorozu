@@ -217,8 +217,8 @@ public struct MessageBubble: View {
         // who said it even when the message is long.
         .frame(maxWidth: bubbleMaxWidth, alignment: isUser ? .trailing : .leading)
         #if os(iOS)
-            // Prose as UITextViews, so a long press selects by word and letter in place; the
-            // same design and colours the modifiers above give the SwiftUI path.
+            // The reply as one UITextView, so a long press selects by word and letter in place
+            // and across blocks; the same design and colours the modifiers above give `Text`.
             .environment(\.proseStyle, ProseStyle(
                 serif: !isUser,
                 ink: isUser ? .white : UIColor(YorozuPalette.ink),
