@@ -431,7 +431,7 @@ struct ConnectionPill: View {
 /// flash of the list on the way in. The path holds thread ids rather than summaries, so a draft
 /// that becomes a real thread mid-push keeps drawing.
 ///
-/// `onSettings` puts a gear beside the `+`. It is a callback rather than a view slot because the
+/// `onSettings` puts a gear in the list toolbar. It is a callback rather than a view slot because the
 /// bar belongs to the navigation stack this view owns, so a caller cannot reach it from outside;
 /// optional because only the phone has a settings screen to open.
 ///
@@ -470,15 +470,26 @@ public struct ThreadListView<Destination: View>: View {
         @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
 
-    /// An iPad with room for two columns draws the list beside the chat, as the Mac does,
-    /// rather than pushing the chat over it. A phone — and an iPad squeezed into Slide Over or
-    /// a third of the screen — keeps the stack, so the same `path` drives both.
+    /// Regular width draws the list beside the chat, including on iPhone Duo's inner display.
+    /// Compact width keeps the stack; the same `path` drives both layouts during resizing.
     private var splitLayout: Bool {
         #if os(iOS)
-            UIDevice.current.userInterfaceIdiom == .pad && sizeClass == .regular
+            sizeClass == .regular
         #else
             false
         #endif
+    }
+
+    private var hasSelectedThread: Bool {
+        guard let id = path.last else { return false }
+        return threads.contains { $0.id == id }
+    }
+
+    private var settingsPlacement: ToolbarItemPlacement {
+        #if os(iOS)
+            if #available(iOS 27.0, *) { return .topBarPinnedTrailing }
+        #endif
+        return .navigation
     }
 
     /// The split view's selection is the top of the stack, so opening a thread from a
@@ -655,7 +666,7 @@ public struct ThreadListView<Destination: View>: View {
         .toolbarTitleDisplayMode(.inline)
         .toolbar {
             if let onSettings {
-                ToolbarItem(placement: .navigation) {
+                ToolbarItem(placement: settingsPlacement) {
                     Button(action: onSettings) {
                         ZStack(alignment: .bottomTrailing) {
                             Image(systemName: "gearshape")
@@ -672,15 +683,19 @@ public struct ThreadListView<Destination: View>: View {
                 }
             }
             #if os(iOS)
-                // One trailing group shaped like the chat's — see ``ChatView`` — with the compose
-                // glyph last in both: pushing a thread then swaps the buttons in place instead of
-                // animating a lone item into a group and back, and a second `.primaryAction`
-                // would fold into a "…" overflow menu anyway.
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    if threads.contains(where: \.isUnread), let onReadAll {
+                if threads.contains(where: \.isUnread), let onReadAll {
+                    ToolbarItem(placement: .topBarTrailing) {
                         Button("Mark all as read", systemImage: "envelope.open", action: onReadAll)
                     }
-                    newThreadButton
+                }
+                // A selected chat already has New session in its own toolbar.
+                if !splitLayout || !hasSelectedThread {
+                    if #available(iOS 27.1, *), !splitLayout {
+                        // The compact Duo bar puts this at the reachable lower edge.
+                        ToolbarItem(placement: .bottomBar) { newThreadButton }
+                    } else {
+                        ToolbarItem(placement: .topBarTrailing) { newThreadButton }
+                    }
                 }
             #endif
             #if os(macOS)
