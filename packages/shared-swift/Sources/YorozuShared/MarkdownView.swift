@@ -38,6 +38,7 @@ public struct MarkdownText: View {
             Text(AttributedString.chatInline(text, highlight: highlight))
                 .font(headingFont(level))
                 .padding(.top, offset == 0 ? 0 : 4)
+                .accessibilityAddTraits(.isHeader)
         case .code(let language, let text):
             CodeBlock(language: language, code: text)
         case .list(let ordered, let items):
@@ -81,9 +82,13 @@ private struct TypingCursor: ViewModifier {
                 .frame(height: 14)
                 .opacity(on ? 1 : 0)
                 .foregroundStyle(.tint)
-                .onAppear {
-                    guard !reduceMotion else { return }
-                    withAnimation(.easeInOut(duration: 0.6).repeatForever()) { on = false }
+                .onChange(of: reduceMotion, initial: true) { _, reduced in
+                    var transaction = Transaction(animation: nil)
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { on = true }
+                    if !reduced {
+                        withAnimation(.easeInOut(duration: 0.6).repeatForever()) { on = false }
+                    }
                 }
                 .accessibilityHidden(true)
         }
@@ -95,6 +100,7 @@ private struct CodeBlock: View {
     let language: String?
     let code: String
     @State private var copied = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -107,7 +113,7 @@ private struct CodeBlock: View {
                 Spacer(minLength: 0)
                 Button {
                     copyToPasteboard(code)
-                    withAnimation { copied = true }
+                    withAnimation(reduceMotion ? nil : .default) { copied = true }
                 } label: {
                     Label(copied ? String(localized: "Copied") : String(localized: "Copy"), systemImage: copied ? "checkmark" : "doc.on.doc")
                         .font(.caption)
@@ -122,15 +128,16 @@ private struct CodeBlock: View {
                 .task(id: copied) {
                     guard copied else { return }
                     try? await Task.sleep(for: .seconds(2))
-                    withAnimation { copied = false }
+                    withAnimation(reduceMotion ? nil : .default) { copied = false }
                 }
             }
             .padding(.horizontal, 10)
 
             // Wrapping code changes what it means, so it scrolls instead.
-            ScrollView(.horizontal, showsIndicators: false) {
+            ScrollView(.horizontal) {
                 Text(code)
                     .font(.callout.monospaced())
+                    .fixedSize(horizontal: true, vertical: true)
                     .textSelection(.enabled)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
@@ -172,8 +179,8 @@ private struct MarkdownTable: View {
     private var columns: Int { max(header.count, rows.map(\.count).max() ?? 0) }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            grid.padding(8)
+        ScrollView(.horizontal) {
+            grid.fixedSize(horizontal: true, vertical: true).padding(8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
@@ -185,6 +192,7 @@ private struct MarkdownTable: View {
                 ForEach(Array(cells(header).enumerated()), id: \.offset) { _, cell in
                     Text(AttributedString.chatInline(cell, highlight: highlight))
                         .font(.footnote.weight(.semibold))
+                        .accessibilityAddTraits(.isHeader)
                 }
             }
             Divider().gridCellUnsizedAxes(.horizontal)

@@ -1,6 +1,6 @@
 # The legacy runtime
 
-`packages/runtime` carries a complete in-house agent loop — providers, tools, memory, scheduling
+`packages/runtime` carries a complete in-house agent loop — tools, memory, scheduling
 and an approval engine — that **a shipped Yorozu never runs**. It predates the move to the
 OpenClaw Gateway. It is still built, still tested, and still the backend the end-to-end harness
 drives, which is why it has not been deleted.
@@ -24,6 +24,17 @@ The Mac app spawns `node .../serve.js` with no argument, so the branch is never 
 imports `index.ts` (the loop, `runAgent`, `defaultTools`) as a **type-only** import, which
 TypeScript erases — on a normal launch that module is not even loaded.
 
+## Provider code that remains live
+
+Normal `serve.js` launches pass `chainFromEnv()` as the automatic thread titler. `title.ts`
+uses that provider to name new conversations, with a first-words fallback if it fails or times
+out. `chain.ts`, `providers.ts`, `provider.ts`, `claude.ts`, `codex.ts`, and the automatic
+`probe.ts` discovery path therefore remain production dependencies even though the old agent
+loop is dormant.
+
+`YOROZU_MODEL_CHAIN`, `YOROZU_BASE_URL`, `YOROZU_API_KEY`, and `YOROZU_MODEL` can affect title
+generation. They do not replace OpenClaw or the native coding-agent backends for chat replies.
+
 ## What is dormant
 
 Everything below is reachable only through the legacy path or through a `serve.js` subcommand with
@@ -31,7 +42,7 @@ no remaining caller:
 
 | Subsystem | Files |
 | --- | --- |
-| Provider adapters and the fallback chain | `claude.ts`, `codex.ts`, `providers.ts`, `chain.ts`, `probe.ts`, `mcp-bridge.ts` |
+| Legacy MCP tool bridge | `mcp-bridge.ts` |
 | PAIOS memory indexing and the `remember` tool | `memory.ts` (except `stateDir()`, which is live) |
 | Scheduler, cron and the `schedule` tools | `scheduler.ts`, `cron.ts` |
 | Agent markdown files, delegation, skills | `agents.ts`, `delegate.ts`, `skills.ts`, `agents/*.md` |
@@ -43,14 +54,13 @@ no remaining caller:
 | The approval gate, task grants, rule proposals | `checkApproval`/`verifyApproved` in `index.ts` |
 | `ask_user` / `report_progress` tools | `tools/cards.ts` |
 
-The environment variables `YOROZU_MODEL_CHAIN`, `YOROZU_BASE_URL`, `YOROZU_API_KEY`,
-`YOROZU_MODEL`, `YOROZU_PAIOS_DIR`, `YOROZU_MEMORY_DIR`, `YOROZU_BROWSER`, `YOROZU_NATIVE_CMD` and
-`YOROZU_CATALOG_URL` are read only from these files. None of them affect a shipped launch. (The
-Mac app sets `YOROZU_NATIVE_CMD` and uses the `yorozu-native` helper directly from Swift for its
-permission checks — the helper is live, the runtime's tool wrappers around it are not.)
+`YOROZU_PAIOS_DIR`, `YOROZU_MEMORY_DIR`, `YOROZU_BROWSER`, and `YOROZU_CATALOG_URL` configure
+these legacy features. The Mac app also sets `YOROZU_NATIVE_CMD` and uses the `yorozu-native`
+helper directly from Swift for permission checks: the helper is live, while the runtime's
+legacy tool wrappers around it are not.
 
-`.github/workflows/catalog.yml` still publishes `catalog/models.json` to a rolling `catalog`
-release on every push that touches it. That feed only has a consumer inside this dormant code.
+`.github/workflows/catalog.yml` uploads `catalog/models.json` to the latest versioned release
+on every push that touches it. The feed's consumer remains inside the dormant catalog code.
 
 ## Two things that look live and are not
 
@@ -76,4 +86,5 @@ threads belong to OpenClaw.
 The loop is self-contained behind `legacy.ts` and the `--direct-provider` flag. Deleting it would
 mean replacing the end-to-end harness's fake backend with something that speaks the Gateway
 protocol, and dropping the `probe`, `models`, `assign`, `assign-revert` and `assign-cron`
-subcommands along with `catalog.yml`. Until then, treat anything on the table above as historical.
+subcommands along with `catalog.yml`. Preserve the provider chain used by automatic thread
+titles, or migrate titling first. Until then, treat the dormant subsystems above as historical.

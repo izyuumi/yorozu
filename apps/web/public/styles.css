@@ -15,6 +15,7 @@
   --amber-deep: oklch(0.7 0.16 72);
   --amber-ink: oklch(0.32 0.08 68);
   --red: oklch(0.55 0.19 35);
+  --on-red: white;
   --red-bg: oklch(0.96 0.03 45);
   --shadow: 0 30px 80px -30px oklch(0.3 0.08 70 / 0.55);
   --page: min(1120px, calc(100% - clamp(32px, 6vw, 64px)));
@@ -35,6 +36,7 @@
     --muted: oklch(0.76 0.015 80);
     --line: oklch(0.3 0.015 60);
     --red: oklch(0.74 0.16 35);
+    --on-red: oklch(0.16 0.012 60);
     --red-bg: oklch(0.25 0.05 40);
     --shadow: 0 30px 80px -30px oklch(0 0 0 / 0.8);
   }
@@ -104,7 +106,7 @@ header nav .button { margin-left: 8px; }
 .button:hover { transform: translateY(-1px); }
 .button:active { transform: translateY(0); transition-duration: 0.08s; }
 header nav a.button { min-height: 38px; padding: 0 16px; font-size: 14px; background: var(--ink); color: var(--canvas); }
-header nav a.button:hover { background: var(--red); color: white; }
+header nav a.button:hover { background: var(--red); color: var(--on-red); }
 .button.ghost { background: transparent; color: inherit; box-shadow: inset 0 0 0 2px currentColor; }
 .button.ghost:hover { background: oklch(1 0 0 / 0.25); }
 
@@ -131,6 +133,7 @@ header nav a.button:hover { background: var(--red); color: white; }
 .lede { max-width: 32em; margin-top: 24px; font-size: clamp(18px, 1.6vw, 21px); line-height: 1.5; color: oklch(0.24 0.05 65); }
 .kana { font-weight: 500; }
 .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+.availability-note { max-width: 34em; margin-top: 20px; font-size: 16px; }
 .hero .fine { margin-top: 22px; }
 .fine { font-size: 14px; color: var(--muted); }
 .hero .fine { color: var(--amber-ink); }
@@ -154,6 +157,14 @@ main > section + section:not(.hero) { border-top: 1px solid var(--line); }
 
 /* Steps: an actual sequence, so the numbers are earned */
 
+.availability-intro { max-width: 40em; }
+.availability-intro p, .steps-intro { margin-top: 20px; color: var(--muted); max-width: 44em; }
+.installation-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 24px; margin-top: 32px; }
+.installation-options article { min-width: 0; padding: clamp(20px, 3vw, 32px); border: 1px solid var(--line); border-radius: 20px; background: var(--raised); }
+.installation-options p { margin-top: 12px; color: var(--muted); }
+.installation-options code { overflow-wrap: anywhere; }
+.installation-options a { display: inline-flex; align-items: center; min-height: 44px; margin-top: 12px; font-weight: 600; }
+section[id] { scroll-margin-top: 24px; }
 .steps ol { list-style: none; margin: 40px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: clamp(24px, 4vw, 56px); }
 .steps li { display: grid; gap: 8px; }
 .steps .num { font-family: var(--display); font-size: 64px; line-height: 1; color: var(--amber-deep); margin-bottom: 8px; }
@@ -214,8 +225,15 @@ main > section + section:not(.hero) { border-top: 1px solid var(--line); }
   transition: background-color 0.2s, transform 0.35s var(--ease);
 }
 .copy:hover { transform: translateY(-1px); }
-.copy.done { background: var(--red); color: white; }
+.copy.done { background: var(--red); color: var(--on-red); }
 .agent-setup .fine { margin-top: 14px; }
+.copy-status { margin-top: 12px; font-size: 14px; color: var(--muted); }
+.copy-status:empty { margin-top: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .button, .copy { transition: none; }
+  .button:hover, .button:active, .copy:hover { transform: none; }
+}
 
 /* Warning */
 

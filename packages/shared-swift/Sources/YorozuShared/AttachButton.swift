@@ -33,10 +33,18 @@ func pastedImageAttachment(bytes: Data) -> MessageAttachment? {
 func stagePastedImage(
     _ image: PastedImage,
     onPick: (MessageAttachment) -> Void,
-    onTooLarge: () -> Void
+    onTooLarge: () -> Void,
+    onFailure: ((String) -> Void)? = nil
 ) {
-    guard image.bytes.count <= MessageAttachment.maxBytes else { return onTooLarge() }
-    guard let attachment = pastedImageAttachment(bytes: image.bytes) else { return }
+    guard image.bytes.count <= MessageAttachment.maxBytes else {
+        if let onFailure { onFailure(String(localized: "Each attachment must be 5 MB or smaller.")) }
+        else { onTooLarge() }
+        return
+    }
+    guard let attachment = pastedImageAttachment(bytes: image.bytes) else {
+        onFailure?(String(localized: "Couldn’t read the image. Copy it again or choose another file."))
+        return
+    }
     onPick(attachment)
 }
 
@@ -54,9 +62,15 @@ struct AttachButton: View {
     let remaining: Int
     let onPick: ([MessageAttachment]) -> Void
     let onTooLarge: () -> Void
+    var onLoadingChanged: (Bool) -> Void = { _ in }
 
     @State private var photos: [PhotosPickerItem] = []
     @State private var browsingFiles = false
+    @State private var isLoading = false
+    @State private var activeLoadID: UUID?
+    @State private var failureMessage: String?
+    @State private var retrySources: [AttachmentSource] = []
+    @State private var loadingTask: Task<Void, Never>?
     #if os(iOS)
         @State private var takingPhoto = false
     #endif
@@ -89,23 +103,53 @@ struct AttachButton: View {
                 }
             #endif
         } label: {
-            Image(systemName: "plus")
-                .font(.body.weight(.semibold))
+            Group {
+                if isLoading { ProgressView().controlSize(.small) }
+                else { Image(systemName: "plus").font(.body.weight(.semibold)) }
+            }
                 .foregroundStyle(.secondary)
                 .frame(width: controlTarget, height: controlTarget)
                 .contentShape(.rect)
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
-        .accessibilityLabel("Attach photos or files")
+        .accessibilityLabel(isLoading ? "Loading attachments" : "Attach photos or files")
+        .disabled(isLoading || remaining <= 0)
+        .help(remaining <= 0 ? "Remove an attachment to add another" : "Attach photos or files")
+        .accessibilityHint(remaining <= 0 ? "Remove an attachment to add another" : "Choose photos or files for this message")
+        .alert("Attachments couldn’t be added", isPresented: Binding(
+            get: { failureMessage != nil },
+            set: { if !$0 { failureMessage = nil } }
+        )) {
+            if !retrySources.isEmpty {
+                Button("Retry failed attachments") {
+                    let sources = retrySources
+                    loadingTask = Task { await load(sources) }
+                }
+            }
+            Button("OK", role: .cancel) { retrySources = [] }
+        } message: {
+            Text(failureMessage ?? "")
+        }
+        .onDisappear {
+            activeLoadID = nil
+            loadingTask?.cancel()
+            isLoading = false
+            onLoadingChanged(false)
+        }
         .task(id: photos) { await loadPhotos() }
         .fileImporter(
             isPresented: $browsingFiles,
             allowedContentTypes: [.item],
             allowsMultipleSelection: true
         ) { result in
-            guard case .success(let urls) = result else { return }
-            loadFiles(urls)
+            switch result {
+            case .success(let urls): loadFiles(urls)
+            case .failure(let error):
+                guard (error as NSError).code != NSUserCancelledError else { return }
+                retrySources = []
+                reportFailure(String(localized: "Couldn’t open the selected files. Choose them again and check that they’re available on this device."))
+            }
         }
         #if os(iOS)
             .fullScreenCover(isPresented: $takingPhoto) {
@@ -113,6 +157,8 @@ struct AttachButton: View {
                     // The camera hands over a picture, not a file: the name is made here, the
                     // same way the library's is.
                     stage([(name: "photo.jpg", mime: "image/jpeg", bytes: data)])
+                } onFailure: {
+                    reportFailure(String(localized: "Couldn’t read the photo. Try taking it again."))
                 }
                 .ignoresSafeArea()
             }
@@ -122,39 +168,72 @@ struct AttachButton: View {
     private func loadPhotos() async {
         guard !photos.isEmpty else { return }
         let picked = photos
-        // Cleared whatever happens, so picking the same photo again is a new pick rather than
-        // a selection that is already "current" and never fires.
-        defer { photos = [] }
-        var picks: [(name: String, mime: String, bytes: Data)] = []
-        for item in picked {
-            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
-            // A PhotosPickerItem carries a type but not always a name, so one is made from the
-            // type: what the user sees, and what a text-only model is told was attached.
+        defer { if photos == picked { photos = [] } }
+        let sources = picked.enumerated().map { index, item in
             let type = item.supportedContentTypes.first ?? .image
-            picks.append((
-                name: "photo.\(type.preferredFilenameExtension ?? "jpg")",
+            return AttachmentSource(
+                name: "photo-\(index + 1).\(type.preferredFilenameExtension ?? "jpg")",
                 mime: type.preferredMIMEType ?? "image/jpeg",
-                bytes: data
-            ))
+                load: { try await item.loadTransferable(type: Data.self) }
+            )
         }
-        stage(picks)
+        await load(sources)
     }
 
     private func loadFiles(_ urls: [URL]) {
-        var picks: [(name: String, mime: String, bytes: Data)] = []
-        for url in urls {
-            // A document picked outside the app's container is only readable inside this pair.
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            guard let data = try? Data(contentsOf: url) else { continue }
-            let type = UTType(filenameExtension: url.pathExtension)
-            picks.append((
+        guard !urls.isEmpty else { return }
+        let sources = urls.map { url in
+            AttachmentSource(
                 name: url.lastPathComponent,
-                mime: type?.preferredMIMEType ?? "application/octet-stream",
-                bytes: data
-            ))
+                mime: UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream",
+                load: {
+                    // Reading cloud-backed documents may block. Keep that work off the UI
+                    // thread and retain security-scoped access for exactly the read's lifetime.
+                    try await Task.detached(priority: .userInitiated) {
+                        let scoped = url.startAccessingSecurityScopedResource()
+                        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                        return try Data(contentsOf: url)
+                    }.value
+                }
+            )
         }
-        stage(picks)
+        loadingTask = Task { await load(sources) }
+    }
+
+    private func load(_ sources: [AttachmentSource]) async {
+        guard !Task.isCancelled else { return }
+        let loadID = UUID()
+        activeLoadID = loadID
+        isLoading = true
+        onLoadingChanged(true)
+        failureMessage = nil
+        retrySources = []
+        defer {
+            if activeLoadID == loadID {
+                activeLoadID = nil
+                isLoading = false
+                onLoadingChanged(false)
+            }
+        }
+        do {
+            let result = try await AttachmentAcquisition.load(sources)
+            try Task.checkCancellation()
+            guard activeLoadID == loadID else { return }
+            retrySources = result.failed
+            if !result.picks.isEmpty { stage(result.picks) }
+            if !result.failed.isEmpty {
+                let names = result.failed.map(\.name).joined(separator: ", ")
+                reportFailure(String(localized: "Couldn’t load: \(names). Try again, or choose another file."))
+            }
+        } catch is CancellationError {
+            // Leaving the conversation cancels acquisition; never attach later to another draft.
+        } catch {
+            reportFailure(String(localized: "Couldn’t load the attachments. Choose them again."))
+        }
+    }
+
+    private func reportFailure(_ message: String) {
+        failureMessage = failureMessage.map { $0 + "\n\n" + message } ?? message
     }
 
     #if os(iOS)
@@ -164,7 +243,16 @@ struct AttachButton: View {
     #endif
 
     private func stage(_ picks: [(name: String, mime: String, bytes: Data)]) {
-        stageAttachments(picks, remaining: remaining, onPick: onPick, onTooLarge: onTooLarge)
+        // Camera and menu Paste start here; async acquisition already began its attempt.
+        // Clear old feedback before callbacks can add errors from this same batch.
+        let freshAttempt = !isLoading
+        if freshAttempt {
+            failureMessage = nil
+            retrySources = []
+            onLoadingChanged(true)
+        }
+        defer { if freshAttempt { onLoadingChanged(false) } }
+        stageAttachments(picks, remaining: remaining, onPick: onPick, onTooLarge: onTooLarge, onFailure: reportFailure)
     }
 }
 
@@ -174,20 +262,48 @@ func stageAttachments(
     _ picks: [(name: String, mime: String, bytes: Data)],
     remaining: Int,
     onPick: ([MessageAttachment]) -> Void,
-    onTooLarge: () -> Void
+    onTooLarge: () -> Void,
+    onFailure: ((String) -> Void)? = nil
 ) {
-    guard !picks.isEmpty else { return }
+    guard !picks.isEmpty else {
+        onFailure?(String(localized: "Couldn’t read the image. Copy it again or choose another file."))
+        return
+    }
     var staged: [MessageAttachment] = []
-    var refused = picks.count > remaining
-    for pick in picks.prefix(max(0, remaining)) {
+    var unreadable: [String] = []
+    var oversized: [String] = []
+    var overCount = false
+    for pick in picks {
+        guard staged.count < max(0, remaining) else { overCount = true; continue }
+        if pick.mime.hasPrefix("image/") {
+            guard let source = CGImageSourceCreateWithData(pick.bytes as CFData, nil),
+                CGImageSourceGetCount(source) > 0 else {
+                unreadable.append(pick.name)
+                continue
+            }
+        }
         if let attachment = attachmentForSending(name: pick.name, mime: pick.mime, bytes: pick.bytes) {
             staged.append(attachment)
         } else {
-            refused = true
+            oversized.append(pick.name)
         }
     }
     if !staged.isEmpty { onPick(staged) }
-    if refused { onTooLarge() }
+    if let onFailure {
+        var messages: [String] = []
+        if !unreadable.isEmpty {
+            let names = unreadable.joined(separator: ", ")
+            messages.append(String(localized: "Couldn’t read: \(names). Choose another file."))
+        }
+        if !oversized.isEmpty {
+            let names = oversized.joined(separator: ", ")
+            messages.append(String(localized: "Too large: \(names). Each attachment must be 5 MB or smaller."))
+        }
+        if overCount { messages.append(String(localized: "A message can contain up to 10 attachments. Remove one to add another.")) }
+        if !messages.isEmpty { onFailure(messages.joined(separator: "\n\n")) }
+    } else if !oversized.isEmpty || overCount {
+        onTooLarge()
+    }
 }
 
 /// Every image on the pasteboard, ready for ``stageAttachments`` — what the + menu's Paste and
@@ -196,8 +312,11 @@ func stageAttachments(
     func pasteboardHasImages() -> Bool { UIPasteboard.general.hasImages }
 
     func pasteboardImagePicks() -> [(name: String, mime: String, bytes: Data)] {
-        (UIPasteboard.general.images ?? []).compactMap { image in
-            image.jpegData(compressionQuality: 1).map { (name: "pasted.jpg", mime: "image/jpeg", bytes: $0) }
+        (UIPasteboard.general.images ?? []).enumerated().map { index, image in
+            // An empty conversion stays in the batch so staging can name the failed image
+            // instead of silently dropping it beside successfully converted ones.
+            (name: "pasted-\(index + 1).jpg", mime: "image/jpeg",
+             bytes: image.jpegData(compressionQuality: 1) ?? Data())
         }
     }
 #else
@@ -208,15 +327,15 @@ func stageAttachments(
         if board.availableType(from: [.string]) != nil, board.availableType(from: [.fileURL]) == nil {
             return false
         }
-        return !pasteboardImagePicks().isEmpty
+        return board.canReadObject(forClasses: [NSImage.self], options: nil)
     }
 
     func pasteboardImagePicks() -> [(name: String, mime: String, bytes: Data)] {
         let images = NSPasteboard.general.readObjects(forClasses: [NSImage.self]) as? [NSImage] ?? []
-        return images.compactMap { image in
-            image.tiffRepresentation
+        return images.enumerated().map { index, image in
+            let bytes = image.tiffRepresentation
                 .flatMap { NSBitmapImageRep(data: $0)?.representation(using: .png, properties: [:]) }
-                .map { (name: "pasted.png", mime: "image/png", bytes: $0) }
+            return (name: "pasted-\(index + 1).png", mime: "image/png", bytes: bytes ?? Data())
         }
     }
 #endif
@@ -226,6 +345,7 @@ func stageAttachments(
     /// still the only way to take one picture without standing up a capture session by hand.
     private struct CameraPicker: UIViewControllerRepresentable {
         let onCapture: (Data) -> Void
+        let onFailure: () -> Void
         @Environment(\.dismiss) private var dismiss
 
         func makeUIViewController(context: Context) -> UIImagePickerController {
@@ -254,6 +374,8 @@ func stageAttachments(
                     let data = image.jpegData(compressionQuality: 1)
                 {
                     parent.onCapture(data)
+                } else {
+                    parent.onFailure()
                 }
                 parent.dismiss()
             }

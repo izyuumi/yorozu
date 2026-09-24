@@ -13,6 +13,39 @@ public struct SearchHit: Equatable, Sendable, Identifiable {
     public var id: String { "\(eventId)#\(occurrence)" }
 }
 
+/// Carries list-search intent into the transcript without changing thread identity.
+public struct ThreadSearchRequest: Equatable, Sendable, Identifiable {
+    public let id = UUID()
+    public let threadId: String
+    public let query: String
+
+    public init(threadId: String, query: String) {
+        self.threadId = threadId
+        self.query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// Both result sections and their empty state use this single partition.
+public struct ThreadSearchResults {
+    public let threads: [ThreadSummary]
+    public let messages: [ThreadSummary]
+    public var isEmpty: Bool { threads.isEmpty && messages.isEmpty }
+
+    public init(threads: [ThreadSummary], query: String, messageText: (String) -> String) {
+        var metadata: [ThreadSummary] = []
+        var content: [ThreadSummary] = []
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !needle.isEmpty {
+            for thread in threads.sorted(by: { $0.lastActivity > $1.lastActivity }) {
+                if threadMatches(thread, query: needle) { metadata.append(thread) }
+                else if !searchRanges(in: messageText(thread.id), term: needle).isEmpty { content.append(thread) }
+            }
+        }
+        self.threads = metadata
+        self.messages = content
+    }
+}
+
 /// Every occurrence of `term` in `text`, left to right and non-overlapping. Case- and
 /// diacritic-insensitive, which is what anyone typing into a search field means.
 public func searchRanges(in text: String, term: String) -> [Range<String.Index>] {
@@ -72,6 +105,7 @@ extension AttributedString {
 }
 
 extension EnvironmentValues {
+    @Entry public var threadSearchRequest: ThreadSearchRequest? = nil
     /// The thread's current search term, handed down rather than passed through every view
     /// between the search field and the run of text a hit is inside.
     @Entry public var searchHighlight: String = ""
