@@ -7,6 +7,7 @@
 # in it. This one is what a stranger downloads, so everything it needs has to be inside.
 set -eu
 cd "$(dirname "$0")/.."
+. ./scripts/build-version.sh
 
 # Capture the caller's CI policy before enabling pnpm's non-interactive mode locally.
 NOTARIZATION_REQUIRED=${REQUIRE_NOTARIZATION:-0}
@@ -20,14 +21,7 @@ if ! command -v pnpm >/dev/null 2>&1; then
   pnpm() { corepack pnpm "$@"; }
 fi
 
-# Sparkle needs CFBundleVersion to rise across marketing versions and beta builds. Keep
-# that machine number global; show the build count since this version's tag to users.
-TAG=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
-VERSION=${VERSION:-${TAG#v}}
-VERSION=${VERSION:-0.1.0}
-VERSION_LABEL=${VERSION_LABEL:-$VERSION}
-BUILD=${BUILD:-$(git rev-list --count HEAD)}
-VERSION_BUILD=$(( $(git rev-list --count ${TAG:+$TAG..}HEAD) + 1 ))
+# Sparkle needs globally increasing builds, allocated before either platform is built.
 DIST=${DIST:-dist}
 IDENTITY=${IDENTITY:-"Developer ID Application: Yumi Izumi (AN5KM8QGEF)"}
 # Overridable so a test install can be built with an id of its own. Two bundles sharing one

@@ -101,9 +101,11 @@ tool call reach the phone.
 
 CI (`.github/workflows/ci.yml`) runs the Node, Swift, and iOS jobs on macOS, plus workflow
 validation, ShellCheck, isolated release-publication tests, and a relay container build and
-WebSocket check on Linux. Release Please
-maintains a release PR; merging it runs the signed Mac release workflow.
-See [the release guide](docs/releasing.md) for credentials and retries.
+WebSocket check on Linux. Successful CI on `main` or `release/*` can produce a matching Mac
+prerelease and TestFlight candidate. Release Please prepares version/changelog PRs; stable
+publication explicitly promotes a tested candidate. All commits must be signed Conventional
+Commits. See [the release workflow](docs/RELEASE_WORKFLOW.md) for the runbook and
+[release setup](docs/releasing.md) for credentials.
 
 ### Configuration
 
@@ -146,14 +148,15 @@ New tasks take priority; approval waits and unknown agent status keep the update
 Mac and phone show progress and offer **Postpone 1 hour**. Drafts and pending submissions
 survive restart. See [queued updates](docs/queued-updates.md) for the full behavior.
 
-Want changes from `main` before the next stable release? Install the [Mac beta](https://github.com/izyuumi/yorozu/releases/download/main-beta/Yorozu.dmg), then enable **Settings → Updates → Receive beta updates**. Each main push publishes a signed, notarized beta build. Turn the setting off to return to stable updates when a newer stable build is available.
+Want changes from `main` before the next stable release? Install the [Mac beta](https://github.com/izyuumi/yorozu/releases/download/main-beta/Yorozu.dmg), then enable **Settings → Updates → Receive beta updates**. Successful main CI publishes a signed, notarized candidate and matching TestFlight build. Turn the setting off to receive stable updates once the stable marketing version catches up; it does not downgrade an installed beta.
 
 ## Documentation
 
 | Document | What it covers |
 | --- | --- |
 | [docs/architecture.md](docs/architecture.md) | pairing and crypto, relay protocol, blind push, threads and sync, both apps |
-| [docs/releasing.md](docs/releasing.md) | DMG build, notarization, Sparkle, TestFlight, self-hosting the relay |
+| [docs/RELEASE_WORKFLOW.md](docs/RELEASE_WORKFLOW.md) | branches, versions, candidate builds, App Store review, promotion, retries |
+| [docs/releasing.md](docs/releasing.md) | credentials, local DMG packaging, notarization, Sparkle, TestFlight setup, relay hosting |
 | [docs/legacy-runtime.md](docs/legacy-runtime.md) | the dormant in-house provider loop and what it still backs |
 | [docs/spec-v1.5.md](docs/spec-v1.5.md), [docs/spec-v1.html](docs/spec-v1.html) | the original product specs |
 | [docs/app-store/listing-0.2.0.md](docs/app-store/listing-0.2.0.md) | App Store Connect listing copy |
