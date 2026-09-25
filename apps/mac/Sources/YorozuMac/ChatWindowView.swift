@@ -86,8 +86,7 @@ private struct ClientChatWindowView: View {
         guard !hosts.hasMultipleHosts else { return hosts.connectionSummary }
         guard let host = hosts.sessions.first else { return "Not connected" }
         if case .updateRequired = host.model.compatibility { return "Update required" }
-        return ClientConnectionStatus(state: host.model.state, ownerOnline: host.model.ownerOnline,
-            failure: session.hostFailures[host.id] ?? host.model.failure).label
+        return ClientConnectionStatus(host.model, failure: session.hostFailures[host.id] ?? host.model.failure).label
     }
 
     private func updateReading() {
@@ -224,12 +223,10 @@ private struct LocalChatWindowView: View {
         .background(WindowNumberReporter())
     }
 
+    /// A sidecar restart shorter than the grace keeps saying Connected.
     private var connectionLabel: String {
-        switch model.state {
-        case .paired: "Connected"
-        case .connecting, .joined: "Connecting"
-        case .closed: "Offline"
-        }
+        if model.link.state == .connected { return "Connected" }
+        return model.state == .closed ? "Offline" : "Connecting"
     }
 }
 

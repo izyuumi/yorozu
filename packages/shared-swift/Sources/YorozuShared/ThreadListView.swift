@@ -361,7 +361,10 @@ public enum ConnectionState: Equatable, Sendable {
     public init(state: TransportState, ownerOnline: Bool) {
         switch state {
         // Joined or paired both mean the relay has us; the Mac's own presence is the other half.
-        case .joined, .paired: self = ownerOnline ? .connected : .offline
+        // Only pairing proves the Mac is answering, though: joined is a socket and a handshake
+        // still to come, so a handshake that stalls there never reads as a working link.
+        case .paired: self = ownerOnline ? .connected : .offline
+        case .joined: self = ownerOnline ? .reconnecting : .offline
         case .connecting, .closed: self = .reconnecting
         }
     }

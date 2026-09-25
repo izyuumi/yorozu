@@ -206,11 +206,12 @@ extension MultiHostModel {
         return states.contains(.reconnecting) ? .reconnecting : .connected
     }
 
-    /// The merged list never borrows one host's status for the whole client.
+    /// The merged list never borrows one host's status for the whole client. Counted from each
+    /// host's ``ChatModel/link``, so one host's blip does not change the count.
     public var connectionSummary: String {
         let connected = sessions.filter {
             if case .updateRequired = $0.model.compatibility { return false }
-            return $0.model.state == .paired && $0.model.ownerOnline
+            return $0.model.link.state == .connected
         }.count
         let updates = sessions.filter {
             if case .updateRequired = $0.model.compatibility { return true }

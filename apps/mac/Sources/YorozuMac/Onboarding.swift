@@ -293,9 +293,7 @@ struct OnboardingView: View {
     }
 
     private var clientDone: some View {
-        let status = ClientConnectionStatus(
-            state: session.model.state, ownerOnline: session.model.ownerOnline, failure: session.model.failure
-        )
+        let status = ClientConnectionStatus(session.model, failure: session.model.failure)
         let connected = status == .connected
         return page(progress: (3, 3, "Done"), title: nil, detail: nil) {
             VStack(spacing: 16) {

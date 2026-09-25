@@ -54,19 +54,30 @@ public final class ChatModel {
     /// hang-up for suspension is not an interruption: the anchor clears, and the next
     /// ``start()`` begins a fresh one.
     public private(set) var interruptedSince: ContinuousClock.Instant?
+    /// This host's link as a status line words it: an interruption shorter than the grace
+    /// never changes it. It starts as not yet connected, the truth before the first
+    /// connection. A toast keeps a presentation of its own, since it should say nothing at
+    /// all until there is something to say.
+    public let link = ConnectionPresentation(.reconnecting)
 
     private func markInterruption() {
-        if !started || ConnectionState(state: state, ownerOnline: ownerOnline) == .connected {
+        let actual = ConnectionState(state: state, ownerOnline: ownerOnline)
+        if !started || actual == .connected {
             interruptedSince = nil
         } else if interruptedSince == nil {
             interruptedSince = .now
         }
+        link.update(actual, active: started, since: interruptedSince)
     }
     public private(set) var peerInfo: PeerInfoData?
     public private(set) var compatibility: PeerCompatibility = .legacy
     public private(set) var updateStatus = UpdateStatusData(phase: .none)
     public var onUpdateStatus: ((UpdateStatusData) -> Void)?
     public private(set) var failure: String?
+    /// The last failure the transport reported, until the link pairs again. It is also
+    /// ``failure``, which status lines read; the transcript leaves it to its connection toast,
+    /// so every dropped socket does not push a banner in and out above the messages.
+    public private(set) var linkFailure: String?
     /// Action IDs already answered from this device, so the card stops offering buttons.
     public private(set) var answered: Set<String> = []
     /// The same for question cards, which are answered with a choice rather than a decision.
@@ -1034,6 +1045,7 @@ public final class ChatModel {
             historyInFlight.removeAll()
             if state == .paired {
                 failure = nil
+                linkFailure = nil
                 // Pull is truth. Nothing sent while this socket was down was kept for us —
                 // thread, device and rule lists live in no thread's log — so every join asks
                 // for all of it again rather than trusting whatever was last pushed.
@@ -1163,6 +1175,7 @@ public final class ChatModel {
         case .failed(let reason):
             flushStreamEvents()
             failure = reason
+            linkFailure = reason
         }
     }
 

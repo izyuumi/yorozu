@@ -163,7 +163,9 @@ public struct ChatView: View {
     public var body: some View {
         VStack(spacing: 0) {
             UpdateStatusView(status: model.updateStatus) { model.updateControl(.postpone) }
-            if let failure = model.failure {
+            // A failure of this device's own, such as a draft that would not save. The link's
+            // failures go in the connection toast below, after the grace, not in a banner.
+            if let failure = model.failure, failure != model.linkFailure {
                 Banner(text: failure, systemImage: "exclamationmark.triangle")
             }
             if thread.interruptedTurnId != nil {
@@ -203,7 +205,8 @@ public struct ChatView: View {
             .overlay(alignment: .top) {
                 ZStack {
                     if connection.state != .connected, model.updateStatus.phase != .installing {
-                        ConnectionPill(state: connection.state, label: offlineNotice)
+                        ConnectionPill(state: connection.state,
+                            label: [offlineNotice, model.linkFailure].compactMap { $0 }.joined(separator: "\n"))
                             .padding(.top, 8)
                             .padding(.horizontal)
                             .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))

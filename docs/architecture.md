@@ -282,7 +282,9 @@ carrying the whole text so far, and the phone replaces that message in place rat
 appending. The relay answers `joined` with `ownerOnline` and pushes `{"type":"owner","online":…}`
 whenever a room's Mac connects or drops; that drives the "Mac offline" toast — after five continuous
 seconds of interruption (`ConnectionPresentation`), so a blip is never announced and the toast
-overlays the list or transcript rather than moving them. Presence is routing
+overlays the list or transcript rather than moving them. Status lines (the Mac sidebar, Settings,
+the multi-host count) read each host's `ChatModel.link`, which keeps its last settled wording through
+the same grace, and only a paired link with the Mac present counts as connected. Presence is routing
 state the relay already keeps to decide whether to forward or buffer, so it stays blind to the
 ciphertext.
 
