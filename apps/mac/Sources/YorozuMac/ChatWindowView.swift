@@ -26,7 +26,6 @@ private struct ClientChatWindowView: View {
     @State private var searchedThread: HostThreadID?
     @State private var searchRequest: ThreadSearchRequest?
     @Environment(\.controlActiveState) private var controlActiveState
-    @Environment(\.openSettings) private var openSettings
 
     private var hosts: MultiHostModel { session.hosts }
 
@@ -38,18 +37,7 @@ private struct ClientChatWindowView: View {
             }
             .navigationSplitViewColumnWidth(min: LayoutMetrics.sidebarMinWidth,
                 ideal: LayoutMetrics.sidebarIdealWidth, max: LayoutMetrics.sidebarMaxWidth)
-            .safeAreaInset(edge: .bottom) {
-                HStack {
-                    Button { openSettings() } label: { Label("Settings", systemImage: "gearshape") }
-                        .buttonStyle(.plain)
-                    Spacer()
-                    Text(connectionLabel)
-                        .foregroundStyle(.secondary)
-                }
-                .font(.caption)
-                .padding(12)
-                .background(YorozuPalette.paper)
-            }
+            .safeAreaInset(edge: .bottom) { SidebarFooter(connection: connectionLabel) }
         } detail: {
             NavigationStack {
                 if let selection, let item = hosts.thread(for: selection), let model = hosts.model(for: selection) {
@@ -184,7 +172,7 @@ private struct LocalChatWindowView: View {
                 ideal: LayoutMetrics.sidebarIdealWidth,
                 max: LayoutMetrics.sidebarMaxWidth
             )
-            .safeAreaInset(edge: .bottom) { gear }
+            .safeAreaInset(edge: .bottom) { SidebarFooter(connection: connectionLabel) }
         } detail: {
             NavigationStack {
                 if let thread {
@@ -194,8 +182,12 @@ private struct LocalChatWindowView: View {
                         offlineNotice: "Runtime not reachable — see Settings for its state."
                     )
                     .environment(\.threadSearchRequest, searchRequest)
+                    // One view per thread, as on a client: switching threads starts the chat's
+                    // own state — scroll, search, focus — afresh rather than carrying it over.
+                    .id(thread.id)
                 } else {
-                    ContentUnavailableView("No thread", systemImage: "bubble.left.and.bubble.right")
+                    ContentUnavailableView("No thread", systemImage: "bubble.left.and.bubble.right",
+                        description: Text("Choose a thread or start a new one."))
                 }
             }
         }
@@ -232,47 +224,6 @@ private struct LocalChatWindowView: View {
         .background(WindowNumberReporter())
     }
 
-    /// Pairing, permissions and the wizard all moved into the Settings scene when
-    /// the window became the chat; this is the way back to them, plus the sidecar's state.
-    private var gear: some View {
-        HStack(spacing: 8) {
-            Menu {
-                Button("Settings…") {
-                    NSApp.activate(ignoringOtherApps: true)
-                    openSettings()
-                }
-                CheckForUpdatesButton()
-                Divider()
-                Button("Quit Yorozu") { NSApp.terminate(nil) }
-            } label: {
-                HStack(spacing: 6) {
-                    YorozuMark(dimension: 15)
-                    Text("Yorozu")
-                }
-                .foregroundStyle(.primary)
-            }
-            // Plain, so the label keeps its own colour: borderless would draw it in the tint.
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .fixedSize()
-            Spacer(minLength: 0)
-            Label {
-                Text(connectionLabel)
-            } icon: {
-                Image(systemName: model.state == .paired ? "circle.fill" : "circle.dotted")
-                    .font(.system(size: 7))
-                    .foregroundStyle(model.state == .paired ? YorozuPalette.sage : Color.secondary)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .help("Relay state reported by the runtime")
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(YorozuPalette.paper)
-    }
-
     private var connectionLabel: String {
         switch model.state {
         case .paired: "Connected"
@@ -282,9 +233,30 @@ private struct LocalChatWindowView: View {
     }
 }
 
+/// The foot of the sidebar, the same on a host and a client: the way to Settings — where
+/// pairing, permissions and the wizard live — and how this window's chat is connected.
+/// Updates and Quit are in the menu bar item and the app menu, as on every Mac.
+private struct SidebarFooter: View {
+    let connection: String
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        HStack {
+            Button { openSettings() } label: { Label("Settings", systemImage: "gearshape") }
+                .buttonStyle(.plain)
+            Spacer()
+            Text(connection)
+                .foregroundStyle(.secondary)
+        }
+        .font(.caption)
+        .padding(12)
+        .background(YorozuPalette.paper)
+    }
+}
+
 /// Everything that is not chat. These used to be stacked in the menu bar window itself; the
-/// window is the chat now, so they live in the standard Settings scene where ⌘, and the gear
-/// menu both find them.
+/// window is the chat now, so they live in the standard Settings scene where ⌘, and the
+/// sidebar's Settings button both find them.
 ///
 /// A toolbar of tabs, as every Mac app's Settings is: a sidebar split view in a Settings
 /// window grew a blank toolbar strip and a second selection colour, for three panes.
