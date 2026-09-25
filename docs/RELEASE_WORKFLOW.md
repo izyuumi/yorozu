@@ -15,7 +15,8 @@ available through GitHub Releases and the App Store.
 
 No permanent beta/stable branches. Create a release branch only when `main` needs to advance
 while another version is being stabilized. Delete the branch when its fixes have reached `main`
-and it no longer needs maintenance; retain candidate and stable tags/releases.
+and it no longer needs maintenance. Retain stable releases and release-branch candidates;
+only the newest published `main` candidate remains available.
 
 All commits must have Conventional Commit messages and cryptographic signatures, including
 release preparation, backports, and merge/squash commits. Configure a signing key registered
@@ -108,7 +109,7 @@ branch ancestry, and exact-note preservation through promotion.
 3. `Release` builds/signs/notarizes the Mac DMG, creates a Sparkle appcast with its EdDSA
    signature, uploads the same version with its per-version iOS build to TestFlight, and waits for
    App Store Connect to identify that exact processed build.
-4. Download the numbered GitHub prerelease's DMG and install its matching TestFlight build.
+4. Download the current numbered GitHub prerelease's DMG and install its matching TestFlight build.
    Record validation against its manifest, not a moving branch name or rolling beta URL.
 
 To start a fresh candidate manually using trusted workflow code from `main`:
@@ -130,7 +131,9 @@ Connect build ID. Existing published candidate artifacts are not overwritten. Ma
 release title `Yorozu Beta candidate-<version>-<build>`, which identifies them to the website
 endpoint. Before publishing, the workflow checks that their marketing version/build increase
 and their source descends from the previous main candidate. Release-branch candidates do not
-carry the beta title and never replace the public main beta.
+carry the beta title and never replace the public main beta. After publishing a new main candidate,
+the workflow removes every older main beta release and tag. Only the newest main beta remains
+downloadable; cached appcasts that reference removed candidates stop working.
 
 ## Promote to stable
 
@@ -186,14 +189,15 @@ the feed and archive-signature format.
 - Stable users read `https://yorozu.yumi.to/appcast.xml`; the website's Mac download follows the
   latest stable GitHub Release.
 - Opted-in beta users read `https://yorozu.yumi.to/beta/appcast.xml`, which redirects to the
-  newest retained main candidate. `https://yorozu.yumi.to/beta` downloads that candidate's DMG.
+  current main candidate. `https://yorozu.yumi.to/beta` downloads that candidate's DMG.
   The app rejects lower marketing
   versions even when their Mac build number is larger, preventing a later stable hotfix from
   downgrading a next-version beta.
 - Turning **Receive beta updates** off waits until stable catches up to the installed marketing
   version and has an eligible build. It does not reinstall or downgrade the app.
-- Appcast enclosure URLs point directly to retained numbered release assets. A later release
-  does not break a cached appcast's download URL. Stable and candidate releases are preserved.
+- Appcast enclosure URLs point to numbered release assets. A new main beta removes older
+  main candidate assets, so clients with a cached older appcast may need to retry after its cache expires.
+  Stable releases and release-branch candidates remain available.
 - Pin the previously shipped `0.4.0 (293)` download redirect to `v0.4.0` before first promotion,
   preserving the legacy cached appcast during migration. It resolves to the same signed bytes
   under `v0.4.0/yorozu.dmg`; the duplicate versioned asset is no longer needed.
@@ -206,9 +210,8 @@ the feed and archive-signature format.
   direct-provider catalog reads `main/catalog/models.json` directly with cache/bundled fallback;
   `/models.json` remains a compatibility redirect for older legacy consumers.
 
-The website Worker discovers published candidates through the GitHub API, orders numeric
-marketing versions/builds, and checks the selected manifest belongs to `main`. Discovery is
-cached for five minutes and limited to 2,000 releases; beyond that ceiling, replace discovery
+The website Worker discovers the published main candidate through the GitHub API and checks its
+manifest belongs to `main`. Discovery is cached for five minutes and limited to 2,000 releases; beyond that ceiling, replace discovery
 with a dedicated index. Missing candidates or upstream failures return 503 and retry guidance;
 the static website stays available. The endpoint never points to a release-branch candidate.
 
@@ -251,13 +254,13 @@ Do not merge an entire hotfix branch into `main` just to transfer its old versio
 | --- | --- |
 | CI fails | Fix source, push signed commit, wait for successful CI |
 | Candidate build/upload/Apple processing fails | Start a fresh `release.yml` dispatch; rerunning the old build would reuse an Apple build number |
-| Candidate published but needs code changes | Commit the fix and build a new candidate |
+| Candidate published but needs code changes | Commit the fix and build a new candidate; publication removes the previous main beta |
 | Promotion fails before completion | Correct the cause and rerun `promote.yml` for the same candidate; it reuses and revalidates existing bytes |
 | Newer stable version/build overtook the candidate | Build and test a fresh eligible candidate; do not move stable tags backwards |
 | Production regression | Publish a forward-fix candidate/version; do not overwrite a released DMG or retarget a stable tag |
 
-A failed draft upload leaves the previous stable release latest. No workflow deletes old
-published releases or force-moves candidate/stable tags. Credentials and local build details
+A failed draft upload leaves the previous beta available. Main beta cleanup runs only after
+the new candidate publishes. No workflow force-moves candidate/stable tags. Credentials and local build details
 are in [releasing.md](releasing.md).
 
 ## Release validation

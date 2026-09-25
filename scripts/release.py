@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Publish retained release candidates and promote their exact signed artifacts.
+"""Publish release candidates and promote their exact signed artifacts.
 
 Uses only Python's standard library and authenticated gh. Commands never build,
-re-sign, delete releases, or replace a published candidate/stable asset.
+re-sign or replace a published candidate/stable asset. Older main betas are removed.
 """
 
 import argparse
@@ -139,6 +139,9 @@ class GitHub:
         self.call("release", "edit", tag, "--repo", self.repo, "--draft=false",
                   f"--prerelease={str(prerelease).lower()}", f"--latest={str(latest).lower()}")
 
+    def delete(self, tag):
+        self.call("release", "delete", tag, "--repo", self.repo, "--yes", "--cleanup-tag")
+
 
 def check_ci(gh, source, branch, run_id=None):
     workflow = gh.api("actions/workflows/ci.yml")
@@ -254,7 +257,18 @@ def publish_candidate(gh, manifest_path, ios_path, directory):
     paths = [directory / name for name in ("candidate.json", asset, "appcast.xml")]
     title = f"Yorozu Beta {data['tag']}" if data["source_branch"] == "main" else f"Yorozu {data['tag']}"
     immutable_assets(gh, data["tag"], data["source_sha"], paths, prerelease=True, notes=data["notes"], title=title)
+    if data["source_branch"] == "main":
+        remove_old_main_betas(gh, data["tag"])
     return data
+
+
+def remove_old_main_betas(gh, current_tag):
+    pages = gh.api("releases?per_page=100", "--paginate", "--slurp")
+    for release in (release for page in pages for release in page):
+        tag = release["tag_name"]
+        if (tag != current_tag and not release["draft"] and release["prerelease"]
+                and CANDIDATE.fullmatch(tag) and release.get("name") == f"Yorozu Beta {tag}"):
+            gh.delete(tag)
 
 
 def fetch(gh, tag, directory):

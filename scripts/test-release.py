@@ -121,6 +121,10 @@ class FakeGitHub(publication.GitHub):
             self.releases[tag]["isPrerelease"] = "--prerelease=true" in args
             if "--notes" in args:
                 self.releases[tag]["notes"] = args[args.index("--notes") + 1]
+        elif action == "delete":
+            assert "--cleanup-tag" in args
+            del self.releases[tag]
+            del self.tags[tag]
         else:
             raise AssertionError(f"unexpected mutation: {args}")
         return ""
@@ -195,6 +199,23 @@ class ReleaseTests(ReleaseFixture):
         self.gh.add_release("candidate-0.5.0-10099", prerelease=True)
         self.publish()
         self.assertEqual(self.gh.releases[self.tag]["name"], f"Yorozu Beta {self.tag}")
+
+    def test_new_main_candidate_removes_older_main_betas_only_after_publication(self):
+        previous = self.publish()
+        del self.gh.releases[self.tag]
+        del self.gh.tags[self.tag]
+        self.gh.events.clear()
+        old_tag = "candidate-0.5.0-10041"
+        self.gh.add_release(old_tag, {"candidate.json": json.dumps({**previous, "tag": old_tag,
+                            "build": "10041", "source_sha": OTHER}).encode()},
+                            prerelease=True, source=OTHER, name=f"Yorozu Beta {old_tag}")
+        self.gh.add_release("candidate-0.5.0-10040", prerelease=True)
+        self.publish()
+        self.assertNotIn(old_tag, self.gh.releases)
+        self.assertNotIn(old_tag, self.gh.tags)
+        self.assertIn("candidate-0.5.0-10040", self.gh.releases)
+        self.assertLess(next(i for i, event in enumerate(self.gh.events) if event[:3] == ("release", "edit", self.tag)),
+                        next(i for i, event in enumerate(self.gh.events) if event[:3] == ("release", "delete", old_tag)))
 
     def test_release_branch_candidates_do_not_become_public_main_beta(self):
         self.data["source_branch"] = "release/0.5"
