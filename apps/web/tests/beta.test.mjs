@@ -56,6 +56,29 @@ test('build breaks equal-version ties without relying on release ordering or tim
   assert.equal(response.headers.get('location'), `${download}${tag}/yorozu.dmg`);
 });
 
+test('versioned beta tag serves uppercase installer before legacy candidate', async () => {
+  const beta = 'v0.5.0-beta';
+  const current = { ...release(beta), name: `Yorozu ${beta}`,
+    assets: ['candidate.json', 'appcast.xml', 'Yorozu.dmg'].map(asset => ({
+      name: asset, state: 'uploaded', browser_download_url: `${download}${beta}/${asset}`,
+    })) };
+  upstream([[release(), current]], { ...manifest, tag: beta, version: '0.5.0', mac: { asset: 'Yorozu.dmg' } });
+  assert.equal((await request('/beta')).headers.get('location'), `${download}${beta}/Yorozu.dmg`);
+});
+
+test('Mac download prefers uppercase installer and supports shipped lowercase stable asset', async () => {
+  for (const names of [['yorozu.dmg'], ['yorozu.dmg', 'Yorozu.dmg']]) {
+    mock.restoreAll();
+    mock.method(globalThis, 'fetch', async () => Response.json({
+      tag_name: 'v0.4.0', assets: names.map(name => ({
+        name, state: 'uploaded', browser_download_url: `${download}v0.4.0/${name}`,
+      })),
+    }));
+    const selected = names.at(-1);
+    assert.equal((await request('/mac')).headers.get('location'), `${download}v0.4.0/${selected}`);
+  }
+});
+
 test('newest candidate metadata must match its main identity; never silently fall back', async () => {
   for (const mismatch of [
     { source_branch: 'release/0.10' }, { source_sha: '../main' }, { tag: 'candidate-0.9.0-9999' },

@@ -22,12 +22,12 @@ SIGNATURE = base64.b64encode(b"s" * 64).decode()
 
 
 def feed(version="0.5.0", build="10042", tag=None):
-    tag = tag or f"candidate-{version}-{build}"
+    tag = tag or f"v{version}-beta"
     return (f'<rss xmlns:sparkle="{publication.SPARKLE}"><channel><item>'
             f'<sparkle:version>{build}</sparkle:version>'
             f'<sparkle:shortVersionString>{version}</sparkle:shortVersionString>'
             '<sparkle:channel>beta</sparkle:channel>'
-            f'<enclosure url="https://github.com/fixture/yorozu/releases/download/{tag}/yorozu.dmg" '
+            f'<enclosure url="https://github.com/fixture/yorozu/releases/download/{tag}/Yorozu.dmg" '
             f'length="10" sparkle:edSignature="{SIGNATURE}"/>'
             '</item></channel></rss>').encode()
 
@@ -146,14 +146,14 @@ class ReleaseFixture(unittest.TestCase):
         checkout.start()
         self.addCleanup(checkout.stop)
         self.data = {"schema": 1, "version": "0.5.0", "build": "10042", "source_sha": SHA,
-                     "source_branch": "main", "tag": "candidate-0.5.0-10042", "run_id": "42", "ci_run_id": "7",
+                     "source_branch": "main", "tag": "v0.5.0-beta", "run_id": "42", "ci_run_id": "7",
                      "notes": "## Changes in 0.5.0\n\n- fix: retain exact candidate notes\n"}
         self.ios = {"app_id": "123", "build_id": "a-b-c", "version": "0.5.0", "build": "10049",
                     "uploaded_date": "2026-09-24T00:00:00Z"}
         self.tag = self.data["tag"]
         publication.write_json(self.dist / "candidate.json", self.data)
         publication.write_json(self.dist / "ios.json", self.ios)
-        (self.dist / "yorozu.dmg").write_bytes(b"signed DMG")
+        (self.dist / "Yorozu.dmg").write_bytes(b"signed DMG")
         (self.dist / "appcast.xml").write_bytes(feed())
 
     def publish(self):
@@ -176,7 +176,8 @@ class ReleaseTests(ReleaseFixture):
             with self.subTest(short=short, build=build, status=status):
                 tag = f"candidate-{short}-{build}"
                 previous = {**data, "version": short, "build": build, "tag": tag, "source_sha": OTHER,
-                            "ios": {**data["ios"], "version": short}}
+                            "ios": {**data["ios"], "version": short},
+                            "mac": {**data["mac"], "asset": "yorozu.dmg"}}
                 self.gh.add_release(tag, {"candidate.json": json.dumps(previous).encode()},
                                     prerelease=True, source=OTHER, name=f"Yorozu Beta {tag}")
                 self.gh.compare_status = status
@@ -193,12 +194,12 @@ class ReleaseTests(ReleaseFixture):
         self.gh.tags.clear()
         tag = "candidate-0.5.0-10041"
         previous = {**data, "build": "10041", "tag": tag, "source_sha": OTHER,
-                    "ios": {**data["ios"]}}
+                    "ios": {**data["ios"]}, "mac": {**data["mac"], "asset": "yorozu.dmg"}}
         self.gh.add_release(tag, {"candidate.json": json.dumps(previous).encode()},
                             prerelease=True, source=OTHER, name=f"Yorozu Beta {tag}")
         self.gh.add_release("candidate-0.5.0-10099", prerelease=True)
         self.publish()
-        self.assertEqual(self.gh.releases[self.tag]["name"], f"Yorozu Beta {self.tag}")
+        self.assertEqual(self.gh.releases[self.tag]["name"], f"Yorozu {self.tag}")
 
     def test_new_main_candidate_removes_older_main_betas_only_after_publication(self):
         previous = self.publish()
@@ -207,7 +208,8 @@ class ReleaseTests(ReleaseFixture):
         self.gh.events.clear()
         old_tag = "candidate-0.5.0-10041"
         self.gh.add_release(old_tag, {"candidate.json": json.dumps({**previous, "tag": old_tag,
-                            "build": "10041", "source_sha": OTHER}).encode()},
+                            "build": "10041", "source_sha": OTHER,
+                            "mac": {**previous["mac"], "asset": "yorozu.dmg"}}).encode()},
                             prerelease=True, source=OTHER, name=f"Yorozu Beta {old_tag}")
         self.gh.add_release("candidate-0.5.0-10040", prerelease=True)
         self.publish()
@@ -217,12 +219,25 @@ class ReleaseTests(ReleaseFixture):
         self.assertLess(next(i for i, event in enumerate(self.gh.events) if event[:3] == ("release", "edit", self.tag)),
                         next(i for i, event in enumerate(self.gh.events) if event[:3] == ("release", "delete", old_tag)))
 
+    def test_new_build_replaces_same_version_beta_tag_and_assets(self):
+        self.publish()
+        self.data["build"] = "10043"
+        self.data["run_id"] = "43"
+        publication.write_json(self.dist / "candidate.json", self.data)
+        (self.dist / "appcast.xml").write_bytes(feed(build="10043"))
+        self.gh.events.clear()
+        self.publish()
+        assert json.loads(self.gh.releases[self.tag]["files"]["candidate.json"])["build"] == "10043"
+        self.assertEqual([event[2] for event in self.gh.events if event[:2] == ("release", "delete")], [self.tag])
+
     def test_release_branch_candidates_do_not_become_public_main_beta(self):
         self.data["source_branch"] = "release/0.5"
+        self.data["tag"] = "candidate-0.5.0-10042"
         self.gh.runs["7"]["head_branch"] = "release/0.5"
         publication.write_json(self.dist / "candidate.json", self.data)
+        (self.dist / "appcast.xml").write_bytes(feed(tag=self.data["tag"]))
         self.publish()
-        self.assertEqual(self.gh.releases[self.tag]["name"], f"Yorozu {self.tag}")
+        self.assertEqual(self.gh.releases[self.data["tag"]]["name"], f"Yorozu {self.data['tag']}")
 
     def test_exact_artifact_promotion_retains_every_release_and_tag(self):
         self.gh.add_release("v0.4.0", {"appcast.xml": feed("0.4.0", "10001")})
@@ -232,9 +247,9 @@ class ReleaseTests(ReleaseFixture):
         self.assertEqual(set(self.gh.releases), {"v0.4.0", self.tag, "v0.5.0"})
         stable = self.gh.releases["v0.5.0"]
         self.assertFalse(stable["isDraft"] or stable["isPrerelease"])
-        self.assertEqual(set(stable["files"]), {"yorozu.dmg", "appcast.xml", "candidate.json"})
+        self.assertEqual(set(stable["files"]), {"Yorozu.dmg", "appcast.xml", "candidate.json"})
         self.assertEqual(set(original["files"]), set(stable["files"]))
-        self.assertEqual(stable["files"]["yorozu.dmg"], b"signed DMG")
+        self.assertEqual(stable["files"]["Yorozu.dmg"], b"signed DMG")
         self.assertEqual(stable["files"]["candidate.json"], original["files"]["candidate.json"])
         self.assertEqual(stable["notes"], self.data["notes"])
         self.assertEqual(stable["notes"], original["notes"])
@@ -270,7 +285,7 @@ class ReleaseTests(ReleaseFixture):
             with self.subTest(corrupt=corrupt):
                 saved = copy.deepcopy((self.gh.releases, self.gh.tags))
                 if corrupt == "digest":
-                    self.gh.releases[self.tag]["files"]["yorozu.dmg"] = b"replacement"
+                    self.gh.releases[self.tag]["files"]["Yorozu.dmg"] = b"replacement"
                 else:
                     self.gh.tags[self.tag] = OTHER
                 self.gh.events.clear()
@@ -323,8 +338,8 @@ class ReleaseTests(ReleaseFixture):
         self.gh.events.clear()
         self.publish()
         self.assertEqual(self.mutations(), [])
-        (self.dist / "yorozu.dmg").write_bytes(b"other DMG!")
-        with self.assertRaisesRegex(ValueError, "immutable asset differs"):
+        (self.dist / "Yorozu.dmg").write_bytes(b"other DMG!")
+        with self.assertRaisesRegex(ValueError, "backwards"):
             self.publish()
         self.assertEqual(self.mutations(), [])
 
@@ -349,7 +364,10 @@ class ReleaseTests(ReleaseFixture):
             self.assertEqual((result["version"], result["build"], result["tag"]), ("0.5.0", "10042", self.tag))
             notes.assert_called_once_with(self.gh, "0.5.0", SHA)
             self.assertEqual(result["notes"], self.data["notes"])
-            self.gh.tags[self.tag] = SHA
+            self.data["source_branch"] = "release/0.5"
+            args.branch = "release/0.5"
+            self.gh.runs["7"]["head_branch"] = "release/0.5"
+            self.gh.tags["candidate-0.5.0-10042"] = SHA
             with self.assertRaisesRegex(ValueError, "already exists"):
                 publication.prepare(self.gh, args)
 
@@ -400,8 +418,11 @@ class ReleaseTests(ReleaseFixture):
 
     def test_release_branch_clears_inherited_main_preparation_prs(self):
         self.data["source_branch"] = "release/0.5"
+        self.data["tag"] = "candidate-0.5.0-10042"
+        self.tag = self.data["tag"]
         self.gh.runs["7"]["head_branch"] = "release/0.5"
         publication.write_json(self.dist / "candidate.json", self.data)
+        (self.dist / "appcast.xml").write_bytes(feed(tag=self.data["tag"]))
         self.publish()
         self.gh.pulls = [
             {"number": number, "merged_at": "2026-09-24", "base": {"ref": branch},
@@ -442,7 +463,7 @@ class ReleaseTests(ReleaseFixture):
         self.assertEqual(self.mutations(), [])
 
     def test_release_branch_must_match_train(self):
-        publication.validate_manifest({**self.data, "source_branch": "release/0.5"}, complete=False)
+        publication.validate_manifest({**self.data, "source_branch": "release/0.5", "tag": "candidate-0.5.0-10042"}, complete=False)
         with self.assertRaisesRegex(ValueError, "matching version"):
             publication.validate_manifest({**self.data, "source_branch": "release/0.4"}, complete=False)
 

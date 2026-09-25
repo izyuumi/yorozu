@@ -4,7 +4,7 @@
 builds, TestFlight, App Store review, promotion, retries, and signed Conventional Commits.
 This guide covers credentials, packaging, and local tools.
 
-CI publishes a numbered Mac prerelease and uploads the matching iOS build only after successful
+CI publishes a Mac prerelease and uploads the matching iOS build only after successful
 CI for the exact source commit. Stable publication is a separate, explicit promotion of those
 same artifacts. Release Please prepares version/changelog PRs; merging one does not publish stable.
 
@@ -34,8 +34,8 @@ and the sidecar plus its production dependencies deployed next to it — so the 
 installed to run. `YOROZU_RUNTIME_CMD` defaults to that bundled pair whenever the app finds it,
 and falls back to the dev checkout layout otherwise.
 
-The installer is `dist/yorozu.dmg`. Each retained candidate tag provides a unique download URL,
-so neither a second alias nor a version/build suffix is needed. Generate an appcast from a clean
+The installer is `dist/Yorozu.dmg`. Main beta releases use `v<version>-beta`; release-branch
+candidates use numbered tags. Generate an appcast from a clean
 output directory, without DMGs left over from earlier builds.
 
 It is deliberately not *this machine's* `node`. A Homebrew node is a stub linked against
@@ -85,7 +85,7 @@ signature; the XML itself is not signed:
 ./apps/mac/.build/artifacts/sparkle/Sparkle/bin/generate_keys   # once, prints the public key
 # Local example matching the DMG above; use the actual candidate version/build in CI.
 CHANNEL=beta \
-  DOWNLOAD_PREFIX=https://github.com/izyuumi/yorozu/releases/download/candidate-0.5.0-9999/ \
+  DOWNLOAD_PREFIX=https://github.com/izyuumi/yorozu/releases/download/v0.5.0-beta/ \
   ./scripts/appcast.sh                                       # writes dist/appcast.xml
 ```
 

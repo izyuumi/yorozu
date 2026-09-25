@@ -8,9 +8,10 @@ available through GitHub Releases and the App Store.
 
 | Source | Purpose | Distribution |
 | --- | --- | --- |
-| `main` | Next-version development | Numbered Mac prerelease, public Mac beta feed, TestFlight |
+| `main` | Next-version development | `v<version>-beta` Mac prerelease, public Mac beta feed, TestFlight |
 | `release/<major>.<minor>` | Temporary stabilization or hotfix branch | Numbered Mac prerelease and TestFlight; does not replace the public main beta |
-| `candidate-<version>-<build>` | Fixed source for one candidate | Retained artifacts and manifest |
+| `candidate-<version>-<build>` | Fixed release-branch candidate | Retained artifacts and manifest |
+| `v<version>-beta` | Current main beta candidate | Replaced on each successful main build |
 | `v<version>` | Fixed source for an approved stable release | Stable Mac download and the selected App Store build |
 
 No permanent beta/stable branches. Create a release branch only when `main` needs to advance
@@ -109,7 +110,7 @@ branch ancestry, and exact-note preservation through promotion.
 3. `Release` builds/signs/notarizes the Mac DMG, creates a Sparkle appcast with its EdDSA
    signature, uploads the same version with its per-version iOS build to TestFlight, and waits for
    App Store Connect to identify that exact processed build.
-4. Download the current numbered GitHub prerelease's DMG and install its matching TestFlight build.
+4. Download the current GitHub prerelease's DMG and install its matching TestFlight build.
    Record validation against its manifest, not a moving branch name or rolling beta URL.
 
 To start a fresh candidate manually using trusted workflow code from `main`:
@@ -125,15 +126,13 @@ selection cannot change the candidate's source. New dispatches receive new build
 An explicit version override does not update Release Please metadata: before stable promotion,
 the candidate SHA's `version.txt` and `.release-please-manifest.json` must both match that version.
 
-Each `candidate-<version>-<Mac build>` release retains exactly one DMG (`yorozu.dmg`), the appcast,
-and `candidate.json` with source SHA, both build numbers, artifact hashes, and exact App Store
-Connect build ID. Existing published candidate artifacts are not overwritten. Main candidates use the
-release title `Yorozu Beta candidate-<version>-<build>`, which identifies them to the website
-endpoint. Before publishing, the workflow checks that their marketing version/build increase
-and their source descends from the previous main candidate. Release-branch candidates do not
-carry the beta title and never replace the public main beta. After publishing a new main candidate,
-the workflow removes every older main beta release and tag. Only the newest main beta remains
-downloadable; cached appcasts that reference removed candidates stop working.
+Each candidate has one DMG (`Yorozu.dmg`), the appcast, and `candidate.json` with source SHA,
+both build numbers, artifact hashes, and exact App Store Connect build ID. Main candidates use
+the release tag `v<version>-beta` and title `Yorozu v<version>-beta`; the build number remains in
+the app and manifest. Before replacing a main beta, the workflow checks version/build ordering
+and source ancestry. It removes the previous beta release and tag, publishes the new candidate
+under the same tag, then removes older main beta releases. Release-branch candidates keep numbered
+tags and immutable artifacts. Only the current main beta can be promoted after replacement.
 
 ## Promote to stable
 
@@ -143,10 +142,10 @@ downloadable; cached appcasts that reference removed candidates stop working.
    choose manual release, and submit it for App Review.
 3. Wait for approval. The selected version/build must be **Pending Developer Release** or
    **Ready for Distribution**. A build merely available on TestFlight is insufficient.
-4. Dispatch promotion with the fixed candidate tag:
+4. Dispatch promotion with the current candidate tag:
 
    ```sh
-   gh workflow run promote.yml --ref main -f candidate=candidate-0.5.0-10123
+   gh workflow run promote.yml --ref main -f candidate=v0.5.0-beta
    ```
 
 5. Release the approved iOS version manually in App Store Connect when ready, then verify both
@@ -177,7 +176,7 @@ New candidate and stable releases have three assets:
 
 | Asset | Purpose |
 | --- | --- |
-| `yorozu.dmg` | The only installer; version/build identity is in the retained tag URL and app bundle |
+| `Yorozu.dmg` | The installer; version/build identity is in the app bundle and manifest |
 | `appcast.xml` | Sparkle's update feed: eligible version/build, DMG URL, size, and EdDSA signature |
 | `candidate.json` | Exact source/build identity, generated release notes, hashes, and Apple build ID needed for promotion |
 
@@ -195,16 +194,14 @@ the feed and archive-signature format.
   downgrading a next-version beta.
 - Turning **Receive beta updates** off waits until stable catches up to the installed marketing
   version and has an eligible build. It does not reinstall or downgrade the app.
-- Appcast enclosure URLs point to numbered release assets. A new main beta removes older
-  main candidate assets, so clients with a cached older appcast may need to retry after its cache expires.
-  Stable releases and release-branch candidates remain available.
+- A new main beta replaces assets at its versioned beta tag. Clients with a cached older appcast
+  may need to retry after its cache expires. Stable releases and release-branch candidates remain available.
 - Pin the previously shipped `0.4.0 (293)` download redirect to `v0.4.0` before first promotion,
   preserving the legacy cached appcast during migration. It resolves to the same signed bytes
   under `v0.4.0/yorozu.dmg`; the duplicate versioned asset is no longer needed.
-- Before deploying lowercase stable links, make `yorozu.dmg` available on the current stable
-  release. Then deploy the website Worker with `apps/relay/node_modules/.bin/wrangler deploy
-  --config apps/web/wrangler.jsonc` from the repository root. Future beta candidates appear
-  automatically; no per-release website deployment or rolling release is needed.
+- The website's `/mac` route prefers `Yorozu.dmg` and supports the shipped `v0.4.0/yorozu.dmg`.
+  Deploy the website Worker with `apps/relay/node_modules/.bin/wrangler deploy
+  --config apps/web/wrangler.jsonc` from the repository root after updating it.
 - Model lists come live from OpenClaw's `models.list`, Claude SDK's `supportedModels()`, and
   Codex's paginated `model/list`. No release `models.json` asset is needed. The dormant
   direct-provider catalog reads `main/catalog/models.json` directly with cache/bundled fallback;
@@ -254,13 +251,13 @@ Do not merge an entire hotfix branch into `main` just to transfer its old versio
 | --- | --- |
 | CI fails | Fix source, push signed commit, wait for successful CI |
 | Candidate build/upload/Apple processing fails | Start a fresh `release.yml` dispatch; rerunning the old build would reuse an Apple build number |
-| Candidate published but needs code changes | Commit the fix and build a new candidate; publication removes the previous main beta |
+| Candidate published but needs code changes | Commit the fix and build a new candidate; publication replaces the previous main beta |
 | Promotion fails before completion | Correct the cause and rerun `promote.yml` for the same candidate; it reuses and revalidates existing bytes |
 | Newer stable version/build overtook the candidate | Build and test a fresh eligible candidate; do not move stable tags backwards |
 | Production regression | Publish a forward-fix candidate/version; do not overwrite a released DMG or retarget a stable tag |
 
-A failed draft upload leaves the previous beta available. Main beta cleanup runs only after
-the new candidate publishes. No workflow force-moves candidate/stable tags. Credentials and local build details
+A failed beta replacement can leave the beta unavailable until a fresh build succeeds. No workflow
+force-moves stable tags. Credentials and local build details
 are in [releasing.md](releasing.md).
 
 ## Release validation
