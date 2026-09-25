@@ -168,7 +168,7 @@ jobs:
           IOS_BUILD=$(node scripts/asc-candidate.mjs next-build "$VERSION")
           BUILD="$IOS_BUILD" ./scripts/build-ios.sh
           node scripts/asc-candidate.mjs resolve "$VERSION" "$IOS_BUILD" dist/ios.json
-      - name: Publish retained candidate
+      - name: Publish candidate
         run: |
           set -eu
           python3 scripts/release.py candidate --manifest dist/candidate.json --ios dist/ios.json --dist dist

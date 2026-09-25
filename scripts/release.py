@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Publish retained release candidates and promote their exact signed artifacts.
+"""Publish release candidates and promote their exact signed artifacts.
 
 Uses only Python's standard library and authenticated gh. Commands never build,
-re-sign, delete releases, or replace a published candidate/stable asset.
+re-sign or replace a published stable asset. The current main beta is replaced.
 """
 
 import argparse
@@ -24,6 +24,7 @@ SPARKLE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 ET.register_namespace("sparkle", SPARKLE)
 VERSION = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 CANDIDATE = re.compile(r"candidate-(\d+\.\d+\.\d+)-(\d+)")
+BETA = re.compile(r"v(\d+\.\d+\.\d+)-beta")
 
 
 def require(condition, message):
@@ -61,14 +62,17 @@ def validate_manifest(data, complete=True):
     require(re.fullmatch(r"[0-9a-f]{40}", data.get("source_sha", "")), "source must be a full commit SHA")
     branch = data.get("source_branch", "")
     require(branch == "main" or branch == f"release/{train[0]}.{train[1]}", "source branch must be main or release/MAJOR.MINOR matching version")
-    require(data.get("tag") == f"candidate-{data['version']}-{data['build']}", "candidate tag does not match version/build")
+    expected_tag = f"v{data['version']}-beta" if branch == "main" else f"candidate-{data['version']}-{data['build']}"
+    legacy_tag = f"candidate-{data['version']}-{data['build']}" if branch == "main" else None
+    require(data.get("tag") in (expected_tag, legacy_tag), "candidate tag does not match version/build")
     for key in ("run_id", "ci_run_id"):
         require(re.fullmatch(r"[1-9]\d*", str(data.get(key, ""))), f"invalid {key}")
     if not complete:
         return
     require(isinstance(data.get("notes"), str) and data["notes"].strip(), "candidate requires generated release notes")
     mac = data.get("mac", {})
-    require(mac.get("asset") == "yorozu.dmg", "invalid Mac asset name")
+    old_main = branch == "main" and data["tag"] == legacy_tag
+    require(mac.get("asset") == ("yorozu.dmg" if old_main else "Yorozu.dmg"), "invalid Mac asset name")
     require(isinstance(mac.get("size"), int) and mac["size"] > 0, "invalid Mac asset size")
     for key in ("sha256", "appcast_sha256"):
         require(re.fullmatch(r"[a-f0-9]{64}", mac.get(key, "")), f"invalid Mac {key}")
@@ -139,6 +143,9 @@ class GitHub:
         self.call("release", "edit", tag, "--repo", self.repo, "--draft=false",
                   f"--prerelease={str(prerelease).lower()}", f"--latest={str(latest).lower()}")
 
+    def delete(self, tag):
+        self.call("release", "delete", tag, "--repo", self.repo, "--yes", "--cleanup-tag")
+
 
 def check_ci(gh, source, branch, run_id=None):
     workflow = gh.api("actions/workflows/ci.yml")
@@ -168,10 +175,11 @@ def prepare(gh, args):
     data = {"schema": 1, "version": args.version or json.loads(Path("release-please-config.json").read_text())["packages"]["."]["release-as"],
             "build": str(10000 + int(args.run_number)), "source_sha": args.source,
             "source_branch": args.branch, "run_id": str(args.run_id), "ci_run_id": str(args.ci_run_id)}
-    data["tag"] = f"candidate-{data['version']}-{data['build']}"
+    data["tag"] = f"v{data['version']}-beta" if data["source_branch"] == "main" else f"candidate-{data['version']}-{data['build']}"
     validate_manifest(data, complete=False)
-    require(gh.release(data["tag"]) is None and gh.tag_sha(data["tag"]) is None,
-            "candidate already exists; dispatch a fresh build instead of rebuilding its identity")
+    if data["source_branch"] != "main":
+        require(gh.release(data["tag"]) is None and gh.tag_sha(data["tag"]) is None,
+                "candidate already exists; dispatch a fresh build instead of rebuilding its identity")
     check_ci(gh, data["source_sha"], data["source_branch"], data["ci_run_id"])
     data["notes"] = generate_release_notes(gh, data["version"], data["source_sha"])
     write_json(args.output, data)
@@ -198,7 +206,7 @@ def appcast(path, data=None, repo=None, beta=None):
     require(enclosure is not None, "appcast item has no enclosure")
     require(appcast(path) == (version(data["version"]), int(data["build"])), "appcast version/build does not match candidate")
     expected = f"https://github.com/{repo}/releases/download/{data['tag']}/{data['mac']['asset']}"
-    require(enclosure.get("url") == expected, "appcast must use permanent candidate asset URL")
+    require(enclosure.get("url") == expected, "appcast must use candidate asset URL")
     require(enclosure.get("length") == str(data["mac"]["size"]), "appcast size does not match DMG")
     require(len(base64.b64decode(enclosure.get(f"{{{SPARKLE}}}edSignature", ""), validate=True)) == 64,
             "appcast is missing a valid Sparkle EdDSA signature")
@@ -241,7 +249,7 @@ def publish_candidate(gh, manifest_path, ios_path, directory):
     validate_manifest(data, complete=False)
     require(checkout_sha() == data["source_sha"], "checkout HEAD does not match candidate source")
     data["ios"] = json.loads(Path(ios_path).read_text())
-    asset = "yorozu.dmg"
+    asset = "Yorozu.dmg"
     dmg = directory / asset
     require(dmg.is_file() and dmg.stat().st_size > 0, f"candidate DMG missing: {dmg}")
     data["mac"] = {"asset": asset, "sha256": sha256(dmg), "size": dmg.stat().st_size,
@@ -252,13 +260,36 @@ def publish_candidate(gh, manifest_path, ios_path, directory):
     check_main_progress(gh, data)
     write_json(directory / "candidate.json", data)
     paths = [directory / name for name in ("candidate.json", asset, "appcast.xml")]
-    title = f"Yorozu Beta {data['tag']}" if data["source_branch"] == "main" else f"Yorozu {data['tag']}"
+    title = f"Yorozu {data['tag']}"
+    current = gh.release(data["tag"]) if data["source_branch"] == "main" else None
+    if current is not None:
+        require(current["isPrerelease"] and current["name"] == title,
+                "existing beta tag belongs to another release")
+        if current["isDraft"]:
+            gh.delete(data["tag"])
+        else:
+            with tempfile.TemporaryDirectory(prefix="yorozu-current-beta-") as old:
+                previous = json.loads(gh.download(data["tag"], "candidate.json", old).read_text())
+            if previous != data:
+                gh.delete(data["tag"])
     immutable_assets(gh, data["tag"], data["source_sha"], paths, prerelease=True, notes=data["notes"], title=title)
+    if data["source_branch"] == "main":
+        remove_old_main_betas(gh, data["tag"])
     return data
 
 
+def remove_old_main_betas(gh, current_tag):
+    pages = gh.api("releases?per_page=100", "--paginate", "--slurp")
+    for release in (release for page in pages for release in page):
+        tag = release["tag_name"]
+        if (tag != current_tag and not release["draft"] and release["prerelease"]
+                and ((BETA.fullmatch(tag) and release.get("name") == f"Yorozu {tag}")
+                     or (CANDIDATE.fullmatch(tag) and release.get("name") == f"Yorozu Beta {tag}"))):
+            gh.delete(tag)
+
+
 def fetch(gh, tag, directory):
-    require(CANDIDATE.fullmatch(tag), "select a candidate-VERSION-BUILD tag")
+    require(CANDIDATE.fullmatch(tag) or BETA.fullmatch(tag), "select a candidate-VERSION-BUILD or vVERSION-beta tag")
     directory = Path(directory)
     release = gh.release(tag)
     require(release is not None and not release["isDraft"] and release["isPrerelease"], "candidate must be a published prerelease")
@@ -276,20 +307,20 @@ def fetch(gh, tag, directory):
 
 
 def check_main_progress(gh, data):
-    """A retained main candidate is also the public beta; reject delayed old builds."""
+    """Reject delayed or divergent main beta builds."""
     if data["source_branch"] != "main":
         return
     pages = gh.api("releases?per_page=100", "--paginate", "--slurp")
     prior = [release for page in pages for release in page
              if not release["draft"] and release["prerelease"]
-             and CANDIDATE.fullmatch(release["tag_name"])
-             and release.get("name") == f"Yorozu Beta {release['tag_name']}"
-             and release["tag_name"] != data["tag"]]
+             and ((BETA.fullmatch(release["tag_name"]) and release.get("name") == f"Yorozu {release['tag_name']}")
+                  or (CANDIDATE.fullmatch(release["tag_name"]) and release.get("name") == f"Yorozu Beta {release['tag_name']}"))]
     if not prior:
         return
     latest = max(prior, key=lambda release: (
-        version(CANDIDATE.fullmatch(release["tag_name"])[1]),
-        int(CANDIDATE.fullmatch(release["tag_name"])[2])))
+        version((BETA.fullmatch(release["tag_name"]) or CANDIDATE.fullmatch(release["tag_name"]))[1]),
+        bool(BETA.fullmatch(release["tag_name"])),
+        int(CANDIDATE.fullmatch(release["tag_name"])[2]) if CANDIDATE.fullmatch(release["tag_name"]) else 0))
     tag = latest["tag_name"]
     with tempfile.TemporaryDirectory(prefix="yorozu-beta-source-") as directory:
         previous = json.loads(gh.download(tag, "candidate.json", directory).read_text())
@@ -298,7 +329,7 @@ def check_main_progress(gh, data):
             "main beta release has mismatched candidate metadata")
     require(gh.tag_sha(tag) == previous["source_sha"], "main beta tag source does not match manifest")
     require(version(data["version"]) >= version(previous["version"])
-            and int(data["build"]) > int(previous["build"]),
+            and (int(data["build"]) > int(previous["build"]) or data == previous),
             "refusing to move beta backwards in version or build")
     comparison = gh.api(f"compare/{previous['source_sha']}...{data['source_sha']}")
     require(comparison.get("status") in ("ahead", "identical"),

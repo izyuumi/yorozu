@@ -8,10 +8,10 @@ set -eu
 cd "$(dirname "$0")/.."
 
 DIST=${DIST:-dist}
-DOWNLOAD_PREFIX=${DOWNLOAD_PREFIX:?set the permanent candidate GitHub Release URL prefix}
+DOWNLOAD_PREFIX=${DOWNLOAD_PREFIX:?set the candidate GitHub Release URL prefix}
 case "$DOWNLOAD_PREFIX" in
-  https://github.com/*/*/releases/download/candidate-*/) ;;
-  *) echo "appcast requires a permanent candidate release download prefix" >&2; exit 1 ;;
+  https://github.com/*/*/releases/download/candidate-*/|https://github.com/*/*/releases/download/v*-beta/) ;;
+  *) echo "appcast requires a candidate release download prefix" >&2; exit 1 ;;
 esac
 
 # Shipped inside the Sparkle package, so `swift build` is what installs it.
