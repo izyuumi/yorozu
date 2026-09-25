@@ -808,7 +808,7 @@ public struct ChatView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .onSubmit { draft.wrappedValue += "\n" }
                     .focused($composerFocused)
-                    .background(ImagePasteMonitor(isActive: composerFocused && !generating, onPaste: pasteImages))
+                    .background(composerKeyMonitor)
                     .accessibilityLabel(presentation.composerPlaceholder)
 
                 HStack(alignment: .center, spacing: 4) {
@@ -1002,9 +1002,8 @@ public struct ChatView: View {
         .frame(width: controlTarget, height: controlTarget)
         .hoverHighlight()
         .disabled(!canSend)
-        #if os(macOS)
-            .macKey(.return, modifiers: sendWithCommandReturn ? .command : [])
-        #endif
+        // Enter sends from the composer itself on both platforms: the phone's text view, and
+        // the Mac's ``ComposerKeyMonitor``.
         .accessibilityLabel("Send")
     }
 
@@ -1014,6 +1013,28 @@ public struct ChatView: View {
                 || !attachments.wrappedValue.isEmpty
         )
     }
+
+    #if os(macOS)
+        /// Enter with the chosen modifiers sends; every other Enter reaches the field, and the
+        /// field's `onSubmit` makes it the newline it was meant to be.
+        private var composerKeyMonitor: some View {
+            let onPaste: (() -> Void)? = generating ? nil : { pasteImages() }
+            return ComposerKeyMonitor(
+                isActive: composerFocused,
+                sendModifiers: sendWithCommandReturn ? .command : [],
+                onSend: sendFromKey,
+                onPaste: onPaste
+            )
+        }
+
+        /// The send key's send: whether anything went, so an Enter with nothing to send is
+        /// the field's to make a newline of.
+        private func sendFromKey() -> Bool {
+            guard canSend else { return false }
+            send()
+            return true
+        }
+    #endif
 
     private func send() {
         guard canSend else { return }
@@ -1426,29 +1447,10 @@ extension View {
             self
         #endif
     }
-
-    /// A key equivalent, on the Mac only.
-    ///
-    /// The composer's own `onKeyPress` never sees Return there: a `TextField` is an
-    /// `NSTextField` underneath and handles its keys in AppKit, below the pipeline SwiftUI
-    /// delivers key presses through. A key equivalent on the button is consulted first, by
-    /// AppKit, so this is the one place the keystroke can be caught — and one with no
-    /// modifiers leaves Shift-Return to the field, where it still inserts a newline. With
-    /// ⌘ as the modifier, a plain Return reaches the field too and inserts a newline.
-    ///
-    /// On iOS the composer's own text view catches Return and a key equivalent would double
-    /// up, so there this does nothing.
-    @ViewBuilder fileprivate func macKey(_ key: KeyEquivalent, modifiers: EventModifiers = []) -> some View {
-        #if os(macOS)
-            keyboardShortcut(key, modifiers: modifiers)
-        #else
-            self
-        #endif
-    }
 }
 
 extension ChatView {
-    /// `UserDefaults` key for the Mac's choice of send key: true for ⌘Return, false for Return.
+    /// `UserDefaults` key for the Mac's choice of send key: true for ⌘Enter, false for Enter.
     public static let sendWithCommandReturnKey = "sendWithCommandReturn"
 }
 

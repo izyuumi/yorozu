@@ -1031,8 +1031,9 @@ public struct ThreadSidebar: View {
                 Button("Mark all as read", systemImage: "envelope.open", action: onReadAll)
             }
             // The same compose glyph the phone's list and every Mac mail or notes app use. It
-            // asks who should answer in the same modal as the keyboard shortcut.
-            Button("New thread", systemImage: "square.and.pencil") { choosingAgent = true }
+            // asks who should answer in the same modal as the keyboard shortcut — and, on a
+            // client, in the caller's own picker, the one that knows the hosts and their folders.
+            Button("New thread", systemImage: "square.and.pencil", action: newThread)
         }
         .renameAlert($renaming, onRename: onRename)
         .onChange(of: selection) { _, id in

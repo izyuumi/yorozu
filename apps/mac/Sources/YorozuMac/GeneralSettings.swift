@@ -26,15 +26,15 @@ struct GeneralView: View {
             if session.role == .host { RelayView() }
             Section {
                 Picker("Send message with", selection: $sendWithCommandReturn) {
-                    Text("Return").tag(false)
-                    Text("⌘ Return").tag(true)
+                    Text("Enter").tag(false)
+                    Text("⌘ Enter").tag(true)
                 }
             } header: {
                 Text("Chat")
             } footer: {
                 Text(sendWithCommandReturn
-                    ? "Return starts a new line."
-                    : "Shift-Return starts a new line.")
+                    ? "Enter starts a new line."
+                    : "Shift-Enter starts a new line.")
                     .leadingFooter()
             }
             // The one approval setting Yorozu itself still owns: the global bypass the

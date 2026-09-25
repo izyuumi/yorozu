@@ -103,23 +103,45 @@
     import AppKit
     import SwiftUI
 
-    /// ⌘V for an image in the Mac's message field. The field is AppKit's text editor, which takes
-    /// every Paste itself and does nothing with an image, so a SwiftUI paste command never
-    /// fires; this sees the keystroke first, and lets it through unless there is an image.
-    struct ImagePasteMonitor: NSViewRepresentable {
+    /// Which key-down in the Mac's message field is the send key: Return or the keypad's
+    /// Enter with exactly `sendModifiers` held (none, or ⌘ by the Settings choice). Every other
+    /// Enter is the field's, where it inserts a newline. Not while an input method is composing:
+    /// that Return confirms the conversion and must reach the field.
+    func isSendKey(
+        keyCode: UInt16, flags: NSEvent.ModifierFlags, sendModifiers: NSEvent.ModifierFlags, composing: Bool
+    ) -> Bool {
+        guard !composing, keyCode == 36 || keyCode == 76 else { return false }
+        // The keypad's Enter arrives flagged as such; only the modifier keys matter.
+        return flags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function]) == sendModifiers
+    }
+
+    /// The Mac message field's keys that the field must not get. The field is AppKit's text
+    /// editor, which handles its keys below the pipeline SwiftUI delivers key presses through:
+    /// a key equivalent on the send button and a SwiftUI paste command both go unseen. This
+    /// sees the keystroke before the window does and lets it through unless it is the send key
+    /// with something to send — see ``isSendKey`` — or ⌘V with an image on the pasteboard.
+    /// `onPaste` is nil while images cannot be attached, and Paste is text-only again.
+    struct ComposerKeyMonitor: NSViewRepresentable {
         let isActive: Bool
-        let onPaste: () -> Void
+        let sendModifiers: NSEvent.ModifierFlags
+        /// Returns whether a message went. An Enter with nothing to send reaches the field.
+        let onSend: () -> Bool
+        let onPaste: (() -> Void)?
 
         func makeNSView(context: Context) -> MonitorView { MonitorView() }
 
         func updateNSView(_ view: MonitorView, context: Context) {
             view.isActive = isActive
+            view.sendModifiers = sendModifiers
+            view.onSend = onSend
             view.onPaste = onPaste
         }
 
         final class MonitorView: NSView {
             var isActive = false
-            var onPaste: () -> Void = {}
+            var sendModifiers: NSEvent.ModifierFlags = []
+            var onSend: () -> Bool = { false }
+            var onPaste: (() -> Void)?
             private var monitor: Any?
 
             override func viewDidMoveToWindow() {
@@ -129,12 +151,21 @@
                 guard window != nil else { return }
                 monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                     // Only this window's field: every open chat has its own monitor.
-                    guard let self, self.isActive, event.window === self.window,
+                    guard let self, self.isActive, event.window === self.window else { return event }
+                    let composing = (self.window?.firstResponder as? NSTextView)?.hasMarkedText() == true
+                    if isSendKey(keyCode: event.keyCode, flags: event.modifierFlags,
+                        sendModifiers: self.sendModifiers, composing: composing), self.onSend()
+                    {
+                        return nil
+                    }
+                    if let onPaste = self.onPaste,
                         event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
                         event.charactersIgnoringModifiers == "v", pasteboardHasImages()
-                    else { return event }
-                    self.onPaste()
-                    return nil
+                    {
+                        onPaste()
+                        return nil
+                    }
+                    return event
                 }
             }
 
