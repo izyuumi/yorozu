@@ -105,21 +105,35 @@ export class OpenClawRunner {
     this.#fetch = options.fetch ?? fetch;
   }
 
+  /**
+   * The Gateway's usable models, the way it prefers them: its default model first, so the
+   * picker's "Default" row means what the Gateway will actually run; that model's provider
+   * ahead of the rest; and fallbacks ahead of the merely configured within a provider.
+   */
   async listModels(): Promise<ModelOption[]> {
     const result = await (await this.connect()).request<{ models?: unknown[] }>("models.list", {});
-    return (result.models ?? []).flatMap((value) => {
+    const models = (result.models ?? []).flatMap((value) => {
       if (!value || typeof value !== "object") return [];
       const model = value as Record<string, unknown>;
       const id = typeof model.id === "string" ? model.id : "";
       const provider = typeof model.provider === "string" ? model.provider : "";
       if (!id || !provider || model.available === false) return [];
+      const tags = Array.isArray(model.tags) ? model.tags.filter((tag): tag is string => typeof tag === "string") : [];
+      const rank = tags.includes("default") ? 0 : tags.some((tag) => tag.startsWith("fallback")) ? 1 : 2;
       return [{
-        id: `${provider}/${id}`,
-        label: typeof model.alias === "string" && model.alias ? model.alias : id,
-        providerLabel: provider,
-        efforts: [...YOROZU_EFFORTS],
+        rank,
+        option: {
+          id: `${provider}/${id}`,
+          label: typeof model.alias === "string" && model.alias ? model.alias : id,
+          providerLabel: provider,
+          efforts: [...YOROZU_EFFORTS],
+        },
       }];
     });
+    const lead = models.find((model) => model.rank === 0)?.option.providerLabel;
+    return models
+      .sort((a, b) => Number(a.option.providerLabel !== lead) - Number(b.option.providerLabel !== lead) || a.rank - b.rank)
+      .map((model) => model.option);
   }
 
   async setArchived(threadId: string, archived: boolean): Promise<void> {

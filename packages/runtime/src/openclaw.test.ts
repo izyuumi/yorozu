@@ -631,13 +631,20 @@ describe("OpenClawRunner", () => {
     const gateway = harness();
     gateway.request.mockImplementation(async (method: string) => method === "models.list" ? {
       models: [
-        { id: "gpt-6-astra", provider: "openai", alias: "Astra", available: true },
+        { id: "claude-fable-5-1", provider: "anthropic", available: true, tags: ["fallback#1", "configured"] },
+        { id: "claude-sonnet-5", provider: "anthropic", available: true, tags: ["configured"] },
+        { id: "gpt-6-luna", provider: "openai", available: true },
+        { id: "gpt-6-astra", provider: "openai", alias: "Astra", available: true, tags: ["default", "configured"] },
         { id: "offline", provider: "local", available: false },
         { provider: "broken" },
       ],
     } : {});
+    const efforts = ["low", "medium", "high"];
     await expect(new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).listModels()).resolves.toEqual([
-      { id: "openai/gpt-6-astra", label: "Astra", providerLabel: "openai", efforts: ["low", "medium", "high"] },
+      { id: "openai/gpt-6-astra", label: "Astra", providerLabel: "openai", efforts },
+      { id: "openai/gpt-6-luna", label: "gpt-6-luna", providerLabel: "openai", efforts },
+      { id: "anthropic/claude-fable-5-1", label: "claude-fable-5-1", providerLabel: "anthropic", efforts },
+      { id: "anthropic/claude-sonnet-5", label: "claude-sonnet-5", providerLabel: "anthropic", efforts },
     ]);
     expect(gateway.request).toHaveBeenCalledWith("models.list", {});
   });
