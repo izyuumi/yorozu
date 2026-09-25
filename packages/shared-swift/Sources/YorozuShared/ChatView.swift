@@ -246,34 +246,43 @@ public struct ChatView: View {
         .navigationTitle(thread.displayTitle)
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            .modifier(AgentSubtitle(text: presentation.agent.label))
         #else
             // A thread on a model of its own says so beside its title. Only then — the default
             // is the case that needs no caption. The Mac has a title bar subtitle for exactly
-            // this; the phone uses a compact identity in its `.principal` item.
+            // this; the phone has one from iOS 26, and a compact identity in its `.principal`
+            // item before that.
             .navigationSubtitle(macModelCaption)
         #endif
         #if os(iOS)
         .toolbar {
-                ToolbarItem(placement: .principal) {
-                    HStack(spacing: 7) {
-                        AgentMarkView(presentation.agent, size: 20)
-                        VStack(alignment: .leading, spacing: 0) {
-                            MarqueeText(text: thread.displayTitle)
-                                .font(.subheadline.weight(.semibold))
-                            HStack(spacing: 4) {
-                                Circle()
-                                    .fill(model.ownerOnline ? YorozuPalette.sage : Color.secondary)
-                                    .frame(width: 5, height: 5)
-                                    .accessibilityHidden(true)
-                                Text(presentation.agent.label)
+                // From iOS 26 the bar lays a custom title view out at its ideal width and never
+                // tells it how much room there is — on every iPhone, and worse on Duo's side
+                // bar — so a long title ran under the buttons. The system title is the one
+                // view the bar does truncate; only older bars, which clamp `titleView`, get this.
+                if #unavailable(iOS 26) {
+                    ToolbarItem(placement: .principal) {
+                        HStack(spacing: 7) {
+                            AgentMarkView(presentation.agent, size: 20)
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(thread.displayTitle)
+                                    .font(.subheadline.weight(.semibold))
                                     .lineLimit(1)
+                                HStack(spacing: 4) {
+                                    Circle()
+                                        .fill(model.ownerOnline ? YorozuPalette.sage : Color.secondary)
+                                        .frame(width: 5, height: 5)
+                                        .accessibilityHidden(true)
+                                    Text(presentation.agent.label)
+                                        .lineLimit(1)
+                                }
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                             }
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
                         }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityValue(model.ownerOnline ? String(localized: "Mac online") : String(localized: "Mac offline"))
                     }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityValue(model.ownerOnline ? String(localized: "Mac online") : String(localized: "Mac offline"))
                 }
                 if #available(iOS 27.1, *) {
                     ToolbarItemGroup(placement: .topBarTrailing) {
@@ -1665,3 +1674,18 @@ func streamingMessageId(in events: [YorozuEvent]) -> String? {
     guard let last, case .message(let data) = last.payload, data.role == .agent, data.done != true else { return nil }
     return last.id
 }
+
+#if os(iOS)
+    /// The agent's name under the title, where the `.principal` item used to carry it.
+    private struct AgentSubtitle: ViewModifier {
+        let text: String
+
+        func body(content: Content) -> some View {
+            if #available(iOS 26, *) {
+                content.navigationSubtitle(text)
+            } else {
+                content
+            }
+        }
+    }
+#endif
