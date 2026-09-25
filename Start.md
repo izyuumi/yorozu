@@ -77,9 +77,8 @@ A Mac is one of two things:
 - **Client** — a second Mac that pairs with the host exactly like a phone does. Runs no agent.
   Needs only the app and a pairing code.
 
-An **iPhone** (iOS 18+) is always a client of a host. Before promising phone setup, check
-whether they already have an internal TestFlight invitation or want to build from source
-(section 5). There is no public iPhone download yet; Mac-only setup remains available.
+An **iPhone** (iOS 18+) is always a client of a host. Install it from the public TestFlight
+link or build from source (section 5). Mac-only setup remains available.
 
 Decision:
 
@@ -252,12 +251,11 @@ Threads, replies and approval cards all sync from the host. Unpair from the same
 
 ## 5. iPhone
 
-Needs iOS 18+ and the Yorozu iOS app. **The iPhone app is in internal testing; there is no
-public App Store or TestFlight download yet.** Establish an installation path before pairing:
+Needs iOS 18+ and the Yorozu iOS app. **The iPhone app is a public TestFlight beta; there is
+no App Store release yet.** Establish an installation path before pairing:
 
-- **Already invited to internal testing:** open their invitation on the iPhone and install
-  through TestFlight. Access is limited to invited team members; see
-  [TestFlight details](docs/releasing.md#testflight). Do not offer a public signup link.
+- **TestFlight (default):** open <https://yorozu.yumi.to/iphone> on the iPhone, install
+  TestFlight if prompted, then install Yorozu.
 - **Developer building from source:** follow [Development](README.md#development) for the
   required tools and workspace setup. From the repository root, run
   `tuist generate --no-open --path apps/ios`, then open `apps/ios/Yorozu.xcworkspace` in Xcode.
