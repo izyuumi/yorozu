@@ -88,9 +88,7 @@ public struct MultiHostThreadListView<Destination: View>: View {
             workingThreads: adapter.workingThreads,
             hostLabel: adapter.hostLabel,
             onNewThread: { choosingHost = true },
-            connection: session.hasMultipleHosts ? nil : session.sessions.first.map {
-                ConnectionState(state: $0.model.state, ownerOnline: $0.model.ownerOnline)
-            },
+            connection: session.connectionState,
             connectionSummary: session.hasMultipleHosts ? session.connectionSummary : nil,
             path: Binding(get: { path.map(\.listID) }, set: { ids in
                 path = ids.compactMap { adapter.resolve($0)?.id }
@@ -194,6 +192,18 @@ public struct MultiHostThreadSidebar: View {
 }
 
 extension MultiHostModel {
+    /// The worst link among the hosts, so a merged list is only "connected" when every host
+    /// is. A host that needs an update is counted as away, as ``connectionSummary`` counts it.
+    public var connectionState: ConnectionState? {
+        let states = sessions.map { host -> ConnectionState in
+            if case .updateRequired = host.model.compatibility { return .offline }
+            return ConnectionState(state: host.model.state, ownerOnline: host.model.ownerOnline)
+        }
+        guard !states.isEmpty else { return nil }
+        if states.contains(.offline) { return .offline }
+        return states.contains(.reconnecting) ? .reconnecting : .connected
+    }
+
     /// The merged list never borrows one host's status for the whole client.
     public var connectionSummary: String {
         let connected = sessions.filter {

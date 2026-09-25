@@ -75,6 +75,9 @@ public struct ChatView: View {
         @State private var runSettings = ChatShowcase.modelMenu
     #endif
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    /// The link as the transcript reports it: a blip shorter than the grace is never mentioned.
+    @State private var connection = ConnectionPresentation(.connected)
     @State private var search = ""
     /// Which hit the arrows are on. Reset whenever the term changes.
     @State private var hit = 0
@@ -129,6 +132,10 @@ public struct ChatView: View {
 
     private var generating: Bool { model.generating.contains(thread.id) }
 
+    private var actualConnection: ConnectionState {
+        ConnectionState(state: model.state, ownerOnline: model.ownerOnline)
+    }
+
     /// Every occurrence of the search term in this thread, in reading order.
     private var hits: [SearchHit] { searchHits(in: events, term: search) }
 
@@ -156,9 +163,6 @@ public struct ChatView: View {
     public var body: some View {
         VStack(spacing: 0) {
             UpdateStatusView(status: model.updateStatus) { model.updateControl(.postpone) }
-            if !model.ownerOnline && model.updateStatus.phase != .installing {
-                Banner(text: offlineNotice, systemImage: "desktopcomputer.trianglebadge.exclamationmark")
-            }
             if let failure = model.failure {
                 Banner(text: failure, systemImage: "exclamationmark.triangle")
             }
@@ -193,11 +197,30 @@ public struct ChatView: View {
                     messages.environment(\.openURL, linkAction)
                 }
             }
+            // The Mac being away is a toast over the transcript, not a strip above it: the link
+            // coming and going must not move the messages or the scroll anchor, and a blip
+            // shorter than ``ConnectionPresentation/grace`` is never mentioned at all.
+            .overlay(alignment: .top) {
+                if connection.state != .connected, model.updateStatus.phase != .installing {
+                    ConnectionPill(state: connection.state, label: offlineNotice)
+                        .padding(.top, 8)
+                        .padding(.horizontal)
+                        .allowsHitTesting(false)
+                        .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .animation(reduceMotion ? nil : .default, value: connection.state)
             composer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(YorozuPalette.canvas.ignoresSafeArea())
         .yorozuTint()
+        .onChange(of: actualConnection, initial: true) { _, actual in
+            connection.update(actual, active: scenePhase != .background)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            connection.update(actualConnection, active: phase != .background)
+        }
         // A truncated tool result in this thread's trace asks the Mac for the rest through here.
         .environment(\.fetchToolResult) { model.requestToolResult($0, in: thread.id) }
         .sheet(isPresented: $choosingAgent) {

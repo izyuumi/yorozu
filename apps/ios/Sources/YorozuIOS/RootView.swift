@@ -545,7 +545,6 @@ struct RootView: View {
     @State private var hostPath: [HostThreadID] = Session.shared.hostPath
     @State private var choosingThreadHost = false
     @State private var settings = launchArgument("yorozuShowcase") == "settings"
-    @State private var connection = ConnectionPresentation(.reconnecting)
     /// Screenshot only: `-yorozuShowcase share` draws the share extension's composer here,
     /// because a simulator cannot be made to open a real share sheet.
     @State private var shareShowcase = ChatShowcase.share
@@ -593,7 +592,6 @@ struct RootView: View {
             // rather than waiting out a backoff that ran down while nothing was executing — and
             // the moment to pick up anything shared while it was away.
             .onChange(of: scenePhase) { _, phase in
-                connection.update(actualConnection, active: phase == .active)
                 // Hang up before iOS suspends the app with the socket half-open: the relay
                 // would go on counting a frozen socket as a phone that is watching, and so
                 // not worth a silent wake-up. See ``ChatModel/suspend()``.
@@ -612,9 +610,6 @@ struct RootView: View {
                 // nothing when a stream is already running.
                 for model in session.allModels { model.start(); model.reconnect() }
                 session.drainShares()
-            }
-            .onChange(of: actualConnection, initial: true) { _, state in
-                connection.update(state, active: scenePhase == .active)
             }
             // Half of "genuinely reading": a thread on screen in an app nobody is looking at is
             // not being read, and must not report that it was. Kept apart from the switch above
@@ -711,7 +706,7 @@ struct RootView: View {
             ThreadListView(
                 threads: model.threads,
                 workingThreads: model.generating,
-                connection: connection.state,
+                connection: actualConnection,
                 path: $path,
                 projects: model.projects,
                 projectListStatus: model.projectListStatus,
