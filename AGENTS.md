@@ -6,6 +6,12 @@ Follow [docs/RELEASE_WORKFLOW.md](docs/RELEASE_WORKFLOW.md) for release-related 
 including versioning, candidate builds, release notes, beta/stable promotion, and hotfixes.
 All commits must use Conventional Commit messages and be cryptographically signed.
 
+## UI layout
+
+Follow [docs/ui-layout.md](docs/ui-layout.md): size from the container with the platform's
+native mechanisms, never from a hard-coded number, unless building a custom component that
+owns its own geometry.
+
 ## Parallel feature work and cleanup
 
 - Before starting a new feature, fetch the target base branch and create a dedicated Git

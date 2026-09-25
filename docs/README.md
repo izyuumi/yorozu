@@ -6,6 +6,7 @@ Start with the [project README](../README.md) for installation and development. 
 | Topic | Document |
 | --- | --- |
 | System design, pairing, relay, threads, and apps | [Architecture](architecture.md) |
+| Sizing from the container, never from a guessed number | [UI layout](ui-layout.md) |
 | Release branches, candidates, and promotion | [Release workflow](RELEASE_WORKFLOW.md) |
 | Signing, packaging, TestFlight, and relay hosting | [Releasing](releasing.md) |
 | Updates that wait for local agents | [Queued updates](queued-updates.md) |
