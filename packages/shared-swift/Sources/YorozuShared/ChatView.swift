@@ -258,9 +258,8 @@ public struct ChatView: View {
                     HStack(spacing: 7) {
                         AgentMarkView(presentation.agent, size: 20)
                         VStack(alignment: .leading, spacing: 0) {
-                            Text(thread.displayTitle)
+                            MarqueeText(text: thread.displayTitle)
                                 .font(.subheadline.weight(.semibold))
-                                .lineLimit(1)
                             HStack(spacing: 4) {
                                 Circle()
                                     .fill(model.ownerOnline ? YorozuPalette.sage : Color.secondary)
@@ -272,12 +271,7 @@ public struct ChatView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         }
-                        // `fixedSize` below takes the ideal width, so a long title needs a cap
-                        // or it runs under the trailing buttons.
-                        .frame(maxWidth: 160, alignment: .leading)
                     }
-                    // The split-view bar can propose only a few points on Duo's inner display.
-                    .fixedSize(horizontal: true, vertical: false)
                     .accessibilityElement(children: .combine)
                     .accessibilityValue(model.ownerOnline ? String(localized: "Mac online") : String(localized: "Mac offline"))
                 }
