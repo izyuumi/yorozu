@@ -1474,7 +1474,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return;
       case "thread_list":
         reply(threadList());
-        reply(modelList());
         refreshModels();
         return reply(projectList());
       case "project_list":

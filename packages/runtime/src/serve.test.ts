@@ -307,7 +307,6 @@ test("public 0.2.3 phone syncs with current Mac runtime", async () => {
   const listed = await next();
   expect(listed).toMatchObject({ kind: "thread_list" });
   expect(listed.data).not.toHaveProperty("peerInfo");
-  expect(await next()).toMatchObject({ kind: "model_list" });
   expect(await next()).toMatchObject({ kind: "project_list" });
   phone.frame(channel.box({ id: "legacy-device-list", threadId: "", ts: Date.now(),
     agentId: "phone", kind: "device_list", data: { devices: [] } }), keys);
