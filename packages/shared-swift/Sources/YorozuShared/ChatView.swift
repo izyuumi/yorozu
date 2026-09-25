@@ -272,6 +272,9 @@ public struct ChatView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         }
+                        // `fixedSize` below takes the ideal width, so a long title needs a cap
+                        // or it runs under the trailing buttons.
+                        .frame(maxWidth: 160, alignment: .leading)
                     }
                     // The split-view bar can propose only a few points on Duo's inner display.
                     .fixedSize(horizontal: true, vertical: false)
