@@ -233,19 +233,55 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
 /// through, is declared at the original deadline rather than a fresh one.
 @MainActor
 @Test func connectionPresentationDoesNotRestartGraceWhenInterruptionChangesKind() async throws {
-    let grace = Duration.milliseconds(800)
+    let grace = Duration.milliseconds(1200)
     let presentation = ConnectionPresentation(.connected)
 
     presentation.update(.reconnecting, active: true, grace: grace)
-    try await Task.sleep(for: .milliseconds(500))
+    try await Task.sleep(for: .milliseconds(700))
     #expect(presentation.state == .connected)
 
     let changed = ContinuousClock.now
     presentation.update(.offline, active: true, grace: grace)
     await settled(presentation, at: .offline)
     #expect(presentation.state == .offline)
-    // A restarted window would have taken the full 800ms from here.
-    #expect(ContinuousClock.now - changed < .milliseconds(600))
+    // About 500ms is left of the original window; a restarted one takes at least 1200ms.
+    #expect(ContinuousClock.now - changed < grace)
+}
+
+/// A view opened mid-outage counts from the host's moment, so one past the grace says so at
+/// once rather than waiting out a grace of its own.
+@MainActor
+@Test func connectionPresentationHonoursAnEarlierAnchor() {
+    let presentation = ConnectionPresentation(.connected)
+    presentation.update(.offline, active: true, since: .now - .seconds(60))
+    #expect(presentation.state == .offline)
+}
+
+@MainActor
+@Test func interruptionAnchorFollowsTheLinkAndClearsOnSuspension() async throws {
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport)
+    #expect(model.interruptedSince == nil)
+    model.start()
+    #expect(model.interruptedSince != nil)
+    await transport.yield(.ownerOnline(true))
+    await transport.yield(.state(.paired))
+    #expect(await eventually { model.interruptedSince == nil })
+
+    await transport.yield(.ownerOnline(false))
+    #expect(await eventually { model.interruptedSince != nil })
+    let lost = try #require(model.interruptedSince)
+    // The loss changing kind is the same interruption.
+    await transport.yield(.state(.closed))
+    #expect(await eventually { model.state == .closed })
+    #expect(model.interruptedSince == lost)
+
+    // Hanging up for suspension is not an interruption; the next start is a fresh one.
+    model.suspend()
+    #expect(model.interruptedSince == nil)
+    model.start()
+    #expect(try #require(model.interruptedSince) > lost)
+    model.close()
 }
 
 /// Short losses separated by genuine recovery each get their own window; they do not add up.

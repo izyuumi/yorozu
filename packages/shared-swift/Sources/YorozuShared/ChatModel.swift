@@ -45,9 +45,23 @@ public final class ChatModel {
         timelineRevision = timelines.count
         return timeline
     }
-    public private(set) var state: TransportState = .connecting
+    public private(set) var state: TransportState = .connecting { didSet { markInterruption() } }
     /// Starts pessimistic: the transport tells us the truth when it connects.
-    public private(set) var ownerOnline = false
+    public private(set) var ownerOnline = false { didSet { markInterruption() } }
+    /// When the link to this host was lost, and nil while it is up. The anchor for
+    /// ``ConnectionPresentation``'s grace, kept per host rather than per view so a chat opened
+    /// an hour into an outage says so at once instead of waiting out a grace of its own. A
+    /// hang-up for suspension is not an interruption: the anchor clears, and the next
+    /// ``start()`` begins a fresh one.
+    public private(set) var interruptedSince: ContinuousClock.Instant?
+
+    private func markInterruption() {
+        if !started || ConnectionState(state: state, ownerOnline: ownerOnline) == .connected {
+            interruptedSince = nil
+        } else if interruptedSince == nil {
+            interruptedSince = .now
+        }
+    }
     public private(set) var peerInfo: PeerInfoData?
     public private(set) var compatibility: PeerCompatibility = .legacy
     public private(set) var updateStatus = UpdateStatusData(phase: .none)
@@ -300,6 +314,7 @@ public final class ChatModel {
     public func start() {
         guard !started, !stopped else { return }
         started = true
+        markInterruption()
         connectionTask = Task { [weak self] in
             guard let stream = await self?.transport.connect() else { return }
             for await update in stream {
@@ -354,6 +369,7 @@ public final class ChatModel {
         // The stream is finished, so the next foreground has to start a new one rather than
         // reconnect a transport that has already hung up.
         started = false
+        markInterruption()
     }
 
     /// Called when the app comes back to the foreground: a socket that dropped while it was

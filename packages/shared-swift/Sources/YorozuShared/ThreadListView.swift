@@ -402,7 +402,15 @@ public final class ConnectionPresentation {
 
     public init(_ state: ConnectionState) { self.state = state }
 
-    public func update(_ actual: ConnectionState, active: Bool, grace: Duration = grace) {
+    /// `since` is when the link was lost, when the caller knows better than this presentation
+    /// can — see ``ChatModel/interruptedSince``. Without it the window opens at the first
+    /// update that reports the loss.
+    public func update(
+        _ actual: ConnectionState,
+        active: Bool,
+        since: ContinuousClock.Instant? = nil,
+        grace: Duration = grace
+    ) {
         pending?.cancel()
         pending = nil
         guard active else {
@@ -415,10 +423,16 @@ public final class ConnectionPresentation {
             return
         }
         guard actual != state else { return }
-        let since = interruptedAt ?? .now
-        interruptedAt = since
+        let anchor = since ?? interruptedAt ?? .now
+        interruptedAt = anchor
+        let deadline = anchor.advanced(by: grace)
+        // Already past: say it now, not a frame later.
+        guard deadline > .now else {
+            state = actual
+            return
+        }
         pending = Task { [weak self] in
-            try? await Task.sleep(until: since.advanced(by: grace), clock: .continuous)
+            try? await Task.sleep(until: deadline, clock: .continuous)
             // Cancelled means a newer update owns the outcome; this one must not touch it.
             guard !Task.isCancelled else { return }
             self?.state = actual
@@ -426,10 +440,11 @@ public final class ConnectionPresentation {
     }
 }
 
-/// The connection as a pill in the navigation bar rather than a banner across the top: the state
-/// is almost always fine, and something that is almost always fine should not cost a strip of the
-/// screen. A coloured dot carries it at a glance and the word behind it says which, so the pill
-/// does not rely on colour alone.
+/// The connection as a toast floating over the list or transcript rather than a strip that
+/// pushes them down: the state is almost always fine, and something that is almost always fine
+/// should not move the layout when it changes. A coloured dot carries it at a glance and the
+/// words behind it say which, so it does not rely on colour alone. A rounded rect that reads as
+/// a capsule on one line, so a notice that wraps at large text sizes still sits inside it.
 struct ConnectionPill: View {
     let state: ConnectionState
     /// The multi-host list says which hosts are missing rather than "Mac offline".
@@ -450,9 +465,9 @@ struct ConnectionPill: View {
         // The bar is glass on 26, so the pill in it should be glass too; on 18 through 25 a thin
         // material is the nearest thing that still reads as a control rather than a label.
         if #available(iOS 26, macOS 26, *) {
-            content.glassEffect(in: .capsule)
+            content.glassEffect(in: .rect(cornerRadius: 14))
         } else {
-            content.background(.thinMaterial, in: .capsule)
+            content.background(.thinMaterial, in: .rect(cornerRadius: 14))
         }
     }
 }
@@ -726,14 +741,16 @@ public struct ThreadListView<Destination: View>: View {
         // label updated in place, gone the moment the link is back — and never there at all
         // for an interruption shorter than the grace.
         .overlay(alignment: .top) {
-            if let shownConnection, shownConnection != .connected {
-                ConnectionPill(state: shownConnection, label: connectionSummary)
-                    .padding(.top, 8)
-                    .allowsHitTesting(false)
-                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+            ZStack {
+                if let shownConnection, shownConnection != .connected {
+                    ConnectionPill(state: shownConnection, label: connectionSummary)
+                        .padding(.top, 8)
+                        .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                }
             }
+            .allowsHitTesting(false)
+            .animation(reduceMotion ? nil : .default, value: shownConnection)
         }
-        .animation(reduceMotion ? nil : .default, value: shownConnection)
         .onChange(of: connection, initial: true) { _, actual in
             presentation.update(actual ?? .connected, active: scenePhase != .background)
         }

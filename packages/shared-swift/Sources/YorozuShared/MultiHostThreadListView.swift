@@ -193,10 +193,12 @@ public struct MultiHostThreadSidebar: View {
 
 extension MultiHostModel {
     /// The worst link among the hosts, so a merged list is only "connected" when every host
-    /// is. A host that needs an update is counted as away, as ``connectionSummary`` counts it.
+    /// is. Among several, a host that needs an update counts as away, as the
+    /// ``connectionSummary`` the list shows alongside counts it; a lone host is only its link,
+    /// since without a summary the label would say "Mac offline" of a Mac that is not.
     public var connectionState: ConnectionState? {
         let states = sessions.map { host -> ConnectionState in
-            if case .updateRequired = host.model.compatibility { return .offline }
+            if hasMultipleHosts, case .updateRequired = host.model.compatibility { return .offline }
             return ConnectionState(state: host.model.state, ownerOnline: host.model.ownerOnline)
         }
         guard !states.isEmpty else { return nil }

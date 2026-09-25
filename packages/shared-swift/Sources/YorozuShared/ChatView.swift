@@ -201,25 +201,28 @@ public struct ChatView: View {
             // coming and going must not move the messages or the scroll anchor, and a blip
             // shorter than ``ConnectionPresentation/grace`` is never mentioned at all.
             .overlay(alignment: .top) {
-                if connection.state != .connected, model.updateStatus.phase != .installing {
-                    ConnectionPill(state: connection.state, label: offlineNotice)
-                        .padding(.top, 8)
-                        .padding(.horizontal)
-                        .allowsHitTesting(false)
-                        .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                ZStack {
+                    if connection.state != .connected, model.updateStatus.phase != .installing {
+                        ConnectionPill(state: connection.state, label: offlineNotice)
+                            .padding(.top, 8)
+                            .padding(.horizontal)
+                            .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                    }
                 }
+                // Scoped here: an animation on the transcript would animate its scroll too.
+                .allowsHitTesting(false)
+                .animation(reduceMotion ? nil : .default, value: connection.state)
             }
-            .animation(reduceMotion ? nil : .default, value: connection.state)
             composer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(YorozuPalette.canvas.ignoresSafeArea())
         .yorozuTint()
         .onChange(of: actualConnection, initial: true) { _, actual in
-            connection.update(actual, active: scenePhase != .background)
+            connection.update(actual, active: scenePhase != .background, since: model.interruptedSince)
         }
         .onChange(of: scenePhase) { _, phase in
-            connection.update(actualConnection, active: phase != .background)
+            connection.update(actualConnection, active: phase != .background, since: model.interruptedSince)
         }
         // A truncated tool result in this thread's trace asks the Mac for the rest through here.
         .environment(\.fetchToolResult) { model.requestToolResult($0, in: thread.id) }
