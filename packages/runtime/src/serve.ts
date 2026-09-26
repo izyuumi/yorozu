@@ -516,8 +516,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const stoppedTurns = new Map((stopLines as StopRecord[]).map((entry) => [entry.targetEventId, entry]));
   const rememberStop = (entry: StopRecord): void => {
     const previous = stoppedTurns.get(entry.targetEventId);
-    if (previous?.status === entry.status && previous.requestIds.length === entry.requestIds.length &&
-      previous.partialText === entry.partialText) return;
+    if (previous?.status === entry.status && previous.requestIds.length === entry.requestIds.length) return;
     appendFileSync(stopFile, JSON.stringify(entry) + "\n", { mode: 0o600, flush: true });
     stoppedTurns.set(entry.targetEventId, entry);
   };
@@ -1224,9 +1223,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const messages = readThreadEvents(threadId, dir).filter((event) => event.kind === "message");
     const index = userEventId ? messages.findIndex((event) => event.id === userEventId) : -1;
     const prior = index > 0 ? messages[index - 1] : index < 0 ? messages.at(-1) : undefined;
-    if (prior?.kind !== "message" || prior.data.role !== "agent" || !prior.data.interrupted) return original;
-    const excerpt = prior.data.text.slice(-4_000);
-    return `Previous reply was stopped by the user. Its partial text may be absent from your session context. ` +
+    if (prior?.kind !== "message") return original;
+    const stop = prior.data.role === "user" ? stoppedTurns.get(prior.id) : undefined;
+    const partial = prior.data.role === "agent" && prior.data.interrupted ? prior.data.text
+      : stop?.status === "requested" || stop?.status === "stopped" ? stop.partialText ?? "" : undefined;
+    if (partial === undefined) return original;
+    const excerpt = partial.slice(-4_000);
+    return `Previous reply was stopped or has a pending Stop request. Its partial text may be absent from your session context. ` +
       `Do not repeat actions without checking their outcomes. Partial reply: ${JSON.stringify(excerpt || "(none)")}\n\nNew user request: ${original}`;
   };
 
@@ -1333,7 +1336,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
               approve: async (tool, input, signal) =>
                 loadSettings(dir).yolo || nativeCards.approve(threadId, agent, tool, input, signal),
               ask: (question, options, signal) => nativeCards.ask(threadId, question, options, signal),
-              onUpdate: (reply) => { executionStarted = true; broadcast(message(reply)); },
+              onUpdate: (reply) => { if (!turn.signal.aborted) { executionStarted = true; broadcast(message(reply)); } },
               onActivity: (key, payload) => {
                 executionStarted = true;
                 const event: YorozuEvent = { id: `${agent}:${threadId}:${key}`, threadId, ts: Date.now(), agentId: MAIN_AGENT, ...payload };
@@ -1348,12 +1351,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
               },
             });
             if (done.sessionId && done.sessionId !== currentHome.sessionId) setThreadSession(threadId, done.sessionId, dir);
-            if (turn.signal.aborted) {
-              const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
-              if (stop?.status === "requested" && done.text.length > (stop.partialText?.length ?? 0))
-                rememberStop({ ...stop, partialText: done.text });
-              return;
-            }
+            if (turn.signal.aborted) return;
             if (done.failed) throw new Error(`${agent} reported an unsuccessful turn`);
             finish(done.text);
             return;
@@ -1402,7 +1400,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           signal: turn.signal,
           completionId: id,
           userEventId,
-          onUpdate: (reply) => broadcast(message(reply)),
+          onUpdate: (reply) => { if (!turn.signal.aborted) broadcast(message(reply)); },
           onEvent: emit,
           onRecoveryState: () => broadcast(threadList()),
         });
@@ -1414,6 +1412,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (running.get(threadId) === turn) running.delete(threadId);
         if (runningEventIds.get(threadId) === userEventId) runningEventIds.delete(threadId);
         broadcastActiveThreadList();
+        const settlement = turn.signal.aborted && userEventId ? stopSettlements.get(userEventId) : undefined;
+        if (settlement) {
+          await settlement.promise;
+          stopSettlements.delete(userEventId!);
+        }
       }
       return;
     }
@@ -1518,6 +1521,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
    */
   const archiveUpdates = new Map<string, Promise<void>>();
   const stopAttempts = new Set<string>();
+  const stopSettlements = new Map<string, ReturnType<typeof Promise.withResolvers<void>>>();
 
   const stopStatus = (record: StopRecord, requestId: string): YorozuEvent => ({
     ...control({ kind: "stop_status", data: { targetEventId: record.targetEventId, requestId, status: record.status } }),
@@ -1574,6 +1578,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
       return;
     }
     stopAttempts.add(target);
+    const settlement = stopSettlements.get(target) ?? Promise.withResolvers<void>();
+    stopSettlements.set(target, settlement);
     abortTarget(record.threadId, target);
     void openclaw!.stopRun(record.sessionKey, record.runId).then((outcome) => {
       if (!outcome) return;
@@ -1587,6 +1593,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       rememberStop({ ...record, status: outcome.status });
       broadcastStop(stoppedTurns.get(target)!);
+      settlement.resolve();
+      if (!admittedTurns.has(target)) stopSettlements.delete(target);
     }).catch((error: unknown) => state(`stop-error ${String(error)}`)).finally(() => stopAttempts.delete(target));
   };
 

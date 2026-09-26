@@ -1088,7 +1088,7 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
   // An agent that cannot run at all still finishes the turn, with the reason in the thread.
   send({ kind: "message", data: { role: "user", text: "break" } }, "cc");
   const failed = (await eventsUntil((event) => event.kind === "message" && event.data.done === true)).at(-1)!;
-  expect(turns[3]?.text).toContain("Previous reply was stopped by the user");
+  expect(turns[3]?.text).toContain("Previous reply was stopped or has a pending Stop request");
   // The phone hears that the turn is over and where to look; the SDK's own words, which can
   // name local paths and accounts, stay in the Mac's log.
   expect(failed).toMatchObject({ data: { text: `${agent} could not answer; see the Mac log.` } });
@@ -1193,20 +1193,31 @@ test.each([
     await new Promise<void>((resolve) => turn.signal?.addEventListener("abort", () => resolve(), { once: true }));
     return "";
   });
-  vi.spyOn(OpenClawRunner.prototype, "stopRun").mockResolvedValue({ status: outcome,
-    ...(outcome === "completed" ? { text: "finished" } : {}) });
+  const releaseStop = Promise.withResolvers<{ status: "stopped" | "completed"; text?: string }>();
+  vi.spyOn(OpenClawRunner.prototype, "stopRun").mockImplementation(() => releaseStop.promise);
   const { dir, send, eventsUntil } = await pairedPhone([], true);
   send({ kind: "thread_create", data: {} });
   await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
   const target = send({ kind: "message", data: { role: "user", text: "work" } });
   await eventsUntil((event) => event.kind === "message" && event.data.role === "agent" && event.data.text === "partial");
   send({ kind: "interrupt", data: { targetEventId: target } });
+  if (interrupted) {
+    await eventsUntil((event) => event.kind === "stop_status" && event.data.status === "requested");
+    const queued = send({ kind: "message", data: { role: "user", text: "next" } });
+    await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === queued);
+  }
+  releaseStop.resolve({ status: outcome, ...(outcome === "completed" ? { text: "finished" } : {}) });
   await eventsUntil((event) => event.kind === "stop_status" && event.data.status === outcome);
   expect(readThreadEvents("t1", dir).find((event) => event.id === `openclaw:${target}:final`))
     .toMatchObject({ data: { text, done: true, ...(interrupted ? { interrupted: true } : {}) } });
-  send({ kind: "message", data: { role: "user", text: "next" } });
+  if (!interrupted) send({ kind: "message", data: { role: "user", text: "next" } });
   await eventsUntil((event) => event.kind === "message" && event.data.role === "agent" && event.data.text === "next answer");
-  expect(turns[1]?.text.includes("Previous reply was stopped by the user")).toBe(interrupted);
+  expect(turns[1]?.text.includes("Previous reply was stopped or has a pending Stop request")).toBe(interrupted);
+  if (interrupted) {
+    const history = readThreadEvents("t1", dir);
+    expect(history.findIndex((event) => event.id === `openclaw:${target}:final`))
+      .toBeLessThan(history.findIndex((event) => event.kind === "message" && event.data.text === "next answer"));
+  }
 });
 
 test("client archive and restore reach OpenClaw in order before the canonical list changes", async () => {

@@ -116,13 +116,15 @@ test.each(["approval", "question"])("Stop interrupts Codex while %s is pending, 
 test("Stop returns Codex's last streamed reply", async () => {
   const abort = new AbortController();
   const fake = fakeCodex(async (h) => {
-    h.notify("item/agentMessage/delta", { threadId: "native", itemId: "reply", delta: "half a" });
+    h.notify("item/agentMessage/delta", { threadId: "native", itemId: "one", delta: "first" });
+    h.notify("item/agentMessage/delta", { threadId: "native", itemId: "two", delta: "longer other reply" });
+    h.notify("item/agentMessage/delta", { threadId: "native", itemId: "one", delta: " last" });
   });
   const onUpdate = vi.fn();
   const running = codexNativeRunner(fake.connect).run(turn({ signal: abort.signal, onUpdate }));
-  await vi.waitFor(() => expect(onUpdate).toHaveBeenCalledWith("half a"));
+  await vi.waitFor(() => expect(onUpdate).toHaveBeenLastCalledWith("first last"));
   abort.abort();
-  expect(await running).toEqual({ text: "half a", sessionId: "native" });
+  expect(await running).toEqual({ text: "first last", sessionId: "native" });
 });
 
 test("Codex failures propagate and unknown server requests fail closed", async () => {

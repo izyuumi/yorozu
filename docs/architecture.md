@@ -511,13 +511,19 @@ If a host restart leaves a native Stop impossible to confirm, the host reports t
 and retires the recovery marker; the client keeps a warning with the cached conversation and
 never labels the task Stopped.
 
-Backend context after Stop is not guaranteed: Claude Code closes its SDK query on abort; Codex
-interrupts its app-server turn; OpenClaw sends `chat.abort`, whose history may omit the
-assistant partial. Each keeps its session ID or Gateway session key. On the next prompt, Yorozu
-supplies the stopped partial (up to its last 4,000 characters) and a reminder to verify prior
-actions to all three backends. That makes continuation independent of whether each backend
-retained the partial. This context is sent to the backend only; the user's saved message stays
-unchanged. A Stop before text supplies a short stopped-turn note.
+Backend context after Stop:
+
+| Backend | What its saved session contains after abort |
+| --- | --- |
+| Claude Code SDK | The SDK query is closed with its abort controller. Its session ID survives; whether an incomplete assistant message is included on resume is undocumented and unverified. |
+| Codex app server | `turn/interrupt` ends the turn and `thread/resume` keeps the thread ID. The protocol exposes streamed deltas, but does not promise that incomplete assistant text enters the next model context; unverified. |
+| OpenClaw Gateway | [Gateway docs](https://docs.openclaw.ai/web/control-ui/chat#abort-partial-retention) say buffered aborted text is saved in transcript history with abort metadata. They do not guarantee that all streamed text was buffered or included in the next model context. |
+
+Yorozu therefore supplies the stopped partial (up to its last 4,000 characters) and a reminder
+to verify prior actions with the next prompt to all three backends. The user's saved message
+stays unchanged. A Stop before text supplies a short note. A same-thread prompt can be admitted
+while Stop is pending, but waits for the exact Stop outcome before execution so the interrupted
+reply stays ahead of it in the host log.
 
 ## Approvals, questions and progress
 

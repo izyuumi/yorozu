@@ -191,6 +191,7 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
       let sessionId = turn.sessionId;
       try {
         for await (const message of session as AsyncIterable<SDKMessage>) {
+          if (turn.signal.aborted) break;
           if ("session_id" in message && message.session_id && message.session_id !== sessionId) {
             sessionId = message.session_id;
             turn.onSession?.(sessionId);
