@@ -81,6 +81,8 @@ public struct ThreadCache: Sendable {
         var threads: [ThreadSummary]
         var knownThreads: [ThreadSummary]?
         var openThread: String?
+        /// Prepared composer send. Outbox presence decides whether this draft was committed.
+        var preparedSend: [String: String]? = nil
     }
 
     public func composer() -> ComposerState? {

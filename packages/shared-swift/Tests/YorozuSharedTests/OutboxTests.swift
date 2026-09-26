@@ -103,7 +103,11 @@ private func reconnect(_ transport: QueueTransport) async {
     defer { try? FileManager.default.removeItem(at: directory) }
     try FileManager.default.createDirectory(at: directory.appending(path: "outbox.bin"), withIntermediateDirectories: true)
     let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
-    let model = ChatModel(transport: QueueTransport(), cache: cache, device: "phone")
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    await reconnect(transport)
+    #expect(await settle { model.canDeliver })
     let thread = model.newDraft()
     let attachment = MessageAttachment(name: "proof.txt", mime: "text/plain", data: "aGk=")
     model.drafts[thread.id] = "hello"
@@ -116,7 +120,12 @@ private func reconnect(_ transport: QueueTransport) async {
     #expect(model.outbox.isEmpty)
     #expect(model.events[thread.id]?.isEmpty ?? true)
     #expect(model.failure?.contains("Could not save pending messages") == true)
+    #expect(cache.composer()?.drafts[thread.id] == "hello")
+    #expect(cache.composer()?.attachments[thread.id] == [attachment])
+    #expect(await transport.messages.isEmpty)
 
+    await transport.yield(.ownerOnline(false))
+    #expect(await settle { !model.canDeliver })
     try FileManager.default.removeItem(at: directory.appending(path: "outbox.bin"))
     model.send(in: thread)
     #expect(model.drafts[thread.id] == "")
@@ -124,6 +133,36 @@ private func reconnect(_ transport: QueueTransport) async {
     #expect(!model.isDraft(thread.id))
     #expect(model.outbox.map(\.event.payload.kind) == [.threadCreate, .message])
     #expect(model.failure == nil)
+}
+
+@MainActor
+@Test func preparedSendRestoresDraftOnlyWhenOutboxDidNotCommit() throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let thread = ThreadSummary(id: "new-thread", title: "New chat", archived: false, lastActivity: 1)
+    let message = YorozuEvent(id: "prepared-message", threadId: thread.id, ts: 1, agentId: "phone",
+                              payload: .message(MessageData(role: .user, text: "hello")))
+    let create = YorozuEvent(id: "prepared-create", threadId: thread.id, ts: 1, agentId: "phone",
+                             payload: .threadCreate(ThreadCreateData()))
+    let prepared = ThreadCache.ComposerState(drafts: [thread.id: "hello"], attachments: [:],
+                                             threads: [thread], knownThreads: nil, openThread: thread.id,
+                                             preparedSend: [thread.id: message.id])
+
+    // Crash before outbox write: original draft remains usable.
+    try cache.save(composer: prepared)
+    let notCommitted = ChatModel(transport: QueueTransport(), cache: cache)
+    #expect(notCommitted.drafts[thread.id] == "hello")
+    #expect(notCommitted.isDraft(thread.id))
+
+    // Crash after outbox write but before composer clear: one queued operation owns input.
+    try cache.save(composer: prepared)
+    try cache.savePending([OutboxItem(event: create), OutboxItem(event: message)])
+    let committed = ChatModel(transport: QueueTransport(), cache: cache)
+    #expect(committed.drafts[thread.id] == "")
+    #expect(!committed.isDraft(thread.id))
+    #expect(committed.outbox.map(\.id) == [create.id, message.id])
+    #expect(cache.composer()?.drafts[thread.id] == "")
 }
 
 @MainActor
