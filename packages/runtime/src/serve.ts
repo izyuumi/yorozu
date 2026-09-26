@@ -893,7 +893,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     broadcast(event);
     // A raised card shows on the list as well as in the chat, so the list follows it.
-    if (event.kind === "approval_card") broadcast(threadList());
+    if (event.kind === "approval_card" || event.kind === "question_card") broadcast(threadList());
   }
 
   /** Final event owns recovery marker: persist once, then acknowledge, then publish. */
@@ -1273,28 +1273,28 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const id = userEventId ? completionIdFor(threadId, userEventId) : randomUUID();
     // `done` on the finished one only: it is what tells a phone the turn is over, so its
     // composer can stop offering Stop. The deltas under the same id leave it unset.
-    const message = (reply: string, done = false): YorozuEvent => ({
+    const message = (reply: string, done = false, failed = false): YorozuEvent => ({
       id,
       threadId,
       ts: Date.now(),
       agentId: MAIN_AGENT,
       kind: "message",
-      data: { role: "agent", text: reply, ...(done ? { done: true } : {}) },
+      data: { role: "agent", text: reply, ...(done ? { done: true } : {}), ...(failed ? { failed: true } : {}) },
     });
 
     // A native agent's thread is answered by that agent alone: its own session, in the
     // thread's folder, with its own tools. Yorozu's dispatch and approval gate are not here.
     if (agent !== "yorozu") {
       const runner = nativeRunners[agent];
-      const finish = (reply: string): void => {
-        const final = message(reply, true);
+      const finish = (reply: string, failed = false): void => {
+        const final = message(reply, true, failed);
         appendTranscript(final, transcripts);
         appendThreadEvent(final, dir);
         broadcast(final);
       };
       // Finished, so the composer is not left offering Stop for a turn nobody is running.
       if (!runner) {
-        finish(`${agent} is not available in this build yet.`);
+        finish(`${agent} is not available in this build yet.`, true);
         setNativeTurn(threadId, undefined, dir);
         broadcast(threadList());
         return;
@@ -1304,7 +1304,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const home = threadHome(threadId, dir);
       if (!home.cwd || !isProjectFolder(home.cwd)) {
         state("native-cwd-refused");
-        finish(`${agent} needs one of this Mac's project folders, and this thread has none.`);
+        finish(`${agent} needs one of this Mac's project folders, and this thread has none.`, true);
         setNativeTurn(threadId, undefined, dir);
         broadcast(threadList());
         return;
@@ -1363,7 +1363,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
             state(`native-error ${error instanceof Error ? error.message : String(error)}`);
             process.stderr.write(`native-error ${threadId}: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
             if (!recovering && !executionStarted) {
-              finish(`${agent} could not answer; see the Mac log.`);
+              finish(`${agent} could not answer; see the Mac log.`, true);
               return;
             }
             if (recoveryAttempts >= 3) {
@@ -1390,6 +1390,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
     if (openclaw) {
       const turn = new AbortController();
+      let failed = false;
       if (!running.has(threadId)) running.set(threadId, turn);
       if (userEventId) runningEventIds.set(threadId, userEventId);
       broadcastActiveThreadList();
@@ -1408,10 +1409,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
           onUpdate: (reply) => { if (!turn.signal.aborted) broadcast(message(reply)); },
           onEvent: emit,
           onRecoveryState: () => broadcast(threadList()),
+          onFailure: () => { failed = true; },
         });
         if (turn.signal.aborted) return;
         if (reply === undefined) return;
-        const final = message(reply, true);
+        const final = message(reply, true, failed);
         finalizeOpenClaw(final);
       } finally {
         if (running.get(threadId) === turn) running.delete(threadId);
@@ -2108,9 +2110,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
         // Emitted by the runtime, never accepted from a device: a proposal is not a decision.
         return;
       case "question_answer":
-        if (nativeCards.answer(event)) return;
-        questions.answer(event.data.questionId, event.data.answer);
-        return;
+        if (!nativeCards.answer(event)) questions.answer(event.data.questionId, event.data.answer);
+        // The row's "needs your answer" mark clears with the card.
+        return broadcast(threadList());
       // The rest of a truncated tool result, to the one device that asked, under the id it
       // already holds so it lands in place. Nothing to say when none was kept.
       case "tool_result_request": {
@@ -2820,13 +2822,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
     running.set(threadId, turn);
     if (stored.userEventId) runningEventIds.set(threadId, stored.userEventId);
     broadcastActiveThreadList();
-    const message = (text: string, done = false): YorozuEvent => ({
+    const message = (text: string, done = false, failed = false): YorozuEvent => ({
       id: completionId, threadId, ts: Date.now(), agentId: MAIN_AGENT, kind: "message",
-      data: { role: "agent", text, ...(done ? { done: true } : {}) },
+      data: { role: "agent", text, ...(done ? { done: true } : {}), ...(failed ? { failed: true } : {}) },
     });
     try {
       while (!turn.signal.aborted) {
         try {
+          let failed = false;
           const reply = await openclaw!.resume({
             threadId,
             signal: turn.signal,
@@ -2834,9 +2837,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
             onUpdate: (text) => broadcast(message(text)),
             onEvent: emit,
             onRecoveryState: () => broadcast(threadList()),
+            onFailure: () => { failed = true; },
           });
           if (turn.signal.aborted || reply === undefined) return;
-          finalizeOpenClaw(message(reply, true));
+          finalizeOpenClaw(message(reply, true, failed));
           return;
         } catch (error) {
           state(`openclaw-resume-error ${String(error)}`);

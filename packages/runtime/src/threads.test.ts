@@ -491,6 +491,23 @@ test("a thread waits for approval until its card is answered", () => {
   expect(threadSummaries(dir)[0]!.awaitingApproval).toBe(true);
   appendThreadEvent({ ...base, id: "ans", kind: "approval_answer", data: { actionId: "a", answer: "yes" } }, dir);
   expect(threadSummaries(dir)[0]!.awaitingApproval).toBeUndefined();
+
+  // A question is the other card a row must own up to, tracked by its own id space.
+  expect(threadSummaries(dir)[0]!.awaitingQuestion).toBeUndefined();
+  appendThreadEvent({ ...base, id: "q", kind: "question_card", data: { questionId: "q1", question: "Which env?", options: ["staging"] } }, dir);
+  expect(threadSummaries(dir)[0]!.awaitingQuestion).toBe(true);
+  expect(threadSummaries(dir)[0]!.awaitingApproval).toBeUndefined();
+  appendThreadEvent({ ...base, id: "qa", kind: "question_answer", data: { questionId: "q1", answer: "staging" } }, dir);
+  expect(threadSummaries(dir)[0]!.awaitingQuestion).toBeUndefined();
+});
+
+test("a failed final needs attention until the user starts another turn", () => {
+  const thread = createThread("Deploy", dir);
+  const base = { threadId: thread.id, ts: 1, agentId: "main" };
+  appendThreadEvent({ ...base, id: "failed", kind: "message", data: { role: "agent", text: "Build failed", done: true, failed: true } }, dir);
+  expect(threadSummaries(dir)[0]!.needsAttention).toBe(true);
+  appendThreadEvent({ ...base, id: "retry", ts: 2, kind: "message", data: { role: "user", text: "Try again" } }, dir);
+  expect(threadSummaries(dir)[0]!.needsAttention).toBeUndefined();
 });
 
 import { recoverNativeTurns, setNativeTurn } from "./threads.js";

@@ -1091,7 +1091,7 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
   expect(turns[3]?.text).toContain("Previous reply was stopped or has a pending Stop request");
   // The phone hears that the turn is over and where to look; the SDK's own words, which can
   // name local paths and accounts, stay in the Mac's log.
-  expect(failed).toMatchObject({ data: { text: `${agent} could not answer; see the Mac log.` } });
+  expect(failed).toMatchObject({ data: { text: `${agent} could not answer; see the Mac log.`, failed: true } });
   expect(JSON.stringify(failed)).not.toContain("not logged in");
   expect(states).toContain("native-error claude is not logged in");
 });
