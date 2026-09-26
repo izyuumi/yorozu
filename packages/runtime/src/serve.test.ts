@@ -1101,6 +1101,53 @@ test("rapid reply revisions converge to the latest partial and final answer", as
     .map((event) => event.kind === "message" ? event.data.text : "")).toEqual(["draft 0", "draft 19", "finished"]);
 });
 
+test("a trace burst cannot delay the final answer or lose durable history", async () => {
+  let release!: () => void;
+  const firstReplay = new Promise<void>((resolve) => { release = resolve; });
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    for (let i = 0; i < 150; i++) turn.onActivity?.(`thought-${i}`, { kind: "thought", data: { text: `step ${i}` } });
+    turn.onActivity?.("large-thought", { kind: "thought", data: { text: "x".repeat(800_000) } });
+    await firstReplay;
+    return { text: "finished" };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "cc");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "cc"));
+  send({ kind: "message", data: { role: "user", text: "work" } }, "cc");
+  const lastSeen: Record<string, string> = {};
+  const replayed: YorozuEvent[] = [];
+  let hinted = false;
+  let complete = false;
+  const onEvent = (event: YorozuEvent): void => {
+    if (event.kind !== "sync_delta") return;
+    if (!hinted && event.data.events.length === 0 && event.data.more === true) {
+      hinted = true;
+      send({ kind: "sync_request", data: { lastSeen, focusThreadId: "cc" } }, "");
+      return;
+    }
+    for (const item of event.data.events) {
+      replayed.push(item);
+      lastSeen[item.threadId] = item.syncCursor ?? item.id;
+    }
+    if (replayed.length && replayed.length === event.data.events.length) release();
+    if (event.data.more) send({ kind: "sync_request", data: { lastSeen, focusThreadId: "cc", includeCurrent: false } }, "");
+    else complete = true;
+  };
+  const live = await eventsUntil((event) => {
+    onEvent(event);
+    return event.kind === "message" && event.data.role === "agent" && event.data.done === true;
+  });
+  expect(hinted).toBe(true);
+  expect(replayed.filter((event) => event.kind === "thought").length).toBeLessThan(151);
+  expect(live.filter((event) => event.kind === "thought").length).toBeLessThan(150);
+  expect(live.some((event) => event.kind === "thought" && event.data.text.length === 800_000)).toBe(false);
+  while (!complete) await eventsUntil((event) => { onEvent(event); return complete; });
+  expect(replayed.filter((event) => event.kind === "thought")).toHaveLength(151);
+  expect(new Set(replayed.map((event) => event.id)).size).toBe(replayed.length);
+  expect(replayed.some((event) => event.kind === "thought" && event.data.text.includes("full trace on host"))).toBe(true);
+  expect(readThreadEvents("cc", dir).some((event) => event.kind === "thought" && event.data.text.length === 800_000)).toBe(true);
+});
+
 test("stopping a turn keeps its latest unsent draft", async () => {
   const runner: NativeAgentRunner = { run: async (turn) => {
     for (let i = 0; i < 20; i++) turn.onUpdate?.(`draft ${i}`);

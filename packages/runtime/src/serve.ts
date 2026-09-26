@@ -655,6 +655,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const catchupSends = new Map<string, { connection: WebSocket | null; device: PairedDevice;
     responses: YorozuEvent[]; next: number }>();
   let catchupTimer: NodeJS.Timeout | null = null;
+  let nextCatchupAt = 0;
   /**
    * Secrets behind the QRs on screen, newest last. A phone's first `hello` proves it holds one
    * of them, and pairing spends them all: a QR is for one phone, and the next one is drawn fresh.
@@ -663,11 +664,142 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const PAIRING_SECRETS = 4;
   /** Seals and sends to one paired device. Replaced per connection, a no-op while there is none. */
   let sendTo: (device: string, event: YorozuEvent) => void = () => {};
-  let sendToAll: (event: YorozuEvent) => number = () => 0;
+  // A negative result means a trace was held (-1) or is too large to send live (-2).
+  let sendToAll: (event: YorozuEvent, maxBuffered?: number) => number = () => 0;
   const liveReplies = new Map<string, YorozuEvent>();
   const partials = new Map<string, YorozuEvent>();
   let partialTimer: NodeJS.Timeout | null = null;
   let nextPartialAt = 0;
+  const traces = new Map<string, YorozuEvent[]>();
+  let traceCount = 0;
+  let traceBytes = 0;
+  let traceTimer: NodeJS.Timeout | null = null;
+  let syncHintTimer: NodeJS.Timeout | null = null;
+  let syncNeeded = false;
+  let nextSyncHintAt = 0;
+  const hintedClients = new Set<string>();
+  let traceTokens = 30;
+  let traceRefilledAt = Date.now();
+  const TRACE_EVENTS = 64;
+  const TRACE_BYTES = 512 * 1024;
+  const refillTraceTokens = (): void => {
+    const now = Date.now();
+    traceTokens = Math.min(30, traceTokens + Math.max(0, now - traceRefilledAt) / 100);
+    traceRefilledAt = now;
+  };
+
+  const traceEvent = (event: YorozuEvent): boolean =>
+    event.kind === "thought" || event.kind === "tool_call" || event.kind === "tool_result" ||
+    event.kind === "progress_card";
+  const phoneTrace = (event: YorozuEvent): YorozuEvent => {
+    if (!traceEvent(event) || Buffer.byteLength(JSON.stringify(event)) <= 32 * 1024) return event;
+    let preview: YorozuEvent;
+    switch (event.kind) {
+      case "thought":
+        preview = { ...event, data: { ...event.data,
+          text: `${event.data.text.slice(0, 4_096)}\n… [full trace on host]` } };
+        break;
+      case "tool_call":
+        preview = { ...event, data: { ...event.data, name: event.data.name.slice(0, 256),
+          args: { preview: "Arguments shortened; full trace on host" } } };
+        break;
+      case "tool_result":
+        preview = stashToolResult(event, dir);
+        break;
+      case "progress_card":
+        preview = { ...event, data: { ...event.data, title: event.data.title.slice(0, 256),
+          steps: [], note: "Progress detail shortened; full trace on host" } };
+        break;
+      default: return event;
+    }
+    return Buffer.byteLength(JSON.stringify(preview)) <= 32 * 1024 ? preview
+      : { ...event, kind: "thought", data: { text: "Large trace kept on host" } };
+  };
+  const durableTrace = (event: YorozuEvent): boolean =>
+    event.kind !== "thought" || event.data.transient !== true;
+  const clearTraces = (): void => {
+    traces.clear();
+    traceCount = 0;
+    traceBytes = 0;
+    if (traceTimer) clearTimeout(traceTimer);
+    traceTimer = null;
+    if (syncHintTimer) clearTimeout(syncHintTimer);
+    syncHintTimer = null;
+    syncNeeded = false;
+    traceTokens = 30;
+    traceRefilledAt = Date.now();
+  };
+  const sendSyncHint = (): void => {
+    syncHintTimer = null;
+    if (!syncNeeded || stopped || !relayReady) return;
+    syncNeeded = false;
+    nextSyncHintAt = Date.now() + 5_000;
+    // An empty truncated delta leaves every client's replay cursor intact and asks it to sync.
+    for (const pub of devices.keys()) hintedClients.add(pub);
+    try { sendToAll(control({ kind: "sync_delta", data: { events: [], more: true } })); }
+    catch (error) { state(`sync-hint-error ${String(error)}`); socket?.close(); }
+  };
+  const noteSkippedTrace = (): void => {
+    syncNeeded = true;
+    if (!syncHintTimer) syncHintTimer = setTimeout(sendSyncHint, Math.max(1_000, nextSyncHintAt - Date.now()));
+  };
+  const drainTrace = (): void => {
+    traceTimer = null;
+    if (stopped || !relayReady) return clearTraces();
+    if ((socket?.bufferedAmount ?? 0) > TRACE_BYTES) {
+      traceTimer = setTimeout(drainTrace, 100);
+      return;
+    }
+    refillTraceTokens();
+    if (traceTokens < 1) {
+      traceTimer = setTimeout(drainTrace, Math.max(10, Math.ceil((1 - traceTokens) * 100)));
+      return;
+    }
+    const entry = traces.entries().next().value;
+    if (!entry) return;
+    const [threadId, queue] = entry;
+    traces.delete(threadId);
+    const event = queue[0]!;
+    let batches = 0;
+    try { batches = sendToAll(event, TRACE_BYTES); }
+    catch (error) { state(`trace-send-error ${String(error)}`); socket?.close(); return; }
+    if (batches === -1) {
+      traces.set(threadId, queue);
+      traceTimer = setTimeout(drainTrace, 100);
+      return;
+    }
+    queue.shift();
+    traceCount--;
+    traceBytes -= Buffer.byteLength(JSON.stringify(event));
+    if (queue.length) traces.set(threadId, queue);
+    if (batches === -2) { if (durableTrace(event)) noteSkippedTrace(); }
+    else traceTokens -= batches;
+    if (traces.size) traceTimer = setTimeout(drainTrace, 100);
+  };
+  const queueTrace = (event: YorozuEvent): void => {
+    if (!relayReady) return; // reconnect sync owns history emitted while the relay was away
+    refillTraceTokens();
+    if (!traces.size && traceTokens >= 1 && (socket?.bufferedAmount ?? 0) <= TRACE_BYTES) {
+      const batches = sendToAll(event, TRACE_BYTES);
+      if (batches >= 0) { traceTokens -= batches; return; }
+      if (batches === -2) { if (durableTrace(event)) noteSkippedTrace(); return; }
+    }
+    const size = Buffer.byteLength(JSON.stringify(event));
+    const queue = traces.get(event.threadId) ?? [];
+    queue.push(event);
+    traces.set(event.threadId, queue);
+    traceCount++;
+    traceBytes += size;
+    while (traceCount > TRACE_EVENTS || traceBytes > TRACE_BYTES) {
+      const largest = [...traces].reduce((best, entry) => entry[1].length > best[1].length ? entry : best);
+      const skipped = largest[1].shift()!;
+      traceCount--;
+      traceBytes -= Buffer.byteLength(JSON.stringify(skipped));
+      if (!largest[1].length) traces.delete(largest[0]);
+      if (durableTrace(skipped)) noteSkippedTrace();
+    }
+    if (traces.size && !traceTimer) traceTimer = setTimeout(drainTrace, 100);
+  };
 
   /** Latest partial per thread, paced by the relay batches each broadcast actually used. */
   const flushPartial = (): void => {
@@ -693,10 +825,22 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   /** The same event to every paired device, through the relay or over the local socket. */
   const broadcast = (event: YorozuEvent): void => {
+    if (traceEvent(event)) {
+      for (const send of locals.values()) send(event);
+      queueTrace(phoneTrace(event));
+      return;
+    }
     if (event.kind === "message" && event.data.role === "agent" && !event.parentAgentId) {
       if (event.data.done) {
         liveReplies.delete(event.threadId);
         partials.delete(event.threadId);
+        const queued = traces.get(event.threadId);
+        if (queued) {
+          traces.delete(event.threadId);
+          traceCount -= queued.length;
+          traceBytes -= queued.reduce((sum, trace) => sum + Buffer.byteLength(JSON.stringify(trace)), 0);
+          if (queued.some(durableTrace)) noteSkippedTrace();
+        }
       } else {
         liveReplies.set(event.threadId, event);
         partials.set(event.threadId, event);
@@ -978,7 +1122,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   /** A bounded replay page. An explicit thread request includes its pre-pairing history. */
   const syncDelta = (lastSeen: Record<string, string>, pairedAt = 0, threadId?: string,
-    includeApprovalStatus = true, focusThreadId?: string, includeCurrent = true): YorozuEvent[] => {
+    includeApprovalStatus = true, focusThreadId?: string, includeCurrent = true,
+    replayBytes = SYNC_PAGE_BYTES, replayEvents = SYNC_LIMIT, forPhone = false): YorozuEvent[] => {
     const events: YorozuEvent[] = [];
     const cards: YorozuEvent[] = [];
     const selected = listThreads(dir).filter((thread) => threadId ? thread.id === threadId : !thread.archived);
@@ -1029,9 +1174,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const page = eventsAfter(thread.id, lastSeen?.[thread.id], dir, threadId ? 0 : pairedAt,
         (event) => includeApprovalStatus || event.kind !== "approval_status");
       if (page.length === SYNC_LIMIT) more = true;
-      for (const event of page) {
+      for (const stored of page) {
+        const event = forPhone ? phoneTrace(stored) : stored;
         const size = Buffer.byteLength(JSON.stringify(event));
-        if ((events.length > 0 || current.length > 0) && bytes + size > SYNC_PAGE_BYTES) {
+        if (events.length >= replayEvents ||
+          ((events.length > 0 || current.length > 0) && bytes + size > replayBytes)) {
           more = true;
           break threads;
         }
@@ -1536,6 +1683,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
     catchupSends.delete(pub);
     if (!stopped && relayReady && socket === job.connection && job.connection?.readyState === WebSocket.OPEN &&
       devices.get(pub) === job.device) {
+      if (job.connection.bufferedAmount > 512 * 1024) {
+        catchupSends.set(pub, job);
+        catchupTimer = setTimeout(sendCatchup, 100);
+        catchupTimer.unref();
+        return;
+      }
       while (job.next < job.responses.length) {
         const response = job.responses[job.next++]!;
         if (!stillActionable(response)) continue;
@@ -1548,12 +1701,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
           job.connection?.close();
           return;
         }
+        nextCatchupAt = Date.now() + 100;
         break;
       }
       if (job.next < job.responses.length) catchupSends.set(pub, job);
     }
     if (catchupSends.size) {
-      catchupTimer = setTimeout(sendCatchup, 100);
+      catchupTimer = setTimeout(sendCatchup, Math.max(0, nextCatchupAt - Date.now()));
       catchupTimer.unref();
     }
   };
@@ -2008,15 +2162,23 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (event.data.focusThreadId !== undefined &&
           (typeof event.data.focusThreadId !== "string" || event.data.focusThreadId.length > 256)) return;
         const compatibility = from ? devices.get(from)?.compatibility : undefined;
+        const hinted = !!from && hintedClients.has(from);
         const responses = syncDelta(event.data.lastSeen, pairedAt, event.data.threadId,
           !from || compatibility?.state === "compatible" && compatibility.capabilities.includes("offline-approval-v1"),
-          event.data.focusThreadId, event.data.includeCurrent !== false);
+          event.data.focusThreadId, event.data.includeCurrent !== false,
+          hinted ? 32 * 1024 : SYNC_PAGE_BYTES, hinted ? 32 : SYNC_LIMIT, !!from);
+        if (hinted && event.data.threadId === undefined &&
+          responses.some((response) => response.kind === "sync_delta" && !response.data.more))
+          hintedClients.delete(from!);
         if (from) catchupSends.delete(from);
-        if (from && responses.length > 1) {
+        if (from) {
           const device = devices.get(from);
           if (!device) return;
           catchupSends.set(from, { connection: socket, device, responses, next: 0 });
-          if (!catchupTimer) sendCatchup();
+          if (!catchupTimer) {
+            catchupTimer = setTimeout(sendCatchup, Math.max(0, nextCatchupAt - Date.now()));
+            catchupTimer.unref();
+          }
         } else for (const response of responses) reply(response);
         return;
       }
@@ -2246,14 +2408,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
     };
     sendTo = (device, event) => { for (const box of boxesFor(device, event)) sendFrame(box); };
     const emptyBatchBytes = Buffer.byteLength(JSON.stringify({ type: "frame", frames: [] }));
-    sendToAll = (event) => {
+    sendToAll = (event, maxBuffered) => {
+      if (maxBuffered !== undefined) {
+        // Cover both current and legacy boxes without burning sequence numbers while held.
+        const estimate = devices.size * (Buffer.byteLength(JSON.stringify(event)) * 3 + 1_024);
+        if (estimate > maxBuffered) return -2;
+        if (ws.bufferedAmount + estimate > maxBuffered) return -1;
+      }
       let frames: ReturnType<typeof signedFrame>[] = [];
       let bytes = emptyBatchBytes;
-      let batches = 0;
+      const batches: string[] = [];
       const flush = (): void => {
         if (frames.length) {
-          ws.send(JSON.stringify({ type: "frame", frames }));
-          batches++;
+          batches.push(JSON.stringify({ type: "frame", frames }));
         }
         frames = [];
         bytes = emptyBatchBytes;
@@ -2267,7 +2434,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
         bytes += size;
       }
       flush();
-      return batches;
+      if (maxBuffered !== undefined) {
+        const total = batches.reduce((sum, batch) => sum + Buffer.byteLength(batch), 0);
+        if (total > maxBuffered) return -2;
+        if (ws.bufferedAmount + total > maxBuffered) return -1;
+      }
+      for (const batch of batches) ws.send(batch);
+      return batches.length;
     };
 
     /**
@@ -2538,6 +2711,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
     ws.on("close", () => {
       relayReady = false;
+      clearTraces();
       catchupSends.clear();
       if (catchupTimer) clearTimeout(catchupTimer);
       catchupTimer = null;
@@ -2648,6 +2822,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     close: async () => {
       stopped = true;
+      clearTraces();
       partials.clear();
       if (partialTimer) clearTimeout(partialTimer);
       partialTimer = null;

@@ -252,6 +252,17 @@ queued draft. The host still
 keeps the full current reply for reconnect catch-up and writes the final to durable history.
 The host sends each live broadcast's sealed phone copies in relay frame batches of at most
 16 entries and under 900 KB, so multiple paired phones do not multiply relay rate-limit cost.
+Verbose thought, tool, and progress events use a separate relay budget: a 30-batch burst, then
+ten batches per second. Critical replies, cards, and acknowledgments bypass that queue. The
+queued trace is capped at 64 events or 512 KB, including a projected encrypted fanout budget
+on the host relay socket. The host keeps durable trace history; if live queue pressure skips an
+event, a periodic empty `sync_delta` with `more` asks paired clients to replay from their own
+cursors. Hint-triggered replay uses pages of at most 32 events or 32 KB of ordinary history
+(a single large event or current snapshot can exceed that target), with one relay catch-up
+frame per 100 ms; final answers and cards bypass that queue. Queued
+traces for a completed turn yield to its final answer and replay. The local Mac socket continues
+receiving traces immediately. Oversized verbose traces travel as phone previews so a single
+stored event cannot stall replay; the host retains the full event.
 
 Sync builds an in-memory byte-offset index on the first read of a log, then seeks directly to each
 page without re-parsing prior messages; file changes invalidate the index, metadata for 16
