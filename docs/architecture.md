@@ -234,10 +234,11 @@ so updates that reuse a progress card's ID cannot skip intervening history. Phon
 cursor only from replayed events and save it with the encrypted history, so live replies and
 unsent messages cannot move it past unseen pages. An invalid cursor replays from the start.
 
-Routine sync also names the open conversation as `focusThreadId`. The host sends still-actionable
-cards as individual events before the delta, puts its current reply in `sync_delta.current`, and
-scans that thread first. Current events never advance `lastSeen`; older replay cannot replace a newer or
-final version of the same reply. Subsequent replay pages skip that snapshot and retain open-thread
+Routine sync also names the open conversation as `focusThreadId`. The host puts its current reply
+and still-actionable cards in `sync_delta.current`, sending cards that exceed the snapshot budget
+as paced individual events before the delta, and scans that thread first. Current events never
+advance `lastSeen`; older replay cannot replace a newer or final version of the same reply.
+Subsequent replay pages skip that snapshot and retain open-thread
 priority, so long backfills do not repeatedly scan the full log. Peers without these optional
 fields keep ordinary replay.
 

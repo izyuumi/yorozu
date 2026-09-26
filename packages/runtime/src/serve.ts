@@ -652,6 +652,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   let relayReady = false;
   let retry: NodeJS.Timeout | null = null;
   let stopped = false;
+  let catchupSends: Promise<void> = Promise.resolve();
   /**
    * Secrets behind the QRs on screen, newest last. A phone's first `hello` proves it holds one
    * of them, and pairing spends them all: a QR is for one phone, and the next one is drawn fresh.
@@ -950,14 +951,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
       selected.splice(selected.indexOf(focused), 1);
       selected.unshift(focused);
     }
-    const current: YorozuEvent[] = [];
+    let latest: YorozuEvent | undefined;
     if (focused && includeCurrent) {
       const history = readThreadEvents(focused.id, dir).filter((event) => event.ts >= pairedAt);
       const live = running.has(focused.id) ? liveReplies.get(focused.id) : undefined;
       const reply = live && live.ts >= pairedAt ? live : undefined;
-      const latest = reply ?? history.findLast((event) =>
+      latest = reply ?? history.findLast((event) =>
         event.kind === "message" && event.data.role === "agent" && !event.parentAgentId);
-      if (latest) current.push(latest);
       if (running.has(focused.id)) {
         const answered = new Set(history.flatMap((event) => event.kind === "approval_answer" ? [event.data.actionId]
           : event.kind === "approval_status" && event.data.status !== "rejected" ? [event.data.actionId]
@@ -969,10 +969,25 @@ export function serve(options: ServeOptions = {}): Sidecar {
               questions.has(event.data.questionId, focused.id)));
       }
     }
-    // Active cards are individual protocol events ahead of the delta, so none disappear when
-    // a snapshot would exceed the frame budget. A huge reply still arrives via replay.
-    if (current.length && Buffer.byteLength(JSON.stringify(current)) > SYNC_PAGE_BYTES / 2) current.length = 0;
-    let bytes = Buffer.byteLength(JSON.stringify(current));
+    // Keep active cards ahead of the current reply and historical replay within a bounded frame.
+    const current: YorozuEvent[] = [];
+    let currentBytes = 2; // []
+    const deferredCards: YorozuEvent[] = [];
+    for (const card of cards) {
+      const size = Buffer.byteLength(JSON.stringify(card)) + (current.length ? 1 : 0);
+      if (currentBytes + size <= SYNC_PAGE_BYTES / 2) {
+        current.push(card);
+        currentBytes += size;
+      } else deferredCards.push(card);
+    }
+    if (latest) {
+      const size = Buffer.byteLength(JSON.stringify(latest)) + (current.length ? 1 : 0);
+      if (currentBytes + size <= SYNC_PAGE_BYTES / 2) {
+        current.push(latest);
+        currentBytes += size;
+      }
+    }
+    let bytes = currentBytes;
     let more = false;
     threads: for (const thread of selected) {
       const page = eventsAfter(thread.id, lastSeen?.[thread.id], dir, threadId ? 0 : pairedAt,
@@ -988,7 +1003,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         bytes += size;
       }
     }
-    return [...cards, control({
+    return [...deferredCards, control({
       kind: "sync_delta",
       data: { events, ...(current.length ? { current } : {}), workingThreadIds: [...running.keys()],
         ...(threadId ? { threadId } : {}), ...(more ? { more: true } : {}) },
@@ -1918,9 +1933,27 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (event.data.focusThreadId !== undefined &&
           (typeof event.data.focusThreadId !== "string" || event.data.focusThreadId.length > 256)) return;
         const compatibility = from ? devices.get(from)?.compatibility : undefined;
-        for (const response of syncDelta(event.data.lastSeen, pairedAt, event.data.threadId,
+        const responses = syncDelta(event.data.lastSeen, pairedAt, event.data.threadId,
           !from || compatibility?.state === "compatible" && compatibility.capabilities.includes("offline-approval-v1"),
-          event.data.focusThreadId, event.data.includeCurrent !== false)) reply(response);
+          event.data.focusThreadId, event.data.includeCurrent !== false);
+        if (from && responses.length > 1) {
+          const connection = socket;
+          const send = async (): Promise<void> => {
+            for (const response of responses) {
+              if (stopped || socket !== connection || connection?.readyState !== WebSocket.OPEN || !devices.has(from)) return;
+              if (response.kind === "approval_card") {
+                if (pending.get(response.data.actionId)?.threadId !== response.threadId &&
+                  !nativeCards.has(response.data.actionId, response.threadId)) continue;
+              } else if (response.kind === "question_card" &&
+                !questions.has(response.data.questionId, response.threadId)) continue;
+              reply(response);
+              if (response !== responses.at(-1)) await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+          };
+          catchupSends = catchupSends.then(send, send).catch((error: unknown) => {
+            state(`catchup-send-error ${String(error)}`);
+          });
+        } else for (const response of responses) reply(response);
         return;
       }
     }

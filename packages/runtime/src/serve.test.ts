@@ -2851,13 +2851,15 @@ test("catch-up excludes an answered question from current state", async () => {
   expect(question.kind).toBe("question_card");
   send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "t1" } }, "");
   const active = await eventsUntil((event) => event.kind === "sync_delta");
-  expect(active.slice(0, -1)).toContainEqual(question);
+  const activeDelta = active.at(-1)!;
+  expect(activeDelta.kind === "sync_delta" && activeDelta.data.current).toContainEqual(question);
   if (question.kind !== "question_card") throw new Error("expected question card");
   send({ kind: "question_answer", data: { questionId: question.data.questionId, answer: "A" } });
   await eventsUntil((event) => event.kind === "message" && event.data.done === true);
   send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "t1" } }, "");
   const settled = await eventsUntil((event) => event.kind === "sync_delta");
-  expect(settled.slice(0, -1)).not.toContainEqual(question);
+  const settledDelta = settled.at(-1)!;
+  expect(settledDelta.kind === "sync_delta" && settledDelta.data.current).not.toContainEqual(question);
 });
 
 test("current snapshot honors the pairing cutoff for live replies", async () => {
