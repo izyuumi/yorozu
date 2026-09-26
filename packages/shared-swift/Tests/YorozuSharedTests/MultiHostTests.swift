@@ -79,6 +79,23 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
 }
 
 @MainActor
+@Test func restoredNavigationSelectsOnlyLastUsedHostsExistingThread() {
+    let first = HostSession(id: multiHostID(0), model: ChatModel(transport: MultiHostTransport()), relayURL: "wss://relay.example")
+    let second = HostSession(id: multiHostID(1), model: ChatModel(transport: MultiHostTransport()), relayURL: "wss://relay.example")
+    let firstDraft = first.model.newDraft()
+    let secondDraft = second.model.newDraft()
+    first.model.openThread = firstDraft.id
+    second.model.openThread = secondDraft.id
+    let hosts = MultiHostModel(sessions: [first, second], lastUsedHostID: second.id)
+
+    #expect(hosts.restoredOpenThread == HostThreadID(hostID: second.id, threadID: secondDraft.id))
+    second.model.openThread = "removed"
+    #expect(hosts.restoredOpenThread == nil)
+    hosts.lastUsedHostID = "missing"
+    #expect(hosts.restoredOpenThread == HostThreadID(hostID: first.id, threadID: firstDraft.id))
+}
+
+@MainActor
 @Test func multiHostThreadsKeepCollidingIDsSeparateAndSearchTheCorrectMessages() async throws {
     let firstTransport = MultiHostTransport(), secondTransport = MultiHostTransport()
     let first = multiHostSession(multiHostID(0), transport: firstTransport, nickname: "Desk")

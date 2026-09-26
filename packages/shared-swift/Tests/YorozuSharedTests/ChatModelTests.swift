@@ -146,6 +146,24 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
 }
 
 @MainActor
+@Test func backgroundFlushPersistsComposerBeforeItsDebounce() async {
+    let cache = ThreadCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString), key: SymmetricKey(size: .bits256))
+    defer { try? FileManager.default.removeItem(at: cache.directory) }
+    let model = ChatModel(transport: FakeTransport(), cache: cache)
+    let draft = model.newDraft()
+    model.drafts[draft.id] = "unsent"
+    model.attachments[draft.id] = [MessageAttachment(name: "photo.png", mime: "image/png", data: "aGk=")]
+    model.openThread = draft.id
+
+    await model.flushCache()
+
+    let resumed = ChatModel(transport: FakeTransport(), cache: cache)
+    #expect(resumed.drafts[draft.id] == "unsent")
+    #expect(resumed.attachments[draft.id] == model.attachments[draft.id])
+    #expect(resumed.openThread == draft.id)
+}
+
+@MainActor
 @Test func failedRestartSnapshotIsReportedInsteadOfLosingDrafts() throws {
     let file = URL.temporaryDirectory.appending(path: UUID().uuidString)
     try Data().write(to: file)
