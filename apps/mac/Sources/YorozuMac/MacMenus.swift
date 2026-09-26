@@ -73,7 +73,64 @@ struct ChatMenus: Commands {
     }
 }
 
-/// Whether the chat window is open, which is what decides the app's activation policy.
+struct HostQuitCommands: Commands {
+    let backgroundOnly: Bool
+
+    var body: some Commands {
+        CommandGroup(replacing: .appTermination) {
+            if backgroundOnly {
+                Button("Close Yorozu Windows") { AppDelegate.closeWindows() }
+                    .keyboardShortcut("q")
+            } else {
+                Button("Quit Yorozu") { NSApp.terminate(nil) }
+                    .keyboardShortcut("q")
+            }
+        }
+    }
+}
+
+/// Host-only presentation preference. A client Mac never enters this mode even if it was
+/// previously a host; switching back to host restores the saved choice.
+enum HostWindowMode {
+    static let key = "backgroundOnlyHost"
+    static let updateRelaunchKey = "backgroundOnlyUpdateRelaunch"
+
+    static func active(role: MacRole?, enabled: Bool) -> Bool { role == .host && enabled }
+
+    @MainActor static var active: Bool {
+        active(role: MacChatSession.shared.role, enabled: UserDefaults.standard.bool(forKey: key))
+    }
+
+    @MainActor static var openQuickChat: (() -> Void)?
+    @MainActor static var pendingExplicitOpen = false
+
+    @MainActor static func requestQuickChat() {
+        guard active else { return }
+        if let openQuickChat { openQuickChat() }
+        else { pendingExplicitOpen = true }
+    }
+
+    @MainActor static func routeQuickChat(threadID: String, eventID: String?, kind: String?) {
+        guard active else { return }
+        QuickChatRouter.shared.target = QuickChatTarget(threadID: threadID, eventID: eventID, kind: kind)
+        requestQuickChat()
+    }
+}
+
+struct QuickChatTarget: Identifiable {
+    let id = UUID()
+    let threadID: String
+    let eventID: String?
+    let kind: String?
+}
+
+@MainActor @Observable
+final class QuickChatRouter {
+    static let shared = QuickChatRouter()
+    var target: QuickChatTarget?
+}
+
+/// Whether the full chat window is open, which decides the normal app's activation policy.
 ///
 /// The app is an `LSUIElement` agent, so it launches with no Dock icon and no menu bar — and a
 /// menu bar is where the commands above have to appear. While the chat window is up the app is
@@ -88,7 +145,7 @@ enum WindowPresence {
 
     static func opened() {
         open += 1
-        NSApp.setActivationPolicy(.regular)
+        NSApp.setActivationPolicy(HostWindowMode.active ? .accessory : .regular)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -97,5 +154,9 @@ enum WindowPresence {
         guard open <= 0 else { return }
         open = 0
         NSApp.setActivationPolicy(.accessory)
+    }
+
+    static func modeChanged() {
+        NSApp.setActivationPolicy(HostWindowMode.active || !isOpen ? .accessory : .regular)
     }
 }

@@ -32,6 +32,8 @@ public struct ChatView: View {
     private let notificationEventRef: String?
     private let lastReadAt: Double?
     private let notificationSyncRevision: Int?
+    private let showsUpdateStatus: Bool
+    private let focusComposerOnAppear: Bool
     private let aggregateToast: ConnectionState?
     private let aggregateToastID: UUID?
     private let aggregateToastLabel: String?
@@ -101,6 +103,8 @@ public struct ChatView: View {
         notificationEventRef: String? = nil,
         lastReadAt: Double? = nil,
         notificationSyncRevision: Int? = nil,
+        showsUpdateStatus: Bool = true,
+        focusComposerOnAppear: Bool = false,
         aggregateToast: ConnectionState? = nil,
         aggregateToastID: UUID? = nil,
         aggregateToastLabel: String? = nil,
@@ -114,6 +118,8 @@ public struct ChatView: View {
         self.notificationEventRef = notificationEventRef
         self.lastReadAt = lastReadAt
         self.notificationSyncRevision = notificationSyncRevision
+        self.showsUpdateStatus = showsUpdateStatus
+        self.focusComposerOnAppear = focusComposerOnAppear
         self.aggregateToast = aggregateToast
         self.aggregateToastID = aggregateToastID
         self.aggregateToastLabel = aggregateToastLabel
@@ -168,7 +174,9 @@ public struct ChatView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            UpdateStatusView(status: model.updateStatus) { model.updateControl(.postpone) }
+            if showsUpdateStatus {
+                UpdateStatusView(status: model.updateStatus) { model.updateControl(.postpone) }
+            }
             // A failure of this device's own, such as a draft that would not save. The link's
             // failures go in the connection toast below, after the grace, not in a banner.
             if let failure = model.failure, failure != model.linkFailure {
@@ -402,6 +410,7 @@ public struct ChatView: View {
         // What the Mac's Edit, Thread and Chat menus act on. The same four things the toolbar
         // and the composer offer, published where a menu built by the scene can reach them.
         #if os(macOS)
+            .onAppear { if focusComposerOnAppear { composerFocused = true } }
             .focusedSceneValue(
                 \.chatCommands,
                 ChatCommands(
