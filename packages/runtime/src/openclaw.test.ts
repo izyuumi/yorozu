@@ -69,6 +69,28 @@ describe("OpenClawRunner", () => {
     expect(readFileSync(ledger, "utf8")).toBe(damaged);
     });
 
+  test("same user event ID cannot admit different input", () => {
+    const gateway = harness();
+    const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    runner.admitUserTurn({ threadId: "atomic", text: "first", userEventId: "same",
+      attachments: [{ name: "a.txt", mime: "text/plain", data: "YQ==" }] }, () => {});
+    let accepted = false;
+    expect(() => runner.admitUserTurn({ threadId: "atomic", text: "changed", userEventId: "same",
+      attachments: [{ name: "a.txt", mime: "text/plain", data: "YQ==" }] },
+    () => { accepted = true; })).toThrow("conflicting user event ID");
+    expect(() => runner.admitUserTurn({ threadId: "other", text: "first", userEventId: "same",
+      attachments: [{ name: "a.txt", mime: "text/plain", data: "YQ==" }] }, () => {}))
+      .toThrow("conflicting user event ID");
+    expect(() => runner.admitUserTurn({ threadId: "atomic", text: "first", userEventId: "same",
+      attachments: [{ name: "a.txt", mime: "text/plain", data: "Yg==" }] }, () => {}))
+      .toThrow("conflicting user event ID");
+    expect(runner.admitUserTurn({ threadId: "atomic", text: "first", userEventId: "same",
+      attachments: [{ data: "YQ==", mime: "text/plain", name: "a.txt" }] }, () => {}))
+      .toMatchObject({ userEventId: "same" });
+    expect(accepted).toBe(false);
+    expect(runner.pendingTurns()).toHaveLength(1);
+  });
+
   test("archives and restores the canonical Gateway session without starting a turn", async () => {
     const gateway = harness();
     gateway.request.mockImplementation(async (method) => method === "sessions.describe"

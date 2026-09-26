@@ -164,6 +164,16 @@ export class OpenClawRunner {
     if (!turn.userEventId) throw new Error("OpenClaw queued turn requires userEventId");
     const turns = this.readPending();
     let stored = turns.find((item) => item.userEventId === turn.userEventId);
+    const storedAttachments = stored?.input.attachments ?? [];
+    const retryAttachments = turn.attachments ?? [];
+    if (stored && (stored.threadId !== turn.threadId || stored.input.text !== turn.text ||
+      storedAttachments.length !== retryAttachments.length ||
+      storedAttachments.some((attachment, index) => {
+        const retry = retryAttachments[index]!;
+        return attachment.name !== retry.name || attachment.mime !== retry.mime || attachment.data !== retry.data;
+      }))) {
+      throw new Error("conflicting user event ID");
+    }
     if (!stored && alreadyAccepted()) {
       accept();
       return undefined;

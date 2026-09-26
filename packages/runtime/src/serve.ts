@@ -280,6 +280,14 @@ function writeFileAtomic(file: string, text: string): void {
   }
 }
 
+/** Stable across JSON property order and host restarts; only client-owned message fields count. */
+function userMessageIdentity(event: YorozuEvent & { kind: "message" }): string {
+  return createHash("sha256").update(JSON.stringify([
+    event.threadId, event.data.role, event.data.text,
+    (event.data.attachments ?? []).map(({ name, mime, data }) => [name, mime, data]),
+  ])).digest("hex");
+}
+
 /**
  * The state directory, owner-only. Created 0700 when missing; when it is already there and
  * ours, tightened to 0700, since an older release created it with the umask's default and
@@ -1173,6 +1181,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
    */
   const seenCommands = new Set<string>();
   const SEEN_COMMANDS = 2_000;
+  // Thread logs outlive the dedup window. Rebuild this compact index at startup so a completed
+  // turn's ID cannot be reused in another thread after its OpenClaw admission row is removed.
+  const acceptedMessages = new Map<string, string>();
+  for (const thread of listThreads(dir)) {
+    for (const known of readThreadEvents(thread.id, dir)) {
+      if (known.kind !== "message" || known.data.role !== "user") continue;
+      const identity = userMessageIdentity(known);
+      const previous = acceptedMessages.get(known.id);
+      if (previous && previous !== identity) throw new Error(`conflicting stored user event ID ${known.id}`);
+      acceptedMessages.set(known.id, identity);
+    }
+  }
   const alreadySeen = (id: string): boolean => {
     if (seenCommands.has(id)) return true;
     seenCommands.add(id);
@@ -1335,18 +1355,34 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (event.kind === "message" && !attachmentsWithinLimits(event.data.attachments ?? [])) {
       return state("rejected-oversized-attachments");
     }
+    const identity = event.kind === "message" && event.data.role === "user"
+      ? userMessageIdentity(event) : undefined;
+    if (identity && acceptedMessages.has(event.id) && acceptedMessages.get(event.id) !== identity) {
+      return state("rejected-conflicting-message-id");
+    }
     // Every command is receipted, the second copy included: a device that was never told the
     // first one landed is still waiting to hear so, and only a receipt lets it stop re-sending.
     const receipt = (): void => reply(control({ kind: "receipt", data: { eventId: event.id } }));
+    const knownMessage = event.kind === "message"
+      ? readThreadEvents(event.threadId, dir).find((known) => known.id === event.id)
+      : undefined;
+    if (event.kind === "message" && knownMessage && (knownMessage.kind !== "message" ||
+      knownMessage.data.role !== event.data.role || knownMessage.data.text !== event.data.text ||
+      (knownMessage.data.attachments ?? []).length !== (event.data.attachments ?? []).length ||
+      (knownMessage.data.attachments ?? []).some((attachment, index) => {
+        const retry = event.data.attachments![index]!;
+        return attachment.name !== retry.name || attachment.mime !== retry.mime || attachment.data !== retry.data;
+      }))) {
+      return state("rejected-conflicting-message-id");
+    }
     if (seenCommands.has(event.id)) {
+      if (event.kind === "message" && !knownMessage) return state("missing-previous-message");
       receipt();
       return state("duplicate-command");
     }
     // A message this thread already holds is the same message again: not a second turn, and
     // not a second line in the log.
-    const duplicateMessage =
-      event.kind === "message" &&
-      readThreadEvents(event.threadId, dir).some((known) => known.id === event.id);
+    const duplicateMessage = Boolean(knownMessage);
     const oldest = event.kind === "message" && event.data.role === "user"
       ? [...pending.values()].find((card) => card.threadId === event.threadId) : undefined;
     const typed = oldest && event.kind === "message" ? typedAnswer(event.data.text, oldest.card) : undefined;
@@ -1370,6 +1406,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     // Failed admission never poisons the in-memory dedup window.
     alreadySeen(event.id);
+    if (identity) acceptedMessages.set(event.id, identity);
     receipt();
 
     switch (event.kind) {
