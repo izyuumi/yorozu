@@ -24,53 +24,51 @@ extension RelayClient.Timing {
 /// One harness process: a relay, a sidecar paired to nothing yet, and the proxy in front.
 private actor WireRig {
     private let process = Process()
-    private let input = Pipe()
-    private var lines: AsyncLineSequence<FileHandle.AsyncBytes>.AsyncIterator
+    private let control: URL
     private(set) var pairing: QrPayload!
 
     init() async throws {
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["node", harness.appendingPathComponent("test-support/wire-harness.mjs").path]
-        process.standardInput = input
+        // Held open for the harness's lifetime: it stops when this end closes.
+        process.standardInput = Pipe()
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
-        lines = output.fileHandleForReading.bytes.lines.makeAsyncIterator()
         try process.run()
-        struct Ready: Decodable { var qr: String; var proxy: Int }
-        let ready = try JSONDecoder().decode(Ready.self, from: try await nextLine())
-        var pairing = try QrPayload.decode(ready.qr)
-        pairing.relayUrl = "ws://127.0.0.1:\(ready.proxy)"
-        self.pairing = pairing
+        struct Ready: Decodable { var control: Int }
+        var lines = output.fileHandleForReading.bytes.lines.makeAsyncIterator()
+        guard let line = try await lines.next() else { throw CancellationError() }
+        control = URL(string: "http://127.0.0.1:\(try JSONDecoder().decode(Ready.self, from: Data(line.utf8)).control)")!
+        struct Pairing: Decodable { var qr: String }
+        pairing = try QrPayload.decode(try await get(Pairing.self, "pairing").qr)
     }
 
     deinit { process.terminate() }
 
-    private func nextLine() async throws -> Data {
-        var lines = self.lines
-        defer { self.lines = lines }
-        guard let line = try await lines.next() else { throw CancellationError() }
-        return Data(line.utf8)
+    private func get<T: Decodable>(_ type: T.Type, _ path: String, _ query: [URLQueryItem] = []) async throws -> T {
+        let url = control.appending(path: path).appending(queryItems: query)
+        return try JSONDecoder().decode(type, from: try await URLSession.shared.data(from: url).0)
     }
 
-    /// Sends one command and returns its reply.
-    @discardableResult
-    func run(_ command: String) async throws -> Data {
-        input.fileHandleForWriting.write(Data("\(command)\n".utf8))
-        return try await nextLine()
+    /// Applies one fault, or `heal`.
+    func run(_ fault: String) async throws {
+        var request = URLRequest(url: control.appending(path: fault))
+        request.httpMethod = "POST"
+        _ = try await URLSession.shared.data(for: request)
     }
 
     /// The thread as the Mac recorded it.
     func events(in thread: String) async throws -> [YorozuEvent] {
         struct Reply: Decodable { var events: [YorozuEvent] }
-        return try JSONDecoder().decode(Reply.self, from: try await run("events \(thread)")).events
+        return try await get(Reply.self, "events", [URLQueryItem(name: "thread", value: thread)]).events
     }
 
     /// When each redial reached the proxy, in seconds. URLSession makes a refused dial as a few
     /// connections a millisecond apart, so connections that close together are one dial.
     func dials() async throws -> [Double] {
         struct Reply: Decodable { var dials: [Double] }
-        let accepted = try JSONDecoder().decode(Reply.self, from: try await run("dials")).dials
+        let accepted = try await get(Reply.self, "dials").dials
         return accepted.enumerated().filter { $0.offset == 0 || $0.element - accepted[$0.offset - 1] > 50 }
             .map { $0.element / 1000 }
     }
@@ -213,7 +211,14 @@ struct WireTests {
         // Let the waits grow again, then ask right after a refusal, with a second or so to go.
         try await Task.sleep(for: .seconds(2.5))
         mark = try await rig.dials().count
-        while try await rig.dials().count == mark { try await Task.sleep(for: .milliseconds(10)) }
+        let refusal = ContinuousClock.now + .seconds(3)
+        while try await rig.dials().count == mark {
+            guard ContinuousClock.now < refusal else {
+                Issue.record("no redial while the relay was away; dials: \(try await rig.dials())")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
         try await rig.run("heal")
         model.reconnect()
         try await until("a redial on request", within: .milliseconds(500)) { model.canDeliver }
