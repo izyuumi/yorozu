@@ -64,6 +64,7 @@ public struct ChatView: View {
     @State private var attachmentFailure: String?
     @State private var searchRequestRevision = UUID()
     @State private var pendingExternalSearch = false
+    @State private var externalSearchEventID: String?
     @State private var handledNotificationResume: UUID?
     @State private var suppressedSearchRequest: UUID?
     @State private var supersededNotificationResume: UUID?
@@ -434,6 +435,7 @@ public struct ChatView: View {
         search = ""
         hit = 0
         pendingExternalSearch = false
+        externalSearchEventID = nil
         #if os(iOS)
             timelineRequest = nil
         #endif
@@ -452,6 +454,7 @@ public struct ChatView: View {
         search = request.query
         hit = 0
         pendingExternalSearch = true
+        externalSearchEventID = request.eventId
         // A reused Mac detail can return to the same request after another selection.
         searchRequestRevision = UUID()
     }
@@ -580,6 +583,10 @@ public struct ChatView: View {
         }
 
         private func requestCurrentHit() {
+            if pendingExternalSearch, let externalSearchEventID {
+                guard let index = hits.firstIndex(where: { $0.eventId == externalSearchEventID }) else { return }
+                hit = index
+            }
             guard hits.indices.contains(hit) else { return }
             pendingExternalSearch = false
             timelineRequest = TimelineRequest(target: .event(hits[hit].eventId))
@@ -822,6 +829,10 @@ public struct ChatView: View {
 
     /// Puts the current hit in the middle of the screen, where a hit being read wants to be.
     private func scrollToHit(_ proxy: ScrollViewProxy) {
+        if pendingExternalSearch, let externalSearchEventID {
+            guard let index = hits.firstIndex(where: { $0.eventId == externalSearchEventID }) else { return }
+            hit = index
+        }
         guard hits.indices.contains(hit) else { return }
         pendingExternalSearch = false
         newestScroll.targetEvent()

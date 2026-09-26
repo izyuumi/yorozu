@@ -337,6 +337,21 @@ test("the local socket round-trips a turn and receives broadcasts, with no relay
   ).toEqual(["ping", "pong"]);
 });
 
+test("local host search returns exact historical message and thread summary", async () => {
+  const { dir, path } = await localSidecar();
+  socket = await connectLocal(path);
+  const events = reader(socket);
+  await events.nextOf("thread_list");
+  createThread("Archived", dir, "old");
+  appendThreadEvent({ id: "old-message", threadId: "old", ts: 1, agentId: "main", kind: "message",
+    data: { role: "agent", text: "The café receipt" } }, dir);
+  send(socket, "", { kind: "thread_search_request", data: { requestId: "q1", query: "CAFE" } });
+  expect(await events.nextOf("thread_search_result")).toMatchObject({
+    data: { requestId: "q1", matches: [{ threadId: "old", eventId: "old-message",
+      thread: { id: "old", title: "Archived" } }] },
+  });
+});
+
 test("exact Stop outcome survives host restart and leaves later work alone", async () => {
   const { dir, path, fetchMock } = await localSidecar();
   socket = await connectLocal(path);

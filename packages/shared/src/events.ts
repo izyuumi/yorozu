@@ -574,6 +574,17 @@ export interface SyncDeltaData {
   more?: boolean;
 }
 
+/** Encrypted host-history search. Cursor is an index into the host's thread list. */
+export interface ThreadSearchRequestData { requestId: string; query: string; offset?: number; lineOffset?: number }
+export interface ThreadSearchMatch { threadId: string; eventId: string; excerpt: string; thread?: ThreadSummary }
+export interface ThreadSearchResultData {
+  requestId: string;
+  matches: ThreadSearchMatch[];
+  nextOffset?: number;
+  nextLineOffset?: number;
+  partial?: boolean;
+}
+
 /**
  * One device this Mac is paired with, as the Mac app's Devices tab lists them.
  */
@@ -643,6 +654,8 @@ export type EventPayload =
   | { kind: "stop_status"; data: StopStatusData }
   | { kind: "sync_request"; data: SyncRequestData }
   | { kind: "sync_delta"; data: SyncDeltaData }
+  | { kind: "thread_search_request"; data: ThreadSearchRequestData }
+  | { kind: "thread_search_result"; data: ThreadSearchResultData }
   | { kind: "device_list"; data: DeviceListData }
   | { kind: "device_remove"; data: DeviceRemoveData }
   | { kind: "receipt"; data: ReceiptData }

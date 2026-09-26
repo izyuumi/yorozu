@@ -123,6 +123,10 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         case .interrupt: .interrupt(InterruptData(targetEventId: "user-1"))
         case .stopStatus: .stopStatus(StopStatusData(targetEventId: "user-1", requestId: "stop-1", status: .stopped))
         case .syncRequest: .syncRequest(SyncRequestData(lastSeen: ["home": "e9"]))
+        case .threadSearchRequest: .threadSearchRequest(ThreadSearchRequestData(requestId: "q1", query: "café"))
+        case .threadSearchResult: .threadSearchResult(ThreadSearchResultData(requestId: "q1", matches: [
+            ThreadSearchMatch(threadId: "home", eventId: "e9", excerpt: "At the café")
+        ]))
         case .syncDelta:
             .syncDelta(SyncDeltaData(events: [
                 YorozuEvent(id: "e2", threadId: "home", ts: 2, agentId: "main", payload: .thought(ThoughtData(text: "x")))

@@ -91,6 +91,7 @@ import {
   markThreadRead,
   pinThread,
   readThreadEvents,
+  searchThreadPage,
   renameThread,
   setThreadEffort,
   setNativeTurn,
@@ -1132,6 +1133,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const known = devices.get(pub);
     if (!known) return;
     catchupSends.delete(pub);
+    activeSearchRequests.delete(pub);
     devices.delete(pub);
     saveDevices();
     if (known.record.signingPub) revokeAtRelay(known.record.signingPub);
@@ -1804,7 +1806,29 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * clients are this Mac's own user: that difference is what decides whether turning YOLO on
    * is a command or a request.
    */
+  const activeSearchRequests = new Map<string, string>();
   function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0, from?: string, localDevice?: string): void {
+    if (event.kind === "thread_search_result") return;
+    if (event.kind === "thread_search_request") {
+      const { requestId, query, offset = 0, lineOffset = 0 } = event.data;
+      const compatibility = from ? devices.get(from)?.compatibility : undefined;
+      if (from && (compatibility?.state !== "compatible" ||
+          !compatibility.capabilities.includes("thread-search-v1"))) return;
+      if (typeof requestId !== "string" || !requestId || requestId.length > 128 ||
+          typeof query !== "string" || !query.trim() || Buffer.byteLength(query) > 128 ||
+          !Number.isSafeInteger(offset) || offset < 0 ||
+          !Number.isSafeInteger(lineOffset) || lineOffset < 0) return;
+      const source = from ?? localDevice ?? "local";
+      if ((offset > 0 || lineOffset > 0) && activeSearchRequests.get(source) !== requestId) return;
+      activeSearchRequests.set(source, requestId);
+      void searchThreadPage(query, offset, dir, () => activeSearchRequests.get(source) === requestId, lineOffset)
+        .then((page) => {
+          if (activeSearchRequests.get(source) === requestId) {
+            reply(control({ kind: "thread_search_result", data: { requestId, ...page } }));
+          }
+        }).catch((error) => state(`thread-search-error ${String(error)}`));
+      return;
+    }
     if (event.kind === "approval_answer") {
       const compatibility = from ? devices.get(from)?.compatibility : undefined;
       const statusSupported = !from || compatibility?.state === "compatible" &&
@@ -2320,6 +2344,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     onClose: (device) => {
       locals.delete(device);
+      activeSearchRequests.delete(device);
       updateSubscribers.delete(device);
       if (updateOwner === device) {
         updateOwner = undefined;

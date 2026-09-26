@@ -18,11 +18,13 @@ public struct ThreadSearchRequest: Equatable, Sendable, Identifiable {
     public let id: UUID
     public let threadId: String
     public let query: String
+    public let eventId: String?
 
-    public init(threadId: String, query: String, id: UUID = UUID()) {
+    public init(threadId: String, query: String, eventId: String? = nil, id: UUID = UUID()) {
         self.id = id
         self.threadId = threadId
         self.query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.eventId = eventId
     }
 }
 
@@ -32,7 +34,8 @@ public struct ThreadSearchResults {
     public let messages: [ThreadSummary]
     public var isEmpty: Bool { threads.isEmpty && messages.isEmpty }
 
-    public init(threads: [ThreadSummary], query: String, metadataText: (String) -> String = { _ in "" }, messageText: (String) -> String) {
+    public init(threads: [ThreadSummary], query: String, metadataText: (String) -> String = { _ in "" },
+                messageText: (String) -> String, remoteMatches: [String: ThreadSearchMatch] = [:]) {
         var metadata: [ThreadSummary] = []
         var content: [ThreadSummary] = []
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -40,7 +43,8 @@ public struct ThreadSearchResults {
             for thread in threads.sorted(by: { $0.lastActivity > $1.lastActivity }) {
                 if threadMatches(thread, query: needle) || !searchRanges(in: metadataText(thread.id), term: needle).isEmpty {
                     metadata.append(thread)
-                } else if !searchRanges(in: messageText(thread.id), term: needle).isEmpty { content.append(thread) }
+                } else if remoteMatches[thread.id] != nil ||
+                    !searchRanges(in: messageText(thread.id), term: needle).isEmpty { content.append(thread) }
             }
         }
         self.threads = metadata

@@ -30,6 +30,60 @@ public final class ChatModel {
     /// Advances after a complete sync response. Notification navigation uses this to tell
     /// "events have not arrived yet" from "refresh finished and there is no message anchor".
     public private(set) var syncRevision = 0
+    /// Additional matches from this host's history, keyed by its original thread ID.
+    public private(set) var remoteSearch: [String: ThreadSearchMatch] = [:]
+    public private(set) var searchComplete = false
+    public private(set) var searchIncomplete = false
+    private var searchNextOffset = 0
+    private var searchNextLineOffset = 0
+    private var searchPages = 0
+    public private(set) var searchQuery = ""
+    private var searchRequestID = ""
+    @ObservationIgnored private var searchTask: Task<Void, Never>?
+
+    public var supportsHostSearch: Bool {
+        if case .compatible(_, let capabilities) = compatibility {
+            return capabilities.contains("thread-search-v1")
+        }
+        return false
+    }
+
+    public var searchScope: String {
+        if searchQuery.utf8.count > 128 { return "Downloaded conversations only · shorten search for host history" }
+        if searchIncomplete { return "Downloaded conversations and partial host results" }
+        guard canDeliver, supportsHostSearch else { return "Downloaded conversations only" }
+        return searchComplete ? "Host history searched" : "Downloaded conversations · searching host…"
+    }
+
+    /// Local list filtering is immediate. Host search follows after typing settles.
+    public func searchHost(_ query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != searchQuery else { return }
+        searchQuery = trimmed
+        remoteSearch = [:]
+        searchComplete = false
+        searchIncomplete = false
+        searchTask?.cancel()
+        guard !trimmed.isEmpty else { searchRequestID = ""; return }
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            self?.requestHostSearch()
+        }
+    }
+
+    private func requestHostSearch() {
+        guard !searchQuery.isEmpty, searchQuery.utf8.count <= 128,
+              canDeliver, supportsHostSearch else { return }
+        searchRequestID = UUID().uuidString
+        searchComplete = false
+        searchIncomplete = false
+        searchNextOffset = 0
+        searchNextLineOffset = 0
+        searchPages = 0
+        emit(.threadSearchRequest(ThreadSearchRequestData(
+            requestId: searchRequestID, query: searchQuery)), in: "")
+    }
     /// Events per thread id, oldest first.
     public var events: [String: [YorozuEvent]] {
         _ = timelineRevision
@@ -397,6 +451,7 @@ public final class ChatModel {
     /// Detached cache writes keep their snapshots alive, so cancellation alone is not enough:
     /// wait for them before allowing the host's keys and files to be erased.
     public func shutdown() async {
+        searchTask?.cancel()
         flushStreamEvents()
         do { try saveComposer() }
         catch { failure = "Could not save draft: \(error.localizedDescription)" }
@@ -1424,6 +1479,7 @@ public final class ChatModel {
                 resumeResultRequests()
                 onPaired?()
                 flush()
+                requestHostSearch()
             }
         case .ownerOnline(let online):
             let wasOnline = ownerOnline
@@ -1438,6 +1494,7 @@ public final class ChatModel {
                 resumeResultRequests()
                 if state == .paired {
                     updateControl(.status)
+                    if !wasOnline { requestHostSearch() }
                 }
             }
             // The Mac waking up is the other half of "there is somewhere to send to".
@@ -1496,6 +1553,40 @@ public final class ChatModel {
                     // `more` behind it would let it hang up mid-catch-up. See ``drain(timeout:)``.
                     deltas += 1
                 }
+            case .threadSearchResult(let data):
+                guard data.requestId == searchRequestID, !searchQuery.isEmpty else { break }
+                if data.partial == true { searchIncomplete = true }
+                var known = Set(threads.map(\.id))
+                var addedThread = false
+                for match in data.matches {
+                    if !known.contains(match.threadId) {
+                        if let summary = match.thread, summary.id == match.threadId,
+                           !summary.id.isEmpty, summary.id.utf8.count <= 128 {
+                            synced.append(summary)
+                            known.insert(summary.id)
+                            addedThread = true
+                        } else { searchIncomplete = true; continue }
+                    }
+                    remoteSearch[match.threadId] = match
+                }
+                if addedThread { persist(threads: synced); onThreads?() }
+                searchPages += 1
+                let lineOffset = data.nextLineOffset ?? 0
+                if let offset = data.nextOffset, canDeliver,
+                   (offset > searchNextOffset || offset == searchNextOffset && lineOffset > searchNextLineOffset),
+                   offset <= 1_000_000, lineOffset >= 0, lineOffset <= 1_000_000_000_000,
+                   searchPages < 1_000 {
+                    searchNextOffset = offset
+                    searchNextLineOffset = lineOffset
+                    emit(.threadSearchRequest(ThreadSearchRequestData(
+                        requestId: searchRequestID, query: searchQuery, offset: offset,
+                        lineOffset: lineOffset > 0 ? lineOffset : nil)), in: "")
+                } else if data.nextOffset == nil && data.nextLineOffset == nil {
+                    searchComplete = !searchIncomplete
+                }
+                else { searchIncomplete = true }
+            case .threadSearchRequest:
+                break
             // What the model picker offers, sent with every thread list. Not a thread's event.
             case .modelList(let data):
                 models = data.models

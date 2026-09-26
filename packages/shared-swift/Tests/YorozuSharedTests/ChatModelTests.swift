@@ -1628,3 +1628,58 @@ func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(
     let requests = await sent(by: transport, atLeast: pairingSends * 2 + 1)
     #expect(requests.filter { $0.payload.kind == .toolResultRequest }.count == 1)
 }
+
+@MainActor @Test func hostSearchRejectsLateResultsFromPreviousQuery() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["thread-search-v1"])))
+    await transport.yield(.event(event("list", .threadList(ThreadListData(threads: [
+        ThreadSummary(id: "t", title: "Old thread", archived: true, lastActivity: 1)
+    ])))))
+    #expect(await eventually { model.supportsHostSearch && model.threads.contains(where: { $0.id == "t" }) })
+
+    model.searchHost("alpha")
+    #expect(await eventually {
+        await transport.sent.contains { if case .threadSearchRequest(let data) = $0.payload { return data.query == "alpha" }; return false }
+    })
+    let oldID = await transport.sent.compactMap { event -> String? in
+        if case .threadSearchRequest(let data) = event.payload, data.query == "alpha" { return data.requestId }
+        return nil
+    }.last!
+    model.searchHost("beta")
+    await transport.yield(.event(event("old", .threadSearchResult(ThreadSearchResultData(
+        requestId: oldID, matches: [ThreadSearchMatch(threadId: "t", eventId: "old-hit", excerpt: "alpha")]
+    )))))
+    #expect(model.remoteSearch.isEmpty)
+    #expect(await eventually {
+        await transport.sent.contains { if case .threadSearchRequest(let data) = $0.payload { return data.query == "beta" }; return false }
+    })
+    let newID = await transport.sent.compactMap { event -> String? in
+        if case .threadSearchRequest(let data) = event.payload, data.query == "beta" { return data.requestId }
+        return nil
+    }.last!
+    await transport.yield(.event(event("new", .threadSearchResult(ThreadSearchResultData(
+        requestId: newID, matches: [ThreadSearchMatch(threadId: "fresh", eventId: "new-hit", excerpt: "beta",
+            thread: ThreadSummary(id: "fresh", title: "New host thread", archived: false, lastActivity: 2))]
+    )))))
+    #expect(await eventually {
+        model.remoteSearch["fresh"]?.eventId == "new-hit" && model.searchComplete &&
+        model.threads.contains(where: { $0.id == "fresh" })
+    })
+
+    model.searchHost(String(repeating: "x", count: 129))
+    #expect(model.searchScope.contains("shorten search"))
+    model.searchHost("gamma")
+    #expect(await eventually {
+        await transport.sent.contains { if case .threadSearchRequest(let data) = $0.payload { return data.query == "gamma" }; return false }
+    })
+    let gammaID = await transport.sent.compactMap { event -> String? in
+        if case .threadSearchRequest(let data) = event.payload, data.query == "gamma" { return data.requestId }
+        return nil
+    }.last!
+    await transport.yield(.event(event("bad-cursor", .threadSearchResult(ThreadSearchResultData(
+        requestId: gammaID, matches: [], nextOffset: 0
+    )))))
+    #expect(await eventually { model.searchIncomplete && !model.searchComplete })
+}

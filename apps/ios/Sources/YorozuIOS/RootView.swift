@@ -738,6 +738,10 @@ struct RootView: View {
                     }
                     .joined(separator: "\n\n")
                 },
+                remoteMatches: model.remoteSearch,
+                remoteQuery: model.searchQuery,
+                searchScope: model.searchScope,
+                onSearchQueryChange: model.searchHost,
                 exportMarkdown: model.markdown(of:),
                 onSettings: { settings = true }
             ) { thread in
