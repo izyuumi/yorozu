@@ -38,3 +38,30 @@ public enum ClientConnectionStatus: Equatable, Sendable {
         }
     }
 }
+
+/// Only fixed status fields. Never copy transport errors, URLs, host IDs, messages or keys:
+/// those may contain user content or credentials.
+public enum ConnectionDiagnostics {
+    @MainActor public static func snapshot(for model: ChatModel) -> String {
+        let transport: String = switch model.state {
+        case .paired: "paired"
+        case .joined: "joined"
+        case .connecting: "connecting"
+        case .closed: "closed"
+        }
+        let compatibility: String = switch model.compatibility {
+        case .legacy: "legacy"
+        case .compatible(let version, _): "protocol \(version)"
+        case .updateRequired: "update required"
+        }
+        return """
+        Yorozu connection diagnostics
+        Connection: \(model.link.state.label)
+        Transport: \(transport)
+        Host presence: \(model.ownerOnline ? "online" : "unavailable")
+        Compatibility: \(compatibility)
+        Recent failure: \(model.failure == nil ? "no" : "yes")
+        Pending sends: \(model.outbox.count)
+        """
+    }
+}

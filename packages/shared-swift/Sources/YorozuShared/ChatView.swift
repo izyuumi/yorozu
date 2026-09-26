@@ -32,11 +32,9 @@ public struct ChatView: View {
     private let notificationEventRef: String?
     private let lastReadAt: Double?
     private let notificationSyncRevision: Int?
-    /// Shown while the runtime is unreachable. The two apps lose it differently: the phone
-    /// queues what is typed and sends it when the Mac is back, the Mac's sidecar is simply not
-    /// running yet.
-    public let offlineNotice: String
-
+    private let aggregateToast: ConnectionState?
+    private let aggregateToastID: UUID?
+    private let aggregateToastLabel: String?
     /// Where a pairing code tapped in a message goes; the app sets it, and the default drops
     /// the link. See ``OpenURLAction/chatLinks(onPairingLink:)``.
     @Environment(\.onPairingLink) private var onPairingLink
@@ -81,8 +79,6 @@ public struct ChatView: View {
     #endif
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    /// The link as the transcript reports it: a blip shorter than the grace is never mentioned.
-    @State private var connection = ConnectionPresentation(.connected)
     @State private var search = ""
     /// Which hit the arrows are on. Reset whenever the term changes.
     @State private var hit = 0
@@ -102,9 +98,11 @@ public struct ChatView: View {
         notificationEventRef: String? = nil,
         lastReadAt: Double? = nil,
         notificationSyncRevision: Int? = nil,
+        aggregateToast: ConnectionState? = nil,
+        aggregateToastID: UUID? = nil,
+        aggregateToastLabel: String? = nil,
         onNewThread: (() -> Void)? = nil,
-        onCreate: ((ThreadAgent, String?) -> Void)? = nil,
-        offlineNotice: String = "Mac offline — what you send waits on this phone until it's back."
+        onCreate: ((ThreadAgent, String?) -> Void)? = nil
     ) {
         self.model = model
         self.thread = thread
@@ -113,9 +111,11 @@ public struct ChatView: View {
         self.notificationEventRef = notificationEventRef
         self.lastReadAt = lastReadAt
         self.notificationSyncRevision = notificationSyncRevision
+        self.aggregateToast = aggregateToast
+        self.aggregateToastID = aggregateToastID
+        self.aggregateToastLabel = aggregateToastLabel
         self.onNewThread = onNewThread
         self.onCreate = onCreate
-        self.offlineNotice = offlineNotice
     }
 
     private var presentation: ThreadPresentation { ThreadPresentation(thread: thread) }
@@ -136,10 +136,8 @@ public struct ChatView: View {
     }
 
     private var generating: Bool { model.generating.contains(thread.id) }
-
-    private var actualConnection: ConnectionState {
-        ConnectionState(state: model.state, ownerOnline: model.ownerOnline)
-    }
+    private var shownToast: ConnectionState? { aggregateToast ?? model.connectionToast.visible }
+    private var shownToastID: UUID? { aggregateToastID ?? model.connectionToast.notice?.id }
 
     /// Every occurrence of the search term in this thread, in reading order.
     private var hits: [SearchHit] { searchHits(in: events, term: search) }
@@ -221,9 +219,8 @@ public struct ChatView: View {
                             .background(.thinMaterial, in: Capsule())
                             .accessibilityAddTraits(.updatesFrequently)
                     }
-                    if connection.state != .connected, model.updateStatus.phase != .installing {
-                        ConnectionPill(state: connection.state,
-                            label: [offlineNotice, model.linkFailure].compactMap { $0 }.joined(separator: "\n"))
+                    if let toast = shownToast {
+                        ConnectionPill(state: toast, label: aggregateToastLabel)
                             .padding(.top, 8)
                             .padding(.horizontal)
                             .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
@@ -231,18 +228,20 @@ public struct ChatView: View {
                 }
                 // Scoped here: an animation on the transcript would animate its scroll too.
                 .allowsHitTesting(false)
-                .animation(reduceMotion ? nil : .default, value: connection.state)
+                .animation(reduceMotion ? nil : .default, value: shownToast)
             }
             composer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(YorozuPalette.canvas.ignoresSafeArea())
         .yorozuTint()
-        .onChange(of: actualConnection, initial: true) { _, actual in
-            connection.update(actual, active: scenePhase != .background, since: model.interruptedSince)
-        }
         .onChange(of: scenePhase) { _, phase in
-            connection.update(actualConnection, active: phase != .background, since: model.interruptedSince)
+            if phase == .background { model.connectionToast.dismiss() }
+        }
+        .onChange(of: shownToastID) { _, id in
+            if id != nil, let toast = shownToast {
+                AccessibilityNotification.Announcement(aggregateToastLabel ?? toast.label).post()
+            }
         }
         // A truncated tool result in this thread's trace asks the Mac for the rest through here.
         .environment(\.fetchToolResult) { model.requestToolResult($0, in: thread.id) }

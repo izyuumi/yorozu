@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import YorozuShared
 
@@ -182,6 +183,11 @@ private struct HostConnectionDetails: View {
                 Button("Retry connection") { session.retryConnection(host.id) }
                 Text("Pairing and conversations stay saved while this host reconnects.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+            Button("Copy diagnostics") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(ConnectionDiagnostics.snapshot(for: host.model), forType: .string)
+                AccessibilityNotification.Announcement("Diagnostics copied").post()
             }
             Toggle("YOLO mode — skip all approvals", isOn: Binding(
                 get: { host.model.yoloMode }, set: { host.model.setYoloMode($0) }))

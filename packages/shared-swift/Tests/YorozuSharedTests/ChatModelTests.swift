@@ -248,6 +248,38 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
     #expect(presentation.state == .offline)
 }
 
+@MainActor
+@Test func connectionToastAppearsOncePerOutageAndDismisses() async throws {
+    let toast = ConnectionToastPresentation(duration: .milliseconds(30))
+    let link = ConnectionPresentation(.connected)
+    link.onStateChange = { toast.declared($0) }
+
+    link.update(.offline, active: true, since: .now - .seconds(6))
+    #expect(toast.visible == .offline)
+    for _ in 0..<20 where toast.visible != nil {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(toast.visible == nil)
+    link.update(.reconnecting, active: true, since: .now - .seconds(6))
+    #expect(toast.visible == nil)
+
+    link.update(.connected, active: true)
+    link.update(.offline, active: true, since: .now - .seconds(6))
+    #expect(toast.visible == .offline)
+    toast.dismiss()
+    #expect(toast.visible == nil)
+}
+
+@MainActor
+@Test func copiedConnectionDiagnosticsExcludeComposerContent() {
+    let model = ChatModel(transport: FakeTransport())
+    model.drafts["thread-secret"] = "private draft sentence"
+    let text = ConnectionDiagnostics.snapshot(for: model)
+    #expect(text.contains("Transport:"))
+    #expect(!text.contains("private draft sentence"))
+    #expect(!text.contains("thread-secret"))
+}
+
 /// The grace is anchored to when the link was lost: a change of *how* it is lost, part way
 /// through, is declared at the original deadline rather than a fresh one.
 @MainActor

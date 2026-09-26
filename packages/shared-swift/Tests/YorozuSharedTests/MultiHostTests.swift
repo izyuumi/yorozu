@@ -96,6 +96,24 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
 }
 
 @MainActor
+@Test func newestHostOutageReplacesButDoesNotReplayOlderToast() {
+    let first = HostSession(id: multiHostID(0), model: ChatModel(transport: MultiHostTransport()),
+                            relayURL: "wss://relay.example", nickname: "Desk")
+    let second = HostSession(id: multiHostID(1), model: ChatModel(transport: MultiHostTransport()),
+                             relayURL: "wss://relay.example", nickname: "Laptop")
+    let hosts = MultiHostModel(sessions: [first, second])
+
+    first.model.connectionToast.declared(.offline)
+    let firstID = hosts.connectionToastNotice?.notice.id
+    #expect(hosts.connectionToastLabel == "Desk isn’t reachable")
+    second.model.connectionToast.declared(.offline)
+    #expect(hosts.connectionToastNotice?.notice.id != firstID)
+    #expect(hosts.connectionToastLabel == "Laptop isn’t reachable")
+    second.model.connectionToast.dismiss()
+    #expect(hosts.connectionToastNotice == nil)
+}
+
+@MainActor
 @Test func multiHostThreadsKeepCollidingIDsSeparateAndSearchTheCorrectMessages() async throws {
     let firstTransport = MultiHostTransport(), secondTransport = MultiHostTransport()
     let first = multiHostSession(multiHostID(0), transport: firstTransport, nickname: "Desk")

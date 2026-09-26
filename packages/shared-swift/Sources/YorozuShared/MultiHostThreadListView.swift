@@ -93,6 +93,10 @@ public struct MultiHostThreadListView<Destination: View>: View {
             connectionSince: session.hasMultipleHosts ? nil : session.sessions.first?.model.interruptedSince,
             connectionIsGraced: session.hasMultipleHosts,
             connectionSummary: session.hasMultipleHosts ? session.connectionSummary : nil,
+            toastState: session.connectionToastNotice?.notice.state,
+            toastID: session.connectionToastNotice?.notice.id,
+            toastLabel: session.connectionToastLabel,
+            onBackground: { for host in session.sessions { host.model.connectionToast.dismiss() } },
             path: Binding(get: { path.map(\.listID) }, set: { ids in
                 path = ids.compactMap { adapter.resolve($0)?.id }
                 if let id = path.last { session.lastUsedHostID = id.hostID }
@@ -195,6 +199,26 @@ public struct MultiHostThreadSidebar: View {
 }
 
 extension MultiHostModel {
+    /// Most recent distinct outage owns the one visible toast. Keep dismissed notices in the
+    /// ordering so an older host's still-running timer cannot make its toast reappear.
+    public var connectionToastNotice: (host: HostSession, notice: ConnectionToastNotice)? {
+        guard let newest = sessions.compactMap({ host in
+            host.model.connectionToast.lastNotice.map { (host: host, notice: $0) }
+        }).max(by: { $0.notice.sequence < $1.notice.sequence }),
+              newest.host.model.connectionToast.notice?.id == newest.notice.id else { return nil }
+        return newest
+    }
+
+    public var connectionToastLabel: String? {
+        guard let shown = connectionToastNotice else { return nil }
+        guard hasMultipleHosts else { return shown.notice.state.label }
+        return switch shown.notice.state {
+        case .connected: nil
+        case .reconnecting: "Connecting to \(shown.host.label)…"
+        case .offline: "\(shown.host.label) isn’t reachable"
+        }
+    }
+
     /// Status indicators start honest before pairing; after pairing they hold the last settled
     /// state through a short interruption. Toasts have separate initial visibility below.
     public var statusConnectionState: ConnectionState? {
