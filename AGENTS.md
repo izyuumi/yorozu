@@ -15,8 +15,9 @@ owns its own geometry.
 ## Parallel feature work and cleanup
 
 - Before starting a new feature, fetch the target base branch and create a dedicated Git
-  worktree with a new `codex/<feature>` branch. Give each agent working on an independent
-  feature its own worktree and branch so agents can work simultaneously.
+  worktree with a new branch named for the task topic alone, with no `codex/` or other
+  prefix. Give each agent working on an independent feature its own worktree and branch so
+  agents can work simultaneously.
 - Work only in your task's worktree. Do not switch, reset, or overwrite another agent's
   checkout or the user's working changes.
 - After creating a PR, verify all intended changes are committed and pushed. Once the
