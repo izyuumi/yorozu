@@ -14,6 +14,8 @@ export interface EventBase {
   threadId: string;
   /** Epoch milliseconds. */
   ts: number;
+  /** Original device timestamp when the host delays a queued user message in the timeline. */
+  clientTs?: number;
   agentId: string;
   /** Set when the emitting agent was delegated to by another. */
   parentAgentId?: string;

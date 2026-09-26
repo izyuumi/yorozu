@@ -1205,6 +1205,7 @@ test.each([
   await eventsUntil((event) => event.kind === "stop_status" && event.data.status === "requested");
   const queued = send({ kind: "message", data: { role: "user", text: "next" } });
   await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === queued);
+  const queuedEcho = (await eventsUntil((event) => event.kind === "message" && event.id === queued)).at(-1)!;
   expect(readThreadEvents("t1", dir).some((event) => event.id === queued)).toBe(false);
   if (interrupted) {
     await vi.waitFor(() => expect(stopRun).toHaveBeenCalledTimes(2), { timeout: 3_000 });
@@ -1220,6 +1221,14 @@ test.each([
   const history = readThreadEvents("t1", dir);
   expect(history.findIndex((event) => event.id === `openclaw:${target}:final`))
     .toBeLessThan(history.findIndex((event) => event.id === queued));
+  const final = history.find((event) => event.id === `openclaw:${target}:final`)!;
+  expect(history.find((event) => event.id === queued)).toMatchObject({
+    ts: expect.any(Number), clientTs: queuedEcho.ts,
+  });
+  expect(history.find((event) => event.id === queued)!.ts).toBeGreaterThanOrEqual(final.ts);
+  sendRaw(queuedEcho);
+  await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === queued);
+  expect(readThreadEvents("t1", dir).filter((event) => event.id === queued)).toHaveLength(1);
 });
 
 test("client archive and restore reach OpenClaw in order before the canonical list changes", async () => {

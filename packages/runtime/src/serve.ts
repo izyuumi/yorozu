@@ -282,7 +282,7 @@ function writeFileAtomic(file: string, text: string): void {
 /** Stable across JSON property order and host restarts; only client-owned message fields count. */
 function userMessageIdentity(event: YorozuEvent & { kind: "message" }): string {
   return createHash("sha256").update(JSON.stringify([
-    event.threadId, event.ts, event.data.role, event.data.text, event.data.admissionDeadline ?? null,
+    event.threadId, event.clientTs ?? event.ts, event.data.role, event.data.text, event.data.admissionDeadline ?? null,
     (event.data.attachments ?? []).map(({ name, mime, data }) => [name, mime, data]),
   ])).digest("hex");
 }
@@ -1492,8 +1492,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       const logged = deferredEvent;
       if (logged) {
-        if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === logged.id)) appendTranscript(logged, transcripts);
-        if (!readThreadEvents(threadId, dir).some((known) => known.id === logged.id)) appendThreadEvent(logged, dir);
+        // The device admitted this message before Stop settled. Give its durable copy the
+        // preceding final's timestamp so live and restored timelines show the same order.
+        const prior = readThreadEvents(threadId, dir);
+        const ordered = { ...logged, ts: prior.at(-1)?.ts ?? Date.now(),
+          clientTs: logged.ts };
+        if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === logged.id)) appendTranscript(ordered, transcripts);
+        if (!prior.some((known) => known.id === logged.id)) appendThreadEvent(ordered, dir);
+        broadcast(ordered);
       }
       if (userEventId) activeTurnIds.add(userEventId);
       try { await runTurn(threadId, text, recorded, attachments, userEventId); }
@@ -1994,7 +2000,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     if (event.kind === "message" && knownMessage && (knownMessage.kind !== "message" ||
       knownMessage.data.role !== event.data.role || knownMessage.data.text !== event.data.text ||
-      knownMessage.ts !== event.ts || knownMessage.data.admissionDeadline !== event.data.admissionDeadline ||
+      (knownMessage.clientTs ?? knownMessage.ts) !== event.ts || knownMessage.data.admissionDeadline !== event.data.admissionDeadline ||
       (knownMessage.data.attachments ?? []).length !== (event.data.attachments ?? []).length ||
       (knownMessage.data.attachments ?? []).some((attachment, index) => {
         const retry = event.data.attachments![index]!;

@@ -1138,6 +1138,35 @@ func finalStreamedReplyFollowsToolHistory(finalTimestamp: Int) async throws {
 }
 
 @MainActor
+@Test(arguments: [11, 20])
+func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(finalTimestamp: Int) async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let key = SymmetricKey(size: .bits256)
+    let cache = ThreadCache(directory: directory, key: key)
+    cache.save(threads: [ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 21)])
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    model.start()
+
+    let queued = YorozuEvent(id: "next", threadId: "home", ts: 11, agentId: "phone",
+                             payload: .message(MessageData(role: .user, text: "next")))
+    let stopped = YorozuEvent(id: "reply", threadId: "home", ts: finalTimestamp, agentId: "main",
+                              payload: .message(MessageData(role: .agent, text: "partial", done: true,
+                                                            interrupted: true)))
+    let ordered = YorozuEvent(id: "next", threadId: "home", ts: finalTimestamp, clientTs: 11, agentId: "phone",
+                              payload: queued.payload)
+    for item in [queued, stopped, ordered] { await transport.yield(.event(item)) }
+    #expect(await eventually { model.events["home"]?.first?.id == "reply" })
+    #expect(model.events["home"]?.map(\.id) == ["reply", "next"])
+    #expect(model.events["home"]?.last?.clientTs == 11)
+
+    cache.save(events: model.events["home"]!, threadId: "home")
+    let restored = ChatModel(transport: FakeTransport(), cache: ThreadCache(directory: directory, key: key))
+    #expect(restored.events["home"]?.map(\.id) == ["reply", "next"])
+}
+
+@MainActor
 @Test func lateSyncEventReturnsToWireOrderInsteadOfArrivalOrder() async throws {
     let transport = FakeTransport()
     let model = ChatModel(transport: transport, device: "phone")

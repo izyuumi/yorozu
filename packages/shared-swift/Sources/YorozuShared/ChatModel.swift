@@ -1948,11 +1948,14 @@ public final class ChatModel {
                     (thread[index].ts > event.ts || thread[index].ts == event.ts && old.text.count > next.text.count) ||
                 old.done == true && next.done == true && thread[index].ts > event.ts) { return }
             guard thread[index] != event else { return }
+            let timestampChanged = thread[index].ts != event.ts
+            let orderingConfirmed = thread[index].clientTs == nil && event.clientTs != nil
+            var agentReply = false
+            if case .message(let data) = event.payload { agentReply = data.role == .agent }
             thread[index] = event
-            if case .message(let data) = event.payload, data.role == .agent {
-                // One reply ID spans commentary, tool use and the final answer. Its latest
-                // revision belongs at its latest timestamp, not at the first delta's slot.
-                // Insert after ties too: a tool result and final can share a millisecond.
+            if timestampChanged || orderingConfirmed || agentReply {
+                // Streamed replies and host-retimed queued messages move to their final place.
+                // Insert after ties: a tool result and final can share a millisecond.
                 thread.remove(at: index)
                 let position = thread.lastIndex(where: { $0.ts <= event.ts }).map { $0 + 1 } ?? 0
                 thread.insert(event, at: position)
