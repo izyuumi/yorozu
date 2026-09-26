@@ -1,0 +1,70 @@
+name: UI tests
+# The iOS UI tests on a simulator, against the real relay and sidecar (apps/ios/e2e/ui-tests.sh).
+# Too slow for every pull request: nightly on main, and before every release candidate.
+on:
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: The commit to test
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  ui-tests:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      # A night with nothing new on main has nothing new to prove.
+      - name: Skip a commit that already passed
+        id: seen
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          passed=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ui-tests.yml --branch main \
+            --status success --limit 1 --json headSha --jq '.[0].headSha // ""')
+          if [ "$passed" = "$GITHUB_SHA" ]; then echo skip=true >> "$GITHUB_OUTPUT"; fi
+      - if: steps.seen.outputs.skip != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      # The hosted image's default Xcode can lag; this project needs the newest stable.
+      - if: steps.seen.outputs.skip != 'true'
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with: { xcode-version: latest-stable }
+      - if: steps.seen.outputs.skip != 'true'
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - if: steps.seen.outputs.skip != 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26
+          cache: pnpm
+      - if: steps.seen.outputs.skip != 'true'
+        run: pnpm install --frozen-lockfile
+      # Homebrew has no versioned Tuist cask; use the same mise pin as TestFlight.
+      - name: Install Tuist 4.209.0
+        if: steps.seen.outputs.skip != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          command -v mise >/dev/null || brew install mise
+          mise use -g tuist@4.209.0
+          mise bin-paths tuist@4.209.0 >> "$GITHUB_PATH"
+      # No retry: a failure keeps its result bundle and is root-caused, never re-run to green.
+      - if: steps.seen.outputs.skip != 'true'
+        run: env -u SDKROOT apps/ios/e2e/ui-tests.sh
+      - if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ui-tests
+          path: |
+            apps/ios/e2e/.ui/results.xcresult
+            apps/ios/e2e/.ui/harness.log
+            apps/ios/e2e/.ui/device.log
