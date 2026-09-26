@@ -237,7 +237,9 @@ unsent messages cannot move it past unseen pages. An invalid cursor replays from
 Routine sync also names the open conversation as `focusThreadId`. The host sends its current
 reply and still-actionable cards in `sync_delta.current` before the replay page and scans that
 thread first. Current events never advance `lastSeen`; older replay cannot replace a newer or
-final version of the same reply. Peers without these optional fields keep ordinary replay.
+final version of the same reply. Subsequent replay pages skip that snapshot and retain open-thread
+priority, so long backfills do not repeatedly scan the full log. Peers without these optional
+fields keep ordinary replay.
 
 Sync builds an in-memory byte-offset index on the first read of a log, then seeks directly to each
 page without re-parsing prior messages; file changes invalidate the index, metadata for 16

@@ -941,7 +941,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   /** A bounded replay page. An explicit thread request includes its pre-pairing history. */
   const syncDelta = (lastSeen: Record<string, string>, pairedAt = 0, threadId?: string,
-    includeApprovalStatus = true, focusThreadId?: string): YorozuEvent => {
+    includeApprovalStatus = true, focusThreadId?: string, includeCurrent = true): YorozuEvent => {
     const events: YorozuEvent[] = [];
     const selected = listThreads(dir).filter((thread) => threadId ? thread.id === threadId : !thread.archived);
     const focused = !threadId && selected.find((thread) => thread.id === focusThreadId);
@@ -950,9 +950,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
       selected.unshift(focused);
     }
     const current: YorozuEvent[] = [];
-    if (focused) {
+    if (focused && includeCurrent) {
       const history = readThreadEvents(focused.id, dir).filter((event) => event.ts >= pairedAt);
-      const reply = running.has(focused.id) ? liveReplies.get(focused.id) : undefined;
+      const live = running.has(focused.id) ? liveReplies.get(focused.id) : undefined;
+      const reply = live && live.ts >= pairedAt ? live : undefined;
       const latest = reply ?? history.findLast((event) =>
         event.kind === "message" && event.data.role === "agent" && !event.parentAgentId);
       if (latest) current.push(latest);
@@ -964,11 +965,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
           ? !answered.has(event.data.actionId) &&
               (pending.get(event.data.actionId)?.threadId === focused.id || nativeCards.has(event.data.actionId, focused.id))
           : event.kind === "question_card" && !answered.has(event.data.questionId) &&
-              questions.has(event.data.questionId, focused.id)).slice(-16));
+              questions.has(event.data.questionId, focused.id)));
       }
       current.sort((a, b) => a.ts - b.ts);
+      if (latest && Buffer.byteLength(JSON.stringify(current)) > SYNC_PAGE_BYTES / 2) {
+        current.splice(current.indexOf(latest), 1);
+      }
     }
-    // Keep snapshots within half a replay page so a slow client can still advance history.
+    // ponytail: oversized card sets fall back to replay; page current cards if this becomes common.
     while (current.length && Buffer.byteLength(JSON.stringify(current)) > SYNC_PAGE_BYTES / 2) current.shift();
     let bytes = Buffer.byteLength(JSON.stringify(current));
     let more = false;
@@ -1918,7 +1922,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         const compatibility = from ? devices.get(from)?.compatibility : undefined;
         return reply(syncDelta(event.data.lastSeen, pairedAt, event.data.threadId,
           !from || compatibility?.state === "compatible" && compatibility.capabilities.includes("offline-approval-v1"),
-          event.data.focusThreadId));
+          event.data.focusThreadId, event.data.includeCurrent !== false));
       }
     }
 

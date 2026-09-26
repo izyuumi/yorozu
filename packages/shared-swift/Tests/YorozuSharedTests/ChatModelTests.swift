@@ -1202,6 +1202,7 @@ func finalStreamedReplyFollowsToolHistory(finalTimestamp: Int) async throws {
         return
     }
     #expect(continuation.lastSeen == ["home": "first-page"])
+    #expect(continuation.includeCurrent == false)
 }
 
 @MainActor

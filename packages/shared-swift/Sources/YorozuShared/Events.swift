@@ -1130,10 +1130,13 @@ public struct SyncRequestData: Codable, Equatable, Sendable {
     public var lastSeen: [String: String]
     public var threadId: String?
     public var focusThreadId: String?
-    public init(lastSeen: [String: String], threadId: String? = nil, focusThreadId: String? = nil) {
+    public var includeCurrent: Bool?
+    public init(lastSeen: [String: String], threadId: String? = nil, focusThreadId: String? = nil,
+                includeCurrent: Bool? = nil) {
         self.lastSeen = lastSeen
         self.threadId = threadId
         self.focusThreadId = focusThreadId
+        self.includeCurrent = includeCurrent
     }
 }
 

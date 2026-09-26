@@ -548,6 +548,8 @@ export interface SyncRequestData {
   threadId?: string;
   /** Open conversation to refresh before routine history replay. */
   focusThreadId?: string;
+  /** Follow-up replay pages can skip a current snapshot already received. */
+  includeCurrent?: boolean;
 }
 
 export interface SyncDeltaData {

@@ -2813,10 +2813,12 @@ test("a sync page stops short of the relay's frame limit, and the rest follows o
   });
 
   // From the end of that page: the second turn, and that is all.
-  phone.send(chat, { kind: "sync_request", data: { lastSeen: { [chat]: replies[0]! } } });
+  phone.send(chat, { kind: "sync_request", data: { lastSeen: { [chat]: replies[0]! }, focusThreadId: chat,
+    includeCurrent: false } });
   const rest = await phone.next("sync_delta");
   expect(roles(rest)).toEqual(["user", "agent"]);
   expect(rest.kind === "sync_delta" && rest.data.more).toBeUndefined();
+  expect(rest.kind === "sync_delta" && rest.data.current).toBeUndefined();
 });
 
 test("catch-up shows a still-actionable card before historical replay", async () => {
@@ -2855,6 +2857,33 @@ test("catch-up excludes an answered question from current state", async () => {
   send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "t1" } }, "");
   const settled = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
   expect(settled.kind === "sync_delta" && settled.data.current).not.toContainEqual(question);
+});
+
+test("current snapshot honors the pairing cutoff for live replies", async () => {
+  const streamed = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let pairedAt = 0;
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(pairedAt - 1);
+    turn.onUpdate?.("before pairing");
+    clock.mockRestore();
+    streamed.resolve();
+    turn.signal.addEventListener("abort", () => release.resolve(), { once: true });
+    await release.promise;
+    return { text: "done", sessionId: "session" };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
+  await vi.waitFor(() => expect(loadDevices(join(dir, "devices.json"))).toHaveLength(1));
+  pairedAt = loadDevices(join(dir, "devices.json"))[0]!.pairedAt!;
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "native");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "native"));
+  send({ kind: "message", data: { role: "user", text: "work" } }, "native");
+  await streamed.promise;
+  try {
+    send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "native" } }, "");
+    const snapshot = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
+    expect(snapshot.kind === "sync_delta" && snapshot.data.current).toBeUndefined();
+  } finally { release.resolve(); }
 });
 
 test.each([["claude-code", "yes"], ["claude-code", "no"], ["codex", "yes"], ["codex", "no"]] as const)("%s native approval %s round-trips through encrypted relay including lockscreen answers", async (agent, answer) => {

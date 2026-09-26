@@ -237,6 +237,7 @@ public final class ChatModel {
     /// Replay progress follows the runtime's log order, independently of live events and
     /// the timeline's timestamp order. Advancing from either can skip unseen sync pages.
     private var syncLastSeen: [String: String] = [:]
+    private var lastSyncFocus: String?
     private var historyCursors: [String: String] = [:]
     private var historyLoaded: Set<String> = []
     private var historyInFlight: Set<String> = []
@@ -1338,9 +1339,11 @@ public final class ChatModel {
     }
 
     /// Asks for everything each thread has gained since the last event we hold.
-    public func requestSync() {
+    public func requestSync(includeCurrent: Bool = true) {
+        lastSyncFocus = openThread
         emit(
-            .syncRequest(SyncRequestData(lastSeen: syncLastSeen, focusThreadId: openThread)),
+            .syncRequest(SyncRequestData(lastSeen: syncLastSeen, focusThreadId: openThread,
+                includeCurrent: includeCurrent ? nil : false)),
             in: ""
         )
     }
@@ -1464,7 +1467,7 @@ public final class ChatModel {
                 }
                 if data.more == true {
                     if data.threadId != nil { requestOpenHistory() }
-                    else { requestSync() }
+                    else { requestSync(includeCurrent: openThread != lastSyncFocus) }
                 }
                 else if data.threadId == nil {
                     syncRevision += 1
