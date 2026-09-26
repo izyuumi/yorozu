@@ -59,6 +59,9 @@ public final class ChatModel {
     /// connection. A toast keeps a presentation of its own, since it should say nothing at
     /// all until there is something to say.
     public let link = ConnectionPresentation(.reconnecting)
+    /// Unlike status lines, a new list starts without a connection toast. Keeping this per
+    /// host lets a merged list respect each host's own grace and initial connection attempt.
+    public let toastLink = ConnectionPresentation(.connected)
 
     private func markInterruption() {
         let actual = ConnectionState(state: state, ownerOnline: ownerOnline)
@@ -68,6 +71,7 @@ public final class ChatModel {
             interruptedSince = .now
         }
         link.update(actual, active: started, since: interruptedSince)
+        toastLink.update(actual, active: started, since: interruptedSince)
     }
     public private(set) var peerInfo: PeerInfoData?
     public private(set) var compatibility: PeerCompatibility = .legacy

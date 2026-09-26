@@ -201,7 +201,7 @@ extension MultiHostModel {
     public var connectionState: ConnectionState? {
         let states = sessions.map { host -> ConnectionState in
             if hasMultipleHosts, case .updateRequired = host.model.compatibility { return .offline }
-            return hasMultipleHosts ? host.model.link.state
+            return hasMultipleHosts ? host.model.toastLink.state
                 : ConnectionState(state: host.model.state, ownerOnline: host.model.ownerOnline)
         }
         guard !states.isEmpty else { return nil }

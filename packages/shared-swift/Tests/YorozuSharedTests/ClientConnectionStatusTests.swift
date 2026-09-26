@@ -175,6 +175,7 @@ private func eventuallyRecovered(_ condition: @MainActor () -> Bool) async -> Bo
     first.start()
     second.start()
     defer { first.close(); second.close() }
+    #expect(hosts.connectionState == .connected)
     await firstTransport.yield(.ownerOnline(true))
     await firstTransport.yield(.state(.paired))
     await secondTransport.yield(.ownerOnline(true))
