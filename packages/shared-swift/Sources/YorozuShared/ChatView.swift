@@ -48,7 +48,12 @@ public struct ChatView: View {
     /// The shortcut stays out of the way while the reader is still at the newest edge.
     @State private var showJumpToLatest = false
     @State private var scrollPhase = ScrollPhase.idle
-    @State private var visibleMessageID: String?
+    @State private var restoredReadingThreadID: String?
+    #if os(macOS)
+        @State private var macScrollPosition = ScrollPosition(idType: String.self)
+        @State private var macReadingGeometry = MacReadingGeometry()
+        @State private var pendingMacReadingPosition: PendingMacReadingPosition?
+    #endif
     /// Geometry can move away from the bottom because replay arrived or a self-sizing row grew,
     /// not because the reader scrolled. Keep that layout fact separate from the reader's intent.
     @State private var newestScroll = NewestScrollIntent()
@@ -355,7 +360,9 @@ public struct ChatView: View {
             atBottom = true
             showJumpToLatest = false
             scrollPhase = .idle
-            visibleMessageID = nil
+            #if os(macOS)
+                macScrollPosition = ScrollPosition(idType: String.self)
+            #endif
             newestScroll = NewestScrollIntent()
             attachmentLoading = false
             attachmentFailure = nil
@@ -514,6 +521,8 @@ public struct ChatView: View {
                 agent: presentation.agent,
                 request: timelineRequest,
                 notificationRequest: notificationRequest,
+                savedPosition: resumeRequest == nil && threadSearchRequest?.threadId != thread.id
+                    ? model.readingPosition(in: thread.id) : nil,
                 presentation: TimelinePresentation(
                     search: search,
                     outbox: model.outbox,
@@ -526,6 +535,7 @@ public struct ChatView: View {
                 ),
                 atBottom: $atBottom,
                 showJumpToLatest: $showJumpToLatest,
+                onPositionChange: { model.rememberReadingPosition($0, in: thread.id) },
                 content: { row in
                     AnyView(
                         rowView(row)
@@ -577,6 +587,7 @@ public struct ChatView: View {
         }
     #endif
 
+    #if os(macOS)
     private var swiftUIMessages: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -584,10 +595,21 @@ public struct ChatView: View {
                     // A delegation collapses to one card where it started and what the
                     // specialist did is behind it; the main agent's own tool use is shown
                     // here, grouped, where it happened.
-                    ForEach(rows) { row in rowView(row) }
+                    ForEach(rows) { row in
+                        rowView(row)
+                            .background {
+                                GeometryReader { geometry in
+                                    Color.clear.preference(
+                                        key: ChatRowTopKey.self,
+                                        value: [row.id: geometry.frame(in: .named("chat-content")).minY]
+                                    )
+                                }
+                            }
+                    }
                     if let activity { ChatActivityRow(activity: activity, agent: presentation.agent) }
                     Color.clear.frame(height: 1).id(Self.bottomAnchor)
                 }
+                .coordinateSpace(name: "chat-content")
                 .scrollTargetLayout()
                 .compactQuietTranscriptLayout()
                 // Handed down rather than threaded through every bubble, block and table cell
@@ -597,7 +619,43 @@ public struct ChatView: View {
             // A thread opens on its newest message, like every other chat: the anchor does it
             // during layout, so there is no jump from the top to watch on the way in.
             .defaultScrollAnchor(.bottom)
-            .scrollPosition(id: $visibleMessageID, anchor: .top)
+            .scrollPosition($macScrollPosition, anchor: .top)
+            .onPreferenceChange(ChatRowTopKey.self) { tops in
+                macReadingGeometry.rowTops = tops
+                restoreMacReadingPositionIfReady()
+            }
+            .onChange(of: rows.map(\.id), initial: true) { _, ids in
+                guard restoredReadingThreadID != thread.id else { return }
+                guard resumeRequest == nil,
+                      threadSearchRequest?.threadId != thread.id else {
+                    restoredReadingThreadID = thread.id
+                    return
+                }
+                guard let saved = model.readingPosition(in: thread.id) else {
+                    restoredReadingThreadID = thread.id
+                    return
+                }
+                guard ids.contains(saved.rowID) else { return }
+                Task { @MainActor in
+                    await Task.yield()
+                    guard restoredReadingThreadID != thread.id,
+                          resumeRequest == nil,
+                          threadSearchRequest?.threadId != thread.id else { return }
+                    newestScroll.targetEvent()
+                    pendingMacReadingPosition = .init(threadID: thread.id, position: saved)
+                    proxy.scrollTo(saved.rowID, anchor: .top)
+                    await Task.yield()
+                    restoreMacReadingPositionIfReady()
+                }
+            }
+            .onChange(of: atBottom) { _, bottom in
+                if restoredReadingThreadID == thread.id && bottom {
+                    model.rememberReadingPosition(nil, in: thread.id)
+                }
+            }
+            .onScrollGeometryChange(for: CGFloat.self) { $0.visibleRect.minY } action: { _, top in
+                macReadingGeometry.visibleTop = top
+            }
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 // `visibleRect` is in content coordinates, which is what makes this reliable:
                 // a thread shorter than the screen sits under a content inset and reports a
@@ -639,6 +697,10 @@ public struct ChatView: View {
             .onScrollPhaseChange { _, phase in
                 scrollPhase = phase
                 newestScroll.observe(atBottom: atBottom, phase: phase)
+                if phase == .idle, restoredReadingThreadID == thread.id {
+                    if atBottom { model.rememberReadingPosition(nil, in: thread.id) }
+                    else { saveMacReadingPosition() }
+                }
             }
             .overlay(alignment: .bottom) {
                 // Not while searching: the arrows are already moving the thread about, and a
@@ -675,6 +737,28 @@ public struct ChatView: View {
             .animation(reduceMotion ? nil : .snappy, value: search.isEmpty)
         }
     }
+
+    #if os(macOS)
+        private func restoreMacReadingPositionIfReady() {
+            guard let pending = pendingMacReadingPosition, pending.threadID == thread.id,
+                  let rowTop = macReadingGeometry.rowTops[pending.position.rowID] else { return }
+            macScrollPosition.scrollTo(y: max(0, rowTop - CGFloat(pending.position.distanceFromTop)))
+            pendingMacReadingPosition = nil
+            restoredReadingThreadID = thread.id
+        }
+
+        private func saveMacReadingPosition() {
+            guard restoredReadingThreadID == thread.id, !atBottom,
+                  !newestScroll.followsLatest,
+                  let id = macScrollPosition.viewID(type: String.self),
+                  let rowTop = macReadingGeometry.rowTops[id] else { return }
+            model.rememberReadingPosition(
+                .init(rowID: id, distanceFromTop: Double(rowTop - macReadingGeometry.visibleTop)),
+                in: thread.id
+            )
+        }
+    #endif
+    #endif
 
     @ViewBuilder private func rowView(_ row: ChatRow) -> some View {
         switch row {
@@ -1104,6 +1188,26 @@ public struct ChatView: View {
     }
 }
 
+#if os(macOS)
+    private struct PendingMacReadingPosition {
+        let threadID: String
+        let position: ThreadCache.ReadingPosition
+    }
+
+    @MainActor private final class MacReadingGeometry {
+        var visibleTop: CGFloat = 0
+        var rowTops: [String: CGFloat] = [:]
+    }
+
+    private struct ChatRowTopKey: PreferenceKey {
+        static var defaultValue: [String: CGFloat] { [:] }
+
+        static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+            value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
+        }
+    }
+#endif
+
 #if os(iOS)
     private struct TimelineRequest: Equatable {
         enum Target: Equatable { case latest, event(String) }
@@ -1153,9 +1257,11 @@ public struct ChatView: View {
         let agent: ThreadAgent
         let request: TimelineRequest?
         let notificationRequest: TimelineRequest?
+        let savedPosition: ThreadCache.ReadingPosition?
         let presentation: TimelinePresentation
         @Binding var atBottom: Bool
         @Binding var showJumpToLatest: Bool
+        let onPositionChange: (ThreadCache.ReadingPosition?) -> Void
         let content: (ChatRow) -> AnyView
 
         private enum Entry: Hashable {
@@ -1204,6 +1310,9 @@ public struct ChatView: View {
             private var animatingToEvent = false
             private var snapshotAnchor: VisibleAnchor?
             private var layoutAnchor: VisibleAnchor?
+            private var didRestoreInitialPosition = false
+            private var restoringInitialPosition = false
+            private var lastPositionReportAt: TimeInterval = 0
 
             init(_ parent: IOSChatTimeline) { self.parent = parent }
 
@@ -1245,6 +1354,7 @@ public struct ChatView: View {
                             self.restore(anchor, in: timeline)
                         }
                         self.layoutAnchor = nil
+                        self.restoreInitialPositionIfNeeded(timeline)
                         self.pinLatestIfNeeded(timeline)
                         Task { @MainActor [weak self, weak timeline] in
                             guard let self, let timeline else { return }
@@ -1266,6 +1376,7 @@ public struct ChatView: View {
 
                 let previousEntries = dataSource?.snapshot().itemIdentifiers ?? []
                 guard !changed.isEmpty || entries != previousEntries else {
+                    restoreInitialPositionIfNeeded(collectionView)
                     applyRequest(collectionView)
                     return
                 }
@@ -1282,6 +1393,7 @@ public struct ChatView: View {
                     collectionView.layoutIfNeeded()
                     if let anchor = self.snapshotAnchor { self.restore(anchor, in: collectionView) }
                     self.snapshotAnchor = nil
+                    self.restoreInitialPositionIfNeeded(collectionView)
                     self.pinLatestIfNeeded(collectionView)
                     self.applyRequest(collectionView)
                     self.reportBottom(collectionView)
@@ -1308,6 +1420,40 @@ public struct ChatView: View {
                 let desired = min(maximum, max(minimum, frame.minY - anchor.distanceFromTop - inset.top))
                 if abs(collectionView.contentOffset.y - desired) > 0.5 {
                     collectionView.contentOffset.y = desired
+                }
+            }
+
+            private func restoreInitialPositionIfNeeded(_ collectionView: UICollectionView) {
+                guard !didRestoreInitialPosition, !restoringInitialPosition else { return }
+                guard let position = parent.savedPosition else {
+                    didRestoreInitialPosition = true
+                    return
+                }
+                guard collectionView.bounds.height > 0 else { return }
+                guard let path = dataSource?.indexPath(for: .row(position.rowID)) else { return }
+                restoringInitialPosition = true
+                newestScroll.targetEvent()
+                collectionView.scrollToItem(at: path, at: .top, animated: false)
+                collectionView.layoutIfNeeded()
+                restore(VisibleAnchor(entry: .row(position.rowID),
+                                      distanceFromTop: position.distanceFromTop), in: collectionView)
+                didRestoreInitialPosition = true
+                restoringInitialPosition = false
+            }
+
+            private func reportPosition(_ scrollView: UIScrollView, force: Bool = false) {
+                guard didRestoreInitialPosition, !restoringInitialPosition,
+                      let collectionView = scrollView as? UICollectionView else { return }
+                let now = ProcessInfo.processInfo.systemUptime
+                guard force || now - lastPositionReportAt >= 0.15 else { return }
+                lastPositionReportAt = now
+                if isAtBottom(scrollView) {
+                    parent.onPositionChange(nil)
+                } else if !newestScroll.followsLatest,
+                          let anchor = visibleAnchor(in: collectionView),
+                          case .row(let id) = anchor.entry {
+                    parent.onPositionChange(.init(rowID: id,
+                                                  distanceFromTop: Double(anchor.distanceFromTop)))
                 }
             }
 
@@ -1397,8 +1543,12 @@ public struct ChatView: View {
                 if parent.showJumpToLatest != show { parent.showJumpToLatest = show }
             }
 
-            func scrollViewDidScroll(_ scrollView: UIScrollView) { reportBottom(scrollView) }
+            func scrollViewDidScroll(_ scrollView: UIScrollView) {
+                reportBottom(scrollView)
+                reportPosition(scrollView)
+            }
             func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+                didRestoreInitialPosition = true
                 snapshotAnchor = nil
                 layoutAnchor = nil
                 animatingToLatest = false
@@ -1408,12 +1558,14 @@ public struct ChatView: View {
             }
             func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate: Bool) {
                 reportBottom(scrollView)
+                reportPosition(scrollView, force: true)
                 if !willDecelerate, let collectionView = scrollView as? UICollectionView {
                     pinLatestIfNeeded(collectionView)
                 }
             }
             func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
                 reportBottom(scrollView)
+                reportPosition(scrollView, force: true)
                 if let collectionView = scrollView as? UICollectionView {
                     pinLatestIfNeeded(collectionView)
                 }
@@ -1422,6 +1574,7 @@ public struct ChatView: View {
                 animatingToLatest = false
                 animatingToEvent = false
                 reportBottom(scrollView)
+                reportPosition(scrollView, force: true)
                 if let collectionView = scrollView as? UICollectionView {
                     pinLatestIfNeeded(collectionView)
                 }
