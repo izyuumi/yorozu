@@ -244,6 +244,15 @@ Subsequent replay pages skip that snapshot and retain open-thread
 priority, so long backfills do not repeatedly scan the full log. Peers without these optional
 fields keep ordinary replay.
 
+Live agent replies send their first partial immediately, then keep only the latest unsent
+revision per thread. A round-robin sender allows at most ten partial broadcasts per second
+across threads and slows further when a broadcast splits into several relay batches. Final
+replies bypass this queue and discard superseded partials; interrupted turns keep their last
+queued draft. The host still
+keeps the full current reply for reconnect catch-up and writes the final to durable history.
+The host sends each live broadcast's sealed phone copies in relay frame batches of at most
+16 entries and under 900 KB, so multiple paired phones do not multiply relay rate-limit cost.
+
 Sync builds an in-memory byte-offset index on the first read of a log, then seeks directly to each
 page without re-parsing prior messages; file changes invalidate the index, metadata for 16
 recently synced logs is retained, and message bodies are not cached.

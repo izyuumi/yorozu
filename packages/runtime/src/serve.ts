@@ -663,20 +663,53 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const PAIRING_SECRETS = 4;
   /** Seals and sends to one paired device. Replaced per connection, a no-op while there is none. */
   let sendTo: (device: string, event: YorozuEvent) => void = () => {};
+  let sendToAll: (event: YorozuEvent) => number = () => 0;
   const liveReplies = new Map<string, YorozuEvent>();
+  const partials = new Map<string, YorozuEvent>();
+  let partialTimer: NodeJS.Timeout | null = null;
+  let nextPartialAt = 0;
+
+  /** Latest partial per thread, paced by the relay batches each broadcast actually used. */
+  const flushPartial = (): void => {
+    partialTimer = null;
+    const entry = partials.entries().next().value;
+    if (!entry || stopped) return;
+    const [threadId, event] = entry;
+    partials.delete(threadId);
+    let batches = 0;
+    try { batches = sendBroadcast(event); }
+    catch (error) { state(`partial-send-error ${String(error)}`); }
+    nextPartialAt = Date.now() + Math.max(100, batches * 50);
+    if (partials.size) partialTimer = setTimeout(flushPartial, nextPartialAt - Date.now());
+  };
+
+  const sendBroadcast = (event: YorozuEvent): number => {
+    const batches = sendToAll(event);
+    for (const send of locals.values()) send(event);
+    // A suspended phone still needs a wake for a final reply or actionable card.
+    notifyRelay(event);
+    return batches;
+  };
 
   /** The same event to every paired device, through the relay or over the local socket. */
   const broadcast = (event: YorozuEvent): void => {
     if (event.kind === "message" && event.data.role === "agent" && !event.parentAgentId) {
-      if (event.data.done) liveReplies.delete(event.threadId);
-      else liveReplies.set(event.threadId, event);
+      if (event.data.done) {
+        liveReplies.delete(event.threadId);
+        partials.delete(event.threadId);
+      } else {
+        liveReplies.set(event.threadId, event);
+        partials.set(event.threadId, event);
+        if (partialTimer || Date.now() < nextPartialAt) {
+          if (!partialTimer) partialTimer = setTimeout(flushPartial, nextPartialAt - Date.now());
+          return;
+        }
+        partials.delete(event.threadId);
+        nextPartialAt = Date.now() + Math.max(100, sendBroadcast(event) * 50);
+        return;
+      }
     }
-    for (const device of devices.keys()) sendTo(device, event);
-    for (const send of locals.values()) send(event);
-    // Beside the sealed frame, never instead of it: a phone that is listening gets the event
-    // immediately. Every phone still gets an alert because a server-open socket can belong to a
-    // suspended iOS app; foreground presentation is suppressed by the app itself.
-    notifyRelay(event);
+    sendBroadcast(event);
   };
 
   const currentUpdateStatus = (requestId?: string) =>
@@ -1046,6 +1079,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     userEventId?: string,
   ): Promise<void> {
     liveReplies.delete(threadId);
+    partials.delete(threadId);
     // A turn the phone did not send — a due job, a background delegation — is still part of
     // the thread, so it is recorded as the user message it stands in for.
     if (!recorded) {
@@ -2062,11 +2096,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
     /** Set once a replayed frame on this socket threw; nothing after it is acked. */
     let ackBlocked = false;
 
-    const sendFrame = (body: FrameBody): void => {
+    const signedFrame = (body: FrameBody): { payload: string; sig: string } => {
       const payload = toBase64Url(Buffer.from(JSON.stringify(body)));
       const sig = signFrame(keys.signing.privateKey, Buffer.from(payload));
-      ws.send(JSON.stringify({ type: "frame", payload, sig: toBase64Url(sig) }));
+      return { payload, sig: toBase64Url(sig) };
     };
+    const sendFrame = (body: FrameBody): void => ws.send(JSON.stringify({ type: "frame", ...signedFrame(body) }));
 
     /**
      * The relay learns who is paired from us, not the other way round: a relay that lost its
@@ -2174,19 +2209,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
       return { t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) };
     };
 
-    sendTo = (device: string, event: YorozuEvent): void => {
+    const boxesFor = (device: string, event: YorozuEvent): FrameBody[] => {
       const known = devices.get(device);
-      if (!known || !relayReady || ws.readyState !== WebSocket.OPEN) return;
+      if (!known || !relayReady || ws.readyState !== WebSocket.OPEN) return [];
       const supportsApprovalStatus = known.compatibility?.state === "compatible" &&
         known.compatibility.capabilities.includes("offline-approval-v1");
-      if (!supportsApprovalStatus && event.kind === "approval_status") return;
+      if (!supportsApprovalStatus && event.kind === "approval_status") return [];
       const awaitingCompatibility = known.record.peerInfoRequired && known.compatibility?.state !== "compatible";
-      if (awaitingCompatibility && event.kind !== "thread_list") return;
+      if (awaitingCompatibility && event.kind !== "thread_list") return [];
       const cutoff = known.record.pairedAt ?? 0;
-      if (event.threadId && event.ts < cutoff) return;
+      if (event.threadId && event.ts < cutoff) return [];
       if (event.kind === "thread_list") {
         const list = threadList(cutoff);
-        if (list.kind !== "thread_list") return;
+        if (list.kind !== "thread_list") return [];
         const name = known.compatibility?.state === "compatible" && known.compatibility.capabilities.includes("host-name") ? computerName() : undefined;
         event = { ...list, id: event.id, ts: event.ts, data: {
           threads: awaitingCompatibility ? [] : list.data.threads,
@@ -2199,13 +2234,40 @@ export function serve(options: ServeOptions = {}): Sidecar {
       // A hello carries no format version. Greet both released clients; each ignores the box
       // it cannot open. Once one answers, send only its format. Modern goes first so a client
       // able to read both never settles on the older format.
-      if (known.format !== "legacy") sendFrame(sealFor(known, event));
+      const boxes: FrameBody[] = [];
+      if (known.format !== "legacy") boxes.push(sealFor(known, event));
       if (known.format !== "current") {
         // Legacy uses a bidirectional key: our own greeting can be reflected. Never put
         // negotiation claims in that format, where direction cannot be authenticated.
         const legacyEvent = event.kind === "thread_list" ? { ...event, data: { threads: event.data.threads } } : event;
-        sendFrame(sealLegacyFor(known, legacyEvent));
+        boxes.push(sealLegacyFor(known, legacyEvent));
       }
+      return boxes;
+    };
+    sendTo = (device, event) => { for (const box of boxesFor(device, event)) sendFrame(box); };
+    const emptyBatchBytes = Buffer.byteLength(JSON.stringify({ type: "frame", frames: [] }));
+    sendToAll = (event) => {
+      let frames: ReturnType<typeof signedFrame>[] = [];
+      let bytes = emptyBatchBytes;
+      let batches = 0;
+      const flush = (): void => {
+        if (frames.length) {
+          ws.send(JSON.stringify({ type: "frame", frames }));
+          batches++;
+        }
+        frames = [];
+        bytes = emptyBatchBytes;
+      };
+      for (const device of devices.keys()) for (const box of boxesFor(device, event)) {
+        const frame = signedFrame(box);
+        const size = Buffer.byteLength(JSON.stringify(frame)) + (frames.length ? 1 : 0);
+        // Stay below the relay's 1 MiB message ceiling, including JSON envelope overhead.
+        if (frames.length && (frames.length === MAX_DEVICES || bytes + size > 900_000)) flush();
+        frames.push(frame);
+        bytes += size;
+      }
+      flush();
+      return batches;
     };
 
     /**
@@ -2586,6 +2648,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     close: async () => {
       stopped = true;
+      partials.clear();
+      if (partialTimer) clearTimeout(partialTimer);
+      partialTimer = null;
       catchupSends.clear();
       if (catchupTimer) clearTimeout(catchupTimer);
       catchupTimer = null;
