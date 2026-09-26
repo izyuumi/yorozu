@@ -76,6 +76,34 @@ private func thread(_ id: String, _ date: Date, pinned: Bool = false, archived: 
     #expect(ThreadGroups([], now: now, calendar: calendar).sections.isEmpty)
 }
 
+@Test func activityUpdatesRowsWithoutMovingThemUntilListInteractionEnds() {
+    let first = thread("first", at(9, 11))
+    let second = thread("second", at(9, 10))
+    let pinned = thread("pinned", at(9, 1), pinned: true)
+    let starting = [first, second, pinned]
+    let held = HeldThreadOrder(
+        groups: ThreadGroups(starting, now: now, calendar: calendar),
+        results: ThreadSearchResults(threads: starting, query: "second", messageText: { _ in "" })
+    )
+
+    var updatedSecond = second
+    updatedSecond.lastActivity = at(9, 12).timeIntervalSince1970 * 1000
+    updatedSecond.title = "Second, with new answer"
+    updatedSecond.lastAgentAt = updatedSecond.lastActivity
+    var newThread = thread("new", at(9, 13))
+    newThread.title = "Second topic"
+    let changed = [first, updatedSecond, pinned, newThread]
+    let during = held.groups(with: changed)
+
+    #expect(during.pinned.map(\.id) == ["pinned"])
+    #expect(during.recent.map(\.id) == ["first", "second"])
+    #expect(during.recent.last?.title == "Second, with new answer")
+    #expect(during.recent.last?.isUnread == true)
+    #expect(held.results(with: changed).threads.map(\.id) == ["second"])
+    #expect(ThreadGroups(changed, now: now, calendar: calendar).recent.map(\.id) == ["new", "second", "first"])
+    #expect(ThreadSearchResults(threads: changed, query: "second", messageText: { _ in "" }).threads.map(\.id) == ["new", "second"])
+}
+
 @Test func threadTimesStayCompactWithoutAgo() {
     let cases: [(TimeInterval, String)] = [
         (0, "0s"),
