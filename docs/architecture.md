@@ -236,7 +236,9 @@ unsent messages cannot move it past unseen pages. An invalid cursor replays from
 
 Routine sync also names the open conversation as `focusThreadId`. The host puts its current reply
 and still-actionable cards in `sync_delta.current`, sending cards that exceed the snapshot budget
-as paced individual events before the delta, and scans that thread first. Current events never
+as paced individual events before the delta, and scans that thread first. Paced sends rotate
+among devices, replace an older request from the same device, and stop on reconnect or re-pair.
+Current events never
 advance `lastSeen`; older replay cannot replace a newer or final version of the same reply.
 Subsequent replay pages skip that snapshot and retain open-thread
 priority, so long backfills do not repeatedly scan the full log. Peers without these optional

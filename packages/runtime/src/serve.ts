@@ -652,7 +652,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
   let relayReady = false;
   let retry: NodeJS.Timeout | null = null;
   let stopped = false;
-  let catchupSends: Promise<void> = Promise.resolve();
+  const catchupSends = new Map<string, { connection: WebSocket | null; device: PairedDevice;
+    responses: YorozuEvent[]; next: number }>();
+  let catchupTimer: NodeJS.Timeout | null = null;
   /**
    * Secrets behind the QRs on screen, newest last. A phone's first `hello` proves it holds one
    * of them, and pairing spends them all: a QR is for one phone, and the next one is drawn fresh.
@@ -933,6 +935,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const forgetDevice = (pub: string): void => {
     const known = devices.get(pub);
     if (!known) return;
+    catchupSends.delete(pub);
     devices.delete(pub);
     saveDevices();
     if (known.record.signingPub) revokeAtRelay(known.record.signingPub);
@@ -1483,6 +1486,38 @@ export function serve(options: ServeOptions = {}): Sidecar {
   };
   armYoloExpiry();
 
+  /** One catch-up frame per tick; rotate phones and replace obsolete requests per phone. */
+  const sendCatchup = (): void => {
+    catchupTimer = null;
+    const entry = catchupSends.entries().next().value;
+    if (!entry) return;
+    const [pub, job] = entry;
+    catchupSends.delete(pub);
+    if (!stopped && relayReady && socket === job.connection && job.connection?.readyState === WebSocket.OPEN &&
+      devices.get(pub) === job.device) {
+      while (job.next < job.responses.length) {
+        const response = job.responses[job.next++]!;
+        if (response.kind === "approval_card" &&
+          pending.get(response.data.actionId)?.threadId !== response.threadId &&
+          !nativeCards.has(response.data.actionId, response.threadId)) continue;
+        if (response.kind === "question_card" &&
+          !questions.has(response.data.questionId, response.threadId)) continue;
+        try { sendTo(pub, response); }
+        catch (error) {
+          state(`catchup-send-error ${String(error)}`);
+          job.connection?.close();
+          return;
+        }
+        break;
+      }
+      if (job.next < job.responses.length) catchupSends.set(pub, job);
+    }
+    if (catchupSends.size) {
+      catchupTimer = setTimeout(sendCatchup, 100);
+      catchupTimer.unref();
+    }
+  };
+
   /**
    * `from` names the relay device a sealed box came from. Absent for the local socket, whose
    * clients are this Mac's own user: that difference is what decides whether turning YOLO on
@@ -1936,23 +1971,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
         const responses = syncDelta(event.data.lastSeen, pairedAt, event.data.threadId,
           !from || compatibility?.state === "compatible" && compatibility.capabilities.includes("offline-approval-v1"),
           event.data.focusThreadId, event.data.includeCurrent !== false);
+        if (from) catchupSends.delete(from);
         if (from && responses.length > 1) {
-          const connection = socket;
-          const send = async (): Promise<void> => {
-            for (const response of responses) {
-              if (stopped || socket !== connection || connection?.readyState !== WebSocket.OPEN || !devices.has(from)) return;
-              if (response.kind === "approval_card") {
-                if (pending.get(response.data.actionId)?.threadId !== response.threadId &&
-                  !nativeCards.has(response.data.actionId, response.threadId)) continue;
-              } else if (response.kind === "question_card" &&
-                !questions.has(response.data.questionId, response.threadId)) continue;
-              reply(response);
-              if (response !== responses.at(-1)) await new Promise((resolve) => setTimeout(resolve, 100));
-            }
-          };
-          catchupSends = catchupSends.then(send, send).catch((error: unknown) => {
-            state(`catchup-send-error ${String(error)}`);
-          });
+          const device = devices.get(from);
+          if (!device) return;
+          catchupSends.set(from, { connection: socket, device, responses, next: 0 });
+          if (!catchupTimer) sendCatchup();
         } else for (const response of responses) reply(response);
         return;
       }
@@ -2446,6 +2470,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
     ws.on("close", () => {
       relayReady = false;
+      catchupSends.clear();
+      if (catchupTimer) clearTimeout(catchupTimer);
+      catchupTimer = null;
       stopHeartbeat();
       state("disconnected");
       if (!stopped) retry = setTimeout(connect, RECONNECT_MS);
@@ -2553,6 +2580,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     close: async () => {
       stopped = true;
+      catchupSends.clear();
+      if (catchupTimer) clearTimeout(catchupTimer);
+      catchupTimer = null;
       for (const turn of running.values()) turn.abort();
       if (retry) clearTimeout(retry);
       await local.close();
