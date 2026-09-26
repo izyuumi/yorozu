@@ -121,6 +121,7 @@ public actor RelayClient: ChatTransport {
     private var deviceToken: String?
 
     private var socket: URLSessionWebSocketTask?
+    private var intentionalRedial: URLSessionWebSocketTask?
     /// The challenge the relay issued on this socket; a rejoin signs it.
     private var nonce = ""
     /// True once the relay has accepted this device, so later joins need no token. Seeded by
@@ -217,6 +218,7 @@ public actor RelayClient: ChatTransport {
         loopGeneration &+= 1
         loop?.cancel()
         socket?.cancel()
+        intentionalRedial = nil
         stopped = false
         watchNetworkPath()
         let generation = loopGeneration
@@ -241,6 +243,7 @@ public actor RelayClient: ChatTransport {
         guard !stopped else { return }
         attempt = 0
         backoff?.cancel()
+        intentionalRedial = socket
         socket?.cancel()
     }
 
@@ -259,6 +262,7 @@ public actor RelayClient: ChatTransport {
         loop?.cancel()
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
+        intentionalRedial = nil
         updates?.yield(.state(.closed))
         updates?.finish()
         updates = nil
@@ -416,7 +420,9 @@ public actor RelayClient: ChatTransport {
                 try handle(text)
             } catch {
                 // Our own cancellation is not a failure worth reporting.
-                if !stopped, !Task.isCancelled, generation == loopGeneration {
+                let redial = intentionalRedial === socket
+                if redial { intentionalRedial = nil }
+                if !redial, !stopped, !Task.isCancelled, generation == loopGeneration {
                     updates?.yield(.failed(error.localizedDescription))
                 }
                 return
