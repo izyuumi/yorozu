@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 #if os(iOS)
 import UIKit
 #endif
@@ -40,6 +41,19 @@ public final class ChatModel {
     public private(set) var searchQuery = ""
     private var searchRequestID = ""
     @ObservationIgnored private var searchTask: Task<Void, Never>?
+    @ObservationIgnored private var uploadCache: (id: String, bytes: [Data])?
+    @ObservationIgnored private var inFlightUpload: [String: (requestId: String, index: Int)] = [:]
+    @ObservationIgnored private var downloadBytes: [String: Data] = [:]
+    @ObservationIgnored private var downloadInFlight: Set<String> = []
+    @ObservationIgnored private var downloadRetries: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var visibleAttachmentMessages: Set<String> = []
+
+    private var supportsAttachmentChunks: Bool {
+        if case .compatible(_, let capabilities) = compatibility {
+            return capabilities.contains("attachment-chunks-v1")
+        }
+        return false
+    }
 
     public var supportsHostSearch: Bool {
         if case .compatible(_, let capabilities) = compatibility {
@@ -232,6 +246,7 @@ public final class ChatModel {
     public var openThread: String? {
         didSet {
             if openThread != oldValue {
+                visibleAttachmentMessages.removeAll()
                 reportRead()
                 saveComposerSoon()
                 requestOpenHistory()
@@ -345,6 +360,7 @@ public final class ChatModel {
     private var stopped = false
     @ObservationIgnored private var connectionTask: Task<Void, Never>?
     @ObservationIgnored private var flushTask: Task<Void, Never>?
+    @ObservationIgnored private var priorityTask: Task<Void, Never>?
     @ObservationIgnored private var retryTask: Task<Void, Never>?
     /// How many `sync_delta`s have been applied, which is what a background drain waits on.
     private var deltas = 0
@@ -462,6 +478,7 @@ public final class ChatModel {
         streamFrame?.cancel()
         composerWrite?.cancel()
         flushTask?.cancel()
+        priorityTask?.cancel()
         retryTask?.cancel()
         emitter?.cancel()
         cache = nil
@@ -469,6 +486,7 @@ public final class ChatModel {
         await connectionTask?.value
         await emitter?.value
         await flushTask?.value
+        await priorityTask?.value
         await cacheWrite?.value
         state = .closed
         ownerOnline = false
@@ -550,6 +568,7 @@ public final class ChatModel {
         guard approvalPending(card.actionId) || answered.contains(card.actionId) else { return false }
         // The durable answer has its own priority lane; wait for this drain before suspending.
         await flushTask?.value
+        await priorityTask?.value
         await flushCache()
         return true
     }
@@ -595,6 +614,10 @@ public final class ChatModel {
     private func queueMessage(_ text: String, in threadId: String, attachments: [MessageAttachment],
                               fromComposer: Bool = false) -> Bool {
         guard !stopped else { return false }
+        guard !attachments.contains(where: \.isDeferred) else {
+            failure = "Wait for attachment download before sending."
+            return false
+        }
         // Decided once for the whole send: a thread created here and the message that creates it
         // must not take different routes, or the runtime is told about a message in a thread it
         // has never heard of.
@@ -699,6 +722,31 @@ public final class ChatModel {
         return item.status
     }
 
+    public func attachmentTransferLabels(of eventId: String) -> [String]? {
+        guard let item = outbox.first(where: { $0.id == eventId }),
+              case .message(let message) = item.event.payload,
+              !message.attachments.isEmpty,
+              item.admissionStatus != .rejected, item.admissionStatus != .expired,
+              item.admissionStatus != .withdrawn else { return nil }
+        if !supportsAttachmentChunks {
+            let tooLarge = message.attachments.compactMap(\.bytes).reduce(0) { $0 + $1.count } > 384 * 1024
+            let label = tooLarge ? String(localized: "Waiting for host update to transfer")
+                : item.deliveryAttempts == nil ? String(localized: "Waiting to transfer")
+                : String(localized: "Sending attachment · awaiting host acceptance")
+            return message.attachments.map { "\($0.name) · \(label)" }
+        }
+        guard let descriptors = item.uploadDescriptors, let offsets = item.uploadOffsets,
+              descriptors.count == offsets.count else {
+            return message.attachments.map { "\($0.name) · \(String(localized: "Waiting to transfer"))" }
+        }
+        return zip(descriptors, offsets).map { descriptor, offset in
+            let state = offset >= descriptor.bytes
+                ? String(localized: "Transferred · awaiting host acceptance")
+                : String(localized: "Transferring \(Int(Double(offset) / Double(max(1, descriptor.bytes)) * 100))%")
+            return "\(descriptor.name) · \(state)"
+        }
+    }
+
     public func outboxRejectionReason(of eventId: String) -> String? {
         outbox.first(where: { $0.id == eventId })?.rejectionReason
     }
@@ -787,6 +835,7 @@ public final class ChatModel {
     /// Only the first unreceipted operation in a thread may be sent. A socket send remains
     /// uncertain until its host receipt; errors and missing receipts retry with the same ID.
     public func flush() {
+        flushPriority()
         if flushing { flushAgain = true; return }
         guard canDeliver, !outbox.isEmpty, saveOutbox() else { return }
         queryExpiredAdmissions()
@@ -799,15 +848,32 @@ public final class ChatModel {
             while let self, !Task.isCancelled, self.canDeliver {
                 let now = Date()
                 guard let item = self.pendingHeads(at: now, blocking: blockedThreads).first(where: {
-                    !sent.contains($0.id) && ($0.nextAttemptAt ?? .distantPast) <= now
+                    !sent.contains($0.id) && $0.event.payload.kind != .interrupt &&
+                        $0.event.payload.kind != .approvalAnswer && ($0.nextAttemptAt ?? .distantPast) <= now
                 }), let index = self.outbox.firstIndex(where: { $0.id == item.id }) else { break }
+                if case .message(let message) = item.event.payload, !message.attachments.isEmpty,
+                   !self.supportsAttachmentChunks,
+                   message.attachments.compactMap(\.bytes).reduce(0, { $0 + $1.count }) > 384 * 1024 {
+                    self.failure = "Update the host to send attachments larger than 384 KB. Your message is saved."
+                    sent.insert(item.id)
+                    blockedThreads.insert(item.event.threadId)
+                    continue
+                }
                 self.outbox[index].attemptedAt = self.outbox[index].attemptedAt ?? now
                 let attempts = (item.deliveryAttempts ?? 0) + 1
                 self.outbox[index].deliveryAttempts = attempts
                 self.outbox[index].nextAttemptAt = now.addingTimeInterval(Outbox.retryDelay(after: attempts))
                 guard self.saveOutbox() else { break }
                 do {
-                    try await self.transport.send(item.event)
+                    if case .message(let message) = item.event.payload, !message.attachments.isEmpty {
+                        if self.supportsAttachmentChunks {
+                            try await self.sendAttachmentPart(item)
+                        } else {
+                            try await self.transport.send(item.event)
+                        }
+                    } else {
+                        try await self.transport.send(item.event)
+                    }
                     sent.insert(item.id)
                     if let index = self.outbox.firstIndex(where: { $0.id == item.id }), self.outbox[index].tries > 0 {
                         self.outbox[index].tries = 0
@@ -831,6 +897,211 @@ public final class ChatModel {
         }
     }
 
+    /// One urgent control send may start while a large chunk is still awaiting its socket.
+    /// Both lanes use the same persisted outbox and host receipt/status semantics.
+    private func flushPriority() {
+        guard priorityTask == nil, canDeliver else { return }
+        let now = Date()
+        guard let item = pendingHeads(at: now).first(where: {
+            ($0.event.payload.kind == .interrupt || $0.event.payload.kind == .approvalAnswer) &&
+                ($0.nextAttemptAt ?? .distantPast) <= now
+        }), let index = outbox.firstIndex(where: { $0.id == item.id }) else { return }
+        outbox[index].attemptedAt = outbox[index].attemptedAt ?? now
+        let attempts = (item.deliveryAttempts ?? 0) + 1
+        outbox[index].deliveryAttempts = attempts
+        outbox[index].nextAttemptAt = now.addingTimeInterval(Outbox.retryDelay(after: attempts))
+        guard saveOutbox() else { return }
+        priorityTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.transport.send(item.event)
+                if let index = self.outbox.firstIndex(where: { $0.id == item.id }) {
+                    self.outbox[index].tries = 0
+                    self.saveOutbox()
+                }
+            } catch {
+                self.bumpTries(of: item.id)
+                self.saveOutbox()
+            }
+            self.priorityTask = nil
+            self.flush()
+        }
+    }
+
+    private func sendAttachmentPart(_ item: OutboxItem) async throws {
+        guard case .message(let message) = item.event.payload,
+              let deadline = message.admissionDeadline,
+              let initialIndex = outbox.firstIndex(where: { $0.id == item.id }) else { return }
+        if uploadCache?.id != item.id || outbox[initialIndex].uploadDescriptors == nil {
+            let files = message.attachments
+            let prepared = await Task.detached(priority: .utility) { () -> ([Data], [AttachmentDescriptor])? in
+                var bytes: [Data] = [], descriptors: [AttachmentDescriptor] = []
+                for file in files {
+                    guard let data = Data(base64Encoded: file.data) else { return nil }
+                    bytes.append(data)
+                    let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+                    descriptors.append(AttachmentDescriptor(name: file.name, mime: file.mime,
+                        bytes: data.count, sha256: digest))
+                }
+                return (bytes, descriptors)
+            }.value
+            // The actor can process a receipt or withdrawal while the detached hash runs.
+            guard let index = outbox.firstIndex(where: { $0.id == item.id }),
+                  !stopPending(for: item.id), outbox[index].admissionStatus != .withdrawn else { return }
+            guard let prepared, MessageAttachment.withinLimits(message.attachments),
+                  outbox[index].uploadDescriptors == nil || outbox[index].uploadDescriptors == prepared.1 else {
+                outbox[index].admissionStatus = .rejected
+                outbox[index].rejectionReason = "invalid-attachment-upload"
+                saveOutbox()
+                return
+            }
+            uploadCache = (item.id, prepared.0)
+            if outbox[index].uploadDescriptors == nil {
+                outbox[index].uploadDescriptors = prepared.1
+                outbox[index].uploadOffsets = Array(repeating: 0, count: prepared.1.count)
+                guard saveOutbox() else { return }
+            }
+        }
+        guard let index = outbox.firstIndex(where: { $0.id == item.id }),
+              !stopPending(for: item.id), outbox[index].admissionStatus != .withdrawn,
+              outbox[index].admissionStatus != .rejected else { return }
+        guard let cached = uploadCache, let descriptors = outbox[index].uploadDescriptors,
+              let offsets = outbox[index].uploadOffsets,
+              offsets.count == descriptors.count else { return }
+        for fileIndex in descriptors.indices where offsets[fileIndex] < descriptors[fileIndex].bytes {
+            let offset = offsets[fileIndex]
+            let bytes = cached.bytes[fileIndex]
+            let end = min(bytes.count, offset + MessageAttachment.chunkBytes)
+            let requestId = UUID().uuidString
+            let chunk = YorozuEvent(id: requestId, threadId: item.event.threadId,
+                ts: Int(Date().timeIntervalSince1970 * 1000), agentId: item.event.agentId,
+                payload: .attachmentChunk(AttachmentChunkData(messageId: item.id, index: fileIndex,
+                    offset: offset, totalBytes: bytes.count, sha256: descriptors[fileIndex].sha256,
+                    deadline: deadline, data: bytes.subdata(in: offset..<end).base64EncodedString())))
+            inFlightUpload[item.id] = (requestId, fileIndex)
+            try await transport.send(chunk)
+            return
+        }
+        let commit = YorozuEvent(id: item.id, threadId: item.event.threadId, ts: item.event.ts,
+            agentId: item.event.agentId, payload: .attachmentCommit(AttachmentCommitData(
+                text: message.text, attachments: descriptors, admissionDeadline: deadline)))
+        inFlightUpload[item.id] = (item.id, -1)
+        try await transport.send(commit)
+    }
+
+    private func attachmentProgress(_ progress: AttachmentProgressData) {
+        guard let pending = inFlightUpload[progress.messageId], pending.requestId == progress.requestId,
+              let index = outbox.firstIndex(where: { $0.id == progress.messageId }),
+              !stopPending(for: progress.messageId), outbox[index].admissionStatus != .withdrawn,
+              var offsets = outbox[index].uploadOffsets,
+              let descriptors = outbox[index].uploadDescriptors,
+              progress.index >= 0, progress.index < descriptors.count,
+              (pending.index == progress.index || pending.index == -1),
+              progress.nextOffset >= 0, progress.nextOffset <= descriptors[progress.index].bytes else { return }
+        inFlightUpload[progress.messageId] = nil
+        if let reason = progress.reason {
+            if reason == "attachment-storage-failed" || reason == "attachment-storage-full" ||
+                reason == "attachment-busy" {
+                failure = "Host could not save attachment. Retrying."
+            } else {
+                outbox[index].admissionStatus = .rejected
+                outbox[index].rejectionReason = reason
+            }
+        } else {
+            offsets[progress.index] = progress.nextOffset
+            outbox[index].uploadOffsets = offsets
+            outbox[index].nextAttemptAt = nil
+            outbox[index].deliveryAttempts = 0
+            outbox[index].tries = 0
+        }
+        saveOutbox()
+        flush()
+    }
+
+    /// Fetch only attachments in a visible message. History keeps small files inline.
+    public func requestAttachmentDownloads(_ event: YorozuEvent) {
+        visibleAttachmentMessages.insert("\(event.threadId)\0\(event.id)")
+        guard canDeliver, supportsAttachmentChunks,
+              case .message(let message) = event.payload else { return }
+        for (index, attachment) in message.attachments.enumerated() where attachment.isDeferred {
+            let key = "\(event.threadId)\0\(event.id)\0\(index)"
+            guard downloadInFlight.insert(key).inserted else { continue }
+            let offset = downloadBytes[key]?.count ?? 0
+            emit(.attachmentDownloadRequest(AttachmentDownloadRequestData(
+                messageId: event.id, index: index, offset: offset)), in: event.threadId)
+            downloadRetries[key]?.cancel()
+            downloadRetries[key] = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(12))
+                guard !Task.isCancelled, let self,
+                      self.downloadInFlight.remove(key) != nil,
+                      self.visibleAttachmentMessages.contains("\(event.threadId)\0\(event.id)") else { return }
+                self.requestAttachmentDownloads(event)
+            }
+        }
+    }
+
+    public func stopAttachmentDownloads(_ event: YorozuEvent) {
+        visibleAttachmentMessages.remove("\(event.threadId)\0\(event.id)")
+        for index in 0..<MessageAttachment.maxCount {
+            let key = "\(event.threadId)\0\(event.id)\0\(index)"
+            downloadInFlight.remove(key)
+            downloadRetries.removeValue(forKey: key)?.cancel()
+            downloadBytes.removeValue(forKey: key)
+        }
+    }
+
+    private func resumeVisibleAttachmentDownloads() {
+        guard let threadId = openThread else { return }
+        for event in timeline(threadId).events where
+            visibleAttachmentMessages.contains("\(threadId)\0\(event.id)") {
+            requestAttachmentDownloads(event)
+        }
+    }
+
+    private func attachmentDownloadChunk(_ chunk: AttachmentDownloadChunkData, in threadId: String) {
+        let key = "\(threadId)\0\(chunk.messageId)\0\(chunk.index)"
+        if chunk.reason != nil {
+            downloadInFlight.remove(key)
+            downloadRetries.removeValue(forKey: key)?.cancel()
+            downloadBytes.removeValue(forKey: key)
+            failure = "Attachment unavailable on host. Reopen message to retry."
+            return
+        }
+        guard let event = timeline(threadId).events.first(where: { $0.id == chunk.messageId }),
+              case .message(var message) = event.payload,
+              message.attachments.indices.contains(chunk.index),
+              message.attachments[chunk.index].isDeferred,
+              chunk.totalBytes == message.attachments[chunk.index].deferredByteCount,
+              chunk.sha256 == message.attachments[chunk.index].deferredSHA256,
+              chunk.totalBytes > 0, chunk.totalBytes <= MessageAttachment.maxBytes,
+              let bytes = Data(base64Encoded: chunk.data), !bytes.isEmpty,
+              bytes.count <= MessageAttachment.chunkBytes else { return }
+        guard downloadInFlight.contains(key) else { return }
+        var partial = downloadBytes[key] ?? Data()
+        guard chunk.offset == partial.count, partial.count + bytes.count <= chunk.totalBytes else { return }
+        partial.append(bytes)
+        downloadInFlight.remove(key)
+        downloadRetries.removeValue(forKey: key)?.cancel()
+        if partial.count < chunk.totalBytes {
+            downloadBytes[key] = partial
+            if visibleAttachmentMessages.contains("\(threadId)\0\(chunk.messageId)") {
+                requestAttachmentDownloads(event)
+            }
+            return
+        }
+        let digest = SHA256.hash(data: partial).map { String(format: "%02x", $0) }.joined()
+        guard digest == chunk.sha256 else {
+            downloadBytes.removeValue(forKey: key)
+            failure = "Attachment download failed integrity check. Reopen message to retry."
+            return
+        }
+        downloadBytes.removeValue(forKey: key)
+        message.attachments[chunk.index].data = partial.base64EncodedString()
+        var completed = event
+        completed.payload = .message(message)
+        upsert(completed)
+    }
+
     /// The runtime has this one. Only now is it out of the queue.
     private func receipted(_ eventId: String) {
         guard outbox.contains(where: { $0.id == eventId }) else { return }
@@ -838,6 +1109,8 @@ public final class ChatModel {
         if outbox.contains(where: { $0.id == eventId &&
             ($0.event.payload.kind == .interrupt || $0.event.payload.kind == .approvalAnswer) }) { return }
         outbox.removeAll { $0.id == eventId }
+        inFlightUpload[eventId] = nil
+        if uploadCache?.id == eventId { uploadCache = nil }
         saveOutbox()
         flush()
     }
@@ -1457,6 +1730,10 @@ public final class ChatModel {
         case .state(let state):
             self.state = state
             if state != .paired {
+                inFlightUpload.removeAll()
+                downloadInFlight.removeAll()
+                downloadRetries.values.forEach { $0.cancel() }
+                downloadRetries.removeAll()
                 ownerOnline = false
                 if updateStatus.phase != .none && updateStatus.phase != .installing {
                     updateStatus.phase = .unknown
@@ -1479,6 +1756,7 @@ public final class ChatModel {
                 resumeResultRequests()
                 onPaired?()
                 flush()
+                resumeVisibleAttachmentDownloads()
                 requestHostSearch()
             }
         case .ownerOnline(let online):
@@ -1499,6 +1777,7 @@ public final class ChatModel {
             }
             // The Mac waking up is the other half of "there is somewhere to send to".
             if online { flush() }
+            if online { resumeVisibleAttachmentDownloads() }
         case .event(let event):
             switch event.payload {
             case .updateStatus(let data):
@@ -1613,6 +1892,10 @@ public final class ChatModel {
                 }
             case .receipt(let data):
                 receipted(data.eventId)
+            case .attachmentProgress(let data):
+                attachmentProgress(data)
+            case .attachmentDownloadChunk(let data):
+                attachmentDownloadChunk(data, in: event.threadId)
             case .admissionStatus(let data):
                 reconcile(data)
             case .stopStatus(let data):
@@ -2052,6 +2335,19 @@ public final class ChatModel {
         applyAnswerState(event)
         var thread = timeline(event.threadId).events
         if let index = thread.firstIndex(where: { $0.id == event.id }) {
+            if case .message(let old) = thread[index].payload,
+               case .message(var next) = event.payload,
+               old.attachments.count == next.attachments.count {
+                for attachmentIndex in next.attachments.indices where next.attachments[attachmentIndex].isDeferred {
+                    let saved = old.attachments[attachmentIndex]
+                    if saved.bytes != nil && !saved.isDeferred &&
+                        saved.name == next.attachments[attachmentIndex].name &&
+                        saved.mime == next.attachments[attachmentIndex].mime {
+                        next.attachments[attachmentIndex].data = saved.data
+                    }
+                }
+                event.payload = .message(next)
+            }
             if thread[index].clientTs != nil && event.clientTs == nil,
                case .message(let old) = thread[index].payload, old.role == .user,
                case .message(let next) = event.payload, next.role == .user { return }

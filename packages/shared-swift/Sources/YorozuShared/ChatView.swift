@@ -779,6 +779,7 @@ public struct ChatView: View {
                     streaming: event.id == streamingId,
                     status: outboxStatus,
                     rejectionReason: model.outboxRejectionReason(of: event.id),
+                    attachmentTransferLabels: model.attachmentTransferLabels(of: event.id),
                     onRetry: data.role == .user && (outboxStatus == nil || outboxStatus == .rejected || outboxStatus == .withdrawn)
                         ? { retry(data) } : nil,
                     onWithdraw: model.canWithdraw(event)
@@ -791,6 +792,8 @@ public struct ChatView: View {
                     agent: presentation.agent
                 )
                 .id(event.id)
+                .onAppear { model.requestAttachmentDownloads(event) }
+                .onDisappear { model.stopAttachmentDownloads(event) }
             }
         case .approval(let event):
             if case .approvalCard(let card) = event.payload {

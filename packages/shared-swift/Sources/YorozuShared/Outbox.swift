@@ -31,13 +31,17 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
     /// Old attempted messages lacked host-enforced deadlines. Wait out the relay buffer before
     /// offering a new ID, then require a fresh host status query.
     public var legacyHoldUntil: Date?
+    /// Host-fsynced byte offsets, one per attachment. Missing on older encrypted caches.
+    public var uploadOffsets: [Int]?
+    public var uploadDescriptors: [AttachmentDescriptor]?
 
     public init(event: YorozuEvent, tries: Int = 0, attemptedAt: Date? = nil,
                 nextAttemptAt: Date? = nil, deliveryAttempts: Int? = nil, reconfirmedAt: Date? = nil,
                 admissionStatus: AdmissionStatusData.Status? = nil, rejectionReason: String? = nil,
                 replacementId: String? = nil, lastStatusQueryAt: Date? = nil,
                 lastStatusQueryId: String? = nil,
-                legacyHoldUntil: Date? = nil) {
+                legacyHoldUntil: Date? = nil, uploadOffsets: [Int]? = nil,
+                uploadDescriptors: [AttachmentDescriptor]? = nil) {
         self.event = event
         self.tries = tries
         self.attemptedAt = attemptedAt
@@ -50,6 +54,8 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
         self.lastStatusQueryAt = lastStatusQueryAt
         self.lastStatusQueryId = lastStatusQueryId
         self.legacyHoldUntil = legacyHoldUntil
+        self.uploadOffsets = uploadOffsets
+        self.uploadDescriptors = uploadDescriptors
     }
 
     public var id: String { event.id }

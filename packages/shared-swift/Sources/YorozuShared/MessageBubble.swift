@@ -46,6 +46,7 @@ public struct MessageBubble: View {
     /// Set while the message is waiting in the outbox, which is what puts a caption under it.
     private let status: OutboxStatus?
     private let rejectionReason: String?
+    private let attachmentTransferLabels: [String]?
     private let onRetry: (() -> Void)?
     private let onWithdraw: (() -> Void)?
     private let onDelete: (() -> Void)?
@@ -62,6 +63,7 @@ public struct MessageBubble: View {
         streaming: Bool = false,
         status: OutboxStatus? = nil,
         rejectionReason: String? = nil,
+        attachmentTransferLabels: [String]? = nil,
         onRetry: (() -> Void)? = nil,
         onWithdraw: (() -> Void)? = nil,
         onDelete: (() -> Void)? = nil,
@@ -74,6 +76,7 @@ public struct MessageBubble: View {
         self.streaming = streaming
         self.status = status
         self.rejectionReason = rejectionReason
+        self.attachmentTransferLabels = attachmentTransferLabels
         self.onRetry = onRetry
         self.onWithdraw = onWithdraw
         self.onDelete = onDelete
@@ -92,6 +95,12 @@ public struct MessageBubble: View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: LayoutMetrics.tight) {
             if !data.attachments.isEmpty {
                 AttachmentsView(attachments: data.attachments)
+            }
+            if let attachmentTransferLabels {
+                ForEach(Array(attachmentTransferLabels.enumerated()), id: \.offset) { _, label in
+                    Text(label).font(.caption2).foregroundStyle(.secondary)
+                        .accessibilityLabel(label)
+                }
             }
             if (!data.text.isEmpty || streaming), !isUser {
                 HStack(spacing: 6) {
@@ -219,6 +228,11 @@ public struct MessageBubble: View {
     private var rejectionDescription: String {
         switch rejectionReason {
         case "oversized-attachments": String(localized: "Not sent · attachments too large")
+        case "invalid-attachment-upload", "invalid-attachment-chunk", "invalid-attachment-commit":
+            String(localized: "Not sent · attachment could not be read")
+        case "conflicting-attachment-upload", "corrupt-attachment-upload":
+            String(localized: "Not sent · attachment changed during transfer")
+        case "attachment-storage-failed": String(localized: "Not sent · host could not save attachment")
         case "client-clock-ahead": String(localized: "Not sent · device clock is ahead")
         case "conflicting-message-id": String(localized: "Not sent · message changed after sending")
         case "invalid-admission-deadline": String(localized: "Not sent · invalid message deadline")

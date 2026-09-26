@@ -718,8 +718,17 @@ public actor RelayClient: ChatTransport {
         guard let socket else { throw YorozuCrypto.CryptoError.malformed("not connected") }
         let data = try JSONSerialization.data(withJSONObject: message)
         let frame = URLSessionWebSocketTask.Message.string(String(decoding: data, as: UTF8.self))
+        // Enqueue on the socket before actor reentrancy: channel seq assignment and frame
+        // emission must stay ordered even when an earlier send completion stalls.
+        let (result, continuation) = AsyncStream<Result<Void, any Error>>.makeStream(
+            bufferingPolicy: .bufferingOldest(1))
+        socket.send(frame) { error in
+            continuation.yield(error.map { .failure($0) } ?? .success(()))
+            continuation.finish()
+        }
         try await sendWithDeadline(onTimeout: { socket.cancel() }) {
-            try await socket.send(frame)
+            guard let outcome = await result.first(where: { _ in true }) else { throw CancellationError() }
+            try outcome.get()
         }
     }
 }

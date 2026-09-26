@@ -12,6 +12,8 @@ private actor FakeTransport: ChatTransport {
     private var updates: AsyncStream<TransportUpdate>.Continuation?
     private var held: [TransportUpdate] = []
     private(set) var sent: [YorozuEvent] = []
+    private var blockAttachmentChunks = false
+    private var heldChunks: [CheckedContinuation<Void, Never>] = []
 
     init(autoReceipt: Bool = false) { self.autoReceipt = autoReceipt }
 
@@ -25,6 +27,9 @@ private actor FakeTransport: ChatTransport {
 
     func send(_ event: YorozuEvent) async throws {
         sent.append(event)
+        if blockAttachmentChunks && event.payload.kind == .attachmentChunk {
+            await withCheckedContinuation { heldChunks.append($0) }
+        }
         if autoReceipt {
             yield(.event(YorozuEvent(id: "receipt-\(event.id)", threadId: "", ts: 1, agentId: "main",
                                      payload: .receipt(ReceiptData(eventId: event.id)))))
@@ -32,12 +37,20 @@ private actor FakeTransport: ChatTransport {
     }
 
     func close() {
+        for release in heldChunks { release.resume() }
+        heldChunks.removeAll()
         updates?.finish()
         updates = nil
     }
 
     func yield(_ update: TransportUpdate) {
         if let updates { updates.yield(update) } else { held.append(update) }
+    }
+
+    func holdChunks() { blockAttachmentChunks = true }
+    func releaseChunks() {
+        for release in heldChunks { release.resume() }
+        heldChunks.removeAll()
     }
 
 }
@@ -1682,4 +1695,158 @@ func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(
         requestId: gammaID, matches: [], nextOffset: 0
     )))))
     #expect(await eventually { model.searchIncomplete && !model.searchComplete })
+}
+
+@MainActor @Test func attachmentUploadResumesFromHostAckBeforeMessageAdmission() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["attachment-chunks-v1"])))
+    #expect(await eventually {
+        if case .compatible(_, let capabilities) = model.compatibility { return capabilities.contains("attachment-chunks-v1") }
+        return false
+    })
+    let attachment = try #require(MessageAttachment(name: "image.png", mime: "image/png",
+        bytes: Data(repeating: 7, count: 400_000)))
+    model.send("inspect", in: "t", attachments: [attachment])
+    #expect(await eventually { await transport.sent.contains(where: { $0.payload.kind == .attachmentChunk }) })
+    let first = try #require(await transport.sent.first(where: { $0.payload.kind == .attachmentChunk }))
+    guard case .attachmentChunk(let firstData) = first.payload else { return }
+    #expect(firstData.offset == 0)
+    #expect(Data(base64Encoded: firstData.data)?.count == 256 * 1024)
+    #expect(model.attachmentTransferLabels(of: firstData.messageId)?.first?.contains("0%") == true)
+
+    // The host may have saved the first frame while the response was lost. Its next ack
+    // advances the same message rather than creating a second logical submission.
+    await transport.yield(.state(.closed))
+    #expect(await eventually { !model.canDeliver })
+    await transport.yield(.state(.paired))
+    await transport.yield(.ownerOnline(true))
+    #expect(await eventually { model.canDeliver })
+    model.retry(firstData.messageId)
+    #expect(await eventually { await transport.sent.filter { $0.payload.kind == .attachmentChunk }.count >= 2 })
+    let retry = try #require(await transport.sent.filter { $0.payload.kind == .attachmentChunk }.last)
+    guard case .attachmentChunk(let retryData) = retry.payload else { return }
+    #expect(retryData.offset == 0)
+    await transport.yield(.event(event("progress", .attachmentProgress(AttachmentProgressData(
+        requestId: retry.id, messageId: firstData.messageId, index: 0, nextOffset: 256 * 1024)))))
+    #expect(await eventually { await transport.sent.filter { $0.payload.kind == .attachmentChunk }.count >= 3 })
+    let second = try #require(await transport.sent.filter { $0.payload.kind == .attachmentChunk }.last)
+    guard case .attachmentChunk(let secondData) = second.payload else { return }
+    #expect(secondData.offset == 256 * 1024)
+    #expect(model.attachmentTransferLabels(of: firstData.messageId)?.first?.contains("65%") == true)
+    await transport.yield(.event(event("progress-2", .attachmentProgress(AttachmentProgressData(
+        requestId: second.id, messageId: firstData.messageId, index: 0, nextOffset: 400_000)))))
+    #expect(await eventually { await transport.sent.contains(where: { $0.payload.kind == .attachmentCommit }) })
+    let commit = try #require(await transport.sent.first(where: { $0.payload.kind == .attachmentCommit }))
+    #expect(commit.id == firstData.messageId)
+    #expect(model.attachmentTransferLabels(of: firstData.messageId)?.first?.contains("awaiting host acceptance") == true)
+    await transport.yield(.event(event("receipt", .receipt(ReceiptData(eventId: firstData.messageId)))))
+    #expect(await eventually { !model.outbox.contains(where: { $0.id == firstData.messageId }) })
+}
+
+@MainActor @Test func withdrawalCanPassAnUnacknowledgedAttachmentChunk() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["attachment-chunks-v1"])))
+    #expect(await eventually {
+        if case .compatible(_, let capabilities) = model.compatibility { return capabilities.contains("attachment-chunks-v1") }
+        return false
+    })
+    let attachment = try #require(MessageAttachment(name: "file.txt", mime: "text/plain",
+        bytes: Data(repeating: 1, count: 400_000)))
+    model.send("inspect", in: "t", attachments: [attachment])
+    #expect(await eventually { await transport.sent.contains(where: { $0.payload.kind == .attachmentChunk }) })
+    let messageID = try #require(model.outbox.first(where: { $0.event.payload.kind == .message })?.id)
+    model.withdraw(messageID)
+    #expect(await eventually { await transport.sent.contains(where: { $0.payload.kind == .interrupt }) })
+    #expect(await transport.sent.filter { $0.payload.kind == .attachmentCommit }.isEmpty)
+}
+
+@MainActor @Test func withdrawalStartsWhileAttachmentSocketSendIsStalled() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["attachment-chunks-v1"])))
+    #expect(await eventually {
+        if case .compatible(_, let caps) = model.compatibility { return caps.contains("attachment-chunks-v1") }
+        return false
+    })
+    await transport.holdChunks()
+    let attachment = try #require(MessageAttachment(name: "file.txt", mime: "text/plain",
+        bytes: Data(repeating: 1, count: 400_000)))
+    model.send("inspect", in: "t", attachments: [attachment])
+    #expect(await eventually { await transport.sent.contains { $0.payload.kind == .attachmentChunk } })
+    let messageID = try #require(model.outbox.first(where: { $0.event.payload.kind == .message })?.id)
+    model.withdraw(messageID)
+    #expect(await eventually { await transport.sent.contains { $0.payload.kind == .interrupt } })
+    await transport.releaseChunks()
+}
+
+@MainActor @Test(arguments: [false, true])
+func deferredAttachmentDownloadsAfterVisibleHistoryArrives(legacyCache: Bool) async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["attachment-chunks-v1"])))
+    let bytes = Data(repeating: 42, count: 300_000)
+    let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+    let preview = event("host-file", .message(MessageData(role: .user, text: "image",
+        attachments: [MessageAttachment(name: "photo.png", mime: "image/png",
+            data: legacyCache ? "yorozu-deferred-v1:\(bytes.count):\(digest)" : "",
+            sizeBytes: legacyCache ? nil : bytes.count,
+            sha256: legacyCache ? nil : digest)])), thread: "t")
+    await transport.yield(.event(preview))
+    #expect(await eventually { model.events["t"]?.contains(where: { $0.id == preview.id }) == true })
+    model.requestAttachmentDownloads(preview)
+    #expect(await eventually { await transport.sent.contains { $0.payload.kind == .attachmentDownloadRequest } })
+    let first = event("part-1", .attachmentDownloadChunk(AttachmentDownloadChunkData(
+        messageId: preview.id, index: 0, offset: 0, totalBytes: bytes.count,
+        data: bytes.prefix(MessageAttachment.chunkBytes).base64EncodedString(), sha256: digest)), thread: "t")
+    await transport.yield(.event(first))
+    #expect(await eventually { await transport.sent.contains { item in
+        if case .attachmentDownloadRequest(let data) = item.payload { return data.offset == MessageAttachment.chunkBytes }
+        return false
+    } })
+    await transport.yield(.event(event("part-2", .attachmentDownloadChunk(AttachmentDownloadChunkData(
+        messageId: preview.id, index: 0, offset: MessageAttachment.chunkBytes, totalBytes: bytes.count,
+        data: bytes.dropFirst(MessageAttachment.chunkBytes).base64EncodedString(), sha256: digest)), thread: "t")))
+    #expect(await eventually {
+        guard let stored = model.events["t"]?.first(where: { $0.id == preview.id }),
+              case .message(let data) = stored.payload else { return false }
+        return data.attachments.first?.bytes == bytes
+    })
+}
+
+@MainActor @Test func confirmedAttachmentBytesSurviveClientRelaunch() throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let key = SymmetricKey(size: .bits256)
+    let cache = ThreadCache(directory: directory, key: key)
+    let ts = Int(Date().timeIntervalSince1970 * 1000)
+    let file = try #require(MessageAttachment(name: "file.txt", mime: "text/plain",
+        bytes: Data(repeating: 1, count: 400_000)))
+    let message = YorozuEvent(id: "upload", threadId: "home", ts: ts, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "inspect", attachments: [file],
+            admissionDeadline: ts + 30 * 60_000)))
+    try cache.savePending([OutboxItem(event: message, attemptedAt: Date(), uploadOffsets: [256 * 1024],
+        uploadDescriptors: [AttachmentDescriptor(name: "file.txt", mime: "text/plain", bytes: 400_000,
+            sha256: String(repeating: "a", count: 64))])])
+    let restored = ChatModel(transport: FakeTransport(), cache: ThreadCache(directory: directory, key: key))
+    #expect(restored.outbox.first?.uploadOffsets == [256 * 1024])
+    #expect(restored.outbox.first?.uploadDescriptors?.first?.bytes == 400_000)
+}
+
+@MainActor @Test func olderHostKeepsLargeAttachmentQueuedWithExplicitUpgradeReason() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    let attachment = try #require(MessageAttachment(name: "file.txt", mime: "text/plain",
+        bytes: Data(repeating: 1, count: 400_000)))
+    model.send("inspect", in: "t", attachments: [attachment])
+    #expect(await eventually { model.failure?.contains("Update the host") == true })
+    let item = try #require(model.outbox.first(where: { $0.event.payload.kind == .message }))
+    #expect(item.status == .queued)
+    #expect(await transport.sent.allSatisfy { $0.payload.kind != .message && $0.payload.kind != .attachmentChunk })
 }

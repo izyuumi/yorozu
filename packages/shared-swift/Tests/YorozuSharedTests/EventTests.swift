@@ -127,6 +127,18 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         case .threadSearchResult: .threadSearchResult(ThreadSearchResultData(requestId: "q1", matches: [
             ThreadSearchMatch(threadId: "home", eventId: "e9", excerpt: "At the café")
         ]))
+        case .attachmentChunk: .attachmentChunk(AttachmentChunkData(messageId: "m1", index: 0,
+            offset: 0, totalBytes: 2, sha256: String(repeating: "a", count: 64), deadline: 100, data: "aGk="))
+        case .attachmentProgress: .attachmentProgress(AttachmentProgressData(requestId: "r1", messageId: "m1",
+            index: 0, nextOffset: 2))
+        case .attachmentCommit: .attachmentCommit(AttachmentCommitData(text: "look", attachments: [
+            AttachmentDescriptor(name: "photo.png", mime: "image/png", bytes: 2,
+                sha256: String(repeating: "a", count: 64))], admissionDeadline: 100))
+        case .attachmentDownloadRequest: .attachmentDownloadRequest(AttachmentDownloadRequestData(
+            messageId: "m1", index: 0, offset: 0))
+        case .attachmentDownloadChunk: .attachmentDownloadChunk(AttachmentDownloadChunkData(
+            messageId: "m1", index: 0, offset: 0, totalBytes: 2, data: "aGk=",
+            sha256: String(repeating: "a", count: 64)))
         case .syncDelta:
             .syncDelta(SyncDeltaData(events: [
                 YorozuEvent(id: "e2", threadId: "home", ts: 2, agentId: "main", payload: .thought(ThoughtData(text: "x")))
