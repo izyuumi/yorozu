@@ -703,7 +703,8 @@ async function macClient(dir: string) {
     return id;
   };
   const settings = (): YorozuEvent[] => events.filter((event) => event.kind === "approval_settings");
-  return { events, settings, send, close: () => socket.destroy() };
+  const sendRawEvent = (event: YorozuEvent): void => { socket.write(`${JSON.stringify(event)}\n`); };
+  return { events, settings, send, sendRawEvent, close: () => socket.destroy() };
 }
 
 const HOUR_MS = 3_600_000;
@@ -1527,6 +1528,29 @@ test("a replayed command applies once, and every copy is receipted", async () =>
   const again = await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === "cmd-1");
   expect(again.filter((event) => event.kind === "rule_list")).toEqual([]);
   expect(listRules(dir)).toEqual([]);
+});
+
+test("failed OpenClaw admission sends no receipt and accepts the same ID on retry", async () => {
+  vi.spyOn(OpenClawRunner.prototype, "run").mockResolvedValue("done");
+  const { dir } = await pairedPhone([], true);
+  createThread("Admission", dir, "admission");
+  const mac = await macClient(dir);
+  const event: YorozuEvent = {
+    id: "admission-retry", threadId: "admission", ts: Date.now(), agentId: "mac",
+    kind: "message", data: { role: "user", text: "run once" },
+  };
+  const blocked = join(dir, "openclaw-pending.json.tmp");
+  try {
+    mkdirSync(blocked);
+    mac.sendRawEvent(event);
+    await vi.waitFor(() => expect(states.some((state) => state.startsWith("local-event-error"))).toBe(true));
+    expect(mac.events.some((item) => item.kind === "receipt" && item.data.eventId === event.id)).toBe(false);
+
+    rmSync(blocked, { recursive: true });
+    mac.sendRawEvent(event);
+    await vi.waitFor(() => expect(mac.events.some((item) => item.kind === "receipt" && item.data.eventId === event.id)).toBe(true));
+    expect(readThreadEvents(event.threadId, dir).filter((item) => item.id === event.id)).toHaveLength(1);
+  } finally { mac.close(); }
 });
 
 /** Pairing burns a token, so the sidecar prints one QR per device that can still join. */
@@ -3101,4 +3125,3 @@ test("a seventeenth phone is refused, the list never grows past the cap, and the
     mac.close();
   }
 });
-
