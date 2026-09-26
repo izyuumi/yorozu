@@ -1101,6 +1101,25 @@ test("rapid reply revisions converge to the latest partial and final answer", as
     .map((event) => event.kind === "message" ? event.data.text : "")).toEqual(["draft 0", "draft 19", "finished"]);
 });
 
+test("a trace burst cannot delay the final answer or lose durable history", async () => {
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    for (let i = 0; i < 150; i++) turn.onActivity?.(`thought-${i}`, { kind: "thought", data: { text: `step ${i}` } });
+    return { text: "finished" };
+  } };
+  const { send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "cc");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "cc"));
+  send({ kind: "message", data: { role: "user", text: "work" } }, "cc");
+  const live = await eventsUntil((event) => event.kind === "message" && event.data.role === "agent" && event.data.done === true);
+  expect(live.filter((event) => event.kind === "thought").length).toBeLessThan(150);
+  const hint = live.find((event) => event.kind === "sync_delta" && event.data.more === true) ??
+    (await eventsUntil((event) => event.kind === "sync_delta" && event.data.more === true)).at(-1)!;
+  expect(hint).toMatchObject({ kind: "sync_delta", data: { events: [], more: true } });
+  send({ kind: "sync_request", data: { lastSeen: {}, threadId: "cc" } }, "");
+  const replay = (await eventsUntil((event) => event.kind === "sync_delta" && event.data.events.length > 0)).at(-1)!;
+  expect(replay.kind === "sync_delta" && replay.data.events.filter((event) => event.kind === "thought")).toHaveLength(150);
+});
+
 test("stopping a turn keeps its latest unsent draft", async () => {
   const runner: NativeAgentRunner = { run: async (turn) => {
     for (let i = 0; i < 20; i++) turn.onUpdate?.(`draft ${i}`);

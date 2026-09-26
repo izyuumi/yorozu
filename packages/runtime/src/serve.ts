@@ -668,6 +668,102 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const partials = new Map<string, YorozuEvent>();
   let partialTimer: NodeJS.Timeout | null = null;
   let nextPartialAt = 0;
+  const traces = new Map<string, YorozuEvent[]>();
+  let traceCount = 0;
+  let traceBytes = 0;
+  let traceTimer: NodeJS.Timeout | null = null;
+  let syncHintTimer: NodeJS.Timeout | null = null;
+  let syncNeeded = false;
+  let nextSyncHintAt = 0;
+  let traceTokens = 30;
+  let traceRefilledAt = Date.now();
+  const TRACE_EVENTS = 64;
+  const TRACE_BYTES = 512 * 1024;
+  const refillTraceTokens = (): void => {
+    const now = Date.now();
+    traceTokens = Math.min(30, traceTokens + Math.max(0, now - traceRefilledAt) / 100);
+    traceRefilledAt = now;
+  };
+
+  const traceEvent = (event: YorozuEvent): boolean =>
+    event.kind === "thought" || event.kind === "tool_call" || event.kind === "tool_result" ||
+    event.kind === "progress_card";
+  const durableTrace = (event: YorozuEvent): boolean =>
+    event.kind !== "thought" || event.data.transient !== true;
+  const clearTraces = (): void => {
+    traces.clear();
+    traceCount = 0;
+    traceBytes = 0;
+    if (traceTimer) clearTimeout(traceTimer);
+    traceTimer = null;
+    if (syncHintTimer) clearTimeout(syncHintTimer);
+    syncHintTimer = null;
+    syncNeeded = false;
+    traceTokens = 30;
+    traceRefilledAt = Date.now();
+  };
+  const sendSyncHint = (): void => {
+    syncHintTimer = null;
+    if (!syncNeeded || stopped || !relayReady) return;
+    syncNeeded = false;
+    nextSyncHintAt = Date.now() + 5_000;
+    // An empty truncated delta leaves every client's replay cursor intact and asks it to sync.
+    try { sendToAll(control({ kind: "sync_delta", data: { events: [], more: true } })); }
+    catch (error) { state(`sync-hint-error ${String(error)}`); socket?.close(); }
+  };
+  const noteSkippedTrace = (): void => {
+    syncNeeded = true;
+    if (!syncHintTimer) syncHintTimer = setTimeout(sendSyncHint, Math.max(0, nextSyncHintAt - Date.now()));
+  };
+  const drainTrace = (): void => {
+    traceTimer = null;
+    if (stopped || !relayReady) return clearTraces();
+    if ((socket?.bufferedAmount ?? 0) > TRACE_BYTES) {
+      traceTimer = setTimeout(drainTrace, 100);
+      return;
+    }
+    refillTraceTokens();
+    if (traceTokens < 1) {
+      traceTimer = setTimeout(drainTrace, Math.max(10, Math.ceil((1 - traceTokens) * 100)));
+      return;
+    }
+    const entry = traces.entries().next().value;
+    if (!entry) return;
+    const [threadId, queue] = entry;
+    traces.delete(threadId);
+    const event = queue.shift()!;
+    traceCount--;
+    traceBytes -= Buffer.byteLength(JSON.stringify(event));
+    if (queue.length) traces.set(threadId, queue);
+    let batches = 0;
+    try { batches = sendToAll(event); }
+    catch (error) { state(`trace-send-error ${String(error)}`); socket?.close(); return; }
+    traceTokens -= batches;
+    if (traces.size) traceTimer = setTimeout(drainTrace, 100);
+  };
+  const queueTrace = (event: YorozuEvent): void => {
+    if (!relayReady) return; // reconnect sync owns history emitted while the relay was away
+    refillTraceTokens();
+    if (!traces.size && traceTokens >= 1 && (socket?.bufferedAmount ?? 0) <= TRACE_BYTES) {
+      traceTokens -= sendToAll(event);
+      return;
+    }
+    const size = Buffer.byteLength(JSON.stringify(event));
+    const queue = traces.get(event.threadId) ?? [];
+    queue.push(event);
+    traces.set(event.threadId, queue);
+    traceCount++;
+    traceBytes += size;
+    while (traceCount > TRACE_EVENTS || traceBytes > TRACE_BYTES) {
+      const largest = [...traces].reduce((best, entry) => entry[1].length > best[1].length ? entry : best);
+      const skipped = largest[1].shift()!;
+      traceCount--;
+      traceBytes -= Buffer.byteLength(JSON.stringify(skipped));
+      if (!largest[1].length) traces.delete(largest[0]);
+      if (durableTrace(skipped)) noteSkippedTrace();
+    }
+    if (traces.size && !traceTimer) traceTimer = setTimeout(drainTrace, 100);
+  };
 
   /** Latest partial per thread, paced by the relay batches each broadcast actually used. */
   const flushPartial = (): void => {
@@ -693,6 +789,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   /** The same event to every paired device, through the relay or over the local socket. */
   const broadcast = (event: YorozuEvent): void => {
+    if (traceEvent(event)) {
+      for (const send of locals.values()) send(event);
+      queueTrace(event);
+      return;
+    }
     if (event.kind === "message" && event.data.role === "agent" && !event.parentAgentId) {
       if (event.data.done) {
         liveReplies.delete(event.threadId);
@@ -2538,6 +2639,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
     ws.on("close", () => {
       relayReady = false;
+      clearTraces();
       catchupSends.clear();
       if (catchupTimer) clearTimeout(catchupTimer);
       catchupTimer = null;
@@ -2648,6 +2750,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     close: async () => {
       stopped = true;
+      clearTraces();
       partials.clear();
       if (partialTimer) clearTimeout(partialTimer);
       partialTimer = null;
