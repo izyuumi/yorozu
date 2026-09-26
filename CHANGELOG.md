@@ -1,6 +1,9 @@
 # Changelog
 
-## [0.5.0](https://github.com/izyuumi/yorozu/compare/v0.4.0...v0.5.0) (2026-09-25)
+## [0.5.0](https://github.com/izyuumi/yorozu/commits/v0.5.0) (2026-09-25)
+
+The `v0.4.0` tag belongs to an earlier Git lineage, so this preview lists all
+commits reachable from current `main`. Candidate release notes use its exact source commit.
 
 
 ### Features
