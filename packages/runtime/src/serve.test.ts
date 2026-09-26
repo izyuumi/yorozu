@@ -1194,30 +1194,32 @@ test.each([
     return "";
   });
   const releaseStop = Promise.withResolvers<{ status: "stopped" | "completed"; text?: string }>();
-  vi.spyOn(OpenClawRunner.prototype, "stopRun").mockImplementation(() => releaseStop.promise);
+  const stopRun = vi.spyOn(OpenClawRunner.prototype, "stopRun").mockImplementation(() => releaseStop.promise);
+  if (interrupted) stopRun.mockResolvedValueOnce(undefined);
   const { dir, send, eventsUntil } = await pairedPhone([], true);
   send({ kind: "thread_create", data: {} });
   await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
   const target = send({ kind: "message", data: { role: "user", text: "work" } });
   await eventsUntil((event) => event.kind === "message" && event.data.role === "agent" && event.data.text === "partial");
   send({ kind: "interrupt", data: { targetEventId: target } });
+  await eventsUntil((event) => event.kind === "stop_status" && event.data.status === "requested");
+  const queued = send({ kind: "message", data: { role: "user", text: "next" } });
+  await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === queued);
+  expect(readThreadEvents("t1", dir).some((event) => event.id === queued)).toBe(false);
   if (interrupted) {
-    await eventsUntil((event) => event.kind === "stop_status" && event.data.status === "requested");
-    const queued = send({ kind: "message", data: { role: "user", text: "next" } });
-    await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === queued);
+    await vi.waitFor(() => expect(stopRun).toHaveBeenCalledTimes(2), { timeout: 3_000 });
+    expect(turns).toHaveLength(1);
   }
   releaseStop.resolve({ status: outcome, ...(outcome === "completed" ? { text: "finished" } : {}) });
   await eventsUntil((event) => event.kind === "stop_status" && event.data.status === outcome);
   expect(readThreadEvents("t1", dir).find((event) => event.id === `openclaw:${target}:final`))
     .toMatchObject({ data: { text, done: true, ...(interrupted ? { interrupted: true } : {}) } });
-  if (!interrupted) send({ kind: "message", data: { role: "user", text: "next" } });
   await eventsUntil((event) => event.kind === "message" && event.data.role === "agent" && event.data.text === "next answer");
-  expect(turns[1]?.text.includes("Previous reply was stopped or has a pending Stop request")).toBe(interrupted);
-  if (interrupted) {
-    const history = readThreadEvents("t1", dir);
-    expect(history.findIndex((event) => event.id === `openclaw:${target}:final`))
-      .toBeLessThan(history.findIndex((event) => event.kind === "message" && event.data.text === "next answer"));
-  }
+  expect(turns[1]?.promptOverride?.includes("Previous reply was stopped or has a pending Stop request") ?? false)
+    .toBe(interrupted);
+  const history = readThreadEvents("t1", dir);
+  expect(history.findIndex((event) => event.id === `openclaw:${target}:final`))
+    .toBeLessThan(history.findIndex((event) => event.id === queued));
 });
 
 test("client archive and restore reach OpenClaw in order before the canonical list changes", async () => {

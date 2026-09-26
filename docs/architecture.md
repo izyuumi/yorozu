@@ -522,8 +522,9 @@ Backend context after Stop:
 Yorozu therefore supplies the stopped partial (up to its last 4,000 characters) and a reminder
 to verify prior actions with the next prompt to all three backends. The user's saved message
 stays unchanged. A Stop before text supplies a short note. A same-thread prompt can be admitted
-while Stop is pending, but waits for the exact Stop outcome before execution so the interrupted
-reply stays ahead of it in the host log.
+while Stop is pending, but its thread-log entry and execution wait for the exact Stop outcome
+so the interrupted reply stays ahead of it. Inconclusive Gateway abort checks retry while that
+thread remains queued; they do not release another run into an uncertain session.
 
 ## Approvals, questions and progress
 

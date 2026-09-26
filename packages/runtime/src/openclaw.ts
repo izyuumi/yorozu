@@ -74,6 +74,8 @@ export interface StoredTurnInput {
 export interface OpenClawTurn {
   threadId: string;
   text: string;
+  /** Host context for this dispatch; the admitted user text stays unchanged. */
+  promptOverride?: string;
   identity?: string;
   eventTs?: number;
   admissionDeadline?: number;
@@ -292,7 +294,7 @@ export class OpenClawRunner {
       completionId: stored?.completionId ?? turn.completionId }, () => client, sessionKey,
       stored?.runId ?? randomUUID(), stored?.startedAt ?? Date.now());
     pending.recoveryAttempts = stored?.recoveryAttempts ?? 0;
-    pending.recoveryPrompt = stored?.recoveryPrompt;
+    pending.recoveryPrompt = stored?.recoveryPrompt ?? turn.promptOverride;
     pending.recoveryStartedAt = stored?.recoveryStartedAt;
     pending.paused = stored?.paused === true;
     if (!this.#pending.has(pending)) return completed;

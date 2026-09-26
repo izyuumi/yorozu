@@ -1391,9 +1391,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (userEventId) runningEventIds.set(threadId, userEventId);
       broadcastActiveThreadList();
       try {
+        const prompt = withStoppedContext(threadId, text, userEventId);
         const reply = await openclaw.run({
           threadId,
           text,
+          ...(prompt !== text ? { promptOverride: prompt } : {}),
           model: threadModel(threadId, dir),
           effort: threadEffort(threadId, dir),
           attachments,
@@ -1455,20 +1457,24 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     if (updateGate.status.phase === "installing") return Promise.reject(new Error("Mac is installing an update"));
     updateGate.activity();
+    let deferredEvent: YorozuEvent & { kind: "message" } | undefined;
     if (viaOpenClaw(threadId)) {
       userEventId ??= randomUUID();
       const event: YorozuEvent & { kind: "message" } = acceptedEvent?.kind === "message" ? acceptedEvent
         : { id: userEventId, threadId, ts: Date.now(), agentId: MAIN_AGENT,
         kind: "message" as const, data: { role: "user" as const, text, ...(attachments.length ? { attachments } : {}) } };
-      const existingInput = openclaw!.pendingTurns(true).find((turn) => turn.userEventId === userEventId)?.input.text;
-      const stored = openclaw!.admitUserTurn({ threadId, text: existingInput ?? withStoppedContext(threadId, text, userEventId), model: threadModel(threadId, dir),
+      const deferLog = [...stoppedTurns.values()].some((stop) => stop.threadId === threadId && stop.status === "requested");
+      const stored = openclaw!.admitUserTurn({ threadId, text, model: threadModel(threadId, dir),
         effort: threadEffort(threadId, dir), attachments, userEventId, identity: userMessageIdentity(event),
         eventTs: event.ts, admissionDeadline: event.data.admissionDeadline,
         completionId: `openclaw:` + userEventId + `:final` }, (admission) => {
         const logged = admission ? { ...event, data: { ...event.data,
           runId: admission.runId, completionId: admission.completionId } } : event;
-        if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === event.id)) appendTranscript(logged, transcripts);
-        if (!readThreadEvents(threadId, dir).some((known) => known.id === event.id)) appendThreadEvent(logged, dir);
+        if (deferLog) deferredEvent = logged;
+        else {
+          if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === event.id)) appendTranscript(logged, transcripts);
+          if (!readThreadEvents(threadId, dir).some((known) => known.id === event.id)) appendThreadEvent(logged, dir);
+        }
       }, () => readThreadEvents(threadId, dir).some((known) => known.id === event.id));
       if (!stored) return Promise.resolve();
       text = stored.input.text;
@@ -1483,6 +1489,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (userEventId && stoppedTurns.has(userEventId)) {
         openclaw?.discardPending(userEventId);
         return;
+      }
+      const logged = deferredEvent;
+      if (logged) {
+        if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === logged.id)) appendTranscript(logged, transcripts);
+        if (!readThreadEvents(threadId, dir).some((known) => known.id === logged.id)) appendThreadEvent(logged, dir);
       }
       if (userEventId) activeTurnIds.add(userEventId);
       try { await runTurn(threadId, text, recorded, attachments, userEventId); }
@@ -1522,6 +1533,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const archiveUpdates = new Map<string, Promise<void>>();
   const stopAttempts = new Set<string>();
   const stopSettlements = new Map<string, ReturnType<typeof Promise.withResolvers<void>>>();
+  const stopRetries = new Map<string, ReturnType<typeof setTimeout>>();
 
   const stopStatus = (record: StopRecord, requestId: string): YorozuEvent => ({
     ...control({ kind: "stop_status", data: { targetEventId: record.targetEventId, requestId, status: record.status } }),
@@ -1578,6 +1590,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       return;
     }
     stopAttempts.add(target);
+    // Hold the thread's FIFO queue until Gateway confirms this exact run has ended.
     const settlement = stopSettlements.get(target) ?? Promise.withResolvers<void>();
     stopSettlements.set(target, settlement);
     abortTarget(record.threadId, target);
@@ -1595,7 +1608,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
       broadcastStop(stoppedTurns.get(target)!);
       settlement.resolve();
       if (!admittedTurns.has(target)) stopSettlements.delete(target);
-    }).catch((error: unknown) => state(`stop-error ${String(error)}`)).finally(() => stopAttempts.delete(target));
+    }).catch((error: unknown) => state(`stop-error ${String(error)}`)).finally(() => {
+      stopAttempts.delete(target);
+      if (!stopped && stoppedTurns.get(target)?.status === "requested" && !stopRetries.has(target)) {
+        const retry = setTimeout(() => {
+          stopRetries.delete(target);
+          const current = stoppedTurns.get(target);
+          if (current?.status === "requested") finishStop(current);
+        }, 1_000);
+        retry.unref();
+        stopRetries.set(target, retry);
+      }
+    });
   };
 
   function updateArchive(event: YorozuEvent & { kind: "thread_archive" }, reply: Send): void {
@@ -2770,7 +2794,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
     liveReplies.delete(threadId);
     const stop = stored.userEventId ? stoppedTurns.get(stored.userEventId) : undefined;
     if (stop) {
-      if (stop.status === "requested") finishStop(stop);
+      if (stop.status === "requested") {
+        finishStop(stop);
+        await stopSettlements.get(stop.targetEventId)?.promise;
+      }
       else if (stored.userEventId) openclaw!.discardPending(stored.userEventId);
       return;
     }
@@ -2862,6 +2889,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     close: async () => {
       stopped = true;
+      for (const retry of stopRetries.values()) clearTimeout(retry);
+      stopRetries.clear();
       clearTraces();
       partials.clear();
       if (partialTimer) clearTimeout(partialTimer);
