@@ -145,7 +145,8 @@ The runner imports both identities into a temporary keychain, stores the notary 
 Team members are added to the "Internal" beta group in App Store Connect. The "Public" group
 has external testing on; its link is <https://testflight.apple.com/join/DubKMzZF>, served from
 <https://yorozu.yumi.to/iphone>. A build reaches the public link only after it is added to that
-group and passes Beta App Review.
+group and passes Beta App Review. The `Release` workflow does both after each upload
+(`asc-candidate.mjs distribute`); set `ASC_EXTERNAL_GROUP` to target a group other than "Public".
 
 The `Release` workflow owns both platforms. There is no separate TestFlight workflow or build
 counter. The archive step needs the Apple Development identity imported from `MAC_CERT_P12`;

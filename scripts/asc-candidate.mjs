@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Resolve an uploaded candidate, then verify the same binary passed App Review.
-// Read-only: selecting the build, submitting review, and releasing stay in ASC.
+// Only `distribute` writes: it hands the build to external TestFlight testers.
+// Selecting the App Store build, submitting App Review, and releasing stay in ASC.
 import { readFileSync, writeFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { asc } from "./asc.mjs";
@@ -128,6 +129,21 @@ export async function verifyCandidate(candidate, { request = asc, appId = proces
   return { ...actual, app_store_version_id: storeVersion.id, state };
 }
 
+// Add the resolved build to the external group and submit it for Beta App Review.
+export async function distributeExternal(ios, { request = asc, group = process.env.ASC_EXTERNAL_GROUP || "Public" } = {}) {
+  requireValue(typeof ios?.build_id === "string" && /^[A-Za-z0-9-]+$/.test(ios.build_id), "Candidate has no valid ASC build ID");
+  const groups = await request("GET", query(`/v1/apps/${ios.app_id}/betaGroups`, {
+    "filter[name]": group, "fields[betaGroups]": "name,isInternalGroup", limit: "2",
+  }));
+  const matches = groups.data?.filter((item) => item.attributes?.name === group && item.attributes.isInternalGroup === false) ?? [];
+  requireValue(matches.length === 1, `Expected one external beta group named ${group}`);
+  await request("POST", `/v1/betaGroups/${matches[0].id}/relationships/builds`, { data: [{ type: "builds", id: ios.build_id }] });
+  await request("POST", "/v1/betaAppReviewSubmissions", {
+    data: { type: "betaAppReviewSubmissions", relationships: { build: { data: { type: "builds", id: ios.build_id } } } },
+  });
+  return matches[0].id;
+}
+
 if (import.meta.filename === process.argv[1]) {
   const [command, ...args] = process.argv.slice(2);
   try {
@@ -140,8 +156,12 @@ if (import.meta.filename === process.argv[1]) {
     } else if (command === "verify" && args.length === 1) {
       const result = await verifyCandidate(JSON.parse(readFileSync(args[0], "utf8")));
       console.log(`Verified iOS ${result.version} (${result.build}): ${result.state}`);
+    } else if (command === "distribute" && args.length === 1) {
+      const ios = JSON.parse(readFileSync(args[0], "utf8"));
+      await distributeExternal(ios);
+      console.log(`Submitted iOS ${ios.version} (${ios.build}) for external TestFlight review`);
     } else {
-      throw new Error("Usage: asc-candidate.mjs next-build VERSION | resolve VERSION BUILD OUTPUT | verify CANDIDATE_JSON");
+      throw new Error("Usage: asc-candidate.mjs next-build VERSION | resolve VERSION BUILD OUTPUT | verify CANDIDATE_JSON | distribute IOS_JSON");
     }
   } catch (error) {
     console.error(error.message);

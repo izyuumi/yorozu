@@ -168,6 +168,7 @@ jobs:
           IOS_BUILD=$(node scripts/asc-candidate.mjs next-build "$VERSION")
           BUILD="$IOS_BUILD" ./scripts/build-ios.sh
           node scripts/asc-candidate.mjs resolve "$VERSION" "$IOS_BUILD" dist/ios.json
+          node scripts/asc-candidate.mjs distribute dist/ios.json
       - name: Publish candidate
         run: |
           set -eu

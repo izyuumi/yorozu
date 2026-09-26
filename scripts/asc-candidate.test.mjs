@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { nextBuild, resolveCandidate, verifyCandidate } from "./asc-candidate.mjs";
+import { distributeExternal, nextBuild, resolveCandidate, verifyCandidate } from "./asc-candidate.mjs";
 
 const appId = "6811274963";
 const version = "0.5.0";
@@ -152,4 +152,22 @@ test("verify requires exact selected build and approved version", async () => {
   changedUpload.ios.uploaded_date = "2026-09-24T00:01:00Z";
   await assert.rejects(verifyCandidate(changedUpload, { request: fakeAsc(), now: () => currentTime }), /upload date does not match/);
   await assert.rejects(verifyCandidate(candidate(), { request: fakeAsc({ bundleId: "other.bundle.id" }), now: () => currentTime }), /must be to.yumi.yorozu.ios/);
+});
+
+test("distribute adds the build to the one external group and submits beta review", async () => {
+  const calls = [];
+  const request = async (method, path, body) => {
+    calls.push([method, path, body]);
+    if (method === "GET") return { data: [
+      { id: "internal-id", attributes: { name: "Public", isInternalGroup: true } },
+      { id: "group-id", attributes: { name: "Public", isInternalGroup: false } },
+    ] };
+    return {};
+  };
+  assert.equal(await distributeExternal(metadata, { request, group: "Public" }), "group-id");
+  assert.deepEqual(calls.slice(1), [
+    ["POST", "/v1/betaGroups/group-id/relationships/builds", { data: [{ type: "builds", id: "build-id" }] }],
+    ["POST", "/v1/betaAppReviewSubmissions", { data: { type: "betaAppReviewSubmissions", relationships: { build: { data: { type: "builds", id: "build-id" } } } } }],
+  ]);
+  await assert.rejects(distributeExternal(metadata, { request: async () => ({ data: [] }), group: "Public" }), /one external beta group/);
 });
