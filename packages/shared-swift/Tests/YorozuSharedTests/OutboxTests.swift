@@ -154,32 +154,40 @@ private func reconnect(_ transport: QueueTransport) async {
 }
 
 @MainActor
-@Test func aMessageThatWillNotGoGivesUpAfterThreeTriesAndOffersARetry() async throws {
+@Test func lostReceiptAndThreeTransportErrorsRemainUnconfirmed() async throws {
     let transport = QueueTransport()
-    await transport.refuse(true)
+    await transport.swallow(true)
     let model = ChatModel(transport: transport, device: "phone")
     model.start()
+    await reconnect(transport)
+    #expect(await settle { model.canDeliver })
 
     model.send("hi", in: "home")
     let id = try #require(model.outbox.first?.id)
-
-    // Refused every time: after three tries the queue stops trying by itself. How many tries
-    // one reconnection is worth is the transport's business, so this reconnects until the
-    // message has spent them rather than counting them out one by one.
-    for _ in 0..<3 {
-        await reconnect(transport)
-        _ = await settle { model.outboxStatus(of: id) == .failed }
+    #expect(await settle { model.outboxStatus(of: id) == .confirming })
+    var sent = 0
+    for _ in 0..<300 where sent == 0 {
+        sent = await transport.messages.count
+        try? await Task.sleep(for: .milliseconds(10))
     }
-    #expect(model.outboxStatus(of: id) == .failed)
-    // Exactly three, never more: a message it has given up on is stepped over, not retried.
+    #expect(sent == 1)
+    await transport.refuse(true)
+
+    // The first send may have reached the host. Later transport errors cannot prove otherwise.
+    for attempt in 1...3 {
+        await reconnect(transport)
+        #expect(await settle { model.outbox.first?.tries == attempt })
+    }
+    #expect(model.outboxStatus(of: id) == .unconfirmed)
     #expect(model.outbox.first?.tries == Outbox.maxTries)
 
     // A reconnection now leaves it alone — it is waiting on the person, not on the network.
     await reconnect(transport)
-    #expect(await transport.messages.isEmpty)
+    #expect(await transport.messages.map(\.id) == [id])
 
     // Tapping the caption is a fresh three tries, and this time the send lands.
     await transport.refuse(false)
+    await transport.swallow(false)
     model.retry(id)
     #expect(await settle { model.outbox.isEmpty })
     // Reconnect may resend before its receipt arrives; runtime dedupes the stable event ID.
@@ -236,6 +244,15 @@ private func reconnect(_ transport: QueueTransport) async {
     #expect(model.outboxStatus(of: id) == .confirming)
     // But the runtime never said it had it, so it is still ours to deliver.
     #expect(model.outbox.map(\.id) == [id])
+
+    await transport.yield(.ownerOnline(false))
+    #expect(await settle { !model.canDeliver })
+    await reconnect(transport)
+    for _ in 0..<300 where count < 2 {
+        count = await transport.messages.count
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await transport.messages.map(\.id) == [id, id])
 
     // App relaunch keeps uncertainty and retries the same operation ID.
     await model.shutdown()

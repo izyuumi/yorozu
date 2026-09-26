@@ -551,8 +551,7 @@ public final class ChatModel {
         outbox.first(where: { $0.id == eventId })?.status
     }
 
-    /// Sends a message the queue gave up on again, from the top: pressing "Not sent" is a fresh
-    /// three tries, and one more wait if the Mac is still away.
+    /// Resumes a paused message after transport errors or age, keeping its operation ID.
     public func retry(_ eventId: String) {
         guard let index = outbox.firstIndex(where: { $0.id == eventId }) else { return }
         outbox[index].tries = 0

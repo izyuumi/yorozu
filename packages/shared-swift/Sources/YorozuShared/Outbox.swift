@@ -9,8 +9,7 @@ import Foundation
 /// connection dropped is deduped rather than said twice.
 public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
     public var event: YorozuEvent
-    /// Attempts that have failed. Three of them is where the queue stops trying by itself and
-    /// starts asking: a message that will not go is the user's to retry or to let go.
+    /// Transport errors. Three pause automatic attempts, without claiming host rejection.
     public var tries: Int
     /// Set before the first socket attempt. Until a host receipt arrives, delivery is uncertain.
     public var attemptedAt: Date?
@@ -27,19 +26,21 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
     public var queuedAt: Date { Date(timeIntervalSince1970: Double(event.ts) / 1000) }
 
     public var status: OutboxStatus {
-        tries >= Outbox.maxTries ? .failed : attemptedAt == nil ? .queued : .confirming
+        if tries >= Outbox.maxTries { return attemptedAt == nil ? .failed : .unconfirmed }
+        return attemptedAt == nil ? .queued : .confirming
     }
 }
 
 /// What a bubble says until host acceptance is confirmed.
 public enum OutboxStatus: String, Sendable, Equatable {
-    case queued, confirming, failed
+    case queued, confirming, unconfirmed, failed
 
     /// The caption under the bubble.
     public var label: String {
         switch self {
-        case .queued: String(localized: "Waiting to send")
+        case .queued: String(localized: "Queued")
         case .confirming: String(localized: "Confirming delivery…")
+        case .unconfirmed: String(localized: "Delivery unconfirmed")
         case .failed: String(localized: "Not sent")
         }
     }
@@ -48,6 +49,7 @@ public enum OutboxStatus: String, Sendable, Equatable {
         switch self {
         case .queued: "clock"
         case .confirming: "arrow.up.circle"
+        case .unconfirmed: "questionmark.circle"
         case .failed: "exclamationmark.circle"
         }
     }

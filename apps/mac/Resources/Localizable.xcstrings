@@ -2,6 +2,30 @@
   "sourceLanguage": "en",
   "version": "1.0",
   "strings": {
+    "Confirming delivery…" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Confirmando la entrega…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "配信を確認中…" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "전달 확인 중…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在确认送达…" } }
+      }
+    },
+    "Delivery unconfirmed" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Entrega sin confirmar" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "配信を確認できません" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "전달 확인 안 됨" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "送达未确认" } }
+      }
+    },
+    "Delivery unconfirmed — click to retry" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Entrega sin confirmar — haz clic para reintentar" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "配信を確認できません — クリックして再試行" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "전달 확인 안 됨 — 클릭하여 다시 시도" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "送达未确认 — 点击重试" } }
+      }
+    },
     "The most specific matching rule applies. If equally specific rules conflict, Never allow wins." : {
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Se aplica la regla coincidente más específica. Si entran en conflicto reglas igual de específicas, prevalece «No permitir nunca»." } },
