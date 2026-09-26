@@ -57,13 +57,13 @@ let project = Project(
     packages: [.local(path: "../../packages/shared-swift")],
     targets: [
         .target(
-            name: "YorozuKeyboardUITests",
+            name: "YorozuUITests",
             destinations: .iOS,
             product: .uiTests,
-            bundleId: "to.yumi.yorozu.keyboard-tests",
+            bundleId: "to.yumi.yorozu.ui-tests",
             deploymentTargets: .iOS("18.0"),
             infoPlist: .default,
-            sources: ["Tests/KeyboardUITests/**"],
+            sources: ["Tests/UITests/**"],
             dependencies: [.target(name: "YorozuIOS")],
             settings: signing()
         ),

@@ -4,7 +4,7 @@ Generate with `tuist generate --no-open --path apps/ios`, then run:
 
 ```sh
 env -u SDKROOT xcodebuild test \
-  -workspace apps/ios/Yorozu.xcworkspace -scheme YorozuKeyboardUITests \
+  -workspace apps/ios/Yorozu.xcworkspace -scheme YorozuUITests \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
@@ -20,9 +20,9 @@ a relay. Run it on a small iPhone simulator with:
 
 ```sh
 env -u SDKROOT xcodebuild test \
-  -workspace apps/ios/Yorozu.xcworkspace -scheme YorozuKeyboardUITests \
+  -workspace apps/ios/Yorozu.xcworkspace -scheme YorozuUITests \
   -destination 'platform=iOS Simulator,name=iPhone SE (3rd generation)' \
-  -only-testing:YorozuKeyboardUITests/PairingFlowTests
+  -only-testing:YorozuUITests/PairingFlowTests
 ```
 
 These tests cover accepted manual input dismissing before an asynchronous failure, invalid

@@ -6,14 +6,11 @@
  * Point the sidecar at it with YOROZU_BASE_URL=http://127.0.0.1:<PORT>.
  */
 import { createServer } from "node:http";
-import { existsSync } from "node:fs";
 
 const port = Number(process.env.PORT ?? 8799);
 const reply = process.env.REPLY ?? "hello from the fake model";
 /** Milliseconds between words. Zero for the e2e run; set it to watch a reply stream. */
 const delay = Number(process.env.DELAY_MS ?? 0);
-const faultFile = process.env.FAULT_FILE;
-const releaseFile = process.env.RELEASE_FILE;
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
@@ -28,10 +25,6 @@ createServer(async (req, res) => {
     return res.end(JSON.stringify({ data: [{ id: "fake" }] }));
   }
   console.log(`request ${turn + 1}`);
-  const faultTurn = faultFile && existsSync(faultFile);
-  if (faultTurn && releaseFile) {
-    while (!existsSync(releaseFile)) await sleep(50);
-  }
   res.writeHead(200, { "content-type": "text/event-stream" });
   if (turn++ === 0) {
     // The loop runs `echo` itself and comes back for the reply.
@@ -50,7 +43,7 @@ createServer(async (req, res) => {
       }),
     );
   } else {
-    for (const word of (faultTurn ? "finished after disconnect" : reply).split(" ")) {
+    for (const word of reply.split(" ")) {
       res.write(chunk({ delta: { content: `${word} ` } }));
       if (delay) await sleep(delay);
     }

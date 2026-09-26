@@ -14,7 +14,7 @@
 //   POST /heal            back to normal for new connections and frames; blackholed ones stay dead
 //   GET  /dials           {"dials"}: when each phone connection arrived, ms since start
 //   GET  /events?thread=  {"events"}: the thread's durable events, as the Mac recorded them
-//   GET  /messages        {"messages"}: every user message the Mac recorded, in order per thread
+//   GET  /messages        {"messages"}: every user message and finished answer the Mac recorded
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -104,9 +104,9 @@ const faults = {
   down() { fault.down = true; for (const link of links) { link.phone.terminate(); link.upstream.terminate(); } },
   heal() { fault.blackholed = fault.dropHost = fault.down = false; },
 };
-const userMessages = (thread) => readThreadEvents(thread, stateDir)
-  .filter((event) => event.kind === "message" && event.data.role === "user")
-  .map((event) => ({ thread, text: event.data.text }));
+const messages = (thread) => readThreadEvents(thread, stateDir)
+  .filter((event) => event.kind === "message" && (event.data.role === "user" || event.data.done))
+  .map((event) => ({ thread, role: event.data.role, text: event.data.text }));
 
 const control = createServer((request, response) => {
   const url = new URL(request.url, "http://control");
@@ -116,7 +116,7 @@ const control = createServer((request, response) => {
   else if (name === "pairing") body = { qr: pairing };
   else if (name === "dials") body = { dials };
   else if (name === "events") body = { events: readThreadEvents(url.searchParams.get("thread"), stateDir) };
-  else if (name === "messages") body = { messages: listThreads(stateDir).flatMap((thread) => userMessages(thread.id)) };
+  else if (name === "messages") body = { messages: listThreads(stateDir).flatMap((thread) => messages(thread.id)) };
   response.writeHead(body ? 200 : 404, { "content-type": "application/json" });
   response.end(JSON.stringify(body ?? { error: `no ${request.method} ${name}` }));
 });
