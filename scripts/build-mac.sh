@@ -59,7 +59,6 @@ cp -R "$BIN/Sparkle.framework" "$APP/Contents/Frameworks/"
 # Contents/Resources instead. Omitting it makes the first provider mark render trap even
 # though the executable itself built and signed successfully.
 cp -R "$BIN/YorozuShared_YorozuShared.bundle" "$APP/Contents/Resources/"
-cp -R "$BIN/SwiftTerm_SwiftTerm.bundle" "$APP/Contents/Resources/"
 # Which layout that bundle has depends on the toolchain. Swift 6.4 emits an Xcode-style
 # bundle (Contents/Resources) and compiles the asset catalog itself; the CI toolchain behind
 # build 282 emitted a flat bundle with the catalog copied raw, as the .xcassets folder of
