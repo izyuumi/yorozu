@@ -66,7 +66,7 @@ test("no notification body can carry anything from the event", () => {
     "Yorozu replied.",
     "Yorozu needs your approval.",
     "Yorozu finished.",
-    "Yorozu stopped.",
+    "Yorozu needs attention.",
   ]);
 });
 

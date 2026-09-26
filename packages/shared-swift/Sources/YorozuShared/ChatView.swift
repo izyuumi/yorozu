@@ -809,9 +809,7 @@ public struct ChatView: View {
                 .id(event.id)
                 .onAppear { model.requestAttachmentDownloads(event) }
                 .onDisappear { model.stopAttachmentDownloads(event) }
-                .overlay(RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.accentColor, lineWidth: 2)
-                    .opacity(highlightedNotificationRow == event.id ? 1 : 0))
+                .notificationHighlight(highlightedNotificationRow == event.id)
             }
         case .approval(let event):
             if case .approvalCard(let card) = event.payload {
@@ -825,9 +823,7 @@ public struct ChatView: View {
                     model.answer(card.actionId, in: thread.id, choice, rule: rule)
                 }
                 .id(event.id)
-                .overlay(RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.accentColor, lineWidth: 2)
-                    .opacity(highlightedNotificationRow == event.id ? 1 : 0))
+                .notificationHighlight(highlightedNotificationRow == event.id)
             }
         case .proposal(let event):
             if case .ruleProposal(let proposal) = event.payload {
@@ -847,9 +843,7 @@ public struct ChatView: View {
                     chosen: model.questionChoices[card.questionId]
                 ) { model.answerQuestion(card.questionId, in: thread.id, $0) }
                 .id(event.id)
-                .overlay(RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.accentColor, lineWidth: 2)
-                    .opacity(highlightedNotificationRow == event.id ? 1 : 0))
+                .notificationHighlight(highlightedNotificationRow == event.id)
             }
         }
     }
@@ -1934,6 +1928,13 @@ private struct Banner: View {
 }
 
 extension View {
+    fileprivate func notificationHighlight(_ active: Bool) -> some View {
+        overlay(RoundedRectangle(cornerRadius: 12)
+            .stroke(Color.accentColor, lineWidth: 2)
+            .opacity(active ? 1 : 0)
+            .allowsHitTesting(false))
+    }
+
     /// Search over the transcript, hidden until `presented` becomes true. iOS uses its navigation
     /// drawer; Mac uses the default toolbar placement.
     @ViewBuilder fileprivate func threadSearch(text: Binding<String>, presented: Binding<Bool>) -> some View {

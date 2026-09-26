@@ -47,7 +47,7 @@ export const NOTIFY_BODY: Record<NotifyClass, string> = {
   reply: "Yorozu replied.",
   approval: "Yorozu needs your approval.",
   done: "Yorozu finished.",
-  failed: "Yorozu stopped.",
+  failed: "Yorozu needs attention.",
 };
 
 export const NOTIFY_TITLE = "Yorozu";

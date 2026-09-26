@@ -836,16 +836,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (partials.size) partialTimer = setTimeout(flushPartial, nextPartialAt - Date.now());
   };
 
-  const sendBroadcast = (event: YorozuEvent): number => {
+  const sendBroadcast = (event: YorozuEvent, announce = true): number => {
     const batches = sendToAll(event);
     for (const send of locals.values()) send(event);
     // A suspended phone still needs a wake for a final reply or actionable card.
-    notifyRelay(event);
+    if (announce) notifyRelay(event);
     return batches;
   };
 
   /** The same event to every paired device, through the relay or over the local socket. */
-  const broadcast = (event: YorozuEvent): void => {
+  const broadcast = (event: YorozuEvent, announce = true): void => {
     if (traceEvent(event)) {
       for (const send of locals.values()) send(event);
       queueTrace(phoneTrace(event));
@@ -870,11 +870,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
           return;
         }
         partials.delete(event.threadId);
-        nextPartialAt = Date.now() + Math.max(100, sendBroadcast(event) * 50);
+        nextPartialAt = Date.now() + Math.max(100, sendBroadcast(event, announce) * 50);
         return;
       }
     }
-    sendBroadcast(event);
+    sendBroadcast(event, announce);
   };
 
   const currentUpdateStatus = (requestId?: string) =>
@@ -928,7 +928,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === event.id)) appendTranscript(final, transcripts);
     if (!stored) appendThreadEvent(final, dir);
     openclaw!.acknowledge(event.threadId, event.id);
-    broadcast(final);
+    // Replayed durable finals still reach connected clients, but are not a second wake-up.
+    broadcast(final, !stored);
   }
 
   const nativeCards = new NativeCards(emit);
@@ -1403,6 +1404,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
             if (recoveryAttempts >= 3) {
               paused = true;
               setNativeTurn(threadId, { id, state: "interrupted", ...(userEventId ? { userEventId } : {}), recoveryAttempts }, dir);
+              emit({ id: randomUUID(), threadId, ts: Date.now(), agentId: MAIN_AGENT, kind: "message",
+                data: { role: "agent", text: `${agent} could not recover automatically. Retry to continue.`,
+                  done: true, failed: true } });
               broadcast(threadList());
               return;
             }
@@ -2425,15 +2429,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
     broadcast(event);
     queued.catch((e: unknown) => {
       state(`agent-error ${String(e)}`);
-      // A thrown turn has no final message event, so announce its terminal state explicitly.
-      notifyRelay({
-        id: randomUUID(),
-        threadId: event.threadId,
-        ts: Date.now(),
-        agentId: MAIN_AGENT,
-        kind: "message",
-        data: { role: "agent", text: "", done: true, failed: true },
-      });
+      // A thrown turn has no final event. Save one so its alert names a real row after sync.
+      const id = completionIdFor(event.threadId, event.id);
+      if (!readThreadEvents(event.threadId, dir).some((known) => known.id === id)) {
+        emit({ id, threadId: event.threadId, ts: Date.now(), agentId: MAIN_AGENT,
+          kind: "message", data: { role: "agent", text: "The agent could not answer. Check this Mac's log.",
+            done: true, failed: true } });
+      }
     });
   }
 
