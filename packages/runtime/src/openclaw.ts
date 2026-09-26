@@ -669,29 +669,30 @@ export class OpenClawRunner {
   }
 
   private readPending(requireKnown = false): StoredPendingTurn[] {
+    let raw: string;
     try {
-      const value = JSON.parse(readFileSync(this.#pendingFile, "utf8"));
-      if (!Array.isArray(value)) {
-        if (requireKnown) throw new Error("Unknown pending agent state");
-        return [];
-      }
-      const turns = value.filter((item): item is StoredPendingTurn =>
-        item && typeof item.threadId === "string" && typeof item.sessionKey === "string" &&
-        typeof item.runId === "string" && typeof item.startedAt === "number")
-        .map((item) => ({ ...item,
-          completionId: typeof item.completionId === "string" ? item.completionId : `openclaw:${item.runId}:final`,
-          awaitsAnnouncement: item.awaitsAnnouncement === true,
-          taskIds: Array.isArray(item.taskIds) ? item.taskIds.filter((id): id is string => typeof id === "string") : [],
-          childRunIds: Array.isArray(item.childRunIds) ? item.childRunIds.filter((id): id is string => typeof id === "string") : [],
-          input: storedInput(item.input),
-          state: item.state === "queued" ? "queued" as const : "active" as const,
-        }));
-      if (requireKnown && turns.length !== value.length) throw new Error("Unknown pending agent state");
-      return turns;
+      raw = readFileSync(this.#pendingFile, "utf8");
     } catch (error) {
-      if (requireKnown && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      return [];
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
     }
+    // A damaged ledger is not an empty ledger: accepting a new turn would overwrite ownership
+    // of existing work and could acknowledge an operation the host cannot recover.
+    const value = JSON.parse(raw);
+    if (!Array.isArray(value)) throw new Error(requireKnown ? "Unknown pending agent state" : "Damaged pending agent state");
+    const turns = value.filter((item): item is StoredPendingTurn =>
+      item && typeof item.threadId === "string" && typeof item.sessionKey === "string" &&
+      typeof item.runId === "string" && typeof item.startedAt === "number")
+      .map((item) => ({ ...item,
+        completionId: typeof item.completionId === "string" ? item.completionId : `openclaw:${item.runId}:final`,
+        awaitsAnnouncement: item.awaitsAnnouncement === true,
+        taskIds: Array.isArray(item.taskIds) ? item.taskIds.filter((id): id is string => typeof id === "string") : [],
+        childRunIds: Array.isArray(item.childRunIds) ? item.childRunIds.filter((id): id is string => typeof id === "string") : [],
+        input: storedInput(item.input),
+        state: item.state === "queued" ? "queued" as const : "active" as const,
+      }));
+    if (turns.length !== value.length) throw new Error(requireKnown ? "Unknown pending agent state" : "Damaged pending agent state");
+    return turns;
   }
 
   private storePending(pending: PendingTurn): void {

@@ -55,6 +55,19 @@ describe("OpenClawRunner", () => {
     expect(accepted).toBe(false);
   });
 
+  test.each(["{damaged", "[{}]"])("damaged pending ledger blocks new admission: %s", (damaged) => {
+    const gateway = harness();
+    const ledger = join(gateway.dir, "openclaw-pending.json");
+    const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    runner.admitUserTurn({ threadId: "first", text: "keep", userEventId: "first-id" }, () => {});
+    writeFileSync(ledger, damaged);
+    let accepted = false;
+    expect(() => runner.admitUserTurn({ threadId: "second", text: "do not accept", userEventId: "second-id" },
+      () => { accepted = true; })).toThrow();
+    expect(accepted).toBe(false);
+    expect(readFileSync(ledger, "utf8")).toBe(damaged);
+  });
+
   test("archives and restores the canonical Gateway session without starting a turn", async () => {
     const gateway = harness();
     gateway.request.mockImplementation(async (method) => method === "sessions.describe"
