@@ -213,16 +213,18 @@ private func reconnect(_ transport: QueueTransport) async {
 }
 
 @MainActor
-@Test func aMessageSentOnAHalfOpenSocketIsKeptAndSentAgainUntilTheRuntimeReceiptsIt() async throws {
+@Test func aMessageSentOnAHalfOpenSocketRemainsUnconfirmedAfterRelaunch() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
     let transport = QueueTransport()
     await transport.swallow(true)
-    let model = ChatModel(transport: transport, device: "phone")
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
     model.start()
     await reconnect(transport)
     #expect(await settle { model.canDeliver })
 
-    // The link looks fine, so the send goes straight out — and there is no caption, because
-    // nothing is known to be wrong yet.
+    // The link looks fine, but socket delivery is not host acceptance.
     model.send("hi", in: "home")
     let id = try #require(model.outbox.first?.id)
     var count = 0
@@ -231,17 +233,19 @@ private func reconnect(_ transport: QueueTransport) async {
         try? await Task.sleep(for: .milliseconds(10))
     }
     #expect(count == 1)
-    #expect(model.outboxStatus(of: id) == nil)
+    #expect(model.outboxStatus(of: id) == .confirming)
     // But the runtime never said it had it, so it is still ours to deliver.
     #expect(model.outbox.map(\.id) == [id])
 
-    // The socket turns out to have been dead: the next link sends it again, same id.
-    await transport.yield(.ownerOnline(false))
-    #expect(await settle { model.outboxStatus(of: id) == .queued })
-    await transport.swallow(false)
-    await reconnect(transport)
-    #expect(await settle { model.outbox.isEmpty })
-    #expect(await transport.messages.map(\.id) == [id, id])
+    // App relaunch keeps uncertainty and retries the same operation ID.
+    await model.shutdown()
+    let restoredTransport = QueueTransport()
+    let restored = ChatModel(transport: restoredTransport, cache: cache, device: "phone")
+    restored.start()
+    #expect(restored.outboxStatus(of: id) == .confirming)
+    await reconnect(restoredTransport)
+    #expect(await settle { restored.outbox.isEmpty })
+    #expect(await restoredTransport.messages.map(\.id) == [id])
 }
 
 @Test func theQueueStopsTryingAfterTwoDaysWithoutDroppingUnsentMessages() {

@@ -12,10 +12,13 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
     /// Attempts that have failed. Three of them is where the queue stops trying by itself and
     /// starts asking: a message that will not go is the user's to retry or to let go.
     public var tries: Int
+    /// Set before the first socket attempt. Until a host receipt arrives, delivery is uncertain.
+    public var attemptedAt: Date?
 
-    public init(event: YorozuEvent, tries: Int = 0) {
+    public init(event: YorozuEvent, tries: Int = 0, attemptedAt: Date? = nil) {
         self.event = event
         self.tries = tries
+        self.attemptedAt = attemptedAt
     }
 
     public var id: String { event.id }
@@ -23,18 +26,20 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
     /// When it was typed, which is the event's own timestamp.
     public var queuedAt: Date { Date(timeIntervalSince1970: Double(event.ts) / 1000) }
 
-    public var status: OutboxStatus { tries >= Outbox.maxTries ? .failed : .queued }
+    public var status: OutboxStatus {
+        tries >= Outbox.maxTries ? .failed : attemptedAt == nil ? .queued : .confirming
+    }
 }
 
-/// What a bubble says about a message that has not reached the runtime: still waiting, or given
-/// up on and offering a retry.
+/// What a bubble says until host acceptance is confirmed.
 public enum OutboxStatus: String, Sendable, Equatable {
-    case queued, failed
+    case queued, confirming, failed
 
     /// The caption under the bubble.
     public var label: String {
         switch self {
-        case .queued: String(localized: "Queued")
+        case .queued: String(localized: "Waiting to send")
+        case .confirming: String(localized: "Confirming delivery…")
         case .failed: String(localized: "Not sent")
         }
     }
@@ -42,6 +47,7 @@ public enum OutboxStatus: String, Sendable, Equatable {
     public var symbol: String {
         switch self {
         case .queued: "clock"
+        case .confirming: "arrow.up.circle"
         case .failed: "exclamationmark.circle"
         }
     }
