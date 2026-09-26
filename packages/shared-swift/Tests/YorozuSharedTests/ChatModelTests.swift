@@ -1175,6 +1175,36 @@ func finalStreamedReplyFollowsToolHistory(finalTimestamp: Int) async throws {
 }
 
 @MainActor
+@Test func currentFinalSurvivesOlderReplayWithoutSkippingHistory() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    model.openThread = "home"
+    model.requestSync()
+    let requests = await sent(by: transport, atLeast: pairingSends + 1)
+    guard case .syncRequest(let request) = requests.last?.payload else {
+        Issue.record("Current conversation sync was not requested")
+        return
+    }
+    #expect(request.focusThreadId == "home")
+
+    let final = YorozuEvent(id: "reply", threadId: "home", ts: 10, agentId: "main",
+                            payload: .message(MessageData(role: .agent, text: "complete", done: true)))
+    var old = YorozuEvent(id: "reply", threadId: "home", ts: 8, agentId: "main",
+                          payload: .message(MessageData(role: .agent, text: "partial")))
+    old.syncCursor = "first-page"
+    await transport.yield(.event(event("page", .syncDelta(SyncDeltaData(
+        events: [old], current: [final], more: true
+    )))))
+    #expect(await eventually { model.events["home"]?.first == final })
+    let next = await sent(by: transport, atLeast: pairingSends + 2)
+    guard case .syncRequest(let continuation) = next.last?.payload else {
+        Issue.record("Next history page was not requested")
+        return
+    }
+    #expect(continuation.lastSeen == ["home": "first-page"])
+}
+
+@MainActor
 @Test func openedThreadBackfillsFromStartAndRemembersCompletion() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }

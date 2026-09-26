@@ -660,9 +660,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const PAIRING_SECRETS = 4;
   /** Seals and sends to one paired device. Replaced per connection, a no-op while there is none. */
   let sendTo: (device: string, event: YorozuEvent) => void = () => {};
+  const liveReplies = new Map<string, YorozuEvent>();
 
   /** The same event to every paired device, through the relay or over the local socket. */
   const broadcast = (event: YorozuEvent): void => {
+    if (event.kind === "message" && event.data.role === "agent" && !event.parentAgentId) {
+      if (event.data.done) liveReplies.delete(event.threadId);
+      else liveReplies.set(event.threadId, event);
+    }
     for (const device of devices.keys()) sendTo(device, event);
     for (const send of locals.values()) send(event);
     // Beside the sealed frame, never instead of it: a phone that is listening gets the event
@@ -854,6 +859,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }) } });
   };
   const broadcastActiveThreadList = (): void => {
+    for (const id of liveReplies.keys()) if (!running.has(id)) liveReplies.delete(id);
     if (locals.size || [...devices.values()].some((device) => device.compatibility?.state === "compatible" &&
         device.compatibility.capabilities.includes("exact-stop-v1"))) broadcast(threadList());
   };
@@ -935,11 +941,37 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   /** A bounded replay page. An explicit thread request includes its pre-pairing history. */
   const syncDelta = (lastSeen: Record<string, string>, pairedAt = 0, threadId?: string,
-    includeApprovalStatus = true): YorozuEvent => {
+    includeApprovalStatus = true, focusThreadId?: string): YorozuEvent => {
     const events: YorozuEvent[] = [];
-    let bytes = 0;
-    let more = false;
     const selected = listThreads(dir).filter((thread) => threadId ? thread.id === threadId : !thread.archived);
+    const focused = !threadId && selected.find((thread) => thread.id === focusThreadId);
+    if (focused) {
+      selected.splice(selected.indexOf(focused), 1);
+      selected.unshift(focused);
+    }
+    const current: YorozuEvent[] = [];
+    if (focused) {
+      const history = readThreadEvents(focused.id, dir).filter((event) => event.ts >= pairedAt);
+      const reply = running.has(focused.id) ? liveReplies.get(focused.id) : undefined;
+      const latest = reply ?? history.findLast((event) =>
+        event.kind === "message" && event.data.role === "agent" && !event.parentAgentId);
+      if (latest) current.push(latest);
+      if (running.has(focused.id)) {
+        const answered = new Set(history.flatMap((event) => event.kind === "approval_answer" ? [event.data.actionId]
+          : event.kind === "approval_status" && event.data.status !== "rejected" ? [event.data.actionId]
+          : event.kind === "question_answer" ? [event.data.questionId] : []));
+        current.push(...history.filter((event) => event.kind === "approval_card"
+          ? !answered.has(event.data.actionId) &&
+              (pending.get(event.data.actionId)?.threadId === focused.id || nativeCards.has(event.data.actionId, focused.id))
+          : event.kind === "question_card" && !answered.has(event.data.questionId) &&
+              questions.has(event.data.questionId, focused.id)).slice(-16));
+      }
+      current.sort((a, b) => a.ts - b.ts);
+    }
+    // Keep snapshots within half a replay page so a slow client can still advance history.
+    while (current.length && Buffer.byteLength(JSON.stringify(current)) > SYNC_PAGE_BYTES / 2) current.shift();
+    let bytes = Buffer.byteLength(JSON.stringify(current));
+    let more = false;
     threads: for (const thread of selected) {
       const page = eventsAfter(thread.id, lastSeen?.[thread.id], dir, threadId ? 0 : pairedAt,
         (event) => includeApprovalStatus || event.kind !== "approval_status");
@@ -956,7 +988,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     return control({
       kind: "sync_delta",
-      data: { events, workingThreadIds: [...running.keys()], ...(threadId ? { threadId } : {}), ...(more ? { more: true } : {}) },
+      data: { events, ...(current.length ? { current } : {}), workingThreadIds: [...running.keys()],
+        ...(threadId ? { threadId } : {}), ...(more ? { more: true } : {}) },
     });
   };
 
@@ -992,6 +1025,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     attachments: MessageAttachment[] = [],
     userEventId?: string,
   ): Promise<void> {
+    liveReplies.delete(threadId);
     // A turn the phone did not send — a due job, a background delegation — is still part of
     // the thread, so it is recorded as the user message it stands in for.
     if (!recorded) {
@@ -1879,9 +1913,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return forgetDevice(event.data.pub);
       case "sync_request": {
         if (event.data.threadId !== undefined && (typeof event.data.threadId !== "string" || !event.data.threadId)) return;
+        if (event.data.focusThreadId !== undefined &&
+          (typeof event.data.focusThreadId !== "string" || event.data.focusThreadId.length > 256)) return;
         const compatibility = from ? devices.get(from)?.compatibility : undefined;
         return reply(syncDelta(event.data.lastSeen, pairedAt, event.data.threadId,
-          !from || compatibility?.state === "compatible" && compatibility.capabilities.includes("offline-approval-v1")));
+          !from || compatibility?.state === "compatible" && compatibility.capabilities.includes("offline-approval-v1"),
+          event.data.focusThreadId));
       }
     }
 
@@ -2385,6 +2422,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // its deterministic final is durable; later persisted user messages are then replayed FIFO.
   const resumeOpenClaw = async (stored: StoredPendingTurn): Promise<void> => {
     const { threadId, completionId } = stored;
+    liveReplies.delete(threadId);
     const stop = stored.userEventId ? stoppedTurns.get(stored.userEventId) : undefined;
     if (stop) {
       if (stop.status === "requested") finishStop(stop);

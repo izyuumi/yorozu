@@ -1129,20 +1129,24 @@ public struct StopStatusData: Codable, Equatable, Sendable {
 public struct SyncRequestData: Codable, Equatable, Sendable {
     public var lastSeen: [String: String]
     public var threadId: String?
-    public init(lastSeen: [String: String], threadId: String? = nil) {
+    public var focusThreadId: String?
+    public init(lastSeen: [String: String], threadId: String? = nil, focusThreadId: String? = nil) {
         self.lastSeen = lastSeen
         self.threadId = threadId
+        self.focusThreadId = focusThreadId
     }
 }
 
 public struct SyncDeltaData: Codable, Equatable, Sendable {
     public var events: [YorozuEvent]
+    public var current: [YorozuEvent]?
     public var threadId: String?
     /// Threads with a turn still running on the Mac when this page was made.
     public var workingThreadIds: [String]?
     public var more: Bool?
-    public init(events: [YorozuEvent], threadId: String? = nil, workingThreadIds: [String]? = nil, more: Bool? = nil) {
+    public init(events: [YorozuEvent], current: [YorozuEvent]? = nil, threadId: String? = nil, workingThreadIds: [String]? = nil, more: Bool? = nil) {
         self.events = events
+        self.current = current
         self.threadId = threadId
         self.workingThreadIds = workingThreadIds
         self.more = more

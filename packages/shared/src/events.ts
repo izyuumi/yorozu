@@ -546,10 +546,14 @@ export interface SyncRequestData {
   lastSeen: Record<string, string>;
   /** Explicitly opened thread: replay its complete history, including before pairing. */
   threadId?: string;
+  /** Open conversation to refresh before routine history replay. */
+  focusThreadId?: string;
 }
 
 export interface SyncDeltaData {
   events: YorozuEvent[];
+  /** Current open-conversation events; these never advance replay cursors. */
+  current?: YorozuEvent[];
   /** Present when this page answers a request for one opened thread. */
   threadId?: string;
   /** Threads with a turn still running on the Mac when this page was made. */
