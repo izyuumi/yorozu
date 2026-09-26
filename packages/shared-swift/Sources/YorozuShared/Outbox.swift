@@ -9,13 +9,18 @@ import Foundation
 /// connection dropped is deduped rather than said twice.
 public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
     public var event: YorozuEvent
-    /// Attempts that have failed. Three of them is where the queue stops trying by itself and
-    /// starts asking: a message that will not go is the user's to retry or to let go.
+    /// Transport errors. Three pause automatic attempts, without claiming host rejection.
     public var tries: Int
+    /// Set before the first socket attempt. Until a host receipt arrives, delivery is uncertain.
+    public var attemptedAt: Date?
+    /// Local retry intent after the automatic-send window elapsed. Does not alter operation ID.
+    public var reconfirmedAt: Date?
 
-    public init(event: YorozuEvent, tries: Int = 0) {
+    public init(event: YorozuEvent, tries: Int = 0, attemptedAt: Date? = nil, reconfirmedAt: Date? = nil) {
         self.event = event
         self.tries = tries
+        self.attemptedAt = attemptedAt
+        self.reconfirmedAt = reconfirmedAt
     }
 
     public var id: String { event.id }
@@ -23,18 +28,22 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
     /// When it was typed, which is the event's own timestamp.
     public var queuedAt: Date { Date(timeIntervalSince1970: Double(event.ts) / 1000) }
 
-    public var status: OutboxStatus { tries >= Outbox.maxTries ? .failed : .queued }
+    public var status: OutboxStatus {
+        if tries >= Outbox.maxTries { return attemptedAt == nil ? .failed : .unconfirmed }
+        return attemptedAt == nil ? .queued : .confirming
+    }
 }
 
-/// What a bubble says about a message that has not reached the runtime: still waiting, or given
-/// up on and offering a retry.
+/// What a bubble says until host acceptance is confirmed.
 public enum OutboxStatus: String, Sendable, Equatable {
-    case queued, failed
+    case queued, confirming, unconfirmed, failed
 
     /// The caption under the bubble.
     public var label: String {
         switch self {
         case .queued: String(localized: "Queued")
+        case .confirming: String(localized: "Confirming delivery…")
+        case .unconfirmed: String(localized: "Delivery unconfirmed")
         case .failed: String(localized: "Not sent")
         }
     }
@@ -42,6 +51,8 @@ public enum OutboxStatus: String, Sendable, Equatable {
     public var symbol: String {
         switch self {
         case .queued: "clock"
+        case .confirming: "arrow.up.circle"
+        case .unconfirmed: "questionmark.circle"
         case .failed: "exclamationmark.circle"
         }
     }
@@ -59,7 +70,7 @@ public enum Outbox {
     /// is an argument rather than something a test has to move.
     public static func pruned(_ items: [OutboxItem], now: Date = Date()) -> [OutboxItem] {
         let aged = items.map { item -> OutboxItem in
-            guard now.timeIntervalSince(item.queuedAt) > life else { return item }
+            guard now.timeIntervalSince(item.reconfirmedAt ?? item.queuedAt) > life else { return item }
             var item = item
             item.tries = max(item.tries, maxTries)
             return item

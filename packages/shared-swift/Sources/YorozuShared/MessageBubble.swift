@@ -171,15 +171,17 @@ public struct MessageBubble: View {
     }
 
     /// What the outbox has to say about this message, under it and in the quiet of a caption:
-    /// waiting for the Mac is normal and says so once, and a message that will not go says that
-    /// outright and offers the retry rather than hiding it in a long press.
+    /// waiting for the Mac is normal and says so once; uncertain delivery stays explicit.
     @ViewBuilder private func caption(_ status: OutboxStatus) -> some View {
+        let needsRetry = status == .failed || status == .unconfirmed
         let label = Label {
             // "tap" on a Mac is a phone app talking to the wrong person.
             #if os(macOS)
-                Text(status == .failed ? "Not sent — click to retry" : status.label)
+                Text(status == .failed ? "Not sent — click to retry" :
+                    status == .unconfirmed ? "Delivery unconfirmed — click to retry" : status.label)
             #else
-                Text(status == .failed ? "Not sent — tap to retry" : status.label)
+                Text(status == .failed ? "Not sent — tap to retry" :
+                    status == .unconfirmed ? "Delivery unconfirmed — tap to retry" : status.label)
             #endif
         } icon: {
             // The icon carries the red; caption-sized red text is under 4.5:1.
@@ -190,7 +192,7 @@ public struct MessageBubble: View {
         .foregroundStyle(status == .failed ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
         .padding(.horizontal, 4)
 
-        if status == .failed, let onResend {
+        if needsRetry, let onResend {
             Button(action: onResend) { label.frame(minHeight: controlTarget) }
                 .buttonStyle(.plain)
                 .accessibilityHint("Sends this message again")

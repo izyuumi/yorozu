@@ -546,20 +546,16 @@ public final class ChatModel {
         try saveComposer()
     }
 
-    /// What a bubble says about a message, or nil for one that went out normally. A message sent
-    /// on a live link and waiting for its receipt is going out normally: the caption appears
-    /// only once the link is known to be down, or the message has been given up on.
+    /// A socket send is not host acceptance. Keep its pending caption until the host receipts it.
     public func outboxStatus(of eventId: String) -> OutboxStatus? {
-        guard let item = outbox.first(where: { $0.id == eventId }) else { return nil }
-        if item.status == .queued && canDeliver { return nil }
-        return item.status
+        outbox.first(where: { $0.id == eventId })?.status
     }
 
-    /// Sends a message the queue gave up on again, from the top: pressing "Not sent" is a fresh
-    /// three tries, and one more wait if the Mac is still away.
+    /// Resumes a paused message after transport errors or age, keeping its operation ID.
     public func retry(_ eventId: String) {
         guard let index = outbox.firstIndex(where: { $0.id == eventId }) else { return }
         outbox[index].tries = 0
+        outbox[index].reconfirmedAt = Date()
         saveOutbox()
         flush()
     }
@@ -607,8 +603,12 @@ public final class ChatModel {
         flushTask = Task { [weak self] in
             var sent: Set<String> = []
             while let self, !Task.isCancelled, self.canDeliver,
-                let item = self.outbox.first(where: { $0.status == .queued && !sent.contains($0.id) })
+                let item = self.outbox.first(where: { $0.status != .failed && !sent.contains($0.id) })
             {
+                if item.attemptedAt == nil, let index = self.outbox.firstIndex(where: { $0.id == item.id }) {
+                    self.outbox[index].attemptedAt = Date()
+                    guard self.saveOutbox() else { break }
+                }
                 do {
                     try await self.transport.send(item.event)
                     sent.insert(item.id)

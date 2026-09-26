@@ -1,6 +1,30 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Confirming delivery…" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Confirmando la entrega…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "配信を確認中…" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "전달 확인 중…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在确认送达…" } }
+      }
+    },
+    "Delivery unconfirmed" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Entrega sin confirmar" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "配信を確認できません" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "전달 확인 안 됨" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "送达未确认" } }
+      }
+    },
+    "Delivery unconfirmed — tap to retry" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Entrega sin confirmar — toca para reintentar" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "配信を確認できません — タップして再試行" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "전달 확인 안 됨 — 탭하여 다시 시도" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "送达未确认 — 轻点重试" } }
+      }
+    },
     "Notifications" : {
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Notificaciones" } },
