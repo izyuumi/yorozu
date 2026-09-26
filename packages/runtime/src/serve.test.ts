@@ -1570,6 +1570,20 @@ test("failed OpenClaw admission sends no receipt and accepts the same ID on retr
   } finally { mac.close(); }
 });
 
+test("a delayed sealed message expires before host admission", async () => {
+  const { dir, eventsUntil } = await pairedPhone([() => sse("must not run")]);
+  createThread("Delayed", dir, "t1");
+  const queuedAt = Date.now() - 31 * 60_000;
+  sendRaw({ id: "delayed-expired", threadId: "t1", ts: queuedAt, agentId: "phone",
+    kind: "message", data: { role: "user", text: "stale command",
+      admissionDeadline: queuedAt + 30 * 60_000 } });
+  const seen = await eventsUntil((event) => event.kind === "admission_status");
+  expect(seen.at(-1)).toMatchObject({ kind: "admission_status",
+    data: { eventId: "delayed-expired", status: "expired" } });
+  expect(seen.some((event) => event.kind === "receipt" && event.data.eventId === "delayed-expired")).toBe(false);
+  expect(readThreadEvents("t1", dir).some((event) => event.id === "delayed-expired")).toBe(false);
+});
+
 test("a conflicting retry cannot reuse a receipted user message ID", async () => {
   vi.spyOn(OpenClawRunner.prototype, "run").mockResolvedValue("done");
   const { dir } = await pairedPhone([], true);

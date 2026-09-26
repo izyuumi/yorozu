@@ -9,7 +9,7 @@
  */
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { argv, env, stdin, stdout } from "node:process";
@@ -283,10 +283,13 @@ function writeFileAtomic(file: string, text: string): void {
 /** Stable across JSON property order and host restarts; only client-owned message fields count. */
 function userMessageIdentity(event: YorozuEvent & { kind: "message" }): string {
   return createHash("sha256").update(JSON.stringify([
-    event.threadId, event.data.role, event.data.text,
+    event.threadId, event.ts, event.data.role, event.data.text, event.data.admissionDeadline ?? null,
     (event.data.attachments ?? []).map(({ name, mime, data }) => [name, mime, data]),
   ])).digest("hex");
 }
+
+const ADMISSION_LIFE_MS = 30 * 60_000;
+const MAX_CLIENT_CLOCK_LEAD_MS = 5 * 60_000;
 
 /**
  * The state directory, owner-only. Created 0700 when missing; when it is already there and
@@ -453,6 +456,31 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const heartbeat = options.heartbeat ?? { pingMs: PING_MS, pongMs: PONG_MS };
   const state = (name: string) => log(`STATE ${name}`);
   const peerInfo = localPeerInfo(options.appVersion ?? env.YOROZU_APP_VERSION ?? "unknown");
+  // An expired operation ID stays barred after restart. The old encrypted relay copy may
+  // arrive later, while a fresh user confirmation must carry a new ID and deadline.
+  const expiredFile = join(dir, "expired-admissions.jsonl");
+  type ExpiredAdmission = { id: string; threadId: string; identity: string; deadline: number };
+  let expiredText = existsSync(expiredFile) ? readFileSync(expiredFile, "utf8") : "";
+  // A torn final append was never acknowledged. Drop only that tail; complete records remain durable.
+  if (expiredText && !expiredText.endsWith("\n")) {
+    expiredText = expiredText.slice(0, expiredText.lastIndexOf("\n") + 1);
+    truncateSync(expiredFile, Buffer.byteLength(expiredText));
+  }
+  const storedExpired: unknown[] = expiredText ? expiredText.trimEnd().split("\n").map((line) => JSON.parse(line)) : [];
+  if (!storedExpired.every((entry) =>
+    typeof entry === "object" && entry !== null &&
+    typeof (entry as ExpiredAdmission).id === "string" && (entry as ExpiredAdmission).id.length > 0 &&
+    (entry as ExpiredAdmission).id.length <= 128 &&
+    typeof (entry as ExpiredAdmission).threadId === "string" && (entry as ExpiredAdmission).threadId.length > 0 &&
+    (entry as ExpiredAdmission).threadId.length <= 128 &&
+    typeof (entry as ExpiredAdmission).identity === "string" && /^[a-f0-9]{64}$/.test((entry as ExpiredAdmission).identity) &&
+    Number.isSafeInteger((entry as ExpiredAdmission).deadline))) throw new Error("Invalid expired admission journal");
+  const expiredAdmissions = new Map((storedExpired as ExpiredAdmission[]).map((entry) => [entry.id, entry]));
+  if (expiredAdmissions.size !== storedExpired.length) throw new Error("Duplicate expired admission ID");
+  const rememberExpired = (entry: ExpiredAdmission): void => {
+    appendFileSync(expiredFile, JSON.stringify(entry) + "\n", { mode: 0o600, flush: true });
+    expiredAdmissions.set(entry.id, entry);
+  };
   const computerName = options.computerName ?? (() => {
     if (process.platform !== "darwin") return undefined;
     try {
@@ -1118,7 +1146,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
         : { id: userEventId, threadId, ts: Date.now(), agentId: MAIN_AGENT,
         kind: "message" as const, data: { role: "user" as const, text, ...(attachments.length ? { attachments } : {}) } };
       const stored = openclaw!.admitUserTurn({ threadId, text, model: threadModel(threadId, dir),
-        effort: threadEffort(threadId, dir), attachments, userEventId,
+        effort: threadEffort(threadId, dir), attachments, userEventId, identity: userMessageIdentity(event),
+        eventTs: event.ts, admissionDeadline: event.data.admissionDeadline,
         completionId: `openclaw:` + userEventId + `:final` }, (admission) => {
         const logged = admission ? { ...event, data: { ...event.data,
           runId: admission.runId, completionId: admission.completionId } } : event;
@@ -1275,13 +1304,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
         stored.kind === "message" && stored.data.role === "user" && stored.id === id);
       const ledger = openclaw?.pendingTurns(true).find((turn) =>
         turn.threadId === event.threadId && turn.userEventId === id);
+      const expired = expiredAdmissions.get(id);
       const recordedCompletionId = ledger?.completionId ?? user?.data.completionId;
       const oldOpenClawCompletionId = user && viaOpenClaw(event.threadId) ? `openclaw:${id}:final` : undefined;
       const candidate = recordedCompletionId ?? oldOpenClawCompletionId;
       const final = candidate ? history.find((stored): stored is YorozuEvent & { kind: "message" } =>
         stored.id === candidate && stored.kind === "message" && stored.data.role === "agent" && stored.data.done === true) : undefined;
       const completionId = recordedCompletionId ?? (final ? oldOpenClawCompletionId : undefined);
-      const status = !user && !ledger ? "unknown" : final ? "completed"
+      const status = !user && !ledger ? expired?.threadId === event.threadId ? "expired" : "unknown" : final ? "completed"
         : activeTurnIds.has(id) ? "running"
         : admittedTurns.has(id) || ledger?.state === "queued" ? "queued"
         : ledger ? "accepted" : "indeterminate";
@@ -1290,6 +1320,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       reply(control({ kind: "receipt", data: { eventId: event.id } }));
       reply(control({ kind: "admission_status", data: {
         eventId: id, status, requestId: event.id,
+        ...(status === "expired" ? { reason: "admission-deadline" } : {}),
         ...(runId ? { runId } : {}), ...(completionId ? { completionId } : {}),
       } }));
       return;
@@ -1395,12 +1426,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (updateSubscribers.has(localDevice ?? from ?? "")) reply(control({ kind: "update_status", data: currentUpdateStatus() }));
       return;
     }
+    const rejectUserMessage = (reason: string): void => {
+      if (event.kind === "message" && event.data.role === "user") {
+        reply(control({ kind: "admission_status", data: { eventId: event.id, status: "rejected", reason } }));
+      }
+    };
     if (event.kind === "message" && !attachmentsWithinLimits(event.data.attachments ?? [])) {
+      rejectUserMessage("oversized-attachments");
       return state("rejected-oversized-attachments");
     }
     const identity = event.kind === "message" && event.data.role === "user"
       ? userMessageIdentity(event) : undefined;
     if (identity && acceptedMessages.has(event.id) && acceptedMessages.get(event.id) !== identity) {
+      rejectUserMessage("conflicting-message-id");
       return state("rejected-conflicting-message-id");
     }
     // Every command is receipted, the second copy included: a device that was never told the
@@ -1409,14 +1447,51 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const knownMessage = event.kind === "message"
       ? readThreadEvents(event.threadId, dir).find((known) => known.id === event.id)
       : undefined;
+    const knownLedger = identity && !knownMessage ? openclaw?.pendingTurns(true).find((turn) =>
+      turn.userEventId === event.id) : undefined;
+    if (knownLedger && (knownLedger.threadId !== event.threadId ||
+        (knownLedger.input.identity !== undefined && knownLedger.input.identity !== identity))) {
+      rejectUserMessage("conflicting-message-id");
+      return state("rejected-conflicting-message-id");
+    }
     if (event.kind === "message" && knownMessage && (knownMessage.kind !== "message" ||
       knownMessage.data.role !== event.data.role || knownMessage.data.text !== event.data.text ||
+      knownMessage.ts !== event.ts || knownMessage.data.admissionDeadline !== event.data.admissionDeadline ||
       (knownMessage.data.attachments ?? []).length !== (event.data.attachments ?? []).length ||
       (knownMessage.data.attachments ?? []).some((attachment, index) => {
         const retry = event.data.attachments![index]!;
         return attachment.name !== retry.name || attachment.mime !== retry.mime || attachment.data !== retry.data;
       }))) {
+      rejectUserMessage("conflicting-message-id");
       return state("rejected-conflicting-message-id");
+    }
+    if (event.kind === "message" && event.data.role === "user" && !knownMessage && !knownLedger) {
+      const rejected = (status: "expired" | "rejected", reason: string): void =>
+        reply(control({ kind: "admission_status", data: { eventId: event.id, status, reason } }));
+      const expired = expiredAdmissions.get(event.id);
+      if (expired) {
+        rejected(expired.identity === identity ? "expired" : "rejected",
+          expired.identity === identity ? "admission-deadline" : "conflicting-message-id");
+        return;
+      }
+      const deadline = event.data.admissionDeadline;
+      if (deadline !== undefined) {
+        if (!Number.isSafeInteger(event.ts) || !Number.isSafeInteger(deadline) ||
+            deadline !== event.ts + ADMISSION_LIFE_MS || event.id.length > 128 ||
+            !event.threadId || event.threadId.length > 128) {
+          rejected("rejected", "invalid-admission-deadline");
+          return;
+        }
+        if (event.ts > Date.now() + MAX_CLIENT_CLOCK_LEAD_MS) {
+          rejected("rejected", "client-clock-ahead");
+          return;
+        }
+        if (Date.now() >= deadline) {
+          rememberExpired({ id: event.id, threadId: event.threadId, identity: identity!, deadline });
+          rejected("expired", "admission-deadline");
+          return;
+        }
+      }
     }
     if (seenCommands.has(event.id)) {
       if (event.kind === "message" && !knownMessage) return state("missing-previous-message");
@@ -2173,7 +2248,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (stored.userEventId && admittedTurns.get(stored.userEventId) === recovery) admittedTurns.delete(stored.userEventId);
       }).catch(() => {});
     } else {
-      void enqueueTurn(stored.threadId, stored.input.text, true, stored.input.attachments, stored.userEventId);
+      const logged = readThreadEvents(stored.threadId, dir).find((event): event is YorozuEvent & { kind: "message" } =>
+        event.kind === "message" && event.data.role === "user" && event.id === stored.userEventId);
+      const accepted = logged ?? (stored.userEventId && stored.input.eventTs !== undefined ? {
+        id: stored.userEventId, threadId: stored.threadId, ts: stored.input.eventTs,
+        agentId: MAIN_AGENT, kind: "message" as const,
+        data: { role: "user" as const, text: stored.input.text,
+          ...(stored.input.admissionDeadline !== undefined ? { admissionDeadline: stored.input.admissionDeadline } : {}),
+          ...(stored.input.attachments.length ? { attachments: stored.input.attachments } : {}) },
+      } : undefined);
+      void enqueueTurn(stored.threadId, stored.input.text, true, stored.input.attachments, stored.userEventId, accepted);
     }
   }
 

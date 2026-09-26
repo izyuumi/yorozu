@@ -53,6 +53,9 @@ export interface StoredPendingTurn {
 }
 export interface StoredTurnInput {
   text: string;
+  identity?: string;
+  eventTs?: number;
+  admissionDeadline?: number;
   model?: string;
   effort?: ReasoningEffort;
   attachments: MessageAttachment[];
@@ -60,6 +63,9 @@ export interface StoredTurnInput {
 export interface OpenClawTurn {
   threadId: string;
   text: string;
+  identity?: string;
+  eventTs?: number;
+  admissionDeadline?: number;
   model?: string;
   effort?: ReasoningEffort;
   attachments?: MessageAttachment[];
@@ -167,6 +173,9 @@ export class OpenClawRunner {
     const storedAttachments = stored?.input.attachments ?? [];
     const retryAttachments = turn.attachments ?? [];
     if (stored && (stored.threadId !== turn.threadId || stored.input.text !== turn.text ||
+      (stored.input.identity !== undefined && stored.input.identity !== turn.identity) ||
+      (stored.input.eventTs !== undefined && stored.input.eventTs !== turn.eventTs) ||
+      (stored.input.admissionDeadline !== undefined && stored.input.admissionDeadline !== turn.admissionDeadline) ||
       storedAttachments.length !== retryAttachments.length ||
       storedAttachments.some((attachment, index) => {
         const retry = retryAttachments[index]!;
@@ -189,7 +198,10 @@ export class OpenClawRunner {
         userEventId: turn.userEventId,
         awaitsAnnouncement: false,
         taskIds: [], childRunIds: [], state: "queued",
-        input: { text: turn.text, ...(turn.model ? { model: turn.model } : {}),
+        input: { text: turn.text, ...(turn.identity ? { identity: turn.identity } : {}),
+          ...(turn.eventTs !== undefined ? { eventTs: turn.eventTs } : {}),
+          ...(turn.admissionDeadline !== undefined ? { admissionDeadline: turn.admissionDeadline } : {}),
+          ...(turn.model ? { model: turn.model } : {}),
           ...(turn.effort ? { effort: turn.effort } : {}), attachments: turn.attachments ?? [] },
       };
       this.writePending([...turns, stored]);
@@ -704,6 +716,9 @@ export class OpenClawRunner {
         (item.taskIds === undefined || Array.isArray(item.taskIds) && item.taskIds.every((id: unknown) => typeof id === "string")) &&
         (item.childRunIds === undefined || Array.isArray(item.childRunIds) && item.childRunIds.every((id: unknown) => typeof id === "string")) &&
         input && typeof input === "object" && typeof input.text === "string" &&
+        (input.identity === undefined || typeof input.identity === "string" && /^[a-f0-9]{64}$/.test(input.identity)) &&
+        (input.eventTs === undefined || Number.isSafeInteger(input.eventTs)) &&
+        (input.admissionDeadline === undefined || Number.isSafeInteger(input.admissionDeadline)) &&
         (input.model === undefined || typeof input.model === "string") &&
         (input.effort === undefined || typeof input.effort === "string") &&
         Array.isArray(input.attachments) && input.attachments.every((attachment: unknown) => {
@@ -846,6 +861,9 @@ function storedInput(value: unknown): StoredTurnInput {
   const item = record(value);
   return {
     text: string(item.text),
+    ...(typeof item.identity === "string" ? { identity: item.identity } : {}),
+    ...(Number.isSafeInteger(item.eventTs) ? { eventTs: item.eventTs as number } : {}),
+    ...(Number.isSafeInteger(item.admissionDeadline) ? { admissionDeadline: item.admissionDeadline as number } : {}),
     ...(typeof item.model === "string" ? { model: item.model } : {}),
     ...(typeof item.effort === "string" ? { effort: item.effort as ReasoningEffort } : {}),
     attachments: Array.isArray(item.attachments) ? item.attachments as MessageAttachment[] : [],
