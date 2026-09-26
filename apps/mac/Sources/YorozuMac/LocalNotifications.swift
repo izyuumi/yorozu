@@ -72,7 +72,7 @@ final class LocalNotifications: NSObject, UNUserNotificationCenterDelegate {
     func start() {
         center.delegate = self
         previousAttention = Set(MacAttentionItem.pending(in: MacChatSession.shared.model)
-            .filter { $0.id.hasPrefix("failure:") }.map(\.threadID))
+            .filter { $0.kind == .failure }.map(\.threadID))
     }
 
     func requestAuthorization() async {
@@ -110,7 +110,7 @@ final class LocalNotifications: NSObject, UNUserNotificationCenterDelegate {
         guard MacChatSession.shared.role == .host,
               model === MacChatSession.shared.model else { return }
         let current = Set(MacAttentionItem.pending(in: model)
-            .filter { $0.id.hasPrefix("failure:") }.map(\.threadID))
+            .filter { $0.kind == .failure }.map(\.threadID))
         defer { previousAttention = current }
         guard HostWindowMode.active else { return }
         for thread in model.threads where current.contains(thread.id)

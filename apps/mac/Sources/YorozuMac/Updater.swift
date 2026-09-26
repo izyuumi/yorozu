@@ -244,6 +244,10 @@ final class PendingUpdate {
         installStarted = false
         if cancellationId != nil { startTimer(); tick() }
     }
+
+    func recordFailure(_ message: String) {
+        failure = message
+    }
 }
 
 @MainActor
@@ -316,6 +320,13 @@ private final class UpdaterDelegate: NSObject, SPUUpdaterDelegate, @preconcurren
 
     func updater(_ updater: SPUUpdater, didAbortWithError error: any Error) {
         Updates.pending.cancel()
+        let sparkError = error as NSError
+        // Sparkle also reports "already current" and user cancellation as aborts.
+        if sparkError.domain != SUSparkleErrorDomain || ![1001, 4007].contains(sparkError.code) {
+            let message = "Update failed: \(error.localizedDescription)"
+            Updates.pending.recordFailure(message)
+            Updates.checkResult.message = nil
+        }
         Log.write("updates: aborted — \(error.localizedDescription)")
     }
 }

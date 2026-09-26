@@ -555,11 +555,11 @@ struct YorozuMacApp: App {
             }
             if Updates.pending.status.phase != .none {
                 Text(Updates.pending.status.label()).disabled(true)
-                if let failure = Updates.pending.failure { Text(failure).disabled(true) }
                 if Updates.pending.status.phase != .installing {
                     Button("Postpone update 1 hour") { Updates.pending.postpone() }
                 }
             }
+            if let failure = Updates.pending.failure { Text(failure).disabled(true) }
             Divider()
             // Not a control: the sidecar's own word for where the relay stands, which is the
             // one thing worth knowing without opening anything.
