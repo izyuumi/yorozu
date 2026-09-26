@@ -1338,7 +1338,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // Every command is receipted, the second copy included: a device that was never told the
     // first one landed is still waiting to hear so, and only a receipt lets it stop re-sending.
     const receipt = (): void => reply(control({ kind: "receipt", data: { eventId: event.id } }));
-    if (alreadySeen(event.id)) {
+    if (seenCommands.has(event.id)) {
       receipt();
       return state("duplicate-command");
     }
@@ -1347,19 +1347,29 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const duplicateMessage =
       event.kind === "message" &&
       readThreadEvents(event.threadId, dir).some((known) => known.id === event.id);
+    const oldest = event.kind === "message" && event.data.role === "user"
+      ? [...pending.values()].find((card) => card.threadId === event.threadId) : undefined;
+    const typed = oldest && event.kind === "message" ? typedAnswer(event.data.text, oldest.card) : undefined;
     // A user message bound for OpenClaw crosses one admission boundary below: ledger first,
     // logs second. Every other message — a native agent's thread included — is logged here.
-    const admitted = event.kind === "message" && event.data.role === "user" && viaOpenClaw(event.threadId);
+    const admitted = event.kind === "message" && event.data.role === "user" && !typed && viaOpenClaw(event.threadId);
     if (duplicateMessage && !admitted) {
       receipt();
       return state("duplicate-message");
     }
     if (event.kind === "thread_create" || event.kind === "message" || event.kind === "thread_recover") updateGate.activity();
-    if (!admitted) {
+    let admittedTurn: Promise<void> | undefined;
+    if (admitted && event.kind === "message" && event.data.role === "user") {
+      // The OpenClaw ledger owns this turn before a receipt can remove the client's copy.
+      admittedTurn = enqueueTurn(event.threadId, event.data.text, true,
+        event.data.attachments ?? [], event.id, event);
+    } else {
       appendTranscript(event, transcripts);
       appendThreadEvent(event, dir);
       if (event.kind === "approval_answer") broadcast(threadList());
     }
+    // Failed admission never poisons the in-memory dedup window.
+    alreadySeen(event.id);
     receipt();
 
     switch (event.kind) {
@@ -1530,16 +1540,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // A plain "yes" while a card is up in this thread answers the card rather than starting a
     // turn. Only this thread's: a "yes" typed into another chat is a message there, not an
     // answer to whatever happens to be the oldest card anywhere.
-    const oldest = [...pending.values()].find((card) => card.threadId === event.threadId);
-    const typed = oldest && typedAnswer(event.data.text, oldest.card);
-    if (typed) {
-      if (admitted) {
-        appendTranscript(event, transcripts);
-        appendThreadEvent(event, dir);
-      }
-      return oldest.settle(typed);
-    }
-    const queued = enqueueTurn(event.threadId, event.data.text, true, event.data.attachments ?? [], event.id, event);
+    if (typed && oldest) return oldest.settle(typed);
+    const queued = admittedTurn ?? enqueueTurn(event.threadId, event.data.text, true,
+      event.data.attachments ?? [], event.id, event);
     // Admission is durable now. Echoing by id is harmless and converges all clients.
     broadcast(event);
     queued.catch((e: unknown) => {
