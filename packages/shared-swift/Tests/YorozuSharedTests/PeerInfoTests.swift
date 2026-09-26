@@ -168,6 +168,37 @@ private struct PeerReceiveTransport: ChatTransport {
     await model.shutdown()
 }
 
+@MainActor
+@Test func returningHostRequiresFreshAuthenticatedReply() async throws {
+    let wire = PeerWire(), client = try wire.client()
+    let model = ChatModel(transport: PeerReceiveTransport(client: client))
+    model.start()
+    for _ in 0..<20 { await Task.yield() }
+    try await client.handle("{\"type\":\"joined\",\"ownerOnline\":true}")
+    await client.acceptFrame(try wire.frame(ThreadListData(threads: [], peerInfoSupported: true), seq: 1))
+    let oldRequest = try #require(await client.peerInfoRequestID)
+    await client.acceptFrame(try wire.frame(ThreadListData(threads: [], peerInfo: .local, peerInfoReplyTo: oldRequest), seq: 2))
+    for _ in 0..<300 where !model.canDeliver { try await Task.sleep(for: .milliseconds(1)) }
+    #expect(model.canDeliver)
+
+    try await client.handle("{\"type\":\"owner\",\"online\":false}")
+    for _ in 0..<300 where model.state != .joined { try await Task.sleep(for: .milliseconds(1)) }
+    #expect(!model.canDeliver)
+    try await client.handle("{\"type\":\"owner\",\"online\":true}")
+    for _ in 0..<300 where !model.ownerOnline { try await Task.sleep(for: .milliseconds(1)) }
+    #expect(model.state == .joined)
+    #expect(!model.canDeliver)
+
+    await client.acceptFrame(try wire.frame(ThreadListData(threads: [], peerInfo: .local, peerInfoReplyTo: oldRequest), seq: 3))
+    #expect(!model.canDeliver)
+    let newRequest = try #require(await client.peerInfoRequestID)
+    #expect(newRequest != oldRequest)
+    await client.acceptFrame(try wire.frame(ThreadListData(threads: [], peerInfo: .local, peerInfoReplyTo: newRequest), seq: 4))
+    for _ in 0..<300 where !model.canDeliver { try await Task.sleep(for: .milliseconds(1)) }
+    #expect(model.canDeliver)
+    await model.shutdown()
+}
+
 
 @Test func peerMetadataBeforeHelloOnRejoinStartsFreshNegotiation() async throws {
     let wire = PeerWire(), client = try wire.client()

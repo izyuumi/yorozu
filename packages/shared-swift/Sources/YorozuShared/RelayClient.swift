@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Network
 import os
 
 /// Long-lived device identity for a paired phone: the Ed25519 key the relay checks on every
@@ -81,13 +82,14 @@ public actor RelayClient: ChatTransport {
     public typealias State = TransportState
     public typealias Update = TransportUpdate
 
-    /// A dropped socket is retried at 1s, 2s, 4s … up to this, and reset by a join.
+    /// A dropped socket retries with jitter around 1s, 2s, 4s … up to this, reset by a join.
     private static let maxBackoff: Double = 30
     /// The relay keeps a socket that is talking; nothing else on an idle phone would.
     private static let pingInterval: Duration = .seconds(30)
     /// A ping the relay does not answer within this is a socket that is open in name only —
     /// the phone slept, the network changed — and the receive loop would never find out.
     private static let pongDeadline: Duration = .seconds(10)
+    private static let connectionDeadline: Duration = .seconds(15)
 
     private let pairing: QrPayload
     private let identity: PhoneIdentity
@@ -119,6 +121,7 @@ public actor RelayClient: ChatTransport {
     private var deviceToken: String?
 
     private var socket: URLSessionWebSocketTask?
+    private var intentionalRedial: URLSessionWebSocketTask?
     /// The challenge the relay issued on this socket; a rejoin signs it.
     private var nonce = ""
     /// True once the relay has accepted this device, so later joins need no token. Seeded by
@@ -130,9 +133,14 @@ public actor RelayClient: ChatTransport {
     private var stopped = false
     private var attempt = 0
     private var loop: Task<Void, Never>?
+    private var loopGeneration = 0
     private var backoff: Task<Void, Never>?
     private var pinger: Task<Void, Never>?
     private var pongDeadline: Task<Void, Never>?
+    private var phaseDeadline: Task<Void, Never>?
+    private var pathMonitor: NWPathMonitor?
+    private var pathGeneration = 0
+    private var pathKnown = false
 
     /// Throws if the QR payload is not usable — a bad relay URL, a missing room, or a Mac
     /// public key the channel keys cannot be agreed from — or if `counters` holds something it
@@ -207,9 +215,14 @@ public actor RelayClient: ChatTransport {
         // A client that was closed can be dialled again. The phone does exactly this: a
         // background drain hangs up so the OS can suspend it, and the next foreground connects
         // afresh rather than being left with a client that will never redial.
-        stopped = false
+        loopGeneration &+= 1
         loop?.cancel()
-        loop = Task { await self.reconnectLoop() }
+        socket?.cancel()
+        intentionalRedial = nil
+        stopped = false
+        watchNetworkPath()
+        let generation = loopGeneration
+        loop = Task { await self.reconnectLoop(generation: generation) }
         return stream
     }
 
@@ -230,11 +243,18 @@ public actor RelayClient: ChatTransport {
         guard !stopped else { return }
         attempt = 0
         backoff?.cancel()
+        intentionalRedial = socket
         socket?.cancel()
     }
 
     public func close() {
         stopped = true
+        loopGeneration &+= 1
+        pathGeneration &+= 1
+        pathMonitor?.cancel()
+        pathMonitor = nil
+        phaseDeadline?.cancel()
+        phaseDeadline = nil
         pinger?.cancel()
         pongDeadline?.cancel()
         peerExchange?.cancel()
@@ -242,15 +262,49 @@ public actor RelayClient: ChatTransport {
         loop?.cancel()
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
+        intentionalRedial = nil
         updates?.yield(.state(.closed))
         updates?.finish()
         updates = nil
     }
 
+    /// A path transition can leave URLSession holding a socket from the previous network.
+    /// Redial immediately; the existing retry loop still owns backoff and authentication.
+    private func watchNetworkPath() {
+        pathGeneration &+= 1
+        let generation = pathGeneration
+        pathMonitor?.cancel()
+        pathKnown = false
+        let monitor = NWPathMonitor()
+        pathMonitor = monitor
+        monitor.pathUpdateHandler = { [weak self] path in
+            Task { await self?.pathChanged(path.status == .satisfied, generation: generation) }
+        }
+        monitor.start(queue: DispatchQueue.global(qos: .utility))
+    }
+
+    private func pathChanged(_ available: Bool, generation: Int) {
+        guard generation == pathGeneration, !stopped else { return }
+        let previousWasKnown = pathKnown
+        pathKnown = true
+        if previousWasKnown || !available { reconnect() }
+    }
+
+    private func armPhaseDeadline(_ reason: String, on socket: URLSessionWebSocketTask) {
+        phaseDeadline?.cancel()
+        phaseDeadline = Task {
+            try? await Task.sleep(for: Self.connectionDeadline)
+            guard !Task.isCancelled, !stopped, self.socket === socket, !ready else { return }
+            phaseDeadline = nil
+            updates?.yield(.failed(reason))
+            socket.cancel()
+        }
+    }
+
     /// One dial per pass; the pass ends when the socket does. `.closed` is deliberately not
     /// yielded between passes: the connection is not over, it is being retried.
-    private func reconnectLoop() async {
-        while !stopped {
+    private func reconnectLoop(generation: Int) async {
+        while !stopped && !Task.isCancelled && generation == loopGeneration {
             updates?.yield(.state(.connecting))
             joined = false
             channelFormat = nil
@@ -264,12 +318,16 @@ public actor RelayClient: ChatTransport {
             let socket = session.webSocketTask(with: dial)
             self.socket = socket
             socket.resume()
-            await receiveLoop(socket)
+            armPhaseDeadline("relay connection timed out", on: socket)
+            await receiveLoop(socket, generation: generation)
+            guard generation == loopGeneration, self.socket === socket else { return }
+            phaseDeadline?.cancel()
+            phaseDeadline = nil
             pinger?.cancel()
             pongDeadline?.cancel()
-            guard !stopped else { return }
-            // 1s, 2s, 4s … capped, and back to 1s after a join that stuck.
-            let delay = min(Self.maxBackoff, pow(2, Double(attempt)))
+            guard !stopped, !Task.isCancelled else { return }
+            // Exponential retry with jitter; back to the first interval after a join.
+            let delay = min(Self.maxBackoff, pow(2, Double(attempt))) * Double.random(in: 0.75...1.0)
             attempt += 1
             let backoff = Task<Void, Never> { try? await Task.sleep(for: .seconds(delay)) }
             self.backoff = backoff
@@ -354,14 +412,19 @@ public actor RelayClient: ChatTransport {
     }
 
     /// Returns when this socket ends, so the reconnect loop can dial the next one.
-    private func receiveLoop(_ socket: URLSessionWebSocketTask) async {
-        while true {
+    private func receiveLoop(_ socket: URLSessionWebSocketTask, generation: Int) async {
+        while !Task.isCancelled && generation == loopGeneration {
             do {
                 guard case .string(let text) = try await socket.receive() else { continue }
+                guard !Task.isCancelled, generation == loopGeneration, self.socket === socket else { return }
                 try handle(text)
             } catch {
                 // Our own cancellation is not a failure worth reporting.
-                if !stopped { updates?.yield(.failed(error.localizedDescription)) }
+                let redial = intentionalRedial === socket
+                if redial { intentionalRedial = nil }
+                if !redial, !stopped, !Task.isCancelled, generation == loopGeneration {
+                    updates?.yield(.failed(error.localizedDescription))
+                }
                 return
             }
         }
@@ -377,10 +440,14 @@ public actor RelayClient: ChatTransport {
         case "nonce":
             // The relay challenges every socket; only the Mac registers. We join.
             nonce = message.nonce ?? ""
-            Task { await join() }
+            let generation = loopGeneration
+            Task { if generation == loopGeneration { await join() } }
         case "joined":
             joined = true
             attempt = 0
+            phaseDeadline?.cancel()
+            phaseDeadline = nil
+            if message.ownerOnline == true, let socket { armPhaseDeadline("host handshake timed out", on: socket) }
             // The relay remembers this device now, so the one-time token is done with.
             if !paired {
                 paired = true
@@ -391,16 +458,33 @@ public actor RelayClient: ChatTransport {
             updates?.yield(.ownerOnline(message.ownerOnline ?? false))
             // `joined` carried presence as of the instant it was written; ask again so what the
             // UI shows is the relay's live answer rather than anything either end remembered.
-            Task { await requestOwner() }
-            Task { await sayHello() }
+            let generation = loopGeneration
+            Task { if generation == loopGeneration { await requestOwner() } }
+            Task { if generation == loopGeneration { await sayHello() } }
             // Where to wake this device, said again: this may be a room that has never heard
             // of us — a redeployed relay, an evicted object — and there is no way to tell.
-            Task { await self.sendPush() }
+            Task { if generation == loopGeneration { await self.sendPush() } }
         case "pong":
             pongDeadline?.cancel()
             pongDeadline = nil
         case "owner":
-            updates?.yield(.ownerOnline(message.online ?? false))
+            if message.online == true {
+                updates?.yield(.ownerOnline(true))
+                if !ready, phaseDeadline == nil, let socket {
+                    armPhaseDeadline("host handshake timed out", on: socket)
+                    let generation = loopGeneration
+                    Task { if generation == loopGeneration { await sayHello() } }
+                }
+            } else {
+                ready = false
+                channelFormat = nil
+                peerInfoRequestID = nil
+                peerExchange?.cancel()
+                updates?.yield(.state(.joined))
+                updates?.yield(.ownerOnline(false))
+                phaseDeadline?.cancel()
+                phaseDeadline = nil
+            }
         case "frame":
             acceptFrame(message.payload)
         default:
@@ -556,6 +640,8 @@ public actor RelayClient: ChatTransport {
             }
             if !ready {
                 ready = true
+                phaseDeadline?.cancel()
+                phaseDeadline = nil
                 updates?.yield(.compatibility(compatibility))
                 updates?.yield(.state(.paired))
             }
