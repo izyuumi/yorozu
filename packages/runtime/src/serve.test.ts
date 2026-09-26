@@ -1553,6 +1553,52 @@ test("failed OpenClaw admission sends no receipt and accepts the same ID on retr
   } finally { mac.close(); }
 });
 
+test("a conflicting retry cannot reuse a receipted user message ID", async () => {
+  vi.spyOn(OpenClawRunner.prototype, "run").mockResolvedValue("done");
+  const { dir } = await pairedPhone([], true);
+  createThread("Identity", dir, "identity");
+  const mac = await macClient(dir);
+  const first: YorozuEvent = {
+    id: "same-message", threadId: "identity", ts: Date.now(), agentId: "mac",
+    kind: "message", data: { role: "user", text: "first",
+      attachments: [{ name: "a.txt", mime: "text/plain", data: "YQ==" }] },
+  };
+  try {
+    mac.sendRawEvent(first);
+    await vi.waitFor(() => expect(mac.events.filter((item) =>
+      item.kind === "receipt" && item.data.eventId === first.id)).toHaveLength(1));
+    mac.sendRawEvent({ ...first, data: { role: "user", text: "first",
+      attachments: [{ data: "YQ==", mime: "text/plain", name: "a.txt" }] } });
+    await vi.waitFor(() => expect(mac.events.filter((item) =>
+      item.kind === "receipt" && item.data.eventId === first.id)).toHaveLength(2));
+    mac.sendRawEvent({ ...first, data: { role: "user", text: "different",
+      attachments: [{ name: "a.txt", mime: "text/plain", data: "YQ==" }] } });
+    await vi.waitFor(() => expect(states).toContain("rejected-conflicting-message-id"));
+    expect(mac.events.filter((item) => item.kind === "receipt" && item.data.eventId === first.id)).toHaveLength(2);
+    expect(readThreadEvents(first.threadId, dir).filter((item) => item.id === first.id))
+      .toMatchObject([{ data: { text: "first" } }]);
+  } finally { mac.close(); }
+});
+
+test("a completed message ID remains bound to its thread across host restart", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-message-identity-"));
+  createThread("Original", dir, "original");
+  createThread("Other", dir, "other");
+  appendThreadEvent({ id: "completed-id", threadId: "original", ts: Date.now(), agentId: "phone",
+    kind: "message", data: { role: "user", text: "original" } }, dir);
+  vi.spyOn(OpenClawRunner.prototype, "run").mockResolvedValue("done");
+  await pairedPhone([], true, { stateDir: dir });
+  const mac = await macClient(dir);
+  try {
+    mac.sendRawEvent({ id: "completed-id", threadId: "other", ts: Date.now(), agentId: "mac",
+      kind: "message", data: { role: "user", text: "original" } });
+    await vi.waitFor(() => expect(states).toContain("rejected-conflicting-message-id"));
+    expect(mac.events.some((item) => item.kind === "receipt" && item.data.eventId === "completed-id"))
+      .toBe(false);
+    expect(readThreadEvents("other", dir).filter((item) => item.id === "completed-id")).toEqual([]);
+  } finally { mac.close(); }
+});
+
 /** Pairing burns a token, so the sidecar prints one QR per device that can still join. */
 function qrQueue() {
   const printed: string[] = [];
