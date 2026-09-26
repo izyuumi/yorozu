@@ -307,20 +307,23 @@ before the relay is even reachable.
 
 ### Outbox
 
-Every message and archive request goes through the outbox, link or no link, and leaves it only
-when the runtime's `receipt` names its ID: a socket that accepted a send is not a runtime that
-received it, and iOS can leave a socket half-open with the Mac long gone.
+Messages and controls are saved in the encrypted outbox before transmission. A socket send leaves
+delivery uncertain; the runtime's durable receipt or operation outcome settles it. Queued and
+confirming bubbles remain visible, and missing receipts or transient errors retry with the same
+ID using jittered backoff. Independent threads can progress while one is waiting. A new thread's
+creation stays ahead of its first message. The host deduplicates accepted IDs across restarts.
 
-With the Mac asleep, or before the relay has paired the socket, the bubble is captioned
-**Queued**; on a live link there is no caption, since nothing is known to be wrong yet. The queue
-is flushed in order whenever `paired` and `ownerOnline` are both true, and a flush re-sends
-everything still unreceipted. Events keep the IDs they were given, so a copy that did land is
-dropped by the runtime rather than applied twice — it keeps a window of the last two thousand
-command IDs for exactly this — and a thread started offline carries its `thread_create` ahead of
-the message that created it. Three refusals and the caption becomes **Not sent — tap to retry**;
-the queue steps over it and carries on. It holds 50 messages, stops re-sending one after 48
-hours, and is sealed in the same `ThreadCache`, so a phone closed on the underground still has it
-in the morning.
+An unaccepted message has a host-enforced 30-minute admission deadline. It stays visible after
+expiry and needs **Still send?** to create a new intent; an accepted task keeps running. Legacy
+messages without a host deadline wait through the old relay buffer lifetime before they can be
+reconfirmed. Approval answers and Stop requests likewise stay pending until their exact host
+outcomes arrive. The outbox does not discard content to meet a count limit.
+
+The relay client watches native network-path changes and redials promptly when a path switches.
+An idle socket uses economical pings; a dial or online-host handshake that stalls is bounded.
+Reconnect attempts use capped jittered backoff. Link presentation waits five continuous seconds
+of detected interruption before showing a nonblocking toast; the raw transport and outbox react
+immediately.
 
 ### List, export and link previews
 
