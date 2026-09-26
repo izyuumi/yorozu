@@ -176,16 +176,19 @@ private func eventuallyRecovered(_ condition: @MainActor () -> Bool) async -> Bo
     second.start()
     defer { first.close(); second.close() }
     #expect(hosts.connectionState == .connected)
+    #expect(hosts.statusConnectionState == .reconnecting)
     await firstTransport.yield(.ownerOnline(true))
     await firstTransport.yield(.state(.paired))
     await secondTransport.yield(.ownerOnline(true))
     await secondTransport.yield(.state(.paired))
     #expect(await eventuallyRecovered { first.link.state == .connected && second.link.state == .connected })
+    #expect(hosts.statusConnectionState == .connected)
     let whileUp = hosts.connectionSummary
 
     await firstTransport.yield(.state(.closed))
     #expect(await eventuallyRecovered { first.state == .closed })
     #expect(hosts.connectionState == .connected)
+    #expect(hosts.statusConnectionState == .connected)
     #expect(hosts.connectionSummary == whileUp)
 
     await secondTransport.yield(.state(.closed))

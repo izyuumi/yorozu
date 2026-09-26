@@ -498,6 +498,7 @@ public struct ThreadListView<Destination: View>: View {
     private let hostLabel: (String) -> String?
     private let onNewThread: (() -> Void)?
     private let connection: ConnectionState?
+    private let connectionStatus: ConnectionState?
     private let connectionSince: ContinuousClock.Instant?
     private let connectionIsGraced: Bool
     private let connectionSummary: String?
@@ -590,6 +591,7 @@ public struct ThreadListView<Destination: View>: View {
         hostLabel: @escaping (String) -> String? = { _ in nil },
         onNewThread: (() -> Void)? = nil,
         connection: ConnectionState? = nil,
+        connectionStatus: ConnectionState? = nil,
         connectionSince: ContinuousClock.Instant? = nil,
         connectionIsGraced: Bool = false,
         connectionSummary: String? = nil,
@@ -614,6 +616,7 @@ public struct ThreadListView<Destination: View>: View {
         self.hostLabel = hostLabel
         self.onNewThread = onNewThread
         self.connection = connection
+        self.connectionStatus = connectionStatus
         self.connectionSince = connectionSince
         self.connectionIsGraced = connectionIsGraced
         self.connectionSummary = connectionSummary
@@ -790,16 +793,16 @@ public struct ThreadListView<Destination: View>: View {
                     Button(action: onSettings) {
                         ZStack(alignment: .bottomTrailing) {
                             Image(systemName: "gearshape")
-                            if let shownConnection {
+                            if let status = connectionStatus ?? shownConnection {
                                 Circle()
-                                    .fill(shownConnection.tint)
+                                    .fill(status.tint)
                                     .frame(width: 8, height: 8)
                                     .overlay(Circle().stroke(.background, lineWidth: 1.5))
                             }
                         }
                     }
                     .accessibilityLabel("Settings")
-                    .accessibilityValue(connectionSummary ?? shownConnection.map { "Mac connection: \($0.label)" } ?? "")
+                    .accessibilityValue(connectionSummary ?? (connectionStatus ?? shownConnection).map { "Mac connection: \($0.label)" } ?? "")
                 }
             }
             #if os(iOS)

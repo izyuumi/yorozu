@@ -707,6 +707,7 @@ struct RootView: View {
                 threads: model.threads,
                 workingThreads: model.generating,
                 connection: actualConnection,
+                connectionStatus: model.link.state,
                 connectionSince: model.interruptedSince,
                 path: $path,
                 projects: model.projects,
