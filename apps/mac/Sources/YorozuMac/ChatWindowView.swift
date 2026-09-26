@@ -42,9 +42,9 @@ private struct ClientChatWindowView: View {
             NavigationStack {
                 if let selection, let item = hosts.thread(for: selection), let model = hosts.model(for: selection) {
                     ChatView(model: model, thread: item.thread,
-                        offlineNotice: hosts.hasMultipleHosts
-                            ? "\(item.hostLabel) is offline. Messages will send when it reconnects."
-                            : "Connection unavailable. Messages will send when your host Mac reconnects.")
+                        aggregateToast: hosts.connectionToastNotice?.notice.state,
+                        aggregateToastID: hosts.connectionToastNotice?.notice.id,
+                        aggregateToastLabel: hosts.connectionToastLabel)
                         .environment(\.threadSearchRequest, searchedThread == selection ? searchRequest : nil)
                         .id(selection)
                 } else {
@@ -175,11 +175,7 @@ private struct LocalChatWindowView: View {
         } detail: {
             NavigationStack {
                 if let thread {
-                    ChatView(
-                        model: model,
-                        thread: thread,
-                        offlineNotice: "Runtime not reachable — see Settings for its state."
-                    )
+                    ChatView(model: model, thread: thread)
                     .environment(\.threadSearchRequest, searchRequest)
                     // One view per thread, as on a client: switching threads starts the chat's
                     // own state — scroll, search, focus — afresh rather than carrying it over.

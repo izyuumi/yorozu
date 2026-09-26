@@ -444,7 +444,7 @@ public enum ConnectionState: Equatable, Sendable {
         switch self {
         case .connected: String(localized: "Connected")
         case .reconnecting: String(localized: "Reconnecting")
-        case .offline: String(localized: "Mac offline")
+        case .offline: String(localized: "Host isn’t reachable")
         }
     }
 
@@ -470,7 +470,10 @@ public final class ConnectionPresentation {
     /// How long a link can be gone before the user hears about it.
     public static let grace: Duration = .seconds(5)
 
-    public private(set) var state: ConnectionState
+    public private(set) var state: ConnectionState {
+        didSet { if state != oldValue { onStateChange?(state) } }
+    }
+    @ObservationIgnored public var onStateChange: ((ConnectionState) -> Void)?
     private var pending: Task<Void, Never>?
     private var interruptedAt: ContinuousClock.Instant?
 
@@ -514,6 +517,55 @@ public final class ConnectionPresentation {
     }
 }
 
+/// One brief notice per continuous interruption. ConnectionPresentation owns the five-second
+/// declaration; this owns only how long that declared state stays visible. Status in Settings
+/// remains available after the notice leaves.
+public struct ConnectionToastNotice: Equatable, Sendable {
+    public let id: UUID
+    public let state: ConnectionState
+    public let sequence: UInt64
+}
+
+@MainActor
+@Observable
+public final class ConnectionToastPresentation {
+    private static var nextSequence: UInt64 = 0
+    public private(set) var notice: ConnectionToastNotice?
+    public private(set) var lastNotice: ConnectionToastNotice?
+    public var visible: ConnectionState? { notice?.state }
+    private var announced = false
+    private var dismissal: Task<Void, Never>?
+    private let duration: Duration
+
+    public init(duration: Duration = .seconds(8)) { self.duration = duration }
+
+    public func declared(_ state: ConnectionState) {
+        if state == .connected {
+            announced = false
+            dismiss()
+            return
+        }
+        guard !announced else { return }
+        announced = true
+        Self.nextSequence += 1
+        notice = .init(id: UUID(), state: state, sequence: Self.nextSequence)
+        lastNotice = notice
+        let duration = self.duration
+        dismissal = Task { [weak self] in
+            try? await Task.sleep(for: duration)
+            guard !Task.isCancelled else { return }
+            self?.notice = nil
+        }
+    }
+
+    /// Backgrounding hides an existing notice without treating the outage as new.
+    public func dismiss() {
+        dismissal?.cancel()
+        dismissal = nil
+        notice = nil
+    }
+}
+
 /// The connection as a toast floating over the list or transcript rather than a strip that
 /// pushes them down: the state is almost always fine, and something that is almost always fine
 /// should not move the layout when it changes. A coloured dot carries it at a glance and the
@@ -535,7 +587,7 @@ struct ConnectionPill: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Mac connection: \(label ?? state.label)")
+        .accessibilityLabel("Connection: \(label ?? state.label)")
 
         // The bar is glass on 26, so the pill in it should be glass too; on 18 through 25 a thin
         // material is the nearest thing that still reads as a control rather than a label.
@@ -573,6 +625,10 @@ public struct ThreadListView<Destination: View>: View {
     private let connectionSince: ContinuousClock.Instant?
     private let connectionIsGraced: Bool
     private let connectionSummary: String?
+    private let toastState: ConnectionState?
+    private let toastID: UUID?
+    private let toastLabel: String?
+    private let onBackground: (() -> Void)?
     @Binding private var path: [String]
     /// Where a coding agent can be started. Empty means the picker offers Yorozu alone.
     private let projects: [ProjectFolder]
@@ -616,6 +672,9 @@ public struct ThreadListView<Destination: View>: View {
         guard let connection else { return nil }
         return connectionIsGraced ? connection : presentation.state
     }
+
+    private var toastShownHere: ConnectionState? { hasSelectedThread ? nil : toastState }
+    private var toastShownHereID: UUID? { hasSelectedThread ? nil : toastID }
 
     /// Regular width draws the list beside the chat, including on iPhone Duo's inner display.
     /// Compact width keeps the stack; the same `path` drives both layouts during resizing.
@@ -670,6 +729,10 @@ public struct ThreadListView<Destination: View>: View {
         connectionSince: ContinuousClock.Instant? = nil,
         connectionIsGraced: Bool = false,
         connectionSummary: String? = nil,
+        toastState: ConnectionState? = nil,
+        toastID: UUID? = nil,
+        toastLabel: String? = nil,
+        onBackground: (() -> Void)? = nil,
         path: Binding<[String]>,
         projects: [ProjectFolder] = [],
         projectListStatus: ProjectListStatus = .ready,
@@ -695,6 +758,10 @@ public struct ThreadListView<Destination: View>: View {
         self.connectionSince = connectionSince
         self.connectionIsGraced = connectionIsGraced
         self.connectionSummary = connectionSummary
+        self.toastState = toastState
+        self.toastID = toastID
+        self.toastLabel = toastLabel
+        self.onBackground = onBackground
         self._path = path
         self.projects = projects
         self.projectListStatus = projectListStatus
@@ -867,29 +934,33 @@ public struct ThreadListView<Destination: View>: View {
         // for an interruption shorter than the grace.
         .overlay(alignment: .top) {
             ZStack {
-                if let shownConnection, shownConnection != .connected {
-                    ConnectionPill(state: shownConnection, label: connectionSummary)
+                if let toastShownHere {
+                    ConnectionPill(state: toastShownHere, label: toastLabel)
                         .padding(.top, 8)
                         .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
                 }
             }
             .allowsHitTesting(false)
-            .animation(reduceMotion ? nil : .default, value: shownConnection)
+            .animation(reduceMotion ? nil : .default, value: toastShownHere)
         }
         .onChange(of: connection, initial: true) { _, actual in
             guard !connectionIsGraced else { return }
             presentation.update(actual ?? .connected, active: scenePhase != .background, since: connectionSince)
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background { touchingList = false; settleListOrder() }
+            if phase == .background {
+                touchingList = false
+                settleListOrder()
+                onBackground?()
+            }
             guard !connectionIsGraced else { return }
             presentation.update(connection ?? .connected, active: phase != .background, since: connectionSince)
         }
         // Once per declared change, not once per retry: the presentation only moves after the
         // grace, or on recovery.
-        .onChange(of: shownConnection) { old, state in
-            guard old != nil, let state else { return }
-            AccessibilityNotification.Announcement(connectionSummary ?? state.label).post()
+        .onChange(of: toastShownHereID) { _, id in
+            guard id != nil, let state = toastShownHere else { return }
+            AccessibilityNotification.Announcement(toastLabel ?? state.label).post()
         }
         // A search modifier on the root navigation stack otherwise follows pushed chats:
         // pulling a transcript down reveals "Search threads" above the conversation.

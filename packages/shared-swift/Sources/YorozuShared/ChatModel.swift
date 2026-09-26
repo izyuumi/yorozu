@@ -62,6 +62,7 @@ public final class ChatModel {
     /// Unlike status lines, a new list starts without a connection toast. Keeping this per
     /// host lets a merged list respect each host's own grace and initial connection attempt.
     public let toastLink = ConnectionPresentation(.connected)
+    public let connectionToast = ConnectionToastPresentation()
 
     private func markInterruption() {
         let actual = ConnectionState(state: state, ownerOnline: ownerOnline)
@@ -310,6 +311,7 @@ public final class ChatModel {
         self.transport = transport
         self.cache = cache
         self.device = device
+        toastLink.onStateChange = { [weak self] state in self?.connectionToast.declared(state) }
         guard let cache else { return }
         peerInfo = cache.peerInfo()
         synced = cache.threads()

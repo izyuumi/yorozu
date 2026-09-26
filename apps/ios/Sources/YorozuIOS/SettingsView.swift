@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import YorozuShared
 
 /// Amber remains readable as connection-state text on paper.
@@ -221,6 +222,12 @@ private struct HostSettingsView: View {
             }
             .listRowBackground(YorozuPalette.paper)
             Section {
+                Button("Retry connection") { host.model.start(); host.model.reconnect() }
+                    .disabled(host.model.canDeliver)
+                Button("Copy diagnostics", systemImage: "doc.on.doc") {
+                    UIPasteboard.general.string = ConnectionDiagnostics.snapshot(for: host.model)
+                    AccessibilityNotification.Announcement("Diagnostics copied").post()
+                }
                 Button("Repair connection", action: onRepair)
                 Button(session.hosts.hasMultipleHosts ? "Remove host" : "Remove connection", role: .destructive) {
                     confirmingRemoval = true

@@ -713,6 +713,9 @@ struct RootView: View {
                 connection: actualConnection,
                 connectionStatus: model.link.state,
                 connectionSince: model.interruptedSince,
+                toastState: model.connectionToast.visible,
+                toastID: model.connectionToast.notice?.id,
+                onBackground: { model.connectionToast.dismiss() },
                 path: $path,
                 projects: model.projects,
                 projectListStatus: model.projectListStatus,
@@ -797,6 +800,9 @@ struct RootView: View {
             ChatView(model: host.model, thread: thread, resumeRequest: notification?.id,
                      notificationClass: notification?.notificationClass, notificationEventRef: notification?.eventRef,
                      lastReadAt: notification?.lastReadAt, notificationSyncRevision: notification?.syncRevision,
+                     aggregateToast: session.hosts.connectionToastNotice?.notice.state,
+                     aggregateToastID: session.hosts.connectionToastNotice?.notice.id,
+                     aggregateToastLabel: session.hosts.connectionToastLabel,
                      onNewThread: session.hosts.hasMultipleHosts ? { choosingThreadHost = true } : nil,
                      onCreate: { agent, cwd in
                          if let draft = session.hosts.newDraft(on: host.id, agent: agent, cwd: cwd) { hostPath = [draft] }
