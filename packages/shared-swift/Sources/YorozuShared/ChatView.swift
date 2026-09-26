@@ -45,9 +45,10 @@ public struct ChatView: View {
     /// Whether geometry currently reaches the newest message. Reader intent is tracked
     /// separately because async row growth can make this false without any manual scroll.
     @State private var atBottom = true
-    /// The shortcut stays out of the way until the reader is over one viewport from the end.
+    /// The shortcut stays out of the way while the reader is still at the newest edge.
     @State private var showJumpToLatest = false
     @State private var scrollPhase = ScrollPhase.idle
+    @State private var visibleMessageID: String?
     /// Geometry can move away from the bottom because replay arrived or a self-sizing row grew,
     /// not because the reader scrolled. Keep that layout fact separate from the reader's intent.
     @State private var newestScroll = NewestScrollIntent()
@@ -354,6 +355,7 @@ public struct ChatView: View {
             atBottom = true
             showJumpToLatest = false
             scrollPhase = .idle
+            visibleMessageID = nil
             newestScroll = NewestScrollIntent()
             attachmentLoading = false
             attachmentFailure = nil
@@ -586,6 +588,7 @@ public struct ChatView: View {
                     if let activity { ChatActivityRow(activity: activity, agent: presentation.agent) }
                     Color.clear.frame(height: 1).id(Self.bottomAnchor)
                 }
+                .scrollTargetLayout()
                 .compactQuietTranscriptLayout()
                 // Handed down rather than threaded through every bubble, block and table cell
                 // between the field and the run of text a hit is inside.
@@ -594,6 +597,7 @@ public struct ChatView: View {
             // A thread opens on its newest message, like every other chat: the anchor does it
             // during layout, so there is no jump from the top to watch on the way in.
             .defaultScrollAnchor(.bottom)
+            .scrollPosition(id: $visibleMessageID, anchor: .top)
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 // `visibleRect` is in content coordinates, which is what makes this reliable:
                 // a thread shorter than the screen sits under a content inset and reports a
@@ -616,14 +620,11 @@ public struct ChatView: View {
                 else { return }
                 proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
             }
-            .onScrollGeometryChange(for: Bool.self) { geometry in
-                showsJumpToLatest(
-                    contentHeight: geometry.contentSize.height,
-                    visibleBottom: geometry.visibleRect.maxY,
-                    viewportHeight: geometry.visibleRect.height
-                )
-            } action: { _, show in
-                showJumpToLatest = show
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.visibleRect.height > 0
+                    ? geometry.contentSize.height - geometry.visibleRect.maxY : 0
+            } action: { _, distance in
+                showJumpToLatest = distance > 40 && !newestScroll.followsLatest
             }
             // Every frame of a streaming reply lands here, not just every message: the text of
             // the last event grows in place, so its id alone would never change.
@@ -1133,9 +1134,11 @@ public struct ChatView: View {
     /// cells publish their final self-sized heights, so snapshot completion alone is not a safe
     /// "initial scroll finished" boundary.
     private final class TimelineCollectionView: UICollectionView {
+        var willLayout: (() -> Void)?
         var didLayout: (() -> Void)?
 
         override func layoutSubviews() {
+            willLayout?()
             super.layoutSubviews()
             didLayout?()
         }
@@ -1184,6 +1187,11 @@ public struct ChatView: View {
         }
 
         @MainActor final class Coordinator: NSObject, UICollectionViewDelegate {
+            private struct VisibleAnchor {
+                let entry: Entry
+                let distanceFromTop: CGFloat
+            }
+
             var parent: IOSChatTimeline
             private var dataSource: UICollectionViewDiffableDataSource<Int, Entry>?
             private var rowsById: [String: ChatRow] = [:]
@@ -1194,6 +1202,8 @@ public struct ChatView: View {
             private var newestScroll = NewestScrollIntent()
             private var animatingToLatest = false
             private var animatingToEvent = false
+            private var snapshotAnchor: VisibleAnchor?
+            private var layoutAnchor: VisibleAnchor?
 
             init(_ parent: IOSChatTimeline) { self.parent = parent }
 
@@ -1224,8 +1234,17 @@ public struct ChatView: View {
                     )
                 }
                 if let timeline = collectionView as? TimelineCollectionView {
+                    timeline.willLayout = { [weak self, weak timeline] in
+                        guard let self, let timeline, self.snapshotAnchor == nil,
+                              !self.newestScroll.followsLatest, !self.animatingToEvent else { return }
+                        self.layoutAnchor = self.visibleAnchor(in: timeline)
+                    }
                     timeline.didLayout = { [weak self, weak timeline] in
                         guard let self, let timeline else { return }
+                        if let anchor = self.snapshotAnchor ?? self.layoutAnchor {
+                            self.restore(anchor, in: timeline)
+                        }
+                        self.layoutAnchor = nil
                         self.pinLatestIfNeeded(timeline)
                         Task { @MainActor [weak self, weak timeline] in
                             guard let self, let timeline else { return }
@@ -1250,6 +1269,9 @@ public struct ChatView: View {
                     applyRequest(collectionView)
                     return
                 }
+                if snapshotAnchor == nil && !newestScroll.followsLatest && !animatingToEvent {
+                    snapshotAnchor = visibleAnchor(in: collectionView)
+                }
                 var snapshot = NSDiffableDataSourceSnapshot<Int, Entry>()
                 snapshot.appendSections([0])
                 snapshot.appendItems(entries)
@@ -1258,9 +1280,34 @@ public struct ChatView: View {
                 dataSource?.apply(snapshot, animatingDifferences: false) { [weak self, weak collectionView] in
                     guard let self, let collectionView else { return }
                     collectionView.layoutIfNeeded()
+                    if let anchor = self.snapshotAnchor { self.restore(anchor, in: collectionView) }
+                    self.snapshotAnchor = nil
                     self.pinLatestIfNeeded(collectionView)
                     self.applyRequest(collectionView)
                     self.reportBottom(collectionView)
+                }
+            }
+
+            private func visibleAnchor(in collectionView: UICollectionView) -> VisibleAnchor? {
+                let top = collectionView.contentOffset.y + collectionView.adjustedContentInset.top
+                return collectionView.indexPathsForVisibleItems.compactMap { path -> (Entry, CGFloat)? in
+                    guard let entry = dataSource?.itemIdentifier(for: path),
+                          let frame = collectionView.layoutAttributesForItem(at: path)?.frame else { return nil }
+                    return (entry, frame.minY)
+                }
+                .min(by: { $0.1 < $1.1 })
+                .map { VisibleAnchor(entry: $0.0, distanceFromTop: $0.1 - top) }
+            }
+
+            private func restore(_ anchor: VisibleAnchor, in collectionView: UICollectionView) {
+                guard let path = dataSource?.indexPath(for: anchor.entry),
+                      let frame = collectionView.layoutAttributesForItem(at: path)?.frame else { return }
+                let inset = collectionView.adjustedContentInset
+                let minimum = -inset.top
+                let maximum = max(minimum, collectionView.contentSize.height - collectionView.bounds.height + inset.bottom)
+                let desired = min(maximum, max(minimum, frame.minY - anchor.distanceFromTop - inset.top))
+                if abs(collectionView.contentOffset.y - desired) > 0.5 {
+                    collectionView.contentOffset.y = desired
                 }
             }
 
@@ -1279,6 +1326,8 @@ public struct ChatView: View {
                     lastRequest = ordinary.id
                     request = ordinary
                 }
+                snapshotAnchor = nil
+                layoutAnchor = nil
                 switch request.target {
                 case .latest:
                     newestScroll.followLatest()
@@ -1339,7 +1388,7 @@ public struct ChatView: View {
                     newestScroll.observe(atBottom: value, phase: phase)
                 }
                 if parent.atBottom != value { parent.atBottom = value }
-                let show = showsJumpToLatest(
+                let show = !newestScroll.followsLatest && showsJumpToLatest(
                     contentHeight: scrollView.contentSize.height,
                     visibleBottom: scrollView.contentOffset.y + scrollView.bounds.height
                         - scrollView.adjustedContentInset.bottom,
@@ -1350,6 +1399,8 @@ public struct ChatView: View {
 
             func scrollViewDidScroll(_ scrollView: UIScrollView) { reportBottom(scrollView) }
             func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+                snapshotAnchor = nil
+                layoutAnchor = nil
                 animatingToLatest = false
                 animatingToEvent = false
                 newestScroll.observe(atBottom: isAtBottom(scrollView), phase: .tracking)
@@ -1379,9 +1430,9 @@ public struct ChatView: View {
     }
 #endif
 
-/// A return shortcut is useful only when reaching the end would take more than one full swipe.
+/// The same slack as bottom detection keeps the shortcut hidden until content is truly below.
 func showsJumpToLatest(contentHeight: CGFloat, visibleBottom: CGFloat, viewportHeight: CGFloat) -> Bool {
-    viewportHeight > 0 && contentHeight - visibleBottom > viewportHeight
+    viewportHeight > 0 && contentHeight - visibleBottom > 40
 }
 
 /// First assistant message nobody had read when a notification was sent. Tool, progress and
