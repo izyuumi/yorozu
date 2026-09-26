@@ -700,9 +700,7 @@ public struct ChatView: View {
                     rejectionReason: model.outboxRejectionReason(of: event.id),
                     onRetry: data.role == .user && (outboxStatus == nil || outboxStatus == .rejected || outboxStatus == .withdrawn)
                         ? { retry(data) } : nil,
-                    onWithdraw: data.role == .user && outboxStatus != nil &&
-                        outboxStatus != .withdrawn && outboxStatus != .withdrawalPending &&
-                        outboxStatus != .resent && outboxStatus != .rejected
+                    onWithdraw: model.canWithdraw(event)
                         ? { model.withdraw(event.id) } : nil,
                     onDelete: { model.delete(event.id, in: thread.id) },
                     onResend: {

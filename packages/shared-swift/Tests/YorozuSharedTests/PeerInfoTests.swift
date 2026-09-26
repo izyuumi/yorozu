@@ -19,8 +19,9 @@ import Testing
     if case .updateRequired = PeerInfoData.local.compatibility(with: oldHost) {} else {
         Issue.record("New client must require exact-run Stop")
     }
-    if case .compatible = oldHost.compatibility(with: PeerInfoData(appVersion: "new")) {} else {
-        Issue.record("Old client must remain compatible with upgraded host")
+    let upgradedHost = PeerInfoData(appVersion: "new", requiredCapabilities: ["channel-sequence", "exact-stop-v1"])
+    if case .updateRequired = oldHost.compatibility(with: upgradedHost) {} else {
+        Issue.record("Old client must update before its Stop button can claim success")
     }
 }
 

@@ -484,7 +484,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // A Stop is bound to one accepted operation. Keep its intent through sidecar replacement,
   // including the backend run identity needed to finish an interrupted abort request.
   type StopRecord = { targetEventId: string; threadId: string; status: "requested" | "stopped" | "completed" | "withdrawn";
-    sessionKey?: string; runId?: string; requestId?: string };
+    sessionKey?: string; runId?: string; requestIds: string[] };
   const stopFile = join(dir, "stopped-turns.jsonl");
   let stopText = existsSync(stopFile) ? readFileSync(stopFile, "utf8") : "";
   if (stopText && !stopText.endsWith("\n")) {
@@ -500,7 +500,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     ["requested", "stopped", "completed", "withdrawn"].includes((entry as StopRecord).status) &&
     ((entry as StopRecord).runId === undefined || typeof (entry as StopRecord).runId === "string") &&
     ((entry as StopRecord).sessionKey === undefined || typeof (entry as StopRecord).sessionKey === "string") &&
-    ((entry as StopRecord).requestId === undefined || typeof (entry as StopRecord).requestId === "string"))) {
+    Array.isArray((entry as StopRecord).requestIds) &&
+    (entry as StopRecord).requestIds.every((id) => typeof id === "string" && id.length > 0 && id.length <= 128))) {
     throw new Error("Invalid stopped-turn journal");
   }
   const stopOwners = new Map<string, string>();
@@ -511,7 +512,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
   }
   const stoppedTurns = new Map((stopLines as StopRecord[]).map((entry) => [entry.targetEventId, entry]));
   const rememberStop = (entry: StopRecord): void => {
-    if (stoppedTurns.get(entry.targetEventId)?.status === entry.status) return;
+    const previous = stoppedTurns.get(entry.targetEventId);
+    if (previous?.status === entry.status && previous.requestIds.length === entry.requestIds.length) return;
     appendFileSync(stopFile, JSON.stringify(entry) + "\n", { mode: 0o600, flush: true });
     stoppedTurns.set(entry.targetEventId, entry);
   };
@@ -1133,11 +1135,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (running.get(threadId) === turn) running.delete(threadId);
         if (runningEventIds.get(threadId) === userEventId) runningEventIds.delete(threadId);
         const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
-        if (stop?.status === "requested") {
-          const finished = { ...stop, status: "stopped" as const };
-          rememberStop(finished);
-          if (stop.requestId) broadcast(stopStatus(finished, stop.requestId));
-        }
+        if (stop) completeStop(stop);
         if (!stopped) {
           setNativeTurn(threadId, undefined, dir);
           broadcast(threadList());
@@ -1190,11 +1188,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (running.get(threadId) === turn) running.delete(threadId);
       if (runningEventIds.get(threadId) === userEventId) runningEventIds.delete(threadId);
       const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
-      if (stop?.status === "requested") {
-        const finished = { ...stop, status: "stopped" as const };
-        rememberStop(finished);
-        if (stop.requestId) broadcast(stopStatus(finished, stop.requestId));
-      }
+      if (stop) completeStop(stop);
       broadcastActiveThreadList();
     }
   }
@@ -1263,8 +1257,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const archiveUpdates = new Map<string, Promise<void>>();
   const stopAttempts = new Set<string>();
 
-  const stopStatus = (record: StopRecord, requestId: string): YorozuEvent =>
-    control({ kind: "stop_status", data: { targetEventId: record.targetEventId, requestId, status: record.status } });
+  const stopStatus = (record: StopRecord, requestId: string): YorozuEvent => ({
+    ...control({ kind: "stop_status", data: { targetEventId: record.targetEventId, requestId, status: record.status } }),
+    threadId: record.threadId,
+  });
+  const broadcastStop = (record: StopRecord): void => {
+    for (const id of stoppedTurns.get(record.targetEventId)?.requestIds ?? record.requestIds) broadcast(stopStatus(record, id));
+  };
+  function completeStop(record: StopRecord): void {
+    if (record.status !== "requested") return;
+    const finished = { ...record, status: "stopped" as const };
+    rememberStop(finished);
+    broadcastStop(finished);
+  }
 
   const abortTarget = (threadId: string, target: string): boolean => {
     if (runningEventIds.get(threadId) !== target) return false;
@@ -1274,7 +1279,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     return true;
   };
 
-  const finishStop = (record: StopRecord, reply?: Send, requestId?: string): void => {
+  const finishStop = (record: StopRecord): void => {
     if (record.status !== "requested" || stopAttempts.has(record.targetEventId)) return;
     const target = record.targetEventId;
     if (!record.runId || !record.sessionKey) {
@@ -1284,6 +1289,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (nativeTurn?.id === completionIdFor(record.threadId, target) && nativeTurn.state === "interrupted") return;
         openclaw?.discardPending(target);
         rememberStop({ ...record, status: "stopped" });
+        broadcastStop(stoppedTurns.get(target)!);
       }
       return;
     }
@@ -1299,7 +1305,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         openclaw!.discardPending(target);
       }
       rememberStop({ ...record, status: outcome.status });
-      if (reply && requestId) reply(stopStatus(stoppedTurns.get(target)!, requestId));
+      broadcastStop(stoppedTurns.get(target)!);
     }).catch((error: unknown) => state(`stop-error ${String(error)}`)).finally(() => stopAttempts.delete(target));
   };
 
@@ -1435,20 +1441,24 @@ export function serve(options: ServeOptions = {}): Sidecar {
         stored.kind === "message" && stored.data.done === true);
       if (!existing && !user && !ledger) {
         const withdrawn: StopRecord = { targetEventId: target, threadId: event.threadId,
-          status: "withdrawn", requestId: event.id };
+          status: "withdrawn", requestIds: [event.id] };
         rememberStop(withdrawn);
         reply(control({ kind: "receipt", data: { eventId: event.id } }));
         reply(stopStatus(withdrawn, event.id));
         return;
       }
+      const requestIds = existing ? [...new Set([...existing.requestIds, event.id])] : [event.id];
       const record: StopRecord = final ? { ...(existing ?? { targetEventId: target, threadId: event.threadId }),
-        status: "completed", requestId: event.id } : existing ?? { targetEventId: target, threadId: event.threadId,
-        status: "requested", requestId: event.id,
+        status: "completed", requestIds } : existing ? { ...existing, requestIds } : { targetEventId: target, threadId: event.threadId,
+        status: "requested", requestIds,
         ...(ledger && (ledger.state === "active" || runningEventIds.get(event.threadId) === target)
           ? { sessionKey: ledger.sessionKey, runId: ledger.runId } : {}) };
       rememberStop(record);
       reply(control({ kind: "receipt", data: { eventId: event.id } }));
-      if (record.status === "requested") finishStop(record, reply, event.id);
+      if (record.status === "requested") {
+        finishStop(record);
+        if (stoppedTurns.get(target)?.status !== "requested") return;
+      }
       reply(stopStatus(stoppedTurns.get(target)!, event.id));
       return;
     }

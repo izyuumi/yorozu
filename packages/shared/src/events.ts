@@ -522,8 +522,7 @@ export interface ProjectListData {
 }
 
 /**
- * The user pressed stop: cancel the turn running in `threadId` and every agent it
- * delegated to. Carries nothing of its own.
+ * The user pressed Stop for one exact user event. Legacy requests may omit the target.
  */
 export interface InterruptData { targetEventId?: string }
 

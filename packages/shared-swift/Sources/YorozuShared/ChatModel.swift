@@ -890,6 +890,29 @@ public final class ChatModel {
         }
     }
 
+    public func canWithdraw(_ event: YorozuEvent) -> Bool {
+        guard case .message(let data) = event.payload, data.role == .user else { return false }
+        if let item = outbox.first(where: { $0.id == event.id }) {
+            return item.admissionStatus != .withdrawn && item.admissionStatus != .rejected &&
+                item.replacementId == nil && !stopPending(for: event.id)
+        }
+        let history = timeline(event.threadId).events
+        guard history.contains(where: { $0.id == event.id }), !stopPending(for: event.id) else { return false }
+        return !history.contains { known in
+            if case .stopStatus(let status) = known.payload {
+                return status.targetEventId == event.id && status.status != .requested && status.status != .unknown
+            }
+            if case .message(let reply) = known.payload, reply.role == .agent, reply.done == true {
+                return known.id == data.completionId || known.id.hasSuffix(":\(event.id):final")
+            }
+            return false
+        }
+    }
+
+    private func stopPending(for eventId: String) -> Bool {
+        outbox.contains { $0.event.payload == .interrupt(InterruptData(targetEventId: eventId)) }
+    }
+
     private func queueStop(_ targetEventId: String, in threadId: String) {
         guard !outbox.contains(where: { $0.event.payload == .interrupt(InterruptData(targetEventId: targetEventId)) }) else { return }
         let pending = outbox + [OutboxItem(event: event(.interrupt(InterruptData(targetEventId: targetEventId)), in: threadId))]
@@ -910,6 +933,12 @@ public final class ChatModel {
 
     /// Cancel locally only when no socket attempt began. Otherwise ask the host to settle the race.
     public func withdraw(_ eventId: String) {
+        if let accepted = timelines.values.flatMap(\.events).first(where: { $0.id == eventId }),
+           !outbox.contains(where: { $0.id == eventId }) {
+            guard canWithdraw(accepted) else { return }
+            queueStop(eventId, in: accepted.threadId)
+            return
+        }
         guard let index = outbox.firstIndex(where: { $0.id == eventId }),
               case .message = outbox[index].event.payload,
               outbox[index].replacementId == nil,
@@ -1484,6 +1513,7 @@ public final class ChatModel {
                 reconcile(data)
             case .stopStatus(let data):
                 reconcileStop(data)
+                applyEvent(event)
             default:
                 applyEvent(event)
             }

@@ -121,6 +121,22 @@ private func reconnect(_ transport: QueueTransport) async {
 }
 
 @MainActor
+@Test func acceptedQueuedMessageCanStillBeWithdrawnByExactId() async throws {
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, device: "phone")
+    model.start()
+    model.send("queued behind another run", in: "home")
+    let message = try #require(model.events["home"]?.first)
+    await reconnect(transport)
+    #expect(await settle { model.outboxStatus(of: message.id) == nil })
+    #expect(model.canWithdraw(message))
+    model.withdraw(message.id)
+    let stop = try #require(model.outbox.last?.event)
+    #expect(stop.payload == .interrupt(InterruptData(targetEventId: message.id)))
+    #expect(await settle { model.stopPending(in: "home") })
+}
+
+@MainActor
 @Test func neverAttemptedDraftCancelsLocallyWithItsThreadSetup() async throws {
     let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }

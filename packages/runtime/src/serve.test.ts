@@ -3033,6 +3033,26 @@ test("delayed exact-run Stop cannot abort the next turn", async () => {
   await eventsUntil((event) => event.kind === "message" && event.threadId === "exact-stop" && event.data.done === true);
 });
 
+test("repeated Stop requests each receive the confirmed outcome", async () => {
+  const finish = Promise.withResolvers<void>();
+  const runner: NativeAgentRunner = { run: async () => { await finish.promise; return { text: "" }; } };
+  const { send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "multi-stop");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "multi-stop"));
+  const target = send({ kind: "message", data: { role: "user", text: "long run" } }, "multi-stop");
+  await eventsUntil((event) => event.kind === "thread_list" &&
+    event.data.threads.some((thread) => thread.id === "multi-stop" && thread.activeEventId === target));
+  const first = send({ kind: "interrupt", data: { targetEventId: target } }, "multi-stop");
+  await eventsUntil((event) => event.kind === "stop_status" && event.data.requestId === first && event.data.status === "requested");
+  const second = send({ kind: "interrupt", data: { targetEventId: target } }, "multi-stop");
+  await eventsUntil((event) => event.kind === "stop_status" && event.data.requestId === second && event.data.status === "requested");
+  finish.resolve();
+  const outcomes = await eventsUntil((event) => event.kind === "stop_status" && event.data.requestId === second &&
+    event.data.status === "stopped");
+  expect(outcomes.filter((event) => event.kind === "stop_status" && event.data.status === "stopped")
+    .map((event) => event.kind === "stop_status" && event.data.requestId)).toEqual([first, second]);
+});
+
 
 test.each([true, false])("legacy setup runs only with an injected provider (OpenClaw=%s)", async (openclaw) => {
   vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
