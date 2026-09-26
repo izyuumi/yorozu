@@ -11,6 +11,7 @@
 //   POST /blackhole       every phone connection, open or new, stays open and carries nothing
 //   POST /drop-host       frames from the Mac stop reaching the phone; the phone's still arrive
 //   POST /down            close every phone connection now, and refuse new ones
+//   POST /lose-joined     the next phone to join is cut off just as the relay says `joined`
 //   POST /heal            back to normal for new connections and frames; blackholed ones stay dead
 //   GET  /dials           {"dials"}: when each phone connection arrived, ms since start
 //   GET  /events?thread=  {"events"}: the thread's durable events, as the Mac recorded them
@@ -70,7 +71,7 @@ const sidecar = serve({
 // The phone's side. Frame by frame rather than byte by byte, so dropping one direction leaves
 // a connection that still works the other way, the way a lost receipt looks from the phone.
 const links = new Set();
-const fault = { blackholed: false, dropHost: false, down: false };
+const fault = { blackholed: false, dropHost: false, down: false, loseJoined: false };
 const dials = [];
 const phones = new WebSocketServer({ noServer: true });
 const proxy = createServer();
@@ -88,7 +89,13 @@ proxy.on("upgrade", (request, socket, head) => {
       else early.push([data, binary]);
     });
     upstream.on("open", () => { for (const [data, binary] of early.splice(0)) upstream.send(data, { binary }); });
-    upstream.on("message", (data, binary) => { if (!link.dead && !fault.dropHost) phone.send(data, { binary }); });
+    upstream.on("message", (data, binary) => {
+      if (fault.loseJoined && !binary && data.toString().includes('"type":"joined"')) {
+        fault.loseJoined = false;
+        return phone.terminate();
+      }
+      if (!link.dead && !fault.dropHost) phone.send(data, { binary });
+    });
     const drop = () => { phone.terminate(); upstream.terminate(); links.delete(link); };
     phone.on("close", drop).on("error", drop);
     upstream.on("close", drop).on("error", drop);
@@ -102,7 +109,8 @@ const faults = {
   blackhole() { fault.blackholed = true; for (const link of links) link.dead = true; },
   "drop-host"() { fault.dropHost = true; },
   down() { fault.down = true; for (const link of links) { link.phone.terminate(); link.upstream.terminate(); } },
-  heal() { fault.blackholed = fault.dropHost = fault.down = false; },
+  "lose-joined"() { fault.loseJoined = true; },
+  heal() { fault.blackholed = fault.dropHost = fault.down = fault.loseJoined = false; },
 };
 const messages = (thread) => readThreadEvents(thread, stateDir)
   .filter((event) => event.kind === "message" && (event.data.role === "user" || event.data.done))

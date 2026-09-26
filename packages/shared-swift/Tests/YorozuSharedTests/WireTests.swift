@@ -109,6 +109,19 @@ private func finalReply(in thread: String, _ model: ChatModel) -> [MessageData] 
 @Suite(.serialized, .enabled(if: rigAvailable, "needs `pnpm -r build` for the wire harness"))
 @MainActor
 struct WireTests {
+    /// The relay spends a pairing code before it says `joined`. A first join cut off in between
+    /// leaves the phone remembered but unaware of it, and the code is gone: the phone has to
+    /// come back as the device the room knows, not keep offering a code that cannot work.
+    @Test func aFirstJoinCutOffBeforeJoinedStillPairs() async throws {
+        let rig = try await WireRig()
+        try await rig.run("lose-joined")
+        let model = try await pairedModel(rig)
+        let thread = model.newDraft().id
+        model.send("paired after all", in: thread)
+        try await until("the answer") { finalReply(in: thread, model).map(\.text) == ["echo: paired after all"] }
+        model.close()
+    }
+
     /// The foreground case nothing else catches: an idle phone whose socket died without a
     /// close. Only the pong deadline can tell, and the link has to come back by itself.
     @Test func aSilentlyDeadLinkIsNoticedAndReplacedWithoutTheAppAsking() async throws {
