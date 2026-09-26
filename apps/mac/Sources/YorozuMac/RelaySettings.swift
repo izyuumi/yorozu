@@ -190,7 +190,6 @@ private struct HostConnectionDetails: View {
                 Text("Every tool request on this host runs without asking, including purchases, messages, commands, and deletes.")
                     .font(.caption).foregroundStyle(.red)
             }
-            TerminalAccessSettings(model: host.model)
             Button(session.hosts.hasMultipleHosts ? "Remove Host…" : "Unpair…", role: .destructive, action: remove)
                 .buttonStyle(.bordered)
         }

@@ -59,7 +59,6 @@ cp -R "$BIN/Sparkle.framework" "$APP/Contents/Frameworks/"
 # Contents/Resources instead. Omitting it makes the first provider mark render trap even
 # though the executable itself built and signed successfully.
 cp -R "$BIN/YorozuShared_YorozuShared.bundle" "$APP/Contents/Resources/"
-cp -R "$BIN/SwiftTerm_SwiftTerm.bundle" "$APP/Contents/Resources/"
 # Which layout that bundle has depends on the toolchain. Swift 6.4 emits an Xcode-style
 # bundle (Contents/Resources) and compiles the asset catalog itself; the CI toolchain behind
 # build 282 emitted a flat bundle with the catalog copied raw, as the .xcassets folder of
@@ -157,8 +156,6 @@ rm -rf "$APP/Contents/Resources/runtime"
 # link in bundle"). Hoisted is the flat node_modules the signature can cover.
 pnpm --filter @yorozu/runtime --prod --legacy --config.node-linker=hoisted \
   deploy "$APP/Contents/Resources/runtime"
-# pnpm deploy copies package file modes; node-pty's published helper needs execute permission.
-sh scripts/fix-pty-helper.sh "$APP/Contents/Resources/runtime/node_modules/node-pty"
 # --prod above leaves the *workspace* modules directory pruned to production too, which
 # breaks the next `pnpm -r build` (no typescript). Put the dev dependencies back.
 pnpm install --frozen-lockfile

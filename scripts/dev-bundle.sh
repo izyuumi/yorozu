@@ -26,7 +26,6 @@ cp "$(dirname "$BIN")/yorozu-native" "$APP/Contents/MacOS/yorozu-native"
 # SwiftPM keeps the provider marks in a companion bundle. AgentMarkView loads it from
 # Contents/Resources; Bundle.module can point at the build directory.
 cp -R "$(dirname "$BIN")/YorozuShared_YorozuShared.bundle" "$APP/Contents/Resources/"
-cp -R "$(dirname "$BIN")/SwiftTerm_SwiftTerm.bundle" "$APP/Contents/Resources/"
 # SwiftPM's CLI build can leave the catalog uncompiled. Match the shipping bundle.
 MARKS="$APP/Contents/Resources/YorozuShared_YorozuShared.bundle"
 if [ ! -f "$MARKS/Contents/Resources/Assets.car" ]; then

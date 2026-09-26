@@ -281,84 +281,17 @@ test("expired admission is rejected durably while an already accepted retry stil
   expect(fetchMock).toHaveBeenCalledTimes(1);
 }, 10_000);
 
-test("terminal is gated, live-only, and blocks host update install while open", async () => {
+test("old local terminal requests are refused without creating a session", async () => {
   const { dir, path } = await localSidecar();
   socket = await connectLocal(path);
   const events = reader(socket);
-  send(socket, "", { kind: "terminal", data: { action: "status" } });
-  const initial = await events.nextOf("terminal");
-  if (initial.kind !== "terminal") throw new Error("missing terminal state");
-  expect(initial.data).toMatchObject({ action: "state", enabled: false });
-  const epoch = initial.data.epoch!;
-  send(socket, "t1", { kind: "thread_create", data: { title: "Terminal test" } });
-  await events.nextOf("thread_list");
-
-  send(socket, "t1", { kind: "terminal", data: { action: "create", epoch, cols: 80, rows: 24 } });
-  const denied = await events.nextOf("terminal");
-  expect(denied.kind === "terminal" && denied.data.error).toContain("disabled");
-  send(socket, "", { kind: "terminal", data: { action: "enable", epoch } });
-  const enabled = await events.nextOf("terminal");
-  expect(enabled.kind === "terminal" && enabled.data.enabled).toBe(true);
-  send(socket, "t1", { kind: "terminal", data: { action: "create", epoch, cols: 80, rows: 24 } });
-  let opened = await events.nextOf("terminal");
-  while (opened.kind !== "terminal" || opened.data.action !== "state" || !opened.data.sessions?.length) {
-    opened = await events.nextOf("terminal");
-  }
-  const id = opened.data.sessions![0]!.id;
-  expect(opened.data.sessions![0]!.writable).toBe(true);
-  let created = await events.nextOf("terminal");
-  while (created.kind !== "terminal" || created.data.action !== "created") {
-    created = await events.nextOf("terminal");
-  }
-  expect(created.data.sessionId).toBe(id);
+  send(socket, "t1", { kind: "terminal", data: { action: "create", cols: 80, rows: 24 } } as unknown as EventPayload);
+  expect(await events.nextOf("terminal" as EventKind)).toMatchObject({
+    threadId: "t1", data: { action: "error", error: "Remote terminal is no longer available. Update Yorozu." },
+  });
   expect(readThreadEvents("t1", dir)).toEqual([]);
-
-  send(socket, "", { kind: "update_control", data: { action: "queue", updateId: "u1", version: "1.0" } });
-  let status = await events.nextOf("update_status");
-  while (status.kind !== "update_status" || status.data.phase !== "waiting") {
-    status = await events.nextOf("update_status");
-  }
-  expect(status.data.openTerminals).toBe(1);
-  send(socket, "", { kind: "terminal", data: { action: "close", sessionId: id, epoch } });
-  send(socket, "", { kind: "update_control", data: { action: "poll", updateId: "u1" } });
-  let after = await events.nextOf("update_status");
-  while (after.kind !== "update_status" || after.data.phase !== "countdown") {
-    after = await events.nextOf("update_status");
-  }
-  expect(after.data.openTerminals).toBe(0);
-  expect(readThreadEvents("t1", dir)).toEqual([]);
-}, 10_000);
-
-test("simultaneous terminal creates reply only to their requesting clients", async () => {
-  const { path } = await localSidecar();
-  socket = await connectLocal(path);
-  const other = await connectLocal(path);
-  try {
-    const first = reader(socket);
-    const second = reader(other);
-    send(socket, "", { kind: "terminal", data: { action: "status" } });
-    const initial = await first.nextOf("terminal");
-    if (initial.kind !== "terminal") throw new Error("missing terminal state");
-    const epoch = initial.data.epoch!;
-    send(socket, "", { kind: "terminal", data: { action: "enable", epoch } });
-    send(socket, "t1", { kind: "thread_create", data: { title: "Concurrent terminals" } });
-    let listed = await first.nextOf("thread_list");
-    while (listed.kind !== "thread_list" || !listed.data.threads.some((thread) => thread.id === "t1")) {
-      listed = await first.nextOf("thread_list");
-    }
-    send(socket, "t1", { kind: "terminal", data: { action: "create", epoch, cols: 80, rows: 24 } });
-    send(other, "t1", { kind: "terminal", data: { action: "create", epoch, cols: 80, rows: 24 } });
-    const created = async (events: ReturnType<typeof reader>): Promise<string> => {
-      for (;;) {
-        const event = await events.nextOf("terminal");
-        if (event.kind === "terminal" && event.data.action === "created") return event.data.sessionId!;
-      }
-    };
-    expect(await created(first)).not.toBe(await created(second));
-  } finally {
-    other.destroy();
-  }
-}, 10_000);
+  expect(existsSync(join(dir, "terminal-settings.json"))).toBe(false);
+});
 
 test("the local socket round-trips a turn and receives broadcasts, with no relay hop", async () => {
   const { path } = await localSidecar();

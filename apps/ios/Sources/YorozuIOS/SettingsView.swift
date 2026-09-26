@@ -220,8 +220,6 @@ private struct HostSettingsView: View {
                 approvalsFooter
             }
             .listRowBackground(YorozuPalette.paper)
-            TerminalAccessSettings(model: host.model)
-                .listRowBackground(YorozuPalette.paper)
             Section {
                 Button("Repair connection", action: onRepair)
                 Button(session.hosts.hasMultipleHosts ? "Remove host" : "Remove connection", role: .destructive) {
