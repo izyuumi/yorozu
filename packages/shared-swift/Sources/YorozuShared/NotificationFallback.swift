@@ -38,10 +38,13 @@ public enum NotificationFallback {
     }
 
     public static func authenticatedDestination(
-        userInfo: [AnyHashable: Any], keys: [HostID: SymmetricKey]
+        userInfo: [AnyHashable: Any], keys: [HostID: SymmetricKey],
+        legacyThreadRef: ((HostID, String) -> String?)? = nil
     ) -> AuthenticatedNotificationDestination? {
         guard let match = authenticatedPreview(userInfo: userInfo, keys: keys),
-              let thread = match.preview.thread else { return nil }
+              let thread = match.preview.thread ?? match.preview.event.flatMap({
+                  legacyThreadRef?(match.hostID, $0)
+              }) else { return nil }
         return AuthenticatedNotificationDestination(hostID: match.hostID, threadRef: thread,
             eventRef: match.preview.event, notificationClass: match.preview.notificationClass)
     }

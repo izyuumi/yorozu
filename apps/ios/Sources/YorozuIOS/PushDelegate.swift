@@ -99,8 +99,7 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         let info = notification.request.content.userInfo
         let reading = await MainActor.run {
             let session = Session.shared
-            guard let destination = NotificationFallback.authenticatedDestination(
-                userInfo: info, keys: session.notificationKeys) else { return false }
+            guard let destination = session.authenticatedNotificationDestination(userInfo: info) else { return false }
             return session.hosts.session(for: destination.hostID)?.model.isReading(threadRef: destination.threadRef) == true
         }
         return reading ? [] : [.banner, .list, .sound]
@@ -130,16 +129,21 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         default: nil
         }
         let content = response.notification.request.content
-        let (destination, actionModel) = await MainActor.run { () -> (AuthenticatedNotificationDestination?, ChatModel?) in
+        let (destination, legacy, actionModel) = await MainActor.run {
+            () -> (AuthenticatedNotificationDestination?, (HostID, String)?, ChatModel?) in
             // Initialize migration, verify the current key and capture its model without an
             // actor hop between them: a concurrent repair cannot switch the approved session.
             let session = Session.shared
             let keys = session.notificationKeys
-            let destination = NotificationFallback.authenticatedDestination(userInfo: info, keys: keys)
+            let preview = NotificationFallback.authenticatedPreview(userInfo: info, keys: keys)
+            let destination = session.authenticatedNotificationDestination(userInfo: info)
+            let legacy = destination == nil ? preview.flatMap { match in
+                match.preview.event.map { (match.hostID, $0) }
+            } : nil
             let permittedHostID = answer == nil ? nil : NotificationFallback.permittedLockScreenHost(
                 body: content.body, userInfo: info, keys: keys, eventRef: rawEventRef
             )
-            return (destination, permittedHostID.flatMap { session.hosts.session(for: $0)?.model })
+            return (destination, legacy, permittedHostID.flatMap { session.hosts.session(for: $0)?.model })
         }
         if let answer, let rawEventRef, let actionModel,
            await actionModel.answerFromNotification(eventRef: rawEventRef, answer) { return }
@@ -149,6 +153,10 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
                 session.open(threadRef: destination.threadRef, hostID: destination.hostID,
                     notificationClass: destination.notificationClass, eventRef: destination.eventRef)
                 return session.hosts.session(for: destination.hostID).map { [$0.model] } ?? []
+            }
+            if let (hostID, eventRef) = legacy {
+                session.openLegacyNotification(hostID: hostID, eventRef: eventRef)
+                return session.hosts.session(for: hostID).map { [$0.model] } ?? []
             }
             // Old or unauthenticated pushes may wake a refresh, but cannot choose a chat.
             return session.hosts.sessions.map(\.model)

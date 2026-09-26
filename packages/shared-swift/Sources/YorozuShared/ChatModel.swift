@@ -1497,6 +1497,19 @@ public final class ChatModel {
         return isReading(thread.id)
     }
 
+    /// Older hosts sealed the event reference but not its thread. Resolve it only from this
+    /// host's own event cache, and fail closed if the short reference is ambiguous.
+    public func threadRef(containingEventRef eventRef: String) -> String? {
+        var owner: String?
+        for (threadID, list) in events {
+            for event in list where YorozuCrypto.threadRef(event.id) == eventRef {
+                guard owner == nil else { return nil }
+                owner = threadID
+            }
+        }
+        return owner.map(YorozuCrypto.threadRef)
+    }
+
     /// Reports the open thread read, if it is in fact being read. Called on entering a thread,
     /// on the app becoming active with one open, and — debounced — when a reply lands in it.
     private func reportRead() {

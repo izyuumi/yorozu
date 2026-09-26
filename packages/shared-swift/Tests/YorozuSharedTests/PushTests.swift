@@ -167,6 +167,18 @@ import Testing
         forgedDestination["cls"] = "failed"
         #expect(NotificationFallback.authenticatedDestination(userInfo: forgedDestination, keys: keys) ==
             NotificationFallback.authenticatedDestination(userInfo: info, keys: keys))
+        let older = try YorozuCrypto.seal(key: key, plaintext: Data(
+            #"{"v":1,"body":"Run the same command?","event":"\#(event)","quick":true}"#.utf8))
+        let olderInfo: [AnyHashable: Any] = [
+            "preview": ["n": older.nonce.base64URLEncodedString(), "c": older.ciphertext.base64URLEncodedString()],
+            "ref": "forged-thread", "event": "forged-card", "hostID": "forged-host",
+        ]
+        #expect(NotificationFallback.authenticatedDestination(userInfo: olderInfo, keys: keys) == nil)
+        #expect(NotificationFallback.authenticatedDestination(userInfo: olderInfo, keys: keys,
+            legacyThreadRef: { owner, sealedEvent in
+                owner == host && sealedEvent == event ? thread : nil
+            }) == AuthenticatedNotificationDestination(hostID: host, threadRef: thread,
+                eventRef: event, notificationClass: nil))
         #expect(NotificationFallback.permittedLockScreenHost(body: body, userInfo: info, keys: keys, eventRef: event) == host)
         #expect(NotificationFallback.permittedLockScreenHost(body: "Forged words", userInfo: info, keys: keys, eventRef: event) == nil)
         #expect(NotificationFallback.permittedLockScreenHost(body: body, userInfo: info, keys: keys, eventRef: "another-card") == nil)

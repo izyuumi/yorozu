@@ -116,6 +116,7 @@ final class Session {
     private(set) var hostPath: [HostThreadID] = []
     private(set) var notificationOpen: NotificationOpen?
     private var pendingNotification: (hostID: HostID, ref: String, kind: String?, event: String?)?
+    private var pendingLegacyNotification: (hostID: HostID, eventRef: String)?
     private var relays: [HostID: RelayClient] = [:]
     private(set) var notificationKeys: [HostID: SymmetricKey] = [:]
     private var pairingHostID: HostID?
@@ -334,6 +335,7 @@ final class Session {
         if hostPath.contains(where: { $0.hostID == hostID }) { hostPath = [] }
         if notificationOpen?.hostID == hostID { notificationOpen = nil }
         if pendingNotification?.hostID == hostID { pendingNotification = nil }
+        if pendingLegacyNotification?.hostID == hostID { pendingLegacyNotification = nil }
         if pairingHostID == hostID { pairingHostID = nil; isPairing = false }
         model = hosts.sessions.first?.model
         if hosts.lastUsedHostID == hostID {
@@ -367,7 +369,7 @@ final class Session {
         guard hosts.sessions.isEmpty else { return }
         model?.close()
         failure = nil; isPairing = false; isDemo = true; openPath = []
-        notificationOpen = nil; pendingNotification = nil
+        notificationOpen = nil; pendingNotification = nil; pendingLegacyNotification = nil
         let model = ChatModel(transport: DemoTransport(), cache: nil)
         model.previewThreads()
         model.previewChat(in: "Invoices")
@@ -382,7 +384,7 @@ final class Session {
         guard isDemo else { return }
         model?.close(); model = nil
         failure = nil; isPairing = false; isDemo = false; openPath = []
-        notificationOpen = nil; pendingNotification = nil
+        notificationOpen = nil; pendingNotification = nil; pendingLegacyNotification = nil
     }
 
     func requestNotifications() {
@@ -433,6 +435,22 @@ final class Session {
               let host = hosts.session(for: id), host.model.threads.contains(where: { $0.id == threadId }) else { return }
         hostPath = [HostThreadID(hostID: id, threadID: threadId)]
         rememberHost(id)
+    }
+
+    func authenticatedNotificationDestination(userInfo: [AnyHashable: Any]) -> AuthenticatedNotificationDestination? {
+        NotificationFallback.authenticatedDestination(userInfo: userInfo, keys: notificationKeys) { hostID, eventRef in
+            self.hosts.session(for: hostID)?.model.threadRef(containingEventRef: eventRef)
+        }
+    }
+
+    func openLegacyNotification(hostID: HostID, eventRef: String) {
+        guard let model = hosts.session(for: hostID)?.model else { return }
+        guard let ref = model.threadRef(containingEventRef: eventRef) else {
+            pendingLegacyNotification = (hostID, eventRef)
+            return
+        }
+        pendingLegacyNotification = nil
+        open(threadRef: ref, hostID: hostID, eventRef: eventRef)
     }
 
     @discardableResult
@@ -497,6 +515,9 @@ final class Session {
                 if let pending = self.pendingNotification, pending.hostID == hostID {
                     self.open(threadRef: pending.ref, hostID: pending.hostID, notificationClass: pending.kind, eventRef: pending.event)
                 }
+                if let pending = self.pendingLegacyNotification, pending.hostID == hostID {
+                    self.openLegacyNotification(hostID: pending.hostID, eventRef: pending.eventRef)
+                }
                 #if DEBUG
                 if launchArgument("yorozuSend") != nil {
                 print("YOROZU-E2E-HOSTS \(self.hosts.sessions.count)")
@@ -506,15 +527,19 @@ final class Session {
                 self.removeFirstHostForHarnessIfNeeded()
                 #endif
             }
-            #if DEBUG
             let onEvent = model.onEvent
-            model.onEvent = { [weak model] event in
+            model.onEvent = { [weak self, weak model] event in
                 onEvent?(event)
+                if let pending = self?.pendingLegacyNotification, pending.hostID == hostID,
+                   YorozuCrypto.threadRef(event.id) == pending.eventRef {
+                    self?.openLegacyNotification(hostID: hostID, eventRef: pending.eventRef)
+                }
+                #if DEBUG
                 if launchArgument("yorozuSend") != nil, case .message(let data) = event.payload, data.role == .agent {
                     print("YOROZU-E2E-HOST-REPLY [\(hostID)] [\(model?.title(of: event.threadId) ?? event.threadId)] \(data.text)")
                 }
+                #endif
             }
-            #endif
             hosts.add(HostSession(id: hostID, model: model, relayURL: stored.pairing.relayUrl,
                                   nickname: stored.nickname, pairedAt: stored.pairedAt))
             relays[hostID] = relay
