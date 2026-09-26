@@ -132,8 +132,9 @@ export async function verifyCandidate(candidate, { request = asc, appId = proces
 // Add the resolved build to the external group and submit it for Beta App Review.
 export async function distributeExternal(ios, { request = asc, group = process.env.ASC_EXTERNAL_GROUP || "Public" } = {}) {
   requireValue(typeof ios?.build_id === "string" && /^[A-Za-z0-9-]+$/.test(ios.build_id), "Candidate has no valid ASC build ID");
-  const groups = await request("GET", query(`/v1/apps/${ios.app_id}/betaGroups`, {
-    "filter[name]": group, "fields[betaGroups]": "name,isInternalGroup", limit: "2",
+  const groups = await request("GET", query("/v1/betaGroups", {
+    "filter[app]": ios.app_id, "filter[name]": group, "filter[isInternalGroup]": "false",
+    "fields[betaGroups]": "name,isInternalGroup", limit: "2",
   }));
   const matches = groups.data?.filter((item) => item.attributes?.name === group && item.attributes.isInternalGroup === false) ?? [];
   requireValue(matches.length === 1, `Expected one external beta group named ${group}`);
