@@ -404,6 +404,12 @@ public actor RelayClient: ChatTransport {
             throw YorozuCrypto.CryptoError.malformed("Host compatibility has not been established")
         }
         try await sendEncrypted(event)
+        // A send is when a silently dead socket costs the user something, so it asks the relay
+        // now rather than waiting out the idle ping. One probe covers a burst of sends.
+        if pongDeadline == nil {
+            try? await send(["type": "ping"])
+            armPongDeadline()
+        }
     }
 
     private func sendEncrypted(_ event: YorozuEvent) async throws {
