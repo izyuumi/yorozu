@@ -848,7 +848,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         ...(thread.agent && thread.agent !== "yorozu" ? { bypass: yolo } : {}),
         ...(runningEventIds.has(thread.id) ? { activeEventId: runningEventIds.get(thread.id) } : {}),
         ...(openclawTurn?.paused ? { interruptedTurnId: openclawTurn.completionId, canResume: true } :
-          openclawTurn?.recoveryAttempts ? { recoveryState: "recovering" as const } : {}),
+          openclawTurn?.recoveryAttempts || openclawTurn?.recoveryPrompt ? { recoveryState: "recovering" as const } : {}),
         ...(stopping ? { interruptedTurnId: undefined, canResume: undefined, recoveryState: undefined } : {}),
       };
     }) } });

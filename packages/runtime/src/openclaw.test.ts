@@ -563,14 +563,14 @@ describe("OpenClawRunner", () => {
       const gateway = harness();
       let originalRun = "";
       let recoveryRun = "";
+      let recoveryMessage = "";
       gateway.request.mockImplementation(async (method, params) => {
         if (method === "chat.send") {
           const { idempotencyKey, message } = params as { idempotencyKey: string; message: string };
           if (!originalRun) originalRun = idempotencyKey;
           else {
             recoveryRun = idempotencyKey;
-            expect(message).toContain("install the update");
-            expect(message).toContain("installed package");
+            recoveryMessage = message;
           }
           return { runId: idempotencyKey };
         }
@@ -580,6 +580,8 @@ describe("OpenClawRunner", () => {
             { role: "user", runId: originalRun, content: "install the update" },
             { role: "assistant", runId: originalRun, content: [{ type: "toolCall", id: "exec-1", name: "exec", arguments: { command: "install" } }] },
             { role: "toolResult", toolCallId: "exec-1", name: "exec", content: "installed package" },
+            { role: "assistant", runId: originalRun, content: "intermediate analysis ".repeat(1_000) },
+            { role: "assistant", runId: originalRun, content: "more intermediate analysis ".repeat(1_000) },
             { role: "assistant", runId: originalRun, stopReason: "aborted", content: "" },
           ],
         };
@@ -593,11 +595,70 @@ describe("OpenClawRunner", () => {
       expect(gateway.request.mock.calls.filter(([method]) => method === "chat.send")).toHaveLength(1);
       vi.setSystemTime(Date.now() + 6_000);
       await vi.waitFor(() => expect(recoveryRun).not.toBe(""));
+      expect(recoveryMessage).toContain("install the update");
+      expect(recoveryMessage).toContain("installed package");
       gateway.event({ state: "final", sessionKey: "agent:main:yorozu:lost-execution", runId: recoveryRun,
         seq: 1, message: { content: "update complete" } });
       await expect(result).resolves.toBe("update complete");
       expect(runner.pendingTurns()).toMatchObject([{ userEventId: "user-lost", completionId: "openclaw:user-lost:final" }]);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("continues after delegated work ends without its announcement", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const controller = new AbortController();
+    try {
+      const gateway = harness();
+      const sends: string[] = [];
+      let recoveryMessage = "";
+      let childStatus = "running";
+      gateway.request.mockImplementation(async (method, params) => {
+        if (method === "chat.send") {
+          const runId = (params as { idempotencyKey: string }).idempotencyKey;
+          sends.push(runId);
+          if (sends.length > 1) recoveryMessage = (params as { message: string }).message;
+          return { runId };
+        }
+        if (method === "chat.history") return {
+          inputReceipts: [{ runId: sends.at(-1), state: "consumed", consumedByEventId: "input" }], messages: [],
+        };
+        if (method === "tasks.get") return { task: { id: "child-1", status: childStatus, runId: "child-run" } };
+        return {};
+      });
+      const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, recoveryDelayMs: 1 });
+      const result = runner.run({ threadId: "delegated-loss", text: "delegate", userEventId: "delegated-user",
+        completionId: "openclaw:delegated-user:final", signal: controller.signal });
+      await vi.waitFor(() => expect(sends).toHaveLength(1));
+      const childCreatedAt = Date.now();
+      gateway.event({ action: "upserted", task: { id: "child-1", runId: "child-run", createdAt: childCreatedAt,
+        sessionKey: "agent:main:yorozu:delegated-loss", status: "running", deliveryStatus: "pending" } }, "task");
+      await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.history",
+        expect.objectContaining({ inputRunIds: [sends[0]] })));
+      vi.setSystemTime(Date.now() + 6_000);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(sends).toHaveLength(1);
+      childStatus = "failed";
+      const taskReads = gateway.request.mock.calls.filter(([method]) => method === "tasks.get").length;
+      await vi.waitFor(() => expect(gateway.request.mock.calls.filter(([method]) => method === "tasks.get").length)
+        .toBeGreaterThan(taskReads));
+      vi.setSystemTime(Date.now() + 6_000);
+      await vi.waitFor(() => expect(sends).toHaveLength(2));
+      expect(recoveryMessage).toContain("failed");
+      gateway.event({ action: "upserted", task: { id: "child-1", runId: "child-run", createdAt: childCreatedAt,
+        sessionKey: "agent:main:yorozu:delegated-loss", status: "completed", deliveryStatus: "pending" } }, "task");
+      gateway.event({ state: "final", sessionKey: "agent:main:yorozu:delegated-loss",
+        runId: "announce:requester-settle:child-run", seq: 1, message: { content: "late child" } });
+      let settled = false;
+      void result.then(() => { settled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(settled).toBe(false);
+      gateway.event({ state: "final", sessionKey: "agent:main:yorozu:delegated-loss", runId: sends[1],
+        seq: 1, message: { content: "completed after child failure" } });
+      await expect(result).resolves.toBe("completed after child failure");
+    } finally {
+      controller.abort();
       vi.useRealTimers();
     }
   });

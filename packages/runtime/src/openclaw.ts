@@ -32,6 +32,7 @@ interface PendingTurn {
   input: StoredTurnInput;
   recoveryAttempts: number;
   recoveryPrompt?: string;
+  recoveryStartedAt?: number;
   paused: boolean;
   resumeRecovery?: () => void;
   onRecoveryState?: () => void;
@@ -58,6 +59,7 @@ export interface StoredPendingTurn {
   state: "queued" | "active";
   recoveryAttempts?: number;
   recoveryPrompt?: string;
+  recoveryStartedAt?: number;
   paused?: boolean;
 }
 export interface StoredTurnInput {
@@ -291,6 +293,7 @@ export class OpenClawRunner {
       stored?.runId ?? randomUUID(), stored?.startedAt ?? Date.now());
     pending.recoveryAttempts = stored?.recoveryAttempts ?? 0;
     pending.recoveryPrompt = stored?.recoveryPrompt;
+    pending.recoveryStartedAt = stored?.recoveryStartedAt;
     pending.paused = stored?.paused === true;
     if (!this.#pending.has(pending)) return completed;
     this.storePending(pending);
@@ -312,6 +315,7 @@ export class OpenClawRunner {
     stored.sessionKey, stored.runId, stored.startedAt);
     pending.recoveryAttempts = stored.recoveryAttempts ?? 0;
     pending.recoveryPrompt = stored.recoveryPrompt;
+    pending.recoveryStartedAt = stored.recoveryStartedAt;
     pending.paused = stored.paused === true;
     pending.awaitsAnnouncement = stored.awaitsAnnouncement;
     for (const taskId of stored.taskIds) pending.tasks.set(taskId, "recovering");
@@ -410,9 +414,26 @@ export class OpenClawRunner {
           await delay(this.#recoveryDelayMs);
           continue;
         }
+        // A delegated child may still be running after the parent run disappears. Query its
+        // durable task state before deciding whether the missing announcement needs recovery.
+        let delegationSettled = !pending.awaitsAnnouncement;
+        if (pending.awaitsAnnouncement && pending.tasks.size) {
+          const statuses = await Promise.all([...pending.tasks.keys()].map(async (taskId) => {
+            if (!taskId || taskId.length > 256) return "lost";
+            try {
+              const { task } = await client.request<{ task: { status: string } }>("tasks.get", { taskId });
+              return task.status;
+            } catch (error) {
+              if (string(record(error).code) === "NOT_FOUND") return "lost";
+              throw error;
+            }
+          }));
+          delegationSettled = statuses.every((status) => ["completed", "failed", "cancelled", "timed_out", "lost"].includes(status));
+          [...pending.tasks.keys()].forEach((taskId, index) => pending.tasks.set(taskId, statuses[index]!));
+        }
         // A pending input still belongs to Gateway. A consumed input with no active run,
-        // final, or delegated announcement is the execution-loss case, after a quiet window.
-        if (receipt?.state === "consumed" && !pending.awaitsAnnouncement) {
+        // final, or live delegated task is the execution-loss case, after a quiet window.
+        if (receipt?.state === "consumed" && delegationSettled) {
           missingSince ??= Date.now();
           if (Date.now() - missingSince >= EXECUTION_LOST_MS) {
             if (pending.recoveryAttempts >= 3) {
@@ -421,7 +442,11 @@ export class OpenClawRunner {
               pending.onRecoveryState?.();
               continue;
             }
-            pending.recoveryPrompt = recoveryPrompt(pending.input.text, history.messages ?? []);
+            pending.recoveryPrompt = recoveryPrompt(pending.input.text, history.messages ?? [], pending.tasks);
+            pending.recoveryStartedAt = Date.now();
+            pending.tasks.clear();
+            pending.childRunIds.clear();
+            pending.awaitsAnnouncement = false;
             pending.runId = randomUUID();
             pending.recoveryAttempts += 1;
             this.storePending(pending); // New id and prompt are durable before chat.send.
@@ -584,7 +609,8 @@ export class OpenClawRunner {
         const record = task as Record<string, unknown>;
         const sessionKey = string(record.sessionKey ?? record.ownerKey).toLowerCase();
         const pending = [...this.#pending].find((item) => item.sessionKey === sessionKey);
-        if (!pending || typeof record.createdAt !== "number" || record.createdAt < pending.startedAt) return;
+        if (!pending || typeof record.createdAt !== "number" ||
+          record.createdAt < (pending.recoveryStartedAt ?? pending.startedAt)) return;
         const deliveryStatus = record.deliveryStatus;
         if (pending && (deliveryStatus === "pending" || deliveryStatus === "in_progress")) {
           pending.awaitsAnnouncement = true;
@@ -823,6 +849,7 @@ export class OpenClawRunner {
         (item.completionId === undefined || typeof item.completionId === "string") &&
         (item.recoveryAttempts === undefined || Number.isSafeInteger(item.recoveryAttempts) && item.recoveryAttempts >= 0) &&
         (item.recoveryPrompt === undefined || typeof item.recoveryPrompt === "string") &&
+        (item.recoveryStartedAt === undefined || typeof item.recoveryStartedAt === "number" && Number.isFinite(item.recoveryStartedAt)) &&
         (item.paused === undefined || typeof item.paused === "boolean") &&
         (item.awaitsAnnouncement === undefined || typeof item.awaitsAnnouncement === "boolean") &&
         (item.taskIds === undefined || Array.isArray(item.taskIds) && item.taskIds.every((id: unknown) => typeof id === "string")) &&
@@ -865,6 +892,7 @@ export class OpenClawRunner {
       childRunIds: [...pending.childRunIds], input: pending.input, state: "active",
       recoveryAttempts: pending.recoveryAttempts, paused: pending.paused,
       ...(pending.recoveryPrompt ? { recoveryPrompt: pending.recoveryPrompt } : {}),
+      ...(pending.recoveryStartedAt !== undefined ? { recoveryStartedAt: pending.recoveryStartedAt } : {}),
     };
     if (index >= 0) turns[index] = stored;
     else turns.push(stored);
@@ -998,13 +1026,19 @@ function messageText(value: unknown): string {
   }).join("\n");
 }
 
-function recoveryPrompt(original: string, messages: unknown[]): string {
+function recoveryPrompt(original: string, messages: unknown[], tasks: Map<string, string>): string {
+  const effects = messages.filter((value) => record(value).role === "toolResult").slice(-8)
+    .map((value) => {
+      const message = record(value);
+      return `${string(message.name) || "Tool"} (${string(message.toolCallId)}): ${activityText(message.content).slice(0, 900)}`;
+    }).join("\n").slice(-4_000);
   const context = messages.slice(-20).map((value) => {
     const message = record(value);
     return activityText({ role: message.role, name: message.name, toolCallId: message.toolCallId,
       content: message.content });
-  }).join("\n").slice(-12_000);
-  return `The previous execution was interrupted after Gateway accepted this request. Continue the same task. Verify prior tool outcomes and external effects before repeating actions; finish only work still needed.\n\nOriginal request:\n${original}\n\nAvailable prior conversation and tool results:\n${context || "No prior execution details were available."}`;
+  }).join("\n").slice(-(12_000 - effects.length));
+  const delegated = [...tasks].map(([id, status]) => `${id}: ${status}`).join("\n");
+  return `The previous execution was interrupted after Gateway accepted this request. Continue the same task. Verify prior tool outcomes and external effects before repeating actions; finish only work still needed.\n\nOriginal request:\n${original}\n\nCompleted tool results:\n${effects || "None recorded."}\n\nDelegated task outcomes:\n${delegated || "None recorded."}\n\nRecent conversation and interruption point:\n${context || "No prior execution details were available."}`;
 }
 
 function gatewayAttachments(attachments: MessageAttachment[] | undefined): object[] | undefined {
