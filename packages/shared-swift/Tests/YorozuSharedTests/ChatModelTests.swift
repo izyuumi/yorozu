@@ -8,11 +8,14 @@ import Testing
 /// and reads back what the model emitted. Updates yielded before ``connect`` are held, so a test
 /// does not have to race the model's own connecting task.
 private actor FakeTransport: ChatTransport {
+    private let autoReceipt: Bool
     private var updates: AsyncStream<TransportUpdate>.Continuation?
     private var held: [TransportUpdate] = []
     private(set) var sent: [YorozuEvent] = []
     private var holdNextTerminalInput = false
     private var terminalInputRelease: CheckedContinuation<Void, Never>?
+
+    init(autoReceipt: Bool = false) { self.autoReceipt = autoReceipt }
 
     func connect() -> AsyncStream<TransportUpdate> {
         let (stream, continuation) = AsyncStream<TransportUpdate>.makeStream()
@@ -24,6 +27,10 @@ private actor FakeTransport: ChatTransport {
 
     func send(_ event: YorozuEvent) async throws {
         sent.append(event)
+        if autoReceipt {
+            yield(.event(YorozuEvent(id: "receipt-\(event.id)", threadId: "", ts: 1, agentId: "main",
+                                     payload: .receipt(ReceiptData(eventId: event.id)))))
+        }
         if case .terminal(let data) = event.payload, data.action == .input, holdNextTerminalInput {
             holdNextTerminalInput = false
             await withCheckedContinuation { terminalInputRelease = $0 }
@@ -123,7 +130,7 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
     model.attachments[draft.id] = [MessageAttachment(name: "p.png", mime: "image/png", data: "aGk=")]
     model.openThread = draft.id
     try model.saveForRestart()
-    let restoredTransport = FakeTransport()
+    let restoredTransport = FakeTransport(autoReceipt: true)
     let restored = ChatModel(transport: restoredTransport, cache: cache)
     #expect(restored.drafts[draft.id] == "unfinished draft")
     #expect(restored.attachments[draft.id] == model.attachments[draft.id])
@@ -750,7 +757,7 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
 
 @MainActor
 @Test func whatTheUserTypesReachesTheTransportTaggedWithThisDevice() async throws {
-    let transport = FakeTransport()
+    let transport = FakeTransport(autoReceipt: true)
     let model = await connected(transport, device: "mac")
 
     let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
@@ -783,7 +790,7 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
 
 @MainActor
 @Test func aDraftThreadIsNowhereButHereUntilItsFirstMessage() async throws {
-    let transport = FakeTransport()
+    let transport = FakeTransport(autoReceipt: true)
     let model = await connected(transport)
 
     // It is in the list, at the top, and the runtime has heard nothing about it.
@@ -811,7 +818,7 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
 
 @MainActor
 @Test func draftsWithInputSurviveNavigationNewSessionsAndSync() async throws {
-    let transport = FakeTransport()
+    let transport = FakeTransport(autoReceipt: true)
     let model = await connected(transport)
     let first = model.newDraft(agent: .codex, cwd: "/tmp/project")
     model.drafts[first.id] = "  finish this later  "
@@ -1329,7 +1336,7 @@ func finalStreamedReplyFollowsToolHistory(finalTimestamp: Int) async throws {
 /// the very first turn already runs on what was picked.
 @MainActor
 @Test func aModelPickedInADraftGoesOutWithTheMessageThatCreatesTheThread() async throws {
-    let transport = FakeTransport()
+    let transport = FakeTransport(autoReceipt: true)
     let model = await connected(transport)
     let draft = model.newDraft()
 
@@ -1349,7 +1356,7 @@ func finalStreamedReplyFollowsToolHistory(finalTimestamp: Int) async throws {
 
 @MainActor
 @Test func effortIsOptimisticAndAChoiceOnADraftPrecedesItsFirstMessage() async throws {
-    let transport = FakeTransport()
+    let transport = FakeTransport(autoReceipt: true)
     let model = await connected(transport)
     let thread = ThreadSummary(id: "t1", title: "Kyoto", archived: false, lastActivity: 1)
     await transport.yield(.event(event("l1", .threadList(ThreadListData(threads: [thread])))))
@@ -1394,7 +1401,7 @@ func finalStreamedReplyFollowsToolHistory(finalTimestamp: Int) async throws {
 
 @MainActor
 @Test func nativeBypassChangesGlobalYoloWithoutSavingADraftOverride() async throws {
-    let transport = FakeTransport()
+    let transport = FakeTransport(autoReceipt: true)
     let model = await connected(transport)
     let before = await sent(by: transport, atLeast: pairingSends).count
     let draft = model.newDraft(agent: .claudeCode, cwd: "/tmp/project")

@@ -50,8 +50,8 @@ private actor QueueTransport: ChatTransport {
 }
 
 @MainActor
-private func settle(_ condition: @MainActor () -> Bool) async -> Bool {
-    for _ in 0..<300 {
+private func settle(attempts: Int = 300, _ condition: @MainActor () -> Bool) async -> Bool {
+    for _ in 0..<attempts {
         if condition() { return true }
         try? await Task.sleep(for: .milliseconds(10))
     }
@@ -185,6 +185,29 @@ private func reconnect(_ transport: QueueTransport) async {
 }
 
 @MainActor
+@Test func threadCreationReceiptPrecedesItsFirstMessage() async throws {
+    let transport = QueueTransport()
+    await transport.swallow(true)
+    let model = ChatModel(transport: transport, device: "phone")
+    model.start()
+    let draft = model.newDraft()
+    model.send("first", in: draft.id)
+    let ids = model.outbox.map(\.id)
+    await reconnect(transport)
+    #expect(await settle { model.outbox.first?.deliveryAttempts == 1 })
+    #expect(await transport.sent.filter { $0.threadId == draft.id }.map(\.id) == [ids[0]])
+
+    await transport.yield(.event(YorozuEvent(id: "receipt-create", threadId: "", ts: 1, agentId: "main",
+                                            payload: .receipt(ReceiptData(eventId: ids[0])))))
+    var sent: [String] = []
+    for _ in 0..<300 where sent.count < 2 {
+        sent = await transport.sent.filter { $0.threadId == draft.id }.map(\.id)
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(sent == ids)
+}
+
+@MainActor
 @Test func anArchiveRequestSurvivesDisconnectionAndFlushesOnReconnect() async throws {
     let transport = QueueTransport()
     let model = ChatModel(transport: transport, device: "phone")
@@ -222,7 +245,7 @@ private func reconnect(_ transport: QueueTransport) async {
 }
 
 @MainActor
-@Test func lostReceiptAndThreeTransportErrorsRemainUnconfirmed() async throws {
+@Test func lostReceiptAndThreeTransportErrorsKeepRetrying() async throws {
     let transport = QueueTransport()
     await transport.swallow(true)
     let model = ChatModel(transport: transport, device: "phone")
@@ -242,24 +265,61 @@ private func reconnect(_ transport: QueueTransport) async {
     await transport.refuse(true)
 
     // The first send may have reached the host. Later transport errors cannot prove otherwise.
-    for attempt in 1...3 {
-        await reconnect(transport)
-        #expect(await settle { model.outbox.first?.tries == attempt })
-    }
+    #expect(await settle(attempts: 1_200) { (model.outbox.first?.tries ?? 0) >= 3 })
     #expect(model.outboxStatus(of: id) == .unconfirmed)
-    #expect(model.outbox.first?.tries == Outbox.maxTries)
-
-    // A reconnection now leaves it alone — it is waiting on the person, not on the network.
-    await reconnect(transport)
+    #expect((model.outbox.first?.tries ?? 0) >= Outbox.maxTries)
     #expect(await transport.messages.map(\.id) == [id])
 
-    // Tapping the caption is a fresh three tries, and this time the send lands.
+    // Retry continues automatically past the presentation threshold, using the same ID.
     await transport.refuse(false)
     await transport.swallow(false)
-    model.retry(id)
-    #expect(await settle { model.outbox.isEmpty })
+    #expect(await settle(attempts: 1_800) { model.outbox.isEmpty })
     // Reconnect may resend before its receipt arrives; runtime dedupes the stable event ID.
     #expect(await Set(transport.messages.map(\.id)) == [id])
+}
+
+@MainActor
+@Test func missingReceiptRetriesSameMessageWhileSocketStaysHealthy() async throws {
+    let transport = QueueTransport()
+    await transport.swallow(true)
+    let model = ChatModel(transport: transport, device: "phone")
+    model.start()
+    await reconnect(transport)
+    #expect(await settle { model.canDeliver })
+
+    model.send("keep trying", in: "home")
+    let id = try #require(model.outbox.first?.id)
+    var count = 0
+    for _ in 0..<400 where count < 2 {
+        count = await transport.messages.count
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(count >= 2)
+    #expect(await Set(transport.messages.map(\.id)) == [id])
+    #expect(model.outboxStatus(of: id) == .confirming)
+    #expect(model.outbox.first?.deliveryAttempts == 2)
+    #expect(model.outbox.first?.nextAttemptAt != nil)
+}
+
+@MainActor
+@Test func expiredMessageDoesNotBlockFreshWorkInSameThread() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let old = YorozuEvent(id: "old", threadId: "home",
+                          ts: Int(Date().addingTimeInterval(-Outbox.life - 60).timeIntervalSince1970 * 1_000),
+                          agentId: "phone", payload: .message(MessageData(role: .user, text: "old")))
+    let fresh = YorozuEvent(id: "fresh", threadId: "home",
+                            ts: Int(Date().timeIntervalSince1970 * 1_000),
+                            agentId: "phone", payload: .message(MessageData(role: .user, text: "fresh")))
+    try cache.savePending([OutboxItem(event: old), OutboxItem(event: fresh)])
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    await reconnect(transport)
+    #expect(await settle { model.outbox.map(\.id) == ["old"] })
+    #expect(await transport.messages.map(\.id) == ["fresh"])
+    #expect(model.outbox.first?.status == .failed)
 }
 
 @MainActor
