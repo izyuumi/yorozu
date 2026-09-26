@@ -151,6 +151,15 @@ public final class MultiHostModel {
         return sessions.first?.id
     }
 
+    /// Reopen only a cached thread that still belongs to the previously used host.
+    public var restoredOpenThread: HostThreadID? {
+        guard let hostID = preferredHostID,
+              let model = session(for: hostID)?.model,
+              let threadID = model.openThread,
+              model.threads.contains(where: { $0.id == threadID }) else { return nil }
+        return HostThreadID(hostID: hostID, threadID: threadID)
+    }
+
     @discardableResult
     public func newDraft(on hostID: HostID? = nil, agent: ThreadAgent = .yorozu, cwd: String? = nil) -> HostThreadID? {
         guard let hostID = hostID ?? preferredHostID, let session = session(for: hostID) else { return nil }

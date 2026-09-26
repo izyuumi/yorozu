@@ -265,8 +265,13 @@ public final class ChatModel {
         }
     }
 
-    /// Await before finishing a background fetch. A completed sync includes its offline copy.
-    public func flushCache() async { await cacheWrite?.value }
+    /// Await before suspension. Include the composer even if its debounced write has not fired.
+    public func flushCache() async {
+        await cacheWrite?.value
+        composerWrite?.cancel()
+        do { try saveComposer() }
+        catch { failure = "Could not save draft: \(error.localizedDescription)" }
+    }
     /// What this client tags the events it emits with.
     private let device: String
     private var started = false

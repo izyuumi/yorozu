@@ -201,6 +201,10 @@ final class Session {
                 connect(stored)
                 #endif
             }
+            if let restored = hosts.restoredOpenThread {
+                hostPath = [restored]
+                if hosts.sessions.count == 1 { openPath = [restored.threadID] }
+            }
             #if DEBUG
             if let removed = launchArgument("yorozuRemoveHost") {
                 Task {
