@@ -358,6 +358,11 @@ describe("OpenClawRunner", () => {
     const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
     await expect(runner.stopRun("agent:main:yorozu:done", "finished-run"))
       .resolves.toEqual({ status: "completed", text: "finished answer" });
+    gateway.request.mockImplementation(async (method) => method === "chat.history" ? {
+      messages: [{ role: "assistant", runId: "failed-run", stopReason: "error", content: "boom" }],
+    } : {});
+    await expect(runner.stopRun("agent:main:yorozu:failed", "failed-run"))
+      .resolves.toEqual({ status: "completed", text: "OpenClaw turn failed: boom", failed: true });
   });
 
   test("abort during connect or session patch never dispatches chat.send", async () => {
@@ -956,10 +961,12 @@ describe("OpenClawRunner", () => {
   test("live and recovered terminal errors produce the same durable reply", async () => {
     const liveGateway = harness();
     const liveRunner = new OpenClawRunner({ stateDir: liveGateway.dir, clientFactory: liveGateway.clientFactory });
-    const live = liveRunner.run({ threadId: "live-error", text: "fail" });
+    const liveFailure = vi.fn();
+    const live = liveRunner.run({ threadId: "live-error", text: "fail", onFailure: liveFailure });
     await vi.waitFor(() => expect(liveGateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
     liveGateway.event({ state: "error", sessionKey: "agent:main:yorozu:live-error", runId: "run-1", seq: 1, errorMessage: "boom" });
     await expect(live).resolves.toBe("OpenClaw turn failed: boom");
+    expect(liveFailure).toHaveBeenCalledOnce();
 
     const gateway = harness();
     void new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).run({ threadId: "recovered-error", text: "fail" });
@@ -968,7 +975,9 @@ describe("OpenClawRunner", () => {
       { role: "assistant", content: "boom", stopReason: "error", __openclaw: { runId: "run-1" } },
     ] } : {});
     const replacement = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, recoveryDelayMs: 1 });
-    await expect(replacement.resume({ threadId: "recovered-error" })).resolves.toBe("OpenClaw turn failed: boom");
+    const recoveredFailure = vi.fn();
+    await expect(replacement.resume({ threadId: "recovered-error", onFailure: recoveredFailure })).resolves.toBe("OpenClaw turn failed: boom");
+    expect(recoveredFailure).toHaveBeenCalledOnce();
   });
 
   test("lists available Gateway models in Yorozu's picker shape", async () => {

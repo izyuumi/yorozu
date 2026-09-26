@@ -491,9 +491,47 @@ test("a thread waits for approval until its card is answered", () => {
   expect(threadSummaries(dir)[0]!.awaitingApproval).toBe(true);
   appendThreadEvent({ ...base, id: "ans", kind: "approval_answer", data: { actionId: "a", answer: "yes" } }, dir);
   expect(threadSummaries(dir)[0]!.awaitingApproval).toBeUndefined();
+
+  // A question is the other card a row must own up to, tracked by its own id space.
+  expect(threadSummaries(dir)[0]!.awaitingQuestion).toBeUndefined();
+  appendThreadEvent({ ...base, id: "q", kind: "question_card", data: { questionId: "q1", question: "Which env?", options: ["staging"] } }, dir);
+  expect(threadSummaries(dir)[0]!.awaitingQuestion).toBe(true);
+  expect(threadSummaries(dir)[0]!.awaitingApproval).toBeUndefined();
+  appendThreadEvent({ ...base, id: "qa", kind: "question_answer", data: { questionId: "q1", answer: "staging" } }, dir);
+  expect(threadSummaries(dir)[0]!.awaitingQuestion).toBeUndefined();
 });
 
-import { recoverNativeTurns, setNativeTurn } from "./threads.js";
+test("a failed final needs attention until the user starts another turn", () => {
+  const thread = createThread("Deploy", dir);
+  const base = { threadId: thread.id, ts: 1, agentId: "main" };
+  appendThreadEvent({ ...base, id: "failed", kind: "message", data: { role: "agent", text: "Build failed", done: true, failed: true } }, dir);
+  expect(threadSummaries(dir)[0]!.needsAttention).toBe(true);
+  appendThreadEvent({ ...base, id: "retry", ts: 2, kind: "message", data: { role: "user", text: "Try again" } }, dir);
+  expect(threadSummaries(dir)[0]!.needsAttention).toBeUndefined();
+});
+
+import { recoverNativeTurns, retireOrphanedCards, setNativeTurn } from "./threads.js";
+
+test("restart retires unanswered Yorozu cards once", () => {
+  const thread = createThread("Work", dir);
+  const base = { threadId: thread.id, ts: 1, agentId: "main" };
+  appendThreadEvent({ ...base, id: "approval", kind: "approval_card", data: {
+    actionId: "a", actionClass: "shell", target: "pwd",
+  } }, dir);
+  appendThreadEvent({ ...base, id: "question", kind: "question_card", data: {
+    questionId: "q", question: "Which?", options: ["A"],
+  } }, dir);
+  expect(threadSummaries(dir)[0]).toMatchObject({ awaitingApproval: true, awaitingQuestion: true });
+  retireOrphanedCards(dir);
+  expect(threadSummaries(dir)[0]).not.toHaveProperty("awaitingApproval");
+  expect(threadSummaries(dir)[0]).not.toHaveProperty("awaitingQuestion");
+  expect(readThreadEvents(thread.id, dir).slice(-2)).toMatchObject([
+    { kind: "approval_status", data: { actionId: "a", status: "no-longer-needed" } },
+    { kind: "question_answer", data: { questionId: "q", answer: "Interrupted" } },
+  ]);
+  retireOrphanedCards(dir);
+  expect(readThreadEvents(thread.id, dir)).toHaveLength(4);
+});
 
 test("restart reconciles a committed final reply and retires dead native prompts", () => {
   createThread("Work", dir, "cc", { agent: "claude-code", cwd: "/tmp/proj" });

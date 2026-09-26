@@ -49,8 +49,9 @@ export interface QuestionDesk {
 export function questionDesk(
   raise: (card: QuestionCardData, context?: TurnContext) => void,
   timeoutMs = QUESTION_TIMEOUT_MS,
+  retire?: (questionId: string, threadId: string | undefined, reason: "expired" | "cancelled") => void,
 ): QuestionDesk {
-  const waiting = new Map<string, (answer: string) => void>();
+  const waiting = new Map<string, (answer: string, reason?: "expired" | "cancelled") => void>();
   const threads = new Map<string, string | undefined>();
   return {
     ask: (question, options, allowOther, context) => {
@@ -58,15 +59,14 @@ export function questionDesk(
       threads.set(questionId, context?.threadId);
       return new Promise<string>((resolve) => {
         const timer = setTimeout(() => {
-          waiting.delete(questionId);
-          threads.delete(questionId);
-          resolve(NO_ANSWER);
+          waiting.get(questionId)?.(NO_ANSWER, "expired");
         }, timeoutMs);
         timer.unref?.();
-        waiting.set(questionId, (answer) => {
+        waiting.set(questionId, (answer, reason) => {
           clearTimeout(timer);
           waiting.delete(questionId);
           threads.delete(questionId);
+          if (reason) retire?.(questionId, context?.threadId, reason);
           resolve(answer);
         });
         raise(
@@ -78,7 +78,7 @@ export function questionDesk(
     answer: (questionId, answer) => waiting.get(questionId)?.(answer),
     has: (questionId, threadId) => waiting.has(questionId) && threads.get(questionId) === threadId,
     cancelAll: (threadId) => {
-      for (const [id, settle] of [...waiting]) if (!threadId || threads.get(id) === threadId) settle(NO_ANSWER);
+      for (const [id, settle] of [...waiting]) if (!threadId || threads.get(id) === threadId) settle(NO_ANSWER, "cancelled");
     },
   };
 }

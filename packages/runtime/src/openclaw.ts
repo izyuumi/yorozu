@@ -36,12 +36,13 @@ interface PendingTurn {
   paused: boolean;
   resumeRecovery?: () => void;
   onRecoveryState?: () => void;
+  onFailure?: () => void;
   signal?: AbortSignal;
   onEvent?: (event: YorozuEvent) => void;
   awaitsAnnouncement: boolean;
   text: string;
   onUpdate?: (text: string) => void;
-  resolve: (text: string | undefined) => void;
+  resolve: (text: string | undefined, failed?: boolean) => void;
   reject: (error: Error) => void;
 }
 
@@ -89,6 +90,7 @@ export interface OpenClawTurn {
   userEventId?: string;
   seenEventIds?: Iterable<string>;
   onRecoveryState?: () => void;
+  onFailure?: () => void;
 }
 
 export interface OpenClawRunnerOptions {
@@ -206,7 +208,7 @@ export class OpenClawRunner {
   }
 
   /** Confirm the Gateway no longer has this exact run in flight before reporting Stopped. */
-  async stopRun(sessionKey: string, runId: string): Promise<{ status: "stopped" | "completed"; text?: string } | undefined> {
+  async stopRun(sessionKey: string, runId: string): Promise<{ status: "stopped" | "completed"; text?: string; failed?: boolean } | undefined> {
     const client = await this.connect();
     await client.request("chat.abort", { sessionKey, runId });
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -220,7 +222,7 @@ export class OpenClawRunner {
         });
         if (completed) {
           const final = correlatedFinal(history.messages ?? [], { runId, awaitsAnnouncement: false, childRunIds: new Set() });
-          return final.found ? { status: "completed", text: final.text } : undefined;
+          return final.found ? { status: "completed", text: final.text, ...(final.failed ? { failed: true } : {}) } : undefined;
         }
         return { status: "stopped" };
       }
@@ -351,7 +353,7 @@ export class OpenClawRunner {
         if (!this.#pending.has(pending)) return undefined;
       } catch (error) {
         if (definitiveRejection(error)) {
-          pending.resolve(failureText(error));
+          pending.resolve(failureText(error), true);
           return undefined;
         }
         await delay(this.#recoveryDelayMs);
@@ -369,7 +371,7 @@ export class OpenClawRunner {
         this.storePending(pending);
         void this.recover(pending, client);
       } catch (error) {
-        if (definitiveRejection(error)) pending.resolve(failureText(error));
+        if (definitiveRejection(error)) pending.resolve(failureText(error), true);
         else void this.recover(pending, client, () => this.sendStored(client, pending));
       }
       return client;
@@ -400,7 +402,7 @@ export class OpenClawRunner {
         }
         this.restoreHistory(pending, history.messages ?? []);
         const final = correlatedFinal(history.messages ?? [], pending);
-        if (final.found) { await this.finish(client, pending, final.text, history.messages); return; }
+        if (final.found) { await this.finish(client, pending, final.text, history.messages, final.failed); return; }
         const receipt = history.inputReceipts?.find((item) => item.runId === pending.runId);
         if (resend && !receipt) {
           missingSince = undefined;
@@ -481,7 +483,7 @@ export class OpenClawRunner {
       } catch (error) {
         missingSince = undefined;
         if (definitiveRejection(error)) {
-          pending.resolve(failureText(error));
+          pending.resolve(failureText(error), true);
           return;
         }
         // Keep durable ownership. Same idempotency key makes resend safe.
@@ -516,7 +518,7 @@ export class OpenClawRunner {
     const completed = new Promise<string | undefined>((resolve, reject) => {
       pending = { threadId: turn.threadId, sessionKey, runId, startedAt, completionId: turn.completionId, userEventId: turn.userEventId, seen: new Set(turn.seenEventIds), calls: new Set(), tasks: new Map(), childRunIds: new Set(),
         input: { text: turn.text, ...(turn.model ? { model: turn.model } : {}), ...(turn.effort ? { effort: turn.effort } : {}), attachments: turn.attachments ?? [] },
-        recoveryAttempts: 0, paused: false, onRecoveryState: turn.onRecoveryState,
+        recoveryAttempts: 0, paused: false, onRecoveryState: turn.onRecoveryState, onFailure: turn.onFailure,
         signal: turn.signal, onEvent: turn.onEvent, awaitsAnnouncement: false, text: "", onUpdate: turn.onUpdate, resolve, reject };
       this.#pending.add(pending);
       const abort = () => {
@@ -532,7 +534,10 @@ export class OpenClawRunner {
         this.#pending.delete(pending);
         fn();
       };
-      pending.resolve = (text) => finish(() => resolve(text));
+      pending.resolve = (text, failed) => finish(() => {
+        if (failed) pending.onFailure?.();
+        resolve(text);
+      });
       pending.reject = (error) => finish(() => reject(error));
       if (turn.signal?.aborted) abort();
     });
@@ -677,7 +682,7 @@ export class OpenClawRunner {
       // A user Stop aborts the local signal and removes this pending turn instead.
     } else if (payload.state === "error") {
       const detail = typeof payload.errorMessage === "string" ? payload.errorMessage : "unknown error";
-      pending.resolve("OpenClaw turn failed: " + detail);
+      pending.resolve("OpenClaw turn failed: " + detail, true);
     }
   }
 
@@ -687,7 +692,7 @@ export class OpenClawRunner {
    * inline agent message before the text final, so a relay client shows it like a user photo.
    * Fetch failures drop the image rather than the turn.
    */
-  private async finish(client: Gateway | undefined, pending: PendingTurn, text: string, messages?: unknown[]): Promise<void> {
+  private async finish(client: Gateway | undefined, pending: PendingTurn, text: string, messages?: unknown[], failed = false): Promise<void> {
     if (client && pending.onEvent) try {
       messages ??= (await client.request<History>("chat.history", {
         sessionKey: pending.sessionKey, limit: 1000, inputRunIds: [pending.runId],
@@ -706,7 +711,7 @@ export class OpenClawRunner {
     } catch {
       // Text still answers the turn.
     }
-    pending.resolve(text);
+    pending.resolve(text, failed);
   }
 
   private async fetchImage(client: Gateway, sessionKey: string, artifactId: string, mime: string, name: string): Promise<MessageAttachment | undefined> {
@@ -983,7 +988,7 @@ function rawPublicKey(pem: string): Buffer {
   return createPublicKey(pem).export({ type: "spki", format: "der" }).subarray(-32);
 }
 interface History { messages?: unknown[]; inFlightRun?: Record<string, unknown>; inputReceipts?: Array<{ runId?: string; state?: string }> }
-function correlatedFinal(messages: unknown[], pending: Pick<PendingTurn, "runId" | "awaitsAnnouncement" | "childRunIds">): { found: boolean; text: string } {
+function correlatedFinal(messages: unknown[], pending: Pick<PendingTurn, "runId" | "awaitsAnnouncement" | "childRunIds">): { found: boolean; text: string; failed?: boolean } {
   for (const value of [...messages].reverse()) {
     const message = record(value);
     if (message.role !== "assistant") continue;
@@ -995,8 +1000,8 @@ function correlatedFinal(messages: unknown[], pending: Pick<PendingTurn, "runId"
       : runId === pending.runId;
     if (exact && terminal) {
       const text = messageText(message).replace(/^NO_REPLY$/i, "");
-      return { found: true, text: string(message.stopReason) === "error"
-        ? "OpenClaw turn failed: " + (text || "unknown error") : text };
+      const failed = string(message.stopReason) === "error";
+      return { found: true, text: failed ? "OpenClaw turn failed: " + (text || "unknown error") : text, failed };
     }
   }
   return { found: false, text: "" };

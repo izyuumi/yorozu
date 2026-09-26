@@ -188,6 +188,16 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     #expect((plainJson?["data"] as? [String: Any])?["done"] == nil)
 }
 
+@Test func aFailedFinalMessageKeepsItsWireFlag() throws {
+    let event = YorozuEvent(
+        id: "failed", threadId: "t1", ts: 1, agentId: "main",
+        payload: .message(MessageData(role: .agent, text: "Build failed", done: true, failed: true))
+    )
+    #expect(try roundTrip(event) == event)
+    let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(event)) as? [String: Any]
+    #expect((json?["data"] as? [String: Any])?["failed"] as? Bool == true)
+}
+
 @Test func pairingStringsAreParsedWhereverTheyCameFrom() throws {
     // What TypeScript's `encodePairingString` writes, percent-encoding and all.
     let code = "yorozu://pair?v=1&relay=ws%3A%2F%2F127.0.0.1%3A8791&key=AAA&token=t-_&room=r"

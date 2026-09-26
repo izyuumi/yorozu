@@ -207,11 +207,39 @@ extension View {
     }
 }
 
-/// One thread as a row: what it is called, the last thing said in it, how long ago that was, and
-/// a dot for as long as a reply has arrived in it that has not been read.
-///
-/// Nothing here is sized in points that Dynamic Type cannot move — the dot scales with the body
-/// font. Mac titles can wrap onto a second line; previews remain a compact single line.
+/// The one compact mark a thread row wears, ranked: what the user must do outranks what the
+/// host is doing, which outranks what the user has not yet seen. Lower states are not lost —
+/// an unread title stays semibold under any of them. Drawn from the summary alone, never the
+/// connection: a phone going offline changes no row's status.
+enum ThreadStatus: Equatable, Sendable {
+    /// An approval or question card nobody has answered.
+    case needsAnswer
+    /// A turn the host could not resume on its own — see ``ThreadSummary/interruptedTurnId``.
+    case needsAttention
+    case working
+    case unread
+
+    init?(_ thread: ThreadSummary, working: Bool) {
+        if thread.awaitingApproval == true || thread.awaitingQuestion == true { self = .needsAnswer }
+        else if thread.needsAttention == true || thread.interruptedTurnId != nil { self = .needsAttention }
+        else if working || thread.activeEventId != nil { self = .working }
+        else if thread.isUnread { self = .unread }
+        else { return nil }
+    }
+
+    /// What VoiceOver reads for the mark, and the tail of the row's summary.
+    var label: String {
+        switch self {
+        case .needsAnswer: String(localized: "Needs your answer")
+        case .needsAttention: String(localized: "Needs attention")
+        case .working: String(localized: "Working")
+        case .unread: String(localized: "Unread")
+        }
+    }
+}
+
+/// One thread as a row: title, preview, relative time, and one compact task status.
+/// The status slot scales with Dynamic Type. Mac titles can wrap; previews stay on one line.
 struct ThreadRow: View {
     let thread: ThreadSummary
     var working = false
@@ -223,6 +251,8 @@ struct ThreadRow: View {
 
     @ScaledMetric(relativeTo: .body) private var dot = 9
     @ScaledMetric(relativeTo: .body) private var mark = 16
+
+    private var status: ThreadStatus? { ThreadStatus(thread, working: working) }
 
     var body: some View {
         // Drawn from the thread's own two timestamps, which the runtime owns: reading on the
@@ -261,14 +291,10 @@ struct ThreadRow: View {
                     // The title gives way first: the time is short and always worth its width.
                     .layoutPriority(1)
                 }
-                if working {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Working…")
-                    }
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .accessibilityElement(children: .combine)
+                if status == .working {
+                    Text("Working…")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 } else if let preview = preview ?? thread.lastMessage, !preview.isEmpty {
                     highlightedText(preview)
                         .font(.subheadline)
@@ -288,18 +314,31 @@ struct ThreadRow: View {
                         .lineLimit(1)
                 }
             }
-            // A card waiting on the user outranks an unread reply: it is the one asking.
-            if thread.awaitingApproval == true {
-                Image(systemName: "hand.raised")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.tint)
-                    .accessibilityLabel("Waiting for your approval")
-            } else if thread.isUnread {
-                Circle()
-                    .fill(.tint)
-                    .frame(width: dot, height: dot)
-                    .accessibilityLabel("Unread")
+            // One slot, one mark, always the same width — empty included — so a state arriving
+            // or clearing never reflows the row. Shape and lightness differ too, never colour alone.
+            Group {
+                switch status {
+                case .needsAnswer:
+                    Image(systemName: "questionmark.circle.fill")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.tint)
+                case .needsAttention:
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(YorozuPalette.warning)
+                case .working:
+                    ProgressView().controlSize(.small)
+                case .unread:
+                    Circle()
+                        .fill(.tint)
+                        .frame(width: dot, height: dot)
+                case nil:
+                    Color.clear
+                }
             }
+            .frame(width: mark, height: mark)
+            .accessibilityLabel(status?.label ?? "")
+            .accessibilityHidden(status == nil)
             if chevron {
                 Image(systemName: "chevron.right")
                     .font(.footnote.weight(.semibold))
@@ -331,10 +370,8 @@ struct ThreadRow: View {
             parts.append([agent.label, thread.repoName].compactMap { $0 }.joined(separator: ", "))
         }
         parts.append(thread.displayTitle)
-        if working { parts.append(String(localized: "Working")) }
-        else if let preview = preview ?? thread.lastMessage, !preview.isEmpty { parts.append(preview) }
-        if thread.awaitingApproval == true { parts.append(String(localized: "Waiting for your approval")) }
-        else if thread.isUnread { parts.append(String(localized: "Unread")) }
+        if status != .working, let preview = preview ?? thread.lastMessage, !preview.isEmpty { parts.append(preview) }
+        if let status { parts.append(status.label) }
         return parts.joined(separator: ". ")
     }
 

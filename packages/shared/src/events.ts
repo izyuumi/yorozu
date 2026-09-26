@@ -55,6 +55,8 @@ export interface MessageData {
    * A flag rather than a kind of its own: the final message is already the thing that ends a turn.
    */
   done?: boolean;
+  /** Host-confirmed terminal execution failure, distinct from the reply's text. */
+  failed?: boolean;
   /** Final reply stopped by the user; text, if any, is the partial reply. */
   interrupted?: boolean;
   /** Photos and files sent together. */
@@ -428,6 +430,10 @@ export interface ThreadSummary {
   lastAgentAt?: number;
   /** An approval card in this thread nobody has answered yet. Absent means none. */
   awaitingApproval?: boolean;
+  /** A question card in this thread nobody has answered yet. Absent means none. */
+  awaitingQuestion?: boolean;
+  /** A failed final answer still awaiting a new user action. */
+  needsAttention?: boolean;
 }
 
 export interface ThreadListData {

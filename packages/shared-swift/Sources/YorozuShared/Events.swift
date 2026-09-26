@@ -351,6 +351,8 @@ public struct MessageData: Codable, Equatable, Sendable {
     /// that delegation stops spinning, and the main agent's, so the composer stops offering
     /// Stop. A flag rather than a kind of its own: the final message already ends the turn.
     public var done: Bool?
+    /// Host-confirmed terminal execution failure.
+    public var failed: Bool?
     /// Final reply stopped by the user; text, if any, is the partial reply.
     public var interrupted: Bool?
     /// Photos and files the user sent with this message. Only set on a `user` message.
@@ -366,6 +368,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         role: Role,
         text: String,
         done: Bool? = nil,
+        failed: Bool? = nil,
         interrupted: Bool? = nil,
         attachments: [MessageAttachment] = [],
         admissionDeadline: Int? = nil,
@@ -375,6 +378,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.role = role
         self.text = text
         self.done = done
+        self.failed = failed
         self.interrupted = interrupted
         self.attachments = attachments
         self.admissionDeadline = admissionDeadline
@@ -382,13 +386,14 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, done, interrupted, attachments, admissionDeadline, runId, completionId }
+    private enum CodingKeys: String, CodingKey { case role, text, done, failed, interrupted, attachments, admissionDeadline, runId, completionId }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         role = try c.decode(Role.self, forKey: .role)
         text = try c.decode(String.self, forKey: .text)
         done = try c.decodeIfPresent(Bool.self, forKey: .done)
+        failed = try c.decodeIfPresent(Bool.self, forKey: .failed)
         interrupted = try c.decodeIfPresent(Bool.self, forKey: .interrupted)
         attachments = try c.decodeIfPresent([MessageAttachment].self, forKey: .attachments) ?? []
         admissionDeadline = try c.decodeIfPresent(Int.self, forKey: .admissionDeadline)
@@ -401,6 +406,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         try c.encode(role, forKey: .role)
         try c.encode(text, forKey: .text)
         try c.encodeIfPresent(done, forKey: .done)
+        try c.encodeIfPresent(failed, forKey: .failed)
         try c.encodeIfPresent(interrupted, forKey: .interrupted)
         if !attachments.isEmpty { try c.encode(attachments, forKey: .attachments) }
         try c.encodeIfPresent(admissionDeadline, forKey: .admissionDeadline)
@@ -919,6 +925,10 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     public var lastAgentAt: Double?
     /// An approval card in this thread nobody has answered yet. Nil means none.
     public var awaitingApproval: Bool?
+    /// A question card in this thread nobody has answered yet. Nil means none.
+    public var awaitingQuestion: Bool?
+    /// A failed final answer still awaiting a new user action.
+    public var needsAttention: Bool?
 
     public init(
         id: String,
@@ -934,6 +944,8 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         lastReadAt: Double? = nil,
         lastAgentAt: Double? = nil,
         awaitingApproval: Bool? = nil,
+        awaitingQuestion: Bool? = nil,
+        needsAttention: Bool? = nil,
         bypass: Bool? = nil,
         interruptedTurnId: String? = nil,
         recoveryState: String? = nil,
@@ -953,6 +965,8 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         self.lastReadAt = lastReadAt
         self.lastAgentAt = lastAgentAt
         self.awaitingApproval = awaitingApproval
+        self.awaitingQuestion = awaitingQuestion
+        self.needsAttention = needsAttention
         self.bypass = bypass
         self.interruptedTurnId = interruptedTurnId
         self.recoveryState = recoveryState
@@ -982,6 +996,8 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         lastReadAt = try c.decodeIfPresent(Double.self, forKey: .lastReadAt)
         lastAgentAt = try c.decodeIfPresent(Double.self, forKey: .lastAgentAt)
         awaitingApproval = try c.decodeIfPresent(Bool.self, forKey: .awaitingApproval)
+        awaitingQuestion = try c.decodeIfPresent(Bool.self, forKey: .awaitingQuestion)
+        needsAttention = try c.decodeIfPresent(Bool.self, forKey: .needsAttention)
     }
 
     /// What a list draws: an untitled thread is one the runtime has not named yet.
