@@ -81,8 +81,20 @@ public struct ThreadCache: Sendable {
         var threads: [ThreadSummary]
         var knownThreads: [ThreadSummary]?
         var openThread: String?
+        var readingPositions: [String: ReadingPosition]? = nil
         /// Prepared composer send. Outbox presence decides whether this draft was committed.
         var preparedSend: [String: String]? = nil
+    }
+
+    /// Stable transcript row and its distance from the viewport's top edge.
+    public struct ReadingPosition: Codable, Sendable, Equatable {
+        public let rowID: String
+        public let distanceFromTop: Double
+
+        public init(rowID: String, distanceFromTop: Double) {
+            self.rowID = rowID
+            self.distanceFromTop = distanceFromTop
+        }
     }
 
     public func composer() -> ComposerState? {

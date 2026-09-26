@@ -154,6 +154,8 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
     model.drafts[draft.id] = "unsent"
     model.attachments[draft.id] = [MessageAttachment(name: "photo.png", mime: "image/png", data: "aGk=")]
     model.openThread = draft.id
+    let position = ThreadCache.ReadingPosition(rowID: "older-reply", distanceFromTop: -18)
+    model.rememberReadingPosition(position, in: draft.id)
 
     await model.flushCache()
 
@@ -161,6 +163,7 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
     #expect(resumed.drafts[draft.id] == "unsent")
     #expect(resumed.attachments[draft.id] == model.attachments[draft.id])
     #expect(resumed.openThread == draft.id)
+    #expect(resumed.readingPosition(in: draft.id) == position)
 }
 
 @MainActor
