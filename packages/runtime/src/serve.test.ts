@@ -994,7 +994,7 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
   const runner: NativeAgentRunner = {
     run: vi.fn(async (turn: NativeTurn) => {
       turns.push(turn);
-      if (turn.text === "break") throw new Error("claude is not logged in");
+      if (turn.text.endsWith("break")) throw new Error("claude is not logged in");
       turn.onUpdate?.("working");
       if (turns.length < 3) {
         if (turns.length === 1) {
@@ -1005,6 +1005,8 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
         return { text: `reply ${turns.length}`, sessionId: "s-1" };
       }
       // The third turn hangs until stopped, the way a long job would.
+      turn.onActivity?.("long:call", { kind: "tool_call", data: { callId: "long", name: "Bash", args: { command: "pwd" } } });
+      turn.onActivity?.("long:result", { kind: "tool_result", data: { callId: "long", ok: true, output: "done" } });
       await new Promise<void>((resolve) => {
         release = resolve;
         turn.signal.addEventListener("abort", () => resolve(), { once: true });
@@ -1046,7 +1048,7 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
   await eventsUntil((event) => event.kind === "message" && event.data.done === true);
   expect(turns[1]).toMatchObject({ cwd: proj, sessionId: "s-1" });
 
-  // Stop aborts the running turn; nothing is said, and the session is still the one to resume.
+  // Stop ends the turn without erasing the partial reply, and keeps the session to resume.
   const longJobId = send({ kind: "message", data: { role: "user", text: "long job" } }, "cc");
   await vi.waitFor(() => expect(turns).toHaveLength(3));
   send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "cc" } });
@@ -1060,7 +1062,17 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
   send({ kind: "sync_request", data: { lastSeen: {} } });
   const idle = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)! as YorozuEvent & { kind: "sync_delta" };
   expect(idle.data.workingThreadIds).toEqual([]);
-  expect(readThreadEvents("cc", dir).filter((event) => event.kind === "message" && event.data.role === "agent")).toHaveLength(2);
+  const replies = readThreadEvents("cc", dir).filter((event) => event.kind === "message" && event.data.role === "agent");
+  expect(replies).toHaveLength(3);
+  expect(replies.at(-1)).toMatchObject({ kind: "message", data: { text: "working", done: true, interrupted: true } });
+  const history = readThreadEvents("cc", dir);
+  expect(history.findIndex((event) => event.kind === "tool_result" && event.data.callId === "long"))
+    .toBeLessThan(history.findIndex((event) => event.id === `native:${longJobId}:final`));
+  expect(readTranscripts(new Date(0), transcriptDir(dir))).toContainEqual(expect.objectContaining({
+    id: `native:${longJobId}:final`, data: expect.objectContaining({ text: "working", interrupted: true }),
+  }));
+  expect(idle.data.events).toContainEqual(expect.objectContaining({ id: `native:${longJobId}:final`,
+    data: expect.objectContaining({ text: "working", done: true, interrupted: true }) }));
   expect(listThreads(dir).find((thread) => thread.id === "cc")?.nativeSessionId).toBe("s-1");
   // A reconnecting phone's sync carries the truncated head, and the request still answers whole.
   send({ kind: "sync_request", data: { lastSeen: {} } });
@@ -1076,6 +1088,7 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
   // An agent that cannot run at all still finishes the turn, with the reason in the thread.
   send({ kind: "message", data: { role: "user", text: "break" } }, "cc");
   const failed = (await eventsUntil((event) => event.kind === "message" && event.data.done === true)).at(-1)!;
+  expect(turns[3]?.text).toContain("Previous reply was stopped or has a pending Stop request");
   // The phone hears that the turn is over and where to look; the SDK's own words, which can
   // name local paths and accounts, stay in the Mac's log.
   expect(failed).toMatchObject({ data: { text: `${agent} could not answer; see the Mac log.` } });
@@ -1148,20 +1161,79 @@ test("a trace burst cannot delay the final answer or lose durable history", asyn
   expect(readThreadEvents("cc", dir).some((event) => event.kind === "thought" && event.data.text.length === 800_000)).toBe(true);
 });
 
-test("stopping a turn keeps its latest unsent draft", async () => {
+test("stopping a turn persists its latest unsent draft", async () => {
   const runner: NativeAgentRunner = { run: async (turn) => {
     for (let i = 0; i < 20; i++) turn.onUpdate?.(`draft ${i}`);
     await new Promise<void>((resolve) => turn.signal.addEventListener("abort", () => resolve(), { once: true }));
     return { text: "" };
   } };
-  const { send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
   send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "cc");
   await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "cc"));
   const id = send({ kind: "message", data: { role: "user", text: "write" } }, "cc");
   await eventsUntil((event) => event.kind === "message" && event.data.role === "agent" && event.data.text === "draft 0");
   send({ kind: "interrupt", data: { targetEventId: id } }, "cc");
   expect((await eventsUntil((event) => event.kind === "message" && event.data.role === "agent" &&
-    event.data.text === "draft 19")).at(-1)).toMatchObject({ data: { text: "draft 19" } });
+    event.data.text === "draft 19" && event.data.done === true)).at(-1))
+    .toMatchObject({ data: { text: "draft 19", done: true, interrupted: true } });
+  expect(readThreadEvents("cc", dir).filter((event) => event.kind === "message" && event.data.role === "agent"))
+    .toHaveLength(1);
+});
+
+test.each([
+  { outcome: "stopped" as const, text: "partial", interrupted: true },
+  { outcome: "completed" as const, text: "finished", interrupted: false },
+])("OpenClaw Stop $outcome persists the right final and keeps next prompt context", async ({ outcome, text, interrupted }) => {
+  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
+  const turns: OpenClawTurn[] = [];
+  vi.spyOn(OpenClawRunner.prototype, "run").mockImplementation(async (turn) => {
+    turns.push(turn);
+    if (turns.length > 1) return "next answer";
+    turn.onUpdate?.("partial");
+    await new Promise<void>((resolve) => turn.signal?.addEventListener("abort", () => resolve(), { once: true }));
+    return "";
+  });
+  const releaseStop = Promise.withResolvers<{ status: "stopped" | "completed"; text?: string }>();
+  const stopRun = vi.spyOn(OpenClawRunner.prototype, "stopRun").mockImplementation(() => releaseStop.promise);
+  if (interrupted) stopRun.mockResolvedValueOnce(undefined);
+  const { dir, send, eventsUntil } = await pairedPhone([], true);
+  send({ kind: "thread_create", data: {} });
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
+  const target = send({ kind: "message", data: { role: "user", text: "work" } });
+  await eventsUntil((event) => event.kind === "message" && event.data.role === "agent" && event.data.text === "partial");
+  send({ kind: "interrupt", data: { targetEventId: target } });
+  await eventsUntil((event) => event.kind === "stop_status" && event.data.status === "requested");
+  const queued = send({ kind: "message", data: { role: "user", text: "next" } });
+  await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === queued);
+  const queuedEcho = (await eventsUntil((event) => event.kind === "message" && event.id === queued)).at(-1)!;
+  expect(readThreadEvents("t1", dir).some((event) => event.id === queued)).toBe(false);
+  if (interrupted) {
+    await vi.waitFor(() => expect(stopRun).toHaveBeenCalledTimes(2), { timeout: 3_000 });
+    expect(turns).toHaveLength(1);
+  }
+  releaseStop.resolve({ status: outcome, ...(outcome === "completed" ? { text: "finished" } : {}) });
+  await eventsUntil((event) => event.kind === "stop_status" && event.data.status === outcome);
+  expect(readThreadEvents("t1", dir).find((event) => event.id === `openclaw:${target}:final`))
+    .toMatchObject({ data: { text, done: true, ...(interrupted ? { interrupted: true } : {}) } });
+  await eventsUntil((event) => event.kind === "message" && event.data.role === "agent" && event.data.text === "next answer");
+  expect(turns[1]?.promptOverride?.includes("Previous reply was stopped or has a pending Stop request") ?? false)
+    .toBe(interrupted);
+  const history = readThreadEvents("t1", dir);
+  expect(history.findIndex((event) => event.id === `openclaw:${target}:final`))
+    .toBeLessThan(history.findIndex((event) => event.id === queued));
+  const final = history.find((event) => event.id === `openclaw:${target}:final`)!;
+  expect(history.find((event) => event.id === queued)).toMatchObject({
+    ts: expect.any(Number), clientTs: queuedEcho.ts,
+  });
+  expect(history.find((event) => event.id === queued)!.ts).toBeGreaterThanOrEqual(final.ts);
+  const queuedStored = history.find((event) => event.id === queued)!;
+  const nextFinal = history.find((event) => event.kind === "message" && event.data.role === "agent" &&
+    event.data.text === "next answer")!;
+  expect(queuedStored.ts).toBeGreaterThan(final.ts);
+  expect(nextFinal.ts).toBeGreaterThan(queuedStored.ts);
+  sendRaw(queuedEcho);
+  await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === queued);
+  expect(readThreadEvents("t1", dir).filter((event) => event.id === queued)).toHaveLength(1);
 });
 
 test("client archive and restore reach OpenClaw in order before the canonical list changes", async () => {
@@ -3362,7 +3434,7 @@ test("delayed exact-run Stop cannot abort the next turn", async () => {
 test("repeated Stop requests each receive the confirmed outcome", async () => {
   const finish = Promise.withResolvers<void>();
   const runner: NativeAgentRunner = { run: async () => { await finish.promise; return { text: "" }; } };
-  const { send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
   send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "multi-stop");
   await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "multi-stop"));
   const target = send({ kind: "message", data: { role: "user", text: "long run" } }, "multi-stop");
@@ -3377,6 +3449,8 @@ test("repeated Stop requests each receive the confirmed outcome", async () => {
     event.data.status === "stopped");
   expect(outcomes.filter((event) => event.kind === "stop_status" && event.data.status === "stopped")
     .map((event) => event.kind === "stop_status" && event.data.requestId)).toEqual([first, second]);
+  expect(readThreadEvents("multi-stop", dir).filter((event) => event.kind === "message" && event.data.role === "agent"))
+    .toEqual([expect.objectContaining({ data: expect.objectContaining({ text: "", done: true, interrupted: true }) })]);
 });
 
 

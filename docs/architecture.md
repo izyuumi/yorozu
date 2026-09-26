@@ -252,9 +252,12 @@ fields keep ordinary replay.
 Live agent replies send their first partial immediately, then keep only the latest unsent
 revision per thread. A round-robin sender allows at most ten partial broadcasts per second
 across threads and slows further when a broadcast splits into several relay batches. Final
-replies bypass this queue and discard superseded partials; interrupted turns keep their last
-queued draft. The host still
-keeps the full current reply for reconnect catch-up and writes the final to durable history.
+replies bypass this queue and discard superseded partials. Stop saves the latest partial as a
+final message with `interrupted: true`, or an empty final marker if no text arrived. That event
+uses the reply's stable ID, follows tool activity in the thread log and transcript, and replays
+to other devices. Clients draw **Stopped** below partial text, or alone with no empty bubble.
+The host still keeps the full current reply for reconnect catch-up and writes the final to
+durable history.
 The host sends each live broadcast's sealed phone copies in relay frame batches of at most
 16 entries and under 900 KB, so multiple paired phones do not multiply relay rate-limit cost.
 Verbose thought, tool, and progress events use a separate relay budget: a 30-batch burst, then
@@ -507,6 +510,21 @@ completed tool result resets that budget. A persisted Stop prevents automatic re
 If a host restart leaves a native Stop impossible to confirm, the host reports that uncertainty
 and retires the recovery marker; the client keeps a warning with the cached conversation and
 never labels the task Stopped.
+
+Backend context after Stop:
+
+| Backend | What its saved session contains after abort |
+| --- | --- |
+| Claude Code SDK | The SDK query is closed with its abort controller. Its session ID survives; whether an incomplete assistant message is included on resume is undocumented and unverified. |
+| Codex app server | `turn/interrupt` ends the turn and `thread/resume` keeps the thread ID. The protocol exposes streamed deltas, but does not promise that incomplete assistant text enters the next model context; unverified. |
+| OpenClaw Gateway | [Gateway docs](https://docs.openclaw.ai/web/control-ui/chat#abort-partial-retention) say buffered aborted text is saved in transcript history with abort metadata. They do not guarantee that all streamed text was buffered or included in the next model context. |
+
+Yorozu therefore supplies the stopped partial (up to its last 4,000 characters) and a reminder
+to verify prior actions with the next prompt to all three backends. The user's saved message
+stays unchanged. A Stop before text supplies a short note. A same-thread prompt can be admitted
+while Stop is pending, but its thread-log entry and execution wait for the exact Stop outcome
+so the interrupted reply stays ahead of it. Inconclusive Gateway abort checks retry while that
+thread remains queued; they do not release another run into an uncertain session.
 
 ## Approvals, questions and progress
 

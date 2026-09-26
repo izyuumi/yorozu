@@ -282,7 +282,7 @@ function writeFileAtomic(file: string, text: string): void {
 /** Stable across JSON property order and host restarts; only client-owned message fields count. */
 function userMessageIdentity(event: YorozuEvent & { kind: "message" }): string {
   return createHash("sha256").update(JSON.stringify([
-    event.threadId, event.ts, event.data.role, event.data.text, event.data.admissionDeadline ?? null,
+    event.threadId, event.clientTs ?? event.ts, event.data.role, event.data.text, event.data.admissionDeadline ?? null,
     (event.data.attachments ?? []).map(({ name, mime, data }) => [name, mime, data]),
   ])).digest("hex");
 }
@@ -486,7 +486,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // A Stop is bound to one accepted operation. Keep its intent through sidecar replacement,
   // including the backend run identity needed to finish an interrupted abort request.
   type StopRecord = { targetEventId: string; threadId: string; status: "requested" | "stopped" | "completed" | "withdrawn" | "unconfirmed";
-    sessionKey?: string; runId?: string; requestIds: string[] };
+    sessionKey?: string; runId?: string; partialText?: string; requestIds: string[] };
   const stopFile = join(dir, "stopped-turns.jsonl");
   let stopText = existsSync(stopFile) ? readFileSync(stopFile, "utf8") : "";
   if (stopText && !stopText.endsWith("\n")) {
@@ -502,6 +502,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     ["requested", "stopped", "completed", "withdrawn", "unconfirmed"].includes((entry as StopRecord).status) &&
     ((entry as StopRecord).runId === undefined || typeof (entry as StopRecord).runId === "string") &&
     ((entry as StopRecord).sessionKey === undefined || typeof (entry as StopRecord).sessionKey === "string") &&
+    ((entry as StopRecord).partialText === undefined || typeof (entry as StopRecord).partialText === "string") &&
     Array.isArray((entry as StopRecord).requestIds) &&
     (entry as StopRecord).requestIds.every((id) => typeof id === "string" && id.length > 0 && id.length <= 128))) {
     throw new Error("Invalid stopped-turn journal");
@@ -898,12 +899,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
   /** Final event owns recovery marker: persist once, then acknowledge, then publish. */
   function finalizeOpenClaw(event: YorozuEvent): void {
     const admission = openclaw!.pendingTurns(true).find((turn) => turn.completionId === event.id);
-    const final = event.kind === "message" && admission
-      ? { ...event, data: { ...event.data, runId: admission.runId } } : event;
+    const history = readThreadEvents(event.threadId, dir);
+    const stored = history.find((known) => known.id === event.id);
+    const timed = stored ?? { ...event, ts: Math.max(event.ts, (history.at(-1)?.ts ?? 0) + 1) };
+    const final = timed.kind === "message" && admission
+      ? { ...timed, data: { ...timed.data, runId: admission.runId } } : timed;
     if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === event.id)) appendTranscript(final, transcripts);
-    if (!readThreadEvents(event.threadId, dir).some((known) => known.id === event.id)) appendThreadEvent(final, dir);
+    if (!stored) appendThreadEvent(final, dir);
     openclaw!.acknowledge(event.threadId, event.id);
-    broadcast(event);
+    broadcast(final);
   }
 
   const nativeCards = new NativeCards(emit);
@@ -1218,6 +1222,20 @@ export function serve(options: ServeOptions = {}): Sidecar {
       `Continue unfinished work and answer the original request.\nOriginal request: ${original}\nRecent host record:\n${recent}`;
   };
 
+  const withStoppedContext = (threadId: string, original: string, userEventId?: string): string => {
+    const messages = readThreadEvents(threadId, dir).filter((event) => event.kind === "message");
+    const index = userEventId ? messages.findIndex((event) => event.id === userEventId) : -1;
+    const prior = index > 0 ? messages[index - 1] : index < 0 ? messages.at(-1) : undefined;
+    if (prior?.kind !== "message") return original;
+    const stop = prior.data.role === "user" ? stoppedTurns.get(prior.id) : undefined;
+    const partial = prior.data.role === "agent" && prior.data.interrupted ? prior.data.text
+      : stop?.status === "requested" || stop?.status === "stopped" ? stop.partialText ?? "" : undefined;
+    if (partial === undefined) return original;
+    const excerpt = partial.slice(-4_000);
+    return `Previous reply was stopped or has a pending Stop request. Its partial text may be absent from your session context. ` +
+      `Do not repeat actions without checking their outcomes. Partial reply: ${JSON.stringify(excerpt || "(none)")}\n\nNew user request: ${original}`;
+  };
+
   async function runTurn(
     threadId: string,
     text: string,
@@ -1310,7 +1328,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
             const currentHome = threadHome(threadId, dir);
             const done = await runner.run({
               threadId,
-              text: recovering ? nativeRecoveryPrompt(threadId, text) : text,
+              text: recovering ? nativeRecoveryPrompt(threadId, text) : withStoppedContext(threadId, text, userEventId),
               ...currentHome,
               cwd: home.cwd,
               bypass: loadSettings(dir).yolo,
@@ -1321,7 +1339,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
               approve: async (tool, input, signal) =>
                 loadSettings(dir).yolo || nativeCards.approve(threadId, agent, tool, input, signal),
               ask: (question, options, signal) => nativeCards.ask(threadId, question, options, signal),
-              onUpdate: (reply) => { executionStarted = true; broadcast(message(reply)); },
+              onUpdate: (reply) => { if (!turn.signal.aborted) { executionStarted = true; broadcast(message(reply)); } },
               onActivity: (key, payload) => {
                 executionStarted = true;
                 const event: YorozuEvent = { id: `${agent}:${threadId}:${key}`, threadId, ts: Date.now(), agentId: MAIN_AGENT, ...payload };
@@ -1376,16 +1394,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (userEventId) runningEventIds.set(threadId, userEventId);
       broadcastActiveThreadList();
       try {
+        const prompt = withStoppedContext(threadId, text, userEventId);
         const reply = await openclaw.run({
           threadId,
           text,
+          ...(prompt !== text ? { promptOverride: prompt } : {}),
           model: threadModel(threadId, dir),
           effort: threadEffort(threadId, dir),
           attachments,
           signal: turn.signal,
           completionId: id,
           userEventId,
-          onUpdate: (reply) => broadcast(message(reply)),
+          onUpdate: (reply) => { if (!turn.signal.aborted) broadcast(message(reply)); },
           onEvent: emit,
           onRecoveryState: () => broadcast(threadList()),
         });
@@ -1397,6 +1417,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (running.get(threadId) === turn) running.delete(threadId);
         if (runningEventIds.get(threadId) === userEventId) runningEventIds.delete(threadId);
         broadcastActiveThreadList();
+        const settlement = turn.signal.aborted && userEventId ? stopSettlements.get(userEventId) : undefined;
+        if (settlement) {
+          await settlement.promise;
+          stopSettlements.delete(userEventId!);
+        }
       }
       return;
     }
@@ -1435,19 +1460,24 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     if (updateGate.status.phase === "installing") return Promise.reject(new Error("Mac is installing an update"));
     updateGate.activity();
+    let deferredEvent: YorozuEvent & { kind: "message" } | undefined;
     if (viaOpenClaw(threadId)) {
       userEventId ??= randomUUID();
       const event: YorozuEvent & { kind: "message" } = acceptedEvent?.kind === "message" ? acceptedEvent
         : { id: userEventId, threadId, ts: Date.now(), agentId: MAIN_AGENT,
         kind: "message" as const, data: { role: "user" as const, text, ...(attachments.length ? { attachments } : {}) } };
+      const deferLog = [...stoppedTurns.values()].some((stop) => stop.threadId === threadId && stop.status === "requested");
       const stored = openclaw!.admitUserTurn({ threadId, text, model: threadModel(threadId, dir),
         effort: threadEffort(threadId, dir), attachments, userEventId, identity: userMessageIdentity(event),
         eventTs: event.ts, admissionDeadline: event.data.admissionDeadline,
         completionId: `openclaw:` + userEventId + `:final` }, (admission) => {
         const logged = admission ? { ...event, data: { ...event.data,
           runId: admission.runId, completionId: admission.completionId } } : event;
-        if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === event.id)) appendTranscript(logged, transcripts);
-        if (!readThreadEvents(threadId, dir).some((known) => known.id === event.id)) appendThreadEvent(logged, dir);
+        if (deferLog) deferredEvent = logged;
+        else {
+          if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === event.id)) appendTranscript(logged, transcripts);
+          if (!readThreadEvents(threadId, dir).some((known) => known.id === event.id)) appendThreadEvent(logged, dir);
+        }
       }, () => readThreadEvents(threadId, dir).some((known) => known.id === event.id));
       if (!stored) return Promise.resolve();
       text = stored.input.text;
@@ -1462,6 +1492,17 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (userEventId && stoppedTurns.has(userEventId)) {
         openclaw?.discardPending(userEventId);
         return;
+      }
+      const logged = deferredEvent;
+      if (logged) {
+        // The device admitted this message before Stop settled. Give its durable copy the
+        // preceding final's timestamp so live and restored timelines show the same order.
+        const prior = readThreadEvents(threadId, dir);
+        const ordered = { ...logged, ts: (prior.at(-1)?.ts ?? Date.now()) + 1,
+          clientTs: logged.ts };
+        if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === logged.id)) appendTranscript(ordered, transcripts);
+        if (!prior.some((known) => known.id === logged.id)) appendThreadEvent(ordered, dir);
+        broadcast(ordered);
       }
       if (userEventId) activeTurnIds.add(userEventId);
       try { await runTurn(threadId, text, recorded, attachments, userEventId); }
@@ -1500,6 +1541,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
    */
   const archiveUpdates = new Map<string, Promise<void>>();
   const stopAttempts = new Set<string>();
+  const stopSettlements = new Map<string, ReturnType<typeof Promise.withResolvers<void>>>();
+  const stopRetries = new Map<string, ReturnType<typeof setTimeout>>();
 
   const stopStatus = (record: StopRecord, requestId: string): YorozuEvent => ({
     ...control({ kind: "stop_status", data: { targetEventId: record.targetEventId, requestId, status: record.status } }),
@@ -1508,8 +1551,17 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const broadcastStop = (record: StopRecord): void => {
     for (const id of stoppedTurns.get(record.targetEventId)?.requestIds ?? record.requestIds) broadcast(stopStatus(record, id));
   };
+  const persistStoppedReply = (record: StopRecord, text = record.partialText ?? ""): void => {
+    const id = completionIdFor(record.threadId, record.targetEventId);
+    if (readThreadEvents(record.threadId, dir).some((event) => event.id === id && event.kind === "message" && event.data.done)) return;
+    const final: YorozuEvent = { id, threadId: record.threadId, ts: Date.now(), agentId: MAIN_AGENT,
+      kind: "message", data: { role: "agent", text, done: true, interrupted: true } };
+    if (record.runId && record.sessionKey) finalizeOpenClaw(final);
+    else emit(final);
+  };
   function completeStop(record: StopRecord): void {
     if (record.status !== "requested") return;
+    persistStoppedReply(record);
     const finished = { ...record, status: "stopped" as const };
     rememberStop(finished);
     broadcastStop(finished);
@@ -1540,12 +1592,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
           return;
         }
         openclaw?.discardPending(target);
+        persistStoppedReply(record);
         rememberStop({ ...record, status: "stopped" });
         broadcastStop(stoppedTurns.get(target)!);
       }
       return;
     }
     stopAttempts.add(target);
+    // Hold the thread's FIFO queue until Gateway confirms this exact run has ended.
+    const settlement = stopSettlements.get(target) ?? Promise.withResolvers<void>();
+    stopSettlements.set(target, settlement);
     abortTarget(record.threadId, target);
     void openclaw!.stopRun(record.sessionKey, record.runId).then((outcome) => {
       if (!outcome) return;
@@ -1554,11 +1610,25 @@ export function serve(options: ServeOptions = {}): Sidecar {
           ts: Date.now(), agentId: MAIN_AGENT, kind: "message",
           data: { role: "agent", text: outcome.text ?? "", done: true } });
       } else {
+        if (outcome.status === "stopped") persistStoppedReply(record, outcome.text ?? record.partialText ?? "");
         openclaw!.discardPending(target);
       }
       rememberStop({ ...record, status: outcome.status });
       broadcastStop(stoppedTurns.get(target)!);
-    }).catch((error: unknown) => state(`stop-error ${String(error)}`)).finally(() => stopAttempts.delete(target));
+      settlement.resolve();
+      if (!admittedTurns.has(target)) stopSettlements.delete(target);
+    }).catch((error: unknown) => state(`stop-error ${String(error)}`)).finally(() => {
+      stopAttempts.delete(target);
+      if (!stopped && stoppedTurns.get(target)?.status === "requested" && !stopRetries.has(target)) {
+        const retry = setTimeout(() => {
+          stopRetries.delete(target);
+          const current = stoppedTurns.get(target);
+          if (current?.status === "requested") finishStop(current);
+        }, 1_000);
+        retry.unref();
+        stopRetries.set(target, retry);
+      }
+    });
   };
 
   function updateArchive(event: YorozuEvent & { kind: "thread_archive" }, reply: Send): void {
@@ -1786,7 +1856,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const user = history.find((stored) => stored.id === target && stored.kind === "message" && stored.data.role === "user");
       const ledger = openclaw?.pendingTurns(true).find((turn) => turn.threadId === event.threadId && turn.userEventId === target);
       const final = history.some((stored) => stored.id === completionIdFor(event.threadId, target) &&
-        stored.kind === "message" && stored.data.done === true);
+        stored.kind === "message" && stored.data.done === true && stored.data.interrupted !== true);
       if (!existing && !user && !ledger) {
         const withdrawn: StopRecord = { targetEventId: target, threadId: event.threadId,
           status: "withdrawn", requestIds: [event.id] };
@@ -1796,9 +1866,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return;
       }
       const requestIds = existing ? [...new Set([...existing.requestIds, event.id])] : [event.id];
+      const live = liveReplies.get(event.threadId);
       const record: StopRecord = final ? { ...(existing ?? { targetEventId: target, threadId: event.threadId }),
         status: "completed", requestIds } : existing ? { ...existing, requestIds } : { targetEventId: target, threadId: event.threadId,
         status: "requested", requestIds,
+        ...(runningEventIds.get(event.threadId) === target && live?.kind === "message" && live.data.role === "agent"
+          ? { partialText: live.data.text } : {}),
         ...(ledger && (ledger.state === "active" || runningEventIds.get(event.threadId) === target)
           ? { sessionKey: ledger.sessionKey, runId: ledger.runId } : {}) };
       rememberStop(record);
@@ -1930,7 +2003,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     if (event.kind === "message" && knownMessage && (knownMessage.kind !== "message" ||
       knownMessage.data.role !== event.data.role || knownMessage.data.text !== event.data.text ||
-      knownMessage.ts !== event.ts || knownMessage.data.admissionDeadline !== event.data.admissionDeadline ||
+      (knownMessage.clientTs ?? knownMessage.ts) !== event.ts || knownMessage.data.admissionDeadline !== event.data.admissionDeadline ||
       (knownMessage.data.attachments ?? []).length !== (event.data.attachments ?? []).length ||
       (knownMessage.data.attachments ?? []).some((attachment, index) => {
         const retry = event.data.attachments![index]!;
@@ -2730,7 +2803,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
     liveReplies.delete(threadId);
     const stop = stored.userEventId ? stoppedTurns.get(stored.userEventId) : undefined;
     if (stop) {
-      if (stop.status === "requested") finishStop(stop);
+      if (stop.status === "requested") {
+        finishStop(stop);
+        await stopSettlements.get(stop.targetEventId)?.promise;
+      }
       else if (stored.userEventId) openclaw!.discardPending(stored.userEventId);
       return;
     }
@@ -2822,6 +2898,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     close: async () => {
       stopped = true;
+      for (const retry of stopRetries.values()) clearTimeout(retry);
+      stopRetries.clear();
       clearTraces();
       partials.clear();
       if (partialTimer) clearTimeout(partialTimer);

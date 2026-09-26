@@ -2,13 +2,15 @@ import Foundation
 
 /// Wire events exchanged between Mac, phone and relay. See docs/spec-v1.html sections 3, 7, 8.
 ///
-/// JSON shape is `{ id, threadId, ts, agentId, parentAgentId?, syncCursor?, kind, data }`, identical to
+/// JSON shape is `{ id, threadId, ts, clientTs?, agentId, parentAgentId?, syncCursor?, kind, data }`, identical to
 /// `YorozuEvent` in packages/shared/src/events.ts.
 public struct YorozuEvent: Codable, Equatable, Sendable {
     public var id: String
     public var threadId: String
     /// Epoch milliseconds.
     public var ts: Int
+    /// Original device timestamp when the host delays a queued user message in the timeline.
+    public var clientTs: Int?
     public var agentId: String
     /// Set when the emitting agent was delegated to by another.
     public var parentAgentId: String?
@@ -20,6 +22,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         id: String,
         threadId: String,
         ts: Int,
+        clientTs: Int? = nil,
         agentId: String,
         parentAgentId: String? = nil,
         syncCursor: String? = nil,
@@ -28,6 +31,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         self.id = id
         self.threadId = threadId
         self.ts = ts
+        self.clientTs = clientTs
         self.agentId = agentId
         self.parentAgentId = parentAgentId
         self.syncCursor = syncCursor
@@ -159,7 +163,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, threadId, ts, agentId, parentAgentId, syncCursor, kind, data
+        case id, threadId, ts, clientTs, agentId, parentAgentId, syncCursor, kind, data
     }
 
     public init(from decoder: Decoder) throws {
@@ -167,6 +171,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         id = try c.decode(String.self, forKey: .id)
         threadId = try c.decode(String.self, forKey: .threadId)
         ts = try c.decode(Int.self, forKey: .ts)
+        clientTs = try c.decodeIfPresent(Int.self, forKey: .clientTs)
         agentId = try c.decode(String.self, forKey: .agentId)
         parentAgentId = try c.decodeIfPresent(String.self, forKey: .parentAgentId)
         syncCursor = try c.decodeIfPresent(String.self, forKey: .syncCursor)
@@ -217,6 +222,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         try c.encode(id, forKey: .id)
         try c.encode(threadId, forKey: .threadId)
         try c.encode(ts, forKey: .ts)
+        try c.encodeIfPresent(clientTs, forKey: .clientTs)
         try c.encode(agentId, forKey: .agentId)
         try c.encodeIfPresent(parentAgentId, forKey: .parentAgentId)
         try c.encodeIfPresent(syncCursor, forKey: .syncCursor)
@@ -345,6 +351,8 @@ public struct MessageData: Codable, Equatable, Sendable {
     /// that delegation stops spinning, and the main agent's, so the composer stops offering
     /// Stop. A flag rather than a kind of its own: the final message already ends the turn.
     public var done: Bool?
+    /// Final reply stopped by the user; text, if any, is the partial reply.
+    public var interrupted: Bool?
     /// Photos and files the user sent with this message. Only set on a `user` message.
     public var attachments: [MessageAttachment]
     /// Encrypted initial-admission deadline, exactly 30 minutes after the event timestamp.
@@ -358,6 +366,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         role: Role,
         text: String,
         done: Bool? = nil,
+        interrupted: Bool? = nil,
         attachments: [MessageAttachment] = [],
         admissionDeadline: Int? = nil,
         runId: String? = nil,
@@ -366,19 +375,21 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.role = role
         self.text = text
         self.done = done
+        self.interrupted = interrupted
         self.attachments = attachments
         self.admissionDeadline = admissionDeadline
         self.runId = runId
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, done, attachments, admissionDeadline, runId, completionId }
+    private enum CodingKeys: String, CodingKey { case role, text, done, interrupted, attachments, admissionDeadline, runId, completionId }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         role = try c.decode(Role.self, forKey: .role)
         text = try c.decode(String.self, forKey: .text)
         done = try c.decodeIfPresent(Bool.self, forKey: .done)
+        interrupted = try c.decodeIfPresent(Bool.self, forKey: .interrupted)
         attachments = try c.decodeIfPresent([MessageAttachment].self, forKey: .attachments) ?? []
         admissionDeadline = try c.decodeIfPresent(Int.self, forKey: .admissionDeadline)
         runId = try c.decodeIfPresent(String.self, forKey: .runId)
@@ -390,6 +401,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         try c.encode(role, forKey: .role)
         try c.encode(text, forKey: .text)
         try c.encodeIfPresent(done, forKey: .done)
+        try c.encodeIfPresent(interrupted, forKey: .interrupted)
         if !attachments.isEmpty { try c.encode(attachments, forKey: .attachments) }
         try c.encodeIfPresent(admissionDeadline, forKey: .admissionDeadline)
         try c.encodeIfPresent(runId, forKey: .runId)

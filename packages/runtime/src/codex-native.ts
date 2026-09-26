@@ -130,6 +130,7 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
       let sessionId = turn.sessionId;
       let turnId: string | undefined;
       let text = "";
+      let lastStreamed = "";
       const streamed = new Map<string, string>();
       const cancel = new AbortController();
       const signal = AbortSignal.any([turn.signal, cancel.signal]);
@@ -144,12 +145,13 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
         notify(method, params) {
           if (params.threadId && params.threadId !== sessionId) return;
           if (method === "turn/started") turnId = string(object(params.turn).id);
-          if (method === "item/agentMessage/delta") {
+          if (method === "item/agentMessage/delta" && !turn.signal.aborted) {
             const id = string(params.itemId);
             const next = (streamed.get(id) ?? "") + string(params.delta);
             streamed.set(id, next);
+            lastStreamed = next;
             turn.onUpdate?.(next);
-          } else if (method === "item/started" || method === "item/completed") {
+          } else if ((method === "item/started" || method === "item/completed") && !turn.signal.aborted) {
             const item = object(params.item);
             const id = `${turnId ?? "turn"}:${string(item.id)}`;
             const type = string(item.type);
@@ -210,7 +212,7 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
         clearTimeout(abortTimer);
         client.close();
       }
-      return { text: turn.signal.aborted ? "" : text, ...(sessionId ? { sessionId } : {}) };
+      return { text: turn.signal.aborted ? lastStreamed || text : text, ...(sessionId ? { sessionId } : {}) };
     },
   };
 }

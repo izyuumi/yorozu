@@ -88,6 +88,17 @@ private func event(
     #expect(withPhoto.contains("*(no text)*"))
 }
 
+@Test func stoppedRepliesExportPartialTextAndAStopMarker() {
+    let thread = ThreadSummary(id: "home", title: "Work", archived: false, lastActivity: 0)
+    let markdown = threadMarkdown(thread: thread, events: [
+        event("m1", .message(MessageData(role: .agent, text: "Working", done: true, interrupted: true)), at: 1),
+        event("m2", .message(MessageData(role: .agent, text: "", done: true, interrupted: true)), at: 2)
+    ], locale: posix, timeZone: utc)
+    #expect(markdown.contains("Working\n\n*Stopped*"))
+    #expect(markdown.components(separatedBy: "*Stopped*").count == 3)
+    #expect(!markdown.contains("*(no text)*"))
+}
+
 @Test func aDelegationExportsAsOneFoldedNoteUnderItsSpecialist() {
     let thread = ThreadSummary(id: "home", title: "Trip", archived: false, lastActivity: 0)
     let markdown = threadMarkdown(

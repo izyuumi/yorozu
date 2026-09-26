@@ -14,6 +14,8 @@ export interface EventBase {
   threadId: string;
   /** Epoch milliseconds. */
   ts: number;
+  /** Original device timestamp when the host delays a queued user message in the timeline. */
+  clientTs?: number;
   agentId: string;
   /** Set when the emitting agent was delegated to by another. */
   parentAgentId?: string;
@@ -53,6 +55,8 @@ export interface MessageData {
    * A flag rather than a kind of its own: the final message is already the thing that ends a turn.
    */
   done?: boolean;
+  /** Final reply stopped by the user; text, if any, is the partial reply. */
+  interrupted?: boolean;
   /** Photos and files sent together. */
   attachments?: MessageAttachment[];
   /** Encrypted initial-admission deadline, exactly 30 minutes after this event's `ts`. */

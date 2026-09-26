@@ -97,6 +97,21 @@ describe("OpenClawRunner", () => {
     expect(runner.pendingTurns()).toHaveLength(1);
   });
 
+  test("a queued turn can add stopped context at dispatch without changing admitted user text", async () => {
+    const gateway = harness();
+    const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    runner.admitUserTurn({ threadId: "context", text: "next", userEventId: "next-id" }, () => {});
+    const controller = new AbortController();
+    const running = runner.run({ threadId: "context", text: "next", promptOverride: "Previous reply stopped. Next: next",
+      userEventId: "next-id", signal: controller.signal });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.objectContaining({
+      message: "Previous reply stopped. Next: next",
+    })));
+    expect(runner.pendingTurns(true)[0]?.input.text).toBe("next");
+    controller.abort();
+    await running;
+  });
+
   test("archives and restores the canonical Gateway session without starting a turn", async () => {
     const gateway = harness();
     gateway.request.mockImplementation(async (method) => method === "sessions.describe"
@@ -319,6 +334,20 @@ describe("OpenClawRunner", () => {
     await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.abort", {
       sessionKey: "agent:main:yorozu:send-abort", runId: "accepted-run",
     }));
+  });
+
+  test("abort returns the partial reply already streamed by Gateway", async () => {
+    const gateway = harness();
+    const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    const controller = new AbortController();
+    const onUpdate = vi.fn();
+    const result = runner.run({ threadId: "partial-abort", text: "work", signal: controller.signal, onUpdate });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    gateway.event({ sessionKey: "agent:main:yorozu:partial-abort", runId: "run-1", seq: 1,
+      state: "delta", deltaText: "half a" });
+    expect(onUpdate).toHaveBeenCalledWith("half a");
+    controller.abort();
+    await expect(result).resolves.toBe("half a");
   });
 
   test("stop racing a completed run returns its final answer", async () => {

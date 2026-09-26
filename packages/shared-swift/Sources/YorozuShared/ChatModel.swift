@@ -105,8 +105,8 @@ public final class ChatModel {
     public var attachments: [String: [MessageAttachment]] = [:] { didSet { saveComposerSoon() } }
     /// Threads with a turn in flight, so the composer offers Stop rather than Send.
     ///
-    /// Set when this device sends, cleared by the agent message flagged `done` that ends the
-    /// turn — or by pressing Stop, because an interrupted turn deliberately says nothing back.
+    /// Set when this device sends, cleared by the agent message flagged `done` or confirmed
+    /// Stop status. The composer can send another message while Stop is pending.
     /// It is per-process and starts empty: a turn another device started is not ours to stop.
     public private(set) var generating: Set<String> = []
     /// Every device the runtime answers, newest list wins. Only the Mac's Settings draws these.
@@ -1941,6 +1941,9 @@ public final class ChatModel {
         applyAnswerState(event)
         var thread = timeline(event.threadId).events
         if let index = thread.firstIndex(where: { $0.id == event.id }) {
+            if thread[index].clientTs != nil && event.clientTs == nil,
+               case .message(let old) = thread[index].payload, old.role == .user,
+               case .message(let next) = event.payload, next.role == .user { return }
             if case .message(let old) = thread[index].payload, old.role == .agent,
                case .message(let next) = event.payload, next.role == .agent,
                (old.done == true && next.done != true ||
@@ -1948,11 +1951,14 @@ public final class ChatModel {
                     (thread[index].ts > event.ts || thread[index].ts == event.ts && old.text.count > next.text.count) ||
                 old.done == true && next.done == true && thread[index].ts > event.ts) { return }
             guard thread[index] != event else { return }
+            let timestampChanged = thread[index].ts != event.ts
+            let orderingConfirmed = thread[index].clientTs == nil && event.clientTs != nil
+            var agentReply = false
+            if case .message(let data) = event.payload { agentReply = data.role == .agent }
             thread[index] = event
-            if case .message(let data) = event.payload, data.role == .agent {
-                // One reply ID spans commentary, tool use and the final answer. Its latest
-                // revision belongs at its latest timestamp, not at the first delta's slot.
-                // Insert after ties too: a tool result and final can share a millisecond.
+            if timestampChanged || orderingConfirmed || agentReply {
+                // Streamed replies and host-retimed queued messages move to their final place.
+                // Insert after ties: a tool result and final can share a millisecond.
                 thread.remove(at: index)
                 let position = thread.lastIndex(where: { $0.ts <= event.ts }).map { $0 + 1 } ?? 0
                 thread.insert(event, at: position)
