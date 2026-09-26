@@ -253,6 +253,14 @@ test("a sealed message from a phone round-trips through the agent loop", async (
   }
   expect(receipts).toEqual(["e2"]);
   expect(reflectedId).not.toBe("e2");
+  phone.frame(channel.box({ id: "query-e2", threadId: "t1", ts: Date.now(), agentId: "phone",
+    kind: "admission_query", data: { eventId: "e2" } }), keys);
+  for (;;) {
+    const status = await nextEvent(phone, channel);
+    if (status.kind !== "admission_status") continue;
+    expect(status.data).toMatchObject({ eventId: "e2", status: "completed", requestId: "query-e2" });
+    break;
+  }
 
   // A phone says `hello` on every join. Saying it again resets no counter on either side: the
   // old box is still a replay, and the Mac's seqs carry on from where they were.
@@ -632,7 +640,11 @@ async function pairedPhone(responses: (() => Response)[], openclaw = false, extr
   const send = (
     event: Omit<YorozuEvent, "id" | "threadId" | "ts" | "agentId">,
     threadId = "t1",
-  ): void => sendRaw({ id: randomUUID(), threadId, ts: Date.now(), agentId: "phone", ...event } as YorozuEvent);
+  ): string => {
+    const id = randomUUID();
+    sendRaw({ id, threadId, ts: Date.now(), agentId: "phone", ...event } as YorozuEvent);
+    return id;
+  };
 
   /** Everything the sidecar sends, up to and including the first event `done` accepts. */
   async function eventsUntil(done: (event: YorozuEvent) => boolean): Promise<YorozuEvent[]> {
@@ -1474,9 +1486,14 @@ test("discuss leaves the action pending and the card comes back", async () => {
   send({ kind: "message", data: { role: "user", text: "no" } }, "t2");
   await eventsUntil((event) => event.threadId === "t2" && event.kind === "message");
   // A typed "no" in the card's thread answers it just as the button would.
-  send({ kind: "message", data: { role: "user", text: "no" } });
+  const answerId = send({ kind: "message", data: { role: "user", text: "no" } });
   const tail = await eventsUntil(isReply);
   expect(tail.at(-1)).toMatchObject({ data: { role: "agent", text: "Understood, I will skip it." } });
+  send({ kind: "admission_query", data: { eventId: answerId } });
+  const status = (await eventsUntil((event) => event.kind === "admission_status")).at(-1);
+  expect(status).toMatchObject({ kind: "admission_status", data: { eventId: answerId, status: "indeterminate" } });
+  if (status?.kind !== "admission_status") throw new Error("missing admission status");
+  expect(status.data.completionId).toBeUndefined();
 });
 
 test("a lock-screen answer is honoured only for a card the runtime judged quick", async () => {

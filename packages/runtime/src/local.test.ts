@@ -136,7 +136,7 @@ function reader(from: Socket) {
   };
 }
 
-const send = (to: Socket, threadId: string, payload: EventPayload): void => {
+const send = (to: Socket, threadId: string, payload: EventPayload): string => {
   const event: YorozuEvent = {
     id: `local-${Math.random()}`,
     threadId,
@@ -145,7 +145,69 @@ const send = (to: Socket, threadId: string, payload: EventPayload): void => {
     ...payload,
   };
   to.write(`${JSON.stringify(event)}\n`);
+  return event.id;
 };
+
+test("local admission queries identify unknown, running, and completed turns", async () => {
+  let finish!: (response: Response) => void;
+  const pending = new Promise<Response>((resolve) => { finish = resolve; });
+  const { dir, path, fetchMock } = await localSidecar([() => pending]);
+  socket = await connectLocal(path);
+  const events = reader(socket);
+  await events.nextOf("thread_list");
+  send(socket, "status-thread", { kind: "thread_create", data: { title: "Status" } });
+  await events.nextOf("thread_list");
+
+  send(socket, "status-thread", { kind: "admission_query", data: { eventId: "missing" } });
+  expect(await events.nextOf("admission_status")).toMatchObject({
+    data: { eventId: "missing", status: "unknown" },
+  });
+
+  const id = send(socket, "status-thread", { kind: "message", data: { role: "user", text: "ping" } });
+  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  send(socket, "status-thread", { kind: "admission_query", data: { eventId: id } });
+  expect(await events.nextOf("admission_status")).toMatchObject({
+    data: { eventId: id, status: "running" },
+  });
+
+  finish(sse("pong"));
+  await vi.waitFor(() => expect(readThreadEvents("status-thread", dir).some((event) =>
+    event.kind === "message" && event.data.role === "agent" && event.data.done)).toBe(true));
+  send(socket, "status-thread", { kind: "admission_query", data: { eventId: id } });
+  const completed = await events.nextOf("admission_status");
+  expect(completed).toMatchObject({
+    data: { eventId: id, status: "completed" },
+  });
+  if (completed.kind !== "admission_status") throw new Error("missing status");
+  expect(completed.data.runId).toBeTruthy();
+
+  socket.destroy();
+  await sidecar.close();
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${relay.port}`,
+    stateDir: dir,
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: fetchMock }),
+    log: () => {},
+  });
+  socket = await connectLocal(path);
+  const restarted = reader(socket);
+  await restarted.nextOf("thread_list");
+  send(socket, "status-thread", { kind: "admission_query", data: { eventId: id } });
+  expect(await restarted.nextOf("admission_status")).toMatchObject({
+    data: { eventId: id, status: "completed", runId: completed.data.runId },
+  });
+
+  // Earlier native/legacy turns had no stable final ID. A durable user line alone cannot
+  // prove its queued execution survived a restart, even if a later unrelated final exists.
+  appendThreadEvent({ id: "old-user", threadId: "status-thread", ts: Date.now(), agentId: "mac",
+    kind: "message", data: { role: "user", text: "older prompt" } }, dir);
+  appendThreadEvent({ id: "old-random-final", threadId: "status-thread", ts: Date.now(), agentId: "main",
+    kind: "message", data: { role: "agent", text: "older answer", done: true } }, dir);
+  send(socket, "status-thread", { kind: "admission_query", data: { eventId: "old-user" } });
+  expect(await restarted.nextOf("admission_status")).toMatchObject({
+    data: { eventId: "old-user", status: "indeterminate" },
+  });
+}, 10_000);
 
 test("terminal is gated, live-only, and blocks host update install while open", async () => {
   const { dir, path } = await localSidecar();

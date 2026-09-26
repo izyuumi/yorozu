@@ -32,6 +32,8 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
                     attachments: [MessageAttachment(name: "receipt.png", mime: "image/png", data: "aGk=")]
                 )
             )
+        case .admissionQuery: .admissionQuery(AdmissionQueryData(eventId: "user-1"))
+        case .admissionStatus: .admissionStatus(AdmissionStatusData(eventId: "user-1", status: .running, runId: "run-1", requestId: "query-1"))
         case .thought: .thought(ThoughtData(text: "checking the catalog"))
         case .toolCall: .toolCall(ToolCallData(callId: "c1", name: "shell", args: ["cmd": .string("ls")]))
         case .toolResult: .toolResult(ToolResultData(callId: "c1", ok: true, output: "README.md"))

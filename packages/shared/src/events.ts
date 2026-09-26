@@ -55,6 +55,23 @@ export interface MessageData {
   done?: boolean;
   /** Photos and files sent together. */
   attachments?: MessageAttachment[];
+  /** Host-owned execution association; absent on a client submission. */
+  runId?: string;
+  /** Host-owned final response identity; absent on a client submission. */
+  completionId?: string;
+}
+
+/** A paired device asks the host to reconcile one user message, by its original ID. */
+export interface AdmissionQueryData { eventId: string }
+
+/** Host-owned status. A query response is correlated by requestId. */
+export interface AdmissionStatusData {
+  eventId: string;
+  status: "unknown" | "indeterminate" | "accepted" | "queued" | "running" | "completed" | "rejected" | "expired" | "withdrawn";
+  runId?: string;
+  completionId?: string;
+  reason?: string;
+  requestId?: string;
 }
 
 export function attachmentBytes(attachment: MessageAttachment): number {
@@ -581,6 +598,8 @@ export interface TerminalData {
 /** Kind tag paired with its payload. Discriminates on `kind`. */
 export type EventPayload =
   | { kind: "message"; data: MessageData }
+  | { kind: "admission_query"; data: AdmissionQueryData }
+  | { kind: "admission_status"; data: AdmissionStatusData }
   | { kind: "thought"; data: ThoughtData }
   | { kind: "tool_call"; data: ToolCallData }
   | { kind: "tool_result"; data: ToolResultData }
