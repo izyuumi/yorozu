@@ -84,6 +84,10 @@ private func reconnect(_ transport: QueueTransport) async {
     #expect(!model.generating.contains("home"))
 
     let queuedIds = model.outbox.map(\.id)
+    for item in model.outbox {
+        guard case .message(let data) = item.event.payload else { Issue.record("missing message"); return }
+        #expect(data.admissionDeadline == item.event.ts + 30 * 60_000)
+    }
     await reconnect(transport)
 
     #expect(await settle { model.outbox.isEmpty })
@@ -95,6 +99,212 @@ private func reconnect(_ transport: QueueTransport) async {
             return nil
         } == ["one", "two"]
     )
+}
+
+@MainActor
+@Test func unattemptedExpiredMessageNeedsFreshIdBeforeSending() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let ts = Int(Date().addingTimeInterval(-31 * 60).timeIntervalSince1970 * 1000)
+    let original = YorozuEvent(id: "stale", threadId: "home", ts: ts, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "keep content",
+            admissionDeadline: ts + 30 * 60_000)))
+    try cache.savePending([OutboxItem(event: original)])
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    #expect(model.outboxStatus(of: original.id) == .expired)
+    await reconnect(transport)
+    #expect(await transport.messages.isEmpty)
+    model.stillSend(original.id)
+    let renewed = try #require(model.outbox.last?.event)
+    #expect(renewed.id != original.id)
+    #expect(model.outboxStatus(of: original.id) == .resent)
+    guard case .message(let data) = renewed.payload else { Issue.record("missing renewed message"); return }
+    #expect(data.text == "keep content")
+    #expect(data.admissionDeadline == renewed.ts + 30 * 60_000)
+    #expect(await settle { model.outbox.count == 1 })
+    #expect(await transport.messages.map(\.id) == [renewed.id])
+}
+
+@MainActor
+@Test func offlineMessageBecomesExpiredAtDeadlineWithoutAConnectionEvent() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let ts = Int(Date().addingTimeInterval(-30 * 60 + 1).timeIntervalSince1970 * 1000)
+    let message = YorozuEvent(id: "approaching-deadline", threadId: "home", ts: ts, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "offline",
+            admissionDeadline: ts + 30 * 60_000)))
+    try cache.savePending([OutboxItem(event: message)])
+    let model = ChatModel(transport: QueueTransport(), cache: cache, device: "phone")
+    model.start()
+    #expect(model.outboxStatus(of: message.id) == .queued)
+    #expect(await settle { model.outboxStatus(of: message.id) == .expired })
+}
+
+@MainActor
+@Test func uncertainExpiredMessageQueriesHostBeforeStillSend() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let ts = Int(Date().addingTimeInterval(-31 * 60).timeIntervalSince1970 * 1000)
+    let original = YorozuEvent(id: "uncertain", threadId: "home", ts: ts, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "one task",
+            admissionDeadline: ts + 30 * 60_000)))
+    try cache.savePending([OutboxItem(event: original, attemptedAt: Date().addingTimeInterval(-60))])
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    #expect(model.outboxStatus(of: original.id) == .checking)
+    model.stillSend(original.id)
+    #expect(model.outbox.map(\.id) == [original.id])
+    await reconnect(transport)
+    var queried = false
+    for _ in 0..<300 where !queried {
+        queried = await transport.sent.contains(where: { $0.payload.kind == .admissionQuery })
+        if !queried { try? await Task.sleep(for: .milliseconds(10)) }
+    }
+    #expect(queried)
+    #expect(await transport.messages.isEmpty)
+    let query = try #require(await transport.sent.first { $0.payload.kind == .admissionQuery })
+    await transport.yield(.event(YorozuEvent(id: "expired-status", threadId: "", ts: 1, agentId: "main",
+        payload: .admissionStatus(AdmissionStatusData(eventId: original.id, status: .expired,
+            reason: "admission-deadline", requestId: query.id)))))
+    #expect(await settle { model.outboxStatus(of: original.id) == .expired })
+    model.stillSend(original.id)
+    let renewed = try #require(model.outbox.last?.event)
+    #expect(renewed.id != original.id)
+    var delivered = false
+    for _ in 0..<300 where !delivered {
+        delivered = await transport.messages.map(\.id) == [renewed.id]
+        if !delivered { try? await Task.sleep(for: .milliseconds(10)) }
+    }
+    #expect(delivered)
+    #expect(cache.outbox().first?.replacementId == renewed.id)
+}
+
+@Test func unknownRequiresFreshQueryAfterClockLeadWindow() {
+    let now = Date(timeIntervalSince1970: 2_000_000_000)
+    let ts = Int(now.addingTimeInterval(-31 * 60).timeIntervalSince1970 * 1000)
+    let message = YorozuEvent(id: "clock-skew", threadId: "home", ts: ts, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "one task",
+            admissionDeadline: ts + 30 * 60_000)))
+    var item = OutboxItem(event: message, attemptedAt: now.addingTimeInterval(-60),
+        admissionStatus: .unknown, lastStatusQueryAt: now)
+    #expect(item.status(at: now) == .checking)
+    let afterAllowance = now.addingTimeInterval(6 * 60)
+    #expect(item.status(at: afterAllowance) == .checking)
+    item.lastStatusQueryAt = afterAllowance
+    #expect(item.status(at: afterAllowance) == .expired)
+}
+
+@MainActor
+@Test func lateAcceptanceStatusClearsExpiredUncertaintyWithoutResending() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let ts = Int(Date().addingTimeInterval(-31 * 60).timeIntervalSince1970 * 1000)
+    let original = YorozuEvent(id: "late-receipt", threadId: "home", ts: ts, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "accepted before expiry",
+            admissionDeadline: ts + 30 * 60_000)))
+    try cache.savePending([OutboxItem(event: original, attemptedAt: Date().addingTimeInterval(-31 * 60))])
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    await reconnect(transport)
+    await transport.yield(.event(YorozuEvent(id: "accepted-status", threadId: "", ts: 1, agentId: "main",
+        payload: .admissionStatus(AdmissionStatusData(eventId: original.id, status: .queued,
+            runId: "known-run")))))
+    #expect(await settle { model.outbox.isEmpty })
+    #expect(await transport.messages.isEmpty)
+    #expect(cache.outbox().isEmpty)
+}
+
+@MainActor
+@Test func oldCachedMessageWaitsForRelayDrainAndFreshHostStatus() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let ts = Int(Date().addingTimeInterval(-26 * 60 * 60).timeIntervalSince1970 * 1000)
+    let old = YorozuEvent(id: "old-format", threadId: "home", ts: ts, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "maybe delivered")))
+    try cache.savePending([OutboxItem(event: old, attemptedAt: Date().addingTimeInterval(-26 * 60 * 60),
+        legacyHoldUntil: Date().addingTimeInterval(-60))])
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    #expect(model.outboxStatus(of: old.id) == .checking)
+    await reconnect(transport)
+    var queried = false
+    for _ in 0..<300 where !queried {
+        queried = await transport.sent.contains(where: { $0.payload.kind == .admissionQuery })
+        if !queried { try? await Task.sleep(for: .milliseconds(10)) }
+    }
+    #expect(queried)
+    #expect(await transport.messages.isEmpty)
+    let query = try #require(await transport.sent.first { $0.payload.kind == .admissionQuery })
+    await transport.yield(.event(YorozuEvent(id: "stale-unknown", threadId: "", ts: 1, agentId: "main",
+        payload: .admissionStatus(AdmissionStatusData(eventId: old.id, status: .unknown,
+            requestId: "pre-hold-query")))))
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(model.outboxStatus(of: old.id) == .checking)
+    await transport.yield(.event(YorozuEvent(id: "unknown-status", threadId: "", ts: 1, agentId: "main",
+        payload: .admissionStatus(AdmissionStatusData(eventId: old.id, status: .unknown,
+            requestId: query.id)))))
+    #expect(await settle { model.outboxStatus(of: old.id) == .expired })
+    model.stillSend(old.id)
+    #expect(await settle { model.outboxStatus(of: old.id) == .resent })
+    #expect(await transport.messages.allSatisfy { $0.id != old.id })
+}
+
+@MainActor
+@Test func renewedFirstMessageReactivatesExpiredThreadSetup() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let ts = Int(Date().addingTimeInterval(-49 * 60 * 60).timeIntervalSince1970 * 1000)
+    let threadId = "old-draft"
+    let create = YorozuEvent(id: "old-create", threadId: threadId, ts: ts, agentId: "phone",
+        payload: .threadCreate(ThreadCreateData()))
+    let setModel = YorozuEvent(id: "old-model", threadId: threadId, ts: ts, agentId: "phone",
+        payload: .threadSetModel(ThreadSetModelData(model: "test-model")))
+    let message = YorozuEvent(id: "old-message", threadId: threadId, ts: ts, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "draft",
+            admissionDeadline: ts + 30 * 60_000)))
+    try cache.savePending([OutboxItem(event: create), OutboxItem(event: setModel), OutboxItem(event: message)])
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    model.stillSend(message.id)
+    let renewedId = try #require(model.outbox.last?.id)
+    await reconnect(transport)
+    #expect(await settle { model.outbox.count == 1 })
+    let sent = await transport.sent.filter { $0.threadId == threadId }
+    #expect(sent.map(\.id) == [create.id, setModel.id, renewedId])
+}
+
+@MainActor
+@Test func oldNeverAttemptedMessageMigratesToStillSendWithoutTransmittingOldId() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let old = YorozuEvent(id: "never-attempted", threadId: "home",
+        ts: Int(Date().addingTimeInterval(-60).timeIntervalSince1970 * 1000), agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "preserve me")))
+    try cache.savePending([OutboxItem(event: old)])
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    #expect(model.outboxStatus(of: old.id) == .expired)
+    await reconnect(transport)
+    #expect(await transport.messages.isEmpty)
+    model.stillSend(old.id)
+    let newId = try #require(model.outbox.first?.replacementId)
+    #expect(newId != old.id)
+    #expect(await settle { model.outbox.count == 1 && model.outboxStatus(of: old.id) == .resent })
+    #expect(await transport.messages.map(\.id) == [newId])
 }
 
 @MainActor
@@ -306,12 +516,16 @@ private func reconnect(_ transport: QueueTransport) async {
     let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
     let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let oldTimestamp = Int(Date().addingTimeInterval(-31 * 60).timeIntervalSince1970 * 1_000)
+    let freshTimestamp = Int(Date().timeIntervalSince1970 * 1_000)
     let old = YorozuEvent(id: "old", threadId: "home",
-                          ts: Int(Date().addingTimeInterval(-Outbox.life - 60).timeIntervalSince1970 * 1_000),
-                          agentId: "phone", payload: .message(MessageData(role: .user, text: "old")))
+                          ts: oldTimestamp,
+                          agentId: "phone", payload: .message(MessageData(role: .user, text: "old",
+                              admissionDeadline: oldTimestamp + 30 * 60_000)))
     let fresh = YorozuEvent(id: "fresh", threadId: "home",
-                            ts: Int(Date().timeIntervalSince1970 * 1_000),
-                            agentId: "phone", payload: .message(MessageData(role: .user, text: "fresh")))
+                            ts: freshTimestamp,
+                            agentId: "phone", payload: .message(MessageData(role: .user, text: "fresh",
+                                admissionDeadline: freshTimestamp + 30 * 60_000)))
     try cache.savePending([OutboxItem(event: old), OutboxItem(event: fresh)])
     let transport = QueueTransport()
     let model = ChatModel(transport: transport, cache: cache, device: "phone")
@@ -319,7 +533,7 @@ private func reconnect(_ transport: QueueTransport) async {
     await reconnect(transport)
     #expect(await settle { model.outbox.map(\.id) == ["old"] })
     #expect(await transport.messages.map(\.id) == ["fresh"])
-    #expect(model.outbox.first?.status == .failed)
+    #expect(model.outbox.first?.status == .expired)
 }
 
 @MainActor
@@ -420,26 +634,4 @@ private func reconnect(_ transport: QueueTransport) async {
     #expect(capped.count == 60)
     #expect(capped.first?.id == "m0")
     #expect(capped.last?.id == "m59")
-}
-
-@MainActor
-@Test func retryOfAgedUnconfirmedMessageActuallySendsItsOriginalID() async throws {
-    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
-    let id = UUID().uuidString
-    let old = Date().addingTimeInterval(-Outbox.life - 60)
-    let event = YorozuEvent(id: id, threadId: "home", ts: Int(old.timeIntervalSince1970 * 1000),
-                            agentId: "phone", payload: .message(MessageData(role: .user, text: "old")))
-    try cache.savePending([OutboxItem(event: event, attemptedAt: old)])
-
-    let transport = QueueTransport()
-    let model = ChatModel(transport: transport, cache: cache, device: "phone")
-    model.start()
-    #expect(model.outboxStatus(of: id) == .unconfirmed)
-    model.retry(id)
-    #expect(model.outbox.first?.tries == 0)
-    await reconnect(transport)
-    #expect(await settle { model.outbox.isEmpty })
-    #expect(await transport.messages.map(\.id) == [id])
 }

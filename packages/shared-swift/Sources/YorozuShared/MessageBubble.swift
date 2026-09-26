@@ -45,6 +45,7 @@ public struct MessageBubble: View {
     private let streaming: Bool
     /// Set while the message is waiting in the outbox, which is what puts a caption under it.
     private let status: OutboxStatus?
+    private let rejectionReason: String?
     private let onRetry: (() -> Void)?
     private let onDelete: (() -> Void)?
     /// Sends the queued message again, for a message the outbox has given up on.
@@ -59,6 +60,7 @@ public struct MessageBubble: View {
         data: MessageData,
         streaming: Bool = false,
         status: OutboxStatus? = nil,
+        rejectionReason: String? = nil,
         onRetry: (() -> Void)? = nil,
         onDelete: (() -> Void)? = nil,
         onResend: (() -> Void)? = nil,
@@ -69,6 +71,7 @@ public struct MessageBubble: View {
         self.agent = agent
         self.streaming = streaming
         self.status = status
+        self.rejectionReason = rejectionReason
         self.onRetry = onRetry
         self.onDelete = onDelete
         self.onResend = onResend
@@ -173,31 +176,42 @@ public struct MessageBubble: View {
     /// What the outbox has to say about this message, under it and in the quiet of a caption:
     /// waiting for the Mac is normal and says so once; uncertain delivery stays explicit.
     @ViewBuilder private func caption(_ status: OutboxStatus) -> some View {
-        let needsRetry = status == .failed || status == .unconfirmed
+        let needsRetry = status == .failed || status == .unconfirmed || status == .expired
+        let description = status == .rejected ? rejectionDescription : status.label
         let label = Label {
             // "tap" on a Mac is a phone app talking to the wrong person.
             #if os(macOS)
                 Text(status == .failed ? "Not sent — click to retry" :
-                    status == .unconfirmed ? "Delivery unconfirmed — click to retry" : status.label)
+                    status == .unconfirmed ? "Delivery unconfirmed — click to retry" : description)
             #else
                 Text(status == .failed ? "Not sent — tap to retry" :
-                    status == .unconfirmed ? "Delivery unconfirmed — tap to retry" : status.label)
+                    status == .unconfirmed ? "Delivery unconfirmed — tap to retry" : description)
             #endif
         } icon: {
             // The icon carries the red; caption-sized red text is under 4.5:1.
             Image(systemName: status.symbol)
-                .foregroundStyle(status == .failed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                .foregroundStyle(status == .failed || status == .rejected ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
         }
         .font(.caption)
-        .foregroundStyle(status == .failed ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+        .foregroundStyle(status == .failed || status == .rejected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
         .padding(.horizontal, 4)
 
         if needsRetry, let onResend {
             Button(action: onResend) { label.frame(minHeight: controlTarget) }
                 .buttonStyle(.plain)
-                .accessibilityHint("Sends this message again")
+                .accessibilityHint(status == .expired ? "Sends a new message with the same content" : "Sends this message again")
         } else {
-            label.accessibilityLabel(status.label)
+            label.accessibilityLabel(description)
+        }
+    }
+
+    private var rejectionDescription: String {
+        switch rejectionReason {
+        case "oversized-attachments": String(localized: "Not sent · attachments too large")
+        case "client-clock-ahead": String(localized: "Not sent · device clock is ahead")
+        case "conflicting-message-id": String(localized: "Not sent · message changed after sending")
+        case "invalid-admission-deadline": String(localized: "Not sent · invalid message deadline")
+        default: String(localized: "Not sent · rejected by host")
         }
     }
 

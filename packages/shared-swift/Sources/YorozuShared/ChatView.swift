@@ -690,14 +690,20 @@ public struct ChatView: View {
             WorkRowView(work: work).id(work.id)
         case .message(let event):
             if case .message(let data) = event.payload {
+                let outboxStatus = model.outboxStatus(of: event.id)
                 MessageBubble(
                     id: event.id,
                     data: data,
                     streaming: event.id == streamingId,
-                    status: model.outboxStatus(of: event.id),
-                    onRetry: data.role == .user ? { retry(data) } : nil,
+                    status: outboxStatus,
+                    rejectionReason: model.outboxRejectionReason(of: event.id),
+                    onRetry: data.role == .user && (outboxStatus == nil || outboxStatus == .rejected)
+                        ? { retry(data) } : nil,
                     onDelete: { model.delete(event.id, in: thread.id) },
-                    onResend: { model.retry(event.id) },
+                    onResend: {
+                        if model.outboxStatus(of: event.id) == .expired { model.stillSend(event.id) }
+                        else { model.retry(event.id) }
+                    },
                     agent: presentation.agent
                 )
                 .id(event.id)

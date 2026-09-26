@@ -213,19 +213,30 @@ private func relayClient(counters: any ChannelCounterStorage) throws -> (RelayCl
     return (try RelayClient(pairing: pairing, identity: identity, counters: counters), identity, mac)
 }
 
-private func greet(_ client: RelayClient, identity: PhoneIdentity, mac: YorozuCrypto.Keypair, legacy: Bool = false, seq: Int = 1) async throws {
+private func greet(_ client: RelayClient, identity: PhoneIdentity, mac: YorozuCrypto.Keypair,
+                   storage: MemoryCounterStorage, legacy: Bool = false, seq: Int = 1) async throws {
     let key = try legacy
         ? YorozuCrypto.deriveSessionKey(myPriv: mac.privateKey, theirPub: identity.sessionPublicKey)
         : YorozuCrypto.deriveChannelKeys(myPriv: mac.privateKey, theirPub: identity.sessionPublicKey, role: .mac).send
-    let greeting = YorozuEvent(id: "greeting", threadId: "", ts: 1, agentId: "main",
-        payload: .threadList(ThreadListData(threads: [])))
-    let plain = try legacy ? JSONEncoder().encode(greeting) : ChannelEnvelope(seq: seq, event: greeting).encoded()
-    let box = try YorozuCrypto.seal(key: key, plaintext: plain)
-    let body = try JSONSerialization.data(withJSONObject: [
-        "t": "box", "n": box.nonce.base64URLEncodedString(),
-        "c": box.ciphertext.base64URLEncodedString(),
-    ])
-    await client.acceptFrame(body.base64URLEncodedString())
+    func accept(_ list: ThreadListData, at number: Int) async throws {
+        let greeting = YorozuEvent(id: "greeting-\(number)", threadId: "", ts: 1, agentId: "main",
+            payload: .threadList(list))
+        let plain = try legacy ? JSONEncoder().encode(greeting) : ChannelEnvelope(seq: number, event: greeting).encoded()
+        let box = try YorozuCrypto.seal(key: key, plaintext: plain)
+        let body = try JSONSerialization.data(withJSONObject: [
+            "t": "box", "n": box.nonce.base64URLEncodedString(),
+            "c": box.ciphertext.base64URLEncodedString(),
+        ])
+        await client.acceptFrame(body.base64URLEncodedString())
+    }
+    let priorSend = storage.value?.send ?? 0
+    try await accept(ThreadListData(threads: [], peerInfoSupported: !legacy), at: seq)
+    guard !legacy else { return }
+    for _ in 0..<100 where (storage.value?.send ?? 0) == priorSend {
+        try? await Task.sleep(for: .milliseconds(1))
+    }
+    let requestID = try #require(await client.peerInfoRequestID)
+    try await accept(ThreadListData(threads: [], peerInfo: .local, peerInfoReplyTo: requestID), at: seq + 1)
 }
 
 /// The counter the client numbers from is the one the storage holds, and every number it
@@ -234,19 +245,19 @@ private func greet(_ client: RelayClient, identity: PhoneIdentity, mac: YorozuCr
 @Test func relayClientNumbersFromTheStoredCounterAndSavesBeforeSending() async throws {
     let storage = MemoryCounterStorage(ChannelCounter(send: 41, recv: 7))
     let (client, identity, mac) = try relayClient(counters: storage)
-    try await greet(client, identity: identity, mac: mac, seq: 8)
+    try await greet(client, identity: identity, mac: mac, storage: storage, seq: 8)
     await #expect(throws: (any Error).self) { try await client.send(sampleEvent) }
-    #expect(storage.value == ChannelCounter(send: 42, recv: 8))
-    #expect(storage.saves == 2)
+    #expect(storage.value == ChannelCounter(send: 43, recv: 9, peerInfoRequired: true))
+    #expect(storage.saves == 5)
 }
 
 /// Nothing stored is a fresh pairing: the first box out is 1.
 @Test func relayClientStartsFromOneWithEmptyStorage() async throws {
     let storage = MemoryCounterStorage()
     let (client, identity, mac) = try relayClient(counters: storage)
-    try await greet(client, identity: identity, mac: mac)
+    try await greet(client, identity: identity, mac: mac, storage: storage)
     await #expect(throws: (any Error).self) { try await client.send(sampleEvent) }
-    #expect(storage.value == ChannelCounter(send: 1, recv: 1))
+    #expect(storage.value == ChannelCounter(send: 2, recv: 2, peerInfoRequired: true))
 }
 
 @Test func legacyMacGreetingLetsNewClientSendWithoutNumberedEnvelope() async throws {
@@ -255,7 +266,7 @@ private func greet(_ client: RelayClient, identity: PhoneIdentity, mac: YorozuCr
     // Before the greeting, no request can be sent in the wrong wire format.
     await #expect(throws: (any Error).self) { try await client.send(sampleEvent) }
     #expect(storage.saves == 0)
-    try await greet(client, identity: identity, mac: mac, legacy: true)
+    try await greet(client, identity: identity, mac: mac, storage: storage, legacy: true)
     await #expect(throws: (any Error).self) { try await client.send(sampleEvent) }
     #expect(storage.saves == 0)
 }
@@ -263,10 +274,13 @@ private func greet(_ client: RelayClient, identity: PhoneIdentity, mac: YorozuCr
 @Test func upgradedMacMovesExistingPairingToNumberedChannel() async throws {
     let storage = MemoryCounterStorage()
     let (client, identity, mac) = try relayClient(counters: storage)
-    try await greet(client, identity: identity, mac: mac, legacy: true)
-    try await greet(client, identity: identity, mac: mac)
-    await #expect(throws: (any Error).self) { try await client.send(sampleEvent) }
-    #expect(storage.value == ChannelCounter(send: 1, recv: 1))
+    try await greet(client, identity: identity, mac: mac, storage: storage, legacy: true)
+    let renewed = try RelayClient(pairing: QrPayload(relayUrl: "ws://127.0.0.1:1",
+        macPubkey: mac.publicKey.base64URLEncodedString(), token: "t", roomId: "r"),
+        identity: identity, counters: storage)
+    try await greet(renewed, identity: identity, mac: mac, storage: storage)
+    await #expect(throws: (any Error).self) { try await renewed.send(sampleEvent) }
+    #expect(storage.value == ChannelCounter(send: 2, recv: 2, peerInfoRequired: true))
 }
 
 /// Storage that cannot be read is refused at construction rather than silently started over.
