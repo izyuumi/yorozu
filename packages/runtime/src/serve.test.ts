@@ -2863,9 +2863,11 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   // event it is about and permits no button.
   expect(Object.keys(notify.previews as object).sort()).toEqual([keys.pub, second.keys.pub].sort());
   expect(openPreview(notify, keys.pub, sessionKey))
-    .toEqual({ body: "the secret reply", event: notify.eventRef, quick: false });
+    .toEqual({ body: "the secret reply", event: notify.eventRef,
+      thread: notify.threadRef, class: "reply", quick: false });
   expect(openPreview(notify, second.keys.pub, secondSessionKey))
-    .toEqual({ body: "the secret reply", event: notify.eventRef, quick: false });
+    .toEqual({ body: "the secret reply", event: notify.eventRef,
+      thread: notify.threadRef, class: "reply", quick: false });
   expect(() => openPreview(notify, second.keys.pub, sessionKey)).toThrow();
   expect(JSON.stringify(notify)).not.toContain("the secret reply");
 
@@ -2877,6 +2879,10 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   };
   phone.frame(channel.box(failed), keys);
   await vi.waitFor(() => expect(seen.map((msg) => msg.class)).toContain("failed"));
+  const failure = seen.find((msg) => msg.class === "failed")!;
+  expect(openPreview(failure, keys.pub, sessionKey)).toMatchObject({
+    event: failure.eventRef, thread: failure.threadRef, class: "failed", quick: false,
+  });
 
   // An approval for something local and below every floor may be answered from the lock
   // screen, and the relay is told so with one bit. The command itself is not in the notify.
@@ -2894,9 +2900,11 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   // what the phone draws Allow and Deny under, and checks before either counts.
   expect(Object.keys(approval.previews as object).sort()).toEqual([keys.pub, second.keys.pub].sort());
   expect(openPreview(approval, keys.pub, sessionKey))
-    .toEqual({ body: "Run a command: echo yorozu-lockscreen", event: approval.eventRef, quick: true });
+    .toEqual({ body: "Run a command: echo yorozu-lockscreen", event: approval.eventRef,
+      thread: approval.threadRef, class: "approval", quick: true });
   expect(openPreview(approval, second.keys.pub, secondSessionKey))
-    .toEqual({ body: "Run a command: echo yorozu-lockscreen", event: approval.eventRef, quick: true });
+    .toEqual({ body: "Run a command: echo yorozu-lockscreen", event: approval.eventRef,
+      thread: approval.threadRef, class: "approval", quick: true });
 
   // The whole side-channel, everything the relay was ever told in the clear. Neither side of
   // the conversation is in it, and neither is the thread it happened in.

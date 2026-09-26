@@ -34,6 +34,7 @@ import {
   seal,
   notifyFor,
   notificationPreviewBody,
+  NOTIFY_BODY,
   encodeNotificationPreview,
   signFrame,
   threadRef,
@@ -2430,8 +2431,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
         threadId: event.threadId,
         ts: Date.now(),
         agentId: MAIN_AGENT,
-        kind: "interrupt",
-        data: {},
+        kind: "message",
+        data: { role: "agent", text: "", done: true, failed: true },
       });
     });
   }
@@ -2532,15 +2533,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
         (quickActions.get(event.data.actionId) === true || nativeCards.quickApprovable(event.data.actionId));
       // A reply's words, or a card's one line, each sealed once per phone under its own key,
       // together with the reference of the event they are about and the quick judgement.
-      const body = notificationPreviewBody(event);
+      const body = notificationPreviewBody(event) ?? NOTIFY_BODY[cls];
       // The thread's title rides inside the sealed box, never beside it: the relay sees none of it.
       let title: string | undefined;
       try {
-        title = body ? listThreads(dir).find((thread) => thread.id === event.threadId)?.title : undefined;
+        title = listThreads(dir).find((thread) => thread.id === event.threadId)?.title;
       } catch {
         // An unreadable index costs the title, not the notification.
       }
-      const plaintext = body ? encodeNotificationPreview({ body, event: threadRef(event.id), quick, title }) : null;
+      const plaintext = encodeNotificationPreview({ body, event: threadRef(event.id),
+        thread: threadRef(event.threadId), class: cls, quick, title });
       const previews = plaintext
         ? Object.fromEntries(
             [...devices.values()].flatMap(({ key, record }) => {

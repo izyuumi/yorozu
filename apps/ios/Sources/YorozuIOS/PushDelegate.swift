@@ -97,12 +97,11 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         let info = notification.request.content.userInfo
-        let ref = info["ref"] as? String
         let reading = await MainActor.run {
             let session = Session.shared
-            let verified = NotificationFallback.authenticatedPreview(userInfo: info, keys: session.notificationKeys)
-            guard let ref, let hostID = verified?.hostID else { return false }
-            return session.hosts.session(for: hostID)?.model.isReading(threadRef: ref) == true
+            guard let destination = NotificationFallback.authenticatedDestination(
+                userInfo: info, keys: session.notificationKeys) else { return false }
+            return session.hosts.session(for: destination.hostID)?.model.isReading(threadRef: destination.threadRef) == true
         }
         return reading ? [] : [.banner, .list, .sound]
     }
@@ -112,9 +111,7 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         didReceive response: UNNotificationResponse
     ) async {
         let info = response.notification.request.content.userInfo
-        guard let ref = info["ref"] as? String else { return }
-        let notificationClass = info["cls"] as? String
-        let eventRef = info["event"] as? String
+        let rawEventRef = info["event"] as? String
 
         // A button, not a tap: answer the card without bringing the app forward. The phone
         // was just unlocked to press it, and the answer is the same `approval_answer` the card
@@ -133,25 +130,27 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         default: nil
         }
         let content = response.notification.request.content
-        let (hostID, actionModel) = await MainActor.run { () -> (HostID?, ChatModel?) in
+        let (destination, actionModel) = await MainActor.run { () -> (AuthenticatedNotificationDestination?, ChatModel?) in
             // Initialize migration, verify the current key and capture its model without an
             // actor hop between them: a concurrent repair cannot switch the approved session.
             let session = Session.shared
             let keys = session.notificationKeys
-            let hostID = NotificationFallback.authenticatedPreview(userInfo: info, keys: keys)?.hostID
+            let destination = NotificationFallback.authenticatedDestination(userInfo: info, keys: keys)
             let permittedHostID = answer == nil ? nil : NotificationFallback.permittedLockScreenHost(
-                body: content.body, userInfo: info, keys: keys, eventRef: eventRef
+                body: content.body, userInfo: info, keys: keys, eventRef: rawEventRef
             )
-            return (hostID, permittedHostID.flatMap { session.hosts.session(for: $0)?.model })
+            return (destination, permittedHostID.flatMap { session.hosts.session(for: $0)?.model })
         }
-        if let answer, let eventRef, let actionModel,
-           await actionModel.answerFromNotification(eventRef: eventRef, answer) { return }
+        if let answer, let rawEventRef, let actionModel,
+           await actionModel.answerFromNotification(eventRef: rawEventRef, answer) { return }
         let models = await MainActor.run { () -> [ChatModel] in
             let session = Session.shared
-            // A relay-written host field is never used. Legacy taps may resolve only when
-            // this device has exactly one possible host; ambiguous taps only catch up.
-            session.open(threadRef: ref, hostID: hostID, notificationClass: notificationClass, eventRef: eventRef)
-            if let hostID { return session.hosts.session(for: hostID).map { [$0.model] } ?? [] }
+            if let destination {
+                session.open(threadRef: destination.threadRef, hostID: destination.hostID,
+                    notificationClass: destination.notificationClass, eventRef: destination.eventRef)
+                return session.hosts.session(for: destination.hostID).map { [$0.model] } ?? []
+            }
+            // Old or unauthenticated pushes may wake a refresh, but cannot choose a chat.
             return session.hosts.sessions.map(\.model)
         }
         await withTaskGroup(of: Void.self) { group in

@@ -27,6 +27,9 @@ export interface NotificationPreviewContent {
   body: string;
   /** `threadRef(event.id)` of the card or message this preview is about; null when unknown. */
   event: string | null;
+  /** Authenticated destination, unlike relay-written `ref`. */
+  thread?: string;
+  class?: NotifyClass;
   /** Whether the Mac judged this card answerable from the lock screen. Never true for a reply. */
   quick: boolean;
   /** The thread's title, shown as the notification's title; null when unknown. */
@@ -68,12 +71,13 @@ export function notifyFor(event: YorozuEvent): NotifyClass | null {
     // Stop is a turn that ends deliberately and says nothing back, so nothing else will arrive
     // to end it.
     case "interrupt":
-      return "failed";
+      return null;
     case "message": {
       if (event.data.role !== "agent") return null;
       // Only the *main* agent's last message ends a turn; a delegated one finishing is a step
       // of it, and the deltas before it are the turn still running.
       if (event.data.done !== true || event.parentAgentId !== undefined) return null;
+      if (event.data.failed === true) return "failed";
       // A turn that ran tools and said nothing is finished rather than answered, and says so:
       // "Yorozu finished" is true of it and "Yorozu replied" would not be.
       return event.data.text.trim() === "" ? "done" : "reply";
@@ -150,14 +154,16 @@ const NOTIFY_TITLE_BYTES = 64;
  * `NOTIFY_PREVIEW_BYTES` — the relay refuses a bigger box. The body gives way to fit.
  */
 export function encodeNotificationPreview(content: NotificationPreviewContent): string {
-  const title = boundedBytes(content.title?.trim().replace(/\s+/g, " ") ?? "", NOTIFY_TITLE_BYTES);
+  let title = [...boundedBytes(content.title?.trim().replace(/\s+/g, " ") ?? "", NOTIFY_TITLE_BYTES)];
   const encode = (body: string): string =>
     JSON.stringify({
       v: NOTIFY_PREVIEW_VERSION,
       body,
       event: content.event,
+      ...(content.thread ? { thread: content.thread } : {}),
+      ...(content.class ? { class: content.class } : {}),
       quick: content.quick === true,
-      ...(title ? { title } : {}),
+      ...(title.length ? { title: title.join("") } : {}),
     });
   let body = [...content.body];
   let plaintext = encode(content.body);
@@ -166,6 +172,13 @@ export function encodeNotificationPreview(content: NotificationPreviewContent): 
     const over = Buffer.byteLength(plaintext) - NOTIFY_PREVIEW_BYTES;
     body = body.slice(0, Math.max(1, body.length - Math.ceil(over / 4)));
     plaintext = encode(body.join(""));
+  }
+  while (Buffer.byteLength(plaintext) > NOTIFY_PREVIEW_BYTES && title.length > 0) {
+    title.pop();
+    plaintext = encode(body.join(""));
+  }
+  if (Buffer.byteLength(plaintext) > NOTIFY_PREVIEW_BYTES) {
+    throw new Error("notification preview routing exceeds byte limit");
   }
   return plaintext;
 }
@@ -191,6 +204,10 @@ export function decodeNotificationPreview(plaintext: string): NotificationPrevie
   return {
     body,
     event: typeof object.event === "string" && object.event !== "" ? object.event : null,
+    ...(typeof object.thread === "string" && object.thread !== "" && object.thread.length <= 128
+      ? { thread: object.thread } : {}),
+    ...(["reply", "approval", "done", "failed"].includes(String(object.class))
+      ? { class: object.class as NotifyClass } : {}),
     quick: object.quick === true,
     ...(typeof object.title === "string" && object.title !== "" ? { title: object.title } : {}),
   };

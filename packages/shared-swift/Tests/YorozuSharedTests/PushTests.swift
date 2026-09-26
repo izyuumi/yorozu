@@ -81,6 +81,9 @@ import Testing
     // The thread title, when the Mac sealed one; an empty one is none.
     #expect(NotificationPreviewContent(plaintext: #"{"v":1,"body":"x","title":"Trip plans"}"#)?.title == "Trip plans")
     #expect(NotificationPreviewContent(plaintext: #"{"v":1,"body":"x","title":""}"#)?.title == nil)
+    #expect(NotificationPreviewContent(plaintext: #"{"v":1,"body":"x","thread":"thread-ref","class":"approval"}"#)?.thread == "thread-ref")
+    #expect(NotificationPreviewContent(plaintext: #"{"v":1,"body":"x","thread":"thread-ref","class":"approval"}"#)?.notificationClass == "approval")
+    #expect(NotificationPreviewContent(plaintext: #"{"v":1,"body":"x","class":"forged"}"#)?.notificationClass == nil)
     // Nothing to say is no preview.
     #expect(NotificationPreviewContent(plaintext: #"{"v":1,"body":""}"#) == nil)
     #expect(NotificationPreviewContent(plaintext: #"{"v":1}"#) == nil)
@@ -141,19 +144,29 @@ import Testing
     let keys = ["host-a": a, "host-b": b]
     let body = "Run the same command?"
     let event = YorozuCrypto.threadRef("same-card-on-both-hosts")
+    let thread = YorozuCrypto.threadRef("same-thread-on-both-hosts")
     for (host, key) in keys {
-        let plaintext = #"{"v":1,"body":"\#(body)","event":"\#(event)","quick":true}"#
+        let plaintext = #"{"v":1,"body":"\#(body)","event":"\#(event)","thread":"\#(thread)","class":"approval","quick":true}"#
         let box = try YorozuCrypto.seal(key: key, plaintext: Data(plaintext.utf8))
         // Identical thread/card references do not affect host ownership. All routing labels
         // below can be supplied or forged by a relay and therefore must have no authority.
         let info: [AnyHashable: Any] = [
             "preview": ["n": box.nonce.base64URLEncodedString(), "c": box.ciphertext.base64URLEncodedString()],
-            "ref": YorozuCrypto.threadRef("same-thread-on-both-hosts"),
+            "ref": thread,
             "event": event,
             "hostID": host == "host-a" ? "host-b" : "host-a",
             NotificationFallback.localHostKey: "forged-host",
         ]
         #expect(NotificationFallback.authenticatedPreview(userInfo: info, keys: keys)?.hostID == host)
+        #expect(NotificationFallback.authenticatedDestination(userInfo: info, keys: keys) ==
+            AuthenticatedNotificationDestination(hostID: host, threadRef: thread, eventRef: event,
+                notificationClass: "approval"))
+        var forgedDestination = info
+        forgedDestination["ref"] = "another-thread"
+        forgedDestination["event"] = "another-card"
+        forgedDestination["cls"] = "failed"
+        #expect(NotificationFallback.authenticatedDestination(userInfo: forgedDestination, keys: keys) ==
+            NotificationFallback.authenticatedDestination(userInfo: info, keys: keys))
         #expect(NotificationFallback.permittedLockScreenHost(body: body, userInfo: info, keys: keys, eventRef: event) == host)
         #expect(NotificationFallback.permittedLockScreenHost(body: "Forged words", userInfo: info, keys: keys, eventRef: event) == nil)
         #expect(NotificationFallback.permittedLockScreenHost(body: body, userInfo: info, keys: keys, eventRef: "another-card") == nil)

@@ -655,9 +655,9 @@ struct RootView: View {
         center.getDeliveredNotifications { delivered in
             let stale = delivered.compactMap { note -> String? in
                 let info = note.request.content.userInfo
-                guard let ref = info["ref"] as? String,
-                      let verified = NotificationFallback.authenticatedPreview(userInfo: info, keys: keys),
-                      let unreadRefs = unread[verified.hostID], !unreadRefs.contains(ref) else { return nil }
+                guard let destination = NotificationFallback.authenticatedDestination(userInfo: info, keys: keys),
+                      let unreadRefs = unread[destination.hostID],
+                      !unreadRefs.contains(destination.threadRef) else { return nil }
                 return note.request.identifier
             }
             if !stale.isEmpty { center.removeDeliveredNotifications(withIdentifiers: stale) }

@@ -42,12 +42,14 @@ test("deltas, delegated finals and tool traffic wake nobody", () => {
   expect(notificationPreviewBody(cut)).toBeNull();
 });
 
-test("cards are the class worth interrupting someone for, and a stop is a failure", () => {
+test("cards and real failures notify, while a requested stop stays quiet", () => {
   expect(notifyFor(event({ kind: "approval_card", data: { actionId: "a", actionClass: "send", target: "x" } })))
     .toBe("approval");
   expect(notifyFor(event({ kind: "question_card", data: { questionId: "q", question: "?", options: [] } })))
     .toBe("approval");
-  expect(notifyFor(event({ kind: "interrupt", data: {} }))).toBe("failed");
+  expect(notifyFor(event({ kind: "interrupt", data: {} }))).toBeNull();
+  expect(notifyFor(event({ kind: "message", data: { role: "agent", text: "Could not complete", done: true, failed: true } })))
+    .toBe("failed");
 });
 
 test("a phone's own message and the control frames are not news", () => {
@@ -129,6 +131,16 @@ test("a preview's plaintext is a versioned object, and decodes back to what was 
     .toEqual({ body: "x", event: null, quick: false });
   expect(decodeNotificationPreview('{"v":1,"body":"","event":"e","quick":true}')).toBeNull();
   expect(decodeNotificationPreview('{"v":1,"event":"e","quick":true}')).toBeNull();
+});
+
+test("sealed notification destination survives encode and ignores unknown alert class", () => {
+  const content = { body: "Need input", event: "event-ref", thread: "thread-ref", class: "approval" as const, quick: true };
+  expect(decodeNotificationPreview(encodeNotificationPreview(content))).toEqual(content);
+  expect(decodeNotificationPreview('{"v":1,"body":"x","thread":"t","class":"forged"}'))
+    .toEqual({ body: "x", event: null, quick: false, thread: "t" });
+  const worstTitle = encodeNotificationPreview({ ...content, body: "x".repeat(256), title: "\0".repeat(64) });
+  expect(Buffer.byteLength(worstTitle)).toBeLessThanOrEqual(NOTIFY_PREVIEW_BYTES);
+  expect(decodeNotificationPreview(worstTitle)).toMatchObject({ event: "event-ref", thread: "thread-ref", class: "approval" });
 });
 
 test("a preview carries the thread title, and fits the relay's box whatever the body", () => {
