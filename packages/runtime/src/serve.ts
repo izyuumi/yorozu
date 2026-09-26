@@ -663,32 +663,32 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const PAIRING_SECRETS = 4;
   /** Seals and sends to one paired device. Replaced per connection, a no-op while there is none. */
   let sendTo: (device: string, event: YorozuEvent) => void = () => {};
-  let sendToAll: (event: YorozuEvent) => void = () => {};
+  let sendToAll: (event: YorozuEvent) => number = () => 0;
   const liveReplies = new Map<string, YorozuEvent>();
   const partials = new Map<string, YorozuEvent>();
   let partialTimer: NodeJS.Timeout | null = null;
   let nextPartialAt = 0;
 
-  /** Latest partial per thread, sent round-robin at no more than ten broadcasts a second. */
+  /** Latest partial per thread, paced by the relay batches each broadcast actually used. */
   const flushPartial = (): void => {
     partialTimer = null;
     const entry = partials.entries().next().value;
     if (!entry || stopped) return;
     const [threadId, event] = entry;
     partials.delete(threadId);
-    if (running.has(threadId) && !running.get(threadId)?.signal.aborted) {
-      try { sendBroadcast(event); }
-      catch (error) { state(`partial-send-error ${String(error)}`); }
-    }
-    nextPartialAt = Date.now() + 100;
-    if (partials.size) partialTimer = setTimeout(flushPartial, 100);
+    let batches = 0;
+    try { batches = sendBroadcast(event); }
+    catch (error) { state(`partial-send-error ${String(error)}`); }
+    nextPartialAt = Date.now() + Math.max(100, batches * 50);
+    if (partials.size) partialTimer = setTimeout(flushPartial, nextPartialAt - Date.now());
   };
 
-  const sendBroadcast = (event: YorozuEvent): void => {
-    sendToAll(event);
+  const sendBroadcast = (event: YorozuEvent): number => {
+    const batches = sendToAll(event);
     for (const send of locals.values()) send(event);
     // A suspended phone still needs a wake for a final reply or actionable card.
     notifyRelay(event);
+    return batches;
   };
 
   /** The same event to every paired device, through the relay or over the local socket. */
@@ -705,7 +705,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
           return;
         }
         partials.delete(event.threadId);
-        nextPartialAt = Date.now() + 100;
+        nextPartialAt = Date.now() + Math.max(100, sendBroadcast(event) * 50);
+        return;
       }
     }
     sendBroadcast(event);
@@ -2248,8 +2249,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
     sendToAll = (event) => {
       let frames: ReturnType<typeof signedFrame>[] = [];
       let bytes = emptyBatchBytes;
+      let batches = 0;
       const flush = (): void => {
-        if (frames.length) ws.send(JSON.stringify({ type: "frame", frames }));
+        if (frames.length) {
+          ws.send(JSON.stringify({ type: "frame", frames }));
+          batches++;
+        }
         frames = [];
         bytes = emptyBatchBytes;
       };
@@ -2262,6 +2267,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         bytes += size;
       }
       flush();
+      return batches;
     };
 
     /**

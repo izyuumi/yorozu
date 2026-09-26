@@ -246,7 +246,9 @@ fields keep ordinary replay.
 
 Live agent replies send their first partial immediately, then keep only the latest unsent
 revision per thread. A round-robin sender allows at most ten partial broadcasts per second
-across threads. Final replies bypass this queue and discard superseded partials; the host still
+across threads and slows further when a broadcast splits into several relay batches. Final
+replies bypass this queue and discard superseded partials; interrupted turns keep their last
+queued draft. The host still
 keeps the full current reply for reconnect catch-up and writes the final to durable history.
 The host sends each live broadcast's sealed phone copies in relay frame batches of at most
 16 entries and under 900 KB, so multiple paired phones do not multiply relay rate-limit cost.

@@ -1101,6 +1101,22 @@ test("rapid reply revisions converge to the latest partial and final answer", as
     .map((event) => event.kind === "message" ? event.data.text : "")).toEqual(["draft 0", "draft 19", "finished"]);
 });
 
+test("stopping a turn keeps its latest unsent draft", async () => {
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    for (let i = 0; i < 20; i++) turn.onUpdate?.(`draft ${i}`);
+    await new Promise<void>((resolve) => turn.signal.addEventListener("abort", () => resolve(), { once: true }));
+    return { text: "" };
+  } };
+  const { send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "cc");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "cc"));
+  const id = send({ kind: "message", data: { role: "user", text: "write" } }, "cc");
+  await eventsUntil((event) => event.kind === "message" && event.data.role === "agent" && event.data.text === "draft 0");
+  send({ kind: "interrupt", data: { targetEventId: id } }, "cc");
+  expect((await eventsUntil((event) => event.kind === "message" && event.data.role === "agent" &&
+    event.data.text === "draft 19")).at(-1)).toMatchObject({ data: { text: "draft 19" } });
+});
+
 test("client archive and restore reach OpenClaw in order before the canonical list changes", async () => {
   vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
   let finishArchive!: () => void;
