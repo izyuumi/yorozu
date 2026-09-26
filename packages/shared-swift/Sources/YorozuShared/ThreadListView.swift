@@ -453,6 +453,7 @@ struct ConnectionPill: View {
     /// The multi-host list says which hosts are missing rather than "Mac offline".
     var label: String? = nil
 
+    private let cornerRadius: CGFloat = 14
     @ScaledMetric(relativeTo: .caption) private var dot = 7
 
     var body: some View {
@@ -468,9 +469,9 @@ struct ConnectionPill: View {
         // The bar is glass on 26, so the pill in it should be glass too; on 18 through 25 a thin
         // material is the nearest thing that still reads as a control rather than a label.
         if #available(iOS 26, macOS 26, *) {
-            content.glassEffect(in: .rect(cornerRadius: 14))
+            content.glassEffect(in: .rect(cornerRadius: cornerRadius))
         } else {
-            content.background(.thinMaterial, in: .rect(cornerRadius: 14))
+            content.background(.thinMaterial, in: .rect(cornerRadius: cornerRadius))
         }
     }
 }
@@ -497,6 +498,8 @@ public struct ThreadListView<Destination: View>: View {
     private let hostLabel: (String) -> String?
     private let onNewThread: (() -> Void)?
     private let connection: ConnectionState?
+    private let connectionSince: ContinuousClock.Instant?
+    private let connectionIsGraced: Bool
     private let connectionSummary: String?
     @Binding private var path: [String]
     /// Where a coding agent can be started. Empty means the picker offers Yorozu alone.
@@ -533,7 +536,10 @@ public struct ThreadListView<Destination: View>: View {
     #endif
 
     /// Nil with no host to report on; otherwise the graced state.
-    private var shownConnection: ConnectionState? { connection == nil ? nil : presentation.state }
+    private var shownConnection: ConnectionState? {
+        guard let connection else { return nil }
+        return connectionIsGraced ? connection : presentation.state
+    }
 
     /// Regular width draws the list beside the chat, including on iPhone Duo's inner display.
     /// Compact width keeps the stack; the same `path` drives both layouts during resizing.
@@ -584,6 +590,8 @@ public struct ThreadListView<Destination: View>: View {
         hostLabel: @escaping (String) -> String? = { _ in nil },
         onNewThread: (() -> Void)? = nil,
         connection: ConnectionState? = nil,
+        connectionSince: ContinuousClock.Instant? = nil,
+        connectionIsGraced: Bool = false,
         connectionSummary: String? = nil,
         path: Binding<[String]>,
         projects: [ProjectFolder] = [],
@@ -606,6 +614,8 @@ public struct ThreadListView<Destination: View>: View {
         self.hostLabel = hostLabel
         self.onNewThread = onNewThread
         self.connection = connection
+        self.connectionSince = connectionSince
+        self.connectionIsGraced = connectionIsGraced
         self.connectionSummary = connectionSummary
         self._path = path
         self.projects = projects
@@ -755,10 +765,12 @@ public struct ThreadListView<Destination: View>: View {
             .animation(reduceMotion ? nil : .default, value: shownConnection)
         }
         .onChange(of: connection, initial: true) { _, actual in
-            presentation.update(actual ?? .connected, active: scenePhase != .background)
+            guard !connectionIsGraced else { return }
+            presentation.update(actual ?? .connected, active: scenePhase != .background, since: connectionSince)
         }
         .onChange(of: scenePhase) { _, phase in
-            presentation.update(connection ?? .connected, active: phase != .background)
+            guard !connectionIsGraced else { return }
+            presentation.update(connection ?? .connected, active: phase != .background, since: connectionSince)
         }
         // Once per declared change, not once per retry: the presentation only moves after the
         // grace, or on recovery.

@@ -89,6 +89,8 @@ public struct MultiHostThreadListView<Destination: View>: View {
             hostLabel: adapter.hostLabel,
             onNewThread: { choosingHost = true },
             connection: session.connectionState,
+            connectionSince: session.hasMultipleHosts ? nil : session.sessions.first?.model.interruptedSince,
+            connectionIsGraced: session.hasMultipleHosts,
             connectionSummary: session.hasMultipleHosts ? session.connectionSummary : nil,
             path: Binding(get: { path.map(\.listID) }, set: { ids in
                 path = ids.compactMap { adapter.resolve($0)?.id }
@@ -192,14 +194,15 @@ public struct MultiHostThreadSidebar: View {
 }
 
 extension MultiHostModel {
-    /// The worst link among the hosts, so a merged list is only "connected" when every host
-    /// is. Among several, a host that needs an update counts as away, as the
-    /// ``connectionSummary`` the list shows alongside counts it; a lone host is only its link,
-    /// since without a summary the label would say "Mac offline" of a Mac that is not.
+    /// The worst link among the hosts. Each host first gets its own five-second grace, so a
+    /// fresh interruption cannot borrow another host's elapsed time. With one host the list
+    /// applies that host's grace using its interruption anchor. An update-required host counts
+    /// as away only in the multi-host summary; alone it has its own update label elsewhere.
     public var connectionState: ConnectionState? {
         let states = sessions.map { host -> ConnectionState in
             if hasMultipleHosts, case .updateRequired = host.model.compatibility { return .offline }
-            return ConnectionState(state: host.model.state, ownerOnline: host.model.ownerOnline)
+            return hasMultipleHosts ? host.model.link.state
+                : ConnectionState(state: host.model.state, ownerOnline: host.model.ownerOnline)
         }
         guard !states.isEmpty else { return nil }
         if states.contains(.offline) { return .offline }

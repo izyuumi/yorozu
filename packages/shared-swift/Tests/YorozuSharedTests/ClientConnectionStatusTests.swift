@@ -159,3 +159,37 @@ private func eventuallyRecovered(_ condition: @MainActor () -> Bool) async -> Bo
     #expect(ClientConnectionStatus(model, failure: model.failure) == .connected)
     #expect(hosts.connectionSummary == whileUp)
 }
+
+/// Each host owns its own grace: one host recovering cannot let another host's fresh
+/// interruption borrow the first host's elapsed time in the merged list.
+@MainActor
+@Test func multiHostConnectionDoesNotAccumulateDifferentHostInterruptions() async {
+    let firstTransport = RecoveryTransport()
+    let secondTransport = RecoveryTransport()
+    let first = ChatModel(transport: firstTransport, device: "first")
+    let second = ChatModel(transport: secondTransport, device: "second")
+    let hosts = MultiHostModel(sessions: [
+        HostSession(id: "first", model: first, relayURL: "wss://relay.test", nickname: "First"),
+        HostSession(id: "second", model: second, relayURL: "wss://relay.test", nickname: "Second"),
+    ])
+    first.start()
+    second.start()
+    defer { first.close(); second.close() }
+    await firstTransport.yield(.ownerOnline(true))
+    await firstTransport.yield(.state(.paired))
+    await secondTransport.yield(.ownerOnline(true))
+    await secondTransport.yield(.state(.paired))
+    #expect(await eventuallyRecovered { first.link.state == .connected && second.link.state == .connected })
+    let whileUp = hosts.connectionSummary
+
+    await firstTransport.yield(.state(.closed))
+    #expect(await eventuallyRecovered { first.state == .closed })
+    #expect(hosts.connectionState == .connected)
+    #expect(hosts.connectionSummary == whileUp)
+
+    await secondTransport.yield(.state(.closed))
+    await firstTransport.yield(.state(.paired))
+    #expect(await eventuallyRecovered { second.state == .closed && first.state == .paired })
+    #expect(hosts.connectionState == .connected)
+    #expect(hosts.connectionSummary == whileUp)
+}
