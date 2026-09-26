@@ -1011,8 +1011,7 @@ private func summary(
         .first { $0.payload == .interrupt(InterruptData(targetEventId: target)) })
     await transport.yield(.event(event("unconfirmed", .stopStatus(StopStatusData(
         targetEventId: target, requestId: stop.id, status: .unconfirmed)))))
-    #expect(await eventually { !model.stopPending(in: "home") &&
-        model.failure == "Could not confirm whether this task stopped. Check the host before retrying." })
+    #expect(await eventually { !model.stopPending(in: "home") && model.hasUnconfirmedStop(in: "home") })
     #expect(!model.generating.contains("home"))
 }
 

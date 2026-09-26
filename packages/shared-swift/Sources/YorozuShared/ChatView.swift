@@ -167,6 +167,10 @@ public struct ChatView: View {
             if let failure = model.failure, failure != model.linkFailure {
                 Banner(text: failure, systemImage: "exclamationmark.triangle")
             }
+            if model.hasUnconfirmedStop(in: thread.id) {
+                Banner(text: "Could not confirm whether this task stopped. Check the host before retrying.",
+                    systemImage: "exclamationmark.triangle")
+            }
             if thread.interruptedTurnId != nil {
                 VStack(alignment: .leading) {
                     Label("Couldn't resume automatically", systemImage: "pause.circle")

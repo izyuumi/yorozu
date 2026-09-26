@@ -93,6 +93,29 @@ private func reconnect(_ transport: QueueTransport) async {
 }
 
 @MainActor
+@Test func uncertainStopWarningSurvivesClientRelaunch() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    await transport.yield(.event(YorozuEvent(id: "threads", threadId: "", ts: 1, agentId: "main",
+        payload: .threadList(ThreadListData(threads: [
+            ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1, activeEventId: "running")
+        ])))))
+    #expect(await settle { model.activeEventId(in: "home") == "running" })
+    model.interrupt(in: "home")
+    let stop = try #require(model.outbox.first { $0.event.payload == .interrupt(InterruptData(targetEventId: "running")) })
+    await transport.yield(.event(YorozuEvent(id: "uncertain", threadId: "home", ts: 2, agentId: "main",
+        payload: .stopStatus(StopStatusData(targetEventId: "running", requestId: stop.id, status: .unconfirmed)))))
+    #expect(await settle { model.hasUnconfirmedStop(in: "home") && !model.stopPending(in: "home") })
+    await model.flushCache()
+    let restored = ChatModel(transport: QueueTransport(), cache: cache, device: "phone")
+    #expect(restored.hasUnconfirmedStop(in: "home"))
+}
+
+@MainActor
 @Test func offlineApprovalSurvivesRelaunchAndReceiptDoesNotClaimItApplied() async throws {
     let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }

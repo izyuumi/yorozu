@@ -901,6 +901,17 @@ public final class ChatModel {
         outbox.contains { $0.event.payload == .interrupt(InterruptData(targetEventId: eventId)) }
     }
 
+    public func hasUnconfirmedStop(in threadId: String) -> Bool {
+        let events = timelines[threadId]?.events ?? []
+        return events.contains { event in
+            guard case .stopStatus(let status) = event.payload, status.status == .unconfirmed else { return false }
+            return !events.contains { known in
+                guard case .message(let reply) = known.payload, reply.role == .agent, reply.done == true else { return false }
+                return known.id.hasSuffix(":\(status.targetEventId):final")
+            }
+        }
+    }
+
     private func queueStop(_ targetEventId: String, in threadId: String) {
         guard !outbox.contains(where: { $0.event.payload == .interrupt(InterruptData(targetEventId: targetEventId)) }) else { return }
         let pending = outbox + [OutboxItem(event: event(.interrupt(InterruptData(targetEventId: targetEventId)), in: threadId))]
@@ -973,7 +984,6 @@ public final class ChatModel {
         outbox.remove(at: index)
         if status.status == .unconfirmed {
             generating.remove(threadId)
-            failure = "Could not confirm whether this task stopped. Check the host before retrying."
             saveOutbox()
             return
         }
