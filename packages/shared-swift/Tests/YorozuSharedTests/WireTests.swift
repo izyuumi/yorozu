@@ -127,6 +127,29 @@ struct WireTests {
         model.close()
     }
 
+    /// What a user sends into a link that died silently reaches the Mac once each, in order.
+    /// Sending is when the dead link matters most, so a send does not wait for the idle ping
+    /// to find out: it is checked within one pong deadline.
+    @Test func messagesSentIntoADeadLinkArriveOnceEachInOrder() async throws {
+        let rig = try await WireRig()
+        // An idle ping that would take half a minute, so only the send itself can notice.
+        let timing = RelayClient.Timing(firstBackoff: 0.05, maxBackoff: 0.4, pingInterval: .seconds(30),
+                                        pongDeadline: .milliseconds(300), connectionDeadline: .seconds(1.5))
+        let model = try await pairedModel(rig, timing: timing)
+        let thread = model.newDraft().id
+        try await rig.run("blackhole")
+        model.send("first", in: thread)
+        model.send("second", in: thread)
+        try await until("the dead link noticed", within: .seconds(2)) { !model.canDeliver }
+        try await rig.run("heal")
+        try await until("both messages receipted") { model.canDeliver && model.outbox.isEmpty }
+        let sent = try await rig.events(in: thread).compactMap { event -> String? in
+            if case .message(let data) = event.payload, data.role == .user { data.text } else { nil }
+        }
+        #expect(sent == ["first", "second"])
+        model.close()
+    }
+
     /// A link that drops while the Mac is streaming an answer, and stays down until the answer is
     /// done, loses none of it and repeats none of it: the phone ends with one complete answer,
     /// just as the Mac recorded it.
