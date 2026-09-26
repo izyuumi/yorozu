@@ -738,9 +738,11 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     let reply = event("older-host-reply", .message(MessageData(role: .agent, text: "Done", done: true)),
                       thread: "second-host-thread")
     let ref = YorozuCrypto.threadRef(reply.id)
+    var delivered = false
+    model.onEvent = { delivered = delivered || $0.id == reply.id }
     #expect(model.threadRef(containingEventRef: ref) == nil)
-    await transport.yield(.event(reply))
-    #expect(await eventually { model.threadRef(containingEventRef: ref) == YorozuCrypto.threadRef(reply.threadId) })
+    await transport.yield(.event(event("sync", .syncDelta(SyncDeltaData(events: [reply])))))
+    #expect(await eventually { delivered && model.threadRef(containingEventRef: ref) == YorozuCrypto.threadRef(reply.threadId) })
     #expect(model.threadRef(containingEventRef: YorozuCrypto.threadRef("unknown")) == nil)
 }
 

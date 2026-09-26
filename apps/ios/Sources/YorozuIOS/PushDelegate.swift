@@ -97,12 +97,33 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         let info = notification.request.content.userInfo
-        let reading = await MainActor.run {
+        let (reading, waitForLegacy) = await MainActor.run {
             let session = Session.shared
-            guard let destination = session.authenticatedNotificationDestination(userInfo: info) else { return false }
-            return session.hosts.session(for: destination.hostID)?.model.isReading(threadRef: destination.threadRef) == true
+            if let destination = session.authenticatedNotificationDestination(userInfo: info) {
+                return (session.hosts.session(for: destination.hostID)?.model.isReading(threadRef: destination.threadRef) == true, false)
+            }
+            // An older host sealed the event but not its thread. The relay's `ref` may only
+            // decide whether to wait for that event's sync; it never decides suppression.
+            guard let match = NotificationFallback.authenticatedPreview(userInfo: info, keys: session.notificationKeys),
+                  match.preview.thread == nil, match.preview.event != nil,
+                  let hint = info["ref"] as? String,
+                  session.hosts.session(for: match.hostID)?.model.isReading(threadRef: hint) == true
+            else { return (false, false) }
+            return (false, true)
         }
-        return reading ? [] : [.banner, .list, .sound]
+        if reading { return [] }
+        if waitForLegacy {
+            for _ in 0..<20 {
+                try? await Task.sleep(for: .milliseconds(50))
+                let resolved = await MainActor.run { () -> Bool? in
+                    let session = Session.shared
+                    guard let destination = session.authenticatedNotificationDestination(userInfo: info) else { return nil }
+                    return session.hosts.session(for: destination.hostID)?.model.isReading(threadRef: destination.threadRef) == true
+                }
+                if let resolved { return resolved ? [] : [.banner, .list, .sound] }
+            }
+        }
+        return [.banner, .list, .sound]
     }
 
     func userNotificationCenter(
