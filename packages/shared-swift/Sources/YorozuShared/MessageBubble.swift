@@ -47,6 +47,7 @@ public struct MessageBubble: View {
     private let status: OutboxStatus?
     private let rejectionReason: String?
     private let onRetry: (() -> Void)?
+    private let onWithdraw: (() -> Void)?
     private let onDelete: (() -> Void)?
     /// Sends the queued message again, for a message the outbox has given up on.
     private let onResend: (() -> Void)?
@@ -62,6 +63,7 @@ public struct MessageBubble: View {
         status: OutboxStatus? = nil,
         rejectionReason: String? = nil,
         onRetry: (() -> Void)? = nil,
+        onWithdraw: (() -> Void)? = nil,
         onDelete: (() -> Void)? = nil,
         onResend: (() -> Void)? = nil,
         agent: ThreadAgent = .yorozu
@@ -73,6 +75,7 @@ public struct MessageBubble: View {
         self.status = status
         self.rejectionReason = rejectionReason
         self.onRetry = onRetry
+        self.onWithdraw = onWithdraw
         self.onDelete = onDelete
         self.onResend = onResend
     }
@@ -147,6 +150,9 @@ public struct MessageBubble: View {
         }
         if let onRetry {
             Button("Retry", systemImage: "arrow.clockwise", action: onRetry)
+        }
+        if let onWithdraw {
+            Button("Cancel send", systemImage: "xmark.circle", action: onWithdraw)
         }
         if let onDelete {
             // Local only, which the menu says outright: the word "Delete" on its own

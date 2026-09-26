@@ -387,7 +387,10 @@ test("the local socket round-trips a turn and receives broadcasts, with no relay
   // Thread admin is broadcast rather than answered to one device: getting it proves the socket
   // sits in the sidecar's session map like any paired phone.
   send(socket, "t2", { kind: "thread_create", data: { title: "Groceries" } });
-  const listed = await events.nextOf("thread_list");
+  let listed = await events.nextOf("thread_list");
+  while (listed.kind === "thread_list" && !listed.data.threads.some((thread) => thread.title === "Groceries")) {
+    listed = await events.nextOf("thread_list");
+  }
   expect(
     listed.kind === "thread_list" && listed.data.threads.map((t) => t.title).toSorted(),
   ).toEqual(["Chores", "Groceries"]);
@@ -399,6 +402,46 @@ test("the local socket round-trips a turn and receives broadcasts, with no relay
     delta.kind === "sync_delta" &&
       delta.data.events.map((e) => (e.kind === "message" ? e.data.text : e.kind)),
   ).toEqual(["ping", "pong"]);
+});
+
+test("exact Stop outcome survives host restart and leaves later work alone", async () => {
+  const { dir, path, fetchMock } = await localSidecar();
+  socket = await connectLocal(path);
+  const events = reader(socket);
+  await events.nextOf("thread_list");
+  createThread("Stop", dir, "stop-restart");
+  appendThreadEvent({ id: "old-target", threadId: "stop-restart", ts: Date.now(), agentId: "mac",
+    kind: "message", data: { role: "user", text: "old work" } }, dir);
+  send(socket, "stop-restart", { kind: "interrupt", data: { targetEventId: "old-target" } });
+  expect(await events.nextOf("stop_status")).toMatchObject({
+    data: { targetEventId: "old-target", status: "stopped" },
+  });
+  send(socket, "stop-restart", { kind: "interrupt", data: { targetEventId: "late-target" } });
+  expect(await events.nextOf("stop_status")).toMatchObject({
+    data: { targetEventId: "late-target", status: "withdrawn" },
+  });
+  socket.destroy();
+  await sidecar.close();
+  appendFileSync(join(dir, "stopped-turns.jsonl"), '{"targetEventId":"torn"');
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir,
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: fetchMock }), log: () => {} });
+  socket = await connectLocal(path);
+  const restarted = reader(socket);
+  await restarted.nextOf("thread_list");
+  send(socket, "stop-restart", { kind: "interrupt", data: { targetEventId: "old-target" } });
+  expect(await restarted.nextOf("stop_status")).toMatchObject({
+    data: { targetEventId: "old-target", status: "stopped" },
+  });
+  socket.write(`${JSON.stringify({ id: "late-target", threadId: "stop-restart", ts: Date.now(), agentId: "mac",
+    kind: "message", data: { role: "user", text: "must never run" } })}\n`);
+  expect(await restarted.nextOf("admission_status")).toMatchObject({
+    data: { eventId: "late-target", status: "withdrawn" },
+  });
+  expect(fetchMock).not.toHaveBeenCalled();
+  send(socket, "stop-restart", { kind: "message", data: { role: "user", text: "new work" } });
+  expect(await restarted.nextOf("message")).toMatchObject({ data: { role: "user", text: "new work" } });
+  expect(await restarted.nextOf("message")).toMatchObject({ data: { role: "agent", done: true } });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
 test("messages in one thread run FIFO without overlap", async () => {

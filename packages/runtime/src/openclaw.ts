@@ -164,6 +164,34 @@ export class OpenClawRunner {
     return this.readPending(requireKnown).sort((a, b) => a.startedAt - b.startedAt);
   }
 
+  discardPending(userEventId: string): void {
+    this.writePending(this.readPending().filter((turn) => turn.userEventId !== userEventId));
+  }
+
+  /** Confirm the Gateway no longer has this exact run in flight before reporting Stopped. */
+  async stopRun(sessionKey: string, runId: string): Promise<{ status: "stopped" | "completed"; text?: string } | undefined> {
+    const client = await this.connect();
+    await client.request("chat.abort", { sessionKey, runId });
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const history = await client.request<History>("chat.history", { sessionKey, limit: 1000, inputRunIds: [runId] });
+      if (history.inFlightRun?.runId !== runId) {
+        const completed = (history.messages ?? []).some((value) => {
+          const message = record(value);
+          const observedRunId = string(record(message.__openclaw).runId ?? message.runId);
+          return message.role === "assistant" && observedRunId === runId &&
+            ["stop", "length", "error"].includes(string(message.stopReason));
+        });
+        if (completed) {
+          const final = correlatedFinal(history.messages ?? [], { runId, awaitsAnnouncement: false, childRunIds: new Set() });
+          return final.found ? { status: "completed", text: final.text } : undefined;
+        }
+        return { status: "stopped" };
+      }
+      await delay(this.#recoveryDelayMs);
+    }
+    return undefined;
+  }
+
   /** Durably owns a user turn before its visible event is accepted. Replays repair either side. */
   admitUserTurn(turn: OpenClawTurn, accept: (stored?: StoredPendingTurn) => void,
     alreadyAccepted: () => boolean = () => false): StoredPendingTurn | undefined {

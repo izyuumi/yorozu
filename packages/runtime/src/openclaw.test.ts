@@ -321,6 +321,16 @@ describe("OpenClawRunner", () => {
     }));
   });
 
+  test("stop racing a completed run returns its final answer", async () => {
+    const gateway = harness();
+    gateway.request.mockImplementation(async (method) => method === "chat.history" ? {
+      messages: [{ role: "assistant", runId: "finished-run", stopReason: "stop", content: "finished answer" }],
+    } : {});
+    const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    await expect(runner.stopRun("agent:main:yorozu:done", "finished-run"))
+      .resolves.toEqual({ status: "completed", text: "finished answer" });
+  });
+
   test("abort during connect or session patch never dispatches chat.send", async () => {
     let connected!: () => void;
     const connectRequest = vi.fn(async () => ({}));

@@ -371,6 +371,8 @@ export interface ThreadRenameData {
 }
 
 export interface ThreadSummary {
+  /** Host-owned ID of the user operation currently executing in this thread. */
+  activeEventId?: string;
   interruptedTurnId?: string;
   canResume?: boolean;
   bypass?: boolean;
@@ -520,10 +522,16 @@ export interface ProjectListData {
 }
 
 /**
- * The user pressed stop: cancel the turn running in `threadId` and every agent it
- * delegated to. Carries nothing of its own.
+ * The user pressed Stop for one exact user event. Legacy requests may omit the target.
  */
-export type InterruptData = Record<string, never>;
+export interface InterruptData { targetEventId?: string }
+
+/** Host outcome for one exact-run Stop request. A receipt alone is not cessation. */
+export interface StopStatusData {
+  targetEventId: string;
+  requestId: string;
+  status: "requested" | "stopped" | "completed" | "withdrawn" | "unknown";
+}
 
 /** Last sync cursor the device already holds, per thread. Event ids support older peers. */
 export interface SyncRequestData {
@@ -628,6 +636,7 @@ export type EventPayload =
   | { kind: "model_list"; data: ModelListData }
   | { kind: "project_list"; data: ProjectListData }
   | { kind: "interrupt"; data: InterruptData }
+  | { kind: "stop_status"; data: StopStatusData }
   | { kind: "sync_request"; data: SyncRequestData }
   | { kind: "sync_delta"; data: SyncDeltaData }
   | { kind: "device_list"; data: DeviceListData }

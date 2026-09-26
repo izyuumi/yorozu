@@ -1032,14 +1032,28 @@ private func summary(
 }
 
 @MainActor
-@Test func stoppingATurnReleasesTheComposerRatherThanWaitingForAReplyThatIsNotComing() async throws {
-    let transport = FakeTransport()
+@Test func stopWaitsForHostCessationEvenAfterReceipt() async throws {
+    let transport = FakeTransport(autoReceipt: true)
     let model = await connected(transport)
 
     model.send("hi", in: "home")
+    let target = try #require(model.events["home"]?.first?.id)
+    await transport.yield(.event(event("active", .threadList(ThreadListData(threads: [
+        ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1,
+            activeEventId: target)
+    ])))))
+    #expect(await eventually { model.activeEventId(in: "home") == target })
     model.interrupt(in: "home")
-    #expect(!model.generating.contains("home"))
-    #expect(await sent(by: transport, atLeast: pairingSends + 2).contains { $0.payload.kind == .interrupt })
+    let stop = try #require(await sent(by: transport, atLeast: pairingSends + 2)
+        .first { $0.payload == .interrupt(InterruptData(targetEventId: target)) })
+    #expect(model.stopPending(in: "home"))
+    #expect(model.generating.contains("home"))
+    await transport.yield(.event(event("requested", .stopStatus(StopStatusData(
+        targetEventId: target, requestId: stop.id, status: .requested)))))
+    #expect(model.stopPending(in: "home"))
+    await transport.yield(.event(event("stopped", .stopStatus(StopStatusData(
+        targetEventId: target, requestId: stop.id, status: .stopped)))))
+    #expect(await eventually { !model.stopPending(in: "home") && !model.generating.contains("home") })
 }
 
 @MainActor

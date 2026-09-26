@@ -631,7 +631,11 @@ public final class ChatModel {
 
     /// A socket send is not host acceptance. Keep its pending caption until the host receipts it.
     public func outboxStatus(of eventId: String) -> OutboxStatus? {
-        outbox.first(where: { $0.id == eventId })?.status
+        guard let item = outbox.first(where: { $0.id == eventId }) else { return nil }
+        if outbox.contains(where: { $0.event.payload == .interrupt(InterruptData(targetEventId: eventId)) }) {
+            return .withdrawalPending
+        }
+        return item.status
     }
 
     public func outboxRejectionReason(of eventId: String) -> String? {
@@ -643,7 +647,9 @@ public final class ChatModel {
         guard let index = outbox.firstIndex(where: { $0.id == eventId }) else { return }
         guard outbox[index].legacyHoldUntil == nil else { return }
         guard outbox[index].admissionDeadline == nil || !outbox[index].isExpired(at: Date()) else { return }
-        guard outbox[index].admissionStatus != .rejected, outbox[index].replacementId == nil else { return }
+        guard outbox[index].admissionStatus != .rejected,
+              outbox[index].admissionStatus != .withdrawn,
+              outbox[index].replacementId == nil else { return }
         outbox[index].tries = 0
         outbox[index].nextAttemptAt = nil
         outbox[index].deliveryAttempts = nil
@@ -767,6 +773,8 @@ public final class ChatModel {
     /// The runtime has this one. Only now is it out of the queue.
     private func receipted(_ eventId: String) {
         guard outbox.contains(where: { $0.id == eventId }) else { return }
+        // Stop's receipt confirms durable intent, not that execution ceased.
+        if outbox.contains(where: { $0.id == eventId && $0.event.payload.kind == .interrupt }) { return }
         outbox.removeAll { $0.id == eventId }
         saveOutbox()
         flush()
@@ -823,7 +831,9 @@ public final class ChatModel {
 
     private func pendingHeads(at now: Date, blocking blockedThreads: Set<String> = []) -> [OutboxItem] {
         var threads = blockedThreads
-        return outbox.filter { item in
+        let prioritized = outbox.filter { $0.event.payload.kind == .interrupt } +
+            outbox.filter { $0.event.payload.kind != .interrupt }
+        return prioritized.filter { item in
             guard !item.isExpired(at: now), item.admissionStatus != .rejected,
                   item.admissionStatus != .withdrawn, item.replacementId == nil else { return false }
             guard threads.insert(item.event.threadId).inserted else { return false }
@@ -870,12 +880,116 @@ public final class ChatModel {
         }
     }
 
-    /// Stops the turn running in a thread. The runtime cancels the agent and every agent it
-    /// delegated to, and deliberately sends no reply back — so the composer is released here
-    /// rather than waiting for a `done` that is never coming.
+    public func activeEventId(in threadId: String) -> String? {
+        synced.first(where: { $0.id == threadId })?.activeEventId
+    }
+
+    public func stopPending(in threadId: String) -> Bool {
+        outbox.contains { item in
+            item.event.threadId == threadId && item.event.payload.kind == .interrupt
+        }
+    }
+
+    public func canWithdraw(_ event: YorozuEvent) -> Bool {
+        guard case .message(let data) = event.payload, data.role == .user else { return false }
+        if let item = outbox.first(where: { $0.id == event.id }) {
+            return item.admissionStatus != .withdrawn && item.admissionStatus != .rejected &&
+                item.replacementId == nil && !stopPending(for: event.id)
+        }
+        let history = timeline(event.threadId).events
+        guard history.contains(where: { $0.id == event.id }), !stopPending(for: event.id) else { return false }
+        return !history.contains { known in
+            if case .stopStatus(let status) = known.payload {
+                return status.targetEventId == event.id && status.status != .requested && status.status != .unknown
+            }
+            if case .message(let reply) = known.payload, reply.role == .agent, reply.done == true {
+                return known.id == data.completionId || known.id.hasSuffix(":\(event.id):final")
+            }
+            return false
+        }
+    }
+
+    private func stopPending(for eventId: String) -> Bool {
+        outbox.contains { $0.event.payload == .interrupt(InterruptData(targetEventId: eventId)) }
+    }
+
+    private func queueStop(_ targetEventId: String, in threadId: String) {
+        guard !outbox.contains(where: { $0.event.payload == .interrupt(InterruptData(targetEventId: targetEventId)) }) else { return }
+        let pending = outbox + [OutboxItem(event: event(.interrupt(InterruptData(targetEventId: targetEventId)), in: threadId))]
+        do { try cache?.savePending(pending) }
+        catch {
+            failure = "Could not save Stop request: \(error.localizedDescription)"
+            return
+        }
+        outbox = pending
+        flush()
+    }
+
+    /// Persist Stop against the run the host last identified; await cessation evidence.
     public func interrupt(in threadId: String) {
-        generating.remove(threadId)
-        emit(.interrupt(InterruptData()), in: threadId)
+        guard let targetEventId = activeEventId(in: threadId), !stopPending(in: threadId) else { return }
+        queueStop(targetEventId, in: threadId)
+    }
+
+    /// Cancel locally only when no socket attempt began. Otherwise ask the host to settle the race.
+    public func withdraw(_ eventId: String) {
+        if let accepted = timelines.values.flatMap(\.events).first(where: { $0.id == eventId }),
+           !outbox.contains(where: { $0.id == eventId }) {
+            guard canWithdraw(accepted) else { return }
+            queueStop(eventId, in: accepted.threadId)
+            return
+        }
+        guard let index = outbox.firstIndex(where: { $0.id == eventId }),
+              case .message = outbox[index].event.payload,
+              outbox[index].replacementId == nil,
+              outbox[index].admissionStatus != .withdrawn else { return }
+        if outbox[index].attemptedAt != nil {
+            queueStop(eventId, in: outbox[index].event.threadId)
+            return
+        }
+        var pending = outbox
+        pending[index].admissionStatus = .withdrawn
+        // An untouched draft's setup belongs to its first message, not an empty remote chat.
+        let threadId = pending[index].event.threadId
+        let anotherMessage = pending.contains { item in
+            guard item.id != eventId, item.event.threadId == threadId, item.admissionStatus != .withdrawn else { return false }
+            if case .message = item.event.payload { return true }
+            return false
+        }
+        if !anotherMessage {
+            for predecessor in pending.indices where predecessor < index &&
+                pending[predecessor].event.threadId == threadId &&
+                pending[predecessor].attemptedAt == nil {
+                switch pending[predecessor].event.payload {
+                case .threadCreate, .threadSetModel, .threadSetEffort:
+                    pending[predecessor].admissionStatus = .withdrawn
+                default: break
+                }
+            }
+        }
+        do { try cache?.savePending(pending) }
+        catch {
+            failure = "Could not save withdrawal: \(error.localizedDescription)"
+            return
+        }
+        outbox = pending
+    }
+
+    private func reconcileStop(_ status: StopStatusData) {
+        guard let index = outbox.firstIndex(where: { item in
+            item.id == status.requestId && item.event.payload == .interrupt(InterruptData(targetEventId: status.targetEventId))
+        }) else { return }
+        guard status.status == .stopped || status.status == .completed || status.status == .withdrawn else { return }
+        let threadId = outbox[index].event.threadId
+        outbox.remove(at: index)
+        if status.status == .withdrawn, let original = outbox.firstIndex(where: { $0.id == status.targetEventId }) {
+            outbox[original].admissionStatus = .withdrawn
+        } else if status.status == .stopped || status.status == .completed {
+            outbox.removeAll { $0.id == status.targetEventId }
+        }
+        if status.status != .completed { generating.remove(threadId) }
+        saveOutbox()
+        flush()
     }
 
     /// Forgets one event on this device only: it stays in the runtime's thread log, and a
@@ -1397,6 +1511,9 @@ public final class ChatModel {
                 receipted(data.eventId)
             case .admissionStatus(let data):
                 reconcile(data)
+            case .stopStatus(let data):
+                reconcileStop(data)
+                applyEvent(event)
             default:
                 applyEvent(event)
             }
