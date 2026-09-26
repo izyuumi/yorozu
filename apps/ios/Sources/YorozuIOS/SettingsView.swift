@@ -15,14 +15,14 @@ private extension ConnectionState {
 @MainActor
 private func hostStatus(_ host: HostSession) -> String {
     if case .updateRequired = host.model.compatibility { return String(localized: "Update required") }
-    return ConnectionState(state: host.model.state, ownerOnline: host.model.ownerOnline).label
+    return host.model.link.state.label
 }
 
 /// The colour ``hostStatus(_:)`` is drawn in. An update the Mac needs is attention, not failure.
 @MainActor
 private func statusTint(_ host: HostSession) -> Color {
     if case .updateRequired = host.model.compatibility { return YorozuPalette.warning }
-    return ConnectionState(state: host.model.state, ownerOnline: host.model.ownerOnline).tint
+    return host.model.link.state.tint
 }
 
 struct SettingsView: View {

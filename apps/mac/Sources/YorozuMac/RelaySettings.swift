@@ -130,8 +130,7 @@ struct HostsView: View {
     /// Keep main's connection indicator: the word and dot carry the state together.
     private func connectionTint(_ host: HostSession) -> Color {
         if case .updateRequired = host.model.compatibility { return YorozuPalette.warning }
-        return switch ClientConnectionStatus(state: host.model.state, ownerOnline: host.model.ownerOnline,
-            failure: session.hostFailures[host.id] ?? host.model.failure) {
+        return switch ClientConnectionStatus(host.model, failure: session.hostFailures[host.id] ?? host.model.failure) {
         case .connected: YorozuPalette.sage
         case .hostOffline, .offline: YorozuPalette.warning
         case .failed: .red
@@ -141,8 +140,7 @@ struct HostsView: View {
 
     private func connectionLabel(_ host: HostSession) -> String {
         if case .updateRequired = host.model.compatibility { return "Update required" }
-        return ClientConnectionStatus(state: host.model.state, ownerOnline: host.model.ownerOnline,
-            failure: session.hostFailures[host.id] ?? host.model.failure).label
+        return ClientConnectionStatus(host.model, failure: session.hostFailures[host.id] ?? host.model.failure).label
     }
 }
 

@@ -17,6 +17,14 @@ import YorozuShared
     #expect(ClientConnectionStatus(state: .paired, ownerOnline: true, failure: nil) == .connected)
 }
 
+/// Joining the relay is a socket, not the host: a handshake that stalls there must not read
+/// as a working link, nor end a grace window.
+@Test func connectionStateNeedsAPairedLinkToBeConnected() {
+    #expect(ConnectionState(state: .paired, ownerOnline: true) == .connected)
+    #expect(ConnectionState(state: .joined, ownerOnline: true) == .reconnecting)
+    #expect(ConnectionState(state: .joined, ownerOnline: false) == .offline)
+}
+
 @Test func clientConnectionDistinguishesInitialDialFromOfflineAndFailedRetry() {
     #expect(ClientConnectionStatus(state: .connecting, ownerOnline: false, failure: nil) == .connecting)
     #expect(ClientConnectionStatus(state: .closed, ownerOnline: true, failure: nil) == .offline)
@@ -67,6 +75,7 @@ private func eventuallyRecovered(_ condition: @MainActor () -> Bool) async -> Bo
     await transport.yield(.failed("Network unavailable"))
     #expect(await eventuallyRecovered { model.state == .closed && model.failure == "Network unavailable" })
     #expect(status() == .failed)
+    #expect(model.linkFailure == "Network unavailable")
 
     model.reconnect()
     #expect(await eventuallyRecovered { model.state == .connecting })
@@ -78,6 +87,7 @@ private func eventuallyRecovered(_ condition: @MainActor () -> Bool) async -> Bo
 
     await transport.yield(.state(.paired))
     #expect(await eventuallyRecovered { model.state == .paired && model.failure == nil })
+    #expect(model.linkFailure == nil)
     #expect(status() == .hostOffline)
     await transport.yield(.ownerOnline(true))
     #expect(await eventuallyRecovered { model.ownerOnline })
@@ -118,4 +128,72 @@ private func eventuallyRecovered(_ condition: @MainActor () -> Bool) async -> Bo
     let reopened = ThreadCache(directory: directory, key: key)
     #expect(reopened.threads() == [thread])
     #expect(reopened.events(threadId: thread.id) == [message])
+}
+
+/// Status lines keep saying Connected through a drop shorter than the grace — the failure
+/// every dropped socket reports included — while before the first connection there is
+/// nothing to keep and they say what is happening. The multi-host count holds the same way.
+@MainActor
+@Test func statusLinesHoldConnectedThroughABriefDrop() async {
+    let transport = RecoveryTransport()
+    let model = ChatModel(transport: transport, device: "mac")
+    let hosts = MultiHostModel(sessions: [HostSession(id: "mac", model: model, relayURL: "wss://relay.test", nickname: "Mac")])
+    model.start()
+    defer { model.close() }
+    await transport.yield(.failed("Network unavailable"))
+    #expect(await eventuallyRecovered { model.failure != nil })
+    #expect(ClientConnectionStatus(model, failure: model.failure) == .failed)
+    let beforeFirstConnection = hosts.connectionSummary
+
+    await transport.yield(.ownerOnline(true))
+    await transport.yield(.state(.paired))
+    #expect(await eventuallyRecovered { ClientConnectionStatus(model, failure: model.failure) == .connected })
+    let whileUp = hosts.connectionSummary
+    #expect(whileUp != beforeFirstConnection)
+
+    await transport.yield(.state(.closed))
+    await transport.yield(.failed("Relay stopped answering"))
+    #expect(await eventuallyRecovered { model.failure == "Relay stopped answering" })
+    // The drop is real: the live status has already moved.
+    #expect(ClientConnectionStatus(state: model.state, ownerOnline: model.ownerOnline, failure: model.failure) == .failed)
+    #expect(ClientConnectionStatus(model, failure: model.failure) == .connected)
+    #expect(hosts.connectionSummary == whileUp)
+}
+
+/// Each host owns its own grace: one host recovering cannot let another host's fresh
+/// interruption borrow the first host's elapsed time in the merged list.
+@MainActor
+@Test func multiHostConnectionDoesNotAccumulateDifferentHostInterruptions() async {
+    let firstTransport = RecoveryTransport()
+    let secondTransport = RecoveryTransport()
+    let first = ChatModel(transport: firstTransport, device: "first")
+    let second = ChatModel(transport: secondTransport, device: "second")
+    let hosts = MultiHostModel(sessions: [
+        HostSession(id: "first", model: first, relayURL: "wss://relay.test", nickname: "First"),
+        HostSession(id: "second", model: second, relayURL: "wss://relay.test", nickname: "Second"),
+    ])
+    first.start()
+    second.start()
+    defer { first.close(); second.close() }
+    #expect(hosts.connectionState == .connected)
+    #expect(hosts.statusConnectionState == .reconnecting)
+    await firstTransport.yield(.ownerOnline(true))
+    await firstTransport.yield(.state(.paired))
+    await secondTransport.yield(.ownerOnline(true))
+    await secondTransport.yield(.state(.paired))
+    #expect(await eventuallyRecovered { first.link.state == .connected && second.link.state == .connected })
+    #expect(hosts.statusConnectionState == .connected)
+    let whileUp = hosts.connectionSummary
+
+    await firstTransport.yield(.state(.closed))
+    #expect(await eventuallyRecovered { first.state == .closed })
+    #expect(hosts.connectionState == .connected)
+    #expect(hosts.statusConnectionState == .connected)
+    #expect(hosts.connectionSummary == whileUp)
+
+    await secondTransport.yield(.state(.closed))
+    await firstTransport.yield(.state(.paired))
+    #expect(await eventuallyRecovered { second.state == .closed && first.state == .paired })
+    #expect(hosts.connectionState == .connected)
+    #expect(hosts.connectionSummary == whileUp)
 }

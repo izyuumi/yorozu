@@ -361,7 +361,10 @@ public enum ConnectionState: Equatable, Sendable {
     public init(state: TransportState, ownerOnline: Bool) {
         switch state {
         // Joined or paired both mean the relay has us; the Mac's own presence is the other half.
-        case .joined, .paired: self = ownerOnline ? .connected : .offline
+        // Only pairing proves the Mac is answering, though: joined is a socket and a handshake
+        // still to come, so a handshake that stalls there never reads as a working link.
+        case .paired: self = ownerOnline ? .connected : .offline
+        case .joined: self = ownerOnline ? .reconnecting : .offline
         case .connecting, .closed: self = .reconnecting
         }
     }
@@ -383,61 +386,92 @@ public enum ConnectionState: Equatable, Sendable {
     }
 }
 
-/// UI-facing connection state. Backgrounding freezes the last label; a foreground disconnect
-/// has to survive the grace period before it replaces that label. Recovery is always immediate.
+/// UI-facing connection state, kept apart from raw transport availability. A lost link opens a
+/// grace window rather than saying anything; if the link is back inside it, nothing was said.
+/// The window is anchored to when the interruption began, so a link that goes from reconnecting
+/// to Mac-offline four seconds in is declared at five, not nine — and separate short losses each
+/// open their own window rather than adding up. Backgrounding freezes the last label and forgets
+/// the window: the foreground re-evaluates from scratch, so a timer that ran down while suspended
+/// cannot flash a stale state. Recovery is always immediate and needs no window of its own.
 @MainActor
 @Observable
 public final class ConnectionPresentation {
+    /// How long a link can be gone before the user hears about it.
+    public static let grace: Duration = .seconds(5)
+
     public private(set) var state: ConnectionState
     private var pending: Task<Void, Never>?
+    private var interruptedAt: ContinuousClock.Instant?
 
     public init(_ state: ConnectionState) { self.state = state }
 
+    /// `since` is when the link was lost, when the caller knows better than this presentation
+    /// can — see ``ChatModel/interruptedSince``. Without it the window opens at the first
+    /// update that reports the loss.
     public func update(
         _ actual: ConnectionState,
         active: Bool,
-        delay: Duration = .seconds(3.2)
+        since: ContinuousClock.Instant? = nil,
+        grace: Duration = grace
     ) {
         pending?.cancel()
         pending = nil
-        guard active, actual != state else { return }
-        guard actual != .connected else {
+        guard active else {
+            interruptedAt = nil
+            return
+        }
+        if actual == .connected {
+            interruptedAt = nil
+            state = actual
+            return
+        }
+        guard actual != state else { return }
+        let anchor = since ?? interruptedAt ?? .now
+        interruptedAt = anchor
+        let deadline = anchor.advanced(by: grace)
+        // Already past: say it now, not a frame later.
+        guard deadline > .now else {
             state = actual
             return
         }
         pending = Task { [weak self] in
-            try? await Task.sleep(for: delay)
+            try? await Task.sleep(until: deadline, clock: .continuous)
+            // Cancelled means a newer update owns the outcome; this one must not touch it.
             guard !Task.isCancelled else { return }
             self?.state = actual
         }
     }
 }
 
-/// The connection as a pill in the navigation bar rather than a banner across the top: the state
-/// is almost always fine, and something that is almost always fine should not cost a strip of the
-/// screen. A coloured dot carries it at a glance and the word behind it says which, so the pill
-/// does not rely on colour alone.
+/// The connection as a toast floating over the list or transcript rather than a strip that
+/// pushes them down: the state is almost always fine, and something that is almost always fine
+/// should not move the layout when it changes. A coloured dot carries it at a glance and the
+/// words behind it say which, so it does not rely on colour alone. A rounded rect that reads as
+/// a capsule on one line, so a notice that wraps at large text sizes still sits inside it.
 struct ConnectionPill: View {
     let state: ConnectionState
+    /// The multi-host list says which hosts are missing rather than "Mac offline".
+    var label: String? = nil
 
+    private let cornerRadius: CGFloat = 14
     @ScaledMetric(relativeTo: .caption) private var dot = 7
 
     var body: some View {
         let content = HStack(spacing: 5) {
             Circle().fill(state.tint).frame(width: dot, height: dot)
-            Text(state.label).font(.caption.weight(.medium))
+            Text(label ?? state.label).font(.caption.weight(.medium))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Mac connection: \(state.label)")
+        .accessibilityLabel("Mac connection: \(label ?? state.label)")
 
         // The bar is glass on 26, so the pill in it should be glass too; on 18 through 25 a thin
         // material is the nearest thing that still reads as a control rather than a label.
         if #available(iOS 26, macOS 26, *) {
-            content.glassEffect(in: .capsule)
+            content.glassEffect(in: .rect(cornerRadius: cornerRadius))
         } else {
-            content.background(.thinMaterial, in: .capsule)
+            content.background(.thinMaterial, in: .rect(cornerRadius: cornerRadius))
         }
     }
 }
@@ -464,6 +498,9 @@ public struct ThreadListView<Destination: View>: View {
     private let hostLabel: (String) -> String?
     private let onNewThread: (() -> Void)?
     private let connection: ConnectionState?
+    private let connectionStatus: ConnectionState?
+    private let connectionSince: ContinuousClock.Instant?
+    private let connectionIsGraced: Bool
     private let connectionSummary: String?
     @Binding private var path: [String]
     /// Where a coding agent can be started. Empty means the picker offers Yorozu alone.
@@ -490,9 +527,20 @@ public struct ThreadListView<Destination: View>: View {
     /// The archive opens closed: it is where threads go to stop being in the way.
     @State private var showArchived = false
     @State private var choosingAgent = NewThreadShowcase.agent != nil
+    /// What the list says about the link, which lags what the transport says by
+    /// ``ConnectionPresentation/grace`` on the way down and not at all on the way up.
+    @State private var presentation = ConnectionPresentation(.connected)
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     #if os(iOS)
         @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
+
+    /// Nil with no host to report on; otherwise the graced state.
+    private var shownConnection: ConnectionState? {
+        guard let connection else { return nil }
+        return connectionIsGraced ? connection : presentation.state
+    }
 
     /// Regular width draws the list beside the chat, including on iPhone Duo's inner display.
     /// Compact width keeps the stack; the same `path` drives both layouts during resizing.
@@ -543,6 +591,9 @@ public struct ThreadListView<Destination: View>: View {
         hostLabel: @escaping (String) -> String? = { _ in nil },
         onNewThread: (() -> Void)? = nil,
         connection: ConnectionState? = nil,
+        connectionStatus: ConnectionState? = nil,
+        connectionSince: ContinuousClock.Instant? = nil,
+        connectionIsGraced: Bool = false,
         connectionSummary: String? = nil,
         path: Binding<[String]>,
         projects: [ProjectFolder] = [],
@@ -565,6 +616,9 @@ public struct ThreadListView<Destination: View>: View {
         self.hostLabel = hostLabel
         self.onNewThread = onNewThread
         self.connection = connection
+        self.connectionStatus = connectionStatus
+        self.connectionSince = connectionSince
+        self.connectionIsGraced = connectionIsGraced
         self.connectionSummary = connectionSummary
         self._path = path
         self.projects = projects
@@ -669,17 +723,6 @@ public struct ThreadListView<Destination: View>: View {
     private var list: some View {
         let groups = groups
         return List(selection: splitLayout ? selection : nil) {
-            if let connectionSummary {
-                Text(connectionSummary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-            } else if let connection, connection != .connected {
-                ConnectionPill(state: connection)
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-            }
             if searchNeedle.isEmpty {
                 if !groups.pinned.isEmpty {
                     Section("Pinned") { rows(groups.pinned) }
@@ -709,6 +752,35 @@ public struct ThreadListView<Destination: View>: View {
         .contentMargins(.vertical, LayoutMetrics.inner)
         .animation(.default, value: threads)
         .overlay { empty(groups) }
+        // A toast over the list, not a row in it: the link coming and going must not move a
+        // single thread, heading or scroll anchor. One view for the whole interruption, its
+        // label updated in place, gone the moment the link is back — and never there at all
+        // for an interruption shorter than the grace.
+        .overlay(alignment: .top) {
+            ZStack {
+                if let shownConnection, shownConnection != .connected {
+                    ConnectionPill(state: shownConnection, label: connectionSummary)
+                        .padding(.top, 8)
+                        .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .allowsHitTesting(false)
+            .animation(reduceMotion ? nil : .default, value: shownConnection)
+        }
+        .onChange(of: connection, initial: true) { _, actual in
+            guard !connectionIsGraced else { return }
+            presentation.update(actual ?? .connected, active: scenePhase != .background, since: connectionSince)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard !connectionIsGraced else { return }
+            presentation.update(connection ?? .connected, active: phase != .background, since: connectionSince)
+        }
+        // Once per declared change, not once per retry: the presentation only moves after the
+        // grace, or on recovery.
+        .onChange(of: shownConnection) { old, state in
+            guard old != nil, let state else { return }
+            AccessibilityNotification.Announcement(connectionSummary ?? state.label).post()
+        }
         // A search modifier on the root navigation stack otherwise follows pushed chats:
         // pulling a transcript down reveals "Search threads" above the conversation.
         .threadListSearch(text: $query, enabled: splitLayout || path.isEmpty)
@@ -721,16 +793,16 @@ public struct ThreadListView<Destination: View>: View {
                     Button(action: onSettings) {
                         ZStack(alignment: .bottomTrailing) {
                             Image(systemName: "gearshape")
-                            if let connection {
+                            if let status = connectionStatus ?? shownConnection {
                                 Circle()
-                                    .fill(connection.tint)
+                                    .fill(status.tint)
                                     .frame(width: 8, height: 8)
                                     .overlay(Circle().stroke(.background, lineWidth: 1.5))
                             }
                         }
                     }
                     .accessibilityLabel("Settings")
-                    .accessibilityValue(connectionSummary ?? connection.map { "Mac connection: \($0.label)" } ?? "")
+                    .accessibilityValue(connectionSummary ?? (connectionStatus ?? shownConnection).map { "Mac connection: \($0.label)" } ?? "")
                 }
             }
             #if os(iOS)

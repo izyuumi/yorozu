@@ -210,25 +210,119 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
 @Test func connectionPresentationFreezesInBackgroundAndDelaysDisconnection() async throws {
     // Delays are long next to the short "not yet" checks, and the final change is polled for,
     // so a slow CI VM that oversleeps cannot flip either kind of expectation.
-    let delay = Duration.milliseconds(300)
+    let grace = Duration.milliseconds(300)
     let presentation = ConnectionPresentation(.connected)
 
-    presentation.update(.reconnecting, active: false, delay: delay)
+    presentation.update(.reconnecting, active: false, grace: grace)
     try await Task.sleep(for: .milliseconds(400))
     #expect(presentation.state == .connected)
 
-    presentation.update(.reconnecting, active: true, delay: delay)
+    presentation.update(.reconnecting, active: true, grace: grace)
     try await Task.sleep(for: .milliseconds(20))
     #expect(presentation.state == .connected)
-    presentation.update(.connected, active: true, delay: delay)
+    presentation.update(.connected, active: true, grace: grace)
     try await Task.sleep(for: .milliseconds(400))
     #expect(presentation.state == .connected)
 
-    presentation.update(.offline, active: true, delay: delay)
-    for _ in 0..<100 where presentation.state != .offline {
-        try await Task.sleep(for: .milliseconds(30))
-    }
+    presentation.update(.offline, active: true, grace: grace)
+    await settled(presentation, at: .offline)
     #expect(presentation.state == .offline)
+}
+
+/// The grace is anchored to when the link was lost: a change of *how* it is lost, part way
+/// through, is declared at the original deadline rather than a fresh one.
+@MainActor
+@Test func connectionPresentationDoesNotRestartGraceWhenInterruptionChangesKind() async throws {
+    let grace = Duration.milliseconds(1200)
+    let presentation = ConnectionPresentation(.connected)
+
+    presentation.update(.reconnecting, active: true, grace: grace)
+    try await Task.sleep(for: .milliseconds(700))
+    #expect(presentation.state == .connected)
+
+    let changed = ContinuousClock.now
+    presentation.update(.offline, active: true, grace: grace)
+    await settled(presentation, at: .offline)
+    #expect(presentation.state == .offline)
+    // About 500ms is left of the original window; a restarted one takes at least 1200ms.
+    #expect(ContinuousClock.now - changed < grace)
+}
+
+/// A view opened mid-outage counts from the host's moment, so one past the grace says so at
+/// once rather than waiting out a grace of its own.
+@MainActor
+@Test func connectionPresentationHonoursAnEarlierAnchor() {
+    let presentation = ConnectionPresentation(.connected)
+    presentation.update(.offline, active: true, since: .now - .seconds(60))
+    #expect(presentation.state == .offline)
+}
+
+@MainActor
+@Test func interruptionAnchorFollowsTheLinkAndClearsOnSuspension() async throws {
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport)
+    #expect(model.interruptedSince == nil)
+    model.start()
+    #expect(model.interruptedSince != nil)
+    await transport.yield(.ownerOnline(true))
+    await transport.yield(.state(.paired))
+    #expect(await eventually { model.interruptedSince == nil })
+
+    await transport.yield(.ownerOnline(false))
+    #expect(await eventually { model.interruptedSince != nil })
+    let lost = try #require(model.interruptedSince)
+    // The loss changing kind is the same interruption.
+    await transport.yield(.state(.closed))
+    #expect(await eventually { model.state == .closed })
+    #expect(model.interruptedSince == lost)
+
+    // Hanging up for suspension is not an interruption; the next start is a fresh one.
+    model.suspend()
+    #expect(model.interruptedSince == nil)
+    model.start()
+    #expect(try #require(model.interruptedSince) > lost)
+    model.close()
+}
+
+/// Short losses separated by genuine recovery each get their own window; they do not add up.
+@MainActor
+@Test func connectionPresentationDoesNotAccumulateSeparateInterruptions() async throws {
+    let grace = Duration.milliseconds(1000)
+    let presentation = ConnectionPresentation(.connected)
+
+    for _ in 0..<3 {
+        presentation.update(.reconnecting, active: true, grace: grace)
+        try await Task.sleep(for: .milliseconds(400))
+        presentation.update(.connected, active: true, grace: grace)
+    }
+    presentation.update(.reconnecting, active: true, grace: grace)
+    try await Task.sleep(for: .milliseconds(400))
+    #expect(presentation.state == .connected)
+}
+
+/// Backgrounding forgets the window; coming back starts a fresh one rather than declaring a
+/// loss the timer counted down while nothing was running.
+@MainActor
+@Test func connectionPresentationRestartsGraceOnForeground() async throws {
+    let grace = Duration.milliseconds(1000)
+    let presentation = ConnectionPresentation(.connected)
+
+    presentation.update(.reconnecting, active: true, grace: grace)
+    try await Task.sleep(for: .milliseconds(600))
+    presentation.update(.reconnecting, active: false, grace: grace)
+    presentation.update(.reconnecting, active: true, grace: grace)
+    try await Task.sleep(for: .milliseconds(600))
+    // A stale anchor would have declared this at 400ms.
+    #expect(presentation.state == .connected)
+    await settled(presentation, at: .reconnecting)
+    #expect(presentation.state == .reconnecting)
+}
+
+@MainActor
+private func settled(_ presentation: ConnectionPresentation, at state: ConnectionState) async {
+    for _ in 0..<200 where presentation.state != state {
+        try? await Task.sleep(for: .milliseconds(20))
+    }
 }
 
 @MainActor

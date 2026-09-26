@@ -18,6 +18,16 @@ public enum ClientConnectionStatus: Equatable, Sendable {
         }
     }
 
+    /// What a status line says of `model`: the live status, except that a link which was up
+    /// keeps saying Connected through an interruption shorter than
+    /// ``ConnectionPresentation/grace`` — the failure every dropped socket reports included.
+    /// Before the first connection there is nothing to keep, so it is the live status.
+    @MainActor
+    public init(_ model: ChatModel, failure: String?) {
+        self = model.link.state == .connected ? .connected
+            : ClientConnectionStatus(state: model.state, ownerOnline: model.ownerOnline, failure: failure)
+    }
+
     public var label: String {
         switch self {
         case .connected: String(localized: "Connected")

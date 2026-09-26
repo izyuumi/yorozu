@@ -88,9 +88,10 @@ public struct MultiHostThreadListView<Destination: View>: View {
             workingThreads: adapter.workingThreads,
             hostLabel: adapter.hostLabel,
             onNewThread: { choosingHost = true },
-            connection: session.hasMultipleHosts ? nil : session.sessions.first.map {
-                ConnectionState(state: $0.model.state, ownerOnline: $0.model.ownerOnline)
-            },
+            connection: session.connectionState,
+            connectionStatus: session.statusConnectionState,
+            connectionSince: session.hasMultipleHosts ? nil : session.sessions.first?.model.interruptedSince,
+            connectionIsGraced: session.hasMultipleHosts,
             connectionSummary: session.hasMultipleHosts ? session.connectionSummary : nil,
             path: Binding(get: { path.map(\.listID) }, set: { ids in
                 path = ids.compactMap { adapter.resolve($0)?.id }
@@ -194,11 +195,39 @@ public struct MultiHostThreadSidebar: View {
 }
 
 extension MultiHostModel {
-    /// The merged list never borrows one host's status for the whole client.
+    /// Status indicators start honest before pairing; after pairing they hold the last settled
+    /// state through a short interruption. Toasts have separate initial visibility below.
+    public var statusConnectionState: ConnectionState? {
+        summarizedConnection { $0.model.link.state }
+    }
+
+    /// The worst link among the hosts. Each host first gets its own five-second grace, so a
+    /// fresh interruption cannot borrow another host's elapsed time. With one host the list
+    /// applies that host's grace using its interruption anchor. An update-required host counts
+    /// as away only in the multi-host summary; alone it has its own update label elsewhere.
+    public var connectionState: ConnectionState? {
+        summarizedConnection { host in
+            hasMultipleHosts ? host.model.toastLink.state
+                : ConnectionState(state: host.model.state, ownerOnline: host.model.ownerOnline)
+        }
+    }
+
+    private func summarizedConnection(_ state: (HostSession) -> ConnectionState) -> ConnectionState? {
+        let states = sessions.map { host -> ConnectionState in
+            if hasMultipleHosts, case .updateRequired = host.model.compatibility { return .offline }
+            return state(host)
+        }
+        guard !states.isEmpty else { return nil }
+        if states.contains(.offline) { return .offline }
+        return states.contains(.reconnecting) ? .reconnecting : .connected
+    }
+
+    /// The merged list never borrows one host's status for the whole client. Counted from each
+    /// host's ``ChatModel/link``, so one host's blip does not change the count.
     public var connectionSummary: String {
         let connected = sessions.filter {
             if case .updateRequired = $0.model.compatibility { return false }
-            return $0.model.state == .paired && $0.model.ownerOnline
+            return $0.model.link.state == .connected
         }.count
         let updates = sessions.filter {
             if case .updateRequired = $0.model.compatibility { return true }
