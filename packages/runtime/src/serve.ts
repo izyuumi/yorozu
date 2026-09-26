@@ -970,8 +970,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   const nativeRecoveryPrompt = (threadId: string, original: string): string => {
     const recent = readThreadEvents(threadId, dir).filter((event) =>
-      event.kind === "message" || event.kind === "tool_result").slice(-20).map((event) => {
+      event.kind === "message" || event.kind === "tool_call" || event.kind === "tool_result").slice(-20).map((event) => {
       if (event.kind === "message") return `${event.data.role}: ${event.data.text.slice(0, 2_000)}`;
+      if (event.kind === "tool_call") return `tool call ${event.data.name}: ${JSON.stringify(event.data.args).slice(0, 2_000)}`;
       return `tool result ${event.data.callId}: ${event.data.output.slice(0, 2_000)}`;
     }).join("\n").slice(-12_000);
     return `Resume the interrupted task. Verify prior actions and their outcomes before repeating any external effect. ` +

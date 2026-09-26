@@ -2903,6 +2903,10 @@ test.each(["claude-code", "codex"] as const)("startup automatically recovers the
   setThreadSession("cc", "native-before-crash", dir);
   appendThreadEvent({ id: "original", threadId: "cc", ts: 1, agentId: "main", kind: "message",
     data: { role: "user", text: "Finish the report" } }, dir);
+  appendThreadEvent({ id: "prior-call", threadId: "cc", ts: 2, agentId: "main", kind: "tool_call",
+    data: { callId: "prior", name: "Bash", args: { command: "generate report" } } }, dir);
+  appendThreadEvent({ id: "prior-result", threadId: "cc", ts: 3, agentId: "main", kind: "tool_result",
+    data: { callId: "prior", ok: true, output: "draft created" } }, dir);
   setNativeTurn("cc", { id: "native:original:final", state: "running", userEventId: "original" }, dir);
   const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "continued", sessionId: "native-before-crash" });
   const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { [agent]: { run } } });
@@ -2912,6 +2916,8 @@ test.each(["claude-code", "codex"] as const)("startup automatically recovers the
   expect(run).toHaveBeenCalledWith(expect.objectContaining({
     text: expect.stringContaining("Finish the report"), sessionId: "native-before-crash", cwd: proj,
   }));
+  expect(run.mock.calls[0]?.[0].text).toContain("generate report");
+  expect(run.mock.calls[0]?.[0].text).toContain("draft created");
   expect(readThreadEvents("cc", dir).filter((event) => event.kind === "message" && event.data.role === "user")).toHaveLength(1);
   send({ kind: "thread_recover", data: { turnId: "native:original:final", action: "continue" } }, "cc");
   send({ kind: "thread_list", data: { threads: [] } });
