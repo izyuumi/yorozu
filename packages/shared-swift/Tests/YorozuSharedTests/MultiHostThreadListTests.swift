@@ -14,7 +14,12 @@ private actor ListTransport: ChatTransport {
         return stream
     }
     private(set) var sent: [YorozuEvent] = []
-    func send(_ event: YorozuEvent) async throws { sent.append(event) }
+    func send(_ event: YorozuEvent) async throws {
+        sent.append(event)
+        continuation?.yield(.event(YorozuEvent(id: "receipt-\(event.id)", threadId: "",
+                                               ts: 1, agentId: "main",
+                                               payload: .receipt(ReceiptData(eventId: event.id)))))
+    }
     func close() { continuation?.finish() }
 }
 

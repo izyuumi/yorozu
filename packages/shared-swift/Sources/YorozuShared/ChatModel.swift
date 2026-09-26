@@ -280,10 +280,12 @@ public final class ChatModel {
     private var stopped = false
     @ObservationIgnored private var connectionTask: Task<Void, Never>?
     @ObservationIgnored private var flushTask: Task<Void, Never>?
+    @ObservationIgnored private var retryTask: Task<Void, Never>?
     /// How many `sync_delta`s have been applied, which is what a background drain waits on.
     private var deltas = 0
     /// One flush at a time: the queue is sent in order, and two loops draining it would not be.
     private var flushing = false
+    private var flushAgain = false
     /// Direct sends share one tail so events finish on the wire in emission order. Starting one
     /// unstructured task per event let a message overtake its thread creation — or the relay's
     /// pairing hello — when URLSession resumed concurrent sends out of order.
@@ -358,6 +360,8 @@ public final class ChatModel {
     }
 
     public func close() {
+        retryTask?.cancel()
+        retryTask = nil
         invalidateTerminalConnection()
         Task { [transport] in await transport.close() }
     }
@@ -381,6 +385,7 @@ public final class ChatModel {
         streamFrame?.cancel()
         composerWrite?.cancel()
         flushTask?.cancel()
+        retryTask?.cancel()
         emitter?.cancel()
         cache = nil
         await transport.close()
@@ -615,6 +620,8 @@ public final class ChatModel {
     public func retry(_ eventId: String) {
         guard let index = outbox.firstIndex(where: { $0.id == eventId }) else { return }
         outbox[index].tries = 0
+        outbox[index].nextAttemptAt = nil
+        outbox[index].deliveryAttempts = nil
         outbox[index].reconfirmedAt = Date()
         saveOutbox()
         flush()
@@ -647,38 +654,49 @@ public final class ChatModel {
         if !queue { flush() }
     }
 
-    /// Sends the queue, oldest first, and stops at the first message the transport refuses:
-    /// the rest are behind it, and a thread read out of order is worse than one that arrives
-    /// late. A refusal costs that message one of its three tries and the next reconnect tries
-    /// again; one that has spent all three is stepped over rather than left blocking the queue,
-    /// because it is waiting on the person now and not on the network.
-    ///
-    /// A send that went is not a message that landed: the socket may be half-open, with the Mac
-    /// gone and the relay still counting it present. So nothing leaves the queue here. An item
-    /// leaves when the runtime's `receipt` names it (``apply(_:)``), and until then every flush
-    /// sends it again — the runtime keys on the id, so a copy that did land is dropped there.
+    /// Only the first unreceipted operation in a thread may be sent. A socket send remains
+    /// uncertain until its host receipt; errors and missing receipts retry with the same ID.
     public func flush() {
-        guard !flushing, canDeliver, !outbox.isEmpty, saveOutbox() else { return }
+        if flushing { flushAgain = true; return }
+        guard canDeliver, !outbox.isEmpty, saveOutbox() else { return }
+        retryTask?.cancel()
+        retryTask = nil
         flushing = true
         flushTask = Task { [weak self] in
             var sent: Set<String> = []
-            while let self, !Task.isCancelled, self.canDeliver,
-                let item = self.outbox.first(where: { $0.status != .failed && !sent.contains($0.id) })
-            {
-                if item.attemptedAt == nil, let index = self.outbox.firstIndex(where: { $0.id == item.id }) {
-                    self.outbox[index].attemptedAt = Date()
-                    guard self.saveOutbox() else { break }
-                }
+            var blockedThreads: Set<String> = []
+            while let self, !Task.isCancelled, self.canDeliver {
+                let now = Date()
+                guard let item = self.pendingHeads(at: now, blocking: blockedThreads).first(where: {
+                    !sent.contains($0.id) && ($0.nextAttemptAt ?? .distantPast) <= now
+                }), let index = self.outbox.firstIndex(where: { $0.id == item.id }) else { break }
+                self.outbox[index].attemptedAt = self.outbox[index].attemptedAt ?? now
+                let attempts = (item.deliveryAttempts ?? 0) + 1
+                self.outbox[index].deliveryAttempts = attempts
+                self.outbox[index].nextAttemptAt = now.addingTimeInterval(Outbox.retryDelay(after: attempts))
+                guard self.saveOutbox() else { break }
                 do {
                     try await self.transport.send(item.event)
                     sent.insert(item.id)
+                    if let index = self.outbox.firstIndex(where: { $0.id == item.id }), self.outbox[index].tries > 0 {
+                        self.outbox[index].tries = 0
+                        self.saveOutbox()
+                    }
                 } catch {
                     self.bumpTries(of: item.id)
-                    break
+                    blockedThreads.insert(item.event.threadId)
+                    guard self.saveOutbox() else { break }
                 }
             }
-            self?.flushing = false
-            self?.saveOutbox()
+            guard let self else { return }
+            self.flushing = false
+            self.saveOutbox()
+            if self.flushAgain {
+                self.flushAgain = false
+                self.flush()
+            } else {
+                self.armOutboxRetry()
+            }
         }
     }
 
@@ -687,11 +705,31 @@ public final class ChatModel {
         guard outbox.contains(where: { $0.id == eventId }) else { return }
         outbox.removeAll { $0.id == eventId }
         saveOutbox()
+        flush()
     }
 
     private func bumpTries(of id: String) {
         guard let index = outbox.firstIndex(where: { $0.id == id }) else { return }
         outbox[index].tries += 1
+    }
+
+    private func pendingHeads(at now: Date, blocking blockedThreads: Set<String> = []) -> [OutboxItem] {
+        var threads = blockedThreads
+        return outbox.filter { item in
+            guard !item.isExpired(at: now) else { return false }
+            guard threads.insert(item.event.threadId).inserted else { return false }
+            return true
+        }
+    }
+
+    private func armOutboxRetry() {
+        guard canDeliver, let next = pendingHeads(at: Date()).compactMap(\.nextAttemptAt).min() else { return }
+        retryTask?.cancel()
+        retryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(max(0, next.timeIntervalSinceNow)))
+            guard !Task.isCancelled else { return }
+            self?.flush()
+        }
     }
 
     @discardableResult

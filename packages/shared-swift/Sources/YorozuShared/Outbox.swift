@@ -9,17 +9,24 @@ import Foundation
 /// connection dropped is deduped rather than said twice.
 public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
     public var event: YorozuEvent
-    /// Transport errors. Three pause automatic attempts, without claiming host rejection.
+    /// Consecutive transport errors; three change the caption, never stop automatic recovery.
     public var tries: Int
     /// Set before the first socket attempt. Until a host receipt arrives, delivery is uncertain.
     public var attemptedAt: Date?
+    /// Persisted retry deadline; a relaunch must not turn a half-open send into a retry storm.
+    public var nextAttemptAt: Date?
+    /// Optional for caches written before automatic retry; counts sends even without errors.
+    public var deliveryAttempts: Int?
     /// Local retry intent after the automatic-send window elapsed. Does not alter operation ID.
     public var reconfirmedAt: Date?
 
-    public init(event: YorozuEvent, tries: Int = 0, attemptedAt: Date? = nil, reconfirmedAt: Date? = nil) {
+    public init(event: YorozuEvent, tries: Int = 0, attemptedAt: Date? = nil,
+                nextAttemptAt: Date? = nil, deliveryAttempts: Int? = nil, reconfirmedAt: Date? = nil) {
         self.event = event
         self.tries = tries
         self.attemptedAt = attemptedAt
+        self.nextAttemptAt = nextAttemptAt
+        self.deliveryAttempts = deliveryAttempts
         self.reconfirmedAt = reconfirmedAt
     }
 
@@ -31,6 +38,10 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
     public var status: OutboxStatus {
         if tries >= Outbox.maxTries { return attemptedAt == nil ? .failed : .unconfirmed }
         return attemptedAt == nil ? .queued : .confirming
+    }
+
+    public func isExpired(at now: Date) -> Bool {
+        now.timeIntervalSince(reconfirmedAt ?? queuedAt) > Outbox.life
     }
 }
 
@@ -61,6 +72,10 @@ public enum OutboxStatus: String, Sendable, Equatable {
 /// The queue's rules, kept out of the model so they can be checked without one.
 public enum Outbox {
     public static let maxTries = 3
+    /// Randomized capped retry, for both transport failures and a sent frame with no receipt.
+    public static func retryDelay(after attempts: Int) -> TimeInterval {
+        min(60, pow(2, Double(min(max(attempts - 1, 0), 6))) * Double.random(in: 0.8...1.2))
+    }
     /// How long a message is worth sending by itself. Past that it is not dropped — the bubble
     /// is in the transcript and has to say something honest — but it stops being sent on a
     /// reconnect two days later and waits to be retried by hand.
