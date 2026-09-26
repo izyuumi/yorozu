@@ -13,11 +13,14 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
     public var tries: Int
     /// Set before the first socket attempt. Until a host receipt arrives, delivery is uncertain.
     public var attemptedAt: Date?
+    /// Local retry intent after the automatic-send window elapsed. Does not alter operation ID.
+    public var reconfirmedAt: Date?
 
-    public init(event: YorozuEvent, tries: Int = 0, attemptedAt: Date? = nil) {
+    public init(event: YorozuEvent, tries: Int = 0, attemptedAt: Date? = nil, reconfirmedAt: Date? = nil) {
         self.event = event
         self.tries = tries
         self.attemptedAt = attemptedAt
+        self.reconfirmedAt = reconfirmedAt
     }
 
     public var id: String { event.id }
@@ -67,7 +70,7 @@ public enum Outbox {
     /// is an argument rather than something a test has to move.
     public static func pruned(_ items: [OutboxItem], now: Date = Date()) -> [OutboxItem] {
         let aged = items.map { item -> OutboxItem in
-            guard now.timeIntervalSince(item.queuedAt) > life else { return item }
+            guard now.timeIntervalSince(item.reconfirmedAt ?? item.queuedAt) > life else { return item }
             var item = item
             item.tries = max(item.tries, maxTries)
             return item

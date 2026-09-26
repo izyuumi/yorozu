@@ -293,3 +293,25 @@ private func reconnect(_ transport: QueueTransport) async {
     #expect(capped.first?.id == "m0")
     #expect(capped.last?.id == "m59")
 }
+
+@MainActor
+@Test func retryOfAgedUnconfirmedMessageActuallySendsItsOriginalID() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let id = UUID().uuidString
+    let old = Date().addingTimeInterval(-Outbox.life - 60)
+    let event = YorozuEvent(id: id, threadId: "home", ts: Int(old.timeIntervalSince1970 * 1000),
+                            agentId: "phone", payload: .message(MessageData(role: .user, text: "old")))
+    try cache.savePending([OutboxItem(event: event, attemptedAt: old)])
+
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    #expect(model.outboxStatus(of: id) == .unconfirmed)
+    model.retry(id)
+    #expect(model.outbox.first?.tries == 0)
+    await reconnect(transport)
+    #expect(await settle { model.outbox.isEmpty })
+    #expect(await transport.messages.map(\.id) == [id])
+}

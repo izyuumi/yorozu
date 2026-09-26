@@ -555,6 +555,7 @@ public final class ChatModel {
     public func retry(_ eventId: String) {
         guard let index = outbox.firstIndex(where: { $0.id == eventId }) else { return }
         outbox[index].tries = 0
+        outbox[index].reconfirmedAt = Date()
         saveOutbox()
         flush()
     }
