@@ -48,8 +48,8 @@ private func showcaseImages() -> [MessageAttachment] {
     }
 }
 
-/// Test harness only, and inert unless `-yorozuSend` was passed: it drives the first message and
-/// prints the lines `apps/ios/e2e/run.sh` asserts on. It hangs off the model's hooks rather than
+/// Test harness only, and inert unless `-yorozuSend` or `-yorozuObserve` was passed: it drives
+/// messages and prints the lines `apps/ios/e2e/run.sh` asserts on. It hangs off the model's hooks rather than
 /// living inside it, so nothing about the harness ships in the shared model.
 ///
 /// The model's closures hold it, and it holds the model weakly.
@@ -179,7 +179,12 @@ final class E2EHarness {
                 break
             }
         }
-        guard let autoSend = launchArgument("yorozuSend") else { return }
+        guard let autoSend = launchArgument("yorozuSend"), !autoSend.isEmpty else {
+            if launchArgument("yorozuObserve") != nil {
+                E2EHarness(model: model, autoSend: "").wire()
+            }
+            return
+        }
         E2EHarness(model: model, autoSend: autoSend).wire()
     }
 
@@ -194,13 +199,34 @@ final class E2EHarness {
             print("YOROZU-E2E paired")
 
             // A draft, exactly as the `+` button makes one: the message below is what creates it.
-            if let draft = model?.newDraft() {
-                autoDraftID = draft.id
-                model?.send(autoSend, in: draft.id)
-            }
-            // And a second, named thread, to prove `thread_create` and its sync as well.
-            if let autoThread, let id = model?.createThread(title: autoThread) {
-                model?.send(autoSend, in: id)
+            if !autoSend.isEmpty {
+                let send = { [self] in
+                    if launchArgument("yorozuSendInFirstThread") != nil {
+                        guard let thread = model?.threads.first(where: { model?.isDraft($0.id) == false }) else {
+                            print("YOROZU-E2E-NO-THREAD")
+                            return
+                        }
+                        model?.send(autoSend, in: thread.id)
+                        if let id = model?.outbox.last?.id {
+                            Task { [weak model] in
+                                try? await Task.sleep(for: .milliseconds(500))
+                                print("YOROZU-E2E-DELIVERY \(model?.outboxStatus(of: id) == .confirming ? "confirming" : "other")")
+                            }
+                        }
+                    } else if let draft = model?.newDraft() {
+                        autoDraftID = draft.id
+                        model?.send(autoSend, in: draft.id)
+                    }
+                    // And a second, named thread, to prove `thread_create` and its sync as well.
+                    if let autoThread, let id = model?.createThread(title: autoThread) {
+                        model?.send(autoSend, in: id)
+                    }
+                }
+                if let delay = launchArgument("yorozuSendDelayMs").flatMap(Int.init), delay > 0 {
+                    Task { try? await Task.sleep(for: .milliseconds(delay)); send() }
+                } else {
+                    send()
+                }
             }
         }
         model?.onEvent = { [self] event in
@@ -208,6 +234,9 @@ final class E2EHarness {
             case .message(let data) where data.role == .agent:
                 let title = model?.title(of: event.threadId) ?? event.threadId
                 print("YOROZU-E2E-REPLY [\(title)] \(data.text)")
+                if data.done == true {
+                    print("YOROZU-E2E-FINAL [\(title)] \(data.text) pending=\(model?.outbox.count ?? -1)")
+                }
                 if event.threadId == autoDraftID { print("YOROZU-E2E-DRAFT-REPLY \(data.text)") }
             case .toolCall(let data):
                 print("YOROZU-E2E-TOOL \(data.name)")
