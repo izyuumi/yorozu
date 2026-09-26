@@ -1941,6 +1941,9 @@ public final class ChatModel {
         applyAnswerState(event)
         var thread = timeline(event.threadId).events
         if let index = thread.firstIndex(where: { $0.id == event.id }) {
+            if thread[index].clientTs != nil && event.clientTs == nil,
+               case .message(let old) = thread[index].payload, old.role == .user,
+               case .message(let next) = event.payload, next.role == .user { return }
             if case .message(let old) = thread[index].payload, old.role == .agent,
                case .message(let next) = event.payload, next.role == .agent,
                (old.done == true && next.done != true ||

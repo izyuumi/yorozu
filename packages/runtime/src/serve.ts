@@ -899,12 +899,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
   /** Final event owns recovery marker: persist once, then acknowledge, then publish. */
   function finalizeOpenClaw(event: YorozuEvent): void {
     const admission = openclaw!.pendingTurns(true).find((turn) => turn.completionId === event.id);
-    const final = event.kind === "message" && admission
-      ? { ...event, data: { ...event.data, runId: admission.runId } } : event;
+    const history = readThreadEvents(event.threadId, dir);
+    const stored = history.find((known) => known.id === event.id);
+    const timed = stored ?? { ...event, ts: Math.max(event.ts, (history.at(-1)?.ts ?? 0) + 1) };
+    const final = timed.kind === "message" && admission
+      ? { ...timed, data: { ...timed.data, runId: admission.runId } } : timed;
     if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === event.id)) appendTranscript(final, transcripts);
-    if (!readThreadEvents(event.threadId, dir).some((known) => known.id === event.id)) appendThreadEvent(final, dir);
+    if (!stored) appendThreadEvent(final, dir);
     openclaw!.acknowledge(event.threadId, event.id);
-    broadcast(event);
+    broadcast(final);
   }
 
   const nativeCards = new NativeCards(emit);
@@ -1495,7 +1498,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         // The device admitted this message before Stop settled. Give its durable copy the
         // preceding final's timestamp so live and restored timelines show the same order.
         const prior = readThreadEvents(threadId, dir);
-        const ordered = { ...logged, ts: prior.at(-1)?.ts ?? Date.now(),
+        const ordered = { ...logged, ts: (prior.at(-1)?.ts ?? Date.now()) + 1,
           clientTs: logged.ts };
         if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === logged.id)) appendTranscript(ordered, transcripts);
         if (!prior.some((known) => known.id === logged.id)) appendThreadEvent(ordered, dir);

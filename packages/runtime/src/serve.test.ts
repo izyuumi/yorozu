@@ -1226,6 +1226,11 @@ test.each([
     ts: expect.any(Number), clientTs: queuedEcho.ts,
   });
   expect(history.find((event) => event.id === queued)!.ts).toBeGreaterThanOrEqual(final.ts);
+  const queuedStored = history.find((event) => event.id === queued)!;
+  const nextFinal = history.find((event) => event.kind === "message" && event.data.role === "agent" &&
+    event.data.text === "next answer")!;
+  expect(queuedStored.ts).toBeGreaterThan(final.ts);
+  expect(nextFinal.ts).toBeGreaterThan(queuedStored.ts);
   sendRaw(queuedEcho);
   await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === queued);
   expect(readThreadEvents("t1", dir).filter((event) => event.id === queued)).toHaveLength(1);

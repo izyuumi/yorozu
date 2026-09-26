@@ -1138,8 +1138,10 @@ func finalStreamedReplyFollowsToolHistory(finalTimestamp: Int) async throws {
 }
 
 @MainActor
-@Test(arguments: [11, 20])
-func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(finalTimestamp: Int) async throws {
+@Test(arguments: [10, 11], [false, true])
+func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(
+    finalTimestamp: Int, reverseDelivery: Bool
+) async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
     let key = SymmetricKey(size: .bits256)
@@ -1154,16 +1156,21 @@ func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(finalTimestamp: 
     let stopped = YorozuEvent(id: "reply", threadId: "home", ts: finalTimestamp, agentId: "main",
                               payload: .message(MessageData(role: .agent, text: "partial", done: true,
                                                             interrupted: true)))
-    let ordered = YorozuEvent(id: "next", threadId: "home", ts: finalTimestamp, clientTs: 11, agentId: "phone",
+    let ordered = YorozuEvent(id: "next", threadId: "home", ts: finalTimestamp + 1, clientTs: 11, agentId: "phone",
                               payload: queued.payload)
-    for item in [queued, stopped, ordered] { await transport.yield(.event(item)) }
-    #expect(await eventually { model.events["home"]?.first?.id == "reply" })
+    for item in reverseDelivery ? [queued, ordered, stopped, queued] : [queued, stopped, ordered, queued] {
+        await transport.yield(.event(item))
+    }
+    #expect(await eventually { model.events["home"]?.first?.id == "reply" &&
+        model.events["home"]?.last?.clientTs == 11 })
     #expect(model.events["home"]?.map(\.id) == ["reply", "next"])
     #expect(model.events["home"]?.last?.clientTs == 11)
 
     cache.save(events: model.events["home"]!, threadId: "home")
+    try cache.savePending([OutboxItem(event: queued)])
     let restored = ChatModel(transport: FakeTransport(), cache: ThreadCache(directory: directory, key: key))
     #expect(restored.events["home"]?.map(\.id) == ["reply", "next"])
+    #expect(restored.events["home"]?.last?.clientTs == 11)
 }
 
 @MainActor
