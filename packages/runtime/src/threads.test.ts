@@ -15,6 +15,7 @@ import {
   markThreadRead,
   pinThread,
   readThreadEvents,
+  searchThreadPage,
   renameThread,
   setThreadEffort,
   setThreadModel,
@@ -245,6 +246,56 @@ test("sync pages advance through a long thread without dropping searchable histo
   expect(first).toHaveLength(SYNC_LIMIT);
   expect(first[0]!.id).toBe("e0");
   expect(eventsAfter(HOME, first.at(-1)!.id, dir).map((event) => event.id)).toEqual([`e${SYNC_LIMIT}`]);
+});
+
+test("host search reaches archived history beyond the first bounded page", async () => {
+  const threads = Array.from({ length: 55 }, (_, index) => ({ id: `thread${String(index).padStart(2, "0")}`, title: `Thread ${index}` }));
+  writeLegacyIndex(...threads);
+  archiveThread("thread54", dir);
+  appendThreadEvent(message("e1", "Old café note", "thread54"), dir);
+  appendThreadEvent(message("e2", "Newest CAFE note", "thread54"), dir);
+
+  const first = await searchThreadPage("cafe", 0, dir);
+  expect(first.matches).toEqual([]);
+  expect(first.nextOffset).toBe(10);
+  let offset = first.nextOffset;
+  let final = first;
+  while (offset !== undefined) {
+    final = await searchThreadPage("cafe", offset, dir);
+    offset = final.nextOffset;
+  }
+  expect(final.matches).toMatchObject([{ threadId: "thread54", eventId: "e2", excerpt: "Newest CAFE note",
+    thread: { id: "thread54", archived: true } }]);
+});
+
+test("host search excerpt points at a match after decomposed accents", async () => {
+  writeLegacyIndex();
+  appendThreadEvent(message("e1", `${"e\u0301".repeat(100)} needle near the end`), dir);
+  const page = await searchThreadPage("needle", 0, dir);
+  expect(page.matches[0]?.excerpt).toContain("needle");
+});
+
+test("host search resumes within a long log after its per-page work budget", async () => {
+  writeLegacyIndex();
+  for (let index = 0; index <= 1_000; index++) {
+    appendThreadEvent(message(`e${index}`, index === 1_000 ? "needle" : "other"), dir);
+  }
+  const first = await searchThreadPage("needle", 0, dir);
+  expect(first.matches).toEqual([]);
+  expect(first.nextOffset).toBe(0);
+  expect(first.nextLineOffset).toBeGreaterThan(0);
+  const second = await searchThreadPage("needle", first.nextOffset, dir, () => true, first.nextLineOffset);
+  expect(second.matches.map((match) => match.eventId)).toEqual(["e1000"]);
+  expect(second.nextOffset).toBeUndefined();
+});
+
+test("host search bounds an oversized log line and marks the result partial", async () => {
+  writeLegacyIndex({ id: "large", title: "Large" }, { id: "small", title: "Small" });
+  appendThreadEvent(message("e1", "x".repeat(2 * 1024 * 1024 + 1), "large"), dir);
+  appendThreadEvent(message("e2", "needle", "small"), dir);
+  const page = await searchThreadPage("needle", 0, dir);
+  expect(page.partial).toBe(true);
+  expect(page.matches.map((match) => match.threadId)).toEqual(["small"]);
 });
 
 test("sync keeps messages between repeated progress cards across page boundaries", () => {

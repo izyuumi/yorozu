@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, createReadStream, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   THREAD_AGENTS,
@@ -15,6 +15,7 @@ import {
   type ReasoningEffort,
   type ThreadAgent,
   type ThreadSummary,
+  type ThreadSearchMatch,
   type YorozuEvent,
 } from "@yorozu/shared";
 import { stateDir } from "./memory.js";
@@ -138,7 +139,7 @@ function validThread(value: unknown): value is ThreadRecord {
  * working directories or approval bypass, so guessing metadata would silently change agents.
  * The original index stays untouched for repair or restoration from backup.
  */
-export function listThreads(dir = stateDir()): ThreadRecord[] {
+export function listThreads(dir = stateDir(), byActivity = true): ThreadRecord[] {
   let stored: ThreadRecord[];
   try {
     let raw: string;
@@ -163,7 +164,7 @@ export function listThreads(dir = stateDir()): ThreadRecord[] {
         : [],
   );
   if (JSON.stringify(threads) !== JSON.stringify(stored)) saveThreads(threads, dir);
-  return threads.sort((a, b) => lastActivity(b, dir) - lastActivity(a, dir));
+  return byActivity ? threads.sort((a, b) => lastActivity(b, dir) - lastActivity(a, dir)) : threads;
 }
 
 /** The thread a turn that has none of its own belongs to: the newest one, or a new one. */
@@ -488,6 +489,110 @@ export function readThreadEvents(threadId: string, dir = stateDir()): YorozuEven
     }
   }
   return events;
+}
+
+/** Stream a small slice of host history without blocking message/control handling. */
+async function* boundedLogLines(input: ReturnType<typeof createReadStream>): AsyncGenerator<{ line: string; bytes: number }> {
+  const maxLineBytes = 2 * 1024 * 1024;
+  let chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of input) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    let start = 0;
+    for (let index = 0; index < buffer.length; index++) {
+      if (buffer[index] !== 10) continue;
+      const part = buffer.subarray(start, index);
+      size += part.length;
+      if (size > maxLineBytes) throw new Error("search line too large");
+      chunks.push(part);
+      yield { line: Buffer.concat(chunks, size).toString("utf8"), bytes: size + 1 };
+      chunks = [];
+      size = 0;
+      start = index + 1;
+    }
+    const tail = buffer.subarray(start);
+    size += tail.length;
+    if (size > maxLineBytes) throw new Error("search line too large");
+    chunks.push(tail);
+  }
+  if (size > 0) yield { line: Buffer.concat(chunks, size).toString("utf8"), bytes: size };
+}
+
+export async function searchThreadPage(query: string, offset = 0, dir = stateDir(),
+  active = (): boolean => true, lineOffset = 0): Promise<{
+  matches: ThreadSearchMatch[]; nextOffset?: number; nextLineOffset?: number; partial?: boolean;
+}> {
+  const fold = (text: string): string => text.normalize("NFD").replace(/\p{M}/gu, "").toLocaleLowerCase();
+  const needle = fold(query.trim());
+  if (!needle) return { matches: [] };
+  const threads = listThreads(dir, false).sort((a, b) => a.id.localeCompare(b.id));
+  const end = Math.min(threads.length, offset + 10);
+  const matches: ThreadSearchMatch[] = [];
+  let partial = false;
+  let linesScanned = 0;
+  let bytesScanned = 0;
+  for (let index = offset; index < end; index++) {
+    if (!active()) return { matches: [] };
+    const thread = threads[index]!;
+    const file = logFile(thread.id, dir);
+    if (!existsSync(file)) continue;
+    let readOffset = index === offset ? lineOffset : 0;
+    if (readOffset > statSync(file).size) { partial = true; continue; }
+    const input = createReadStream(file, { start: readOffset });
+    let found: ThreadSearchMatch | undefined;
+    let resumeAt: number | undefined;
+    try {
+      for await (const { line, bytes: lineBytes } of boundedLogLines(input)) {
+        if (!active()) return { matches: [] };
+        readOffset += lineBytes;
+        linesScanned++;
+        bytesScanned += lineBytes;
+        try {
+          const event = JSON.parse(line) as YorozuEvent;
+          if (event.kind === "message" && typeof event.data?.text === "string") {
+            const text = event.data.text;
+            const at = fold(text).indexOf(needle);
+            if (at >= 0) {
+              let originalAt = 0;
+              let foldedAt = 0;
+              for (const character of text) {
+                if (foldedAt >= at) break;
+                foldedAt += fold(character).length;
+                originalAt += character.length;
+              }
+              const start = Math.max(0, originalAt - 50);
+              const excerpt = text.slice(start, start + 160).replace(/\s+/gu, " ").trim();
+              found = { threadId: thread.id, eventId: event.id, excerpt,
+                thread: { id: thread.id, title: thread.title, archived: thread.archived,
+                  lastActivity: event.ts, pinned: thread.pinned ?? false,
+                  ...(thread.agent ? { agent: thread.agent } : {}),
+                  ...(thread.cwd ? { cwd: thread.cwd } : {}) } };
+            }
+          }
+        } catch {
+          // A half-written or obsolete event cannot hide later matches.
+        }
+        if (linesScanned >= 1_000 || bytesScanned >= 2 * 1024 * 1024) {
+          resumeAt = readOffset;
+          break;
+        }
+      }
+    } catch {
+      partial = true;
+    } finally {
+      input.destroy();
+    }
+    if (found) matches.push(found);
+    if (resumeAt !== undefined) {
+      let moreInFile = false;
+      try { moreInFile = resumeAt < statSync(file).size; }
+      catch { partial = true; }
+      const nextOffset = moreInFile ? index : index + 1;
+      return { matches, ...(nextOffset < threads.length ? { nextOffset } : {}),
+        ...(moreInFile ? { nextLineOffset: resumeAt } : {}), ...(partial ? { partial } : {}) };
+    }
+  }
+  return { matches, ...(end < threads.length ? { nextOffset: end } : {}), ...(partial ? { partial } : {}) };
 }
 
 /**

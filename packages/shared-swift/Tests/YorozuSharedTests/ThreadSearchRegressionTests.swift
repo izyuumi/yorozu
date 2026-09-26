@@ -63,3 +63,12 @@ import Testing
         payload: .message(MessageData(role: .agent, text: "Meet at the cafe")))
     #expect(searchHits(in: [message], term: first.query).first?.eventId == "matching-message")
 }
+
+@Test func hostMatchAppearsBeforeItsMessageIsDownloaded() {
+    let thread = ThreadSummary(id: "older", title: "Unrelated", archived: true, lastActivity: 1)
+    let match = ThreadSearchMatch(threadId: thread.id, eventId: "exact-message", excerpt: "Café in older history")
+    let results = ThreadSearchResults(threads: [thread], query: "cafe", messageText: { _ in "" },
+                                      remoteMatches: [thread.id: match])
+    #expect(results.messages.map(\.id) == [thread.id])
+    #expect(ThreadSearchRequest(threadId: thread.id, query: "cafe", eventId: match.eventId).eventId == "exact-message")
+}

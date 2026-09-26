@@ -163,6 +163,10 @@ private struct LocalChatWindowView: View {
                     }
                     .joined(separator: "\n\n")
                 },
+                remoteMatches: model.remoteSearch,
+                remoteQuery: model.searchQuery,
+                searchScope: model.searchScope,
+                onSearchQueryChange: model.searchHost,
                 exportMarkdown: model.markdown(of:),
                 onSearchSelect: { searchRequest = $0 }
             )

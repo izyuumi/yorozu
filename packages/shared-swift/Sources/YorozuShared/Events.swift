@@ -71,6 +71,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case stopStatus = "stop_status"
         case syncRequest = "sync_request"
         case syncDelta = "sync_delta"
+        case threadSearchRequest = "thread_search_request"
+        case threadSearchResult = "thread_search_result"
         case deviceList = "device_list"
         case deviceRemove = "device_remove"
         case receipt
@@ -112,6 +114,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case stopStatus(StopStatusData)
         case syncRequest(SyncRequestData)
         case syncDelta(SyncDeltaData)
+        case threadSearchRequest(ThreadSearchRequestData)
+        case threadSearchResult(ThreadSearchResultData)
         case deviceList(DeviceListData)
         case deviceRemove(DeviceRemoveData)
         case receipt(ReceiptData)
@@ -153,6 +157,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .stopStatus: .stopStatus
             case .syncRequest: .syncRequest
             case .syncDelta: .syncDelta
+            case .threadSearchRequest: .threadSearchRequest
+            case .threadSearchResult: .threadSearchResult
             case .deviceList: .deviceList
             case .deviceRemove: .deviceRemove
             case .receipt: .receipt
@@ -209,6 +215,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .stopStatus: payload = .stopStatus(try c.decode(StopStatusData.self, forKey: .data))
         case .syncRequest: payload = .syncRequest(try c.decode(SyncRequestData.self, forKey: .data))
         case .syncDelta: payload = .syncDelta(try c.decode(SyncDeltaData.self, forKey: .data))
+        case .threadSearchRequest: payload = .threadSearchRequest(try c.decode(ThreadSearchRequestData.self, forKey: .data))
+        case .threadSearchResult: payload = .threadSearchResult(try c.decode(ThreadSearchResultData.self, forKey: .data))
         case .deviceList: payload = .deviceList(try c.decode(DeviceListData.self, forKey: .data))
         case .deviceRemove: payload = .deviceRemove(try c.decode(DeviceRemoveData.self, forKey: .data))
         case .receipt: payload = .receipt(try c.decode(ReceiptData.self, forKey: .data))
@@ -261,6 +269,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .stopStatus(let d): try c.encode(d, forKey: .data)
         case .syncRequest(let d): try c.encode(d, forKey: .data)
         case .syncDelta(let d): try c.encode(d, forKey: .data)
+        case .threadSearchRequest(let d): try c.encode(d, forKey: .data)
+        case .threadSearchResult(let d): try c.encode(d, forKey: .data)
         case .deviceList(let d): try c.encode(d, forKey: .data)
         case .deviceRemove(let d): try c.encode(d, forKey: .data)
         case .receipt(let d): try c.encode(d, forKey: .data)
@@ -1181,6 +1191,48 @@ public struct SyncDeltaData: Codable, Equatable, Sendable {
         self.threadId = threadId
         self.workingThreadIds = workingThreadIds
         self.more = more
+    }
+}
+
+public struct ThreadSearchRequestData: Codable, Equatable, Sendable {
+    public var requestId: String
+    public var query: String
+    public var offset: Int?
+    public var lineOffset: Int?
+    public init(requestId: String, query: String, offset: Int? = nil, lineOffset: Int? = nil) {
+        self.requestId = requestId
+        self.query = query
+        self.offset = offset
+        self.lineOffset = lineOffset
+    }
+}
+
+public struct ThreadSearchMatch: Codable, Equatable, Sendable {
+    public var threadId: String
+    public var eventId: String
+    public var excerpt: String
+    public var thread: ThreadSummary?
+    public init(threadId: String, eventId: String, excerpt: String, thread: ThreadSummary? = nil) {
+        self.threadId = threadId
+        self.eventId = eventId
+        self.excerpt = excerpt
+        self.thread = thread
+    }
+}
+
+public struct ThreadSearchResultData: Codable, Equatable, Sendable {
+    public var requestId: String
+    public var matches: [ThreadSearchMatch]
+    public var nextOffset: Int?
+    public var nextLineOffset: Int?
+    public var partial: Bool?
+    public init(requestId: String, matches: [ThreadSearchMatch], nextOffset: Int? = nil,
+                nextLineOffset: Int? = nil, partial: Bool? = nil) {
+        self.requestId = requestId
+        self.matches = matches
+        self.nextOffset = nextOffset
+        self.nextLineOffset = nextLineOffset
+        self.partial = partial
     }
 }
 

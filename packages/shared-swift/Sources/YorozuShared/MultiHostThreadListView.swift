@@ -49,6 +49,18 @@ struct HostThreadListAdapter {
         return session.messageText(for: id)
     }
 
+    var remoteMatches: [String: ThreadSearchMatch] {
+        Dictionary(uniqueKeysWithValues: records.compactMap { listID, item in
+            guard let match = session.model(for: item.id)?.remoteSearch[item.id.threadID] else { return nil }
+            return (listID, ThreadSearchMatch(threadId: listID, eventId: match.eventId, excerpt: match.excerpt))
+        })
+    }
+
+    var remoteQuery: String? {
+        let queries = Set(session.sessions.map { $0.model.searchQuery })
+        return queries.count == 1 ? queries.first : nil
+    }
+
     func markdown(_ thread: ThreadSummary) -> String {
         guard let item = resolve(thread.id), let model = session.model(for: item.id) else { return "" }
         return model.markdown(of: item.thread)
@@ -56,7 +68,8 @@ struct HostThreadListAdapter {
 
     func searchRequest(_ request: ThreadSearchRequest?) -> (HostThreadID, ThreadSearchRequest)? {
         guard let request, let item = resolve(request.threadId) else { return nil }
-        return (item.id, ThreadSearchRequest(threadId: item.thread.id, query: request.query, id: request.id))
+        return (item.id, ThreadSearchRequest(threadId: item.thread.id, query: request.query,
+                                              eventId: request.eventId, id: request.id))
     }
 }
 
@@ -117,6 +130,12 @@ public struct MultiHostThreadListView<Destination: View>: View {
                 }
             },
             messageText: adapter.messageText,
+            remoteMatches: adapter.remoteMatches,
+            remoteQuery: adapter.remoteQuery,
+            searchScope: session.searchScope,
+            onSearchQueryChange: { query in
+                for host in session.sessions { host.model.searchHost(query) }
+            },
             exportMarkdown: adapter.markdown,
             onSettings: onSettings
         ) { thread in
@@ -142,7 +161,8 @@ private struct HostThreadDestination<Content: View>: View {
     var body: some View {
         content.environment(\.threadSearchRequest, searchRequest.flatMap { request in
             guard request.threadId == id.listID else { return nil }
-            return ThreadSearchRequest(threadId: id.threadID, query: request.query, id: request.id)
+            return ThreadSearchRequest(threadId: id.threadID, query: request.query,
+                                       eventId: request.eventId, id: request.id)
         })
     }
 }
@@ -186,6 +206,12 @@ public struct MultiHostThreadSidebar: View {
             },
             onReadAll: session.markAllRead,
             messageText: adapter.messageText,
+            remoteMatches: adapter.remoteMatches,
+            remoteQuery: adapter.remoteQuery,
+            searchScope: session.searchScope,
+            onSearchQueryChange: { query in
+                for host in session.sessions { host.model.searchHost(query) }
+            },
             exportMarkdown: adapter.markdown,
             onSearchSelect: { request in
                 let mapped = adapter.searchRequest(request)
@@ -199,6 +225,23 @@ public struct MultiHostThreadSidebar: View {
 }
 
 extension MultiHostModel {
+    public var searchScope: String {
+        if sessions.contains(where: { $0.model.searchQuery.utf8.count > 128 }) {
+            return "Downloaded conversations only · shorten search for host history"
+        }
+        if sessions.contains(where: { $0.model.searchIncomplete }) {
+            return "Downloaded conversations and partial host results"
+        }
+        let available = sessions.filter { $0.model.canDeliver && $0.model.supportsHostSearch }
+        guard !available.isEmpty else { return "Downloaded conversations only" }
+        if available.count == sessions.count && available.allSatisfy({ $0.model.searchComplete }) {
+            return "All host histories searched"
+        }
+        return available.allSatisfy({ $0.model.searchComplete })
+            ? "Downloaded conversations and available host history"
+            : "Downloaded conversations · searching available hosts…"
+    }
+
     /// Most recent distinct outage owns the one visible toast. Keep dismissed notices in the
     /// ordering so an older host's still-running timer cannot make its toast reappear.
     public var connectionToastNotice: (host: HostSession, notice: ConnectionToastNotice)? {

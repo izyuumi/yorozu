@@ -644,6 +644,10 @@ public struct ThreadListView<Destination: View>: View {
     private let onReadAll: (() -> Void)?
     private let onRefresh: (() async -> Void)?
     private let messageText: (String) -> String
+    private let remoteMatches: [String: ThreadSearchMatch]
+    private let remoteQuery: String?
+    private let searchScope: String
+    private let onSearchQueryChange: ((String) -> Void)?
     private let exportMarkdown: ((ThreadSummary) -> String)?
     private let onSettings: (() -> Void)?
     private let destination: (ThreadSummary) -> Destination
@@ -745,6 +749,10 @@ public struct ThreadListView<Destination: View>: View {
         onReadAll: (() -> Void)? = nil,
         onRefresh: (() async -> Void)? = nil,
         messageText: @escaping (String) -> String = { _ in "" },
+        remoteMatches: [String: ThreadSearchMatch] = [:],
+        remoteQuery: String? = nil,
+        searchScope: String = "Downloaded conversations only",
+        onSearchQueryChange: ((String) -> Void)? = nil,
         exportMarkdown: ((ThreadSummary) -> String)? = nil,
         onSettings: (() -> Void)? = nil,
         @ViewBuilder destination: @escaping (ThreadSummary) -> Destination
@@ -774,6 +782,10 @@ public struct ThreadListView<Destination: View>: View {
         self.onReadAll = onReadAll
         self.onRefresh = onRefresh
         self.messageText = messageText
+        self.remoteMatches = remoteMatches
+        self.remoteQuery = remoteQuery
+        self.searchScope = searchScope
+        self.onSearchQueryChange = onSearchQueryChange
         self.exportMarkdown = exportMarkdown
         self.onSettings = onSettings
         self.destination = destination
@@ -790,9 +802,16 @@ public struct ThreadListView<Destination: View>: View {
     private var groups: ThreadGroups { heldOrder?.groups(with: threads) ?? liveGroups }
 
     private var searchNeedle: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var currentRemoteMatches: [String: ThreadSearchMatch] {
+        remoteQuery == searchNeedle ? remoteMatches : [:]
+    }
+    private var shownSearchScope: String {
+        remoteQuery == searchNeedle ? searchScope : "Downloaded conversations only"
+    }
 
     private var searchResults: ThreadSearchResults {
-        ThreadSearchResults(threads: threads, query: query, metadataText: { hostLabel($0) ?? "" }, messageText: messageText)
+        ThreadSearchResults(threads: threads, query: query, metadataText: { hostLabel($0) ?? "" },
+                            messageText: messageText, remoteMatches: currentRemoteMatches)
     }
 
     private var threadResults: [ThreadSummary] { heldOrder?.results(with: threads).threads ?? searchResults.threads }
@@ -846,8 +865,9 @@ public struct ThreadListView<Destination: View>: View {
             searchRequest = nil
             return
         }
-        searchRequest = searchRanges(in: messageText(id), term: searchNeedle).isEmpty
-            ? nil : ThreadSearchRequest(threadId: id, query: searchNeedle)
+        let remote = currentRemoteMatches[id]
+        searchRequest = remote == nil && searchRanges(in: messageText(id), term: searchNeedle).isEmpty
+            ? nil : ThreadSearchRequest(threadId: id, query: searchNeedle, eventId: remote?.eventId)
     }
 
     private var stack: some View {
@@ -891,7 +911,7 @@ public struct ThreadListView<Destination: View>: View {
                 }
             } else {
                 Section {
-                    Text("Downloaded conversations only")
+                    Text(shownSearchScope)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .listRowSeparator(.hidden)
@@ -902,7 +922,9 @@ public struct ThreadListView<Destination: View>: View {
                 }
                 if !messageResults.isEmpty {
                     Section("Messages") {
-                        rows(messageResults) { searchExcerpt(in: messageText($0.id), matching: searchNeedle) }
+                        rows(messageResults) {
+                            currentRemoteMatches[$0.id]?.excerpt ?? searchExcerpt(in: messageText($0.id), matching: searchNeedle)
+                        }
                     }
                 }
             }
@@ -930,7 +952,10 @@ public struct ThreadListView<Destination: View>: View {
                 if listScrollPhase == .idle { settleListOrder() }
             })
         #endif
-        .onChange(of: query) { _, _ in settleListOrder() }
+        .onChange(of: query, initial: true) { _, value in
+            settleListOrder()
+            onSearchQueryChange?(value)
+        }
         .onChange(of: path) { _, value in
             if !splitLayout && !value.isEmpty { touchingList = false; settleListOrder() }
         }
@@ -1134,7 +1159,7 @@ public struct ThreadListView<Destination: View>: View {
                 ContentUnavailableView(
                     "No downloaded matches",
                     systemImage: "magnifyingglass",
-                    description: Text("Downloaded conversations only")
+                    description: Text(shownSearchScope)
                 )
             }
         }
@@ -1187,6 +1212,10 @@ public struct ThreadSidebar: View {
     private let onRead: (ThreadSummary, Bool) -> Void
     private let onReadAll: (() -> Void)?
     private let messageText: (String) -> String
+    private let remoteMatches: [String: ThreadSearchMatch]
+    private let remoteQuery: String?
+    private let searchScope: String
+    private let onSearchQueryChange: ((String) -> Void)?
     private let exportMarkdown: ((ThreadSummary) -> String)?
     private let onSearchSelect: ((ThreadSearchRequest?) -> Void)?
 
@@ -1218,6 +1247,10 @@ public struct ThreadSidebar: View {
         onRead: @escaping (ThreadSummary, Bool) -> Void = { _, _ in },
         onReadAll: (() -> Void)? = nil,
         messageText: @escaping (String) -> String = { _ in "" },
+        remoteMatches: [String: ThreadSearchMatch] = [:],
+        remoteQuery: String? = nil,
+        searchScope: String = "Downloaded conversations only",
+        onSearchQueryChange: ((String) -> Void)? = nil,
         exportMarkdown: ((ThreadSummary) -> String)? = nil,
         onSearchSelect: ((ThreadSearchRequest?) -> Void)? = nil
     ) {
@@ -1236,6 +1269,10 @@ public struct ThreadSidebar: View {
         self.onRead = onRead
         self.onReadAll = onReadAll
         self.messageText = messageText
+        self.remoteMatches = remoteMatches
+        self.remoteQuery = remoteQuery
+        self.searchScope = searchScope
+        self.onSearchQueryChange = onSearchQueryChange
         self.exportMarkdown = exportMarkdown
         self.onSearchSelect = onSearchSelect
     }
@@ -1244,9 +1281,16 @@ public struct ThreadSidebar: View {
     private var groups: ThreadGroups { heldOrder?.groups(with: threads) ?? liveGroups }
 
     private var searchNeedle: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var currentRemoteMatches: [String: ThreadSearchMatch] {
+        remoteQuery == searchNeedle ? remoteMatches : [:]
+    }
+    private var shownSearchScope: String {
+        remoteQuery == searchNeedle ? searchScope : "Downloaded conversations only"
+    }
 
     private var searchResults: ThreadSearchResults {
-        ThreadSearchResults(threads: threads, query: query, metadataText: { hostLabel($0) ?? "" }, messageText: messageText)
+        ThreadSearchResults(threads: threads, query: query, metadataText: { hostLabel($0) ?? "" },
+                            messageText: messageText, remoteMatches: currentRemoteMatches)
     }
 
     private var threadResults: [ThreadSummary] { heldOrder?.results(with: threads).threads ?? searchResults.threads }
@@ -1287,7 +1331,7 @@ public struct ThreadSidebar: View {
                 }
             } else {
                 Section {
-                    Text("Downloaded conversations only")
+                    Text(shownSearchScope)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .listRowSeparator(.hidden)
@@ -1298,7 +1342,9 @@ public struct ThreadSidebar: View {
                 }
                 if !messageResults.isEmpty {
                     Section("Messages") {
-                        rows(messageResults) { searchExcerpt(in: messageText($0.id), matching: searchNeedle) }
+                        rows(messageResults) {
+                            currentRemoteMatches[$0.id]?.excerpt ?? searchExcerpt(in: messageText($0.id), matching: searchNeedle)
+                        }
                     }
                 }
             }
@@ -1324,7 +1370,10 @@ public struct ThreadSidebar: View {
                 pressingList = false
                 if listScrollPhase == .idle { settleListOrder() }
             })
-        .onChange(of: query) { _, _ in settleListOrder() }
+        .onChange(of: query, initial: true) { _, value in
+            settleListOrder()
+            onSearchQueryChange?(value)
+        }
         .overlay { empty(groups) }
         // In the sidebar itself rather than in the toolbar: the chat next to it has a search
         // field of its own, and two searchable views in one window fight over the toolbar.
@@ -1378,8 +1427,9 @@ public struct ThreadSidebar: View {
             onSearchSelect?(nil)
             return
         }
-        let request = searchRanges(in: messageText(id), term: needle).isEmpty
-            ? nil : ThreadSearchRequest(threadId: id, query: needle)
+        let remote = currentRemoteMatches[id]
+        let request = remote == nil && searchRanges(in: messageText(id), term: needle).isEmpty
+            ? nil : ThreadSearchRequest(threadId: id, query: needle, eventId: remote?.eventId)
         searchThreadID = request?.threadId
         onSearchSelect?(request)
     }
@@ -1470,7 +1520,7 @@ public struct ThreadSidebar: View {
                 ContentUnavailableView(
                     "No downloaded matches",
                     systemImage: "magnifyingglass",
-                    description: Text("Downloaded conversations only")
+                    description: Text(shownSearchScope)
                 )
             }
         }
