@@ -18,6 +18,7 @@ IOS="$ROOT/apps/ios"
 BUNDLE_ID=to.yumi.yorozu.ios
 DEVICE_TYPE=${DEVICE_TYPE:-com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro}
 RELAY_PORT=${RELAY_PORT:-8791}
+PROXY_PORT=${PROXY_PORT:-8792}
 PROVIDER_PORT=${PROVIDER_PORT:-8799}
 SECOND_PROVIDER_PORT=${SECOND_PROVIDER_PORT:-8800}
 REPLY=${REPLY:-"hello from the fake model"}
@@ -38,8 +39,9 @@ cleanup() {
     if [ -n "$UDID" ]; then
       xcrun simctl spawn "$UDID" log show --last 5m --style compact \
         --predicate 'process == "YorozuIOS"' >"$WORK/device.log" 2>/dev/null || true
+      xcrun simctl io "$UDID" screenshot "$WORK/failure.png" >/dev/null 2>&1 || true
     fi
-    for name in app app2 app3 app4 app5 sidecar sidecar2 relay provider provider2 device; do
+    for name in app app2 app3 app-fault app-recovered app4 app5 sidecar sidecar2 relay proxy provider provider2 device; do
       [ -s "$WORK/$name.log" ] || continue
       printf '\n--- %s.log ---\n' "$name" >&2
       tail -30 "$WORK/$name.log" >&2
@@ -66,15 +68,30 @@ wait_for() {
   return 1
 }
 
+wait_for_transcript() {
+  local pattern=$1 label=$2 seconds=${3:-60}
+  for _ in $(seq "$seconds"); do
+    grep -q "$pattern" "$WORK/state/transcripts/"*.jsonl 2>/dev/null && return 0
+    sleep 1
+  done
+  echo "timed out waiting for $label" >&2
+  return 1
+}
+
 say "building TypeScript workspaces"
 pnpm -C "$ROOT" -r build >/dev/null
 
 say "starting relay, fake provider and sidecar"
 PORT=$RELAY_PORT node "$ROOT/apps/relay/dist/index.js" >"$WORK/relay.log" 2>&1 &
 PIDS+=($!)
-PORT=$PROVIDER_PORT REPLY="$REPLY" node "$IOS/e2e/fake-provider.mjs" >"$WORK/provider.log" 2>&1 &
+PORT=$PROXY_PORT UPSTREAM="ws://127.0.0.1:$RELAY_PORT" DROP_FILE="$WORK/drop-host-frames" \
+  node "$IOS/e2e/relay-fault-proxy.mjs" >"$WORK/proxy.log" 2>&1 &
+PIDS+=($!)
+PORT=$PROVIDER_PORT REPLY="$REPLY" FAULT_FILE="$WORK/fault-provider" RELEASE_FILE="$WORK/release-provider" \
+  node "$IOS/e2e/fake-provider.mjs" >"$WORK/provider.log" 2>&1 &
 PIDS+=($!)
 wait_for "$WORK/relay.log" "relay listening" "the relay"
+wait_for "$WORK/proxy.log" "fault proxy listening" "the phone proxy"
 
 # Only the fake provider, written before the sidecar starts. `--direct-provider` keeps this test
 # pinned to it instead of sending the turn to whichever live OpenClaw gateway is on the machine.
@@ -91,6 +108,8 @@ YOROZU_RELAY_URL="ws://127.0.0.1:$RELAY_PORT" \
 PIDS+=($!)
 wait_for "$WORK/sidecar.log" "^PAIR " "the pairing string"
 PAIR=$(grep -m1 '^PAIR ' "$WORK/sidecar.log" | cut -c6-)
+PAIR=$(node -e 'const pair = new URL(process.argv[1]); pair.searchParams.set("relay", process.argv[2]); console.log(String(pair))' \
+  "$PAIR" "ws://127.0.0.1:$PROXY_PORT")
 
 say "generating and building the app"
 tuist generate --no-open --path "$IOS" >/dev/null
@@ -167,6 +186,42 @@ PIDS+=($!)
 wait_for "$WORK/app3.log" "YOROZU-E2E paired" "the phone to rejoin after reinstalling" 45
 wait_for "$WORK/app3.log" "YOROZU-E2E-REPLY \[.*\] $REPLY" "a reply after the reinstall" 45
 
+say "dropping host confirmations, killing phone, then recovering finished work"
+xcrun simctl terminate "$UDID" "$BUNDLE_ID"
+previous_requests=$(grep -c '^request ' "$WORK/provider.log")
+xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" \
+  -yorozuSend fault-path-question -yorozuSendInFirstThread yes -yorozuSendDelayMs 3000 \
+  >"$WORK/app-fault.log" 2>&1 &
+PIDS+=($!)
+wait_for "$WORK/app-fault.log" "YOROZU-E2E paired" "the phone to rejoin before the fault" 45
+touch "$WORK/drop-host-frames" "$WORK/fault-provider"
+wait_for "$WORK/provider.log" "^request $((previous_requests + 1))$" "host execution after the lost receipt" 45
+wait_for "$WORK/app-fault.log" "YOROZU-E2E-DELIVERY confirming" "uncertain delivery state" 20
+if grep -q 'finished after disconnect' "$WORK/state/transcripts/"*.jsonl 2>/dev/null; then
+  echo "host finished before the phone was terminated" >&2
+  exit 1
+fi
+xcrun simctl terminate "$UDID" "$BUNDLE_ID"
+touch "$WORK/release-provider"
+wait_for_transcript 'finished after disconnect' "host completion while phone is dead" 45
+test "$(grep -c '^request ' "$WORK/provider.log")" -eq "$((previous_requests + 1))"
+test "$(grep -c 'dropped host frame' "$WORK/proxy.log")" -gt 0
+rm "$WORK/drop-host-frames" "$WORK/fault-provider" "$WORK/release-provider"
+xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" \
+  -yorozuObserve yes >"$WORK/app-recovered.log" 2>&1 &
+PIDS+=($!)
+wait_for "$WORK/app-recovered.log" 'YOROZU-E2E-FINAL .*finished after disconnect.*pending=0' "completed answer and reconciled outbox after relaunch" 45
+test "$(grep -c '^request ' "$WORK/provider.log")" -eq "$((previous_requests + 1))"
+node - "$WORK/state/transcripts" <<'JS'
+const fs = require('node:fs');
+const events = fs.readdirSync(process.argv[2]).filter(name => name.endsWith('.jsonl'))
+  .flatMap(name => fs.readFileSync(`${process.argv[2]}/${name}`, 'utf8').trim().split('\n').map(JSON.parse));
+const messages = events.filter(event => event.kind === 'message' && event.data.role === 'user' && event.data.text === 'fault-path-question');
+if (messages.length !== 1) throw new Error(`fault request recorded ${messages.length} times`);
+const answers = events.filter(event => event.threadId === messages[0].threadId && event.kind === 'message' && event.data.role === 'agent' && event.data.done && event.data.text.includes('finished after disconnect'));
+if (answers.length !== 1) throw new Error(`fault answer recorded ${answers.length} times`);
+JS
+
 say "adding a second host without replacing the first"
 PORT=$SECOND_PROVIDER_PORT REPLY="$SECOND_REPLY" node "$IOS/e2e/fake-provider.mjs" >"$WORK/provider2.log" 2>&1 &
 PIDS+=($!)
@@ -215,6 +270,8 @@ grep -m2 'YOROZU-E2E-REPLY' "$WORK/app.log"
 grep -m1 'YOROZU-E2E-TOOL' "$WORK/app.log"
 grep -m1 'YOROZU-E2E-REPLY' "$WORK/app2.log"
 grep -m1 'YOROZU-E2E-REPLY' "$WORK/app3.log"
+grep -m1 'YOROZU-E2E-DELIVERY' "$WORK/app-fault.log"
+grep -m1 'YOROZU-E2E-FINAL .*finished after disconnect.*pending=0' "$WORK/app-recovered.log"
 grep 'YOROZU-E2E-HOST-REPLY' "$WORK/app4.log"
 grep 'YOROZU-E2E-REMOVED\|YOROZU-E2E-HOST-REPLY' "$WORK/app5.log"
 grep '^STATE ' "$WORK/sidecar.log"
