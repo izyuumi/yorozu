@@ -37,7 +37,7 @@ export const SYNC_PAGE_BYTES = 512 * 1024;
 
 export interface ThreadRecord {
   bypass?: boolean;
-  nativeTurn?: { id: string; state: "running" | "interrupted" };
+  nativeTurn?: { id: string; state: "running" | "interrupted"; userEventId?: string; recoveryAttempts?: number; recoveryActive?: boolean };
   id: string;
   /** Empty until the runtime auto-titles the thread or the user renames it. */
   title: string;
@@ -381,7 +381,13 @@ export const threadSummaries = (dir = stateDir(), minTs = 0): ThreadSummary[] =>
       ...(thread.model ? { model: thread.model } : {}),
       ...(thread.effort ? { effort: thread.effort } : {}),
       ...(thread.agent ? { bypass: thread.bypass ?? false } : {}),
-      ...(thread.nativeTurn?.state === "interrupted" ? { interruptedTurnId: thread.nativeTurn.id, canResume: !!thread.nativeSessionId } : {}),
+      ...(thread.nativeTurn?.state === "interrupted" &&
+        ((thread.nativeTurn.recoveryAttempts ?? 0) >= 3 || !thread.nativeTurn.userEventId)
+        ? { interruptedTurnId: thread.nativeTurn.id, canResume: !!thread.nativeTurn.userEventId } : {}),
+      ...(thread.nativeTurn?.userEventId &&
+        (thread.nativeTurn.state === "running" && thread.nativeTurn.recoveryActive === true ||
+          thread.nativeTurn.state === "interrupted" && (thread.nativeTurn.recoveryAttempts ?? 0) < 3)
+        ? { recoveryState: "recovering" as const } : {}),
       // Absent on a yorozu thread: that is the default, and what older phones already assume.
       ...(thread.agent && THREAD_AGENTS.includes(thread.agent) ? { agent: thread.agent } : {}),
       ...(thread.agent && thread.cwd ? { cwd: thread.cwd } : {}),
@@ -537,11 +543,21 @@ export function recoverNativeTurns(dir = stateDir()): void {
   const threads = listThreads(dir);
   let changed = false;
   for (const thread of threads) {
-    if (thread.agent && thread.nativeTurn?.state === "running") {
+    if (thread.agent && thread.nativeTurn) {
       const events = readThreadEvents(thread.id, dir);
+      if (!thread.nativeTurn.userEventId) {
+        const match = /^native:(.+):final$/.exec(thread.nativeTurn.id);
+        if (match && events.some((event) => event.id === match[1] && event.kind === "message" && event.data.role === "user")) {
+          thread.nativeTurn.userEventId = match[1];
+          changed = true;
+        }
+      }
       const finished = events.some((event) => event.id === thread.nativeTurn!.id && event.kind === "message" && event.data.done);
+      const wasRunning = thread.nativeTurn.state === "running";
       if (finished) delete thread.nativeTurn;
-      else thread.nativeTurn.state = "interrupted";
+      else if (wasRunning) thread.nativeTurn.state = "interrupted";
+      else continue;
+      if (!wasRunning) { changed = true; continue; }
       // SDK callbacks died with the process: historical cards must not keep live buttons.
       const answered = new Set(events.flatMap((e) => e.kind === "approval_answer" ? [e.data.actionId] : e.kind === "question_answer" ? [e.data.questionId] : []));
       for (const event of events) {

@@ -2897,35 +2897,76 @@ test.each(["claude-code", "codex"] as const)("%s native bypass shares global YOL
   mac.close();
 });
 
-test.each([
-  ["claude-code", "continue"], ["claude-code", "dismiss"], ["codex", "continue"], ["codex", "dismiss"],
-] as const)("startup never replays %s turns; %s is an explicit recoverable command", async (agent, action) => {
+test.each(["claude-code", "codex"] as const)("startup automatically recovers the same %s turn", async (agent) => {
   const dir = mkdtempSync(join(tmpdir(), "yorozu-native-restart-"));
   createThread("Work", dir, "cc", { agent, cwd: proj });
   setThreadSession("cc", "native-before-crash", dir);
-  setNativeTurn("cc", { id: "crashed-turn", state: "running" }, dir);
+  appendThreadEvent({ id: "original", threadId: "cc", ts: 1, agentId: "main", kind: "message",
+    data: { role: "user", text: "Finish the report" } }, dir);
+  setNativeTurn("cc", { id: "native:original:final", state: "running", userEventId: "original" }, dir);
   const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "continued", sessionId: "native-before-crash" });
   const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { [agent]: { run } } });
-  const startup = (await eventsUntil((e) => e.kind === "thread_list")).at(-1)!;
-  expect(startup).toMatchObject({ data: { threads: [expect.objectContaining({ interruptedTurnId: "crashed-turn" })] } });
-  expect(run).not.toHaveBeenCalled();
-  send({ kind: "thread_recover", data: { turnId: "crashed-turn", action } }, "cc");
-  await eventsUntil((e) => e.kind === "thread_list" && e.data.threads.every((t) => !t.interruptedTurnId));
-  if (action === "continue") {
-    await eventsUntil((e) => e.kind === "message" && e.data.done === true);
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({ text: "Continue the interrupted turn.", sessionId: "native-before-crash", cwd: proj }));
-    // A second device's stale Continue must not start another turn.
-    send({ kind: "thread_recover", data: { turnId: "crashed-turn", action } }, "cc");
-    send({ kind: "thread_list", data: { threads: [] } });
-    await eventsUntil((e) => e.kind === "thread_list");
-    expect(run).toHaveBeenCalledTimes(1);
-  } else {
-    expect(run).not.toHaveBeenCalled();
-    send({ kind: "message", data: { role: "user", text: "New plan" } }, "cc");
-    await eventsUntil((e) => e.kind === "message" && e.data.done === true);
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({ text: "New plan", sessionId: "native-before-crash" }));
-  }
+  await vi.waitFor(() => expect(readThreadEvents("cc", dir)).toContainEqual(expect.objectContaining({
+    id: "native:original:final", kind: "message", data: expect.objectContaining({ done: true, text: "continued" }),
+  })));
+  expect(run).toHaveBeenCalledWith(expect.objectContaining({
+    text: expect.stringContaining("Finish the report"), sessionId: "native-before-crash", cwd: proj,
+  }));
+  expect(readThreadEvents("cc", dir).filter((event) => event.kind === "message" && event.data.role === "user")).toHaveLength(1);
+  send({ kind: "thread_recover", data: { turnId: "native:original:final", action: "continue" } }, "cc");
+  send({ kind: "thread_list", data: { threads: [] } });
+  await eventsUntil((e) => e.kind === "thread_list");
+  expect(run).toHaveBeenCalledTimes(1);
   expect(listThreads(dir)[0]?.nativeTurn).toBeUndefined();
+});
+
+test("three failed native recoveries pause across restart until Retry", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-native-budget-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  appendThreadEvent({ id: "original", threadId: "cc", ts: 1, agentId: "main", kind: "message",
+    data: { role: "user", text: "Finish the report" } }, dir);
+  setNativeTurn("cc", { id: "native:original:final", state: "running", userEventId: "original" }, dir);
+  const failed = vi.fn<NativeAgentRunner["run"]>().mockRejectedValue(new Error("backend crashed"));
+  await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run: failed } } });
+  await vi.waitFor(() => expect(listThreads(dir)[0]?.nativeTurn).toMatchObject({
+    state: "interrupted", recoveryAttempts: 3, userEventId: "original",
+  }));
+  expect(failed).toHaveBeenCalledTimes(3);
+  expect(readThreadEvents("cc", dir).some((event) => event.id === "native:original:final")).toBe(false);
+  await sidecar.close();
+
+  const resumed = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "completed" });
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run: resumed } } });
+  const startup = (await eventsUntil((event) => event.kind === "thread_list")).at(-1)!;
+  expect(startup).toMatchObject({ data: { threads: [expect.objectContaining({
+    interruptedTurnId: "native:original:final", canResume: true,
+  })] } });
+  expect(resumed).not.toHaveBeenCalled();
+  send({ kind: "thread_recover", data: { turnId: "native:original:final", action: "continue" } }, "cc");
+  await vi.waitFor(() => expect(readThreadEvents("cc", dir)).toContainEqual(expect.objectContaining({
+    id: "native:original:final", data: expect.objectContaining({ done: true, text: "completed" }),
+  })));
+  expect(resumed).toHaveBeenCalledTimes(1);
+  expect(readThreadEvents("cc", dir).filter((event) => event.kind === "message" && event.data.role === "user")).toHaveLength(1);
+});
+
+test("new completed tool work resets the native recovery budget", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-native-progress-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  appendThreadEvent({ id: "original", threadId: "cc", ts: 1, agentId: "main", kind: "message",
+    data: { role: "user", text: "Finish the report" } }, dir);
+  setNativeTurn("cc", { id: "native:original:final", state: "running", userEventId: "original", recoveryAttempts: 2 }, dir);
+  const run = vi.fn<NativeAgentRunner["run"]>()
+    .mockImplementationOnce(async (turn) => {
+      turn.onActivity?.("result:fresh", { kind: "tool_result", data: { callId: "fresh", ok: true, output: "verified" } });
+      throw new Error("backend crashed after progress");
+    })
+    .mockResolvedValue({ text: "completed" });
+  await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+  await vi.waitFor(() => expect(readThreadEvents("cc", dir)).toContainEqual(expect.objectContaining({
+    id: "native:original:final", data: expect.objectContaining({ done: true, text: "completed" }),
+  })));
+  expect(run).toHaveBeenCalledTimes(2);
 });
 
 test("native session and running marker reach disk before completion, and survive sidecar shutdown", async () => {

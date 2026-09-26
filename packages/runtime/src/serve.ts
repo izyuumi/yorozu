@@ -535,6 +535,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const running = new Map<string, AbortController>();
   const runningEventIds = new Map<string, string>();
   const turnQueues = new Map<string, Promise<void>>();
+  const nativeRecoveryStarted = new Set<string>();
   const admittedTurns = new Map<string, Promise<void>>();
   const activeTurnIds = new Set<string>();
   const postponeFile = join(dir, "update-postponed-until.json");
@@ -967,6 +968,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const completionIdFor = (threadId: string, userEventId: string): string =>
     `${threadAgent(threadId, dir) === "yorozu" ? openclaw ? "openclaw" : "legacy" : "native"}:${userEventId}:final`;
 
+  const nativeRecoveryPrompt = (threadId: string, original: string): string => {
+    const recent = readThreadEvents(threadId, dir).filter((event) =>
+      event.kind === "message" || event.kind === "tool_result").slice(-20).map((event) => {
+      if (event.kind === "message") return `${event.data.role}: ${event.data.text.slice(0, 2_000)}`;
+      return `tool result ${event.data.callId}: ${event.data.output.slice(0, 2_000)}`;
+    }).join("\n").slice(-12_000);
+    return `Resume the interrupted task. Verify prior actions and their outcomes before repeating any external effect. ` +
+      `Continue unfinished work and answer the original request.\nOriginal request: ${original}\nRecent host record:\n${recent}`;
+  };
+
   async function runTurn(
     threadId: string,
     text: string,
@@ -1033,51 +1044,72 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const turn = new AbortController();
       if (!running.has(threadId)) running.set(threadId, turn);
       if (userEventId) runningEventIds.set(threadId, userEventId);
-      setNativeTurn(threadId, { id, state: "running" }, dir);
-      broadcast(threadList());
+      const previous = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
+      let recoveryAttempts = previous?.userEventId === userEventId ? previous?.recoveryAttempts ?? 0 : 0;
+      let recovering = previous?.state === "interrupted" && previous.userEventId === userEventId;
+      let paused = false;
+      const seenResults = new Set(readThreadEvents(threadId, dir).filter((event) => event.kind === "tool_result").map((event) => event.id));
       try {
-        const done = await runner.run({
-          threadId,
-          text,
-          ...home,
-          cwd: home.cwd,
-          bypass: loadSettings(dir).yolo,
-          model: threadModel(threadId, dir),
-          effort: threadEffort(threadId, dir),
-          signal: turn.signal,
-          onSession: (sessionId) => { setThreadSession(threadId, sessionId, dir); },
-          // YOLO is read per prompt, not per turn: switching it on mid-turn stops the asking.
-          approve: async (tool, input, signal) =>
-            loadSettings(dir).yolo || nativeCards.approve(threadId, agent, tool, input, signal),
-          ask: (question, options, signal) => nativeCards.ask(threadId, question, options, signal),
-          onUpdate: (reply) => broadcast(message(reply)),
-          // The agent's trace, under ids stable per step, so a replayed step is one row. A
-          // long result goes out as its head, flagged; the whole stays here for the asking.
-          onActivity: (key, payload) => {
-            const event: YorozuEvent = { id: `${agent}:${threadId}:${key}`, threadId, ts: Date.now(), agentId: MAIN_AGENT, ...payload };
-            emit(event.kind === "tool_result" ? stashToolResult(event, dir) : event);
-          },
-        });
-        // Stored even after a stop: the session outlives the turn, and the next prompt resumes it.
-        if (done.sessionId && done.sessionId !== home.sessionId) setThreadSession(threadId, done.sessionId, dir);
-        // An interrupted turn says nothing: the user already knows they stopped it.
-        if (turn.signal.aborted) return;
-        finish(done.text);
-      } catch (error) {
-        // The agent could not run at all — not installed, not logged in, crashed. Said in the
-        // thread, finished, so the composer is not left offering Stop for a dead turn.
-        if (turn.signal.aborted) return;
-        // The whole error stays on the Mac: SDK messages name local paths and accounts, and a
-        // phone only needs to know the turn is over and where the detail is.
-        state(`native-error ${error instanceof Error ? error.message : String(error)}`);
-        process.stderr.write(`native-error ${threadId}: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
-        finish(`${agent} could not answer; see the Mac log.`);
+        while (!turn.signal.aborted) {
+          if (recovering) recoveryAttempts += 1;
+          setNativeTurn(threadId, { id, state: "running", ...(userEventId ? { userEventId } : {}), recoveryAttempts,
+            recoveryActive: recovering }, dir);
+          broadcast(threadList());
+          try {
+            const currentHome = threadHome(threadId, dir);
+            const done = await runner.run({
+              threadId,
+              text: recovering ? nativeRecoveryPrompt(threadId, text) : text,
+              ...currentHome,
+              cwd: home.cwd,
+              bypass: loadSettings(dir).yolo,
+              model: threadModel(threadId, dir),
+              effort: threadEffort(threadId, dir),
+              signal: turn.signal,
+              onSession: (sessionId) => { setThreadSession(threadId, sessionId, dir); },
+              approve: async (tool, input, signal) =>
+                loadSettings(dir).yolo || nativeCards.approve(threadId, agent, tool, input, signal),
+              ask: (question, options, signal) => nativeCards.ask(threadId, question, options, signal),
+              onUpdate: (reply) => broadcast(message(reply)),
+              onActivity: (key, payload) => {
+                const event: YorozuEvent = { id: `${agent}:${threadId}:${key}`, threadId, ts: Date.now(), agentId: MAIN_AGENT, ...payload };
+                const newResult = event.kind === "tool_result" && !seenResults.has(event.id);
+                emit(event.kind === "tool_result" ? stashToolResult(event, dir) : event);
+                if (newResult) {
+                  seenResults.add(event.id);
+                  recoveryAttempts = 0;
+                  setNativeTurn(threadId, { id, state: "running", ...(userEventId ? { userEventId } : {}), recoveryAttempts,
+                    recoveryActive: recovering }, dir);
+                }
+              },
+            });
+            if (done.sessionId && done.sessionId !== currentHome.sessionId) setThreadSession(threadId, done.sessionId, dir);
+            if (turn.signal.aborted) return;
+            finish(done.text);
+            return;
+          } catch (error) {
+            if (turn.signal.aborted) return;
+            state(`native-error ${error instanceof Error ? error.message : String(error)}`);
+            process.stderr.write(`native-error ${threadId}: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+            if (!recovering) {
+              finish(`${agent} could not answer; see the Mac log.`);
+              return;
+            }
+            if (recoveryAttempts >= 3) {
+              paused = true;
+              setNativeTurn(threadId, { id, state: "interrupted", ...(userEventId ? { userEventId } : {}), recoveryAttempts }, dir);
+              broadcast(threadList());
+              return;
+            }
+            recovering = true;
+          }
+        }
       } finally {
         if (running.get(threadId) === turn) running.delete(threadId);
         if (runningEventIds.get(threadId) === userEventId) runningEventIds.delete(threadId);
         const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
         if (stop) completeStop(stop);
-        if (!stopped) {
+        if (!stopped && !paused) {
           setNativeTurn(threadId, undefined, dir);
           broadcast(threadList());
         }
@@ -1188,6 +1220,23 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (userEventId && admittedTurns.get(userEventId) === next) admittedTurns.delete(userEventId);
     }).catch(() => {});
     return next;
+  }
+
+  function resumeNativeTurn(threadId: string, retry = false): boolean {
+    const marker = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
+    if (marker?.state !== "interrupted" || !marker.userEventId || nativeRecoveryStarted.has(threadId) ||
+      stoppedTurns.has(marker.userEventId) || (!retry && (marker.recoveryAttempts ?? 0) >= 3)) return false;
+    const original = readThreadEvents(threadId, dir).find((event) => event.id === marker.userEventId &&
+      event.kind === "message" && event.data.role === "user");
+    if (original?.kind !== "message") return false;
+    if (retry) setNativeTurn(threadId, { ...marker, recoveryAttempts: 0 }, dir);
+    nativeRecoveryStarted.add(threadId);
+    // A paused turn can receive Retry before its first worker's finally callback clears this
+    // in-memory id. The next attempt still queues behind that worker for the same thread.
+    admittedTurns.delete(marker.userEventId);
+    const recovery = enqueueTurn(threadId, original.data.text, true, original.data.attachments ?? [], marker.userEventId);
+    void recovery.finally(() => nativeRecoveryStarted.delete(threadId)).catch(() => {});
+    return true;
   }
 
   /**
@@ -1751,10 +1800,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if ([...stoppedTurns.values()].some((stop) => stop.threadId === event.threadId &&
           completionIdFor(event.threadId, stop.targetEventId) === event.data.turnId)) return;
         if (event.data.action !== "continue" && event.data.action !== "dismiss") return;
-        if (event.data.action === "continue" && !thread.nativeSessionId) return;
-        setNativeTurn(event.threadId, undefined, dir);
-        broadcast(threadList());
-        if (event.data.action === "continue") void enqueueTurn(event.threadId, "Continue the interrupted turn.");
+        if (event.data.action === "continue") {
+          resumeNativeTurn(event.threadId, true);
+        } else {
+          setNativeTurn(event.threadId, undefined, dir);
+          broadcast(threadList());
+        }
         return;
       }
       // A pick is only ever one of the published options, whichever agent the thread is on. An
@@ -2344,6 +2395,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
   };
 
   for (const stop of stoppedTurns.values()) if (stop.status === "requested") finishStop(stop);
+
+  for (const thread of listThreads(dir)) {
+    if (thread.nativeTurn?.state === "interrupted") resumeNativeTurn(thread.id);
+  }
 
   for (const stored of openclaw?.pendingTurns() ?? []) {
     if (stored.state !== "queued") {

@@ -382,6 +382,7 @@ export interface ThreadSummary {
   activeEventId?: string;
   interruptedTurnId?: string;
   canResume?: boolean;
+  recoveryState?: "recovering";
   bypass?: boolean;
   id: string;
   title: string;

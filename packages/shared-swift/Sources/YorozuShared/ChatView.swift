@@ -169,11 +169,11 @@ public struct ChatView: View {
             }
             if thread.interruptedTurnId != nil {
                 VStack(alignment: .leading) {
-                    Label("Turn interrupted", systemImage: "pause.circle")
-                    Text(thread.canResume == false ? "Interrupted before the agent created a session. Dismiss, then send your request again." : "The Mac restarted. Continue when you're ready.").font(.callout)
+                    Label("Couldn't resume automatically", systemImage: "pause.circle")
+                    Text(thread.canResume == false ? "Original request is unavailable. Dismiss, then send it again." : "Three recovery attempts failed. Retry when ready.").font(.callout)
                     HStack {
                         if thread.canResume != false {
-                            Button("Continue") { model.recover(thread, action: .continue) }
+                            Button("Retry") { model.recover(thread, action: .continue) }
                                 .buttonStyle(.borderedProminent)
                         }
                         Button("Dismiss") { model.recover(thread, action: .dismiss) }
@@ -202,7 +202,15 @@ public struct ChatView: View {
             // coming and going must not move the messages or the scroll anchor, and a blip
             // shorter than ``ConnectionPresentation/grace`` is never mentioned at all.
             .overlay(alignment: .top) {
-                ZStack {
+                VStack(spacing: 8) {
+                    if thread.recoveryState == "recovering" {
+                        Label("Recovering…", systemImage: "arrow.clockwise")
+                            .font(.callout)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(.thinMaterial, in: Capsule())
+                            .accessibilityAddTraits(.updatesFrequently)
+                    }
                     if connection.state != .connected, model.updateStatus.phase != .installing {
                         ConnectionPill(state: connection.state,
                             label: [offlineNotice, model.linkFailure].compactMap { $0 }.joined(separator: "\n"))
