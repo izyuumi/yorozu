@@ -172,7 +172,7 @@ private func freshDefaults() throws -> (UserDefaults, String) {
 // MARK: - ChannelCounterStorage through RelayClient
 
 /// A storage the tests can look into: what the apps' Keychain-backed ones do, in memory.
-private final class MemoryCounterStorage: ChannelCounterStorage, @unchecked Sendable {
+final class MemoryCounterStorage: ChannelCounterStorage, @unchecked Sendable {
     private let lock = NSLock()
     private var stored: ChannelCounter?
     private var loadError: (any Error)?
