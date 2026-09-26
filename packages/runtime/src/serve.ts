@@ -980,7 +980,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (page.length === SYNC_LIMIT) more = true;
       for (const event of page) {
         const size = Buffer.byteLength(JSON.stringify(event));
-        if (events.length > 0 && bytes + size > SYNC_PAGE_BYTES) {
+        if ((events.length > 0 || current.length > 0) && bytes + size > SYNC_PAGE_BYTES) {
           more = true;
           break threads;
         }
