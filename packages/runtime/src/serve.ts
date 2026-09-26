@@ -1486,6 +1486,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
   };
   armYoloExpiry();
 
+  const stillActionable = (event: YorozuEvent): boolean => event.kind === "approval_card"
+    ? pending.get(event.data.actionId)?.threadId === event.threadId ||
+      nativeCards.has(event.data.actionId, event.threadId)
+    : event.kind === "question_card"
+      ? questions.has(event.data.questionId, event.threadId)
+      : true;
+
   /** One catch-up frame per tick; rotate phones and replace obsolete requests per phone. */
   const sendCatchup = (): void => {
     catchupTimer = null;
@@ -1497,12 +1504,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
       devices.get(pub) === job.device) {
       while (job.next < job.responses.length) {
         const response = job.responses[job.next++]!;
-        if (response.kind === "approval_card" &&
-          pending.get(response.data.actionId)?.threadId !== response.threadId &&
-          !nativeCards.has(response.data.actionId, response.threadId)) continue;
-        if (response.kind === "question_card" &&
-          !questions.has(response.data.questionId, response.threadId)) continue;
-        try { sendTo(pub, response); }
+        if (!stillActionable(response)) continue;
+        const fresh = response.kind === "sync_delta" && response.data.current
+          ? { ...response, data: { ...response.data, current: response.data.current.filter(stillActionable) } }
+          : response;
+        try { sendTo(pub, fresh); }
         catch (error) {
           state(`catchup-send-error ${String(error)}`);
           job.connection?.close();
