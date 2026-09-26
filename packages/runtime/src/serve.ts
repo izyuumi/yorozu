@@ -469,6 +469,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const running = new Map<string, AbortController>();
   const turnQueues = new Map<string, Promise<void>>();
   const admittedTurns = new Map<string, Promise<void>>();
+  const activeTurnIds = new Set<string>();
   const postponeFile = join(dir, "update-postponed-until.json");
   let postponedUntil = 0;
   try {
@@ -643,8 +644,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   /** Final event owns recovery marker: persist once, then acknowledge, then publish. */
   function finalizeOpenClaw(event: YorozuEvent): void {
-    if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === event.id)) appendTranscript(event, transcripts);
-    if (!readThreadEvents(event.threadId, dir).some((known) => known.id === event.id)) appendThreadEvent(event, dir);
+    const admission = openclaw!.pendingTurns(true).find((turn) => turn.completionId === event.id);
+    const final = event.kind === "message" && admission
+      ? { ...event, data: { ...event.data, runId: admission.runId } } : event;
+    if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === event.id)) appendTranscript(final, transcripts);
+    if (!readThreadEvents(event.threadId, dir).some((known) => known.id === event.id)) appendThreadEvent(final, dir);
     openclaw!.acknowledge(event.threadId, event.id);
     broadcast(event);
   }
@@ -941,6 +945,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
       .catch((e: unknown) => state(`title-error ${String(e)}`));
   };
 
+  const completionIdFor = (threadId: string, userEventId: string): string =>
+    `${threadAgent(threadId, dir) === "yorozu" ? openclaw ? "openclaw" : "legacy" : "native"}:${userEventId}:final`;
+
   async function runTurn(
     threadId: string,
     text: string,
@@ -973,7 +980,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // reply goes through `emit`, so the transcript keeps one line per turn rather than one
     // per delta.
     const agent = threadAgent(threadId, dir);
-    const id = agent === "yorozu" && openclaw && userEventId ? `openclaw:` + userEventId + `:final` : randomUUID();
+    const id = userEventId ? completionIdFor(threadId, userEventId) : randomUUID();
     // `done` on the finished one only: it is what tells a phone the turn is over, so its
     // composer can stop offering Stop. The deltas under the same id leave it unset.
     const message = (reply: string, done = false): YorozuEvent => ({
@@ -1107,13 +1114,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
     updateGate.activity();
     if (viaOpenClaw(threadId)) {
       userEventId ??= randomUUID();
-      const event = acceptedEvent ?? { id: userEventId, threadId, ts: Date.now(), agentId: MAIN_AGENT,
+      const event: YorozuEvent & { kind: "message" } = acceptedEvent?.kind === "message" ? acceptedEvent
+        : { id: userEventId, threadId, ts: Date.now(), agentId: MAIN_AGENT,
         kind: "message" as const, data: { role: "user" as const, text, ...(attachments.length ? { attachments } : {}) } };
       const stored = openclaw!.admitUserTurn({ threadId, text, model: threadModel(threadId, dir),
         effort: threadEffort(threadId, dir), attachments, userEventId,
-        completionId: `openclaw:` + userEventId + `:final` }, () => {
-        if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === event.id)) appendTranscript(event, transcripts);
-        if (!readThreadEvents(threadId, dir).some((known) => known.id === event.id)) appendThreadEvent(event, dir);
+        completionId: `openclaw:` + userEventId + `:final` }, (admission) => {
+        const logged = admission ? { ...event, data: { ...event.data,
+          runId: admission.runId, completionId: admission.completionId } } : event;
+        if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === event.id)) appendTranscript(logged, transcripts);
+        if (!readThreadEvents(threadId, dir).some((known) => known.id === event.id)) appendThreadEvent(logged, dir);
       }, () => readThreadEvents(threadId, dir).some((known) => known.id === event.id));
       if (!stored) return Promise.resolve();
       text = stored.input.text;
@@ -1123,7 +1133,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const admitted = userEventId ? admittedTurns.get(userEventId) : undefined;
     if (admitted) return admitted;
     const previous = turnQueues.get(threadId) ?? Promise.resolve();
-    const next = previous.catch(() => {}).then(() => stopped ? undefined : runTurn(threadId, text, recorded, attachments, userEventId));
+    const next = previous.catch(() => {}).then(async () => {
+      if (stopped) return;
+      if (userEventId) activeTurnIds.add(userEventId);
+      try { await runTurn(threadId, text, recorded, attachments, userEventId); }
+      finally { if (userEventId) activeTurnIds.delete(userEventId); }
+    });
     turnQueues.set(threadId, next);
     if (userEventId) admittedTurns.set(userEventId, next);
     void next.finally(() => {
@@ -1252,6 +1267,34 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * is a command or a request.
    */
   function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0, from?: string, localDevice?: string): void {
+    if (event.kind === "admission_query") {
+      const id = event.data.eventId;
+      if (typeof id !== "string" || !id || id.length > 128 || !event.threadId) return;
+      const history = readThreadEvents(event.threadId, dir);
+      const user = history.find((stored): stored is YorozuEvent & { kind: "message" } =>
+        stored.kind === "message" && stored.data.role === "user" && stored.id === id);
+      const ledger = openclaw?.pendingTurns(true).find((turn) =>
+        turn.threadId === event.threadId && turn.userEventId === id);
+      const recordedCompletionId = ledger?.completionId ?? user?.data.completionId;
+      const oldOpenClawCompletionId = user && viaOpenClaw(event.threadId) ? `openclaw:${id}:final` : undefined;
+      const candidate = recordedCompletionId ?? oldOpenClawCompletionId;
+      const final = candidate ? history.find((stored): stored is YorozuEvent & { kind: "message" } =>
+        stored.id === candidate && stored.kind === "message" && stored.data.role === "agent" && stored.data.done === true) : undefined;
+      const completionId = recordedCompletionId ?? (final ? oldOpenClawCompletionId : undefined);
+      const status = !user && !ledger ? "unknown" : final ? "completed"
+        : activeTurnIds.has(id) ? "running"
+        : admittedTurns.has(id) || ledger?.state === "queued" ? "queued"
+        : ledger ? "accepted" : "indeterminate";
+      const runId = ledger?.runId ?? (final?.kind === "message" ? final.data.runId : undefined)
+        ?? (!viaOpenClaw(event.threadId) ? user?.data.runId : undefined);
+      reply(control({ kind: "receipt", data: { eventId: event.id } }));
+      reply(control({ kind: "admission_status", data: {
+        eventId: id, status, requestId: event.id,
+        ...(runId ? { runId } : {}), ...(completionId ? { completionId } : {}),
+      } }));
+      return;
+    }
+    if (event.kind === "admission_status") return;
     if (event.kind === "update_status") return;
     if (event.kind === "update_control") {
       const subscriber = localDevice ?? from;
@@ -1400,8 +1443,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
       admittedTurn = enqueueTurn(event.threadId, event.data.text, true,
         event.data.attachments ?? [], event.id, event);
     } else {
-      appendTranscript(event, transcripts);
-      appendThreadEvent(event, dir);
+      const logged = event.kind === "message" && event.data.role === "user"
+        ? { ...event, data: { ...event.data,
+          runId: typed ? undefined : completionIdFor(event.threadId, event.id),
+          completionId: typed ? undefined : completionIdFor(event.threadId, event.id) } } : event;
+      appendTranscript(logged, transcripts);
+      appendThreadEvent(logged, dir);
       if (event.kind === "approval_answer") broadcast(threadList());
     }
     // Failed admission never poisons the in-memory dedup window.
@@ -2117,9 +2164,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
   for (const stored of openclaw?.pendingTurns() ?? []) {
     if (stored.state !== "queued") {
       const recovery = resumeOpenClaw(stored);
+      if (stored.userEventId) activeTurnIds.add(stored.userEventId);
       turnQueues.set(stored.threadId, recovery);
       if (stored.userEventId) admittedTurns.set(stored.userEventId, recovery);
       void recovery.finally(() => {
+        if (stored.userEventId) activeTurnIds.delete(stored.userEventId);
         if (turnQueues.get(stored.threadId) === recovery) turnQueues.delete(stored.threadId);
         if (stored.userEventId && admittedTurns.get(stored.userEventId) === recovery) admittedTurns.delete(stored.userEventId);
       }).catch(() => {});

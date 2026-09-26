@@ -36,6 +36,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
 
     public enum Kind: String, Codable, Sendable, CaseIterable {
         case message, thought
+        case admissionQuery = "admission_query"
+        case admissionStatus = "admission_status"
         case toolCall = "tool_call"
         case toolResult = "tool_result"
         case approvalCard = "approval_card"
@@ -73,6 +75,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
 
     public enum Payload: Equatable, Sendable {
         case message(MessageData)
+        case admissionQuery(AdmissionQueryData)
+        case admissionStatus(AdmissionStatusData)
         case thought(ThoughtData)
         case toolCall(ToolCallData)
         case toolResult(ToolResultData)
@@ -111,6 +115,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         public var kind: Kind {
             switch self {
             case .message: .message
+            case .admissionQuery: .admissionQuery
+            case .admissionStatus: .admissionStatus
             case .thought: .thought
             case .toolCall: .toolCall
             case .toolResult: .toolResult
@@ -163,6 +169,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         syncCursor = try c.decodeIfPresent(String.self, forKey: .syncCursor)
         switch try c.decode(Kind.self, forKey: .kind) {
         case .message: payload = .message(try c.decode(MessageData.self, forKey: .data))
+        case .admissionQuery: payload = .admissionQuery(try c.decode(AdmissionQueryData.self, forKey: .data))
+        case .admissionStatus: payload = .admissionStatus(try c.decode(AdmissionStatusData.self, forKey: .data))
         case .thought: payload = .thought(try c.decode(ThoughtData.self, forKey: .data))
         case .toolCall: payload = .toolCall(try c.decode(ToolCallData.self, forKey: .data))
         case .toolResult: payload = .toolResult(try c.decode(ToolResultData.self, forKey: .data))
@@ -211,6 +219,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         try c.encode(payload.kind, forKey: .kind)
         switch payload {
         case .message(let d): try c.encode(d, forKey: .data)
+        case .admissionQuery(let d): try c.encode(d, forKey: .data)
+        case .admissionStatus(let d): try c.encode(d, forKey: .data)
         case .thought(let d): try c.encode(d, forKey: .data)
         case .toolCall(let d): try c.encode(d, forKey: .data)
         case .toolResult(let d): try c.encode(d, forKey: .data)
@@ -296,6 +306,32 @@ public struct MessageAttachment: Codable, Equatable, Sendable {
     public var isImage: Bool { mime.hasPrefix("image/") }
 }
 
+public struct AdmissionQueryData: Codable, Equatable, Sendable {
+    public var eventId: String
+    public init(eventId: String) { self.eventId = eventId }
+}
+
+public struct AdmissionStatusData: Codable, Equatable, Sendable {
+    public enum Status: String, Codable, Sendable {
+        case unknown, indeterminate, accepted, queued, running, completed, rejected, expired, withdrawn
+    }
+    public var eventId: String
+    public var status: Status
+    public var runId: String?
+    public var completionId: String?
+    public var reason: String?
+    public var requestId: String?
+    public init(eventId: String, status: Status, runId: String? = nil, completionId: String? = nil,
+                reason: String? = nil, requestId: String? = nil) {
+        self.eventId = eventId
+        self.status = status
+        self.runId = runId
+        self.completionId = completionId
+        self.reason = reason
+        self.requestId = requestId
+    }
+}
+
 public struct MessageData: Codable, Equatable, Sendable {
     public enum Role: String, Codable, Sendable { case user, agent }
     public var role: Role
@@ -306,20 +342,28 @@ public struct MessageData: Codable, Equatable, Sendable {
     public var done: Bool?
     /// Photos and files the user sent with this message. Only set on a `user` message.
     public var attachments: [MessageAttachment]
+    /// Host-owned execution association; absent on a client submission.
+    public var runId: String?
+    /// Host-owned final response identity; absent on a client submission.
+    public var completionId: String?
 
     public init(
         role: Role,
         text: String,
         done: Bool? = nil,
-        attachments: [MessageAttachment] = []
+        attachments: [MessageAttachment] = [],
+        runId: String? = nil,
+        completionId: String? = nil
     ) {
         self.role = role
         self.text = text
         self.done = done
         self.attachments = attachments
+        self.runId = runId
+        self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, done, attachments }
+    private enum CodingKeys: String, CodingKey { case role, text, done, attachments, runId, completionId }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -327,6 +371,8 @@ public struct MessageData: Codable, Equatable, Sendable {
         text = try c.decode(String.self, forKey: .text)
         done = try c.decodeIfPresent(Bool.self, forKey: .done)
         attachments = try c.decodeIfPresent([MessageAttachment].self, forKey: .attachments) ?? []
+        runId = try c.decodeIfPresent(String.self, forKey: .runId)
+        completionId = try c.decodeIfPresent(String.self, forKey: .completionId)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -334,8 +380,9 @@ public struct MessageData: Codable, Equatable, Sendable {
         try c.encode(role, forKey: .role)
         try c.encode(text, forKey: .text)
         try c.encodeIfPresent(done, forKey: .done)
-        guard !attachments.isEmpty else { return }
-        try c.encode(attachments, forKey: .attachments)
+        if !attachments.isEmpty { try c.encode(attachments, forKey: .attachments) }
+        try c.encodeIfPresent(runId, forKey: .runId)
+        try c.encodeIfPresent(completionId, forKey: .completionId)
     }
 }
 
