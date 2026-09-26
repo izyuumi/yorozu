@@ -418,18 +418,30 @@ export class OpenClawRunner {
         // durable task state before deciding whether the missing announcement needs recovery.
         let delegationSettled = !pending.awaitsAnnouncement;
         if (pending.awaitsAnnouncement && pending.tasks.size) {
-          const statuses = await Promise.all([...pending.tasks.keys()].map(async (taskId) => {
-            if (!taskId || taskId.length > 256) return "lost";
+          const taskIds = [...pending.tasks.keys()];
+          const statuses = await Promise.all(taskIds.map(async (taskId) => {
+            if (!taskId || taskId.length > 256) return { status: "lost", deliveryStatus: "failed" };
             try {
-              const { task } = await client.request<{ task: { status: string } }>("tasks.get", { taskId });
-              return task.status;
+              const { task } = await client.request<{ task: { status: string; deliveryStatus?: string } }>("tasks.get", { taskId });
+              return task;
             } catch (error) {
-              if (string(record(error).code) === "NOT_FOUND") return "lost";
+              if (string(record(error).code) === "NOT_FOUND") return { status: "lost", deliveryStatus: "failed" };
               throw error;
             }
           }));
-          delegationSettled = statuses.every((status) => ["completed", "failed", "cancelled", "timed_out", "lost"].includes(status));
-          [...pending.tasks.keys()].forEach((taskId, index) => pending.tasks.set(taskId, statuses[index]!));
+          if (!this.#pending.has(pending) || pending.signal?.aborted) return;
+          if (taskIds.length !== pending.tasks.size || taskIds.some((id) => !pending.tasks.has(id))) {
+            missingSince = undefined;
+            await delay(this.#recoveryDelayMs);
+            continue;
+          }
+          delegationSettled = statuses.every((task) =>
+            ["completed", "failed", "cancelled", "timed_out", "lost"].includes(task.status) &&
+            task.deliveryStatus !== "pending" && task.deliveryStatus !== "session_queued");
+          taskIds.forEach((taskId, index) => {
+            const task = statuses[index]!;
+            pending.tasks.set(taskId, task.deliveryStatus ? `${task.status} (${task.deliveryStatus})` : task.status);
+          });
         }
         // A pending input still belongs to Gateway. A consumed input with no active run,
         // final, or live delegated task is the execution-loss case, after a quiet window.
@@ -612,7 +624,8 @@ export class OpenClawRunner {
         if (!pending || typeof record.createdAt !== "number" ||
           record.createdAt < (pending.recoveryStartedAt ?? pending.startedAt)) return;
         const deliveryStatus = record.deliveryStatus;
-        if (pending && (deliveryStatus === "pending" || deliveryStatus === "in_progress")) {
+        if (pending && (deliveryStatus === "pending" || deliveryStatus === "in_progress" ||
+          deliveryStatus === "session_queued")) {
           pending.awaitsAnnouncement = true;
           this.storePending(pending);
         }

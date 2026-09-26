@@ -614,6 +614,7 @@ describe("OpenClawRunner", () => {
       const sends: string[] = [];
       let recoveryMessage = "";
       let childStatus = "running";
+      let deliveryStatus = "pending";
       gateway.request.mockImplementation(async (method, params) => {
         if (method === "chat.send") {
           const runId = (params as { idempotencyKey: string }).idempotencyKey;
@@ -624,7 +625,8 @@ describe("OpenClawRunner", () => {
         if (method === "chat.history") return {
           inputReceipts: [{ runId: sends.at(-1), state: "consumed", consumedByEventId: "input" }], messages: [],
         };
-        if (method === "tasks.get") return { task: { id: "child-1", status: childStatus, runId: "child-run" } };
+        if (method === "tasks.get") return { task: { id: "child-1", status: childStatus,
+          deliveryStatus, runId: "child-run" } };
         return {};
       });
       const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, recoveryDelayMs: 1 });
@@ -633,16 +635,24 @@ describe("OpenClawRunner", () => {
       await vi.waitFor(() => expect(sends).toHaveLength(1));
       const childCreatedAt = Date.now();
       gateway.event({ action: "upserted", task: { id: "child-1", runId: "child-run", createdAt: childCreatedAt,
-        sessionKey: "agent:main:yorozu:delegated-loss", status: "running", deliveryStatus: "pending" } }, "task");
+        sessionKey: "agent:main:yorozu:delegated-loss", status: "running", deliveryStatus: "session_queued" } }, "task");
       await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.history",
         expect.objectContaining({ inputRunIds: [sends[0]] })));
       vi.setSystemTime(Date.now() + 6_000);
       await new Promise((resolve) => setTimeout(resolve, 10));
       expect(sends).toHaveLength(1);
-      childStatus = "failed";
+      childStatus = "completed";
+      deliveryStatus = "session_queued";
       const taskReads = gateway.request.mock.calls.filter(([method]) => method === "tasks.get").length;
       await vi.waitFor(() => expect(gateway.request.mock.calls.filter(([method]) => method === "tasks.get").length)
         .toBeGreaterThan(taskReads));
+      vi.setSystemTime(Date.now() + 6_000);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(sends).toHaveLength(1);
+      deliveryStatus = "failed";
+      const queuedReads = gateway.request.mock.calls.filter(([method]) => method === "tasks.get").length;
+      await vi.waitFor(() => expect(gateway.request.mock.calls.filter(([method]) => method === "tasks.get").length)
+        .toBeGreaterThan(queuedReads));
       vi.setSystemTime(Date.now() + 6_000);
       await vi.waitFor(() => expect(sends).toHaveLength(2));
       expect(recoveryMessage).toContain("failed");
@@ -657,6 +667,90 @@ describe("OpenClawRunner", () => {
       gateway.event({ state: "final", sessionKey: "agent:main:yorozu:delegated-loss", runId: sends[1],
         seq: 1, message: { content: "completed after child failure" } });
       await expect(result).resolves.toBe("completed after child failure");
+    } finally {
+      controller.abort();
+      vi.useRealTimers();
+    }
+  });
+
+  test("Stop during delegated status lookup cannot restore a removed turn", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const controller = new AbortController();
+    try {
+      const gateway = harness();
+      const held = Promise.withResolvers<{ task: { status: string; deliveryStatus: string } }>();
+      let runId = "";
+      let taskReads = 0;
+      gateway.request.mockImplementation(async (method, params) => {
+        if (method === "chat.send") {
+          runId = (params as { idempotencyKey: string }).idempotencyKey;
+          return { runId };
+        }
+        if (method === "chat.history") return { inputReceipts: [{ runId, state: "consumed" }], messages: [] };
+        if (method === "tasks.get") return ++taskReads === 1
+          ? { task: { status: "failed", deliveryStatus: "failed" } } : held.promise;
+        return {};
+      });
+      const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, recoveryDelayMs: 1 });
+      const result = runner.run({ threadId: "stop-lookup", text: "delegate", userEventId: "stop-lookup-user",
+        signal: controller.signal });
+      await vi.waitFor(() => expect(runId).not.toBe(""));
+      gateway.event({ action: "upserted", task: { id: "child", runId: "child-run", createdAt: Date.now(),
+        sessionKey: "agent:main:yorozu:stop-lookup", status: "failed", deliveryStatus: "pending" } }, "task");
+      await vi.waitFor(() => expect(taskReads).toBeGreaterThanOrEqual(1));
+      vi.setSystemTime(Date.now() + 6_000);
+      await vi.waitFor(() => expect(taskReads).toBeGreaterThanOrEqual(2));
+      controller.abort();
+      held.resolve({ task: { status: "failed", deliveryStatus: "failed" } });
+      await expect(result).resolves.toBe("");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(runner.pendingTurns()).toEqual([]);
+      expect(gateway.request.mock.calls.filter(([method]) => method === "chat.send")).toHaveLength(1);
+    } finally {
+      controller.abort();
+      vi.useRealTimers();
+    }
+  });
+
+  test("a newly delegated child keeps ownership during an older task lookup", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const controller = new AbortController();
+    try {
+      const gateway = harness();
+      const held = Promise.withResolvers<{ task: { status: string; deliveryStatus: string } }>();
+      const sends: string[] = [];
+      let oldReads = 0;
+      gateway.request.mockImplementation(async (method, params) => {
+        if (method === "chat.send") {
+          const runId = (params as { idempotencyKey: string }).idempotencyKey;
+          sends.push(runId);
+          return { runId };
+        }
+        if (method === "chat.history") return { inputReceipts: [{ runId: sends.at(-1), state: "consumed" }], messages: [] };
+        if (method === "tasks.get") {
+          const taskId = (params as { taskId: string }).taskId;
+          if (taskId === "newer") return { task: { status: "running", deliveryStatus: "pending" } };
+          return ++oldReads === 2 ? held.promise : { task: { status: "failed", deliveryStatus: "failed" } };
+        }
+        return {};
+      });
+      const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, recoveryDelayMs: 1 });
+      const result = runner.run({ threadId: "new-child", text: "delegate", userEventId: "new-child-user",
+        signal: controller.signal });
+      await vi.waitFor(() => expect(sends).toHaveLength(1));
+      gateway.event({ action: "upserted", task: { id: "older", runId: "older-run", createdAt: Date.now(),
+        sessionKey: "agent:main:yorozu:new-child", status: "failed", deliveryStatus: "pending" } }, "task");
+      await vi.waitFor(() => expect(oldReads).toBeGreaterThanOrEqual(1));
+      vi.setSystemTime(Date.now() + 6_000);
+      await vi.waitFor(() => expect(oldReads).toBeGreaterThanOrEqual(2));
+      gateway.event({ action: "upserted", task: { id: "newer", runId: "newer-run", createdAt: Date.now(),
+        sessionKey: "agent:main:yorozu:new-child", status: "running", deliveryStatus: "pending" } }, "task");
+      held.resolve({ task: { status: "failed", deliveryStatus: "failed" } });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(sends).toHaveLength(1);
+      expect(runner.pendingTurns()[0]?.taskIds).toContain("newer");
+      controller.abort();
+      await expect(result).resolves.toBe("");
     } finally {
       controller.abort();
       vi.useRealTimers();

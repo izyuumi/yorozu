@@ -522,9 +522,9 @@ receipt. A consumed input with no active run, final answer, or delegated announc
 seconds is continued in the same Gateway session with the original request and bounded history
 of prior tool effects. The same Yorozu user event and final ID remain in use. Three lost
 continuations pause the turn for Retry or Dismiss; Gateway connection retries do not use this
-budget. A new successful tool result resets it. Delegated tasks are checked with Gateway before
-continuation, and late events from a settled child cannot finish the new run. A Stop fences
-continuation before sending.
+budget. A new successful tool result resets it. Delegated task and announcement delivery states
+are checked with Gateway before continuation; late events from a settled child cannot finish the
+new run. A Stop fences continuation before sending.
 
 The approval **rule engine** in `approval.ts` — the floor, action classes, structured scopes,
 rules with `always`/`never` precedence, rule proposals — is fully implemented, wire-supported
