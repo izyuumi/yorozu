@@ -2822,20 +2822,21 @@ test("a sync page stops short of the relay's frame limit, and the rest follows o
 });
 
 test("catch-up shows a still-actionable card before historical replay", async () => {
-  const { send, eventsUntil } = await pairedPhone([() => shellTurn("echo catch-up"), () => sse("done")]);
+  const { send, eventsUntil } = await pairedPhone([() => shellTurn("x".repeat(140_000)), () => sse("done")]);
   send({ kind: "thread_create", data: {} });
   await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
   send({ kind: "message", data: { role: "user", text: "run it" } });
   const card = (await eventsUntil((event) => event.kind === "approval_card")).at(-1)!;
+  expect(Buffer.byteLength(JSON.stringify(card))).toBeGreaterThan(SYNC_PAGE_BYTES / 2);
   send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "t1" } }, "");
-  const snapshot = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
-  expect(snapshot).toMatchObject({ data: { current: [card] } });
+  const snapshot = await eventsUntil((event) => event.kind === "sync_delta");
+  expect(snapshot.slice(0, -1).map((event) => event.id)).toContain(card.id);
   if (card.kind !== "approval_card") throw new Error("expected approval card");
   send({ kind: "approval_answer", data: { actionId: card.data.actionId, answer: "no" } });
   await eventsUntil((event) => event.kind === "message" && event.data.done === true);
   send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "t1" } }, "");
-  const settled = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
-  expect(settled.kind === "sync_delta" && settled.data.current).not.toContainEqual(card);
+  const settled = await eventsUntil((event) => event.kind === "sync_delta");
+  expect(settled.slice(0, -1).map((event) => event.id)).not.toContain(card.id);
 });
 
 test("catch-up excludes an answered question from current state", async () => {
@@ -2849,14 +2850,14 @@ test("catch-up excludes an answered question from current state", async () => {
   const question = (await eventsUntil((event) => event.kind === "question_card")).at(-1)!;
   expect(question.kind).toBe("question_card");
   send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "t1" } }, "");
-  const active = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
-  expect(active).toMatchObject({ data: { current: [question] } });
+  const active = await eventsUntil((event) => event.kind === "sync_delta");
+  expect(active.slice(0, -1)).toContainEqual(question);
   if (question.kind !== "question_card") throw new Error("expected question card");
   send({ kind: "question_answer", data: { questionId: question.data.questionId, answer: "A" } });
   await eventsUntil((event) => event.kind === "message" && event.data.done === true);
   send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "t1" } }, "");
-  const settled = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
-  expect(settled.kind === "sync_delta" && settled.data.current).not.toContainEqual(question);
+  const settled = await eventsUntil((event) => event.kind === "sync_delta");
+  expect(settled.slice(0, -1)).not.toContainEqual(question);
 });
 
 test("current snapshot honors the pairing cutoff for live replies", async () => {

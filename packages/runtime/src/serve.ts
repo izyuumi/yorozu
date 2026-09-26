@@ -941,8 +941,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   /** A bounded replay page. An explicit thread request includes its pre-pairing history. */
   const syncDelta = (lastSeen: Record<string, string>, pairedAt = 0, threadId?: string,
-    includeApprovalStatus = true, focusThreadId?: string, includeCurrent = true): YorozuEvent => {
+    includeApprovalStatus = true, focusThreadId?: string, includeCurrent = true): YorozuEvent[] => {
     const events: YorozuEvent[] = [];
+    const cards: YorozuEvent[] = [];
     const selected = listThreads(dir).filter((thread) => threadId ? thread.id === threadId : !thread.archived);
     const focused = !threadId && selected.find((thread) => thread.id === focusThreadId);
     if (focused) {
@@ -961,19 +962,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
         const answered = new Set(history.flatMap((event) => event.kind === "approval_answer" ? [event.data.actionId]
           : event.kind === "approval_status" && event.data.status !== "rejected" ? [event.data.actionId]
           : event.kind === "question_answer" ? [event.data.questionId] : []));
-        current.push(...history.filter((event) => event.kind === "approval_card"
+        cards.push(...history.filter((event) => event.kind === "approval_card"
           ? !answered.has(event.data.actionId) &&
               (pending.get(event.data.actionId)?.threadId === focused.id || nativeCards.has(event.data.actionId, focused.id))
           : event.kind === "question_card" && !answered.has(event.data.questionId) &&
               questions.has(event.data.questionId, focused.id)));
       }
-      current.sort((a, b) => a.ts - b.ts);
-      if (latest && Buffer.byteLength(JSON.stringify(current)) > SYNC_PAGE_BYTES / 2) {
-        current.splice(current.indexOf(latest), 1);
-      }
     }
-    // ponytail: oversized card sets fall back to replay; page current cards if this becomes common.
-    while (current.length && Buffer.byteLength(JSON.stringify(current)) > SYNC_PAGE_BYTES / 2) current.shift();
+    // Active cards are individual protocol events ahead of the delta, so none disappear when
+    // a snapshot would exceed the frame budget. A huge reply still arrives via replay.
+    if (current.length && Buffer.byteLength(JSON.stringify(current)) > SYNC_PAGE_BYTES / 2) current.length = 0;
     let bytes = Buffer.byteLength(JSON.stringify(current));
     let more = false;
     threads: for (const thread of selected) {
@@ -990,11 +988,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
         bytes += size;
       }
     }
-    return control({
+    return [...cards, control({
       kind: "sync_delta",
       data: { events, ...(current.length ? { current } : {}), workingThreadIds: [...running.keys()],
         ...(threadId ? { threadId } : {}), ...(more ? { more: true } : {}) },
-    });
+    })];
   };
 
   /**
@@ -1920,9 +1918,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (event.data.focusThreadId !== undefined &&
           (typeof event.data.focusThreadId !== "string" || event.data.focusThreadId.length > 256)) return;
         const compatibility = from ? devices.get(from)?.compatibility : undefined;
-        return reply(syncDelta(event.data.lastSeen, pairedAt, event.data.threadId,
+        for (const response of syncDelta(event.data.lastSeen, pairedAt, event.data.threadId,
           !from || compatibility?.state === "compatible" && compatibility.capabilities.includes("offline-approval-v1"),
-          event.data.focusThreadId, event.data.includeCurrent !== false));
+          event.data.focusThreadId, event.data.includeCurrent !== false)) reply(response);
+        return;
       }
     }
 
