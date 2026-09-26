@@ -93,6 +93,34 @@ private func reconnect(_ transport: QueueTransport) async {
 }
 
 @MainActor
+@Test func offlineApprovalSurvivesRelaunchAndReceiptDoesNotClaimItApplied() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let offline = ChatModel(transport: QueueTransport(), cache: cache, device: "phone")
+    offline.start()
+    offline.answer("card-1", in: "home", .yes)
+    let id = try #require(cache.outbox().first?.id)
+    let transport = QueueTransport()
+    let restored = ChatModel(transport: transport, cache: cache, device: "phone")
+    restored.start()
+    #expect(restored.approvalPending("card-1"))
+    await reconnect(transport)
+    var delivered = false
+    for _ in 0..<300 where !delivered {
+        delivered = await transport.sent.contains(where: { $0.id == id })
+        if !delivered { try? await Task.sleep(for: .milliseconds(10)) }
+    }
+    #expect(delivered)
+    #expect(restored.approvalPending("card-1"))
+    #expect(!restored.answered.contains("card-1"))
+    await transport.yield(.event(YorozuEvent(id: "applied-card-1", threadId: "home", ts: 1, agentId: "main",
+        payload: .approvalStatus(ApprovalStatusData(requestId: id, actionId: "card-1", status: .applied)))))
+    #expect(await settle { restored.answered.contains("card-1") && !restored.approvalPending("card-1") })
+    #expect(cache.outbox().isEmpty)
+}
+
+@MainActor
 @Test func hostWithdrawalKeepsCancelledMessageAndNeverTransmitsIt() async throws {
     let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }

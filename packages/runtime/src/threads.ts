@@ -83,6 +83,7 @@ const LOGGED: ReadonlySet<EventKind> = new Set<EventKind>([
   "tool_result",
   "approval_card",
   "approval_answer",
+  "approval_status",
   "question_card",
   "question_answer",
   "progress_card",
@@ -447,7 +448,8 @@ const resultFile = (threadId: string, callId: string, dir: string): string =>
 export function appendThreadEvent(event: YorozuEvent, dir = stateDir()): void {
   if (!LOGGED.has(event.kind)) return;
   mkdirSync(threadsDir(dir), { recursive: true, mode: 0o700 });
-  appendFileSync(logFile(event.threadId, dir), `${JSON.stringify(event)}\n`, { mode: 0o600 });
+  appendFileSync(logFile(event.threadId, dir), `${JSON.stringify(event)}\n`,
+    { mode: 0o600, flush: event.kind === "approval_status" });
 }
 
 /** The thread's events, oldest first. Unreadable lines are skipped. */

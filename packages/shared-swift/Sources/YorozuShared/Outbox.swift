@@ -87,6 +87,7 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
 
     public func isExpired(at now: Date) -> Bool {
         if case .interrupt(let data) = event.payload, data.targetEventId != nil { return false }
+        if case .approvalAnswer = event.payload { return false }
         if legacyHoldUntil != nil || admissionStatus == .expired || admissionStatus == .withdrawn { return true }
         if let admissionDeadline { return now >= admissionDeadline }
         return now.timeIntervalSince(reconfirmedAt ?? queuedAt) > Outbox.life

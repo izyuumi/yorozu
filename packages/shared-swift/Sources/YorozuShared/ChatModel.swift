@@ -84,6 +84,7 @@ public final class ChatModel {
     public private(set) var linkFailure: String?
     /// Action IDs already answered from this device, so the card stops offering buttons.
     public private(set) var answered: Set<String> = []
+    public private(set) var approvalOutcomes: [String: ApprovalStatusData.Status] = [:]
     /// The same for question cards, which are answered with a choice rather than a decision.
     public private(set) var answeredQuestions: Set<String> = []
     /// The choice made on this device, so a resolved question keeps its answer visible.
@@ -355,7 +356,7 @@ public final class ChatModel {
         }
         for item in outbox {
             if case .message = item.event.payload { upsert(item.event, persist: false) }
-            applyAnswerState(item.event)
+            if item.event.payload.kind != .approvalAnswer { applyAnswerState(item.event) }
         }
         armOutboxRetry()
     }
@@ -487,7 +488,8 @@ public final class ChatModel {
         // Tagged as a button press: the runtime honours one only for a card it judged answerable
         // from the lock screen, whatever buttons the push happened to draw.
         self.answer(card.actionId, in: threadId, answer, source: .notification)
-        // The send is queued behind everything before it; wait for the queue to drain.
+        guard approvalPending(card.actionId) || answered.contains(card.actionId) else { return false }
+        // The durable answer has its own priority lane; wait for this drain before suspending.
         await flushTask?.value
         await flushCache()
         return true
@@ -774,7 +776,8 @@ public final class ChatModel {
     private func receipted(_ eventId: String) {
         guard outbox.contains(where: { $0.id == eventId }) else { return }
         // Stop's receipt confirms durable intent, not that execution ceased.
-        if outbox.contains(where: { $0.id == eventId && $0.event.payload.kind == .interrupt }) { return }
+        if outbox.contains(where: { $0.id == eventId &&
+            ($0.event.payload.kind == .interrupt || $0.event.payload.kind == .approvalAnswer) }) { return }
         outbox.removeAll { $0.id == eventId }
         saveOutbox()
         flush()
@@ -832,10 +835,12 @@ public final class ChatModel {
     private func pendingHeads(at now: Date, blocking blockedThreads: Set<String> = []) -> [OutboxItem] {
         var threads = blockedThreads
         let prioritized = outbox.filter { $0.event.payload.kind == .interrupt } +
-            outbox.filter { $0.event.payload.kind != .interrupt }
+            outbox.filter { $0.event.payload.kind == .approvalAnswer } +
+            outbox.filter { $0.event.payload.kind != .interrupt && $0.event.payload.kind != .approvalAnswer }
         return prioritized.filter { item in
             guard !item.isExpired(at: now), item.admissionStatus != .rejected,
                   item.admissionStatus != .withdrawn, item.replacementId == nil else { return false }
+            if item.event.payload.kind == .approvalAnswer { return !blockedThreads.contains(item.event.threadId) }
             guard threads.insert(item.event.threadId).inserted else { return false }
             return true
         }
@@ -1198,12 +1203,39 @@ public final class ChatModel {
         rule: ApprovalRule? = nil,
         source: ApprovalAnswerData.Source? = nil
     ) {
-        answered.insert(actionId)
-        choices[actionId] = answer
-        emit(
-            .approvalAnswer(ApprovalAnswerData(actionId: actionId, answer: answer, rule: rule, source: source)),
-            in: threadId
-        )
+        guard !answered.contains(actionId), !approvalPending(actionId),
+              approvalOutcomes[actionId] != .noLongerNeeded,
+              approvalOutcomes[actionId] != .expired else { return }
+        let request = event(.approvalAnswer(ApprovalAnswerData(
+            actionId: actionId, answer: answer, rule: rule, source: source)), in: threadId)
+        let pending = Outbox.pruned(outbox + [OutboxItem(event: request)])
+        do { try cache?.savePending(pending) }
+        catch {
+            failure = "Could not save approval answer: \(error.localizedDescription)"
+            return
+        }
+        outbox = pending
+        flush()
+    }
+
+    public func approvalPending(_ actionId: String) -> Bool {
+        outbox.contains { item in
+            if case .approvalAnswer(let answer) = item.event.payload { return answer.actionId == actionId }
+            return false
+        }
+    }
+
+    private func reconcileApproval(_ status: ApprovalStatusData, event: YorozuEvent) {
+        if let index = outbox.firstIndex(where: { $0.id == status.requestId }),
+           case .approvalAnswer(let answer) = outbox[index].event.payload,
+           answer.actionId == status.actionId {
+            if status.status == .applied { choices[status.actionId] = answer.answer }
+            outbox.remove(at: index)
+            saveOutbox()
+            flush()
+        }
+        if status.status == .rejected { failure = "Approval answer could not be applied." }
+        applyEvent(event)
     }
 
     /// Saves a rule: from the proposal card's editor, or from the Rules screen. The runtime
@@ -1514,6 +1546,8 @@ public final class ChatModel {
             case .stopStatus(let data):
                 reconcileStop(data)
                 applyEvent(event)
+            case .approvalStatus(let data):
+                reconcileApproval(data, event: event)
             default:
                 applyEvent(event)
             }
@@ -1908,6 +1942,11 @@ public final class ChatModel {
         case .approvalAnswer(let data):
             answered.insert(data.actionId)
             choices[data.actionId] = data.answer
+        case .approvalStatus(let data):
+            if approvalOutcomes[data.actionId] != .applied || data.status == .applied {
+                approvalOutcomes[data.actionId] = data.status
+            }
+            if data.status == .applied { answered.insert(data.actionId) }
         case .questionAnswer(let data):
             answeredQuestions.insert(data.questionId)
             questionChoices[data.questionId] = data.answer

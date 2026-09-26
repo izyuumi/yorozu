@@ -261,6 +261,13 @@ export interface ApprovalAnswerData {
   source?: "notification";
 }
 
+/** The host settled one answer against the card that was still pending. */
+export interface ApprovalStatusData {
+  requestId: string;
+  actionId: string;
+  status: "applied" | "no-longer-needed" | "expired" | "rejected";
+}
+
 /**
  * The runtime has taken a command a device sent: it is logged or applied, whichever the kind
  * calls for. A device keeps every command in its outbox until this arrives, since a socket that
@@ -615,6 +622,7 @@ export type EventPayload =
   | { kind: "tool_result"; data: ToolResultData }
   | { kind: "approval_card"; data: ApprovalCardData }
   | { kind: "approval_answer"; data: ApprovalAnswerData }
+  | { kind: "approval_status"; data: ApprovalStatusData }
   | { kind: "rule_proposal"; data: RuleProposalData }
   | { kind: "rule_list"; data: RuleListData }
   | { kind: "rule_update"; data: RuleUpdateData }

@@ -352,7 +352,7 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
 }
 
 @MainActor
-@Test func multiHostOfflineApprovalChoiceSurvivesRelaunchOnlyForItsOwner() {
+@Test func multiHostOfflineApprovalIntentSurvivesRelaunchOnlyForItsOwner() {
     let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
     let cache = ThreadCache(directory: directory, key: SymmetricKey(size: .bits256))
@@ -362,8 +362,8 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
     first.answerQuestion("same-question", in: "same", "Option A")
 
     let restored = ChatModel(transport: MultiHostTransport(), cache: cache)
-    #expect(restored.answered.contains("same-action"))
-    #expect(restored.choices["same-action"] == .yes)
+    #expect(restored.approvalPending("same-action"))
+    #expect(!restored.answered.contains("same-action"))
     #expect(restored.questionChoices["same-question"] == "Option A")
     #expect(restored.outbox.map(\.event.payload.kind) == [.approvalAnswer, .questionAnswer])
     #expect(other.answered.isEmpty && other.answeredQuestions.isEmpty && other.outbox.isEmpty)

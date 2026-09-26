@@ -527,6 +527,7 @@ public struct ChatView: View {
                     search: search,
                     outbox: model.outbox,
                     answered: model.answered,
+                    approvalOutcomes: model.approvalOutcomes,
                     answeredQuestions: model.answeredQuestions,
                     questionChoices: model.questionChoices,
                     handledProposals: model.handledProposals,
@@ -716,6 +717,8 @@ public struct ChatView: View {
                 ApprovalCardView(
                     card: card,
                     answered: model.answered.contains(card.actionId),
+                    pending: model.approvalPending(card.actionId),
+                    disposition: model.approvalOutcomes[card.actionId],
                     chosen: model.choices[card.actionId]
                 ) { choice, rule in
                     model.answer(card.actionId, in: thread.id, choice, rule: rule)
@@ -1130,6 +1133,7 @@ public struct ChatView: View {
         let search: String
         let outbox: [OutboxItem]
         let answered: Set<String>
+        let approvalOutcomes: [String: ApprovalStatusData.Status]
         let answeredQuestions: Set<String>
         let questionChoices: [String: String]
         let handledProposals: Set<String>

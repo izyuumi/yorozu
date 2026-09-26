@@ -8,6 +8,9 @@ test("capabilities and protocol range decide compatibility independently of app 
   expect(negotiatePeerInfo(local, { ...local, protocolMin: 2, protocolMax: 3 })).toMatchObject({ state: "update-required" });
   expect(negotiatePeerInfo(local, { ...local, capabilities: ["peer-info"], requiredCapabilities: [] })).toMatchObject({ state: "update-required" });
   expect(negotiatePeerInfo(local, { ...local,
+    capabilities: local.capabilities.filter((capability) => capability !== "offline-approval-v1"),
+    requiredCapabilities: ["channel-sequence", "exact-stop-v1"] })).toMatchObject({ state: "update-required" });
+  expect(negotiatePeerInfo(local, { ...local,
     capabilities: local.capabilities.filter((capability) => capability !== "exact-stop-v1"), requiredCapabilities: ["channel-sequence"] }))
     .toMatchObject({ state: "update-required" });
 });
