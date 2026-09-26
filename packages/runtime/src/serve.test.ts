@@ -1736,38 +1736,24 @@ async function pairPhone(port: number, qr: QrPayload) {
   };
 }
 
-test("terminal broadcasts reach only paired clients that requested terminal status", async () => {
+test("old relay terminal requests are refused without creating sessions", async () => {
   relay = await startRelay(0);
   const qrs = qrQueue();
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-terminal-removed-"));
+  writeFileSync(join(dir, "terminal-settings.json"), JSON.stringify({ enabled: true }));
   sidecar = serve({
     relayUrl: `ws://127.0.0.1:${relay.port}`,
-    stateDir: mkdtempSync(join(tmpdir(), "yorozu-terminal-opt-in-")),
+    stateDir: dir,
     log: (line) => { if (line.startsWith("QR ")) qrs.push(line.slice(3)); },
   });
-  const ordinary = await pairPhone(relay.port, await qrs.next());
-  await ordinary.next("device_list");
-  const subscribed = await pairPhone(relay.port, await qrs.next());
-  await subscribed.next("device_list");
-
-  // Both clients predate peer-info negotiation. The terminal request itself opts one in.
-  subscribed.send("", { kind: "terminal", data: { action: "status" } });
-  const initial = await subscribed.next("terminal");
-  expect(initial).toMatchObject({ data: { action: "state", enabled: false, sessions: [], epoch: expect.any(String) } });
-  if (initial.kind !== "terminal") throw new Error("missing terminal state");
-  const epoch = initial.data.epoch!;
-  expect(epoch).not.toBe("");
-
-  for (const action of ["enable", "disable"] as const) {
-    subscribed.send("", { kind: "terminal", data: { action, epoch } });
-    expect(await subscribed.next("terminal")).toMatchObject({
-      data: { action: "state", enabled: action === "enable", sessions: [], epoch },
-    });
-    // A response to a later command bounds the negative check without timers or transport mocks.
-    ordinary.send("", { kind: "sync_request", data: { lastSeen: {} } });
-    const observed: YorozuEvent[] = [];
-    await ordinary.next("sync_delta", observed);
-    expect(observed.filter((event) => event.kind === "terminal")).toEqual([]);
-  }
+  const phone = await pairPhone(relay.port, await qrs.next());
+  await phone.next("device_list");
+  phone.send("t1", { kind: "terminal", data: { action: "create", cols: 80, rows: 24 } } as unknown as EventPayload);
+  expect(await phone.next("terminal" as EventKind)).toMatchObject({
+    threadId: "t1", data: { action: "error", error: "Remote terminal is no longer available. Update Yorozu." },
+  });
+  expect(readThreadEvents("t1", dir)).toEqual([]);
+  expect(existsSync(join(dir, "terminal-settings.json"))).toBe(false);
 });
 
 test.each([true, false])("peer metadata follows an encrypted handshake (host-name=%s)", async (hostName) => {

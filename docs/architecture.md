@@ -46,6 +46,10 @@ Its stdout is a line protocol the Mac app parses:
 A `keys.json` that exists but will not read stops the sidecar rather than minting a new identity,
 since new keys would silently unpair every phone. Only an absent file is a first run.
 
+Interactive remote terminal sessions are retired. Older clients receive an error for terminal
+controls, and the host removes the old terminal opt-in at startup. Backend-owned shell tools
+and their results remain available in agent threads.
+
 ## Pairing
 
 The pairing code carries the Mac's X25519 key, the room ID and a one-time token as one compact

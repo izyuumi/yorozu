@@ -69,7 +69,6 @@ public struct ChatView: View {
     #endif
     @State private var searching = false
     @State private var choosingAgent = false
-    @State private var showingTerminal = false
     #if os(iOS)
         /// The model and effort card, open over the chat. Seeded open for the screenshot scene.
         @State private var runSettings = ChatShowcase.modelMenu
@@ -236,14 +235,6 @@ public struct ChatView: View {
                     .presentationDetents([.medium, .large])
             }
         }
-        .sheet(isPresented: $showingTerminal) {
-            TerminalSheet(model: model, thread: thread)
-                #if os(iOS)
-                .presentationDetents([.medium])
-                #else
-                .frame(minWidth: 700, minHeight: 450)
-                #endif
-        }
         #if os(iOS)
             // In the view tree, not a sheet: a presented sheet resigns the composer, and the
             // keyboard and caret must survive choosing a model mid-sentence.
@@ -315,9 +306,6 @@ public struct ChatView: View {
                 }
                 if #available(iOS 27.1, *) {
                     ToolbarItemGroup(placement: .topBarTrailing) {
-                        if model.terminalEnabled {
-                            Button("Open terminal", systemImage: "terminal") { showingTerminal = true }
-                        }
                         Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
                             .keyboardShortcut("f")
                     }
@@ -329,9 +317,6 @@ public struct ChatView: View {
                     }
                 } else {
                     ToolbarItemGroup(placement: .topBarTrailing) {
-                        if model.terminalEnabled {
-                            Button("Open terminal", systemImage: "terminal") { showingTerminal = true }
-                        }
                         Button("Find in thread", systemImage: "magnifyingglass") { searching = true }
                             .keyboardShortcut("f")
                         if onNewThread != nil || onCreate != nil {
@@ -339,14 +324,6 @@ public struct ChatView: View {
                         }
                     }
                 }
-        }
-        #else
-        .toolbar {
-            if model.terminalEnabled {
-                ToolbarItem(placement: .primaryAction) {
-                    Button("Open terminal", systemImage: "terminal") { showingTerminal = true }
-                }
-            }
         }
         #endif
         // Opened from the magnifier rather than always on show: a thread is for reading, and

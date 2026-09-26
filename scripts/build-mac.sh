@@ -157,8 +157,6 @@ rm -rf "$APP/Contents/Resources/runtime"
 # link in bundle"). Hoisted is the flat node_modules the signature can cover.
 pnpm --filter @yorozu/runtime --prod --legacy --config.node-linker=hoisted \
   deploy "$APP/Contents/Resources/runtime"
-# pnpm deploy copies package file modes; node-pty's published helper needs execute permission.
-sh scripts/fix-pty-helper.sh "$APP/Contents/Resources/runtime/node_modules/node-pty"
 # --prod above leaves the *workspace* modules directory pruned to production too, which
 # breaks the next `pnpm -r build` (no typescript). Put the dev dependencies back.
 pnpm install --frozen-lockfile

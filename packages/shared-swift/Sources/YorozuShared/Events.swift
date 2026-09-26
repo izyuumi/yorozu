@@ -72,7 +72,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case receipt
         case updateStatus = "update_status"
         case updateControl = "update_control"
-        case terminal
     }
 
     public enum Payload: Equatable, Sendable {
@@ -114,7 +113,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case receipt(ReceiptData)
         case updateStatus(UpdateStatusData)
         case updateControl(UpdateControlData)
-        case terminal(TerminalData)
 
         public var kind: Kind {
             switch self {
@@ -156,7 +154,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .receipt: .receipt
             case .updateStatus: .updateStatus
             case .updateControl: .updateControl
-            case .terminal: .terminal
             }
         }
     }
@@ -212,7 +209,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .receipt: payload = .receipt(try c.decode(ReceiptData.self, forKey: .data))
         case .updateStatus: payload = .updateStatus(try c.decode(UpdateStatusData.self, forKey: .data))
         case .updateControl: payload = .updateControl(try c.decode(UpdateControlData.self, forKey: .data))
-        case .terminal: payload = .terminal(try c.decode(TerminalData.self, forKey: .data))
         }
     }
 
@@ -264,7 +260,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .receipt(let d): try c.encode(d, forKey: .data)
         case .updateStatus(let data): try c.encode(data, forKey: .data)
         case .updateControl(let data): try c.encode(data, forKey: .data)
-        case .terminal(let data): try c.encode(data, forKey: .data)
         }
     }
 }
@@ -1196,50 +1191,6 @@ public struct DeviceListData: Codable, Equatable, Sendable {
 public struct DeviceRemoveData: Codable, Equatable, Sendable {
     public var pub: String
     public init(pub: String) { self.pub = pub }
-}
-
-/// Host terminal control and display frames. These never enter a chat transcript or outbox.
-public struct TerminalSessionData: Codable, Equatable, Sendable, Identifiable {
-    public var id: String
-    public var title: String
-    public var cwd: String
-    public var writable: Bool
-    public var cols: Int
-    public var rows: Int
-}
-
-public struct TerminalData: Codable, Equatable, Sendable {
-    public enum Action: String, Codable, Sendable {
-        case status, enable, disable, create, created, attach, detach, takeover, input, resize, close
-        case state, snapshot, output, error
-    }
-
-    public var action: Action
-    public var sessionId: String?
-    public var enabled: Bool?
-    public var sessions: [TerminalSessionData]?
-    public var cols: Int?
-    public var rows: Int?
-    /// Input is base64; output and snapshots are terminal text.
-    public var data: String?
-    public var sequence: Int?
-    public var snapshotId: String?
-    public var last: Bool?
-    public var error: String?
-    /// New on each host relay connection; rejects buffered stale terminal controls.
-    public var epoch: String?
-
-    public init(
-        action: Action, sessionId: String? = nil, cols: Int? = nil, rows: Int? = nil,
-        data: String? = nil, epoch: String? = nil
-    ) {
-        self.action = action
-        self.sessionId = sessionId
-        self.cols = cols
-        self.rows = rows
-        self.data = data
-        self.epoch = epoch
-    }
 }
 
 /// Arbitrary JSON, for tool arguments the schema cannot know ahead of time.

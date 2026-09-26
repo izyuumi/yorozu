@@ -97,15 +97,6 @@ public final class ChatModel {
     public private(set) var yoloMode = false
     /// When the bypass switches itself off, in epoch ms. Nil while it is off.
     public private(set) var yoloUntil: Int?
-    /// Host-owned developer setting and live PTY list. Never cached in thread history.
-    public private(set) var terminalEnabled = false
-    public private(set) var terminalSessions: [TerminalSessionData] = []
-    public private(set) var terminalEpoch: String?
-    public private(set) var terminalError: String?
-    /// Only the open terminal sheet consumes display frames; reattach fetches a fresh snapshot.
-    public var onTerminalFrame: ((TerminalData) -> Void)?
-    private var terminalConnectionRevision = 0
-    private var terminalEmitter: Task<Void, Never>?
     /// What this device chose for each answered action, so the card can say so afterwards.
     public private(set) var choices: [String: ApprovalAnswerData.Answer] = [:]
     /// One composer draft per thread, so switching threads does not lose what was typed.
@@ -378,7 +369,6 @@ public final class ChatModel {
     public func close() {
         retryTask?.cancel()
         retryTask = nil
-        invalidateTerminalConnection()
         Task { [transport] in await transport.close() }
     }
 
@@ -390,11 +380,6 @@ public final class ChatModel {
         do { try saveComposer() }
         catch { failure = "Could not save draft: \(error.localizedDescription)" }
         stopped = true
-        invalidateTerminalConnection()
-        terminalEnabled = false
-        terminalSessions = []
-        terminalError = nil
-        onTerminalFrame = nil
         foreground = false
         connectionTask?.cancel()
         readReport?.cancel()
@@ -407,7 +392,6 @@ public final class ChatModel {
         await transport.close()
         await connectionTask?.value
         await emitter?.value
-        await terminalEmitter?.value
         await flushTask?.value
         await cacheWrite?.value
         state = .closed
@@ -429,7 +413,6 @@ public final class ChatModel {
     /// Called when the app comes back to the foreground: a socket that dropped while it was
     /// suspended is re-dialled now instead of after the transport's backoff.
     public func reconnect() {
-        invalidateTerminalConnection()
         Task { [transport] in await transport.reconnect() }
     }
 
@@ -1264,38 +1247,6 @@ public final class ChatModel {
         emit(control(.approvalSettings(ApprovalSettingsData())))
     }
 
-    public func requestTerminalStatus() {
-        emit(control(.terminal(TerminalData(action: .status))))
-    }
-
-    public var terminalCanHostClose: Bool { transport is LocalSocketTransport }
-
-    /// Terminal controls are deliberately live-only: never stored in the message outbox.
-    public func terminal(
-        _ action: TerminalData.Action, in threadId: String = "", sessionId: String? = nil,
-        cols: Int? = nil, rows: Int? = nil, data: Data? = nil
-    ) {
-        guard canDeliver, let terminalEpoch else { return }
-        terminalError = nil
-        let frame = event(.terminal(TerminalData(
-            action: action, sessionId: sessionId, cols: cols, rows: rows,
-            data: data?.base64EncodedString(), epoch: terminalEpoch
-        )), in: threadId)
-        let revision = terminalConnectionRevision
-        let previous = terminalEmitter
-        terminalEmitter = Task { [weak self, transport] in
-            await previous?.value
-            guard !Task.isCancelled, let self, self.terminalConnectionRevision == revision, self.canDeliver else { return }
-            try? await transport.send(frame)
-        }
-    }
-
-    private func invalidateTerminalConnection() {
-        terminalConnectionRevision &+= 1
-        terminalEpoch = nil
-        terminalEmitter?.cancel()
-    }
-
     public func setYoloMode(_ enabled: Bool) {
         yoloMode = enabled
         emit(control(.approvalSettings(ApprovalSettingsData(yolo: enabled))))
@@ -1411,7 +1362,6 @@ public final class ChatModel {
         case .state(let state):
             self.state = state
             if state != .paired {
-                invalidateTerminalConnection()
                 ownerOnline = false
                 if updateStatus.phase != .none && updateStatus.phase != .installing {
                     updateStatus.phase = .unknown
@@ -1430,7 +1380,6 @@ public final class ChatModel {
                 requestOpenHistory()
                 requestDevices()
                 requestRules()
-                if ownerOnline { requestTerminalStatus() }
                 if ownerOnline { updateControl(.status) }
                 resumeResultRequests()
                 onPaired?()
@@ -1439,7 +1388,6 @@ public final class ChatModel {
         case .ownerOnline(let online):
             let wasOnline = ownerOnline
             ownerOnline = online
-            if !online { invalidateTerminalConnection() }
             if !online && updateStatus.phase != .none && updateStatus.phase != .installing {
                 updateStatus.phase = .unknown
                 updateStatus.deadline = nil
@@ -1449,7 +1397,6 @@ public final class ChatModel {
             if online {
                 resumeResultRequests()
                 if state == .paired {
-                    requestTerminalStatus()
                     updateControl(.status)
                 }
             }
@@ -1529,20 +1476,6 @@ public final class ChatModel {
                 if let yolo = data.yolo {
                     yoloMode = yolo
                     yoloUntil = yolo ? data.yoloUntil : nil
-                }
-            case .terminal(let data):
-                switch data.action {
-                case .state:
-                    terminalEnabled = data.enabled == true
-                    terminalSessions = data.sessions ?? []
-                    terminalEpoch = data.epoch
-                    terminalError = nil
-                case .error:
-                    terminalError = data.error
-                    onTerminalFrame?(data)
-                case .created, .snapshot, .output:
-                    onTerminalFrame?(data)
-                default: break
                 }
             case .receipt(let data):
                 receipted(data.eventId)

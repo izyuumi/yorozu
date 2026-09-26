@@ -7,8 +7,9 @@ updated count; work on other hosts and unrelated Terminal agents does not.
 Running and queued turns, approval/input waits, recovery and pending retries block
 installation indefinitely. Final failures and completed cancellations do not.
 Unknown runtime status is never idle. Open chat windows do not block updates.
-Each open host terminal session blocks both automatic and manual update installs,
-even when no command is visibly running. Closing the session releases the gate.
+Builds with interactive remote terminals block update installation until every session
+is closed. The updated host removes the old terminal opt-in on first launch and does not
+restore terminal sessions. Force quitting an older host still ends its live sessions.
 
 After all work finishes, the Mac must remain idle for 10 continuous seconds.
 New submissions take priority and reset the countdown, including work arriving
