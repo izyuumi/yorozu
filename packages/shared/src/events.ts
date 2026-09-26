@@ -55,6 +55,8 @@ export interface MessageData {
   done?: boolean;
   /** Photos and files sent together. */
   attachments?: MessageAttachment[];
+  /** Encrypted initial-admission deadline, exactly 30 minutes after this event's `ts`. */
+  admissionDeadline?: number;
   /** Host-owned execution association; absent on a client submission. */
   runId?: string;
   /** Host-owned final response identity; absent on a client submission. */

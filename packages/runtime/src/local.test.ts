@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -207,6 +208,77 @@ test("local admission queries identify unknown, running, and completed turns", a
   expect(await restarted.nextOf("admission_status")).toMatchObject({
     data: { eventId: "old-user", status: "indeterminate" },
   });
+}, 10_000);
+
+test("expired admission is rejected durably while an already accepted retry still receipts", async () => {
+  const { dir, path, fetchMock } = await localSidecar();
+  socket = await connectLocal(path);
+  const events = reader(socket);
+  await events.nextOf("thread_list");
+  send(socket, "expiry", { kind: "thread_create", data: { title: "Expiry" } });
+  await events.nextOf("thread_list");
+
+  const queuedAt = Date.now() - 73 * 60 * 60_000;
+  const stale: YorozuEvent = { id: "expired-message", threadId: "expiry", ts: queuedAt,
+    agentId: "mac", kind: "message", data: { role: "user", text: "do not run",
+      admissionDeadline: queuedAt + 30 * 60_000 } };
+  socket.write(`${JSON.stringify(stale)}\n`);
+  expect(await events.nextOf("admission_status")).toMatchObject({
+    data: { eventId: stale.id, status: "expired", reason: "admission-deadline" },
+  });
+  expect(readThreadEvents("expiry", dir).some((event) => event.id === stale.id)).toBe(false);
+  expect(fetchMock).not.toHaveBeenCalled();
+  send(socket, "expiry", { kind: "admission_query", data: { eventId: stale.id } });
+  expect(await events.nextOf("admission_status")).toMatchObject({ data: { eventId: stale.id, status: "expired" } });
+
+  socket.write(`${JSON.stringify({ ...stale, ts: Date.now(),
+    data: { ...stale.data, admissionDeadline: Date.now() + 30 * 60_000 } })}\n`);
+  expect(await events.nextOf("admission_status")).toMatchObject({
+    data: { eventId: stale.id, status: "rejected", reason: "conflicting-message-id" },
+  });
+
+  const accepted: YorozuEvent = { ...stale, id: "accepted-before-deadline", data: { ...stale.data, text: "already owned" } };
+  appendThreadEvent(accepted, dir);
+  socket.write(`${JSON.stringify(accepted)}\n`);
+  await vi.waitFor(() => expect(events.all.some((event) =>
+    event.kind === "receipt" && event.data.eventId === accepted.id)).toBe(true));
+
+  const now = Date.now();
+  const fresh: YorozuEvent = { id: "fresh-message", threadId: "expiry", ts: now, agentId: "mac",
+    kind: "message", data: { role: "user", text: "run now", admissionDeadline: now + 30 * 60_000 } };
+  socket.write(`${JSON.stringify(fresh)}\n`);
+  await vi.waitFor(() => expect(events.all.some((event) =>
+    event.kind === "receipt" && event.data.eventId === fresh.id)).toBe(true));
+  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+  const ahead = now + 6 * 60_000;
+  const wrongClock: YorozuEvent = { ...fresh, id: "future-clock", ts: ahead,
+    data: { ...fresh.data, admissionDeadline: ahead + 30 * 60_000 } };
+  socket.write(`${JSON.stringify(wrongClock)}\n`);
+  expect(await events.nextOf("admission_status")).toMatchObject({
+    data: { eventId: wrongClock.id, status: "rejected", reason: "client-clock-ahead" },
+  });
+
+  socket.destroy();
+  await sidecar.close();
+  appendFileSync(join(dir, "expired-admissions.jsonl"), '{"id":"torn-tail"');
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir,
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: fetchMock }), log: () => {} });
+  socket = await connectLocal(path);
+  const restarted = reader(socket);
+  await restarted.nextOf("thread_list");
+  send(socket, "expiry", { kind: "admission_query", data: { eventId: stale.id } });
+  expect(await restarted.nextOf("admission_status")).toMatchObject({ data: { eventId: stale.id, status: "expired" } });
+  socket.write(`${JSON.stringify(stale)}\n`);
+  expect(await restarted.nextOf("admission_status")).toMatchObject({
+    data: { eventId: stale.id, status: "expired", reason: "admission-deadline" },
+  });
+  socket.write(`${JSON.stringify({ ...stale, ts: Date.now(),
+    data: { ...stale.data, admissionDeadline: Date.now() + 30 * 60_000 } })}\n`);
+  expect(await restarted.nextOf("admission_status")).toMatchObject({
+    data: { eventId: stale.id, status: "rejected", reason: "conflicting-message-id" },
+  });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
 }, 10_000);
 
 test("terminal is gated, live-only, and blocks host update install while open", async () => {
@@ -432,6 +504,64 @@ test("restart restores queued durable ledger head without an active run", async 
   await vi.waitFor(() => expect(readThreadEvents("gap", dir).some((event) =>
     event.kind === "message" && event.data.role === "agent" && event.data.done)).toBe(true));
 });
+
+test("a ledger-owned ID rejects changed deadline across the ledger-to-log crash gap", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-admission-gap-"));
+  createThread("Gap", dir, "gap");
+  const ts = Date.now() - 31 * 60_000;
+  const original: YorozuEvent = { id: "gap-user", threadId: "gap", ts, agentId: "mac",
+    kind: "message", data: { role: "user", text: "original",
+      admissionDeadline: ts + 30 * 60_000 } };
+  const identity = createHash("sha256").update(JSON.stringify([
+    "gap", ts, "user", "original", ts + 30 * 60_000, [],
+  ])).digest("hex");
+  const stored = { threadId: "gap", sessionKey: "agent:main:yorozu:gap", runId: "gap-run",
+    startedAt: Date.now(), completionId: "openclaw:gap-user:final", userEventId: "gap-user",
+    awaitsAnnouncement: false, taskIds: [], childRunIds: [], state: "active" as const,
+    input: { text: "original", identity, attachments: [] } };
+  const admitUserTurn = vi.fn((_: unknown, accept: (entry: unknown) => void) => { accept(stored); return stored; });
+  const fake = { pendingTurns: () => [stored], resume: vi.fn(() => new Promise(() => {})),
+    admitUserTurn, run: vi.fn(), acknowledge: vi.fn(), listModels: vi.fn(async () => []),
+    setArchived: vi.fn(async () => {}) } as unknown as OpenClawRunner;
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, openclawRunner: fake, log: () => {} });
+  socket = await connectLocal(localSocketPath(dir));
+  const events = reader(socket);
+  await events.nextOf("thread_list");
+  socket.write(`${JSON.stringify({ ...original, ts: Date.now(),
+    data: { ...original.data, admissionDeadline: Date.now() + 30 * 60_000 } })}\n`);
+  expect(await events.nextOf("admission_status")).toMatchObject({
+    data: { eventId: original.id, status: "rejected", reason: "conflicting-message-id" },
+  });
+  expect(admitUserTurn).not.toHaveBeenCalled();
+  expect(readThreadEvents("gap", dir).some((event) => event.id === original.id)).toBe(false);
+  socket.write(`${JSON.stringify(original)}\n`);
+  await vi.waitFor(() => expect(events.all.some((event) =>
+    event.kind === "receipt" && event.data.eventId === original.id)).toBe(true));
+  expect(admitUserTurn).toHaveBeenCalledTimes(1);
+}, 10_000);
+
+test("queued OpenClaw admission repairs a missing log with its original deadline after restart", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-queued-expiry-"));
+  createThread("Queued", dir, "queued");
+  const ts = Date.now() - 31 * 60_000;
+  const deadline = ts + 30 * 60_000;
+  const identity = createHash("sha256").update(JSON.stringify([
+    "queued", ts, "user", "already accepted", deadline, [],
+  ])).digest("hex");
+  const runner = new OpenClawRunner({ stateDir: dir });
+  expect(() => runner.admitUserTurn({ threadId: "queued", text: "already accepted", userEventId: "queued-user",
+    identity, eventTs: ts, admissionDeadline: deadline }, () => { throw new Error("log crashed"); }))
+    .toThrow("log crashed");
+  const run = vi.spyOn(runner, "run").mockResolvedValue("done");
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, openclawRunner: runner, log: () => {} });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => expect(readThreadEvents("queued", dir).some((event) =>
+    event.kind === "message" && event.data.role === "agent" && event.data.done)).toBe(true));
+  const repaired = readThreadEvents("queued", dir).find((event) => event.id === "queued-user");
+  expect(repaired).toMatchObject({ ts, data: { admissionDeadline: deadline, text: "already accepted" } });
+}, 10_000);
 
 test("startup reconciles transcript independently before acknowledging existing thread final", async () => {
   relay = await startRelay(0);

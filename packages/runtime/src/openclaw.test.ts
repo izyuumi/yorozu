@@ -36,9 +36,15 @@ describe("OpenClawRunner", () => {
   test("admission writes ledger before logs and replays either crash side idempotently", () => {
     const gateway = harness();
     const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
-    const turn = { threadId: "atomic", text: "once", userEventId: "user-1" };
+    const turn = { threadId: "atomic", text: "once", userEventId: "user-1",
+      identity: "a".repeat(64), eventTs: 1, admissionDeadline: 30 * 60_000 + 1 };
     expect(() => runner.admitUserTurn(turn, () => { throw new Error("log crash"); })).toThrow("log crash");
     expect(runner.pendingTurns()).toHaveLength(1);
+    expect(new OpenClawRunner({ stateDir: gateway.dir }).pendingTurns()[0]?.input).toMatchObject({
+      identity: "a".repeat(64), eventTs: 1, admissionDeadline: 30 * 60_000 + 1,
+    });
+    expect(() => runner.admitUserTurn({ ...turn, identity: "b".repeat(64) }, () => {}))
+      .toThrow("conflicting user event ID");
     let repairs = 0;
     const replayed = runner.admitUserTurn(turn, () => { repairs += 1; });
     expect(repairs).toBe(1);
