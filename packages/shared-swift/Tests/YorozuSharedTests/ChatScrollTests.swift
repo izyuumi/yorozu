@@ -41,9 +41,9 @@ import Testing
     #expect(intent.shouldPinLatest(during: .idle))
 }
 
-@Test func jumpToLatestNeedsMoreThanOneViewportOfDistance() {
-    #expect(!showsJumpToLatest(contentHeight: 2_000, visibleBottom: 1_500, viewportHeight: 500))
-    #expect(showsJumpToLatest(contentHeight: 2_001, visibleBottom: 1_500, viewportHeight: 500))
+@Test func jumpToLatestAppearsOnceContentIsBelowTheReadingPosition() {
+    #expect(!showsJumpToLatest(contentHeight: 2_000, visibleBottom: 1_960, viewportHeight: 500))
+    #expect(showsJumpToLatest(contentHeight: 2_001, visibleBottom: 1_960, viewportHeight: 500))
     #expect(!showsJumpToLatest(contentHeight: 2_000, visibleBottom: 500, viewportHeight: 0))
 }
 
