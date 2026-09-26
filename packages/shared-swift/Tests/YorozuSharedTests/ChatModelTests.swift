@@ -305,12 +305,12 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
     let grace = Duration.milliseconds(1000)
     let presentation = ConnectionPresentation(.connected)
 
-    presentation.update(.reconnecting, active: true, grace: grace)
-    try await Task.sleep(for: .milliseconds(600))
+    // The old deadline expires while backgrounded, when no presentation timer is active.
+    presentation.update(.reconnecting, active: true, since: .now - .milliseconds(600), grace: grace)
     presentation.update(.reconnecting, active: false, grace: grace)
+    try await Task.sleep(for: .milliseconds(500))
     presentation.update(.reconnecting, active: true, grace: grace)
-    try await Task.sleep(for: .milliseconds(600))
-    // A stale anchor would have declared this at 400ms.
+    // A stale anchor declares reconnecting synchronously; a fresh one starts a new grace.
     #expect(presentation.state == .connected)
     await settled(presentation, at: .reconnecting)
     #expect(presentation.state == .reconnecting)
