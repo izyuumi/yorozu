@@ -99,6 +99,37 @@ test("the payload cap accepts one MiB and rejects fragmented UTF-8 bytes above i
   expect(await Promise.race([peer.next(), peer.closed])).toBe(1009);
 });
 
+test("a stalled phone is disconnected without slowing another phone or the host", async () => {
+  const logs = vi.spyOn(console, "log");
+  const keys = keypair();
+  const mac = await connectMac(relay.port, keys);
+  peers.push(mac);
+  const room = roomId(keys.pub);
+  const slow = await connectPhone(relay.port, room, await mintToken(mac));
+  peers.push(slow.phone);
+  await slow.phone.next(); // joined
+  const fast = await connectPhone(relay.port, room, await mintToken(mac));
+  peers.push(fast.phone);
+  await fast.phone.next(); // joined
+  const socket = (slow.phone.ws as WebSocket & { _socket: { pause(): void; resume(): void } })._socket;
+  socket.pause();
+  try {
+    const payload = "A".repeat(140_000);
+    const frames = Array.from({ length: 6 }, () => ({ payload, sig: signChallenge(payload, keys.priv) }));
+    for (let i = 0; i < 8; i++) {
+      mac.send({ type: "frame", frames });
+      for (let j = 0; j < frames.length; j++)
+        expect(await fast.phone.next()).toMatchObject({ type: "frame", payload });
+    }
+    await vi.waitFor(() => expect(logs.mock.calls.some(([line]) => JSON.parse(line).ev === "slow-phone")).toBe(true));
+  } finally {
+    socket.resume();
+  }
+  expect(await slow.phone.closed).toBe(1013);
+  mac.frame("bWFya2Vy", keys);
+  expect(await fast.phone.next()).toMatchObject({ type: "frame", payload: "bWFya2Vy" });
+});
+
 async function limitedRelay(): Promise<Relay> {
   const server = await startRelay(0);
   servers.push(server);

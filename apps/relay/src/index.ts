@@ -94,6 +94,7 @@ export function clientIp(headers: IncomingHttpHeaders, peer: string | undefined,
 }
 
 type Buffered = { raw: string; bytes: number; at: number; seq: number };
+const PHONE_BUFFER_CAP_BYTES = 2 * MAX_PAYLOAD_BYTES;
 
 /** One line per socket event, the same shape as the Worker's, so both relays read alike. */
 function log(ev: string, fields: Record<string, unknown> = {}): void {
@@ -163,6 +164,17 @@ function bufferFrame(room: Room, raw: string, now: number): void {
   trimBuffer(room, now);
 }
 
+/** A slow phone can replay from the host after reconnect; its socket must not retain a room's fanout. */
+function sendPhone(phone: WebSocket, raw: string): void {
+  if (phone.readyState !== phone.OPEN) return;
+  if (phone.bufferedAmount + Buffer.byteLength(raw) > PHONE_BUFFER_CAP_BYTES) {
+    log("slow-phone", { bufferedBytes: phone.bufferedAmount });
+    phone.close(1013, "slow receiver");
+    return;
+  }
+  phone.send(raw);
+}
+
 /**
  * Tells the room's phones whether its Mac holds a live socket, so they can show an offline
  * banner instead of a silent send. This is routing state the relay already keeps — it says
@@ -170,7 +182,7 @@ function bufferFrame(room: Room, raw: string, now: number): void {
  */
 function notifyOwner(room: Room, online: boolean): void {
   const raw = JSON.stringify({ type: "owner", online });
-  for (const phone of room.phones) phone.send(raw);
+  for (const phone of room.phones) sendPhone(phone, raw);
 }
 
 /**
@@ -472,7 +484,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
             // join, which holds the whole history. The relay is only ever the fast path down.
             // A batch is unpacked here: each phone sees plain frames, never the batch.
             const wires = msg.frames === undefined ? [raw] : frames.map(frameWire);
-            for (const phone of conn.room.phones) for (const wire of wires) phone.send(wire);
+            for (const phone of conn.room.phones) for (const wire of wires) sendPhone(phone, wire);
           }
           return;
         }
