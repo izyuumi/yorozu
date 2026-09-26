@@ -245,7 +245,7 @@ final class PendingUpdate {
         if cancellationId != nil { startTimer(); tick() }
     }
 
-    func recordFailure(_ message: String) {
+    func recordFailure(_ message: String?) {
         failure = message
     }
 }
@@ -309,11 +309,13 @@ private final class UpdaterDelegate: NSObject, SPUUpdaterDelegate, @preconcurren
     }
 
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        Updates.pending.recordFailure(nil)
         Updates.checkResult.message = "Update \(item.displayVersionString) available"
         Log.write("updates: found \(item.displayVersionString) (build \(item.versionString))")
     }
 
     func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: any Error) {
+        Updates.pending.recordFailure(nil)
         Updates.checkResult.message = error.localizedDescription
         Log.write("updates: none available — \(error.localizedDescription)")
     }
@@ -321,8 +323,8 @@ private final class UpdaterDelegate: NSObject, SPUUpdaterDelegate, @preconcurren
     func updater(_ updater: SPUUpdater, didAbortWithError error: any Error) {
         Updates.pending.cancel()
         let sparkError = error as NSError
-        // Sparkle also reports "already current" and user cancellation as aborts.
-        if sparkError.domain != SUSparkleErrorDomain || ![1001, 4007].contains(sparkError.code) {
+        // Sparkle's SUErrors.h: no update (1001), cancelled (4007), authorize later (4008).
+        if sparkError.domain != SUSparkleErrorDomain || ![1001, 4007, 4008].contains(sparkError.code) {
             let message = "Update failed: \(error.localizedDescription)"
             Updates.pending.recordFailure(message)
             Updates.checkResult.message = nil
