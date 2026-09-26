@@ -7,8 +7,8 @@ import YorozuShared
 struct GeneralView: View {
     @ObservedObject private var neverSleep = NeverSleep.shared
     @State private var session = MacChatSession.shared
-    @State private var betaUpdates = Updates.beta
     @AppStorage(ChatView.sendWithCommandReturnKey) private var sendWithCommandReturn = false
+    @AppStorage(HostWindowMode.key) private var backgroundOnlyHost = false
 
     var body: some View {
         Form {
@@ -20,6 +20,11 @@ struct GeneralView: View {
                 .pickerStyle(.segmented)
                 if session.role == .client {
                     Text(session.hosts.hasMultipleHosts ? "Manage paired Macs in Hosts." : "Manage pairing in Connection.")
+                        .foregroundStyle(.secondary)
+                } else if session.role == .host {
+                    Toggle("Background-only host", isOn: $backgroundOnlyHost)
+                        .onChange(of: backgroundOnlyHost) { _, _ in WindowPresence.modeChanged() }
+                    Text("Keep hosting from the menu bar. Quick Chat and Settings remain available without a Dock icon.")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -84,26 +89,8 @@ struct GeneralView: View {
                     .leadingFooter()
                 }
             }
-            Section {
-                LabeledContent("Version", value: versionLabel)
-                AutomaticUpdatesToggle()
-                if Updates.controller != nil {
-                    Toggle("Receive beta updates", isOn: $betaUpdates)
-                        .onChange(of: betaUpdates) { Updates.beta = betaUpdates }
-                    LabeledContent("") { CheckForUpdatesButton() }
-                }
-            } header: {
-                Text("Updates")
-            } footer: {
-                Group {
-                    if Updates.controller != nil {
-                        Text("Downloads updates in the background. Installs after this Mac’s agents finish and stay idle for 10 seconds.")
-                        if betaUpdates {
-                            Text("Beta builds include changes from main before a stable release. Turning beta off waits for a newer stable build.")
-                        }
-                    }
-                }
-                .leadingFooter()
+            if !HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost) {
+                UpdatesSettingsSection()
             }
             Section {
                 Text(ProviderMarkAttribution.notice)
@@ -115,6 +102,35 @@ struct GeneralView: View {
         .toggleStyle(.switch)
         .scrollContentBackground(.hidden)
         .background(YorozuPalette.canvas)
+    }
+
+}
+
+struct UpdatesSettingsSection: View {
+    @State private var betaUpdates = Updates.beta
+
+    var body: some View {
+        Section {
+            LabeledContent("Version", value: versionLabel)
+            AutomaticUpdatesToggle()
+            if Updates.controller != nil {
+                Toggle("Receive beta updates", isOn: $betaUpdates)
+                    .onChange(of: betaUpdates) { Updates.beta = betaUpdates }
+                LabeledContent("") { CheckForUpdatesButton() }
+            }
+        } header: {
+            Text("Updates")
+        } footer: {
+            Group {
+                if Updates.controller != nil {
+                    Text("Downloads updates in the background. Installs after this Mac’s agents finish and stay idle for 10 seconds.")
+                    if betaUpdates {
+                        Text("Beta builds include changes from main before a stable release. Turning beta off waits for a newer stable build.")
+                    }
+                }
+            }
+            .leadingFooter()
+        }
     }
 
     private var versionLabel: String {

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import YorozuKeepalive
 import YorozuShared
 
 /// The chat window: threads on the left, the chat on the right, and everything that is not
@@ -17,6 +18,112 @@ struct ChatWindowView: View {
     var body: some View {
         if session.role == .client { ClientChatWindowView(session: session) }
         else { LocalChatWindowView() }
+    }
+}
+
+/// One conversation in the host's menu-bar mode. The existing ChatView owns transcript,
+/// composer, attachments, approvals and their persisted per-thread state.
+struct QuickChatView: View {
+    // Window owns its initial geometry; users can resize it after opening.
+    static let initialWidth: CGFloat = 560
+    static let initialHeight: CGFloat = 660
+
+    @State private var session = MacChatSession.shared
+    @State private var router = QuickChatRouter.shared
+    @State private var selection: String?
+    @AppStorage("quickChatThreadID") private var lastThreadID = ""
+    @Environment(\.controlActiveState) private var controlActiveState
+
+    private var model: ChatModel { session.model }
+    private var thread: ThreadSummary? { model.threads.first { $0.id == selection } }
+    private var target: QuickChatTarget? { router.target?.threadID == selection ? router.target : nil }
+
+    var body: some View {
+        NavigationStack {
+            if let thread {
+                ChatView(model: model, thread: thread,
+                    resumeRequest: target?.id,
+                    notificationClass: target?.kind?.rawValue,
+                    notificationEventRef: target?.eventID.map(YorozuCrypto.threadRef),
+                    showsUpdateStatus: false,
+                    focusComposerOnAppear: target == nil)
+                    .id(thread.id)
+            } else {
+                ContentUnavailableView("No chat yet", systemImage: "bubble.left.and.bubble.right",
+                    description: Text("Start a chat from the menu bar."))
+            }
+        }
+        .toolbar {
+            QuickChatToolbar(threads: Array(visibleThreads(model.threads).prefix(8)),
+                onNew: newChat, onSelect: { router.target = nil; selection = $0 })
+        }
+        .focusedSceneValue(\.threadCommands, ThreadCommands(newThread: newChat))
+        .background(YorozuPalette.canvas)
+        .yorozuTint()
+        .onAppear { open() }
+        .onChange(of: selection, initial: true) { old, new in
+            if let old, old != new { model.discardDraft(old) }
+            model.openThread = new
+            if let new { lastThreadID = new }
+        }
+        .onChange(of: lastThreadID) { _, id in
+            if model.threads.contains(where: { $0.id == id }) { selection = id }
+        }
+        .onChange(of: router.target?.id, initial: true) { _, _ in followTarget() }
+        .onChange(of: model.threads.map(\.id)) { _, _ in followTarget() }
+        .onChange(of: model.listed) { _, listed in if listed && selection == nil { open() } }
+        .onChange(of: controlActiveState, initial: true) { _, state in
+            model.foreground = state == .key
+        }
+        .onDisappear {
+            model.foreground = false
+            router.target = nil
+            do { try model.saveForRestart() }
+            catch { Log.write("quick chat: could not save draft on close — \(error.localizedDescription)") }
+        }
+    }
+
+    private func open() {
+        guard selection == nil else { return }
+        if router.target != nil { followTarget(); return }
+        guard model.listed || !model.threads.isEmpty else { return }
+        selection = model.threads.first { $0.id == lastThreadID && !$0.archived }?.id
+            ?? visibleThreads(model.threads).first?.id
+            ?? model.newDraft().id
+    }
+
+    private func newChat() {
+        router.target = nil
+        selection = model.newDraft().id
+    }
+
+    private func followTarget() {
+        if let id = router.target?.threadID, model.threads.contains(where: { $0.id == id }) {
+            selection = id
+        }
+    }
+}
+
+private struct QuickChatToolbar: ToolbarContent {
+    let threads: [ThreadSummary]
+    let onNew: () -> Void
+    let onSelect: (String) -> Void
+    @FocusedValue(\.chatCommands) private var chat
+
+    var body: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button("Find in Thread", systemImage: "magnifyingglass") { chat?.find() }
+                .disabled(chat == nil)
+            Button("New Chat", systemImage: "square.and.pencil", action: onNew)
+            Menu {
+                ForEach(threads) { item in
+                    Button(item.displayTitle) { onSelect(item.id) }
+                }
+            } label: {
+                Label("Recent Chats", systemImage: "ellipsis.circle")
+            }
+            .disabled(threads.isEmpty)
+        }
     }
 }
 
@@ -218,6 +325,7 @@ private struct LocalChatWindowView: View {
             if launchArgument("yorozuWindow") == "settings" { openSettings() }
         }
         .onChange(of: model.listed) { _, listed in if listed { open() } }
+        .onDisappear { model.foreground = false }
         // Screenshot harness only: prints the window number `screencapture -l` wants. Inert
         // unless a showcase argument was passed — see ``Showcase``.
         .background(WindowNumberReporter())
@@ -257,9 +365,17 @@ private struct SidebarFooter: View {
 ///
 /// A toolbar of tabs, as every Mac app's Settings is: a sidebar split view in a Settings
 /// window grew a blank toolbar strip and a second selection colour, for three panes.
+@MainActor @Observable
+final class SettingsPaneRouter {
+    static let shared = SettingsPaneRouter()
+    var selection: String?
+}
+
 struct SettingsView: View {
     @ObservedObject var sidecar: Sidecar
     @State private var session = MacChatSession.shared
+    @State private var route = SettingsPaneRouter.shared
+    @AppStorage(HostWindowMode.key) private var backgroundOnlyHost = false
     // The pane, or the one a screenshot asked for — see ``Showcase``.
     @State private var selection = launchArgument("yorozuSettingsPane") ?? "general"
 
@@ -273,6 +389,14 @@ struct SettingsView: View {
                 Tab("Permissions", systemImage: "lock.shield", value: "permissions") {
                     PermissionsView()
                 }
+                if backgroundOnlyHost {
+                    Tab("Notifications", systemImage: "bell", value: "notifications") {
+                        MacNotificationsView()
+                    }
+                    Tab("Updates", systemImage: "arrow.triangle.2.circlepath", value: "updates") {
+                        UpdatesSettingsView()
+                    }
+                }
             } else {
                 Tab(session.hosts.hasMultipleHosts ? "Hosts" : "Connection",
                     systemImage: session.hosts.hasMultipleHosts ? "desktopcomputer" : "link", value: "hosts") {
@@ -281,6 +405,9 @@ struct SettingsView: View {
             }
         }
         .frame(width: 600, height: 620)
+        .onAppear { if let pane = route.selection { selection = pane } }
+        .onChange(of: route.selection) { _, pane in if let pane { selection = pane } }
         .onChange(of: session.role) { _, _ in selection = "general" }
+        .onChange(of: backgroundOnlyHost) { _, active in if !active { selection = "general" } }
     }
 }

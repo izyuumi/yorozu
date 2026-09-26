@@ -34,5 +34,5 @@ fi
 
 mkdir -p "$(dirname "$LOG")"
 echo "$(date '+%Y-%m-%d %H:%M:%S') watchdog: $APP not running, relaunching" >>"$LOG"
-open -a "$APP" ||
+open -g -a "$APP" --args -yorozuWatchdogLaunch ||
   echo "$(date '+%Y-%m-%d %H:%M:%S') watchdog: open -a \"$APP\" failed" >>"$LOG"

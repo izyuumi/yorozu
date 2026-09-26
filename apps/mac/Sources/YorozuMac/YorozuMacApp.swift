@@ -1,5 +1,6 @@
 import AppKit
 import CoreImage.CIFilterBuiltins
+import CoreServices
 import SwiftUI
 import YorozuKeepalive
 import YorozuPermissions
@@ -299,18 +300,52 @@ private extension String {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var explicitQuitRequested = false
+
+    @MainActor static func closeWindows() {
+        for window in NSApp.windows where window.isVisible && window.level == .normal {
+            window.performClose(nil)
+        }
+    }
+
+    @MainActor func requestQuit() {
+        explicitQuitRequested = true
+        NSApp.terminate(nil)
+    }
+
     /// Yorozu is a menu-bar agent. Closing chat or Settings only hides UI; relay, runtime,
     /// updates, and phone connectivity keep running until the user explicitly chooses Quit.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         MainActor.assumeIsolated {
-            if Updates.pending.status.phase != .none && !Updates.installing {
+            if HostWindowMode.active && !Updates.installing {
+                // A key equivalent can still reach AppKit directly from a Settings scene.
+                // Intercept only the actual ⌘Q event; OS logout and Sparkle termination pass.
+                if let event = NSApp.currentEvent, event.type == .keyDown,
+                   event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "q" {
+                    Self.closeWindows()
+                    return .terminateCancel
+                }
+                if explicitQuitRequested && !MacChatSession.shared.model.generating.isEmpty {
+                    let alert = NSAlert()
+                    alert.messageText = "Tasks are still running"
+                    alert.informativeText = "Quitting Yorozu stops this Mac's active tasks and disconnects paired devices."
+                    alert.addButton(withTitle: "Keep Yorozu Running")
+                    alert.addButton(withTitle: "Quit Yorozu")
+                    if alert.runModal() == .alertFirstButtonReturn {
+                        explicitQuitRequested = false
+                        return .terminateCancel
+                    }
+                }
+            }
+            if Updates.pending.status.phase != .none && !Updates.installing && !HostWindowMode.active {
                 let alert = NSAlert()
                 alert.messageText = "Update is waiting"
                 alert.informativeText = "Yorozu will restart after this Mac’s agents finish, any postponement expires, and the 10-second countdown completes."
                 alert.addButton(withTitle: "Keep Yorozu Running")
                 alert.runModal()
+                explicitQuitRequested = false
                 return .terminateCancel
             }
             guard Updates.installing else { return .terminateNow }
@@ -326,6 +361,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
+            let event = NSAppleEventManager.shared().currentAppleEvent
+            let loginLaunch = event?.eventID == kAEOpenApplication
+                && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+            let watchdogLaunch = ProcessInfo.processInfo.arguments.contains("-yorozuWatchdogLaunch")
+            let updateRelaunch = UserDefaults.standard.bool(forKey: HostWindowMode.updateRelaunchKey)
+            UserDefaults.standard.removeObject(forKey: HostWindowMode.updateRelaunchKey)
+            if HostWindowMode.active && event?.eventID == kAEOpenApplication
+                && !loginLaunch && !watchdogLaunch && !updateRelaunch {
+                HostWindowMode.pendingExplicitOpen = true
+            }
             let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev"
             Log.write("launch: build \(version) at \(Bundle.main.bundlePath)")
             // Debug builds only: the screenshot scripts and the keyboard UI tests run a debug
@@ -355,6 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // an automatic update is that nobody had to go looking for it.
             Updates.start()
             if MacChatSession.shared.role == .host { NeverSleep.shared.restoreFromDefaults() }
+            LocalNotifications.shared.start()
             MacChatSession.shared.start()
             #if DEBUG
             // Test harness only, and inert without a `-yorozuShowcase` argument. After
@@ -366,18 +412,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        MainActor.assumeIsolated {
+            guard HostWindowMode.active else { return true }
+            HostWindowMode.requestQuickChat()
+            return false
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
-            // A quit the user asked for has to stick. A crash never gets here, so the
-            // watchdog remains installed and relaunches it. The next manual/login launch
-            // installs the watchdog again.
-            //
-            // Sparkle's relaunch is not a quit: it is about to start the new build itself, and
-            // if that fails the watchdog is exactly who should notice.
+            // Only a menu quit removes supervision in background-only mode. Sparkle's
+            // relaunch and session shutdown keep it for recovery at the next login.
             if Updates.installing {
                 Log.write("quit: installing an update, watchdog left running")
-            } else {
+            } else if explicitQuitRequested || !HostWindowMode.active {
                 Watchdog.remove()
+            } else {
+                Log.write("quit: system termination, watchdog left running")
             }
             Sidecar.shared.stop()
             // Quitting is not the user opting out: keep the preference for the next launch.
@@ -392,18 +444,34 @@ struct YorozuMacApp: App {
     @StateObject private var sidecar = Sidecar.shared
     @State private var session = MacChatSession.shared
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
+    @Environment(\.dismissWindow) private var dismissWindow
     /// Whether setup was finished, so the menu can offer the way back to it until it was.
     @AppStorage(OnboardingWindow.completedKey) private var onboardingCompleted = false
+    @AppStorage(HostWindowMode.key) private var backgroundOnlyHost = false
+    @AppStorage(MacNotificationPreference.attentionIndicator) private var attentionIndicator = true
 
     /// The chat window's id, so the status item can ask for it by name.
     static let chatWindow = "chat"
+    static let quickChatWindow = "quick-chat"
+
+    private func openQuickChat() {
+        openWindow(id: Self.quickChatWindow)
+        NSApp.activate(ignoringOtherApps: true)
+    }
 
     var body: some Scene {
         // The chat is a real window. It used to be the menu bar item's own popover, which cost
         // it a toolbar, a resizable frame, working sheets and share pickers, and any menu bar
         // at all to hang ⌘N, ⌘F and Stop off — see ``ChatWindowView``.
         Window("Yorozu", id: Self.chatWindow) {
-            ChatWindowView()
+            Group {
+                if HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost) {
+                    Color.clear.task { dismissWindow(id: Self.chatWindow) }
+                } else {
+                    ChatWindowView()
+                }
+            }
                 // A `yorozu://pair` link, from Messages or a browser. Asked about before it
                 // replaces anything — see ``MacChatSession/handlePairingLink(_:)``. Other hosts
                 // are the phone's, and mean nothing here.
@@ -419,48 +487,129 @@ struct YorozuMacApp: App {
                 }
         }
         .defaultSize(width: 1040, height: 680)
-        .commands { ChatMenus() }
+        .commands {
+            ChatMenus()
+            HostQuitCommands(backgroundOnly: HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost))
+        }
         .handlesExternalEvents(matching: ["pair"])
+
+        Window("Quick Chat", id: Self.quickChatWindow) {
+            Group {
+                if session.role == .host {
+                    QuickChatView()
+                } else {
+                    Color.clear.task { dismissWindow(id: Self.quickChatWindow) }
+                }
+            }
+            .onOpenURL { MacChatSession.shared.handlePairingLink($0) }
+            .environment(\.onPairingLink) { MacChatSession.shared.handlePairingLink($0) }
+            .onDisappear { Speaker.shared.stop() }
+        }
+        .defaultSize(width: QuickChatView.initialWidth, height: QuickChatView.initialHeight)
+        .commands { HostQuitCommands(backgroundOnly: HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost)) }
 
         // The status item is now the way to that window rather than the place the chat lives.
         // A menu rather than a panel, because everything in it is one click that goes somewhere.
         MenuBarExtra {
-            Button("Open Yorozu") { openWindow(id: Self.chatWindow) }
-                .keyboardShortcut("o")
+            if HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost) {
+                Button("Quick Chat") { openQuickChat() }
+                Button("New Chat") {
+                    QuickChatRouter.shared.target = nil
+                    let id = session.model.newDraft().id
+                    UserDefaults.standard.set(id, forKey: "quickChatThreadID")
+                    openQuickChat()
+                }
+            }
+            if !HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost) {
+                Button("Open Yorozu") { openWindow(id: Self.chatWindow) }
+                    .keyboardShortcut("o")
+            }
+            if HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost) {
+                let attention = MacAttentionItem.pending(in: session.model)
+                if !attention.isEmpty || Updates.pending.failure != nil {
+                    Section("Needs Attention") {
+                        ForEach(attention) { item in
+                            Button(item.label) {
+                                HostWindowMode.routeQuickChat(threadID: item.threadID,
+                                    eventID: item.eventID, kind: item.kind)
+                            }
+                        }
+                        if Updates.pending.failure != nil {
+                            Button("Update needs attention") {
+                                SettingsPaneRouter.shared.selection = "updates"
+                                openSettings()
+                            }
+                        }
+                    }
+                }
+            }
             if session.role == nil || !onboardingCompleted {
                 Button("Finish Setup…") { OnboardingWindow.show() }
             }
             Divider()
             SettingsLink { Text("Settings…") }
             CheckForUpdatesButton()
+            if HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost),
+               let check = Updates.checkResult.message {
+                Text(check).disabled(true)
+            }
             if Updates.pending.status.phase != .none {
                 Text(Updates.pending.status.label()).disabled(true)
-                if let failure = Updates.pending.failure { Text(failure).disabled(true) }
                 if Updates.pending.status.phase != .installing {
                     Button("Postpone update 1 hour") { Updates.pending.postpone() }
                 }
             }
+            if let failure = Updates.pending.failure { Text(failure).disabled(true) }
             Divider()
             // Not a control: the sidecar's own word for where the relay stands, which is the
             // one thing worth knowing without opening anything.
             Text(session.role == .host ? sidecar.state : "client").disabled(true)
             Divider()
-            Button("Quit Yorozu") { NSApp.terminate(nil) }
+            Button(HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost)
+                ? "Quit Yorozu…" : "Quit Yorozu") {
+                (NSApp.delegate as? AppDelegate)?.requestQuit()
+            }
         } label: {
             Image(systemName: (session.role == .client ? session.hosts.sessions.contains { $0.model.canDeliver } : session.model.state == .paired) ? "circle.fill" : "circle.dotted")
+                .overlay(alignment: .topTrailing) {
+                    if HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost)
+                        && attentionIndicator
+                        && (!MacAttentionItem.pending(in: session.model).isEmpty || Updates.pending.failure != nil) {
+                        HostAttentionIndicator()
+                    }
+                }
                 .accessibilityLabel((session.role == .client ? session.hosts.sessions.contains { $0.model.canDeliver } : session.model.state == .paired) ? "Yorozu, connected" : "Yorozu, not connected")
                 .task {
                     // The setup window's way into the chat: it is an NSWindow outside this
                     // scene graph, and this is the `openWindow` that works.
-                    OnboardingWindow.openChat = { openWindow(id: Self.chatWindow) }
+                    OnboardingWindow.openChat = {
+                        if !HostWindowMode.active { openWindow(id: Self.chatWindow) }
+                    }
+                    HostWindowMode.openQuickChat = { openQuickChat() }
+                    if HostWindowMode.pendingExplicitOpen {
+                        HostWindowMode.pendingExplicitOpen = false
+                        if QuickChatRouter.shared.target != nil { openQuickChat() }
+                        else { HostWindowMode.requestQuickChat() }
+                    }
                     OnboardingWindow.showIfFirstLaunch()
                     if UserDefaults.standard.bool(forKey: "restoreChatAfterUpdate") {
                         UserDefaults.standard.removeObject(forKey: "restoreChatAfterUpdate")
-                        openWindow(id: Self.chatWindow)
+                        if !HostWindowMode.active { openWindow(id: Self.chatWindow) }
                     }
                 }
         }
 
         Settings { SettingsView(sidecar: sidecar) }
+            .commands { HostQuitCommands(backgroundOnly: HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost)) }
+    }
+}
+
+private struct HostAttentionIndicator: View {
+    private static let diameter: CGFloat = 6
+
+    var body: some View {
+        Circle().fill(YorozuPalette.vermilion)
+            .frame(width: Self.diameter, height: Self.diameter)
+            .accessibilityHidden(true)
     }
 }

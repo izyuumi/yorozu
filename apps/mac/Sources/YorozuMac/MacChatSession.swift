@@ -301,7 +301,13 @@ final class MacChatSession {
         NSApp.dockTile.badgeLabel = count == 0 ? nil : String(count)
     }
     private func configure(_ model: ChatModel) {
-        model.onThreads = { [weak self] in self?.updateBadge() }
+        model.onThreads = { [weak self, weak model] in
+            self?.updateBadge()
+            if let model { LocalNotifications.shared.threadsChanged(model) }
+        }
+        model.onEvent = { [weak model] event in
+            if let model { LocalNotifications.shared.received(event, from: model) }
+        }
         model.onUpdateStatus = { [weak model] status in
             guard let model else { return }
             Updates.pending.receive(status, from: model)

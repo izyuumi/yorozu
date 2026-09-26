@@ -21,7 +21,7 @@ enum Updates {
     static let controller: SPUStandardUpdaterController? = {
         guard Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil else { return nil }
         let controller = SPUStandardUpdaterController(
-            startingUpdater: true, updaterDelegate: delegate, userDriverDelegate: nil)
+            startingUpdater: true, updaterDelegate: delegate, userDriverDelegate: delegate)
         if !UserDefaults.standard.bool(forKey: configuredKey) {
             controller.updater.automaticallyChecksForUpdates = true
             controller.updater.automaticallyDownloadsUpdates = true
@@ -33,6 +33,7 @@ enum Updates {
 
     private static let delegate = UpdaterDelegate()
     static let pending = PendingUpdate()
+    static let checkResult = UpdateCheckResult()
 
     /// Set while Sparkle is installing and about to relaunch us. Quitting for an update is not
     /// the user quitting, so it must not pause the watchdog — see ``AppDelegate``.
@@ -207,7 +208,11 @@ final class PendingUpdate {
         defer { preparing = false }
         do {
             try MacChatSession.shared.saveForRestart()
-            UserDefaults.standard.set(WindowPresence.isOpen, forKey: "restoreChatAfterUpdate")
+            UserDefaults.standard.set(!HostWindowMode.active && WindowPresence.isOpen,
+                forKey: "restoreChatAfterUpdate")
+            if HostWindowMode.active {
+                UserDefaults.standard.set(true, forKey: HostWindowMode.updateRelaunchKey)
+            }
             status.phase = .installing
             Updates.installing = true
             installStarted = true
@@ -239,10 +244,28 @@ final class PendingUpdate {
         installStarted = false
         if cancellationId != nil { startTimer(); tick() }
     }
+
+    func recordFailure(_ message: String?) {
+        failure = message
+    }
 }
 
 @MainActor
-private final class UpdaterDelegate: NSObject, SPUUpdaterDelegate {
+private final class UpdaterDelegate: NSObject, SPUUpdaterDelegate, @preconcurrency SPUStandardUserDriverDelegate {
+    var supportsGentleScheduledUpdateReminders: Bool { true }
+
+    func standardUserDriverShouldHandleShowingScheduledUpdate(_ update: SUAppcastItem,
+        andInImmediateFocus immediateFocus: Bool) -> Bool {
+        !HostWindowMode.active
+    }
+
+    func standardUserDriverWillHandleShowingUpdate(_ handleShowingUpdate: Bool,
+        forUpdate update: SUAppcastItem, state: SPUUserUpdateState) {
+        if HostWindowMode.active {
+            Updates.checkResult.message = "Update \(update.displayVersionString) available"
+        }
+    }
+
     func feedURLString(for updater: SPUUpdater) -> String? {
         Updates.beta ? Updates.betaFeedURL : nil
     }
@@ -286,24 +309,71 @@ private final class UpdaterDelegate: NSObject, SPUUpdaterDelegate {
     }
 
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        Updates.pending.recordFailure(nil)
+        Updates.checkResult.message = "Update \(item.displayVersionString) available"
         Log.write("updates: found \(item.displayVersionString) (build \(item.versionString))")
     }
 
     func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: any Error) {
+        Updates.pending.recordFailure(nil)
+        Updates.checkResult.message = error.localizedDescription
         Log.write("updates: none available — \(error.localizedDescription)")
     }
 
     func updater(_ updater: SPUUpdater, didAbortWithError error: any Error) {
         Updates.pending.cancel()
+        let sparkError = error as NSError
+        // Sparkle's SUErrors.h: no update (1001), cancelled (4007), authorize later (4008).
+        if sparkError.domain != SUSparkleErrorDomain || ![1001, 4007, 4008].contains(sparkError.code) {
+            let message = "Update failed: \(error.localizedDescription)"
+            Updates.pending.recordFailure(message)
+            Updates.checkResult.message = nil
+        }
         Log.write("updates: aborted — \(error.localizedDescription)")
     }
 }
 
+@MainActor @Observable
+final class UpdateCheckResult {
+    var message: String?
+}
+
 struct CheckForUpdatesButton: View {
+    @Environment(\.openSettings) private var openSettings
+
     var body: some View {
         if let controller = Updates.controller {
-            Button("Check for Updates…") { controller.updater.checkForUpdates() }
+            Button("Check for Updates…") {
+                if HostWindowMode.active {
+                    SettingsPaneRouter.shared.selection = "updates"
+                    openSettings()
+                    Updates.checkResult.message = "Checking for updates…"
+                    controller.updater.checkForUpdatesInBackground()
+                } else {
+                    controller.updater.checkForUpdates()
+                }
+            }
         }
+    }
+}
+
+struct UpdatesSettingsView: View {
+    @State private var checkResult = Updates.checkResult
+    @State private var pending = Updates.pending
+
+    var body: some View {
+        Form {
+            UpdatesSettingsSection()
+            Section("Status") {
+                if let message = checkResult.message { Text(message) }
+                if pending.status.phase != .none { Text(pending.status.label()) }
+                if let failure = pending.failure { Text(failure).foregroundStyle(.red) }
+                if checkResult.message == nil && pending.status.phase == .none && pending.failure == nil {
+                    Text("Updates check quietly in the background.").foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 

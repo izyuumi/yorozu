@@ -32,6 +32,8 @@ public struct ChatView: View {
     private let notificationEventRef: String?
     private let lastReadAt: Double?
     private let notificationSyncRevision: Int?
+    private let showsUpdateStatus: Bool
+    private let focusComposerOnAppear: Bool
     private let aggregateToast: ConnectionState?
     private let aggregateToastID: UUID?
     private let aggregateToastLabel: String?
@@ -66,6 +68,9 @@ public struct ChatView: View {
     @State private var pendingExternalSearch = false
     @State private var externalSearchEventID: String?
     @State private var handledNotificationResume: UUID?
+    #if os(macOS)
+        @State private var handledMacNotificationScroll: UUID?
+    #endif
     @State private var suppressedSearchRequest: UUID?
     @State private var supersededNotificationResume: UUID?
     @State private var highlightedNotificationRow: String?
@@ -101,6 +106,8 @@ public struct ChatView: View {
         notificationEventRef: String? = nil,
         lastReadAt: Double? = nil,
         notificationSyncRevision: Int? = nil,
+        showsUpdateStatus: Bool = true,
+        focusComposerOnAppear: Bool = false,
         aggregateToast: ConnectionState? = nil,
         aggregateToastID: UUID? = nil,
         aggregateToastLabel: String? = nil,
@@ -114,6 +121,8 @@ public struct ChatView: View {
         self.notificationEventRef = notificationEventRef
         self.lastReadAt = lastReadAt
         self.notificationSyncRevision = notificationSyncRevision
+        self.showsUpdateStatus = showsUpdateStatus
+        self.focusComposerOnAppear = focusComposerOnAppear
         self.aggregateToast = aggregateToast
         self.aggregateToastID = aggregateToastID
         self.aggregateToastLabel = aggregateToastLabel
@@ -168,7 +177,9 @@ public struct ChatView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            UpdateStatusView(status: model.updateStatus) { model.updateControl(.postpone) }
+            if showsUpdateStatus {
+                UpdateStatusView(status: model.updateStatus) { model.updateControl(.postpone) }
+            }
             // A failure of this device's own, such as a draft that would not save. The link's
             // failures go in the connection toast below, after the grace, not in a banner.
             if let failure = model.failure, failure != model.linkFailure {
@@ -402,6 +413,7 @@ public struct ChatView: View {
         // What the Mac's Edit, Thread and Chat menus act on. The same four things the toolbar
         // and the composer offer, published where a menu built by the scene can reach them.
         #if os(macOS)
+            .onAppear { if focusComposerOnAppear { composerFocused = true } }
             .focusedSceneValue(
                 \.chatCommands,
                 ChatCommands(
@@ -646,6 +658,7 @@ public struct ChatView: View {
                 restoreMacReadingPositionIfReady()
             }
             .onChange(of: rows.map(\.id), initial: true) { _, ids in
+                scrollToMacNotification(proxy)
                 guard restoredReadingThreadID != thread.id else { return }
                 guard resumeRequest == nil,
                       threadSearchRequest?.threadId != thread.id else {
@@ -673,6 +686,9 @@ public struct ChatView: View {
                 if restoredReadingThreadID == thread.id && bottom {
                     model.rememberReadingPosition(nil, in: thread.id)
                 }
+            }
+            .onChange(of: resumeRequest, initial: true) { _, _ in
+                scrollToMacNotification(proxy)
             }
             .onScrollGeometryChange(for: CGFloat.self) { $0.visibleRect.minY } action: { _, top in
                 macReadingGeometry.visibleTop = top
@@ -766,9 +782,28 @@ public struct ChatView: View {
             macScrollPosition.scrollTo(y: max(0, rowTop - CGFloat(pending.position.distanceFromTop)))
             pendingMacReadingPosition = nil
             restoredReadingThreadID = thread.id
-        }
+    }
 
-        private func saveMacReadingPosition() {
+    private func scrollToMacNotification(_ proxy: ScrollViewProxy) {
+        guard let resumeRequest, resumeRequest != handledMacNotificationScroll else { return }
+        let destination: String
+        if let notificationEventRef {
+            guard let row = resumeRowId(rows: rows, lastReadAt: nil,
+                notificationEventRef: notificationEventRef) else { return }
+            destination = row
+        } else {
+            destination = Self.bottomAnchor
+        }
+        handledMacNotificationScroll = resumeRequest
+        newestScroll.targetEvent()
+        Task { @MainActor in
+            await Task.yield()
+            proxy.scrollTo(destination, anchor: .center)
+            if destination != Self.bottomAnchor { highlightNotificationRow(destination) }
+        }
+    }
+
+    private func saveMacReadingPosition() {
             guard restoredReadingThreadID == thread.id, !atBottom,
                   !newestScroll.followsLatest,
                   let id = macScrollPosition.viewID(type: String.self),

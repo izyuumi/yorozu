@@ -53,7 +53,13 @@ import Testing
 /// The shipped script, run for real against a bundle path that does not exist. It logs
 /// before it launches anything, so the log is the record of what it decided — and `open -a`
 /// on a missing bundle cannot start an app, so nothing appears on screen either way.
-private func runWatchdog(pause: String?) throws -> String {
+private struct WatchdogRun {
+    let log: String
+    let app: String
+    let openArguments: [String]
+}
+
+private func runWatchdog(pause: String?, captureOpen: Bool = false) throws -> WatchdogRun {
     let directory = URL.temporaryDirectory.appending(path: "watchdog-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -63,6 +69,13 @@ private func runWatchdog(pause: String?) throws -> String {
     let log = directory.appending(path: "app.log")
     // The bundle the agent would supervise: a name no running process can match.
     let app = directory.appending(path: "Absent-\(UUID().uuidString).app")
+    let capture = directory.appending(path: "open-args")
+    if captureOpen {
+        let fakeOpen = directory.appending(path: "open")
+        try "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$YOROZU_TEST_OPEN_ARGS\"\n"
+            .write(to: fakeOpen, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeOpen.path)
+    }
 
     let script = URL(filePath: #filePath)
         .deletingLastPathComponent()  // YorozuKeepaliveTests
@@ -73,28 +86,42 @@ private func runWatchdog(pause: String?) throws -> String {
     let task = Process()
     task.executableURL = URL(filePath: "/bin/sh")
     task.arguments = [script.path, app.path, pauseFile.path, log.path]
+    if captureOpen {
+        var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = directory.path + ":" + (environment["PATH"] ?? "/usr/bin:/bin")
+        environment["YOROZU_TEST_OPEN_ARGS"] = capture.path
+        task.environment = environment
+    }
     try task.run()
     task.waitUntilExit()
     #expect(task.terminationStatus == 0)
-    return (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+    let arguments = (try? String(contentsOf: capture, encoding: .utf8))?
+        .split(separator: "\n").map(String.init) ?? []
+    return WatchdogRun(log: (try? String(contentsOf: log, encoding: .utf8)) ?? "",
+        app: app.path, openArguments: arguments)
 }
 
 @Test func scriptRelaunchesAnAppThatIsNotRunning() throws {
-    #expect(try runWatchdog(pause: nil).contains("not running, relaunching"))
+    #expect(try runWatchdog(pause: nil).log.contains("not running, relaunching"))
+}
+
+@Test func watchdogRelaunchIsSilentAndIdentifiable() throws {
+    let run = try runWatchdog(pause: nil, captureOpen: true)
+    #expect(run.openArguments == ["-g", "-a", run.app, "--args", "-yorozuWatchdogLaunch"])
 }
 
 @Test func scriptHoldsOffWhileAQuitIsStillPaused() throws {
     let deadline = Int(Date().addingTimeInterval(600).timeIntervalSince1970)
-    #expect(try runWatchdog(pause: "\(deadline)\n").isEmpty)
+    #expect(try runWatchdog(pause: "\(deadline)\n").log.isEmpty)
 }
 
 @Test func scriptResumesOnceThePauseHasExpired() throws {
     let deadline = Int(Date().addingTimeInterval(-1).timeIntervalSince1970)
-    #expect(try runWatchdog(pause: "\(deadline)\n").contains("not running, relaunching"))
+    #expect(try runWatchdog(pause: "\(deadline)\n").log.contains("not running, relaunching"))
 }
 
 /// The case that decides whether a crash is ever noticed: a pause file the app never wrote
 /// properly must not read as "leave it down".
 @Test func scriptTreatsAnUnreadablePauseAsNoPause() throws {
-    #expect(try runWatchdog(pause: "not a number\n").contains("not running, relaunching"))
+    #expect(try runWatchdog(pause: "not a number\n").log.contains("not running, relaunching"))
 }
