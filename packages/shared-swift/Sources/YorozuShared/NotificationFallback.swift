@@ -9,6 +9,13 @@ public struct AuthenticatedNotificationPreview: Equatable, Sendable {
     public let preview: NotificationPreviewContent
 }
 
+public struct AuthenticatedNotificationDestination: Equatable, Sendable {
+    public let hostID: HostID
+    public let threadRef: String
+    public let eventRef: String?
+    public let notificationClass: String?
+}
+
 public enum NotificationFallback {
     /// A local routing hint for notification cleanup, never evidence for an approval.
     public static let localHostKey = "yorozuLocalHostID"
@@ -28,6 +35,18 @@ public enum NotificationFallback {
             match = AuthenticatedNotificationPreview(hostID: hostID, preview: preview)
         }
         return match
+    }
+
+    public static func authenticatedDestination(
+        userInfo: [AnyHashable: Any], keys: [HostID: SymmetricKey],
+        legacyThreadRef: ((HostID, String) -> String?)? = nil
+    ) -> AuthenticatedNotificationDestination? {
+        guard let match = authenticatedPreview(userInfo: userInfo, keys: keys),
+              let thread = match.preview.thread ?? match.preview.event.flatMap({
+                  legacyThreadRef?(match.hostID, $0)
+              }) else { return nil }
+        return AuthenticatedNotificationDestination(hostID: match.hostID, threadRef: thread,
+            eventRef: match.preview.event, notificationClass: match.preview.notificationClass)
     }
 
     /// Re-open the box in the main app, match the displayed words and sealed card reference,

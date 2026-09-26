@@ -68,6 +68,8 @@ public struct ChatView: View {
     @State private var handledNotificationResume: UUID?
     @State private var suppressedSearchRequest: UUID?
     @State private var supersededNotificationResume: UUID?
+    @State private var highlightedNotificationRow: String?
+    @State private var highlightRevision = UUID()
     #if os(macOS)
         @FocusState private var composerFocused: Bool
         @AppStorage(ChatView.sendWithCommandReturnKey) private var sendWithCommandReturn = false
@@ -441,6 +443,17 @@ public struct ChatView: View {
         #endif
     }
 
+    private func highlightNotificationRow(_ id: String) {
+        let revision = UUID()
+        highlightRevision = revision
+        highlightedNotificationRow = id
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled, highlightRevision == revision else { return }
+            highlightedNotificationRow = nil
+        }
+    }
+
     private func applyThreadSearchRequest() {
         // A notification chooses a concrete event. Ignore the older list search request, but
         // allow a later explicit search (a new request id) in the same open conversation.
@@ -523,6 +536,7 @@ public struct ChatView: View {
                 agent: presentation.agent,
                 request: timelineRequest,
                 notificationRequest: notificationRequest,
+                highlightedRow: highlightedNotificationRow,
                 savedPosition: resumeRequest == nil && threadSearchRequest?.threadId != thread.id
                     ? model.readingPosition(in: thread.id) : nil,
                 presentation: TimelinePresentation(
@@ -538,6 +552,7 @@ public struct ChatView: View {
                 atBottom: $atBottom,
                 showJumpToLatest: $showJumpToLatest,
                 onPositionChange: { model.rememberReadingPosition($0, in: thread.id) },
+                onNotificationTarget: { highlightNotificationRow($0) },
                 content: { row in
                     AnyView(
                         rowView(row)
@@ -794,6 +809,7 @@ public struct ChatView: View {
                 .id(event.id)
                 .onAppear { model.requestAttachmentDownloads(event) }
                 .onDisappear { model.stopAttachmentDownloads(event) }
+                .notificationHighlight(highlightedNotificationRow == event.id)
             }
         case .approval(let event):
             if case .approvalCard(let card) = event.payload {
@@ -807,6 +823,7 @@ public struct ChatView: View {
                     model.answer(card.actionId, in: thread.id, choice, rule: rule)
                 }
                 .id(event.id)
+                .notificationHighlight(highlightedNotificationRow == event.id)
             }
         case .proposal(let event):
             if case .ruleProposal(let proposal) = event.payload {
@@ -826,6 +843,7 @@ public struct ChatView: View {
                     chosen: model.questionChoices[card.questionId]
                 ) { model.answerQuestion(card.questionId, in: thread.id, $0) }
                 .id(event.id)
+                .notificationHighlight(highlightedNotificationRow == event.id)
             }
         }
     }
@@ -1270,11 +1288,13 @@ public struct ChatView: View {
         let agent: ThreadAgent
         let request: TimelineRequest?
         let notificationRequest: TimelineRequest?
+        let highlightedRow: String?
         let savedPosition: ThreadCache.ReadingPosition?
         let presentation: TimelinePresentation
         @Binding var atBottom: Bool
         @Binding var showJumpToLatest: Bool
         let onPositionChange: (ThreadCache.ReadingPosition?) -> Void
+        let onNotificationTarget: (String) -> Void
         let content: (ChatRow) -> AnyView
 
         private enum Entry: Hashable {
@@ -1316,6 +1336,7 @@ public struct ChatView: View {
             private var rowsById: [String: ChatRow] = [:]
             private var previousRows: [String: ChatRow] = [:]
             private var previousPresentation: TimelinePresentation?
+            private var previousHighlightedRow: String?
             private var lastRequest: UUID?
             private var lastNotificationRequest: TimelineRequest?
             private var newestScroll = NewestScrollIntent()
@@ -1384,8 +1405,14 @@ public struct ChatView: View {
 
                 var changed = parent.rows.compactMap { previousRows[$0.id] == $0 ? nil : Entry.row($0.id) }
                 if previousPresentation != parent.presentation { changed = entries }
+                if previousHighlightedRow != parent.highlightedRow {
+                    for id in [previousHighlightedRow, parent.highlightedRow].compactMap({ $0 }) {
+                        changed.append(.row(id))
+                    }
+                }
                 previousRows = rowsById
                 previousPresentation = parent.presentation
+                previousHighlightedRow = parent.highlightedRow
 
                 let previousEntries = dataSource?.snapshot().itemIdentifiers ?? []
                 guard !changed.isEmpty || entries != previousEntries else {
@@ -1400,7 +1427,8 @@ public struct ChatView: View {
                 snapshot.appendSections([0])
                 snapshot.appendItems(entries)
                 let existing = Set(previousEntries)
-                snapshot.reconfigureItems(changed.filter { existing.contains($0) })
+                let current = Set(entries)
+                snapshot.reconfigureItems(Array(Set(changed.filter { existing.contains($0) && current.contains($0) })))
                 dataSource?.apply(snapshot, animatingDifferences: false) { [weak self, weak collectionView] in
                     guard let self, let collectionView else { return }
                     collectionView.layoutIfNeeded()
@@ -1474,7 +1502,6 @@ public struct ChatView: View {
                 let request: TimelineRequest
                 if let notification = parent.notificationRequest,
                    notification != lastNotificationRequest {
-                    lastNotificationRequest = notification
                     // A notification wins if it arrives in the same update as an old search or
                     // latest request. Mark that request consumed so it cannot pull the view away
                     // again on the next render.
@@ -1489,11 +1516,13 @@ public struct ChatView: View {
                 layoutAnchor = nil
                 switch request.target {
                 case .latest:
+                    if request.id == parent.notificationRequest?.id { lastNotificationRequest = request }
                     newestScroll.followLatest()
                     animatingToEvent = false
                     scrollToLatest(collectionView, animated: !UIAccessibility.isReduceMotionEnabled)
                 case .event(let id):
                     guard let index = dataSource?.snapshot().indexOfItem(.row(id)) else { return }
+                    if request.id == parent.notificationRequest?.id { lastNotificationRequest = request }
                     let animated = !UIAccessibility.isReduceMotionEnabled
                     newestScroll.targetEvent()
                     animatingToLatest = false
@@ -1503,6 +1532,9 @@ public struct ChatView: View {
                         at: .centeredVertically,
                         animated: animated
                     )
+                    if request.id == parent.notificationRequest?.id {
+                        Task { @MainActor [parent] in parent.onNotificationTarget(id) }
+                    }
                     if !animated { animatingToEvent = false }
                 }
             }
@@ -1896,6 +1928,13 @@ private struct Banner: View {
 }
 
 extension View {
+    fileprivate func notificationHighlight(_ active: Bool) -> some View {
+        overlay(RoundedRectangle(cornerRadius: 12)
+            .stroke(Color.accentColor, lineWidth: 2)
+            .opacity(active ? 1 : 0)
+            .allowsHitTesting(false))
+    }
+
     /// Search over the transcript, hidden until `presented` becomes true. iOS uses its navigation
     /// drawer; Mac uses the default toolbar placement.
     @ViewBuilder fileprivate func threadSearch(text: Binding<String>, presented: Binding<Bool>) -> some View {

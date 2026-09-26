@@ -2759,6 +2759,8 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   // so a double is the only place the message itself can be read.
   const seen: Record<string, unknown>[] = [];
   const sockets: { mac?: any; phones: any[] } = { phones: [] };
+  let registrations = 0;
+  let mints = 0;
   const fake = new WebSocketServer({ port: 0 });
   fake.on("connection", (ws) => {
     ws.send(JSON.stringify({ type: "nonce", nonce: "n" }));
@@ -2767,8 +2769,10 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
       switch (msg.type) {
         case "register":
           sockets.mac = ws;
+          registrations += 1;
           return ws.send(JSON.stringify({ type: "registered", roomId: "r" }));
         case "mint":
+          mints += 1;
           return ws.send(
             JSON.stringify({ type: "token", token: "tok", expiresAt: Date.now() + 60_000 }),
           );
@@ -2790,9 +2794,10 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   const qrs = qrQueue();
   let paired = 0;
   let turn = 0;
+  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-notify-"));
   sidecar = serve({
     relayUrl: `ws://127.0.0.1:${port}`,
-    stateDir: mkdtempSync(join(tmpdir(), "yorozu-notify-")),
+    stateDir,
     provider: openaiCompat({
       baseUrl: "https://example.invalid",
       model: "m",
@@ -2863,9 +2868,11 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   // event it is about and permits no button.
   expect(Object.keys(notify.previews as object).sort()).toEqual([keys.pub, second.keys.pub].sort());
   expect(openPreview(notify, keys.pub, sessionKey))
-    .toEqual({ body: "the secret reply", event: notify.eventRef, quick: false });
+    .toEqual({ body: "the secret reply", event: notify.eventRef,
+      thread: notify.threadRef, class: "reply", quick: false });
   expect(openPreview(notify, second.keys.pub, secondSessionKey))
-    .toEqual({ body: "the secret reply", event: notify.eventRef, quick: false });
+    .toEqual({ body: "the secret reply", event: notify.eventRef,
+      thread: notify.threadRef, class: "reply", quick: false });
   expect(() => openPreview(notify, second.keys.pub, sessionKey)).toThrow();
   expect(JSON.stringify(notify)).not.toContain("the secret reply");
 
@@ -2877,6 +2884,14 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   };
   phone.frame(channel.box(failed), keys);
   await vi.waitFor(() => expect(seen.map((msg) => msg.class)).toContain("failed"));
+  const failure = seen.find((msg) => msg.class === "failed")!;
+  expect(openPreview(failure, keys.pub, sessionKey)).toMatchObject({
+    event: failure.eventRef, thread: failure.threadRef, class: "failed", quick: false,
+  });
+  expect(readThreadEvents("thread-one", stateDir)).toContainEqual(expect.objectContaining({
+    kind: "message", data: expect.objectContaining({ role: "agent", done: true, failed: true }),
+  }));
+  expect(readThreadEvents("thread-one", stateDir).some((item) => threadRef(item.id) === failure.eventRef)).toBe(true);
 
   // An approval for something local and below every floor may be answered from the lock
   // screen, and the relay is told so with one bit. The command itself is not in the notify.
@@ -2894,9 +2909,11 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   // what the phone draws Allow and Deny under, and checks before either counts.
   expect(Object.keys(approval.previews as object).sort()).toEqual([keys.pub, second.keys.pub].sort());
   expect(openPreview(approval, keys.pub, sessionKey))
-    .toEqual({ body: "Run a command: echo yorozu-lockscreen", event: approval.eventRef, quick: true });
+    .toEqual({ body: "Run a command: echo yorozu-lockscreen", event: approval.eventRef,
+      thread: approval.threadRef, class: "approval", quick: true });
   expect(openPreview(approval, second.keys.pub, secondSessionKey))
-    .toEqual({ body: "Run a command: echo yorozu-lockscreen", event: approval.eventRef, quick: true });
+    .toEqual({ body: "Run a command: echo yorozu-lockscreen", event: approval.eventRef,
+      thread: approval.threadRef, class: "approval", quick: true });
 
   // The whole side-channel, everything the relay was ever told in the clear. Neither side of
   // the conversation is in it, and neither is the thread it happened in.
@@ -2904,6 +2921,28 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   expect(wire).not.toContain("secret");
   expect(wire).not.toContain("thread-one");
   expect(wire).not.toContain("echo");
+
+  // Crash after the final reached durable history but before its pending ledger was acked.
+  // Recovery republishes that row for sync without waking the phone a second time.
+  const replyId = readThreadEvents("thread-one", stateDir).find((item) =>
+    item.kind === "message" && item.data.role === "agent" && item.data.text === "the secret reply")?.id;
+  expect(replyId).toBeTruthy();
+  const mintsBeforeRestart = mints;
+  await sidecar.close();
+  const runner = new OpenClawRunner({ stateDir });
+  vi.spyOn(runner, "listModels").mockResolvedValue([]);
+  runner.admitUserTurn({ threadId: "thread-one", text: "the secret question", userEventId: sent.id,
+    completionId: replyId }, () => {});
+  const ledgerPath = join(stateDir, "openclaw-pending.json");
+  const ledger = JSON.parse(readFileSync(ledgerPath, "utf8")) as { state: string }[];
+  ledger[0]!.state = "active";
+  writeFileSync(ledgerPath, JSON.stringify(ledger));
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${port}`, stateDir, openclawRunner: runner,
+    log: () => {} });
+  await vi.waitFor(() => expect(registrations).toBe(2));
+  await vi.waitFor(() => expect(mints).toBeGreaterThan(mintsBeforeRestart));
+  await vi.waitFor(() => expect(runner.pendingTurns()).toHaveLength(0));
+  expect(seen.filter((msg) => msg.eventRef === notify.eventRef)).toHaveLength(1);
 
   // `close()` waits on the open sockets, and this test attached phones to them as well.
   phone.ws.close();
@@ -3282,6 +3321,10 @@ test("three failed native recoveries pause across restart until Retry", async ()
   }));
   expect(failed).toHaveBeenCalledTimes(3);
   expect(readThreadEvents("cc", dir).some((event) => event.id === "native:original:final")).toBe(false);
+  expect(readThreadEvents("cc", dir)).toContainEqual(expect.objectContaining({
+    kind: "message", data: expect.objectContaining({ role: "agent", done: true, failed: true,
+      text: expect.stringContaining("Retry to continue") }),
+  }));
   await sidecar.close();
 
   const resumed = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "completed" });

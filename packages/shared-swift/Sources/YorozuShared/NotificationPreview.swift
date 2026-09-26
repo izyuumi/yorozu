@@ -31,16 +31,22 @@ public struct NotificationPreviewContent: Equatable, Sendable {
     public let body: String
     /// `threadRef` of the card or message this preview is about; nil when unknown.
     public let event: String?
+    /// Host-authenticated conversation and alert class; clear relay fields are only hints.
+    public let thread: String?
+    public let notificationClass: String?
     /// Whether the Mac judged this card answerable from the lock screen. Never true for a reply.
     public let quick: Bool
     /// The thread's title, shown as the notification's title; nil when the Mac sent none.
     public let title: String?
 
-    public init(body: String, event: String?, quick: Bool, title: String? = nil) {
+    public init(body: String, event: String?, quick: Bool, title: String? = nil,
+                thread: String? = nil, notificationClass: String? = nil) {
         self.body = body
         self.event = event
         self.quick = quick
         self.title = title
+        self.thread = thread
+        self.notificationClass = notificationClass
     }
 
     /// Nil for an empty body, which is no preview at all.
@@ -66,7 +72,14 @@ public struct NotificationPreviewContent: Equatable, Sendable {
             quick = false
         }
         let title = (object["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-        self.init(body: body, event: event, quick: quick, title: title)
+        let thread = (object["thread"] as? String).flatMap {
+            $0.isEmpty || $0.utf8.count > 128 ? nil : $0
+        }
+        let notificationClass = (object["class"] as? String).flatMap {
+            ["reply", "approval", "done", "failed"].contains($0) ? $0 : nil
+        }
+        self.init(body: body, event: event, quick: quick, title: title,
+                  thread: thread, notificationClass: notificationClass)
     }
 }
 

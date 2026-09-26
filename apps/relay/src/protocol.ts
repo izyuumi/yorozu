@@ -270,7 +270,7 @@ export const NOTIFY_BODY: Record<NotifyClass, string> = {
   reply: "Yorozu replied.",
   approval: "Yorozu needs your approval.",
   done: "Yorozu finished.",
-  failed: "Yorozu stopped.",
+  failed: "Yorozu needs attention.",
 };
 
 /** A phone's APNs registration: the one token every alert for it is addressed to. */
