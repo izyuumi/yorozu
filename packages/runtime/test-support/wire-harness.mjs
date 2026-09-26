@@ -97,8 +97,16 @@ proxy.on("upgrade", (request, socket, head) => {
       if (!link.dead && !fault.dropHost) phone.send(data, { binary });
     });
     const drop = () => { phone.terminate(); upstream.terminate(); links.delete(link); };
+    // A close the relay says out loud reaches the phone as it was said; its reason is what the
+    // phone acts on. 1005 and 1006 mean nothing was said, and cannot be sent on.
+    const closedByRelay = (code, reason) => {
+      if (link.dead || code === 1005 || code === 1006) return drop();
+      phone.close(code, reason);
+      upstream.terminate();
+      links.delete(link);
+    };
     phone.on("close", drop).on("error", drop);
-    upstream.on("close", drop).on("error", drop);
+    upstream.on("close", closedByRelay).on("error", drop);
   });
 });
 await new Promise((resolve) => proxy.listen(0, "127.0.0.1", resolve));

@@ -139,6 +139,9 @@ public actor RelayClient: ChatTransport {
     /// True once the relay has accepted this device, so later joins need no token. Seeded by
     /// the caller from whatever it persisted, and `onPaired` is how it learns to persist it.
     private var paired: Bool
+    /// The relay refused the pairing code as unknown: it may have spent it on this very device
+    /// on a socket lost before `joined` arrived, so joins prove the device as a known one.
+    private var codeSpent = false
     private let onPaired: (@Sendable () -> Void)?
     private var joined = false
     private var flowControl = false
@@ -446,6 +449,9 @@ public actor RelayClient: ChatTransport {
                 guard !Task.isCancelled, generation == loopGeneration, self.socket === socket else { return }
                 try handle(text)
             } catch {
+                if !paired, socket.closeReason.flatMap({ String(data: $0, encoding: .utf8) }) == "unknown token" {
+                    codeSpent = true
+                }
                 // Our own cancellation is not a failure worth reporting.
                 let redial = intentionalRedial === socket
                 if redial { intentionalRedial = nil }
@@ -538,7 +544,8 @@ public actor RelayClient: ChatTransport {
     /// come back after a background, a network change or a relaunch without pairing again.
     private func join() async {
         do {
-            let challenge = paired ? nonce : pairing.token
+            let rejoin = paired || codeSpent
+            let challenge = rejoin ? nonce : pairing.token
             let signature = try YorozuCrypto.signFrame(
                 priv: identity.signingPrivateKey,
                 data: Data(challenge.utf8)
@@ -549,7 +556,7 @@ public actor RelayClient: ChatTransport {
                 "phonePubkey": identity.signingPublicKey.base64URLEncodedString(),
                 "sig": signature.base64URLEncodedString(),
             ]
-            if !paired { message["token"] = pairing.token }
+            if !rejoin { message["token"] = pairing.token }
             try await send(message)
         } catch {
             updates?.yield(.failed(error.localizedDescription))
