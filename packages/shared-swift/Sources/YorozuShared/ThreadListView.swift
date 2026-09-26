@@ -106,6 +106,40 @@ public struct ThreadGroups: Equatable, Sendable {
     public var isEmpty: Bool { pinned.isEmpty && recent.isEmpty && archived.isEmpty }
 }
 
+/// Keep positions while a list gesture is active; still draw the newest row contents.
+struct HeldThreadOrder {
+    let groups: ThreadGroups
+    let threadResults: [ThreadSummary]
+    let messageResults: [ThreadSummary]
+
+    init(groups: ThreadGroups, results: ThreadSearchResults) {
+        self.groups = groups
+        threadResults = results.threads
+        messageResults = results.messages
+    }
+
+    private func refreshed(_ rows: [ThreadSummary], from latest: [String: ThreadSummary]) -> [ThreadSummary] {
+        rows.map { latest[$0.id] ?? $0 }
+    }
+
+    func groups(with threads: [ThreadSummary]) -> ThreadGroups {
+        let latest = Dictionary(uniqueKeysWithValues: threads.map { ($0.id, $0) })
+        var held = groups
+        held.pinned = refreshed(groups.pinned, from: latest)
+        held.sections = groups.sections.map { section in
+            ThreadSection(group: section.group, threads: refreshed(section.threads, from: latest))
+        }
+        held.recent = held.sections.flatMap(\.threads)
+        held.archived = refreshed(groups.archived, from: latest)
+        return held
+    }
+
+    func results(with threads: [ThreadSummary]) -> (threads: [ThreadSummary], messages: [ThreadSummary]) {
+        let latest = Dictionary(uniqueKeysWithValues: threads.map { ($0.id, $0) })
+        return (refreshed(threadResults, from: latest), refreshed(messageResults, from: latest))
+    }
+}
+
 /// Whether a thread answers a search. `body` is everything said in it that the device still
 /// holds, so a thread is findable by a word in it and not only by the title the runtime picked.
 /// An empty query matches everything, which is what makes the unsearched list the whole list.
@@ -564,6 +598,10 @@ public struct ThreadListView<Destination: View>: View {
     /// The archive opens closed: it is where threads go to stop being in the way.
     @State private var showArchived = false
     @State private var choosingAgent = NewThreadShowcase.agent != nil
+    @State private var heldOrder: HeldThreadOrder?
+    @State private var listScrollPhase = ScrollPhase.idle
+    @State private var touchingList = false
+    @State private var visibleRowID: String?
     /// What the list says about the link, which lags what the transport says by
     /// ``ConnectionPresentation/grace`` on the way down and not at all on the way up.
     @State private var presentation = ConnectionPresentation(.connected)
@@ -675,12 +713,14 @@ public struct ThreadListView<Destination: View>: View {
     }
 
     /// The three groups, each already filtered by whatever is in the search field.
-    private var groups: ThreadGroups {
+    private var liveGroups: ThreadGroups {
         ThreadGroups(threads.filter {
             threadMatches($0, query: query, body: messageText($0.id))
                 || !searchRanges(in: hostLabel($0.id) ?? "", term: query).isEmpty
         })
     }
+
+    private var groups: ThreadGroups { heldOrder?.groups(with: threads) ?? liveGroups }
 
     private var searchNeedle: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
@@ -688,8 +728,18 @@ public struct ThreadListView<Destination: View>: View {
         ThreadSearchResults(threads: threads, query: query, metadataText: { hostLabel($0) ?? "" }, messageText: messageText)
     }
 
-    private var threadResults: [ThreadSummary] { searchResults.threads }
-    private var messageResults: [ThreadSummary] { searchResults.messages }
+    private var threadResults: [ThreadSummary] { heldOrder?.results(with: threads).threads ?? searchResults.threads }
+    private var messageResults: [ThreadSummary] { heldOrder?.results(with: threads).messages ?? searchResults.messages }
+
+    private func holdListOrder() {
+        if heldOrder == nil { heldOrder = HeldThreadOrder(groups: liveGroups, results: searchResults) }
+    }
+
+    private func settleListOrder() {
+        guard heldOrder != nil else { return }
+        // `scrollPosition` tracks a row identity across the single reorder transaction.
+        withTransaction(Transaction(animation: reduceMotion ? nil : .default)) { heldOrder = nil }
+    }
 
     public var body: some View {
         Group {
@@ -788,6 +838,28 @@ public struct ThreadListView<Destination: View>: View {
         .background(YorozuPalette.canvas)
         .contentMargins(.vertical, LayoutMetrics.inner)
         .animation(.default, value: threads)
+        .scrollPosition(id: $visibleRowID, anchor: .top)
+        .onScrollPhaseChange { _, phase in
+            listScrollPhase = phase
+            if phase == .idle {
+                if !touchingList { settleListOrder() }
+            } else { holdListOrder() }
+        }
+        #if os(iOS)
+        .simultaneousGesture(DragGesture(minimumDistance: 0)
+            .onChanged { _ in
+                touchingList = true
+                holdListOrder()
+            }
+            .onEnded { _ in
+                touchingList = false
+                if listScrollPhase == .idle { settleListOrder() }
+            })
+        #endif
+        .onChange(of: query) { _, _ in settleListOrder() }
+        .onChange(of: path) { _, value in
+            if !splitLayout && !value.isEmpty { touchingList = false; settleListOrder() }
+        }
         .overlay { empty(groups) }
         // A toast over the list, not a row in it: the link coming and going must not move a
         // single thread, heading or scroll anchor. One view for the whole interruption, its
@@ -809,6 +881,7 @@ public struct ThreadListView<Destination: View>: View {
             presentation.update(actual ?? .connected, active: scenePhase != .background, since: connectionSince)
         }
         .onChange(of: scenePhase) { _, phase in
+            if phase == .background { touchingList = false; settleListOrder() }
             guard !connectionIsGraced else { return }
             presentation.update(connection ?? .connected, active: phase != .background, since: connectionSince)
         }
@@ -913,7 +986,7 @@ public struct ThreadListView<Destination: View>: View {
             .listRowBackground(Color.clear)
             .swipeActions(edge: .leading) {
                 if thread.archived {
-                    Button("Restore", systemImage: "tray.and.arrow.up") { onArchive(thread, false) }
+                    Button("Restore", systemImage: "tray.and.arrow.up") { settleListOrder(); onArchive(thread, false) }
                         .tint(.blue)
                 } else {
                     if thread.isUnread {
@@ -923,16 +996,17 @@ public struct ThreadListView<Destination: View>: View {
                     Button(
                         thread.pinned ? String(localized: "Unpin") : String(localized: "Pin"),
                         systemImage: thread.pinned ? "pin.slash" : "pin"
-                    ) { onPin(thread, !thread.pinned) }
+                    ) { settleListOrder(); onPin(thread, !thread.pinned) }
                         .tint(.orange)
                 }
             }
             .swipeActions(edge: .trailing) {
                 if thread.archived {
-                    Button("Restore", systemImage: "tray.and.arrow.up") { onArchive(thread, false) }
+                    Button("Restore", systemImage: "tray.and.arrow.up") { settleListOrder(); onArchive(thread, false) }
                         .tint(.blue)
                 } else {
                     Button("Archive", systemImage: "archivebox", role: .destructive) {
+                        settleListOrder()
                         onArchive(thread, true)
                     }
                     Button("Rename", systemImage: "pencil") { renaming = thread }
@@ -944,7 +1018,7 @@ public struct ThreadListView<Destination: View>: View {
                     Button(
                         thread.pinned ? String(localized: "Unpin") : String(localized: "Pin"),
                         systemImage: thread.pinned ? "pin.slash" : "pin"
-                    ) { onPin(thread, !thread.pinned) }
+                    ) { settleListOrder(); onPin(thread, !thread.pinned) }
                 }
                 readButton(thread)
                 if let exportMarkdown {
@@ -953,7 +1027,7 @@ public struct ThreadListView<Destination: View>: View {
                 Button(
                     thread.archived ? String(localized: "Restore") : String(localized: "Archive"),
                     systemImage: thread.archived ? "tray.and.arrow.up" : "archivebox"
-                ) { onArchive(thread, !thread.archived) }
+                ) { settleListOrder(); onArchive(thread, !thread.archived) }
             }
         }
     }
@@ -971,7 +1045,7 @@ public struct ThreadListView<Destination: View>: View {
     /// Nothing to show is two different situations, and saying which is the whole of the help:
     /// a search that found nothing, or a phone that has not been talked to yet.
     @ViewBuilder private func empty(_ groups: ThreadGroups) -> some View {
-        if searchNeedle.isEmpty ? groups.isEmpty : searchResults.isEmpty {
+        if searchNeedle.isEmpty ? groups.isEmpty : threadResults.isEmpty && messageResults.isEmpty {
             if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 ContentUnavailableView(
                     "No threads yet",
@@ -1040,6 +1114,11 @@ public struct ThreadSidebar: View {
     /// The archive opens closed: it is where threads go to stop being in the way.
     @State private var showArchived = false
     @State private var choosingAgent = NewThreadShowcase.agent != nil
+    @State private var heldOrder: HeldThreadOrder?
+    @State private var visibleRowID: String?
+    @State private var listScrollPhase = ScrollPhase.idle
+    @State private var pressingList = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(
         threads: [ThreadSummary],
@@ -1079,14 +1158,25 @@ public struct ThreadSidebar: View {
         self.onSearchSelect = onSearchSelect
     }
 
-    private var groups: ThreadGroups {
-        ThreadGroups(threads)
-    }
+    private var liveGroups: ThreadGroups { ThreadGroups(threads) }
+    private var groups: ThreadGroups { heldOrder?.groups(with: threads) ?? liveGroups }
 
     private var searchNeedle: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     private var searchResults: ThreadSearchResults {
         ThreadSearchResults(threads: threads, query: query, metadataText: { hostLabel($0) ?? "" }, messageText: messageText)
+    }
+
+    private var threadResults: [ThreadSummary] { heldOrder?.results(with: threads).threads ?? searchResults.threads }
+    private var messageResults: [ThreadSummary] { heldOrder?.results(with: threads).messages ?? searchResults.messages }
+
+    private func holdListOrder() {
+        if heldOrder == nil { heldOrder = HeldThreadOrder(groups: liveGroups, results: searchResults) }
+    }
+
+    private func settleListOrder() {
+        guard heldOrder != nil else { return }
+        withTransaction(Transaction(animation: reduceMotion ? nil : .default)) { heldOrder = nil }
     }
 
     private var navigationSelection: Binding<String?> {
@@ -1114,13 +1204,12 @@ public struct ThreadSidebar: View {
                     Section { archive(groups.archived) }
                 }
             } else {
-                let results = searchResults
-                if !results.threads.isEmpty {
-                    Section("Threads") { rows(results.threads) }
+                if !threadResults.isEmpty {
+                    Section("Threads") { rows(threadResults) }
                 }
-                if !results.messages.isEmpty {
+                if !messageResults.isEmpty {
                     Section("Messages") {
-                        rows(results.messages) { searchExcerpt(in: messageText($0.id), matching: searchNeedle) }
+                        rows(messageResults) { searchExcerpt(in: messageText($0.id), matching: searchNeedle) }
                     }
                 }
             }
@@ -1130,6 +1219,23 @@ public struct ThreadSidebar: View {
         .background(YorozuPalette.canvas)
         .contentMargins(.vertical, LayoutMetrics.inner)
         .animation(.default, value: threads)
+        .scrollPosition(id: $visibleRowID, anchor: .top)
+        .onScrollPhaseChange { _, phase in
+            listScrollPhase = phase
+            if phase == .idle {
+                if !pressingList { settleListOrder() }
+            } else { holdListOrder() }
+        }
+        .simultaneousGesture(DragGesture(minimumDistance: 0)
+            .onChanged { _ in
+                pressingList = true
+                holdListOrder()
+            }
+            .onEnded { _ in
+                pressingList = false
+                if listScrollPhase == .idle { settleListOrder() }
+            })
+        .onChange(of: query) { _, _ in settleListOrder() }
         .overlay { empty(groups) }
         // In the sidebar itself rather than in the toolbar: the chat next to it has a search
         // field of its own, and two searchable views in one window fight over the toolbar.
@@ -1165,6 +1271,7 @@ public struct ThreadSidebar: View {
             .onDeleteCommand {
                 guard let thread = threads.first(where: { $0.id == selection }), !thread.archived
                 else { return }
+                settleListOrder()
                 onArchive(thread, true)
             }
         #endif
@@ -1243,7 +1350,7 @@ public struct ThreadSidebar: View {
             Button(
                 thread.pinned ? String(localized: "Unpin") : String(localized: "Pin"),
                 systemImage: thread.pinned ? "pin.slash" : "pin"
-            ) { onPin(thread, !thread.pinned) }
+            ) { settleListOrder(); onPin(thread, !thread.pinned) }
         }
         // A thread the agent has never spoken in cannot be made unread: nothing in it is news.
         if thread.isUnread {
@@ -1259,11 +1366,11 @@ public struct ThreadSidebar: View {
         Button(
             thread.archived ? String(localized: "Restore") : String(localized: "Archive"),
             systemImage: thread.archived ? "tray.and.arrow.up" : "archivebox"
-        ) { onArchive(thread, !thread.archived) }
+        ) { settleListOrder(); onArchive(thread, !thread.archived) }
     }
 
     @ViewBuilder private func empty(_ groups: ThreadGroups) -> some View {
-        if searchNeedle.isEmpty ? groups.isEmpty : searchResults.isEmpty {
+        if searchNeedle.isEmpty ? groups.isEmpty : threadResults.isEmpty && messageResults.isEmpty {
             if searchNeedle.isEmpty {
                 ContentUnavailableView(
                     "No threads yet",
