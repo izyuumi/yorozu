@@ -165,6 +165,11 @@ test("distribute adds the build to the one external group and submits beta revie
     return {};
   };
   assert.equal(await distributeExternal(metadata, { request, group: "Public" }), "group-id");
+  const lookup = new URL(calls[0][1], "https://api.appstoreconnect.apple.com");
+  assert.equal(lookup.pathname, "/v1/betaGroups");
+  assert.equal(lookup.searchParams.get("filter[app]"), metadata.app_id);
+  assert.equal(lookup.searchParams.get("filter[name]"), "Public");
+  assert.equal(lookup.searchParams.get("filter[isInternalGroup]"), "false");
   assert.deepEqual(calls.slice(1), [
     ["POST", "/v1/betaGroups/group-id/relationships/builds", { data: [{ type: "builds", id: "build-id" }] }],
     ["POST", "/v1/betaAppReviewSubmissions", { data: { type: "betaAppReviewSubmissions", relationships: { build: { data: { type: "builds", id: "build-id" } } } } }],
