@@ -223,6 +223,8 @@ public final class ChatModel {
     private var cache: ThreadCache?
     @ObservationIgnored private var cacheWrite: Task<Void, Never>?
     @ObservationIgnored private var composerWrite: Task<Void, Never>?
+    @ObservationIgnored private var preparedSend: [String: String] = [:]
+    @ObservationIgnored private var pendingSaveFailure: String?
 
     private func saveComposerSoon() {
         guard cache != nil else { return }
@@ -237,7 +239,8 @@ public final class ChatModel {
 
     private func saveComposer() throws {
         try cache?.save(composer: .init(drafts: drafts, attachments: attachments, threads: draftThreads,
-                                       knownThreads: synced, openThread: openThread))
+                                       knownThreads: synced, openThread: openThread,
+                                       preparedSend: preparedSend.isEmpty ? nil : preparedSend))
     }
     /// Replay progress follows the runtime's log order, independently of live events and
     /// the timeline's timestamp order. Advancing from either can skip unseen sync pages.
@@ -307,6 +310,21 @@ public final class ChatModel {
             openThread = composer.openThread
             for thread in composer.knownThreads ?? [] where !synced.contains(where: { $0.id == thread.id }) {
                 synced.append(thread)
+            }
+            // A crash can land between the composer marker, outbox write, and composer clear.
+            // The marker names the exact message: committed sends leave the composer; failed
+            // prepares keep it. Never infer this from matching text, which a user may repeat.
+            if let prepared = composer.preparedSend, !prepared.isEmpty {
+                for (threadId, eventId) in prepared where outbox.contains(where: { $0.id == eventId }) {
+                    drafts[threadId] = ""
+                    attachments[threadId] = nil
+                    if let index = draftThreads.firstIndex(where: { $0.id == threadId }) {
+                        let draft = draftThreads.remove(at: index)
+                        if !synced.contains(where: { $0.id == threadId }) { synced.insert(draft, at: 0) }
+                    }
+                }
+                do { try saveComposer() }
+                catch { failure = "Could not save draft: \(error.localizedDescription)" }
             }
         }
         for thread in synced {
@@ -469,15 +487,19 @@ public final class ChatModel {
         return match
     }
 
-    /// Sends what the composer holds — the typed text and any staged file — and empties it.
+    /// Sends what the composer holds. Clear it only after the outbox owns the message.
     public func send(in thread: ThreadSummary) {
         let text = (drafts[thread.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let attachments = attachments[thread.id] ?? []
         // Files on their own are a message: only an empty composer is nothing to send.
         guard !text.isEmpty || !attachments.isEmpty else { return }
+        guard queueMessage(text, in: thread.id, attachments: attachments, fromComposer: true) else { return }
         drafts[thread.id] = ""
         self.attachments[thread.id] = nil
-        send(text, in: thread.id, attachments: attachments)
+        preparedSend[thread.id] = nil
+        do { try saveComposer() }
+        catch { failure = "Could not save draft: \(error.localizedDescription)" }
+        flush()
     }
 
     public func send(_ text: String, in threadId: String, attachment: MessageAttachment? = nil) {
@@ -485,31 +507,33 @@ public final class ChatModel {
     }
 
     public func send(_ text: String, in threadId: String, attachments: [MessageAttachment]) {
-        guard !stopped else { return }
+        if queueMessage(text, in: threadId, attachments: attachments) { flush() }
+    }
+
+    @discardableResult
+    private func queueMessage(_ text: String, in threadId: String, attachments: [MessageAttachment],
+                              fromComposer: Bool = false) -> Bool {
+        guard !stopped else { return false }
         // Decided once for the whole send: a thread created here and the message that creates it
         // must not take different routes, or the runtime is told about a message in a thread it
         // has never heard of.
         let queue = !canDeliver
+        var commands: [YorozuEvent] = []
         if let draft = draftThreads.first(where: { $0.id == threadId }) {
             // A draft becomes real with its first message. The id is ours, so the message below
             // lands in the thread this `thread_create` is about to mint on the other end.
             // A draft for a coding agent carries who answers it and where; a Yorozu draft says
             // nothing, as every draft did before there was anyone else to ask.
-            deliver(
-                event(.threadCreate(ThreadCreateData(title: nil, agent: draft.agent, cwd: draft.cwd)), in: threadId),
-                queue: queue
-            )
+            commands.append(event(.threadCreate(ThreadCreateData(title: nil, agent: draft.agent, cwd: draft.cwd)), in: threadId))
             // A model chosen in a chat that had not been sent in yet is held on the draft,
             // because there was no thread to set it on. This is that moment, and it goes
             // before the message so the first turn already runs on it.
             if let model = draft.model {
-                deliver(event(.threadSetModel(ThreadSetModelData(model: model)), in: threadId), queue: queue)
+                commands.append(event(.threadSetModel(ThreadSetModelData(model: model)), in: threadId))
             }
             if let effort = draft.effort {
-                deliver(event(.threadSetEffort(ThreadSetEffortData(effort: effort)), in: threadId), queue: queue)
+                commands.append(event(.threadSetEffort(ThreadSetEffortData(effort: effort)), in: threadId))
             }
-            draftThreads.removeAll { $0.id == threadId }
-            synced.insert(draft, at: 0)
         }
         let event = YorozuEvent(
             id: UUID().uuidString,
@@ -518,11 +542,47 @@ public final class ChatModel {
             agentId: device,
             payload: .message(MessageData(role: .user, text: text, attachments: attachments))
         )
+        // Persist creation and its first message in one encrypted write. A failed write leaves
+        // the composer and draft thread intact, with no phantom bubble or unsaved outbox item.
+        let pending = Outbox.pruned(outbox + (commands + [event]).map { OutboxItem(event: $0) })
+        if fromComposer {
+            preparedSend[threadId] = event.id
+            do { try saveComposer() }
+            catch {
+                preparedSend[threadId] = nil
+                failure = "Could not save draft: \(error.localizedDescription)"
+                return false
+            }
+        }
+        do { try cache?.savePending(pending) }
+        catch {
+            let cause = error.localizedDescription
+            if fromComposer { preparedSend[threadId] = nil }
+            do { try saveComposer() }
+            catch {
+                failure = "Could not queue or save draft: \(error.localizedDescription)"
+                return false
+            }
+            pendingSaveFailure = "Could not save pending messages: \(cause)"
+            failure = pendingSaveFailure
+            return false
+        }
+        if failure == pendingSaveFailure { failure = nil }
+        pendingSaveFailure = nil
+        outbox = pending
+        if let draft = draftThreads.first(where: { $0.id == threadId }) {
+            draftThreads.removeAll { $0.id == threadId }
+            synced.insert(draft, at: 0)
+            if !fromComposer {
+                do { try saveComposer() }
+                catch { failure = "Could not save draft: \(error.localizedDescription)" }
+            }
+        }
         // A queued message has started no turn: the composer stays a composer until the message
         // is actually on its way.
         if !queue { generating.insert(threadId) }
         upsert(event)
-        deliver(event, queue: queue)
+        return true
     }
 
     /// Whether an event sent now would actually reach the runtime. Anything else — still
