@@ -157,6 +157,11 @@ envelope shapes, rate limit, buffer trim — in `apps/relay/src/protocol.ts`:
 - **Self-hosted** — `src/index.ts`, a plain `ws` server with everything in memory (`PORT`,
   default 8787).
 
+The self-hosted relay closes a phone whose outbound socket would buffer more than 2 MiB, then
+the phone rejoins and requests history from the host. Other phones keep receiving live frames.
+The hosted Worker's WebSocket API does not expose `bufferedAmount`; its send failure is isolated
+to that socket, while the host and other phones continue.
+
 ## Push notifications
 
 APNs alerts every registered phone. What that costs in privacy is the point of the design, so it
