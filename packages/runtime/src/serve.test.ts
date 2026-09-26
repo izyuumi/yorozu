@@ -2969,6 +2969,61 @@ test("new completed tool work resets the native recovery budget", async () => {
   expect(run).toHaveBeenCalledTimes(2);
 });
 
+test("native backend crash after execution starts recovers the same user turn", async () => {
+  const run = vi.fn<NativeAgentRunner["run"]>()
+    .mockImplementationOnce(async (turn) => {
+      turn.onSession?.("session-before-crash");
+      turn.onUpdate?.("partial reply");
+      throw new Error("backend disconnected");
+    })
+    .mockResolvedValue({ text: "completed", sessionId: "session-before-crash" });
+  const { dir, send } = await pairedPhone([], false, { nativeRunners: { codex: { run } } });
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "cc");
+  const id = send({ kind: "message", data: { role: "user", text: "Finish the report" } }, "cc");
+  await vi.waitFor(() => expect(readThreadEvents("cc", dir)).toContainEqual(expect.objectContaining({
+    id: `native:${id}:final`, data: expect.objectContaining({ done: true, text: "completed" }),
+  })));
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(run.mock.calls[1]?.[0]).toMatchObject({ sessionId: "session-before-crash",
+    text: expect.stringContaining("Finish the report") });
+  expect(readThreadEvents("cc", dir).filter((event) => event.kind === "message" && event.data.role === "user")).toHaveLength(1);
+});
+
+test("failed tool results do not reset the native recovery budget", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-native-failed-tool-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  appendThreadEvent({ id: "original", threadId: "cc", ts: 1, agentId: "main", kind: "message",
+    data: { role: "user", text: "Finish the report" } }, dir);
+  setNativeTurn("cc", { id: "native:original:final", state: "running", userEventId: "original", recoveryAttempts: 2 }, dir);
+  const run = vi.fn<NativeAgentRunner["run"]>().mockImplementation(async (turn) => {
+    turn.onActivity?.("result:failed", { kind: "tool_result", data: { callId: "failed", ok: false, output: "failed" } });
+    return { text: "backend failed", failed: true };
+  });
+  await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+  await vi.waitFor(() => expect(listThreads(dir)[0]?.nativeTurn).toMatchObject({
+    state: "interrupted", recoveryAttempts: 3,
+  }));
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
+test("a native Stop spanning host restart reports uncertainty and prevents recovery", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-native-stop-restart-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  appendThreadEvent({ id: "original", threadId: "cc", ts: 1, agentId: "main", kind: "message",
+    data: { role: "user", text: "Finish the report" } }, dir);
+  setNativeTurn("cc", { id: "native:original:final", state: "running", userEventId: "original" }, dir);
+  writeFileSync(join(dir, "stopped-turns.jsonl"), JSON.stringify({ targetEventId: "original", threadId: "cc",
+    status: "requested", requestIds: ["old-stop"] }) + "\n");
+  const run = vi.fn<NativeAgentRunner["run"]>();
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+  expect(run).not.toHaveBeenCalled();
+  expect(listThreads(dir)[0]?.nativeTurn).toBeUndefined();
+  expect(readFileSync(join(dir, "stopped-turns.jsonl"), "utf8")).toContain('"status":"unconfirmed"');
+  send({ kind: "interrupt", data: { targetEventId: "original" } }, "cc");
+  expect((await eventsUntil((event) => event.kind === "stop_status" && event.data.status === "unconfirmed")).at(-1))
+    .toMatchObject({ data: { targetEventId: "original", status: "unconfirmed" } });
+});
+
 test("native session and running marker reach disk before completion, and survive sidecar shutdown", async () => {
   let started!: NativeTurn;
   const run: NativeAgentRunner["run"] = async (turn) => {

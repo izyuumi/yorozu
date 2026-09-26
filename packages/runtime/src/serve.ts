@@ -485,7 +485,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   };
   // A Stop is bound to one accepted operation. Keep its intent through sidecar replacement,
   // including the backend run identity needed to finish an interrupted abort request.
-  type StopRecord = { targetEventId: string; threadId: string; status: "requested" | "stopped" | "completed" | "withdrawn";
+  type StopRecord = { targetEventId: string; threadId: string; status: "requested" | "stopped" | "completed" | "withdrawn" | "unconfirmed";
     sessionKey?: string; runId?: string; requestIds: string[] };
   const stopFile = join(dir, "stopped-turns.jsonl");
   let stopText = existsSync(stopFile) ? readFileSync(stopFile, "utf8") : "";
@@ -499,7 +499,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     (entry as StopRecord).targetEventId.length <= 128 &&
     typeof (entry as StopRecord).threadId === "string" && !!(entry as StopRecord).threadId &&
     (entry as StopRecord).threadId.length <= 128 &&
-    ["requested", "stopped", "completed", "withdrawn"].includes((entry as StopRecord).status) &&
+    ["requested", "stopped", "completed", "withdrawn", "unconfirmed"].includes((entry as StopRecord).status) &&
     ((entry as StopRecord).runId === undefined || typeof (entry as StopRecord).runId === "string") &&
     ((entry as StopRecord).sessionKey === undefined || typeof (entry as StopRecord).sessionKey === "string") &&
     Array.isArray((entry as StopRecord).requestIds) &&
@@ -843,7 +843,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         ...thread,
         ...(thread.agent && thread.agent !== "yorozu" ? { bypass: yolo } : {}),
         ...(runningEventIds.has(thread.id) ? { activeEventId: runningEventIds.get(thread.id) } : {}),
-        ...(stopping ? { interruptedTurnId: undefined, canResume: undefined } : {}),
+        ...(stopping ? { interruptedTurnId: undefined, canResume: undefined, recoveryState: undefined } : {}),
       };
     }) } });
   };
@@ -1033,13 +1033,21 @@ export function serve(options: ServeOptions = {}): Sidecar {
         broadcast(final);
       };
       // Finished, so the composer is not left offering Stop for a turn nobody is running.
-      if (!runner) return finish(`${agent} is not available in this build yet.`);
+      if (!runner) {
+        finish(`${agent} is not available in this build yet.`);
+        setNativeTurn(threadId, undefined, dir);
+        broadcast(threadList());
+        return;
+      }
       // No folder, no agent: a thread from before folders were required, or one whose folder
       // has since left `~/Projects`, would otherwise run the agent wherever this sidecar sits.
       const home = threadHome(threadId, dir);
       if (!home.cwd || !isProjectFolder(home.cwd)) {
         state("native-cwd-refused");
-        return finish(`${agent} needs one of this Mac's project folders, and this thread has none.`);
+        finish(`${agent} needs one of this Mac's project folders, and this thread has none.`);
+        setNativeTurn(threadId, undefined, dir);
+        broadcast(threadList());
+        return;
       }
       const turn = new AbortController();
       if (!running.has(threadId)) running.set(threadId, turn);
@@ -1055,6 +1063,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           setNativeTurn(threadId, { id, state: "running", ...(userEventId ? { userEventId } : {}), recoveryAttempts,
             recoveryActive: recovering }, dir);
           broadcast(threadList());
+          let executionStarted = false;
           try {
             const currentHome = threadHome(threadId, dir);
             const done = await runner.run({
@@ -1066,14 +1075,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
               model: threadModel(threadId, dir),
               effort: threadEffort(threadId, dir),
               signal: turn.signal,
-              onSession: (sessionId) => { setThreadSession(threadId, sessionId, dir); },
+              onSession: (sessionId) => { executionStarted = true; setThreadSession(threadId, sessionId, dir); },
               approve: async (tool, input, signal) =>
                 loadSettings(dir).yolo || nativeCards.approve(threadId, agent, tool, input, signal),
               ask: (question, options, signal) => nativeCards.ask(threadId, question, options, signal),
-              onUpdate: (reply) => broadcast(message(reply)),
+              onUpdate: (reply) => { executionStarted = true; broadcast(message(reply)); },
               onActivity: (key, payload) => {
+                executionStarted = true;
                 const event: YorozuEvent = { id: `${agent}:${threadId}:${key}`, threadId, ts: Date.now(), agentId: MAIN_AGENT, ...payload };
-                const newResult = event.kind === "tool_result" && !seenResults.has(event.id);
+                const newResult = event.kind === "tool_result" && event.data.ok && !seenResults.has(event.id);
                 emit(event.kind === "tool_result" ? stashToolResult(event, dir) : event);
                 if (newResult) {
                   seenResults.add(event.id);
@@ -1085,13 +1095,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
             });
             if (done.sessionId && done.sessionId !== currentHome.sessionId) setThreadSession(threadId, done.sessionId, dir);
             if (turn.signal.aborted) return;
+            if (done.failed) throw new Error(`${agent} reported an unsuccessful turn`);
             finish(done.text);
             return;
           } catch (error) {
             if (turn.signal.aborted) return;
             state(`native-error ${error instanceof Error ? error.message : String(error)}`);
             process.stderr.write(`native-error ${threadId}: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
-            if (!recovering) {
+            if (!recovering && !executionStarted) {
               finish(`${agent} could not answer; see the Mac log.`);
               return;
             }
@@ -1276,7 +1287,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const active = abortTarget(record.threadId, target);
       if (!active) {
         const nativeTurn = listThreads(dir).find((thread) => thread.id === record.threadId)?.nativeTurn;
-        if (nativeTurn?.id === completionIdFor(record.threadId, target) && nativeTurn.state === "interrupted") return;
+        if (nativeTurn?.id === completionIdFor(record.threadId, target) && nativeTurn.state === "interrupted") {
+          // The old SDK process is gone, but its last external effect is unknowable here.
+          // Stop recovery without claiming confirmed cessation.
+          rememberStop({ ...record, status: "unconfirmed" });
+          setNativeTurn(record.threadId, undefined, dir);
+          broadcast(threadList());
+          broadcastStop(stoppedTurns.get(target)!);
+          return;
+        }
         openclaw?.discardPending(target);
         rememberStop({ ...record, status: "stopped" });
         broadcastStop(stoppedTurns.get(target)!);

@@ -125,7 +125,11 @@ function validThread(value: unknown): value is ThreadRecord {
     && ["pinned", "bypass"].every((key) => t[key] === undefined || typeof t[key] === "boolean")
     && (t.lastReadAt === undefined || typeof t.lastReadAt === "number" && Number.isFinite(t.lastReadAt))
     && (turn === undefined || !!turn && typeof turn === "object"
-      && typeof turn.id === "string" && ["running", "interrupted"].includes(turn.state));
+      && typeof turn.id === "string" && ["running", "interrupted"].includes(turn.state)
+      && (turn.userEventId === undefined || typeof turn.userEventId === "string" && turn.userEventId.length <= 128)
+      && (turn.recoveryAttempts === undefined || Number.isSafeInteger(turn.recoveryAttempts) &&
+        turn.recoveryAttempts >= 0 && turn.recoveryAttempts <= 3)
+      && (turn.recoveryActive === undefined || typeof turn.recoveryActive === "boolean"));
 }
 
 /**
@@ -529,7 +533,7 @@ export function threadMessages(threadId: string, dir = stateDir(), vision = fals
 export const threadHistory = (threadId: string, dir = stateDir(), vision = false): Message[] =>
   threadMessages(threadId, dir, vision).slice(-HISTORY_LIMIT);
 
-/** Written before launching the SDK. Recovery never replays a prompt automatically. */
+/** Written before launching the SDK so a replacement host can recover the same turn. */
 export function setNativeTurn(id: string, turn: ThreadRecord["nativeTurn"], dir = stateDir()): void {
   const threads = listThreads(dir);
   const thread = threads.find((t) => t.id === id);

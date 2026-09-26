@@ -84,6 +84,8 @@ export function childEnv(source: NodeJS.ProcessEnv = process.env, extra: Record<
 export interface NativeTurnResult {
   /** The finished reply. Empty when the turn was aborted before it said anything. */
   text: string;
+  /** The SDK reported a terminal failure rather than a completed answer. */
+  failed?: boolean;
   /** The session to resume next time. Kept even for an aborted turn: the session survives it. */
   sessionId?: string;
 }
@@ -185,6 +187,7 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
 
       let text = "";
       let streamed = "";
+      let failed = false;
       let sessionId = turn.sessionId;
       try {
         for await (const message of session as AsyncIterable<SDKMessage>) {
@@ -230,7 +233,10 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
             }
           } else if (message.type === "result") {
             if (message.subtype === "success") text = message.result || text;
-            else if (!turn.signal.aborted) text = text || `Claude Code stopped: ${message.subtype.replace(/^error_/, "").replace(/_/g, " ")}.`;
+            else if (!turn.signal.aborted) {
+              failed = true;
+              text = text || `Claude Code stopped: ${message.subtype.replace(/^error_/, "").replace(/_/g, " ")}.`;
+            }
           }
         }
       } catch (error) {
@@ -240,7 +246,7 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
         turn.signal.removeEventListener("abort", onAbort);
         session.close();
       }
-      return { text: turn.signal.aborted ? "" : text, ...(sessionId ? { sessionId } : {}) };
+      return { text: turn.signal.aborted ? "" : text, ...(failed ? { failed: true } : {}), ...(sessionId ? { sessionId } : {}) };
     },
   };
 }

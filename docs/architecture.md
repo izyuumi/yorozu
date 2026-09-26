@@ -469,6 +469,8 @@ original request and recent host results, asking it to verify prior effects befo
 work. The same reply ID completes the turn; no second user message is logged. Three unsuccessful
 recovery attempts pause it across restarts with **Couldn't resume automatically** and Retry. A new
 completed tool result resets that budget. A persisted Stop prevents automatic recovery.
+If a host restart leaves a native Stop impossible to confirm, the host reports that uncertainty
+and retires the recovery marker; the client never labels the task Stopped.
 
 ## Approvals, questions and progress
 

@@ -538,7 +538,7 @@ export interface InterruptData { targetEventId?: string }
 export interface StopStatusData {
   targetEventId: string;
   requestId: string;
-  status: "requested" | "stopped" | "completed" | "withdrawn" | "unknown";
+  status: "requested" | "stopped" | "completed" | "withdrawn" | "unknown" | "unconfirmed";
 }
 
 /** Last sync cursor the device already holds, per thread. Event ids support older peers. */

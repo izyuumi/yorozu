@@ -1114,7 +1114,7 @@ public struct InterruptData: Codable, Equatable, Sendable {
 }
 
 public struct StopStatusData: Codable, Equatable, Sendable {
-    public enum Status: String, Codable, Sendable { case requested, stopped, completed, withdrawn, unknown }
+    public enum Status: String, Codable, Sendable { case requested, stopped, completed, withdrawn, unknown, unconfirmed }
     public var targetEventId: String
     public var requestId: String
     public var status: Status

@@ -967,9 +967,16 @@ public final class ChatModel {
         guard let index = outbox.firstIndex(where: { item in
             item.id == status.requestId && item.event.payload == .interrupt(InterruptData(targetEventId: status.targetEventId))
         }) else { return }
-        guard status.status == .stopped || status.status == .completed || status.status == .withdrawn else { return }
+        guard status.status == .stopped || status.status == .completed || status.status == .withdrawn ||
+            status.status == .unconfirmed else { return }
         let threadId = outbox[index].event.threadId
         outbox.remove(at: index)
+        if status.status == .unconfirmed {
+            generating.remove(threadId)
+            failure = "Could not confirm whether this task stopped. Check the host before retrying."
+            saveOutbox()
+            return
+        }
         if status.status == .withdrawn, let original = outbox.firstIndex(where: { $0.id == status.targetEventId }) {
             outbox[original].admissionStatus = .withdrawn
         } else if status.status == .stopped || status.status == .completed {
