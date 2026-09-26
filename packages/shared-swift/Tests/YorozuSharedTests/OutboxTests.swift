@@ -98,6 +98,35 @@ private func reconnect(_ transport: QueueTransport) async {
 }
 
 @MainActor
+@Test func failedOutboxPersistenceKeepsComposerAndDoesNotQueueAPhantomMessage() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory.appending(path: "outbox.bin"), withIntermediateDirectories: true)
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let model = ChatModel(transport: QueueTransport(), cache: cache, device: "phone")
+    let thread = model.newDraft()
+    let attachment = MessageAttachment(name: "proof.txt", mime: "text/plain", data: "aGk=")
+    model.drafts[thread.id] = "hello"
+    model.attachments[thread.id] = [attachment]
+
+    model.send(in: thread)
+    #expect(model.drafts[thread.id] == "hello")
+    #expect(model.attachments[thread.id] == [attachment])
+    #expect(model.isDraft(thread.id))
+    #expect(model.outbox.isEmpty)
+    #expect(model.events[thread.id]?.isEmpty ?? true)
+    #expect(model.failure?.contains("Could not save pending messages") == true)
+
+    try FileManager.default.removeItem(at: directory.appending(path: "outbox.bin"))
+    model.send(in: thread)
+    #expect(model.drafts[thread.id] == "")
+    #expect(model.attachments[thread.id] == nil)
+    #expect(!model.isDraft(thread.id))
+    #expect(model.outbox.map(\.event.payload.kind) == [.threadCreate, .message])
+    #expect(model.failure == nil)
+}
+
+@MainActor
 @Test func aThreadStartedOfflineIsCreatedAheadOfTheMessageThatStartedIt() async throws {
     let transport = QueueTransport()
     let model = ChatModel(transport: transport, device: "phone")
