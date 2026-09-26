@@ -835,14 +835,20 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   const threadList = (minTs = 0): YorozuEvent => {
     const { yolo } = loadSettings(dir);
+    const openclawTurns = new Map(openclaw?.pendingTurns().filter((turn) => turn.state === "active")
+      .map((turn) => [turn.threadId, turn]) ?? []);
     return control({ kind: "thread_list", data: { threads: threadSummaries(dir, minTs).map((thread) => {
-      const stopping = thread.interruptedTurnId && [...stoppedTurns.values()].some((stop) =>
+      const openclawTurn = !thread.agent || thread.agent === "yorozu" ? openclawTurns.get(thread.id) : undefined;
+      const interruptedTurnId = openclawTurn?.paused ? openclawTurn.completionId : thread.interruptedTurnId;
+      const stopping = interruptedTurnId && [...stoppedTurns.values()].some((stop) =>
         stop.threadId === thread.id && stop.status === "requested" &&
-        completionIdFor(thread.id, stop.targetEventId) === thread.interruptedTurnId);
+        completionIdFor(thread.id, stop.targetEventId) === interruptedTurnId);
       return {
         ...thread,
         ...(thread.agent && thread.agent !== "yorozu" ? { bypass: yolo } : {}),
         ...(runningEventIds.has(thread.id) ? { activeEventId: runningEventIds.get(thread.id) } : {}),
+        ...(openclawTurn?.paused ? { interruptedTurnId: openclawTurn.completionId, canResume: true } :
+          openclawTurn?.recoveryAttempts ? { recoveryState: "recovering" as const } : {}),
         ...(stopping ? { interruptedTurnId: undefined, canResume: undefined, recoveryState: undefined } : {}),
       };
     }) } });
@@ -1146,6 +1152,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           userEventId,
           onUpdate: (reply) => broadcast(message(reply)),
           onEvent: emit,
+          onRecoveryState: () => broadcast(threadList()),
         });
         if (turn.signal.aborted) return;
         if (reply === undefined) return;
@@ -1816,6 +1823,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return reply(projectList());
       case "thread_recover": {
         const thread = listThreads(dir).find((t) => t.id === event.threadId);
+        const openclawTurn = thread && !thread.agent ? openclaw?.pendingTurns().find((turn) =>
+          turn.threadId === event.threadId && turn.completionId === event.data.turnId && turn.paused) : undefined;
+        if (openclawTurn) {
+          if ([...stoppedTurns.values()].some((stop) => stop.threadId === event.threadId &&
+            completionIdFor(event.threadId, stop.targetEventId) === event.data.turnId)) return;
+          if (event.data.action === "continue") openclaw?.retryRecovery(event.threadId, event.data.turnId);
+          else if (event.data.action === "dismiss") openclaw?.dismissRecovery(event.threadId, event.data.turnId);
+          return;
+        }
         if (thread?.nativeTurn?.state !== "interrupted" || thread.nativeTurn.id !== event.data.turnId) return;
         if ([...stoppedTurns.values()].some((stop) => stop.threadId === event.threadId &&
           completionIdFor(event.threadId, stop.targetEventId) === event.data.turnId)) return;
@@ -2398,6 +2414,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
             seenEventIds: readThreadEvents(threadId, dir).map((event) => event.id),
             onUpdate: (text) => broadcast(message(text)),
             onEvent: emit,
+            onRecoveryState: () => broadcast(threadList()),
           });
           if (turn.signal.aborted || reply === undefined) return;
           finalizeOpenClaw(message(reply, true));

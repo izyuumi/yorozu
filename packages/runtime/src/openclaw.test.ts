@@ -557,6 +557,114 @@ describe("OpenClawRunner", () => {
     expect(gateway.request.mock.calls.filter(([method]) => method === "chat.send")).toHaveLength(1);
   });
 
+  test("continues a consumed run that lost execution with prior tool effects", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const gateway = harness();
+      let originalRun = "";
+      let recoveryRun = "";
+      gateway.request.mockImplementation(async (method, params) => {
+        if (method === "chat.send") {
+          const { idempotencyKey, message } = params as { idempotencyKey: string; message: string };
+          if (!originalRun) originalRun = idempotencyKey;
+          else {
+            recoveryRun = idempotencyKey;
+            expect(message).toContain("install the update");
+            expect(message).toContain("installed package");
+          }
+          return { runId: idempotencyKey };
+        }
+        if (method === "chat.history") return {
+          inputReceipts: [{ runId: originalRun, state: "consumed", consumedByEventId: "input-1" }],
+          messages: [
+            { role: "user", runId: originalRun, content: "install the update" },
+            { role: "assistant", runId: originalRun, content: [{ type: "toolCall", id: "exec-1", name: "exec", arguments: { command: "install" } }] },
+            { role: "toolResult", toolCallId: "exec-1", name: "exec", content: "installed package" },
+            { role: "assistant", runId: originalRun, stopReason: "aborted", content: "" },
+          ],
+        };
+        return {};
+      });
+      const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, recoveryDelayMs: 1 });
+      const result = runner.run({ threadId: "lost-execution", text: "install the update", userEventId: "user-lost",
+        completionId: "openclaw:user-lost:final" });
+      await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+      await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.history", expect.objectContaining({ inputRunIds: [originalRun] })));
+      expect(gateway.request.mock.calls.filter(([method]) => method === "chat.send")).toHaveLength(1);
+      vi.setSystemTime(Date.now() + 6_000);
+      await vi.waitFor(() => expect(recoveryRun).not.toBe(""));
+      gateway.event({ state: "final", sessionKey: "agent:main:yorozu:lost-execution", runId: recoveryRun,
+        seq: 1, message: { content: "update complete" } });
+      await expect(result).resolves.toBe("update complete");
+      expect(runner.pendingTurns()).toMatchObject([{ userEventId: "user-lost", completionId: "openclaw:user-lost:final" }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("pauses after three lost recovery runs and retries the same logical turn", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const controller = new AbortController();
+    try {
+      const gateway = harness();
+      const sends: string[] = [];
+      gateway.request.mockImplementation(async (method, params) => {
+        if (method === "chat.send") {
+          const runId = (params as { idempotencyKey: string }).idempotencyKey;
+          sends.push(runId);
+          return { runId };
+        }
+        if (method === "chat.history") return {
+          inputReceipts: [{ runId: sends.at(-1), state: "consumed", consumedByEventId: "input" }],
+          messages: [],
+        };
+        return {};
+      });
+      const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, recoveryDelayMs: 1 });
+      const result = runner.run({ threadId: "bounded", text: "deploy", userEventId: "user-bounded",
+        completionId: "openclaw:user-bounded:final", signal: controller.signal });
+      for (let count = 1; count <= 4; count++) {
+        await vi.waitFor(() => expect(sends).toHaveLength(count));
+        await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.history",
+          expect.objectContaining({ inputRunIds: [sends[count - 1]] })));
+        vi.setSystemTime(Date.now() + 6_000);
+      }
+      await vi.waitFor(() => expect(runner.pendingTurns()).toMatchObject([
+        { paused: true, recoveryAttempts: 3, userEventId: "user-bounded" },
+      ]));
+      expect(new OpenClawRunner({ stateDir: gateway.dir }).pendingTurns()).toMatchObject([
+        { paused: true, recoveryAttempts: 3, completionId: "openclaw:user-bounded:final" },
+      ]);
+      expect(sends).toHaveLength(4);
+      const histories = gateway.request.mock.calls.filter(([method]) => method === "chat.history").length;
+      expect(runner.retryRecovery("bounded", "openclaw:user-bounded:final")).toBe(true);
+      await vi.waitFor(() => expect(runner.pendingTurns()).toMatchObject([{ paused: false, recoveryAttempts: 0 }]));
+      await vi.waitFor(() => expect(gateway.request.mock.calls.filter(([method]) => method === "chat.history").length)
+        .toBeGreaterThan(histories));
+      vi.setSystemTime(Date.now() + 6_000);
+      await vi.waitFor(() => expect(sends).toHaveLength(5));
+    } finally {
+      controller.abort();
+      vi.useRealTimers();
+    }
+  });
+
+  test("dismisses a paused persisted recovery without inventing a final answer", async () => {
+    const gateway = harness();
+    const first = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    first.admitUserTurn({ threadId: "dismiss-paused", text: "deploy", userEventId: "dismiss-user" }, () => {});
+    const ledger = join(gateway.dir, "openclaw-pending.json");
+    const [storedTurn] = JSON.parse(readFileSync(ledger, "utf8")) as Array<Record<string, unknown>>;
+    writeFileSync(ledger, JSON.stringify([{ ...storedTurn, state: "active", paused: true, recoveryAttempts: 3 }]));
+    const replacement = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    const resumed = replacement.resume({ threadId: "dismiss-paused" });
+    const completionId = replacement.pendingTurns()[0]!.completionId;
+    expect(replacement.dismissRecovery("dismiss-paused", completionId)).toBe(true);
+    await expect(resumed).resolves.toBeUndefined();
+    expect(replacement.pendingTurns()).toEqual([]);
+    expect(gateway.request).not.toHaveBeenCalledWith("chat.send", expect.anything());
+  });
+
   test("persists and idempotently resends full input envelope when no receipt exists", async () => {
     const gateway = harness();
     let sends = 0;

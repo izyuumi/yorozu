@@ -516,6 +516,14 @@ than a receipt for a stale answer.
 `openclaw.ts`; `thought`, `tool_call`, `tool_result` and `message` come the same way and drive the
 work rows and trace pages.
 
+OpenClaw turns retain their Gateway run ID and original input in the sidecar's pending ledger.
+After restart, the sidecar reattaches to an active run or safely resends an input with no Gateway
+receipt. A consumed input with no active run, final answer, or delegated announcement for five
+seconds is continued in the same Gateway session with the original request and bounded history
+of prior tool effects. The same Yorozu user event and final ID remain in use. Three lost
+continuations pause the turn for Retry or Dismiss; Gateway connection retries do not use this
+budget. A new successful tool result resets it. A Stop fences continuation before sending.
+
 The approval **rule engine** in `approval.ts` — the floor, action classes, structured scopes,
 rules with `always`/`never` precedence, rule proposals — is fully implemented, wire-supported
 (`rule_list`, `rule_update`, `rule_delete`) and covered by tests, but it is only consulted by the

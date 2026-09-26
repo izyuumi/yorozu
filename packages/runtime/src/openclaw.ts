@@ -7,6 +7,7 @@ import type { EventFrame } from "@openclaw/gateway-protocol/frame-guards";
 import { ATTACHMENT_MAX_BYTES, YOROZU_EFFORTS, type EventPayload, type MessageAttachment, type ModelOption, type ReasoningEffort, type YorozuEvent } from "@yorozu/shared";
 
 const DEFAULT_GATEWAY_URL = "ws://127.0.0.1:18789";
+const EXECUTION_LOST_MS = 5_000;
 
 interface StoredGatewayAuth { identity: DeviceIdentity; token?: string; scopes?: string[] }
 interface SetupCode { url: string; bootstrapToken: string }
@@ -29,12 +30,17 @@ interface PendingTurn {
   tasks: Map<string, string>;
   childRunIds: Set<string>;
   input: StoredTurnInput;
+  recoveryAttempts: number;
+  recoveryPrompt?: string;
+  paused: boolean;
+  resumeRecovery?: () => void;
+  onRecoveryState?: () => void;
   signal?: AbortSignal;
   onEvent?: (event: YorozuEvent) => void;
   awaitsAnnouncement: boolean;
   text: string;
   onUpdate?: (text: string) => void;
-  resolve: (text: string) => void;
+  resolve: (text: string | undefined) => void;
   reject: (error: Error) => void;
 }
 
@@ -50,6 +56,9 @@ export interface StoredPendingTurn {
   childRunIds: string[];
   input: StoredTurnInput;
   state: "queued" | "active";
+  recoveryAttempts?: number;
+  recoveryPrompt?: string;
+  paused?: boolean;
 }
 export interface StoredTurnInput {
   text: string;
@@ -75,6 +84,7 @@ export interface OpenClawTurn {
   completionId?: string;
   userEventId?: string;
   seenEventIds?: Iterable<string>;
+  onRecoveryState?: () => void;
 }
 
 export interface OpenClawRunnerOptions {
@@ -168,6 +178,29 @@ export class OpenClawRunner {
     this.writePending(this.readPending().filter((turn) => turn.userEventId !== userEventId));
   }
 
+  retryRecovery(threadId: string, completionId: string): boolean {
+    const pending = [...this.#pending].find((turn) => turn.threadId === threadId &&
+      turn.completionId === completionId && turn.paused);
+    if (!pending) return false;
+    pending.recoveryAttempts = 0;
+    pending.paused = false;
+    this.storePending(pending);
+    pending.onRecoveryState?.();
+    pending.resumeRecovery?.();
+    return true;
+  }
+
+  dismissRecovery(threadId: string, completionId: string): boolean {
+    const pending = [...this.#pending].find((turn) => turn.threadId === threadId &&
+      turn.completionId === completionId && turn.paused);
+    if (!pending) return false;
+    this.clearPending(pending);
+    pending.resolve(undefined);
+    pending.resumeRecovery?.();
+    pending.onRecoveryState?.();
+    return true;
+  }
+
   /** Confirm the Gateway no longer has this exact run in flight before reporting Stopped. */
   async stopRun(sessionKey: string, runId: string): Promise<{ status: "stopped" | "completed"; text?: string } | undefined> {
     const client = await this.connect();
@@ -256,6 +289,9 @@ export class OpenClawRunner {
     const { pending, completed } = this.createPending({ ...turn, ...input,
       completionId: stored?.completionId ?? turn.completionId }, () => client, sessionKey,
       stored?.runId ?? randomUUID(), stored?.startedAt ?? Date.now());
+    pending.recoveryAttempts = stored?.recoveryAttempts ?? 0;
+    pending.recoveryPrompt = stored?.recoveryPrompt;
+    pending.paused = stored?.paused === true;
     if (!this.#pending.has(pending)) return completed;
     this.storePending(pending);
     void this.dispatch(pending, (connected) => { client = connected; });
@@ -270,36 +306,31 @@ export class OpenClawRunner {
       this.clearStored(stored);
       return "";
     }
-    let client!: Gateway;
-    while (!turn.signal?.aborted) {
-      try {
-        client = await this.connect();
-        if (turn.signal?.aborted) {
-          this.clearStored(stored);
-          return "";
-        }
-        break;
-      } catch {
-        if (turn.signal?.aborted) {
-          this.clearStored(stored);
-          return "";
-        }
-        await delay(this.#recoveryDelayMs);
-      }
-    }
-    if (turn.signal?.aborted) {
-      this.clearStored(stored);
-      return "";
-    }
+    let client: Gateway | undefined;
     const { pending, completed } = this.createPending({ ...turn, ...stored.input,
       completionId: stored.completionId, userEventId: stored.userEventId }, () => client,
     stored.sessionKey, stored.runId, stored.startedAt);
+    pending.recoveryAttempts = stored.recoveryAttempts ?? 0;
+    pending.recoveryPrompt = stored.recoveryPrompt;
+    pending.paused = stored.paused === true;
     pending.awaitsAnnouncement = stored.awaitsAnnouncement;
     for (const taskId of stored.taskIds) pending.tasks.set(taskId, "recovering");
     for (const runId of stored.childRunIds) pending.childRunIds.add(runId);
-    await client.request("sessions.subscribe", {}).catch(() => {});
-    if (turn.signal?.aborted || !this.#pending.has(pending)) return completed;
-    void this.recover(pending, client, () => this.sendStored(client, pending));
+    void (async () => {
+      while (this.#pending.has(pending)) {
+        try {
+          client = await this.connect();
+          if (!this.#pending.has(pending)) return;
+          await client.request("sessions.subscribe", {}).catch(() => {});
+          if (!this.#pending.has(pending)) return;
+          await this.recover(pending, client, () => this.sendStored(client!, pending));
+          return;
+        } catch {
+          // Gateway reachability is independent of the execution-recovery budget.
+          if (this.#pending.has(pending)) await delay(this.#recoveryDelayMs);
+        }
+      }
+    })();
     return completed;
   }
 
@@ -341,23 +372,32 @@ export class OpenClawRunner {
   }
 
   private async recover(pending: PendingTurn, client: Gateway, resend?: () => Promise<{ runId?: string }>): Promise<void> {
+    let missingSince: number | undefined;
     while (this.#pending.has(pending)) {
+      if (pending.paused) {
+        await new Promise<void>((resolve) => { pending.resumeRecovery = resolve; });
+        pending.resumeRecovery = undefined;
+        missingSince = undefined;
+        continue;
+      }
       try {
         const history = await client.request<History>("chat.history", {
           sessionKey: pending.sessionKey, limit: 1000, inputRunIds: [pending.runId],
         });
         if (!this.#pending.has(pending)) return;
         const snapshot = history.inFlightRun;
-        if (snapshot && snapshot.runId === pending.runId) {
-          this.restoreSnapshot(pending, snapshot);
+        if (snapshot) {
+          missingSince = undefined;
+          if (snapshot.runId === pending.runId) this.restoreSnapshot(pending, snapshot);
           await delay(this.#recoveryDelayMs);
           continue;
         }
         this.restoreHistory(pending, history.messages ?? []);
         const final = correlatedFinal(history.messages ?? [], pending);
         if (final.found) { await this.finish(client, pending, final.text, history.messages); return; }
-        const accepted = history.inputReceipts?.some((receipt) => receipt.runId === pending.runId);
-        if (resend && !accepted) {
+        const receipt = history.inputReceipts?.find((item) => item.runId === pending.runId);
+        if (resend && !receipt) {
+          missingSince = undefined;
           const result = await resend();
           if (!this.#pending.has(pending) || pending.signal?.aborted) {
             await client.request("chat.abort", {
@@ -370,7 +410,37 @@ export class OpenClawRunner {
           await delay(this.#recoveryDelayMs);
           continue;
         }
+        // A pending input still belongs to Gateway. A consumed input with no active run,
+        // final, or delegated announcement is the execution-loss case, after a quiet window.
+        if (receipt?.state === "consumed" && !pending.awaitsAnnouncement) {
+          missingSince ??= Date.now();
+          if (Date.now() - missingSince >= EXECUTION_LOST_MS) {
+            if (pending.recoveryAttempts >= 3) {
+              pending.paused = true;
+              this.storePending(pending);
+              pending.onRecoveryState?.();
+              continue;
+            }
+            pending.recoveryPrompt = recoveryPrompt(pending.input.text, history.messages ?? []);
+            pending.runId = randomUUID();
+            pending.recoveryAttempts += 1;
+            this.storePending(pending); // New id and prompt are durable before chat.send.
+            pending.onRecoveryState?.();
+            resend = () => this.sendStored(client, pending);
+            const result = await resend();
+            if (!this.#pending.has(pending) || pending.signal?.aborted) {
+              await client.request("chat.abort", { sessionKey: pending.sessionKey,
+                runId: result.runId ?? pending.runId }).catch(() => {});
+              return;
+            }
+            pending.runId = result.runId ?? pending.runId;
+            this.storePending(pending);
+            missingSince = undefined;
+            continue;
+          }
+        } else missingSince = undefined;
       } catch (error) {
+        missingSince = undefined;
         if (definitiveRejection(error)) {
           pending.resolve(failureText(error));
           return;
@@ -396,23 +466,25 @@ export class OpenClawRunner {
 
   private sendChat(client: Gateway, pending: PendingTurn): Promise<{ runId?: string }> {
     return client.request("chat.send", {
-      sessionKey: pending.sessionKey, message: pending.input.text,
+      sessionKey: pending.sessionKey, message: pending.recoveryPrompt ?? pending.input.text,
       attachments: gatewayAttachments(pending.input.attachments), thinking: pending.input.effort,
       deliver: false, idempotencyKey: pending.runId,
     });
   }
 
-  private createPending(turn: OpenClawTurn, client: () => Gateway | undefined, sessionKey: string, runId: string, startedAt: number): { pending: PendingTurn; completed: Promise<string> } {
+  private createPending(turn: OpenClawTurn, client: () => Gateway | undefined, sessionKey: string, runId: string, startedAt: number): { pending: PendingTurn; completed: Promise<string | undefined> } {
     let pending!: PendingTurn;
-    const completed = new Promise<string>((resolve, reject) => {
+    const completed = new Promise<string | undefined>((resolve, reject) => {
       pending = { threadId: turn.threadId, sessionKey, runId, startedAt, completionId: turn.completionId, userEventId: turn.userEventId, seen: new Set(turn.seenEventIds), calls: new Set(), tasks: new Map(), childRunIds: new Set(),
         input: { text: turn.text, ...(turn.model ? { model: turn.model } : {}), ...(turn.effort ? { effort: turn.effort } : {}), attachments: turn.attachments ?? [] },
+        recoveryAttempts: 0, paused: false, onRecoveryState: turn.onRecoveryState,
         signal: turn.signal, onEvent: turn.onEvent, awaitsAnnouncement: false, text: "", onUpdate: turn.onUpdate, resolve, reject };
       this.#pending.add(pending);
       const abort = () => {
         this.#pending.delete(pending);
         this.clearPending(pending);
         void client()?.request("chat.abort", { sessionKey, runId: pending.runId });
+        pending.resumeRecovery?.();
         resolve("");
       };
       turn.signal?.addEventListener("abort", abort, { once: true });
@@ -560,7 +632,8 @@ export class OpenClawRunner {
       if (!pending.awaitsAnnouncement || announcementMatches(runId, pending.childRunIds)) void this.finish(this.#client, pending, text);
       else if (text) pending.onUpdate?.(text);
     } else if (payload.state === "aborted") {
-      pending.resolve("");
+      // An unexpected backend abort can be continued after history confirms no run remains.
+      // A user Stop aborts the local signal and removes this pending turn instead.
     } else if (payload.state === "error") {
       const detail = typeof payload.errorMessage === "string" ? payload.errorMessage : "unknown error";
       pending.resolve("OpenClaw turn failed: " + detail);
@@ -634,10 +707,18 @@ export class OpenClawRunner {
           if (Array.isArray(args.plan)) this.progressCard(pending, `progress:${rawId}`, args.plan);
         }
       }
-      if (phase === "result") this.activity(pending, `result:${rawId}`, { kind: "tool_result", data: {
-        callId, ok: data.isError !== true,
-        output: activityText(data.result ?? data.output ?? "Completed"),
-      } });
+      if (phase === "result") {
+        const newSuccess = data.isError !== true && !pending.seen.has(`openclaw:${pending.runId}:result:${rawId}`);
+        this.activity(pending, `result:${rawId}`, { kind: "tool_result", data: {
+          callId, ok: data.isError !== true,
+          output: activityText(data.result ?? data.output ?? "Completed"),
+        } });
+        if (newSuccess && pending.recoveryAttempts > 0) {
+          pending.recoveryAttempts = 0;
+          this.storePending(pending);
+          pending.onRecoveryState?.();
+        }
+      }
     } else if (payload.stream === "reasoning" || (payload.stream === "lifecycle" && phase === "start")) {
       this.activity(pending, "thinking", { kind: "thought", data: { text: "Thinking…", transient: true } });
     } else if (payload.stream === "run_status") {
@@ -740,6 +821,9 @@ export class OpenClawRunner {
         (item.state === "queued" || item.state === "active") &&
         (item.userEventId === undefined || typeof item.userEventId === "string") &&
         (item.completionId === undefined || typeof item.completionId === "string") &&
+        (item.recoveryAttempts === undefined || Number.isSafeInteger(item.recoveryAttempts) && item.recoveryAttempts >= 0) &&
+        (item.recoveryPrompt === undefined || typeof item.recoveryPrompt === "string") &&
+        (item.paused === undefined || typeof item.paused === "boolean") &&
         (item.awaitsAnnouncement === undefined || typeof item.awaitsAnnouncement === "boolean") &&
         (item.taskIds === undefined || Array.isArray(item.taskIds) && item.taskIds.every((id: unknown) => typeof id === "string")) &&
         (item.childRunIds === undefined || Array.isArray(item.childRunIds) && item.childRunIds.every((id: unknown) => typeof id === "string")) &&
@@ -760,6 +844,8 @@ export class OpenClawRunner {
         awaitsAnnouncement: item.awaitsAnnouncement === true,
         taskIds: Array.isArray(item.taskIds) ? item.taskIds.filter((id: unknown): id is string => typeof id === "string") : [],
         childRunIds: Array.isArray(item.childRunIds) ? item.childRunIds.filter((id: unknown): id is string => typeof id === "string") : [],
+        recoveryAttempts: item.recoveryAttempts ?? 0,
+        paused: item.paused === true,
         input: storedInput(item.input),
         state: item.state === "queued" ? "queued" as const : "active" as const,
       }));
@@ -777,6 +863,8 @@ export class OpenClawRunner {
       ...(current?.userEventId ?? pending.userEventId ? { userEventId: current?.userEventId ?? pending.userEventId } : {}),
       awaitsAnnouncement: pending.awaitsAnnouncement, taskIds: [...pending.tasks.keys()],
       childRunIds: [...pending.childRunIds], input: pending.input, state: "active",
+      recoveryAttempts: pending.recoveryAttempts, paused: pending.paused,
+      ...(pending.recoveryPrompt ? { recoveryPrompt: pending.recoveryPrompt } : {}),
     };
     if (index >= 0) turns[index] = stored;
     else turns.push(stored);
@@ -858,7 +946,7 @@ function correlatedFinal(messages: unknown[], pending: Pick<PendingTurn, "runId"
     if (message.role !== "assistant") continue;
     const meta = record(message.__openclaw);
     const runId = string(meta.runId ?? message.runId);
-    const terminal = ["stop", "length", "error", "aborted"].includes(string(message.stopReason));
+    const terminal = ["stop", "length", "error"].includes(string(message.stopReason));
     const exact = pending.awaitsAnnouncement
       ? announcementMatches(runId, pending.childRunIds)
       : runId === pending.runId;
@@ -908,6 +996,15 @@ function messageText(value: unknown): string {
     const block = item as { type?: string; text?: unknown };
     return block.type === "text" && typeof block.text === "string" ? [block.text] : [];
   }).join("\n");
+}
+
+function recoveryPrompt(original: string, messages: unknown[]): string {
+  const context = messages.slice(-20).map((value) => {
+    const message = record(value);
+    return activityText({ role: message.role, name: message.name, toolCallId: message.toolCallId,
+      content: message.content });
+  }).join("\n").slice(-12_000);
+  return `The previous execution was interrupted after Gateway accepted this request. Continue the same task. Verify prior tool outcomes and external effects before repeating actions; finish only work still needed.\n\nOriginal request:\n${original}\n\nAvailable prior conversation and tool results:\n${context || "No prior execution details were available."}`;
 }
 
 function gatewayAttachments(attachments: MessageAttachment[] | undefined): object[] | undefined {
