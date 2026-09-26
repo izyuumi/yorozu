@@ -890,6 +890,13 @@ public struct ThreadListView<Destination: View>: View {
                     Section { archive(groups.archived) }
                 }
             } else {
+                Section {
+                    Text("Downloaded conversations only")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                }
                 if !threadResults.isEmpty {
                     Section("Threads") { rows(threadResults) }
                 }
@@ -1124,7 +1131,11 @@ public struct ThreadListView<Destination: View>: View {
                     description: Text("Start one and it will be here, on this phone and on your Mac.")
                 )
             } else {
-                ContentUnavailableView.search(text: query)
+                ContentUnavailableView(
+                    "No downloaded matches",
+                    systemImage: "magnifyingglass",
+                    description: Text("Downloaded conversations only")
+                )
             }
         }
     }
@@ -1275,6 +1286,13 @@ public struct ThreadSidebar: View {
                     Section { archive(groups.archived) }
                 }
             } else {
+                Section {
+                    Text("Downloaded conversations only")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                }
                 if !threadResults.isEmpty {
                     Section("Threads") { rows(threadResults) }
                 }
@@ -1449,7 +1467,11 @@ public struct ThreadSidebar: View {
                     description: Text("Start one and it will be here, on this Mac and on your phone.")
                 )
             } else {
-                ContentUnavailableView.search(text: query)
+                ContentUnavailableView(
+                    "No downloaded matches",
+                    systemImage: "magnifyingglass",
+                    description: Text("Downloaded conversations only")
+                )
             }
         }
     }
