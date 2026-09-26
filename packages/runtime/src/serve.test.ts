@@ -1083,6 +1083,24 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
   expect(states).toContain("native-error claude is not logged in");
 });
 
+test("rapid reply revisions converge to the latest partial and final answer", async () => {
+  const finish = Promise.withResolvers<void>();
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    for (let i = 0; i < 20; i++) turn.onUpdate?.(`draft ${i}`);
+    await finish.promise;
+    return { text: "finished" };
+  } };
+  const { send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "cc");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "cc"));
+  send({ kind: "message", data: { role: "user", text: "write" } }, "cc");
+  const partials = await eventsUntil((event) => event.kind === "message" && event.threadId === "cc" && event.data.text === "draft 19");
+  finish.resolve();
+  const seen = [...partials, ...await eventsUntil((event) => event.kind === "message" && event.threadId === "cc" && event.data.done === true)];
+  expect(seen.filter((event) => event.kind === "message" && event.data.role === "agent")
+    .map((event) => event.kind === "message" ? event.data.text : "")).toEqual(["draft 0", "draft 19", "finished"]);
+});
+
 test("client archive and restore reach OpenClaw in order before the canonical list changes", async () => {
   vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
   let finishArchive!: () => void;
@@ -2029,6 +2047,32 @@ test("two phones pair at once and see the same threads, events and deltas", asyn
     title: "Food",
     lastReadAt: 5_000_000_000_000,
   });
+});
+
+test("a burst of durable events reaches both phones without exhausting the relay", async () => {
+  relay = await startRelay(0);
+  const qrs = qrQueue();
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    for (let i = 0; i < 30; i++) turn.onActivity?.(`thought-${i}`, { kind: "thought", data: { text: `step ${i}` } });
+    return { text: "finished" };
+  } };
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`,
+    stateDir: mkdtempSync(join(tmpdir(), "yorozu-batch-serve-")), nativeRunners: { codex: runner },
+    log: (line) => { if (line.startsWith("QR ")) qrs.push(line.slice(3)); } });
+  const first = await pairPhone(relay.port, await qrs.next());
+  const second = await pairPhone(relay.port, await qrs.next());
+  await first.next("thread_list");
+  await second.next("thread_list");
+  first.send("cc", { kind: "thread_create", data: { agent: "codex", cwd: proj } });
+  await first.next("thread_list");
+  await second.next("thread_list");
+  first.send("cc", { kind: "message", data: { role: "user", text: "work" } });
+  for (const phone of [first, second]) {
+    expect(await phone.next("message")).toMatchObject({ data: { role: "user", text: "work" } });
+    const seen: YorozuEvent[] = [];
+    expect(await phone.next("message", seen)).toMatchObject({ data: { role: "agent", text: "finished", done: true } });
+    expect(seen.filter((event) => event.kind === "thought")).toHaveLength(30);
+  }
 });
 
 test("a newly paired phone fetches old history only for an opened thread", async () => {
