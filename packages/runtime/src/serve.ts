@@ -55,6 +55,7 @@ import {
 } from "@yorozu/shared";
 import WebSocket from "ws";
 import { UpdateGate } from "./update-gate.js";
+import { AttachmentUploads } from "./attachment-upload.js";
 import { MAIN_AGENT } from "./agents.js";
 import {
   cardFor,
@@ -435,6 +436,9 @@ export interface Sidecar {
 export function serve(options: ServeOptions = {}): Sidecar {
   const relayUrl = options.relayUrl ?? env.YOROZU_RELAY_URL ?? "wss://relay.yumi.to";
   const dir = options.stateDir ?? env.YOROZU_STATE_DIR ?? DEFAULT_STATE_DIR;
+  const attachmentUploads = new AttachmentUploads(dir);
+  const assemblingAttachments = new Set<string>();
+  let assemblyTail: Promise<void> = Promise.resolve();
   // Memory and the schedule tools resolve their own paths from the environment:
   // publish the choice so an explicit `stateDir` moves the whole runtime, not just the keys.
   env.YOROZU_STATE_DIR = dir;
@@ -695,7 +699,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const traceEvent = (event: YorozuEvent): boolean =>
     event.kind === "thought" || event.kind === "tool_call" || event.kind === "tool_result" ||
     event.kind === "progress_card";
-  const phoneTrace = (event: YorozuEvent): YorozuEvent => {
+  const phoneTrace = (event: YorozuEvent, canDownload = true): YorozuEvent => {
+    if (event.kind === "message" && event.data.attachments?.length &&
+        Buffer.byteLength(JSON.stringify(event)) > (canDownload ? 256 : 450) * 1024) {
+      return { ...event, data: { ...event.data, attachments: event.data.attachments.map((attachment) => {
+        const bytes = Buffer.from(attachment.data, "base64");
+        // Legacy clients discard unknown fields when caching. Keep descriptor in `data` so an
+        // upgraded client can hydrate the same event without resetting its history cursor.
+        const hash = createHash("sha256").update(bytes).digest("hex");
+        return { name: attachment.name, mime: attachment.mime,
+          data: canDownload ? "" : `yorozu-deferred-v1:${bytes.length}:${hash}`, sizeBytes: bytes.length,
+          sha256: hash };
+      }) } };
+    }
     if (!traceEvent(event) || Buffer.byteLength(JSON.stringify(event)) <= 32 * 1024) return event;
     let preview: YorozuEvent;
     switch (event.kind) {
@@ -1144,7 +1160,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   /** A bounded replay page. An explicit thread request includes its pre-pairing history. */
   const syncDelta = (lastSeen: Record<string, string>, pairedAt = 0, threadId?: string,
     includeApprovalStatus = true, focusThreadId?: string, includeCurrent = true,
-    replayBytes = SYNC_PAGE_BYTES, replayEvents = SYNC_LIMIT, forPhone = false): YorozuEvent[] => {
+    replayBytes = SYNC_PAGE_BYTES, replayEvents = SYNC_LIMIT, phoneCanDownload: boolean | null = null): YorozuEvent[] => {
     const events: YorozuEvent[] = [];
     const cards: YorozuEvent[] = [];
     const selected = listThreads(dir).filter((thread) => threadId ? thread.id === threadId : !thread.archived);
@@ -1196,7 +1212,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         (event) => includeApprovalStatus || event.kind !== "approval_status");
       if (page.length === SYNC_LIMIT) more = true;
       for (const stored of page) {
-        const event = forPhone ? phoneTrace(stored) : stored;
+        const event = phoneCanDownload === null ? stored : phoneTrace(stored, phoneCanDownload);
         const size = Buffer.byteLength(JSON.stringify(event));
         if (events.length >= replayEvents ||
           ((events.length > 0 || current.length > 0) && bytes + size > replayBytes)) {
@@ -1807,7 +1823,104 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * is a command or a request.
    */
   const activeSearchRequests = new Map<string, string>();
+  const downloadFiles = new Map<string, { bytes: Buffer; sha256: string }>();
+  let downloadCacheBytes = 0;
   function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0, from?: string, localDevice?: string): void {
+    if (event.kind === "attachment_progress" || event.kind === "attachment_download_chunk") return;
+    if (event.kind === "attachment_download_request") {
+      const compatibility = from ? devices.get(from)?.compatibility : undefined;
+      if (from && (compatibility?.state !== "compatible" ||
+          !compatibility.capabilities.includes("attachment-chunks-v1"))) return;
+      const { messageId, index, offset } = event.data;
+      if (typeof messageId !== "string" || !messageId || messageId.length > 128 ||
+          !Number.isSafeInteger(index) || index < 0 || index >= 10 ||
+          !Number.isSafeInteger(offset) || offset < 0 || offset > 5 * 1024 * 1024 ||
+          typeof event.threadId !== "string" || !event.threadId || event.threadId.length > 128) return;
+      const unavailable = (): void => reply({ ...control({ kind: "attachment_download_chunk", data: {
+        messageId, index, offset, totalBytes: 0, data: "", sha256: "", reason: "attachment-unavailable",
+      } }), threadId: event.threadId });
+      const key = `${event.threadId}\0${messageId}\0${index}`;
+      let file = downloadFiles.get(key);
+      if (!file) {
+        const stored = readThreadEvents(event.threadId, dir).find((item) =>
+          item.kind === "message" && item.id === messageId);
+        if (stored?.kind !== "message") return unavailable();
+        const attachment = stored.data.attachments?.[index];
+        if (!attachment) return unavailable();
+        const bytes = Buffer.from(attachment.data, "base64");
+        if (bytes.length > 5 * 1024 * 1024) return unavailable();
+        file = { bytes, sha256: createHash("sha256").update(bytes).digest("hex") };
+        downloadFiles.set(key, file);
+        downloadCacheBytes += bytes.length;
+        while (downloadCacheBytes > 20 * 1024 * 1024) {
+          const oldest = downloadFiles.keys().next().value;
+          if (!oldest) break;
+          downloadCacheBytes -= downloadFiles.get(oldest)!.bytes.length;
+          downloadFiles.delete(oldest);
+        }
+      } else {
+        downloadFiles.delete(key);
+        downloadFiles.set(key, file);
+      }
+      if (offset > file.bytes.length) return unavailable();
+      reply({ ...control({ kind: "attachment_download_chunk", data: { messageId, index, offset,
+        totalBytes: file.bytes.length, data: file.bytes.subarray(offset, offset + 256 * 1024).toString("base64"),
+        sha256: file.sha256 } }), threadId: event.threadId });
+      return;
+    }
+    if (event.kind === "attachment_chunk" || event.kind === "attachment_commit") {
+      const compatibility = from ? devices.get(from)?.compatibility : undefined;
+      if (from && (compatibility?.state !== "compatible" ||
+          !compatibility.capabilities.includes("attachment-chunks-v1"))) return;
+      // A local socket gets a new connection ID after reconnect; the device identity does not.
+      const source = from ?? `local:${event.agentId}`;
+      if (event.kind === "attachment_chunk") {
+        if (typeof event.data !== "object" || event.data === null) return;
+        void attachmentUploads.chunk(source, event.threadId, event.data).then((progress) => {
+          reply(control({ kind: "attachment_progress", data: {
+            requestId: event.id, messageId: event.data.messageId, index: event.data.index, ...progress,
+          } }));
+        });
+      } else {
+        if (typeof event.data !== "object" || event.data === null ||
+            typeof event.data.text !== "string" || Buffer.byteLength(event.data.text) > 256 * 1024 ||
+            !Number.isSafeInteger(event.ts) || !Number.isSafeInteger(event.data.admissionDeadline) ||
+            event.data.admissionDeadline !== event.ts + ADMISSION_LIFE_MS) {
+          reply(control({ kind: "admission_status", data: {
+            eventId: event.id, status: "rejected", reason: "invalid-attachment-commit",
+          } }));
+          return;
+        }
+        const assemblyKey = `${source}\0${event.id}`;
+        if (assemblingAttachments.has(assemblyKey)) return;
+        if (assemblingAttachments.size >= 8) {
+          reply(control({ kind: "attachment_progress", data: {
+            requestId: event.id, messageId: event.id, index: 0, nextOffset: 0,
+            reason: "attachment-busy",
+          } }));
+          return;
+        }
+        assemblingAttachments.add(assemblyKey);
+        const assembled = assemblyTail.then(() => attachmentUploads.assemble(source, event.id, event.threadId,
+          event.data.attachments, event.data.admissionDeadline));
+        assemblyTail = assembled.then(() => {}, () => {});
+        void assembled.then((result) => {
+          if (result.reason) {
+            reply(control({ kind: "admission_status", data: { eventId: event.id, status: "rejected", reason: result.reason } }));
+          } else if (result.missing) {
+            reply(control({ kind: "attachment_progress", data: {
+              requestId: event.id, messageId: event.id, ...result.missing,
+            } }));
+          } else if (result.attachments) {
+            handleEvent({ ...event, kind: "message", data: { role: "user", text: event.data.text,
+              attachments: result.attachments, admissionDeadline: event.data.admissionDeadline } },
+              reply, pairedAt, from, localDevice);
+          }
+        }).catch((error) => state(`attachment-commit-error ${String(error)}`))
+          .finally(() => assemblingAttachments.delete(assemblyKey));
+      }
+      return;
+    }
     if (event.kind === "thread_search_result") return;
     if (event.kind === "thread_search_request") {
       const { requestId, query, offset = 0, lineOffset = 0 } = event.data;
@@ -2280,7 +2393,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
         const responses = syncDelta(event.data.lastSeen, pairedAt, event.data.threadId,
           !from || compatibility?.state === "compatible" && compatibility.capabilities.includes("offline-approval-v1"),
           event.data.focusThreadId, event.data.includeCurrent !== false,
-          hinted ? 32 * 1024 : SYNC_PAGE_BYTES, hinted ? 32 : SYNC_LIMIT, !!from);
+          hinted ? 32 * 1024 : SYNC_PAGE_BYTES, hinted ? 32 : SYNC_LIMIT,
+          from ? compatibility?.state === "compatible" &&
+            compatibility.capabilities.includes("attachment-chunks-v1") : null);
         if (hinted && event.data.threadId === undefined &&
           responses.some((response) => response.kind === "sync_delta" && !response.data.more))
           hintedClients.delete(from!);
@@ -2508,6 +2623,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
           ...(known.compatibility?.state === "update-required" ? { peerInfoError: known.compatibility.reason } : {}),
         } };
       }
+      if (event.kind === "message") event = phoneTrace(event,
+        known.compatibility?.state === "compatible" &&
+        known.compatibility.capabilities.includes("attachment-chunks-v1"));
       // A hello carries no format version. Greet both released clients; each ignores the box
       // it cannot open. Once one answers, send only its format. Modern goes first so a client
       // able to read both never settles on the older format.

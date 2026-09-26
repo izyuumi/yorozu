@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1908,6 +1908,61 @@ async function pairPhone(port: number, qr: QrPayload) {
     },
   };
 }
+
+test("large historical attachment crosses relay as preview and bounded downloads", async () => {
+  relay = await startRelay(0);
+  const qrs = qrQueue();
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-download-"));
+  createThread("Archive", dir, "archive");
+  const bytes = Buffer.alloc(700_000, 42);
+  appendThreadEvent({ id: "old-file", threadId: "archive", ts: 1, agentId: "phone",
+    kind: "message", data: { role: "user", text: "photo", attachments: [{ name: "photo.png",
+      mime: "image/png", data: bytes.toString("base64") }] } }, dir);
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir,
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m",
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => sse("pong")) }),
+    log: (line) => { if (line.startsWith("QR ")) qrs.push(line.slice(3)); } });
+  const phone = await pairPhone(relay.port, await qrs.next());
+  await phone.next("thread_list");
+  phone.send("", { kind: "thread_list", data: { threads: [], peerInfo: localPeerInfo("0.3.0") } });
+  await phone.next("thread_list");
+  phone.send("archive", { kind: "sync_request", data: { lastSeen: {}, threadId: "archive" } });
+  const delta = await phone.next("sync_delta");
+  const preview = delta.kind === "sync_delta" ? delta.data.events.find((item) => item.id === "old-file") : undefined;
+  expect(preview).toMatchObject({ kind: "message", data: { attachments: [{ name: "photo.png",
+    data: "", sizeBytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") }] } });
+  const received: Buffer[] = [];
+  for (let offset = 0; offset < bytes.length; offset += 256 * 1024) {
+    phone.send("archive", { kind: "attachment_download_request", data: { messageId: "old-file", index: 0, offset } });
+    const chunk = await phone.next("attachment_download_chunk");
+    expect(chunk).toMatchObject({ data: { messageId: "old-file", index: 0, offset, totalBytes: bytes.length } });
+    if (chunk.kind === "attachment_download_chunk") received.push(Buffer.from(chunk.data.data, "base64"));
+  }
+  expect(Buffer.concat(received)).toEqual(bytes);
+  const oldPhone = await pairPhone(relay.port, await qrs.next());
+  await oldPhone.next("thread_list");
+  const oldInfo = localPeerInfo("0.3.0");
+  oldInfo.capabilities = oldInfo.capabilities.filter((capability) => capability !== "attachment-chunks-v1");
+  oldPhone.send("", { kind: "thread_list", data: { threads: [], peerInfo: oldInfo } });
+  await oldPhone.next("thread_list");
+  oldPhone.send("archive", { kind: "sync_request", data: { lastSeen: {}, threadId: "archive" } });
+  const oldDelta = await oldPhone.next("sync_delta");
+  const oldPreview = oldDelta.kind === "sync_delta" ? oldDelta.data.events.find((item) => item.id === "old-file") : undefined;
+  expect(oldPreview).toMatchObject({ kind: "message", data: { attachments: [{
+    data: `yorozu-deferred-v1:${bytes.length}:${createHash("sha256").update(bytes).digest("hex")}`,
+  }] } });
+  const local = await new Promise<ReturnType<typeof createConnection>>((resolve, reject) => {
+    const socket = createConnection(localSocketPath(dir));
+    socket.once("connect", () => resolve(socket));
+    socket.once("error", reject);
+  });
+  local.write(`${JSON.stringify({ id: "live-file", threadId: "archive", ts: Date.now(), agentId: "mac",
+    kind: "message", data: { role: "user", text: "new photo", attachments: [{ name: "new.png",
+      mime: "image/png", data: bytes.toString("base64") }] } })}\n`);
+  const live = await phone.next("message");
+  expect(live).toMatchObject({ id: "live-file", data: { attachments: [{ data: "", sizeBytes: bytes.length }] } });
+  local.destroy();
+});
 
 test("old relay terminal requests are refused without creating sessions", async () => {
   relay = await startRelay(0);

@@ -24,9 +24,8 @@ export interface EventBase {
 }
 
 /**
- * A file sent along with a message: a photo, a screenshot, a PDF. The bytes travel inline
- * rather than as a reference, because the relay stores nothing — a link to it would have
- * nowhere to point.
+ * A file carried in the durable client outbox and host message history. New peers stage its
+ * bytes over encrypted chunks before the host admits the complete message.
  */
 export interface MessageAttachment {
   /** Original file name. What a text-only model is told was attached. */
@@ -35,16 +34,50 @@ export interface MessageAttachment {
   mime: string;
   /** The file itself, standard base64 with padding. */
   data: string;
+  /** Present when bytes are fetched separately from host history. */
+  sizeBytes?: number;
+  sha256?: string;
 }
 
 /**
- * Largest attachment a client may send, decoded. A message is sealed, framed and held whole in
- * memory at both ends and at the relay, so the cap is about what that costs rather than a limit
- * any provider imposes.
+ * Largest attachment a client may send, decoded. Client cache and host history still hold the
+ * full message; the relay sees only bounded encrypted chunks.
  */
 export const ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
 export const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 export const MESSAGE_ATTACHMENTS_MAX_BYTES = 20 * 1024 * 1024;
+
+/** One authenticated upload frame stays well below the relay's 1 MiB frame ceiling. */
+export const ATTACHMENT_CHUNK_BYTES = 256 * 1024;
+
+export interface AttachmentDescriptor { name: string; mime: string; bytes: number; sha256: string }
+export interface AttachmentChunkData {
+  messageId: string;
+  index: number;
+  offset: number;
+  totalBytes: number;
+  sha256: string;
+  deadline: number;
+  data: string;
+}
+export interface AttachmentProgressData {
+  requestId: string;
+  messageId: string;
+  index: number;
+  nextOffset: number;
+  reason?: string;
+}
+export interface AttachmentCommitData {
+  text: string;
+  attachments: AttachmentDescriptor[];
+  admissionDeadline: number;
+}
+
+export interface AttachmentDownloadRequestData { messageId: string; index: number; offset: number }
+export interface AttachmentDownloadChunkData {
+  messageId: string; index: number; offset: number; totalBytes: number;
+  data: string; sha256: string; reason?: string;
+}
 
 export interface MessageData {
   role: "user" | "agent";
@@ -91,6 +124,8 @@ export function attachmentsWithinLimits(attachments: readonly MessageAttachment[
   if (attachments.length > MAX_ATTACHMENTS_PER_MESSAGE) return false;
   let total = 0;
   for (const attachment of attachments) {
+    if (typeof attachment.data !== "string" || attachment.data.length > Math.ceil(ATTACHMENT_MAX_BYTES / 3) * 4 ||
+        Buffer.from(attachment.data, "base64").toString("base64") !== attachment.data) return false;
     const bytes = attachmentBytes(attachment);
     if (bytes > ATTACHMENT_MAX_BYTES) return false;
     total += bytes;
@@ -656,6 +691,11 @@ export type EventPayload =
   | { kind: "sync_delta"; data: SyncDeltaData }
   | { kind: "thread_search_request"; data: ThreadSearchRequestData }
   | { kind: "thread_search_result"; data: ThreadSearchResultData }
+  | { kind: "attachment_chunk"; data: AttachmentChunkData }
+  | { kind: "attachment_progress"; data: AttachmentProgressData }
+  | { kind: "attachment_commit"; data: AttachmentCommitData }
+  | { kind: "attachment_download_request"; data: AttachmentDownloadRequestData }
+  | { kind: "attachment_download_chunk"; data: AttachmentDownloadChunkData }
   | { kind: "device_list"; data: DeviceListData }
   | { kind: "device_remove"; data: DeviceRemoveData }
   | { kind: "receipt"; data: ReceiptData }

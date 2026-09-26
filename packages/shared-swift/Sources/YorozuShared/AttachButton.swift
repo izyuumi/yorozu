@@ -440,7 +440,7 @@ private struct StagedThumbnail: View {
             .accessibilityLabel(
                 attachment.isImage
                     ? "Attached image, \(attachment.name)"
-                    : "Attached file, \(attachment.name)"
+                    : "Attached file, \(attachment.name), \(attachment.size)"
             )
     }
 
@@ -456,6 +456,9 @@ private struct StagedThumbnail: View {
                     .truncationMode(.middle)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 2)
+                Text(attachment.size)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
             .frame(width: Self.side, height: Self.side)
             .background(.quaternary)

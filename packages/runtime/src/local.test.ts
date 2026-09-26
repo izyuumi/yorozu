@@ -667,6 +667,52 @@ test("one turn puts one agent message on the socket when the reply did not strea
   expect(replies[0]).toMatchObject({ data: { role: "agent", text: "pong", done: true } });
 });
 
+test("chunked attachment reaches one admitted turn only after the final commit", async () => {
+  const { dir, path, fetchMock } = await localSidecar();
+  socket = await connectLocal(path);
+  const events = reader(socket);
+  await events.nextOf("thread_list");
+  send(socket, "t1", { kind: "thread_create", data: { title: "Upload" } });
+  await events.nextOf("thread_list");
+  const bytes = Buffer.alloc(520_000, 7);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const created = Date.now();
+  const deadline = created + 30 * 60_000;
+  const messageId = "chunked-message";
+  for (let offset = 0; offset < bytes.length; offset += 256 * 1024) {
+    const id = send(socket, "t1", { kind: "attachment_chunk", data: {
+      messageId, index: 0, offset, totalBytes: bytes.length, sha256, deadline,
+      data: bytes.subarray(offset, offset + 256 * 1024).toString("base64"),
+    } });
+    const progress = await events.nextOf("attachment_progress");
+    expect(progress.kind === "attachment_progress" && progress.data).toMatchObject({
+      requestId: id, messageId, index: 0, nextOffset: Math.min(offset + 256 * 1024, bytes.length),
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  }
+  const commit = { id: messageId, threadId: "t1", ts: created, agentId: "mac",
+    kind: "attachment_commit", data: { text: "inspect file", admissionDeadline: deadline,
+      attachments: [{ name: "image.png", mime: "image/png", bytes: bytes.length, sha256 }] } };
+  socket.write(`${JSON.stringify(commit)}\n`);
+  for (;;) {
+    const receipt = await events.nextOf("receipt");
+    if (receipt.kind === "receipt" && receipt.data.eventId === messageId) break;
+  }
+  await events.nextOf("message");
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  const stored = readThreadEvents("t1", dir).filter((event) => event.id === messageId);
+  expect(stored).toHaveLength(1);
+  expect(stored[0]).toMatchObject({ data: { role: "user", text: "inspect file",
+    attachments: [{ name: "image.png", mime: "image/png", data: bytes.toString("base64") }] } });
+  socket.write(`${JSON.stringify(commit)}\n`);
+  for (;;) {
+    const receipt = await events.nextOf("receipt");
+    if (receipt.kind === "receipt" && receipt.data.eventId === messageId) break;
+  }
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(readThreadEvents("t1", dir).filter((event) => event.id === messageId)).toHaveLength(1);
+});
+
 test("ask_user raises a question card and the answer is what the tool call returns", async () => {
   const { path } = await localSidecar([
     () => toolTurn("ask_user", { question: "Which one?", options: ["tea", "coffee"], allowOther: true }),

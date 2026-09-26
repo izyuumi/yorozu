@@ -73,6 +73,11 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case syncDelta = "sync_delta"
         case threadSearchRequest = "thread_search_request"
         case threadSearchResult = "thread_search_result"
+        case attachmentChunk = "attachment_chunk"
+        case attachmentProgress = "attachment_progress"
+        case attachmentCommit = "attachment_commit"
+        case attachmentDownloadRequest = "attachment_download_request"
+        case attachmentDownloadChunk = "attachment_download_chunk"
         case deviceList = "device_list"
         case deviceRemove = "device_remove"
         case receipt
@@ -116,6 +121,11 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case syncDelta(SyncDeltaData)
         case threadSearchRequest(ThreadSearchRequestData)
         case threadSearchResult(ThreadSearchResultData)
+        case attachmentChunk(AttachmentChunkData)
+        case attachmentProgress(AttachmentProgressData)
+        case attachmentCommit(AttachmentCommitData)
+        case attachmentDownloadRequest(AttachmentDownloadRequestData)
+        case attachmentDownloadChunk(AttachmentDownloadChunkData)
         case deviceList(DeviceListData)
         case deviceRemove(DeviceRemoveData)
         case receipt(ReceiptData)
@@ -159,6 +169,11 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .syncDelta: .syncDelta
             case .threadSearchRequest: .threadSearchRequest
             case .threadSearchResult: .threadSearchResult
+            case .attachmentChunk: .attachmentChunk
+            case .attachmentProgress: .attachmentProgress
+            case .attachmentCommit: .attachmentCommit
+            case .attachmentDownloadRequest: .attachmentDownloadRequest
+            case .attachmentDownloadChunk: .attachmentDownloadChunk
             case .deviceList: .deviceList
             case .deviceRemove: .deviceRemove
             case .receipt: .receipt
@@ -217,6 +232,11 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .syncDelta: payload = .syncDelta(try c.decode(SyncDeltaData.self, forKey: .data))
         case .threadSearchRequest: payload = .threadSearchRequest(try c.decode(ThreadSearchRequestData.self, forKey: .data))
         case .threadSearchResult: payload = .threadSearchResult(try c.decode(ThreadSearchResultData.self, forKey: .data))
+        case .attachmentChunk: payload = .attachmentChunk(try c.decode(AttachmentChunkData.self, forKey: .data))
+        case .attachmentProgress: payload = .attachmentProgress(try c.decode(AttachmentProgressData.self, forKey: .data))
+        case .attachmentCommit: payload = .attachmentCommit(try c.decode(AttachmentCommitData.self, forKey: .data))
+        case .attachmentDownloadRequest: payload = .attachmentDownloadRequest(try c.decode(AttachmentDownloadRequestData.self, forKey: .data))
+        case .attachmentDownloadChunk: payload = .attachmentDownloadChunk(try c.decode(AttachmentDownloadChunkData.self, forKey: .data))
         case .deviceList: payload = .deviceList(try c.decode(DeviceListData.self, forKey: .data))
         case .deviceRemove: payload = .deviceRemove(try c.decode(DeviceRemoveData.self, forKey: .data))
         case .receipt: payload = .receipt(try c.decode(ReceiptData.self, forKey: .data))
@@ -271,6 +291,11 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .syncDelta(let d): try c.encode(d, forKey: .data)
         case .threadSearchRequest(let d): try c.encode(d, forKey: .data)
         case .threadSearchResult(let d): try c.encode(d, forKey: .data)
+        case .attachmentChunk(let d): try c.encode(d, forKey: .data)
+        case .attachmentProgress(let d): try c.encode(d, forKey: .data)
+        case .attachmentCommit(let d): try c.encode(d, forKey: .data)
+        case .attachmentDownloadRequest(let d): try c.encode(d, forKey: .data)
+        case .attachmentDownloadChunk(let d): try c.encode(d, forKey: .data)
         case .deviceList(let d): try c.encode(d, forKey: .data)
         case .deviceRemove(let d): try c.encode(d, forKey: .data)
         case .receipt(let d): try c.encode(d, forKey: .data)
@@ -280,14 +305,108 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
     }
 }
 
-/// A file sent along with a message: a photo, a screenshot, a PDF. The bytes travel inline
-/// rather than as a reference, because the relay stores nothing — a link to it would have
-/// nowhere to point.
+/// A file kept with the durable message; new peers transfer its bytes in encrypted chunks
+/// before the host admits the complete message.
+public struct AttachmentDescriptor: Codable, Equatable, Sendable {
+    public var name: String
+    public var mime: String
+    public var bytes: Int
+    public var sha256: String
+
+    public init(name: String, mime: String, bytes: Int, sha256: String) {
+        self.name = name
+        self.mime = mime
+        self.bytes = bytes
+        self.sha256 = sha256
+    }
+}
+
+public struct AttachmentChunkData: Codable, Equatable, Sendable {
+    public var messageId: String
+    public var index: Int
+    public var offset: Int
+    public var totalBytes: Int
+    public var sha256: String
+    public var deadline: Int
+    public var data: String
+
+    public init(messageId: String, index: Int, offset: Int, totalBytes: Int, sha256: String,
+                deadline: Int, data: String) {
+        self.messageId = messageId
+        self.index = index
+        self.offset = offset
+        self.totalBytes = totalBytes
+        self.sha256 = sha256
+        self.deadline = deadline
+        self.data = data
+    }
+}
+
+public struct AttachmentProgressData: Codable, Equatable, Sendable {
+    public var requestId: String
+    public var messageId: String
+    public var index: Int
+    public var nextOffset: Int
+    public var reason: String?
+
+    public init(requestId: String, messageId: String, index: Int, nextOffset: Int, reason: String? = nil) {
+        self.requestId = requestId
+        self.messageId = messageId
+        self.index = index
+        self.nextOffset = nextOffset
+        self.reason = reason
+    }
+}
+
+public struct AttachmentCommitData: Codable, Equatable, Sendable {
+    public var text: String
+    public var attachments: [AttachmentDescriptor]
+    public var admissionDeadline: Int
+
+    public init(text: String, attachments: [AttachmentDescriptor], admissionDeadline: Int) {
+        self.text = text
+        self.attachments = attachments
+        self.admissionDeadline = admissionDeadline
+    }
+}
+
+public struct AttachmentDownloadRequestData: Codable, Equatable, Sendable {
+    public var messageId: String
+    public var index: Int
+    public var offset: Int
+    public init(messageId: String, index: Int, offset: Int) {
+        self.messageId = messageId
+        self.index = index
+        self.offset = offset
+    }
+}
+
+public struct AttachmentDownloadChunkData: Codable, Equatable, Sendable {
+    public var messageId: String
+    public var index: Int
+    public var offset: Int
+    public var totalBytes: Int
+    public var data: String
+    public var sha256: String
+    public var reason: String?
+    public init(messageId: String, index: Int, offset: Int, totalBytes: Int,
+                data: String, sha256: String, reason: String? = nil) {
+        self.messageId = messageId
+        self.index = index
+        self.offset = offset
+        self.totalBytes = totalBytes
+        self.data = data
+        self.sha256 = sha256
+        self.reason = reason
+    }
+}
+
 public struct MessageAttachment: Codable, Equatable, Sendable {
-    /// Largest attachment this device will send, decoded. A message is sealed, framed and held
-    /// whole in memory at both ends and at the relay, so the cap is about what that costs.
+    /// Largest attachment this device will send, decoded. The cache and host history retain
+    /// the whole message; relay frames stay bounded by encrypted chunk size.
     /// Mirrors `ATTACHMENT_MAX_BYTES` in packages/shared/src/events.ts.
     public static let maxBytes = 5 * 1024 * 1024
+    public static let chunkBytes = 256 * 1024
     public static let maxCount = 10
     public static let maxTotalBytes = 20 * 1024 * 1024
     public static let maxPerMessage = maxCount
@@ -305,11 +424,15 @@ public struct MessageAttachment: Codable, Equatable, Sendable {
     public var mime: String
     /// The file itself, standard base64 with padding.
     public var data: String
+    public var sizeBytes: Int?
+    public var sha256: String?
 
-    public init(name: String, mime: String, data: String) {
+    public init(name: String, mime: String, data: String, sizeBytes: Int? = nil, sha256: String? = nil) {
         self.name = name
         self.mime = mime
         self.data = data
+        self.sizeBytes = sizeBytes
+        self.sha256 = sha256
     }
 
     /// Wraps raw bytes, refusing anything over ``maxBytes`` rather than sending a frame the
@@ -322,7 +445,20 @@ public struct MessageAttachment: Codable, Equatable, Sendable {
 
     /// The bytes back, or nil if what arrived was not base64 after all.
     public var bytes: Data? { Data(base64Encoded: data) }
-    public var byteCount: Int { bytes?.count ?? 0 }
+    private var legacyDescriptor: (bytes: Int, hash: String)? {
+        let parts = data.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 3, parts[0] == "yorozu-deferred-v1",
+              let size = Int(parts[1]), size > 0, size <= Self.maxBytes,
+              parts[2].utf8.count == 64,
+              parts[2].utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return nil }
+        return (size, String(parts[2]))
+    }
+    public var deferredByteCount: Int? { sizeBytes ?? legacyDescriptor?.bytes }
+    public var deferredSHA256: String? { sha256 ?? legacyDescriptor?.hash }
+    public var byteCount: Int { deferredByteCount ?? bytes?.count ?? 0 }
+    public var isDeferred: Bool {
+        ((data.isEmpty && (sizeBytes ?? 0) > 0) || legacyDescriptor != nil) && deferredSHA256 != nil
+    }
 
     public var isImage: Bool { mime.hasPrefix("image/") }
 }
