@@ -422,16 +422,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
-            // A quit the user asked for has to stick. A crash never gets here, so the
-            // watchdog remains installed and relaunches it. The next manual/login launch
-            // installs the watchdog again.
-            //
-            // Sparkle's relaunch is not a quit: it is about to start the new build itself, and
-            // if that fails the watchdog is exactly who should notice.
+            // Only a menu quit removes supervision in background-only mode. Sparkle's
+            // relaunch and session shutdown keep it for recovery at the next login.
             if Updates.installing {
                 Log.write("quit: installing an update, watchdog left running")
-            } else {
+            } else if explicitQuitRequested || !HostWindowMode.active {
                 Watchdog.remove()
+            } else {
+                Log.write("quit: system termination, watchdog left running")
             }
             Sidecar.shared.stop()
             // Quitting is not the user opting out: keep the preference for the next launch.
@@ -497,7 +495,7 @@ struct YorozuMacApp: App {
 
         Window("Quick Chat", id: Self.quickChatWindow) {
             Group {
-                if HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost) {
+                if session.role == .host {
                     QuickChatView()
                 } else {
                     Color.clear.task { dismissWindow(id: Self.quickChatWindow) }
@@ -507,7 +505,7 @@ struct YorozuMacApp: App {
             .environment(\.onPairingLink) { MacChatSession.shared.handlePairingLink($0) }
             .onDisappear { Speaker.shared.stop() }
         }
-        .defaultSize(width: 560, height: 660)
+        .defaultSize(width: QuickChatView.initialWidth, height: QuickChatView.initialHeight)
         .commands { HostQuitCommands(backgroundOnly: HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost)) }
 
         // The status item is now the way to that window rather than the place the chat lives.
@@ -533,8 +531,7 @@ struct YorozuMacApp: App {
                         ForEach(attention) { item in
                             Button(item.label) {
                                 HostWindowMode.routeQuickChat(threadID: item.threadID,
-                                    eventID: item.eventID,
-                                    kind: item.id.hasPrefix("failure:") ? "failure" : "approval")
+                                    eventID: item.eventID, kind: item.kind)
                             }
                         }
                         if Updates.pending.failure != nil {
@@ -578,9 +575,7 @@ struct YorozuMacApp: App {
                     if HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost)
                         && attentionIndicator
                         && (!MacAttentionItem.pending(in: session.model).isEmpty || Updates.pending.failure != nil) {
-                        Circle().fill(YorozuPalette.vermilion)
-                            .frame(width: 6, height: 6)
-                            .accessibilityHidden(true)
+                        HostAttentionIndicator()
                     }
                 }
                 .accessibilityLabel((session.role == .client ? session.hosts.sessions.contains { $0.model.canDeliver } : session.model.state == .paired) ? "Yorozu, connected" : "Yorozu, not connected")
@@ -593,7 +588,8 @@ struct YorozuMacApp: App {
                     HostWindowMode.openQuickChat = { openQuickChat() }
                     if HostWindowMode.pendingExplicitOpen {
                         HostWindowMode.pendingExplicitOpen = false
-                        HostWindowMode.requestQuickChat()
+                        if QuickChatRouter.shared.target != nil { openQuickChat() }
+                        else { HostWindowMode.requestQuickChat() }
                     }
                     OnboardingWindow.showIfFirstLaunch()
                     if UserDefaults.standard.bool(forKey: "restoreChatAfterUpdate") {
@@ -605,5 +601,15 @@ struct YorozuMacApp: App {
 
         Settings { SettingsView(sidecar: sidecar) }
             .commands { HostQuitCommands(backgroundOnly: HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost)) }
+    }
+}
+
+private struct HostAttentionIndicator: View {
+    private static let diameter: CGFloat = 6
+
+    var body: some View {
+        Circle().fill(YorozuPalette.vermilion)
+            .frame(width: Self.diameter, height: Self.diameter)
+            .accessibilityHidden(true)
     }
 }

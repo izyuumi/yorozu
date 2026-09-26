@@ -24,6 +24,10 @@ struct ChatWindowView: View {
 /// One conversation in the host's menu-bar mode. The existing ChatView owns transcript,
 /// composer, attachments, approvals and their persisted per-thread state.
 struct QuickChatView: View {
+    // Window owns its initial geometry; users can resize it after opening.
+    static let initialWidth: CGFloat = 560
+    static let initialHeight: CGFloat = 660
+
     @State private var session = MacChatSession.shared
     @State private var router = QuickChatRouter.shared
     @State private var selection: String?
@@ -39,7 +43,7 @@ struct QuickChatView: View {
             if let thread {
                 ChatView(model: model, thread: thread,
                     resumeRequest: target?.id,
-                    notificationClass: target?.kind,
+                    notificationClass: target?.kind?.rawValue,
                     notificationEventRef: target?.eventID.map(YorozuCrypto.threadRef),
                     showsUpdateStatus: false,
                     focusComposerOnAppear: target == nil)
@@ -81,6 +85,8 @@ struct QuickChatView: View {
 
     private func open() {
         guard selection == nil else { return }
+        if router.target != nil { followTarget(); return }
+        guard model.listed || !model.threads.isEmpty else { return }
         selection = model.threads.first { $0.id == lastThreadID && !$0.archived }?.id
             ?? visibleThreads(model.threads).first?.id
             ?? model.newDraft().id

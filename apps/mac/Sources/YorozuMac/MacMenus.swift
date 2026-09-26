@@ -110,10 +110,11 @@ enum HostWindowMode {
         else { pendingExplicitOpen = true }
     }
 
-    @MainActor static func routeQuickChat(threadID: String, eventID: String?, kind: String?) {
-        guard active else { return }
+    @MainActor static func routeQuickChat(threadID: String, eventID: String?, kind: MacAttentionKind?) {
+        guard MacChatSession.shared.role == .host else { return }
         QuickChatRouter.shared.target = QuickChatTarget(threadID: threadID, eventID: eventID, kind: kind)
-        requestQuickChat()
+        if let openQuickChat { openQuickChat() }
+        else { pendingExplicitOpen = true }
     }
 }
 
@@ -121,7 +122,11 @@ struct QuickChatTarget: Identifiable {
     let id = UUID()
     let threadID: String
     let eventID: String?
-    let kind: String?
+    let kind: MacAttentionKind?
+}
+
+enum MacAttentionKind: String {
+    case answer, approval, question, failure
 }
 
 @MainActor @Observable

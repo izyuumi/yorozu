@@ -24,6 +24,7 @@ struct MacAttentionItem: Identifiable {
     let id: String
     let threadID: String
     let eventID: String?
+    let kind: MacAttentionKind
     let label: String
 
     static func pending(in model: ChatModel) -> [Self] {
@@ -37,7 +38,7 @@ struct MacAttentionItem: Identifiable {
                    }
                    return false
                }) {
-                items.append(Self(id: "approval:\(thread.id)", threadID: thread.id, eventID: event.id,
+                items.append(Self(id: "approval:\(thread.id)", threadID: thread.id, eventID: event.id, kind: .approval,
                     label: "\(thread.displayTitle) · Approval"))
             }
             if thread.awaitingQuestion == true,
@@ -47,11 +48,11 @@ struct MacAttentionItem: Identifiable {
                    }
                    return false
                }) {
-                items.append(Self(id: "question:\(thread.id)", threadID: thread.id, eventID: event.id,
+                items.append(Self(id: "question:\(thread.id)", threadID: thread.id, eventID: event.id, kind: .question,
                     label: "\(thread.displayTitle) · Question"))
             }
             if thread.needsAttention == true || thread.interruptedTurnId != nil {
-                items.append(Self(id: "failure:\(thread.id)", threadID: thread.id, eventID: nil,
+                items.append(Self(id: "failure:\(thread.id)", threadID: thread.id, eventID: nil, kind: .failure,
                     label: "\(thread.displayTitle) · Needs attention"))
             }
             return items
@@ -82,20 +83,20 @@ final class LocalNotifications: NSObject, UNUserNotificationCenterDelegate {
     func received(_ event: YorozuEvent, from model: ChatModel) {
         guard HostWindowMode.active, model === MacChatSession.shared.model,
               Double(event.ts) >= launchTime else { return }
-        let kind: String
+        let kind: MacAttentionKind
         let body: String
         let preference: String
         switch event.payload {
         case .message(let message) where message.role == .agent && message.done == true && event.parentAgentId == nil:
-            kind = "answer"
+            kind = .answer
             body = String(message.text.prefix(240))
             preference = MacNotificationPreference.answers
         case .approvalCard:
-            kind = "approval"
+            kind = .approval
             body = "Your approval is needed."
             preference = MacNotificationPreference.requests
         case .questionCard:
-            kind = "question"
+            kind = .question
             body = "Your answer is needed."
             preference = MacNotificationPreference.requests
         default: return
@@ -115,12 +116,12 @@ final class LocalNotifications: NSObject, UNUserNotificationCenterDelegate {
         for thread in model.threads where current.contains(thread.id)
             && !previousAttention.contains(thread.id) && thread.lastActivity >= launchTime {
             post(id: "failure:\(thread.id):\(Int(thread.lastActivity))", threadID: thread.id,
-                eventID: nil, kind: "failure", body: "This task needs attention.",
+                eventID: nil, kind: .failure, body: "This task needs attention.",
                 preference: MacNotificationPreference.failures, model: model)
         }
     }
 
-    private func post(id: String, threadID: String, eventID: String?, kind: String,
+    private func post(id: String, threadID: String, eventID: String?, kind: MacAttentionKind,
                       body: String, preference: String, model: ChatModel) {
         guard MacNotificationPreference.value(MacNotificationPreference.enabled),
               MacNotificationPreference.value(preference, default: true),
@@ -128,9 +129,9 @@ final class LocalNotifications: NSObject, UNUserNotificationCenterDelegate {
         let content = UNMutableNotificationContent()
         content.title = model.title(of: threadID)
         content.body = MacNotificationPreference.value(MacNotificationPreference.previews) ? body
-            : kind == "answer" ? "New answer" : body
+            : kind == .answer ? "New answer" : body
         if MacNotificationPreference.value(MacNotificationPreference.sound) { content.sound = .default }
-        content.userInfo = ["threadID": threadID, "eventID": eventID ?? "", "kind": kind]
+        content.userInfo = ["threadID": threadID, "eventID": eventID ?? "", "kind": kind.rawValue]
         let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
         Task {
             do { try await center.add(request) }
@@ -143,7 +144,7 @@ final class LocalNotifications: NSObject, UNUserNotificationCenterDelegate {
         let info = response.notification.request.content.userInfo
         let threadID = info["threadID"] as? String
         let eventID = info["eventID"] as? String
-        let kind = info["kind"] as? String
+        let kind = (info["kind"] as? String).flatMap(MacAttentionKind.init(rawValue:))
         completionHandler()
         if let threadID {
             Task { @MainActor in HostWindowMode.routeQuickChat(threadID: threadID,
