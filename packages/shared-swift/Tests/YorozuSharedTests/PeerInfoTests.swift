@@ -7,16 +7,17 @@ import Testing
     #expect(local.compatibility(with: nil) == .legacy)
     #expect(local.compatibility(with: PeerInfoData(appVersion: "99.0-beta")) ==
         .compatible(version: 1, capabilities: ["peer-info", "host-name", "channel-sequence",
-            "admission-status-v1", "admission-expiry-v1"]))
+            "admission-status-v1", "admission-expiry-v1", "exact-stop-v1"]))
     if case .updateRequired = local.compatibility(with: PeerInfoData(appVersion: "1.0", protocolMin: 2, protocolMax: 3)) {} else {
         Issue.record("Disjoint protocols must require an update")
     }
     if case .updateRequired = local.compatibility(with: PeerInfoData(appVersion: "1.0", capabilities: ["peer-info"], requiredCapabilities: [])) {} else {
         Issue.record("Required replay protection cannot be downgraded")
     }
-    let oldHost = PeerInfoData(appVersion: "old", capabilities: ["peer-info", "host-name", "channel-sequence", "admission-status-v1"])
+    let oldHost = PeerInfoData(appVersion: "old", capabilities: ["peer-info", "host-name", "channel-sequence",
+        "admission-status-v1", "admission-expiry-v1"])
     if case .updateRequired = PeerInfoData.local.compatibility(with: oldHost) {} else {
-        Issue.record("New client must require host-enforced message expiry")
+        Issue.record("New client must require exact-run Stop")
     }
     if case .compatible = oldHost.compatibility(with: PeerInfoData(appVersion: "new")) {} else {
         Issue.record("Old client must remain compatible with upgraded host")

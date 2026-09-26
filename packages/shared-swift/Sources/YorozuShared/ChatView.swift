@@ -408,7 +408,8 @@ public struct ChatView: View {
                     find: { searching = true },
                     exportTitle: thread.displayTitle,
                     exportMarkdown: { threadMarkdown(thread: thread, events: events) },
-                    stop: generating ? { model.interrupt(in: thread.id) } : nil,
+                    stop: generating && model.activeEventId(in: thread.id) != nil && !model.stopPending(in: thread.id)
+                        ? { model.interrupt(in: thread.id) } : nil,
                     models: model.models(for: thread),
                     model: thread.model,
                     setModel: { model.setModel(thread, $0) }
@@ -697,8 +698,12 @@ public struct ChatView: View {
                     streaming: event.id == streamingId,
                     status: outboxStatus,
                     rejectionReason: model.outboxRejectionReason(of: event.id),
-                    onRetry: data.role == .user && (outboxStatus == nil || outboxStatus == .rejected)
+                    onRetry: data.role == .user && (outboxStatus == nil || outboxStatus == .rejected || outboxStatus == .withdrawn)
                         ? { retry(data) } : nil,
+                    onWithdraw: data.role == .user && outboxStatus != nil &&
+                        outboxStatus != .withdrawn && outboxStatus != .withdrawalPending &&
+                        outboxStatus != .resent && outboxStatus != .rejected
+                        ? { model.withdraw(event.id) } : nil,
                     onDelete: { model.delete(event.id, in: thread.id) },
                     onResend: {
                         if model.outboxStatus(of: event.id) == .expired { model.stillSend(event.id) }
@@ -823,7 +828,9 @@ public struct ChatView: View {
                     attachButton
                     runSettingsButton
                     Spacer(minLength: 4)
-                    if generating {
+                    if model.stopPending(in: thread.id) {
+                        stopPendingLabel
+                    } else if generating && model.activeEventId(in: thread.id) != nil {
                         stopButton
                     }
                     sendButton
@@ -851,7 +858,9 @@ public struct ChatView: View {
                     runSettingsButton
                         .frame(maxWidth: 280, alignment: .leading)
                     Spacer(minLength: 4)
-                    if generating {
+                    if model.stopPending(in: thread.id) {
+                        stopPendingLabel
+                    } else if generating && model.activeEventId(in: thread.id) != nil {
                         stopButton
                     }
                     sendButton
@@ -1002,6 +1011,14 @@ public struct ChatView: View {
     /// Stop stays beside the composer while a turn runs. Send never changes jobs: another
     /// message steers that active turn, which is why replacing it with Stop made steering
     /// impossible from the app.
+    private var stopPendingLabel: some View {
+        Text("Stop requested · waiting for host")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .accessibilityLabel("Stop requested, waiting for host")
+    }
+
     private var stopButton: some View {
         Button {
             model.interrupt(in: thread.id)

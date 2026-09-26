@@ -63,6 +63,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case modelList = "model_list"
         case projectList = "project_list"
         case interrupt
+        case stopStatus = "stop_status"
         case syncRequest = "sync_request"
         case syncDelta = "sync_delta"
         case deviceList = "device_list"
@@ -103,6 +104,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case modelList(ModelListData)
         case projectList(ProjectListData)
         case interrupt(InterruptData)
+        case stopStatus(StopStatusData)
         case syncRequest(SyncRequestData)
         case syncDelta(SyncDeltaData)
         case deviceList(DeviceListData)
@@ -143,6 +145,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .modelList: .modelList
             case .projectList: .projectList
             case .interrupt: .interrupt
+            case .stopStatus: .stopStatus
             case .syncRequest: .syncRequest
             case .syncDelta: .syncDelta
             case .deviceList: .deviceList
@@ -197,6 +200,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .modelList: payload = .modelList(try c.decode(ModelListData.self, forKey: .data))
         case .projectList: payload = .projectList(try c.decode(ProjectListData.self, forKey: .data))
         case .interrupt: payload = .interrupt(try c.decode(InterruptData.self, forKey: .data))
+        case .stopStatus: payload = .stopStatus(try c.decode(StopStatusData.self, forKey: .data))
         case .syncRequest: payload = .syncRequest(try c.decode(SyncRequestData.self, forKey: .data))
         case .syncDelta: payload = .syncDelta(try c.decode(SyncDeltaData.self, forKey: .data))
         case .deviceList: payload = .deviceList(try c.decode(DeviceListData.self, forKey: .data))
@@ -247,6 +251,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .modelList(let d): try c.encode(d, forKey: .data)
         case .projectList(let d): try c.encode(d, forKey: .data)
         case .interrupt(let d): try c.encode(d, forKey: .data)
+        case .stopStatus(let d): try c.encode(d, forKey: .data)
         case .syncRequest(let d): try c.encode(d, forKey: .data)
         case .syncDelta(let d): try c.encode(d, forKey: .data)
         case .deviceList(let d): try c.encode(d, forKey: .data)
@@ -855,6 +860,7 @@ public struct ThreadRenameData: Codable, Equatable, Sendable {
 }
 
 public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
+    public var activeEventId: String?
     public var canResume: Bool?
     public var interruptedTurnId: String?
     public var bypass: Bool?
@@ -902,8 +908,10 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         lastAgentAt: Double? = nil,
         awaitingApproval: Bool? = nil,
         bypass: Bool? = nil,
-        interruptedTurnId: String? = nil
+        interruptedTurnId: String? = nil,
+        activeEventId: String? = nil
     ) {
+        self.activeEventId = activeEventId
         self.id = id
         self.title = title
         self.archived = archived
@@ -940,6 +948,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         bypass = try c.decodeIfPresent(Bool.self, forKey: .bypass)
         canResume = try c.decodeIfPresent(Bool.self, forKey: .canResume)
         interruptedTurnId = try c.decodeIfPresent(String.self, forKey: .interruptedTurnId)
+        activeEventId = try c.decodeIfPresent(String.self, forKey: .activeEventId)
         lastReadAt = try c.decodeIfPresent(Double.self, forKey: .lastReadAt)
         lastAgentAt = try c.decodeIfPresent(Double.self, forKey: .lastAgentAt)
         awaitingApproval = try c.decodeIfPresent(Bool.self, forKey: .awaitingApproval)
@@ -1080,10 +1089,22 @@ public struct ModelListData: Codable, Equatable, Sendable {
     }
 }
 
-/// The user pressed stop: cancel the turn running in `threadId` and every agent it
-/// delegated to. Carries nothing of its own.
+/// Targets the host's exact user operation. Nil remains decodable for older clients.
 public struct InterruptData: Codable, Equatable, Sendable {
-    public init() {}
+    public var targetEventId: String?
+    public init(targetEventId: String? = nil) { self.targetEventId = targetEventId }
+}
+
+public struct StopStatusData: Codable, Equatable, Sendable {
+    public enum Status: String, Codable, Sendable { case requested, stopped, completed, withdrawn, unknown }
+    public var targetEventId: String
+    public var requestId: String
+    public var status: Status
+    public init(targetEventId: String, requestId: String, status: Status) {
+        self.targetEventId = targetEventId
+        self.requestId = requestId
+        self.status = status
+    }
 }
 
 /// Last event id the device already holds, per thread.

@@ -65,6 +65,81 @@ private func reconnect(_ transport: QueueTransport) async {
 }
 
 @MainActor
+@Test func persistedStopGoesAheadOfQueuedMessagesAndWaitsForOutcome() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let ts = Int(Date().timeIntervalSince1970 * 1000)
+    let later = YorozuEvent(id: "later", threadId: "home", ts: ts, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "later", admissionDeadline: ts + 30 * 60_000)))
+    let stop = YorozuEvent(id: "stop-old", threadId: "home", ts: ts, agentId: "phone",
+        payload: .interrupt(InterruptData(targetEventId: "running-old")))
+    try cache.savePending([OutboxItem(event: later), OutboxItem(event: stop)])
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    await reconnect(transport)
+    for _ in 0..<300 {
+        if await transport.sent.contains(where: { $0.id == stop.id }) { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await transport.sent.filter { $0.threadId == "home" }.first?.id == stop.id)
+    #expect(model.stopPending(in: "home"))
+    #expect(await transport.messages.isEmpty)
+    await transport.yield(.event(YorozuEvent(id: "stop-done", threadId: "", ts: ts, agentId: "main",
+        payload: .stopStatus(StopStatusData(targetEventId: "running-old", requestId: stop.id, status: .stopped)))))
+    #expect(await settle { !model.stopPending(in: "home") && model.outbox.isEmpty })
+    #expect(await transport.sent.filter { $0.threadId == "home" }.map(\.id) == [stop.id, later.id])
+}
+
+@MainActor
+@Test func hostWithdrawalKeepsCancelledMessageAndNeverTransmitsIt() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let ts = Int(Date().timeIntervalSince1970 * 1000)
+    let message = YorozuEvent(id: "withdraw-me", threadId: "home", ts: ts, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "cancel", admissionDeadline: ts + 30 * 60_000)))
+    try cache.savePending([OutboxItem(event: message, attemptedAt: Date())])
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    model.withdraw(message.id)
+    let stop = try #require(model.outbox.last?.event)
+    #expect(model.outboxStatus(of: message.id) == .withdrawalPending)
+    await reconnect(transport)
+    for _ in 0..<300 {
+        if await transport.sent.contains(where: { $0.id == stop.id }) { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await transport.messages.isEmpty)
+    await transport.yield(.event(YorozuEvent(id: "withdrawn", threadId: "", ts: ts, agentId: "main",
+        payload: .stopStatus(StopStatusData(targetEventId: message.id, requestId: stop.id, status: .withdrawn)))))
+    #expect(await settle { model.outboxStatus(of: message.id) == .withdrawn && !model.stopPending(in: "home") })
+    #expect(await transport.messages.isEmpty)
+    #expect(cache.outbox().first?.admissionStatus == .withdrawn)
+}
+
+@MainActor
+@Test func neverAttemptedDraftCancelsLocallyWithItsThreadSetup() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    let draft = model.newDraft()
+    model.send("cancel offline", in: draft.id)
+    let messageId = try #require(model.outbox.last?.id)
+    model.withdraw(messageId)
+    #expect(model.outboxStatus(of: messageId) == .withdrawn)
+    #expect(cache.outbox().allSatisfy { $0.admissionStatus == .withdrawn })
+    await reconnect(transport)
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(await transport.sent.allSatisfy { $0.threadId != draft.id })
+}
+
+@MainActor
 @Test func messagesTypedWithNowhereToSendThemWaitAndGoOutInOrder() async throws {
     let transport = QueueTransport()
     let model = ChatModel(transport: transport, device: "phone")

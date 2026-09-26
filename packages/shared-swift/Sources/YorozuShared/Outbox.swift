@@ -61,6 +61,7 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
 
     public func status(at now: Date) -> OutboxStatus {
         if replacementId != nil { return .resent }
+        if admissionStatus == .withdrawn { return .withdrawn }
         if admissionStatus == .rejected { return .rejected }
         if let legacyHoldUntil {
             return now >= legacyHoldUntil && admissionStatus == .unknown &&
@@ -85,7 +86,8 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
     }
 
     public func isExpired(at now: Date) -> Bool {
-        if legacyHoldUntil != nil || admissionStatus == .expired { return true }
+        if case .interrupt(let data) = event.payload, data.targetEventId != nil { return false }
+        if legacyHoldUntil != nil || admissionStatus == .expired || admissionStatus == .withdrawn { return true }
         if let admissionDeadline { return now >= admissionDeadline }
         return now.timeIntervalSince(reconfirmedAt ?? queuedAt) > Outbox.life
     }
@@ -93,7 +95,7 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
 
 /// What a bubble says until host acceptance is confirmed.
 public enum OutboxStatus: String, Sendable, Equatable {
-    case queued, confirming, unconfirmed, failed, checking, expired, rejected, resent
+    case queued, confirming, unconfirmed, failed, checking, expired, rejected, withdrawalPending, withdrawn, resent
 
     /// The caption under the bubble.
     public var label: String {
@@ -105,6 +107,8 @@ public enum OutboxStatus: String, Sendable, Equatable {
         case .checking: String(localized: "Checking delivery…")
         case .expired: String(localized: "Expired · Still send?")
         case .rejected: String(localized: "Not sent")
+        case .withdrawalPending: String(localized: "Withdrawal pending")
+        case .withdrawn: String(localized: "Cancelled")
         case .resent: String(localized: "Reconfirmed as new message")
         }
     }
@@ -118,6 +122,8 @@ public enum OutboxStatus: String, Sendable, Equatable {
         case .checking: "questionmark.circle"
         case .expired: "clock.badge.exclamationmark"
         case .rejected: "exclamationmark.circle"
+        case .withdrawalPending: "hourglass"
+        case .withdrawn: "xmark.circle"
         case .resent: "arrowshape.turn.up.right"
         }
     }

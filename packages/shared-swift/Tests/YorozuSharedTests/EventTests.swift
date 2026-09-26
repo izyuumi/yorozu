@@ -118,7 +118,8 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
                 ProjectFolder(path: "/Users/yumi/Projects/yorozu", name: "yorozu", lastUsed: 1_757_640_000_000),
                 ProjectFolder(path: "/Users/yumi/Projects/tappa", name: "tappa"),
             ]))
-        case .interrupt: .interrupt(InterruptData())
+        case .interrupt: .interrupt(InterruptData(targetEventId: "user-1"))
+        case .stopStatus: .stopStatus(StopStatusData(targetEventId: "user-1", requestId: "stop-1", status: .stopped))
         case .syncRequest: .syncRequest(SyncRequestData(lastSeen: ["home": "e9"]))
         case .syncDelta:
             .syncDelta(SyncDeltaData(events: [

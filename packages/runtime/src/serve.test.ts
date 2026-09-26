@@ -951,7 +951,7 @@ test("a thread is answered by the agent it was created for, and an unknown agent
 
   // A turn in the native thread never reaches OpenClaw: its own backend answers, and where no
   // runner is wired the answer is that it is not, finished, so the composer is not left waiting.
-  send({ kind: "message", data: { role: "user", text: "fix the tests" } }, "cc");
+  const ccMessageId = send({ kind: "message", data: { role: "user", text: "fix the tests" } }, "cc");
   const reply = (await eventsUntil((event) => event.kind === "message" && event.data.done === true)).at(-1)!;
   expect(reply).toMatchObject({ threadId: "cc", data: { role: "agent", text: expect.stringMatching(/claude-code.*not available/i) } });
   expect(run).not.toHaveBeenCalled();
@@ -959,7 +959,8 @@ test("a thread is answered by the agent it was created for, and an unknown agent
 
   // Stop, archive, model and effort all go to the thread's own agent too: none of them is
   // OpenClaw's business here, and archiving does not wait on a Gateway that never saw the thread.
-  send({ kind: "interrupt", data: {} }, "cc");
+  send({ kind: "interrupt", data: { targetEventId: ccMessageId } }, "cc");
+  await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === ccMessageId);
   send({ kind: "thread_set_model", data: { model: "claude/claude-opus-5" } }, "cc");
   send({ kind: "thread_set_effort", data: { effort: "high" } }, "cc");
   send({ kind: "thread_archive", data: { archived: true } }, "cc");
@@ -1040,12 +1041,12 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
   expect(turns[1]).toMatchObject({ cwd: proj, sessionId: "s-1" });
 
   // Stop aborts the running turn; nothing is said, and the session is still the one to resume.
-  send({ kind: "message", data: { role: "user", text: "long job" } }, "cc");
+  const longJobId = send({ kind: "message", data: { role: "user", text: "long job" } }, "cc");
   await vi.waitFor(() => expect(turns).toHaveLength(3));
   send({ kind: "sync_request", data: { lastSeen: {} } });
   const busy = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)! as YorozuEvent & { kind: "sync_delta" };
   expect(busy.data.workingThreadIds).toEqual(["cc"]);
-  send({ kind: "interrupt", data: {} }, "cc");
+  send({ kind: "interrupt", data: { targetEventId: longJobId } }, "cc");
   await vi.waitFor(() => expect(turns[2]!.signal.aborted).toBe(true));
   send({ kind: "sync_request", data: { lastSeen: {} } });
   const idle = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)! as YorozuEvent & { kind: "sync_delta" };
@@ -2983,18 +2984,53 @@ test.each(["claude-code", "codex"] as const)("%s threads run concurrently with i
     return { text: turn.signal.aborted ? "" : "done", sessionId: `session-${turn.threadId}` };
   } };
   const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { [agent]: runner } });
+  const ids = new Map<string, string>();
   for (const id of ["one", "two", "three"]) {
     send({ kind: "thread_create", data: { agent, cwd: proj } }, id);
-    send({ kind: "message", data: { role: "user", text: "work" } }, id);
+    ids.set(id, send({ kind: "message", data: { role: "user", text: "work" } }, id));
   }
   await vi.waitFor(() => expect(turns.size).toBe(3));
-  send({ kind: "interrupt", data: {} }, "one");
+  send({ kind: "interrupt", data: { targetEventId: ids.get("one")! } }, "one");
   await vi.waitFor(() => expect(turns.get("one")!.signal.aborted).toBe(true));
   expect(turns.get("two")!.signal.aborted).toBe(false);
   expect(turns.get("three")!.signal.aborted).toBe(false);
   releases.get("two")!(); releases.get("three")!();
   await eventsUntil((e) => e.kind === "message" && e.threadId === "three" && e.data.done === true);
   expect(listThreads(dir).map((t) => t.nativeSessionId).sort()).toEqual(["session-one", "session-three", "session-two"]);
+});
+
+test("delayed exact-run Stop cannot abort the next turn", async () => {
+  const turns: NativeTurn[] = [];
+  let releaseSecond!: () => void;
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    turns.push(turn);
+    await new Promise<void>((resolve) => {
+      if (turns.length === 2) releaseSecond = resolve;
+      turn.signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    return { text: turn.signal.aborted ? "" : "second completed" };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "exact-stop");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "exact-stop"));
+  const first = send({ kind: "message", data: { role: "user", text: "first" } }, "exact-stop");
+  await eventsUntil((event) => event.kind === "thread_list" &&
+    event.data.threads.some((thread) => thread.id === "exact-stop" && thread.activeEventId === first));
+  send({ kind: "interrupt", data: { targetEventId: first } }, "exact-stop");
+  await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === first && event.data.status === "stopped");
+  expect(turns[0]?.signal.aborted).toBe(true);
+  const second = send({ kind: "message", data: { role: "user", text: "second" } }, "exact-stop");
+  await eventsUntil((event) => event.kind === "thread_list" &&
+    event.data.threads.some((thread) => thread.id === "exact-stop" && thread.activeEventId === second));
+  send({ kind: "interrupt", data: { targetEventId: first } }, "exact-stop");
+  await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === first);
+  expect(turns[1]?.signal.aborted).toBe(false);
+  send({ kind: "interrupt", data: {} }, "exact-stop");
+  await eventsUntil((event) => event.kind === "thought" && event.data.text.includes("Update Yorozu"));
+  expect(turns[1]?.signal.aborted).toBe(false);
+  expect(readFileSync(join(dir, "stopped-turns.jsonl"), "utf8")).toContain(first);
+  releaseSecond();
+  await eventsUntil((event) => event.kind === "message" && event.threadId === "exact-stop" && event.data.done === true);
 });
 
 
