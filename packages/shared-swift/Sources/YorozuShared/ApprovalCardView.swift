@@ -59,9 +59,7 @@ public struct ApprovalCardView: View {
             items
             consequence
             if card.mustConfirm == true { confirmNote }
-            if answered {
-                outcome
-            } else if pending {
+            if pending {
                 Text("Answer pending · waiting for host")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -69,6 +67,8 @@ public struct ApprovalCardView: View {
                 Text("No longer needed")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+            } else if answered {
+                outcome
             } else {
                 if disposition == .rejected {
                     Text("Answer not applied")

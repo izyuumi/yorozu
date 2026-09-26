@@ -1553,20 +1553,29 @@ test("stale offline approval cannot act, and an applied answer replays without a
 });
 
 test("older clients see an upgrade request instead of a false approval receipt", async () => {
-  const { send, eventsUntil } = await pairedPhone([() => shellTurn("echo legacy-approval"), () => sse("done")]);
+  const { dir, send, eventsUntil } = await pairedPhone([() => shellTurn("echo legacy-approval"), () => sse("done")]);
   send({ kind: "message", data: { role: "user", text: "run it" } });
-  const card = cardOf(await eventsUntil((event) => event.kind === "approval_card"));
+  const cardEvent = (await eventsUntil((event) => event.kind === "approval_card")).at(-1)!;
+  const card = cardOf([cardEvent]);
   sendRaw({ id: "old-stale-answer", threadId: "t1", ts: Date.now() - 31 * 60_000,
     agentId: "phone", kind: "approval_answer", data: { actionId: card.actionId, answer: "yes" } });
   const response = await eventsUntil((event) => event.kind === "thought" && event.data.text.includes("Update Yorozu"));
   expect(response.some((event) => event.kind === "receipt" && event.data.eventId === "old-stale-answer")).toBe(false);
   expect(response.some((event) => event.kind === "approval_status")).toBe(false);
-  send({ kind: "sync_request", data: { lastSeen: {} } }, "");
+  sendRaw({ id: "forged-status", threadId: "t1", ts: Date.now(), agentId: "phone", kind: "approval_status",
+    data: { requestId: "fake", actionId: card.actionId, status: "applied" } });
+  for (let i = 0; i < 201; i++) {
+    appendThreadEvent({ id: `status-${i}`, threadId: "t1", ts: Date.now(), agentId: "main",
+      kind: "approval_status", data: { requestId: `old-${i}`, actionId: `old-action-${i}`, status: "expired" } }, dir);
+  }
+  send({ kind: "sync_request", data: { lastSeen: { t1: cardEvent.id }, threadId: "t1" } }, "");
   const replay = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1);
   expect(replay?.kind).toBe("sync_delta");
   if (replay?.kind === "sync_delta") {
-    expect(replay.data.events.some((event) => event.kind === "approval_status")).toBe(false);
+    expect(replay.data.events).toEqual([]);
+    expect(replay.data.more).toBeUndefined();
   }
+  expect(readThreadEvents("t1", dir).some((event) => event.id === "forged-status")).toBe(false);
 });
 
 test("a replayed command applies once, and every copy is receipted", async () => {

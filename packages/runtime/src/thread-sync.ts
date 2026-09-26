@@ -38,7 +38,8 @@ function parse(text: string): YorozuEvent | undefined {
   } catch { return undefined; }
 }
 
-export function syncPage(file: string, afterId: string | undefined, minTs: number, limit: number): YorozuEvent[] {
+export function syncPage(file: string, afterId: string | undefined, minTs: number, limit: number,
+  include: (event: YorozuEvent) => boolean = () => true): YorozuEvent[] {
   let fd: number;
   try { fd = openSync(file, "r"); }
   catch (error) {
@@ -73,7 +74,7 @@ export function syncPage(file: string, afterId: string | undefined, minTs: numbe
       ? offset : afterId ? index.after.get(afterId) ?? 0 : 0;
     for (const line of lines(fd, start, Number(stat.size))) {
       const event = parse(line.text);
-      if (!event || event.ts < minTs) continue;
+      if (!event || event.ts < minTs || !include(event)) continue;
       page.push({ ...event, syncCursor: `sync:${line.end}:${index.cursors.get(line.end)!}` });
       if (page.length === limit) break;
     }

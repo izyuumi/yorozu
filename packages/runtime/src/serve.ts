@@ -989,13 +989,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
   };
 
   /** A bounded replay page. An explicit thread request includes its pre-pairing history. */
-  const syncDelta = (lastSeen: Record<string, string>, pairedAt = 0, threadId?: string): YorozuEvent => {
+  const syncDelta = (lastSeen: Record<string, string>, pairedAt = 0, threadId?: string,
+    includeApprovalStatus = true): YorozuEvent => {
     const events: YorozuEvent[] = [];
     let bytes = 0;
     let more = false;
     const selected = listThreads(dir).filter((thread) => threadId ? thread.id === threadId : !thread.archived);
     threads: for (const thread of selected) {
-      const page = eventsAfter(thread.id, lastSeen?.[thread.id], dir, threadId ? 0 : pairedAt);
+      const page = eventsAfter(thread.id, lastSeen?.[thread.id], dir, threadId ? 0 : pairedAt,
+        (event) => includeApprovalStatus || event.kind !== "approval_status");
       if (page.length === SYNC_LIMIT) more = true;
       for (const event of page) {
         const size = Buffer.byteLength(JSON.stringify(event));
@@ -1545,7 +1547,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       } }));
       return;
     }
-    if (event.kind === "admission_status") return;
+    if (event.kind === "admission_status" || event.kind === "approval_status") return;
     if (event.kind === "update_status") return;
     if (event.kind === "update_control") {
       const subscriber = localDevice ?? from;
@@ -1892,9 +1894,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       case "device_remove":
         return forgetDevice(event.data.pub);
-      case "sync_request":
+      case "sync_request": {
         if (event.data.threadId !== undefined && (typeof event.data.threadId !== "string" || !event.data.threadId)) return;
-        return reply(syncDelta(event.data.lastSeen, pairedAt, event.data.threadId));
+        const compatibility = from ? devices.get(from)?.compatibility : undefined;
+        return reply(syncDelta(event.data.lastSeen, pairedAt, event.data.threadId,
+          !from || compatibility?.state === "compatible" && compatibility.capabilities.includes("offline-approval-v1")));
+      }
     }
 
     if (event.kind !== "message" || event.data.role !== "user") return;
@@ -2090,10 +2095,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const supportsApprovalStatus = known.compatibility?.state === "compatible" &&
         known.compatibility.capabilities.includes("offline-approval-v1");
       if (!supportsApprovalStatus && event.kind === "approval_status") return;
-      if (!supportsApprovalStatus && event.kind === "sync_delta") {
-        event = { ...event, data: { ...event.data,
-          events: event.data.events.filter((entry) => entry.kind !== "approval_status") } };
-      }
       if (event.kind === "terminal" && !terminalSubscribers.has(device)) return;
       const awaitingCompatibility = known.record.peerInfoRequired && known.compatibility?.state !== "compatible";
       if (awaitingCompatibility && event.kind !== "thread_list") return;

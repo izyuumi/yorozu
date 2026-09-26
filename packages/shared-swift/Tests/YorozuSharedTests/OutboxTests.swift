@@ -121,6 +121,27 @@ private func reconnect(_ transport: QueueTransport) async {
 }
 
 @MainActor
+@Test func missedApprovalStatusReconcilesFromSyncHistory() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let offline = ChatModel(transport: QueueTransport(), cache: cache, device: "phone")
+    offline.start()
+    offline.answer("card-2", in: "home", .no)
+    let id = try #require(cache.outbox().first?.id)
+    let transport = QueueTransport()
+    let restored = ChatModel(transport: transport, cache: cache, device: "phone")
+    restored.start()
+    await reconnect(transport)
+    let status = YorozuEvent(id: "applied-card-2", threadId: "home", ts: 1, agentId: "main",
+        payload: .approvalStatus(ApprovalStatusData(requestId: id, actionId: "card-2", status: .applied)))
+    await transport.yield(.event(YorozuEvent(id: "sync-card-2", threadId: "", ts: 1, agentId: "main",
+        payload: .syncDelta(SyncDeltaData(events: [status])))))
+    #expect(await settle { !restored.approvalPending("card-2") && restored.answered.contains("card-2") })
+    #expect(cache.outbox().isEmpty)
+}
+
+@MainActor
 @Test func hostWithdrawalKeepsCancelledMessageAndNeverTransmitsIt() async throws {
     let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }

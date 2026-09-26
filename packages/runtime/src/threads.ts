@@ -480,8 +480,9 @@ export function eventsAfter(
   afterEventId?: string,
   dir = stateDir(),
   minTs = 0,
+  include?: (event: YorozuEvent) => boolean,
 ): YorozuEvent[] {
-  return syncPage(logFile(threadId, dir), afterEventId, minTs, SYNC_LIMIT);
+  return syncPage(logFile(threadId, dir), afterEventId, minTs, SYNC_LIMIT, include);
 }
 
 /**

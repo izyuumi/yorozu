@@ -1225,7 +1225,7 @@ public final class ChatModel {
         }
     }
 
-    private func reconcileApproval(_ status: ApprovalStatusData, event: YorozuEvent) {
+    private func retireApproval(_ status: ApprovalStatusData) {
         if let index = outbox.firstIndex(where: { $0.id == status.requestId }),
            case .approvalAnswer(let answer) = outbox[index].event.payload,
            answer.actionId == status.actionId {
@@ -1234,6 +1234,10 @@ public final class ChatModel {
             saveOutbox()
             flush()
         }
+    }
+
+    private func reconcileApproval(_ status: ApprovalStatusData, event: YorozuEvent) {
+        retireApproval(status)
         if status.status == .rejected { failure = "Approval answer could not be applied." }
         applyEvent(event)
     }
@@ -1478,6 +1482,7 @@ public final class ChatModel {
                 onThreads?()
             case .syncDelta(let data):
                 for event in data.events {
+                    if case .approvalStatus(let status) = event.payload { retireApproval(status) }
                     upsert(event, persist: false)
                     if data.threadId == nil { syncLastSeen[event.threadId] = event.syncCursor ?? event.id }
                     else { historyCursors[event.threadId] = event.syncCursor ?? event.id }
