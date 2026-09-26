@@ -363,7 +363,9 @@ function logSummary(threadId: string, dir: string, minTs = 0):
   );
   const line = last?.kind === "message" ? last.data.text.replace(/\s+/gu, " ").trim() : "";
   // The same answer state the chat's cards draw from: a card is open until its answer is logged.
-  const answered = new Set(events.flatMap((e) => (e.kind === "approval_answer" ? [e.data.actionId] : [])));
+  const answered = new Set(events.flatMap((e) => e.kind === "approval_answer" ? [e.data.actionId]
+    : e.kind === "approval_status" && (e.data.status === "expired" || e.data.status === "no-longer-needed")
+      ? [e.data.actionId] : []));
   const awaiting = events.some((e) => e.kind === "approval_card" && !answered.has(e.data.actionId));
   const asked = new Set(events.flatMap((e) => (e.kind === "question_answer" ? [e.data.questionId] : [])));
   const asking = events.some((e) => e.kind === "question_card" && !asked.has(e.data.questionId));
@@ -584,4 +586,27 @@ export function recoverNativeTurns(dir = stateDir()): void {
     }
   }
   if (changed) saveThreads(threads, dir);
+}
+
+/** Prompts from a dead Yorozu process have no callback left to answer them. */
+export function retireOrphanedCards(dir = stateDir()): void {
+  for (const thread of listThreads(dir)) {
+    if (thread.agent) continue;
+    const events = readThreadEvents(thread.id, dir);
+    const settled = new Set(events.flatMap((event) => event.kind === "approval_answer" ? [event.data.actionId]
+      : event.kind === "approval_status" && event.data.status !== "rejected" ? [event.data.actionId]
+      : event.kind === "question_answer" ? [event.data.questionId] : []));
+    for (const event of events) {
+      const base = { id: randomUUID(), threadId: thread.id, ts: Date.now(), agentId: "main" };
+      if (event.kind === "approval_card" && !settled.has(event.data.actionId)) {
+        appendThreadEvent({ ...base, kind: "approval_status", data: {
+          requestId: randomUUID(), actionId: event.data.actionId, status: "no-longer-needed",
+        } }, dir);
+      } else if (event.kind === "question_card" && !settled.has(event.data.questionId)) {
+        appendThreadEvent({ ...base, kind: "question_answer", data: {
+          questionId: event.data.questionId, answer: "Interrupted",
+        } }, dir);
+      }
+    }
+  }
 }

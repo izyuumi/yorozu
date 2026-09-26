@@ -95,6 +95,7 @@ import {
   setThreadEffort,
   setNativeTurn,
   recoverNativeTurns,
+  retireOrphanedCards,
   setThreadModel,
   setThreadSession,
   stashToolResult,
@@ -110,7 +111,7 @@ import { codexNativeRunner } from "./codex-native.js";
 import { NativeCards } from "./native-cards.js";
 import { claudeCodeRunner, type NativeAgentRunner } from "./native.js";
 import { isProjectFolder, listProjects } from "./projects.js";
-import { questionDesk } from "./tools/cards.js";
+import { questionDesk, QUESTION_TIMEOUT_MS } from "./tools/cards.js";
 import { OpenClawRunner, type StoredPendingTurn } from "./openclaw.js";
 import { appendTranscript, readTranscripts, transcriptDir } from "./transcripts.js";
 
@@ -443,6 +444,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   rmSync(join(dir, "terminal-settings.json"), { force: true });
   const transcripts = transcriptDir(dir);
   recoverNativeTurns(dir);
+  retireOrphanedCards(dir);
   const keys = loadKeys(dir);
   const provider = options.provider;
   const titler = options.titler ?? onDeviceTitler;
@@ -893,7 +895,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     broadcast(event);
     // A raised card shows on the list as well as in the chat, so the list follows it.
-    if (event.kind === "approval_card" || event.kind === "question_card") broadcast(threadList());
+    if (["approval_card", "approval_answer", "approval_status", "question_card", "question_answer"].includes(event.kind))
+      broadcast(threadList());
   }
 
   /** Final event owns recovery marker: persist once, then acknowledge, then publish. */
@@ -915,7 +918,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
   /** Cards on screen somewhere, waiting to be answered, by action ID. */
   const pending = new Map<
     string,
-    { card: ApprovalCardData; threadId: string; floored: boolean; settle: (result: AskResult) => void }
+    { card: ApprovalCardData; threadId: string; floored: boolean;
+      settle: (result: AskResult, outcome?: "answer" | "already-logged" | "expired" | "cancelled") => void }
   >();
   /** Whether each pending card may be answered from a notification button. */
   const quickActions = new Map<string, boolean>();
@@ -936,19 +940,27 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const floored = hitsFloor(action, settings, dir);
     return new Promise<AskResult>((resolve) => {
       const timer = setTimeout(() => {
-        pending.delete(actionId);
-        quickActions.delete(actionId);
-        resolve({ answer: "no" });
+        pending.get(actionId)?.settle({ answer: "no" }, "expired");
       }, APPROVAL_TIMEOUT_MS);
       timer.unref?.();
       pending.set(actionId, {
         card,
         threadId,
         floored,
-        settle: (result) => {
+        settle: (result, outcome = "answer") => {
+          if (!pending.has(actionId)) return;
           clearTimeout(timer);
           pending.delete(actionId);
           quickActions.delete(actionId);
+          if (outcome === "answer") emit({
+            id: randomUUID(), threadId, ts: Date.now(), agentId: MAIN_AGENT,
+            kind: "approval_answer", data: { actionId, answer: result.answer, ...(result.rule ? { rule: result.rule } : {}) },
+          });
+          else if (outcome === "expired" || outcome === "cancelled") emit({
+            id: randomUUID(), threadId, ts: Date.now(), agentId: MAIN_AGENT,
+            kind: "approval_status", data: { requestId: randomUUID(), actionId,
+              status: outcome === "expired" ? "expired" : "no-longer-needed" },
+          });
           resolve(result);
         },
       });
@@ -995,6 +1007,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
       agentId: context?.agentId ?? MAIN_AGENT,
       kind: "question_card",
       data: card,
+    }), QUESTION_TIMEOUT_MS, (questionId, threadId, reason) => emit({
+      id: randomUUID(), threadId: threadId ?? currentThread(dir), ts: Date.now(), agentId: MAIN_AGENT,
+      kind: "question_answer", data: { questionId, answer: reason === "expired" ? "Expired" : "Cancelled" },
     }),
   );
 
@@ -1572,7 +1587,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const abortTarget = (threadId: string, target: string): boolean => {
     if (runningEventIds.get(threadId) !== target) return false;
     running.get(threadId)?.abort();
-    for (const card of [...pending.values()]) if (card.threadId === threadId) card.settle({ answer: "no" });
+    for (const card of [...pending.values()]) if (card.threadId === threadId) card.settle({ answer: "no" }, "cancelled");
     questions.cancelAll(threadId);
     return true;
   };
@@ -1610,7 +1625,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (outcome.status === "completed") {
         finalizeOpenClaw({ id: completionIdFor(record.threadId, target), threadId: record.threadId,
           ts: Date.now(), agentId: MAIN_AGENT, kind: "message",
-          data: { role: "agent", text: outcome.text ?? "", done: true } });
+          data: { role: "agent", text: outcome.text ?? "", done: true, ...(outcome.failed ? { failed: true } : {}) } });
       } else {
         if (outcome.status === "stopped") persistStoppedReply(record, outcome.text ?? record.partialText ?? "");
         openclaw!.discardPending(target);
@@ -1828,7 +1843,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (event.data.source === "notification" && quickActions.get(event.data.actionId) !== true &&
             !nativeCards.quickApprovable(event.data.actionId)) return "rejected";
         if (!nativeCards.answer(event)) active?.settle({ answer: event.data.answer,
-          ...(event.data.rule ? { rule: event.data.rule } : {}) });
+          ...(event.data.rule ? { rule: event.data.rule } : {}) }, "already-logged");
         if (active) emit(event);
         return "applied";
       })();

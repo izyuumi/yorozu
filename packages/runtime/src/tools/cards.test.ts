@@ -14,8 +14,10 @@ import {
 /** A desk that hands back the card it raised, which is what the tool call is waiting on. */
 function desk(timeoutMs?: number) {
   const raised: QuestionCardData[] = [];
-  const questions = questionDesk((card) => raised.push(card), timeoutMs);
-  return { raised, questions, tool: askUserTool(questions.ask) };
+  const retired: Array<{ questionId: string; reason: "expired" | "cancelled" }> = [];
+  const questions = questionDesk((card) => raised.push(card), timeoutMs,
+    (questionId, _threadId, reason) => retired.push({ questionId, reason }));
+  return { raised, retired, questions, tool: askUserTool(questions.ask) };
 }
 
 test("ask_user raises a card and the answer is what the tool call returns", async () => {
@@ -50,16 +52,18 @@ test("a card that offers only its options says nothing about free text", () => {
 });
 
 test("a question nobody answers expires rather than parking the turn forever", async () => {
-  const { tool } = desk(10);
+  const { raised, retired, tool } = desk(10);
   expect(await tool.run({ question: "Which one?", options: ["a", "b"] })).toBe(NO_ANSWER);
+  expect(retired).toEqual([{ questionId: raised[0].questionId, reason: "expired" }]);
 });
 
 test("an interrupt releases every question still on screen", async () => {
-  const { questions, tool } = desk();
+  const { raised, retired, questions, tool } = desk();
   const first = tool.run({ question: "Which one?", options: ["a"] });
   const second = tool.run({ question: "And this?", options: ["b"] });
   questions.cancelAll();
   expect(await Promise.all([first, second])).toEqual([NO_ANSWER, NO_ANSWER]);
+  expect(retired).toEqual(raised.map((card) => ({ questionId: card.questionId, reason: "cancelled" })));
 });
 
 test("report_progress shows a card and re-reports it under the same card id", () => {

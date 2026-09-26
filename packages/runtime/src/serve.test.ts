@@ -919,6 +919,22 @@ test("OpenClaw activity reaches Mac and encrypted phone live, then replays durin
   }
 });
 
+test("OpenClaw execution failure reaches the phone as a thread needing attention", async () => {
+  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
+  vi.spyOn(OpenClawRunner.prototype, "run").mockImplementation(async (turn) => {
+    turn.onFailure?.();
+    return "OpenClaw turn failed: denied";
+  });
+  const { send, eventsUntil } = await pairedPhone([], true);
+  send({ kind: "thread_create", data: {} });
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
+  send({ kind: "message", data: { role: "user", text: "Deploy" } });
+  const final = (await eventsUntil((event) => event.kind === "message" && event.data.done === true)).at(-1)!;
+  expect(final).toMatchObject({ data: { failed: true, text: "OpenClaw turn failed: denied" } });
+  await eventsUntil((event) => event.kind === "thread_list" &&
+    event.data.threads.find((thread) => thread.id === "t1")?.needsAttention === true);
+});
+
 test("a thread is answered by the agent it was created for, and an unknown agent is refused", async () => {
   vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
   const run = vi.spyOn(OpenClawRunner.prototype, "run").mockResolvedValue("from openclaw");
@@ -1181,9 +1197,10 @@ test("stopping a turn persists its latest unsent draft", async () => {
 });
 
 test.each([
-  { outcome: "stopped" as const, text: "partial", interrupted: true },
-  { outcome: "completed" as const, text: "finished", interrupted: false },
-])("OpenClaw Stop $outcome persists the right final and keeps next prompt context", async ({ outcome, text, interrupted }) => {
+  { outcome: "stopped" as const, text: "partial", interrupted: true, failed: false },
+  { outcome: "completed" as const, text: "finished", interrupted: false, failed: false },
+  { outcome: "completed" as const, text: "OpenClaw turn failed: boom", interrupted: false, failed: true },
+])("OpenClaw Stop $outcome (failed: $failed) persists the right final and keeps next prompt context", async ({ outcome, text, interrupted, failed }) => {
   vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
   const turns: OpenClawTurn[] = [];
   vi.spyOn(OpenClawRunner.prototype, "run").mockImplementation(async (turn) => {
@@ -1193,7 +1210,7 @@ test.each([
     await new Promise<void>((resolve) => turn.signal?.addEventListener("abort", () => resolve(), { once: true }));
     return "";
   });
-  const releaseStop = Promise.withResolvers<{ status: "stopped" | "completed"; text?: string }>();
+  const releaseStop = Promise.withResolvers<{ status: "stopped" | "completed"; text?: string; failed?: boolean }>();
   const stopRun = vi.spyOn(OpenClawRunner.prototype, "stopRun").mockImplementation(() => releaseStop.promise);
   if (interrupted) stopRun.mockResolvedValueOnce(undefined);
   const { dir, send, eventsUntil } = await pairedPhone([], true);
@@ -1211,10 +1228,10 @@ test.each([
     await vi.waitFor(() => expect(stopRun).toHaveBeenCalledTimes(2), { timeout: 3_000 });
     expect(turns).toHaveLength(1);
   }
-  releaseStop.resolve({ status: outcome, ...(outcome === "completed" ? { text: "finished" } : {}) });
+  releaseStop.resolve({ status: outcome, ...(outcome === "completed" ? { text, ...(failed ? { failed: true } : {}) } : {}) });
   await eventsUntil((event) => event.kind === "stop_status" && event.data.status === outcome);
   expect(readThreadEvents("t1", dir).find((event) => event.id === `openclaw:${target}:final`))
-    .toMatchObject({ data: { text, done: true, ...(interrupted ? { interrupted: true } : {}) } });
+    .toMatchObject({ data: { text, done: true, ...(interrupted ? { interrupted: true } : {}), ...(failed ? { failed: true } : {}) } });
   await eventsUntil((event) => event.kind === "message" && event.data.role === "agent" && event.data.text === "next answer");
   expect(turns[1]?.promptOverride?.includes("Previous reply was stopped or has a pending Stop request") ?? false)
     .toBe(interrupted);
@@ -3016,6 +3033,22 @@ test("catch-up shows a still-actionable card before historical replay", async ()
   send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "t1" } }, "");
   const settled = await eventsUntil((event) => event.kind === "sync_delta");
   expect(settled.slice(0, -1).map((event) => event.id)).not.toContain(card.id);
+});
+
+test("Stop retires a pending approval on the phone and in the thread log", async () => {
+  const { dir, send, eventsUntil } = await pairedPhone([() => shellTurn("echo stop-card"), () => sse("done")], false, {}, true);
+  send({ kind: "thread_create", data: {} });
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
+  const target = send({ kind: "message", data: { role: "user", text: "run it" } });
+  const card = (await eventsUntil((event) => event.kind === "approval_card")).at(-1)!;
+  if (card.kind !== "approval_card") throw new Error("expected approval card");
+  send({ kind: "interrupt", data: { targetEventId: target } });
+  await eventsUntil((event) => event.kind === "approval_status" && event.data.actionId === card.data.actionId &&
+    event.data.status === "no-longer-needed");
+  await eventsUntil((event) => event.kind === "thread_list" &&
+    event.data.threads.find((thread) => thread.id === "t1")?.awaitingApproval !== true);
+  expect(readThreadEvents("t1", dir)).toContainEqual(expect.objectContaining({ kind: "approval_status",
+    data: expect.objectContaining({ actionId: card.data.actionId, status: "no-longer-needed" }) }));
 });
 
 test("catch-up excludes an answered question from current state", async () => {

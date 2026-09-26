@@ -208,7 +208,7 @@ export class OpenClawRunner {
   }
 
   /** Confirm the Gateway no longer has this exact run in flight before reporting Stopped. */
-  async stopRun(sessionKey: string, runId: string): Promise<{ status: "stopped" | "completed"; text?: string } | undefined> {
+  async stopRun(sessionKey: string, runId: string): Promise<{ status: "stopped" | "completed"; text?: string; failed?: boolean } | undefined> {
     const client = await this.connect();
     await client.request("chat.abort", { sessionKey, runId });
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -222,7 +222,7 @@ export class OpenClawRunner {
         });
         if (completed) {
           const final = correlatedFinal(history.messages ?? [], { runId, awaitsAnnouncement: false, childRunIds: new Set() });
-          return final.found ? { status: "completed", text: final.text } : undefined;
+          return final.found ? { status: "completed", text: final.text, ...(final.failed ? { failed: true } : {}) } : undefined;
         }
         return { status: "stopped" };
       }

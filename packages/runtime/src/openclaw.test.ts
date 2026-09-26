@@ -358,6 +358,11 @@ describe("OpenClawRunner", () => {
     const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
     await expect(runner.stopRun("agent:main:yorozu:done", "finished-run"))
       .resolves.toEqual({ status: "completed", text: "finished answer" });
+    gateway.request.mockImplementation(async (method) => method === "chat.history" ? {
+      messages: [{ role: "assistant", runId: "failed-run", stopReason: "error", content: "boom" }],
+    } : {});
+    await expect(runner.stopRun("agent:main:yorozu:failed", "failed-run"))
+      .resolves.toEqual({ status: "completed", text: "OpenClaw turn failed: boom", failed: true });
   });
 
   test("abort during connect or session patch never dispatches chat.send", async () => {
