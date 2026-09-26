@@ -35,6 +35,8 @@ export interface QuestionDesk {
   ask: AskUserFn;
   /** The user answered. Unknown ids are a no-op: a card answered twice, or after it expired. */
   answer(questionId: string, answer: string): void;
+  /** Whether the original question still owns a waiting tool call. */
+  has(questionId: string, threadId: string): boolean;
   /** Everything still waiting gives up, so an interrupt does not leave a turn parked on a card. */
   cancelAll(threadId?: string): void;
 }
@@ -74,6 +76,7 @@ export function questionDesk(
       });
     },
     answer: (questionId, answer) => waiting.get(questionId)?.(answer),
+    has: (questionId, threadId) => waiting.has(questionId) && threads.get(questionId) === threadId,
     cancelAll: (threadId) => {
       for (const [id, settle] of [...waiting]) if (!threadId || threads.get(id) === threadId) settle(NO_ANSWER);
     },

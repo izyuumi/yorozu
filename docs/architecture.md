@@ -234,6 +234,16 @@ so updates that reuse a progress card's ID cannot skip intervening history. Phon
 cursor only from replayed events and save it with the encrypted history, so live replies and
 unsent messages cannot move it past unseen pages. An invalid cursor replays from the start.
 
+Routine sync also names the open conversation as `focusThreadId`. The host puts its current reply
+and still-actionable cards in `sync_delta.current`, sending cards that exceed the snapshot budget
+as paced individual events before the delta, and scans that thread first. Paced sends rotate
+among devices, replace an older request from the same device, and stop on reconnect or re-pair.
+Current events never
+advance `lastSeen`; older replay cannot replace a newer or final version of the same reply.
+Subsequent replay pages skip that snapshot and retain open-thread
+priority, so long backfills do not repeatedly scan the full log. Peers without these optional
+fields keep ordinary replay.
+
 Sync builds an in-memory byte-offset index on the first read of a log, then seeks directly to each
 page without re-parsing prior messages; file changes invalidate the index, metadata for 16
 recently synced logs is retained, and message bodies are not cached.

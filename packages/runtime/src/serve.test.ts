@@ -995,8 +995,8 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
     run: vi.fn(async (turn: NativeTurn) => {
       turns.push(turn);
       if (turn.text === "break") throw new Error("claude is not logged in");
+      turn.onUpdate?.("working");
       if (turns.length < 3) {
-        turn.onUpdate?.("working");
         if (turns.length === 1) {
           turn.onActivity?.("u1:thinking", { kind: "thought", data: { text: "reading the failing test" } });
           turn.onActivity?.("call:toolu_1", { kind: "tool_call", data: { callId: "toolu_1", name: "Bash", args: { command: "cat big.log" } } });
@@ -1049,9 +1049,12 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
   // Stop aborts the running turn; nothing is said, and the session is still the one to resume.
   const longJobId = send({ kind: "message", data: { role: "user", text: "long job" } }, "cc");
   await vi.waitFor(() => expect(turns).toHaveLength(3));
-  send({ kind: "sync_request", data: { lastSeen: {} } });
+  send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "cc" } });
   const busy = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)! as YorozuEvent & { kind: "sync_delta" };
   expect(busy.data.workingThreadIds).toEqual(["cc"]);
+  expect(busy.data.current).toEqual([expect.objectContaining({
+    kind: "message", data: { role: "agent", text: "working" },
+  })]);
   send({ kind: "interrupt", data: { targetEventId: longJobId } }, "cc");
   await vi.waitFor(() => expect(turns[2]!.signal.aborted).toBe(true));
   send({ kind: "sync_request", data: { lastSeen: {} } });
@@ -2801,16 +2804,89 @@ test("a sync page stops short of the relay's frame limit, and the rest follows o
       : delta.kind;
 
   // From nothing: the first turn only, and word that there is more.
-  phone.send(chat, { kind: "sync_request", data: { lastSeen: {} } });
+  phone.send(chat, { kind: "sync_request", data: { lastSeen: {}, focusThreadId: chat } });
   const page = await phone.next("sync_delta");
   expect(roles(page)).toEqual(["user", "agent"]);
   expect(page).toMatchObject({ data: { more: true } });
+  expect(page.kind === "sync_delta" && page.data.current?.find((event) => event.id === replies[1])).toMatchObject({
+    kind: "message", data: { role: "agent", done: true },
+  });
 
   // From the end of that page: the second turn, and that is all.
-  phone.send(chat, { kind: "sync_request", data: { lastSeen: { [chat]: replies[0]! } } });
+  phone.send(chat, { kind: "sync_request", data: { lastSeen: { [chat]: replies[0]! }, focusThreadId: chat,
+    includeCurrent: false } });
   const rest = await phone.next("sync_delta");
   expect(roles(rest)).toEqual(["user", "agent"]);
   expect(rest.kind === "sync_delta" && rest.data.more).toBeUndefined();
+  expect(rest.kind === "sync_delta" && rest.data.current).toBeUndefined();
+});
+
+test("catch-up shows a still-actionable card before historical replay", async () => {
+  const { send, eventsUntil } = await pairedPhone([() => shellTurn("x".repeat(140_000)), () => sse("done")]);
+  send({ kind: "thread_create", data: {} });
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
+  send({ kind: "message", data: { role: "user", text: "run it" } });
+  const card = (await eventsUntil((event) => event.kind === "approval_card")).at(-1)!;
+  expect(Buffer.byteLength(JSON.stringify(card))).toBeGreaterThan(SYNC_PAGE_BYTES / 2);
+  send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "t1" } }, "");
+  const snapshot = await eventsUntil((event) => event.kind === "sync_delta");
+  expect(snapshot.slice(0, -1).map((event) => event.id)).toContain(card.id);
+  if (card.kind !== "approval_card") throw new Error("expected approval card");
+  send({ kind: "approval_answer", data: { actionId: card.data.actionId, answer: "no" } });
+  await eventsUntil((event) => event.kind === "message" && event.data.done === true);
+  send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "t1" } }, "");
+  const settled = await eventsUntil((event) => event.kind === "sync_delta");
+  expect(settled.slice(0, -1).map((event) => event.id)).not.toContain(card.id);
+});
+
+test("catch-up excludes an answered question from current state", async () => {
+  const ask = () => new Response(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0,
+    id: "call_ask", function: { name: "ask_user", arguments: JSON.stringify({ question: "Which?", options: ["A", "B"] }) },
+  }] }, finish_reason: "tool_calls" }] })}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
+  const { send, eventsUntil } = await pairedPhone([ask, () => sse("done")]);
+  send({ kind: "thread_create", data: {} });
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
+  send({ kind: "message", data: { role: "user", text: "ask me" } });
+  const question = (await eventsUntil((event) => event.kind === "question_card")).at(-1)!;
+  expect(question.kind).toBe("question_card");
+  send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "t1" } }, "");
+  const active = await eventsUntil((event) => event.kind === "sync_delta");
+  const activeDelta = active.at(-1)!;
+  expect(activeDelta.kind === "sync_delta" && activeDelta.data.current).toContainEqual(question);
+  if (question.kind !== "question_card") throw new Error("expected question card");
+  send({ kind: "question_answer", data: { questionId: question.data.questionId, answer: "A" } });
+  await eventsUntil((event) => event.kind === "message" && event.data.done === true);
+  send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "t1" } }, "");
+  const settled = await eventsUntil((event) => event.kind === "sync_delta");
+  const settledDelta = settled.at(-1)!;
+  expect(settledDelta.kind === "sync_delta" && settledDelta.data.current).not.toContainEqual(question);
+});
+
+test("current snapshot honors the pairing cutoff for live replies", async () => {
+  const streamed = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let pairedAt = 0;
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(pairedAt - 1);
+    turn.onUpdate?.("before pairing");
+    clock.mockRestore();
+    streamed.resolve();
+    turn.signal.addEventListener("abort", () => release.resolve(), { once: true });
+    await release.promise;
+    return { text: "done", sessionId: "session" };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
+  await vi.waitFor(() => expect(loadDevices(join(dir, "devices.json"))).toHaveLength(1));
+  pairedAt = loadDevices(join(dir, "devices.json"))[0]!.pairedAt!;
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "native");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "native"));
+  send({ kind: "message", data: { role: "user", text: "work" } }, "native");
+  await streamed.promise;
+  try {
+    send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "native" } }, "");
+    const snapshot = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
+    expect(snapshot.kind === "sync_delta" && snapshot.data.current).toBeUndefined();
+  } finally { release.resolve(); }
 });
 
 test.each([["claude-code", "yes"], ["claude-code", "no"], ["codex", "yes"], ["codex", "no"]] as const)("%s native approval %s round-trips through encrypted relay including lockscreen answers", async (agent, answer) => {

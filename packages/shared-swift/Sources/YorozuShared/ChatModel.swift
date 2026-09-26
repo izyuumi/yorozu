@@ -237,6 +237,7 @@ public final class ChatModel {
     /// Replay progress follows the runtime's log order, independently of live events and
     /// the timeline's timestamp order. Advancing from either can skip unseen sync pages.
     private var syncLastSeen: [String: String] = [:]
+    private var lastSyncFocus: String?
     private var historyCursors: [String: String] = [:]
     private var historyLoaded: Set<String> = []
     private var historyInFlight: Set<String> = []
@@ -1338,9 +1339,11 @@ public final class ChatModel {
     }
 
     /// Asks for everything each thread has gained since the last event we hold.
-    public func requestSync() {
+    public func requestSync(includeCurrent: Bool = true) {
+        lastSyncFocus = openThread
         emit(
-            .syncRequest(SyncRequestData(lastSeen: syncLastSeen)),
+            .syncRequest(SyncRequestData(lastSeen: syncLastSeen, focusThreadId: openThread,
+                includeCurrent: includeCurrent ? nil : false)),
             in: ""
         )
     }
@@ -1445,6 +1448,7 @@ public final class ChatModel {
                 requestOpenHistory()
                 onThreads?()
             case .syncDelta(let data):
+                for event in data.current ?? [] { upsert(event, persist: false) }
                 for event in data.events {
                     if case .approvalStatus(let status) = event.payload { retireApproval(status) }
                     upsert(event, persist: false)
@@ -1455,13 +1459,15 @@ public final class ChatModel {
                     historyInFlight.remove(id)
                     if data.more != true { historyLoaded.insert(id) }
                 }
-                persistEvents(in: Set(data.events.map(\.threadId)).union(data.threadId.map { [$0] } ?? []))
+                persistEvents(in: Set(data.events.map(\.threadId))
+                    .union((data.current ?? []).map(\.threadId))
+                    .union(data.threadId.map { [$0] } ?? []))
                 if let workingThreadIds = data.workingThreadIds {
                     generating = Set(workingThreadIds)
                 }
                 if data.more == true {
                     if data.threadId != nil { requestOpenHistory() }
-                    else { requestSync() }
+                    else { requestSync(includeCurrent: openThread != lastSyncFocus) }
                 }
                 else if data.threadId == nil {
                     syncRevision += 1
@@ -1935,6 +1941,12 @@ public final class ChatModel {
         applyAnswerState(event)
         var thread = timeline(event.threadId).events
         if let index = thread.firstIndex(where: { $0.id == event.id }) {
+            if case .message(let old) = thread[index].payload, old.role == .agent,
+               case .message(let next) = event.payload, next.role == .agent,
+               (old.done == true && next.done != true ||
+                old.done != true && next.done != true &&
+                    (thread[index].ts > event.ts || thread[index].ts == event.ts && old.text.count > next.text.count) ||
+                old.done == true && next.done == true && thread[index].ts > event.ts) { return }
             guard thread[index] != event else { return }
             thread[index] = event
             if case .message(let data) = event.payload, data.role == .agent {

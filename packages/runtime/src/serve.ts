@@ -652,6 +652,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
   let relayReady = false;
   let retry: NodeJS.Timeout | null = null;
   let stopped = false;
+  const catchupSends = new Map<string, { connection: WebSocket | null; device: PairedDevice;
+    responses: YorozuEvent[]; next: number }>();
+  let catchupTimer: NodeJS.Timeout | null = null;
   /**
    * Secrets behind the QRs on screen, newest last. A phone's first `hello` proves it holds one
    * of them, and pairing spends them all: a QR is for one phone, and the next one is drawn fresh.
@@ -660,9 +663,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const PAIRING_SECRETS = 4;
   /** Seals and sends to one paired device. Replaced per connection, a no-op while there is none. */
   let sendTo: (device: string, event: YorozuEvent) => void = () => {};
+  const liveReplies = new Map<string, YorozuEvent>();
 
   /** The same event to every paired device, through the relay or over the local socket. */
   const broadcast = (event: YorozuEvent): void => {
+    if (event.kind === "message" && event.data.role === "agent" && !event.parentAgentId) {
+      if (event.data.done) liveReplies.delete(event.threadId);
+      else liveReplies.set(event.threadId, event);
+    }
     for (const device of devices.keys()) sendTo(device, event);
     for (const send of locals.values()) send(event);
     // Beside the sealed frame, never instead of it: a phone that is listening gets the event
@@ -854,6 +862,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }) } });
   };
   const broadcastActiveThreadList = (): void => {
+    for (const id of liveReplies.keys()) if (!running.has(id)) liveReplies.delete(id);
     if (locals.size || [...devices.values()].some((device) => device.compatibility?.state === "compatible" &&
         device.compatibility.capabilities.includes("exact-stop-v1"))) broadcast(threadList());
   };
@@ -926,6 +935,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const forgetDevice = (pub: string): void => {
     const known = devices.get(pub);
     if (!known) return;
+    catchupSends.delete(pub);
     devices.delete(pub);
     saveDevices();
     if (known.record.signingPub) revokeAtRelay(known.record.signingPub);
@@ -935,18 +945,60 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   /** A bounded replay page. An explicit thread request includes its pre-pairing history. */
   const syncDelta = (lastSeen: Record<string, string>, pairedAt = 0, threadId?: string,
-    includeApprovalStatus = true): YorozuEvent => {
+    includeApprovalStatus = true, focusThreadId?: string, includeCurrent = true): YorozuEvent[] => {
     const events: YorozuEvent[] = [];
-    let bytes = 0;
-    let more = false;
+    const cards: YorozuEvent[] = [];
     const selected = listThreads(dir).filter((thread) => threadId ? thread.id === threadId : !thread.archived);
+    const focused = !threadId && selected.find((thread) => thread.id === focusThreadId);
+    if (focused) {
+      selected.splice(selected.indexOf(focused), 1);
+      selected.unshift(focused);
+    }
+    let latest: YorozuEvent | undefined;
+    if (focused && includeCurrent) {
+      const history = readThreadEvents(focused.id, dir).filter((event) => event.ts >= pairedAt);
+      const live = running.has(focused.id) ? liveReplies.get(focused.id) : undefined;
+      const reply = live && live.ts >= pairedAt ? live : undefined;
+      latest = reply ?? history.findLast((event) =>
+        event.kind === "message" && event.data.role === "agent" && !event.parentAgentId);
+      if (running.has(focused.id)) {
+        const answered = new Set(history.flatMap((event) => event.kind === "approval_answer" ? [event.data.actionId]
+          : event.kind === "approval_status" && event.data.status !== "rejected" ? [event.data.actionId]
+          : event.kind === "question_answer" ? [event.data.questionId] : []));
+        cards.push(...history.filter((event) => event.kind === "approval_card"
+          ? !answered.has(event.data.actionId) &&
+              (pending.get(event.data.actionId)?.threadId === focused.id || nativeCards.has(event.data.actionId, focused.id))
+          : event.kind === "question_card" && !answered.has(event.data.questionId) &&
+              questions.has(event.data.questionId, focused.id)));
+      }
+    }
+    // Keep active cards ahead of the current reply and historical replay within a bounded frame.
+    const current: YorozuEvent[] = [];
+    let currentBytes = 2; // []
+    const deferredCards: YorozuEvent[] = [];
+    for (const card of cards) {
+      const size = Buffer.byteLength(JSON.stringify(card)) + (current.length ? 1 : 0);
+      if (currentBytes + size <= SYNC_PAGE_BYTES / 2) {
+        current.push(card);
+        currentBytes += size;
+      } else deferredCards.push(card);
+    }
+    if (latest) {
+      const size = Buffer.byteLength(JSON.stringify(latest)) + (current.length ? 1 : 0);
+      if (currentBytes + size <= SYNC_PAGE_BYTES / 2) {
+        current.push(latest);
+        currentBytes += size;
+      }
+    }
+    let bytes = currentBytes;
+    let more = false;
     threads: for (const thread of selected) {
       const page = eventsAfter(thread.id, lastSeen?.[thread.id], dir, threadId ? 0 : pairedAt,
         (event) => includeApprovalStatus || event.kind !== "approval_status");
       if (page.length === SYNC_LIMIT) more = true;
       for (const event of page) {
         const size = Buffer.byteLength(JSON.stringify(event));
-        if (events.length > 0 && bytes + size > SYNC_PAGE_BYTES) {
+        if ((events.length > 0 || current.length > 0) && bytes + size > SYNC_PAGE_BYTES) {
           more = true;
           break threads;
         }
@@ -954,10 +1006,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
         bytes += size;
       }
     }
-    return control({
+    return [...deferredCards, control({
       kind: "sync_delta",
-      data: { events, workingThreadIds: [...running.keys()], ...(threadId ? { threadId } : {}), ...(more ? { more: true } : {}) },
-    });
+      data: { events, ...(current.length ? { current } : {}), workingThreadIds: [...running.keys()],
+        ...(threadId ? { threadId } : {}), ...(more ? { more: true } : {}) },
+    })];
   };
 
   /**
@@ -992,6 +1045,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     attachments: MessageAttachment[] = [],
     userEventId?: string,
   ): Promise<void> {
+    liveReplies.delete(threadId);
     // A turn the phone did not send — a due job, a background delegation — is still part of
     // the thread, so it is recorded as the user message it stands in for.
     if (!recorded) {
@@ -1431,6 +1485,44 @@ export function serve(options: ServeOptions = {}): Sidecar {
     broadcast(approvalSettingsEvent());
   };
   armYoloExpiry();
+
+  const stillActionable = (event: YorozuEvent): boolean => event.kind === "approval_card"
+    ? pending.get(event.data.actionId)?.threadId === event.threadId ||
+      nativeCards.has(event.data.actionId, event.threadId)
+    : event.kind === "question_card"
+      ? questions.has(event.data.questionId, event.threadId)
+      : true;
+
+  /** One catch-up frame per tick; rotate phones and replace obsolete requests per phone. */
+  const sendCatchup = (): void => {
+    catchupTimer = null;
+    const entry = catchupSends.entries().next().value;
+    if (!entry) return;
+    const [pub, job] = entry;
+    catchupSends.delete(pub);
+    if (!stopped && relayReady && socket === job.connection && job.connection?.readyState === WebSocket.OPEN &&
+      devices.get(pub) === job.device) {
+      while (job.next < job.responses.length) {
+        const response = job.responses[job.next++]!;
+        if (!stillActionable(response)) continue;
+        const fresh = response.kind === "sync_delta" && response.data.current
+          ? { ...response, data: { ...response.data, current: response.data.current.filter(stillActionable) } }
+          : response;
+        try { sendTo(pub, fresh); }
+        catch (error) {
+          state(`catchup-send-error ${String(error)}`);
+          job.connection?.close();
+          return;
+        }
+        break;
+      }
+      if (job.next < job.responses.length) catchupSends.set(pub, job);
+    }
+    if (catchupSends.size) {
+      catchupTimer = setTimeout(sendCatchup, 100);
+      catchupTimer.unref();
+    }
+  };
 
   /**
    * `from` names the relay device a sealed box came from. Absent for the local socket, whose
@@ -1879,9 +1971,20 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return forgetDevice(event.data.pub);
       case "sync_request": {
         if (event.data.threadId !== undefined && (typeof event.data.threadId !== "string" || !event.data.threadId)) return;
+        if (event.data.focusThreadId !== undefined &&
+          (typeof event.data.focusThreadId !== "string" || event.data.focusThreadId.length > 256)) return;
         const compatibility = from ? devices.get(from)?.compatibility : undefined;
-        return reply(syncDelta(event.data.lastSeen, pairedAt, event.data.threadId,
-          !from || compatibility?.state === "compatible" && compatibility.capabilities.includes("offline-approval-v1")));
+        const responses = syncDelta(event.data.lastSeen, pairedAt, event.data.threadId,
+          !from || compatibility?.state === "compatible" && compatibility.capabilities.includes("offline-approval-v1"),
+          event.data.focusThreadId, event.data.includeCurrent !== false);
+        if (from) catchupSends.delete(from);
+        if (from && responses.length > 1) {
+          const device = devices.get(from);
+          if (!device) return;
+          catchupSends.set(from, { connection: socket, device, responses, next: 0 });
+          if (!catchupTimer) sendCatchup();
+        } else for (const response of responses) reply(response);
+        return;
       }
     }
 
@@ -2373,6 +2476,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
     ws.on("close", () => {
       relayReady = false;
+      catchupSends.clear();
+      if (catchupTimer) clearTimeout(catchupTimer);
+      catchupTimer = null;
       stopHeartbeat();
       state("disconnected");
       if (!stopped) retry = setTimeout(connect, RECONNECT_MS);
@@ -2385,6 +2491,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // its deterministic final is durable; later persisted user messages are then replayed FIFO.
   const resumeOpenClaw = async (stored: StoredPendingTurn): Promise<void> => {
     const { threadId, completionId } = stored;
+    liveReplies.delete(threadId);
     const stop = stored.userEventId ? stoppedTurns.get(stored.userEventId) : undefined;
     if (stop) {
       if (stop.status === "requested") finishStop(stop);
@@ -2479,6 +2586,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     close: async () => {
       stopped = true;
+      catchupSends.clear();
+      if (catchupTimer) clearTimeout(catchupTimer);
+      catchupTimer = null;
       for (const turn of running.values()) turn.abort();
       if (retry) clearTimeout(retry);
       await local.close();
