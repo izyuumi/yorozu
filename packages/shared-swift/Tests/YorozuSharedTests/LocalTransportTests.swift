@@ -3,6 +3,44 @@ import Network
 import Testing
 @testable import YorozuShared
 
+@Test func sendDeadlineReturnsWhenUnderlyingSendStalls() async throws {
+    let (timeouts, signal) = AsyncStream<Void>.makeStream()
+    await #expect(throws: TransportSendTimeout.self) {
+        try await sendWithDeadline(.milliseconds(30), onTimeout: { signal.yield(()) }) {
+            try await Task.sleep(for: .seconds(5))
+        }
+    }
+    var iterator = timeouts.makeAsyncIterator()
+    #expect(await iterator.next() != nil)
+}
+
+@Test func successfulSendDoesNotCancelItsSocketAtDeadline() async throws {
+    let (timeouts, signal) = AsyncStream<Void>.makeStream()
+    try await sendWithDeadline(.milliseconds(300), onTimeout: { signal.yield(()) }) {}
+    try await Task.sleep(for: .milliseconds(350))
+    signal.finish()
+    var iterator = timeouts.makeAsyncIterator()
+    #expect(await iterator.next() == nil)
+}
+
+@Test func cancelledSendClosesItsSocket() async throws {
+    let (cancellations, signal) = AsyncStream<Void>.makeStream()
+    let (starts, started) = AsyncStream<Void>.makeStream()
+    let task = Task {
+        try await sendWithDeadline(.seconds(5), onTimeout: { signal.yield(()) }) {
+            started.yield(())
+            try await Task.sleep(for: .seconds(5))
+        }
+    }
+    var start = starts.makeAsyncIterator()
+    #expect(await start.next() != nil)
+    task.cancel()
+    await #expect(throws: CancellationError.self) { try await task.value }
+    signal.finish()
+    var iterator = cancellations.makeAsyncIterator()
+    #expect(await iterator.next() != nil)
+}
+
 @MainActor
 private final class RestartSocketServer {
     var ready = false

@@ -19,6 +19,76 @@ extension ChatTransport {
     public func reconnect() async {}
 }
 
+struct TransportSendTimeout: LocalizedError {
+    var errorDescription: String? { "Timed out sending to host" }
+}
+
+private actor SendResolution {
+    private var resolved = false
+    func claim() -> Bool {
+        guard !resolved else { return false }
+        resolved = true
+        return true
+    }
+}
+
+/// Return on the first send result or deadline. Cancel the underlying socket on timeout so a
+/// late completion cannot keep using an obsolete connection while the outbox retries its ID.
+func sendWithDeadline(
+    _ deadline: Duration = .seconds(10),
+    onTimeout: @escaping @Sendable () -> Void,
+    operation: @escaping @Sendable () async throws -> Void
+) async throws {
+    let (stream, continuation) = AsyncStream<Result<Void, any Error>>.makeStream(
+        bufferingPolicy: .bufferingOldest(1))
+    let resolution = SendResolution()
+    let sending = Task {
+        do {
+            try await operation()
+            if await resolution.claim() {
+                continuation.yield(.success(()))
+                continuation.finish()
+            }
+        } catch {
+            if await resolution.claim() {
+                if error is CancellationError { onTimeout() }
+                continuation.yield(.failure(error))
+                continuation.finish()
+            }
+        }
+    }
+    let timer = Task {
+        do { try await Task.sleep(for: deadline) }
+        catch { return }
+        if await resolution.claim() {
+            onTimeout()
+            continuation.yield(.failure(TransportSendTimeout()))
+            continuation.finish()
+        }
+    }
+    defer {
+        sending.cancel()
+        timer.cancel()
+        continuation.finish()
+    }
+    try await withTaskCancellationHandler {
+        var iterator = stream.makeAsyncIterator()
+        guard let result = await iterator.next() else {
+            if await resolution.claim() { onTimeout() }
+            throw CancellationError()
+        }
+        try result.get()
+    } onCancel: {
+        Task {
+            if await resolution.claim() {
+                onTimeout()
+                continuation.yield(.failure(CancellationError()))
+                continuation.finish()
+            }
+        }
+    }
+}
+
 public enum TransportState: String, Sendable {
     case connecting
     /// Accepted by the relay; the Mac may still be offline. Local transports skip it.
@@ -98,13 +168,17 @@ public actor LocalSocketTransport: ChatTransport {
     public func send(_ event: YorozuEvent) async throws {
         var line = try JSONEncoder().encode(event)
         line.append(0x0a)
-        try await withCheckedThrowingContinuation { (resume: CheckedContinuation<Void, Error>) in
-            connection.send(
-                content: line,
-                completion: .contentProcessed { error in
-                    if let error { resume.resume(throwing: error) } else { resume.resume() }
-                }
-            )
+        let bytes = line
+        let connection = self.connection
+        try await sendWithDeadline(onTimeout: { connection.cancel() }) {
+            try await withCheckedThrowingContinuation { (resume: CheckedContinuation<Void, Error>) in
+                connection.send(
+                    content: bytes,
+                    completion: .contentProcessed { error in
+                        if let error { resume.resume(throwing: error) } else { resume.resume() }
+                    }
+                )
+            }
         }
     }
 

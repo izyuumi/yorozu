@@ -630,6 +630,9 @@ public actor RelayClient: ChatTransport {
     private func send(_ message: [String: String]) async throws {
         guard let socket else { throw YorozuCrypto.CryptoError.malformed("not connected") }
         let data = try JSONSerialization.data(withJSONObject: message)
-        try await socket.send(.string(String(decoding: data, as: UTF8.self)))
+        let frame = URLSessionWebSocketTask.Message.string(String(decoding: data, as: UTF8.self))
+        try await sendWithDeadline(onTimeout: { socket.cancel() }) {
+            try await socket.send(frame)
+        }
     }
 }
