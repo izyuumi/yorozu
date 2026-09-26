@@ -486,7 +486,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // A Stop is bound to one accepted operation. Keep its intent through sidecar replacement,
   // including the backend run identity needed to finish an interrupted abort request.
   type StopRecord = { targetEventId: string; threadId: string; status: "requested" | "stopped" | "completed" | "withdrawn" | "unconfirmed";
-    sessionKey?: string; runId?: string; requestIds: string[] };
+    sessionKey?: string; runId?: string; partialText?: string; requestIds: string[] };
   const stopFile = join(dir, "stopped-turns.jsonl");
   let stopText = existsSync(stopFile) ? readFileSync(stopFile, "utf8") : "";
   if (stopText && !stopText.endsWith("\n")) {
@@ -502,6 +502,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     ["requested", "stopped", "completed", "withdrawn", "unconfirmed"].includes((entry as StopRecord).status) &&
     ((entry as StopRecord).runId === undefined || typeof (entry as StopRecord).runId === "string") &&
     ((entry as StopRecord).sessionKey === undefined || typeof (entry as StopRecord).sessionKey === "string") &&
+    ((entry as StopRecord).partialText === undefined || typeof (entry as StopRecord).partialText === "string") &&
     Array.isArray((entry as StopRecord).requestIds) &&
     (entry as StopRecord).requestIds.every((id) => typeof id === "string" && id.length > 0 && id.length <= 128))) {
     throw new Error("Invalid stopped-turn journal");
@@ -515,7 +516,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const stoppedTurns = new Map((stopLines as StopRecord[]).map((entry) => [entry.targetEventId, entry]));
   const rememberStop = (entry: StopRecord): void => {
     const previous = stoppedTurns.get(entry.targetEventId);
-    if (previous?.status === entry.status && previous.requestIds.length === entry.requestIds.length) return;
+    if (previous?.status === entry.status && previous.requestIds.length === entry.requestIds.length &&
+      previous.partialText === entry.partialText) return;
     appendFileSync(stopFile, JSON.stringify(entry) + "\n", { mode: 0o600, flush: true });
     stoppedTurns.set(entry.targetEventId, entry);
   };
@@ -1218,6 +1220,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
       `Continue unfinished work and answer the original request.\nOriginal request: ${original}\nRecent host record:\n${recent}`;
   };
 
+  const withStoppedContext = (threadId: string, original: string, userEventId?: string): string => {
+    const messages = readThreadEvents(threadId, dir).filter((event) => event.kind === "message");
+    const index = userEventId ? messages.findIndex((event) => event.id === userEventId) : -1;
+    const prior = index > 0 ? messages[index - 1] : index < 0 ? messages.at(-1) : undefined;
+    if (prior?.kind !== "message" || prior.data.role !== "agent" || !prior.data.interrupted) return original;
+    const excerpt = prior.data.text.slice(-4_000);
+    return `Previous reply was stopped by the user. Its partial text may be absent from your session context. ` +
+      `Do not repeat actions without checking their outcomes. Partial reply: ${JSON.stringify(excerpt || "(none)")}\n\nNew user request: ${original}`;
+  };
+
   async function runTurn(
     threadId: string,
     text: string,
@@ -1310,7 +1322,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
             const currentHome = threadHome(threadId, dir);
             const done = await runner.run({
               threadId,
-              text: recovering ? nativeRecoveryPrompt(threadId, text) : text,
+              text: recovering ? nativeRecoveryPrompt(threadId, text) : withStoppedContext(threadId, text, userEventId),
               ...currentHome,
               cwd: home.cwd,
               bypass: loadSettings(dir).yolo,
@@ -1336,7 +1348,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
               },
             });
             if (done.sessionId && done.sessionId !== currentHome.sessionId) setThreadSession(threadId, done.sessionId, dir);
-            if (turn.signal.aborted) return;
+            if (turn.signal.aborted) {
+              const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
+              if (stop?.status === "requested" && done.text.length > (stop.partialText?.length ?? 0))
+                rememberStop({ ...stop, partialText: done.text });
+              return;
+            }
             if (done.failed) throw new Error(`${agent} reported an unsuccessful turn`);
             finish(done.text);
             return;
@@ -1440,7 +1457,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const event: YorozuEvent & { kind: "message" } = acceptedEvent?.kind === "message" ? acceptedEvent
         : { id: userEventId, threadId, ts: Date.now(), agentId: MAIN_AGENT,
         kind: "message" as const, data: { role: "user" as const, text, ...(attachments.length ? { attachments } : {}) } };
-      const stored = openclaw!.admitUserTurn({ threadId, text, model: threadModel(threadId, dir),
+      const existingInput = openclaw!.pendingTurns(true).find((turn) => turn.userEventId === userEventId)?.input.text;
+      const stored = openclaw!.admitUserTurn({ threadId, text: existingInput ?? withStoppedContext(threadId, text, userEventId), model: threadModel(threadId, dir),
         effort: threadEffort(threadId, dir), attachments, userEventId, identity: userMessageIdentity(event),
         eventTs: event.ts, admissionDeadline: event.data.admissionDeadline,
         completionId: `openclaw:` + userEventId + `:final` }, (admission) => {
@@ -1508,8 +1526,17 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const broadcastStop = (record: StopRecord): void => {
     for (const id of stoppedTurns.get(record.targetEventId)?.requestIds ?? record.requestIds) broadcast(stopStatus(record, id));
   };
+  const persistStoppedReply = (record: StopRecord, text = record.partialText ?? ""): void => {
+    const id = completionIdFor(record.threadId, record.targetEventId);
+    if (readThreadEvents(record.threadId, dir).some((event) => event.id === id && event.kind === "message" && event.data.done)) return;
+    const final: YorozuEvent = { id, threadId: record.threadId, ts: Date.now(), agentId: MAIN_AGENT,
+      kind: "message", data: { role: "agent", text, done: true, interrupted: true } };
+    if (record.runId && record.sessionKey) finalizeOpenClaw(final);
+    else emit(final);
+  };
   function completeStop(record: StopRecord): void {
     if (record.status !== "requested") return;
+    persistStoppedReply(record);
     const finished = { ...record, status: "stopped" as const };
     rememberStop(finished);
     broadcastStop(finished);
@@ -1540,6 +1567,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           return;
         }
         openclaw?.discardPending(target);
+        persistStoppedReply(record);
         rememberStop({ ...record, status: "stopped" });
         broadcastStop(stoppedTurns.get(target)!);
       }
@@ -1554,6 +1582,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           ts: Date.now(), agentId: MAIN_AGENT, kind: "message",
           data: { role: "agent", text: outcome.text ?? "", done: true } });
       } else {
+        if (outcome.status === "stopped") persistStoppedReply(record, outcome.text ?? record.partialText ?? "");
         openclaw!.discardPending(target);
       }
       rememberStop({ ...record, status: outcome.status });
@@ -1786,7 +1815,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const user = history.find((stored) => stored.id === target && stored.kind === "message" && stored.data.role === "user");
       const ledger = openclaw?.pendingTurns(true).find((turn) => turn.threadId === event.threadId && turn.userEventId === target);
       const final = history.some((stored) => stored.id === completionIdFor(event.threadId, target) &&
-        stored.kind === "message" && stored.data.done === true);
+        stored.kind === "message" && stored.data.done === true && stored.data.interrupted !== true);
       if (!existing && !user && !ledger) {
         const withdrawn: StopRecord = { targetEventId: target, threadId: event.threadId,
           status: "withdrawn", requestIds: [event.id] };
@@ -1796,9 +1825,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return;
       }
       const requestIds = existing ? [...new Set([...existing.requestIds, event.id])] : [event.id];
+      const live = liveReplies.get(event.threadId);
       const record: StopRecord = final ? { ...(existing ?? { targetEventId: target, threadId: event.threadId }),
         status: "completed", requestIds } : existing ? { ...existing, requestIds } : { targetEventId: target, threadId: event.threadId,
         status: "requested", requestIds,
+        ...(runningEventIds.get(event.threadId) === target && live?.kind === "message" && live.data.role === "agent"
+          ? { partialText: live.data.text } : {}),
         ...(ledger && (ledger.state === "active" || runningEventIds.get(event.threadId) === target)
           ? { sessionKey: ledger.sessionKey, runId: ledger.runId } : {}) };
       rememberStop(record);

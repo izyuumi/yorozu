@@ -58,7 +58,9 @@ public func threadMarkdown(
             for attachment in data.attachments {
                 lines += ["*Attached: \(attachment.name) (\(attachment.size))*", ""]
             }
-            lines.append(data.text.isEmpty ? "*(no text)*" : data.text)
+            if !data.text.isEmpty { lines.append(data.text) }
+            if data.interrupted == true { lines += ["", "*Stopped*"] }
+            else if data.text.isEmpty { lines.append("*(no text)*") }
         case .approval(let event):
             guard case .approvalCard(let card) = event.payload else { break }
             lines += ["", "> **Approval asked** — \(card.actionClass): \(card.target)"]

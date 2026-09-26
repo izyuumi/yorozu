@@ -321,6 +321,20 @@ describe("OpenClawRunner", () => {
     }));
   });
 
+  test("abort returns the partial reply already streamed by Gateway", async () => {
+    const gateway = harness();
+    const runner = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory });
+    const controller = new AbortController();
+    const onUpdate = vi.fn();
+    const result = runner.run({ threadId: "partial-abort", text: "work", signal: controller.signal, onUpdate });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    gateway.event({ sessionKey: "agent:main:yorozu:partial-abort", runId: "run-1", seq: 1,
+      state: "delta", deltaText: "half a" });
+    expect(onUpdate).toHaveBeenCalledWith("half a");
+    controller.abort();
+    await expect(result).resolves.toBe("half a");
+  });
+
   test("stop racing a completed run returns its final answer", async () => {
     const gateway = harness();
     gateway.request.mockImplementation(async (method) => method === "chat.history" ? {

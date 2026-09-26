@@ -210,7 +210,7 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
         clearTimeout(abortTimer);
         client.close();
       }
-      return { text: turn.signal.aborted ? "" : text, ...(sessionId ? { sessionId } : {}) };
+      return { text: turn.signal.aborted ? Array.from(streamed.values()).at(-1) || text : text, ...(sessionId ? { sessionId } : {}) };
     },
   };
 }

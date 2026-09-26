@@ -522,7 +522,7 @@ export class OpenClawRunner {
         this.clearPending(pending);
         void client()?.request("chat.abort", { sessionKey, runId: pending.runId });
         pending.resumeRecovery?.();
-        resolve("");
+        resolve(pending.text);
       };
       turn.signal?.addEventListener("abort", abort, { once: true });
       const finish = (fn: () => void) => {

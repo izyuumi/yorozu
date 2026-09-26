@@ -108,7 +108,7 @@ test("thoughts, tool calls and results become the trace the work row draws; suba
   expect(JSON.stringify(activity)).not.toContain("secret");
 });
 
-test("stop aborts the SDK query, says nothing, and keeps the session resumable", async () => {
+test("stop returns streamed text and keeps the SDK session resumable", async () => {
   const turn = new AbortController();
   const { query, calls } = fakeQuery((options) => {
     // The first message arrives; then the user presses stop before the reply does.
@@ -119,6 +119,7 @@ test("stop aborts the SDK query, says nothing, and keeps the session resumable",
         if (prop === Symbol.iterator) {
           return function* () {
             yield target[0];
+            yield { type: "stream_event", session_id: "s-3", event: { type: "content_block_delta", delta: { type: "text_delta", text: "half a" } } };
             turn.abort();
             expect(abort.signal.aborted).toBe(true);
             yield said("s-3", "half a");
@@ -129,7 +130,7 @@ test("stop aborts the SDK query, says nothing, and keeps the session resumable",
     });
   });
   const done = await claudeCodeRunner(query).run({ threadId: "cc", cwd: "/tmp/proj", text: "long job", signal: turn.signal });
-  expect(done).toEqual({ text: "", sessionId: "s-3" });
+  expect(done).toEqual({ text: "half a", sessionId: "s-3" });
   expect(calls).toHaveLength(1);
 });
 

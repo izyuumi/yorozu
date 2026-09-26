@@ -345,6 +345,8 @@ public struct MessageData: Codable, Equatable, Sendable {
     /// that delegation stops spinning, and the main agent's, so the composer stops offering
     /// Stop. A flag rather than a kind of its own: the final message already ends the turn.
     public var done: Bool?
+    /// Final reply stopped by the user; text, if any, is the partial reply.
+    public var interrupted: Bool?
     /// Photos and files the user sent with this message. Only set on a `user` message.
     public var attachments: [MessageAttachment]
     /// Encrypted initial-admission deadline, exactly 30 minutes after the event timestamp.
@@ -358,6 +360,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         role: Role,
         text: String,
         done: Bool? = nil,
+        interrupted: Bool? = nil,
         attachments: [MessageAttachment] = [],
         admissionDeadline: Int? = nil,
         runId: String? = nil,
@@ -366,19 +369,21 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.role = role
         self.text = text
         self.done = done
+        self.interrupted = interrupted
         self.attachments = attachments
         self.admissionDeadline = admissionDeadline
         self.runId = runId
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, done, attachments, admissionDeadline, runId, completionId }
+    private enum CodingKeys: String, CodingKey { case role, text, done, interrupted, attachments, admissionDeadline, runId, completionId }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         role = try c.decode(Role.self, forKey: .role)
         text = try c.decode(String.self, forKey: .text)
         done = try c.decodeIfPresent(Bool.self, forKey: .done)
+        interrupted = try c.decodeIfPresent(Bool.self, forKey: .interrupted)
         attachments = try c.decodeIfPresent([MessageAttachment].self, forKey: .attachments) ?? []
         admissionDeadline = try c.decodeIfPresent(Int.self, forKey: .admissionDeadline)
         runId = try c.decodeIfPresent(String.self, forKey: .runId)
@@ -390,6 +395,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         try c.encode(role, forKey: .role)
         try c.encode(text, forKey: .text)
         try c.encodeIfPresent(done, forKey: .done)
+        try c.encodeIfPresent(interrupted, forKey: .interrupted)
         if !attachments.isEmpty { try c.encode(attachments, forKey: .attachments) }
         try c.encodeIfPresent(admissionDeadline, forKey: .admissionDeadline)
         try c.encodeIfPresent(runId, forKey: .runId)

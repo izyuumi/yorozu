@@ -246,7 +246,7 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
         turn.signal.removeEventListener("abort", onAbort);
         session.close();
       }
-      return { text: turn.signal.aborted ? "" : text, ...(failed ? { failed: true } : {}), ...(sessionId ? { sessionId } : {}) };
+      return { text: turn.signal.aborted ? streamed || text : text, ...(failed ? { failed: true } : {}), ...(sessionId ? { sessionId } : {}) };
     },
   };
 }

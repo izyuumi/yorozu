@@ -109,6 +109,11 @@ public struct MessageBubble: View {
             if !data.text.isEmpty || streaming {
                 bubble
             }
+            if data.interrupted == true {
+                Text("Stopped")
+                    .font(.caption2)
+                    .foregroundStyle(YorozuPalette.ink.opacity(0.62))
+            }
             // Only once the reply has finished arriving: previewing a URL that is still being
             // typed would fetch whatever prefix of it happened to be on screen.
             if let link, !streaming {

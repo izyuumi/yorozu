@@ -113,6 +113,18 @@ test.each(["approval", "question"])("Stop interrupts Codex while %s is pending, 
   expect(fake.close).toHaveBeenCalledOnce();
 });
 
+test("Stop returns Codex's last streamed reply", async () => {
+  const abort = new AbortController();
+  const fake = fakeCodex(async (h) => {
+    h.notify("item/agentMessage/delta", { threadId: "native", itemId: "reply", delta: "half a" });
+  });
+  const onUpdate = vi.fn();
+  const running = codexNativeRunner(fake.connect).run(turn({ signal: abort.signal, onUpdate }));
+  await vi.waitFor(() => expect(onUpdate).toHaveBeenCalledWith("half a"));
+  abort.abort();
+  expect(await running).toEqual({ text: "half a", sessionId: "native" });
+});
+
 test("Codex failures propagate and unknown server requests fail closed", async () => {
   const fake = fakeCodex(async (h) => {
     await expect(h.request("new/permission", {})).rejects.toThrow("Unsupported");

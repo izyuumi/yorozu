@@ -105,8 +105,8 @@ public final class ChatModel {
     public var attachments: [String: [MessageAttachment]] = [:] { didSet { saveComposerSoon() } }
     /// Threads with a turn in flight, so the composer offers Stop rather than Send.
     ///
-    /// Set when this device sends, cleared by the agent message flagged `done` that ends the
-    /// turn — or by pressing Stop, because an interrupted turn deliberately says nothing back.
+    /// Set when this device sends, cleared by the agent message flagged `done` or confirmed
+    /// Stop status. The composer can send another message while Stop is pending.
     /// It is per-process and starts empty: a turn another device started is not ours to stop.
     public private(set) var generating: Set<String> = []
     /// Every device the runtime answers, newest list wins. Only the Mac's Settings draws these.
