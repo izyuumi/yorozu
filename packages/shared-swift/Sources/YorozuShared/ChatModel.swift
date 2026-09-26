@@ -304,7 +304,21 @@ public final class ChatModel {
         peerInfo = cache.peerInfo()
         synced = cache.threads()
         syncLastSeen = cache.lastSeen()
-        outbox = Outbox.pruned(cache.outbox())
+        let storedPending = cache.outbox()
+        var pending = storedPending
+        let migrationTime = Date()
+        for index in pending.indices {
+            guard case .message(let data) = pending[index].event.payload, data.role == .user,
+                  data.admissionDeadline == nil, pending[index].replacementId == nil,
+                  pending[index].admissionStatus == nil, pending[index].legacyHoldUntil == nil else { continue }
+            if pending[index].attemptedAt == nil { pending[index].admissionStatus = .expired }
+            else { pending[index].legacyHoldUntil = migrationTime.addingTimeInterval(25 * 60 * 60) }
+        }
+        if pending != storedPending {
+            do { try cache.savePending(pending) }
+            catch { failure = "Could not save pending-message migration: \(error.localizedDescription)" }
+        }
+        outbox = Outbox.pruned(pending)
         if let composer = cache.composer() {
             drafts = composer.drafts
             attachments = composer.attachments
@@ -343,6 +357,7 @@ public final class ChatModel {
             if case .message = item.event.payload { upsert(item.event, persist: false) }
             applyAnswerState(item.event)
         }
+        armOutboxRetry()
     }
 
     /// Connects and applies updates until the transport ends. Calling it twice does nothing.
@@ -540,12 +555,14 @@ public final class ChatModel {
                 commands.append(event(.threadSetEffort(ThreadSetEffortData(effort: effort)), in: threadId))
             }
         }
+        let createdAt = Int(Date().timeIntervalSince1970 * 1000)
         let event = YorozuEvent(
             id: UUID().uuidString,
             threadId: threadId,
-            ts: Int(Date().timeIntervalSince1970 * 1000),
+            ts: createdAt,
             agentId: device,
-            payload: .message(MessageData(role: .user, text: text, attachments: attachments))
+            payload: .message(MessageData(role: .user, text: text, attachments: attachments,
+                admissionDeadline: createdAt + 30 * 60_000))
         )
         // Persist creation and its first message in one encrypted write. A failed write leaves
         // the composer and draft thread intact, with no phantom bubble or unsaved outbox item.
@@ -587,6 +604,7 @@ public final class ChatModel {
         // is actually on its way.
         if !queue { generating.insert(threadId) }
         upsert(event)
+        armOutboxRetry()
         return true
     }
 
@@ -616,14 +634,59 @@ public final class ChatModel {
         outbox.first(where: { $0.id == eventId })?.status
     }
 
+    public func outboxRejectionReason(of eventId: String) -> String? {
+        outbox.first(where: { $0.id == eventId })?.rejectionReason
+    }
+
     /// Resumes a paused message after transport errors or age, keeping its operation ID.
     public func retry(_ eventId: String) {
         guard let index = outbox.firstIndex(where: { $0.id == eventId }) else { return }
+        guard outbox[index].legacyHoldUntil == nil else { return }
+        guard outbox[index].admissionDeadline == nil || !outbox[index].isExpired(at: Date()) else { return }
+        guard outbox[index].admissionStatus != .rejected, outbox[index].replacementId == nil else { return }
         outbox[index].tries = 0
         outbox[index].nextAttemptAt = nil
         outbox[index].deliveryAttempts = nil
         outbox[index].reconfirmedAt = Date()
         saveOutbox()
+        flush()
+    }
+
+    /// Explicit fresh intent after the host confirmed expiry (or this device never transmitted it).
+    public func stillSend(_ eventId: String) {
+        guard let index = outbox.firstIndex(where: { $0.id == eventId }),
+              outbox[index].status == .expired,
+              case .message(let original) = outbox[index].event.payload else { return }
+        let old = outbox[index].event
+        let ts = Int(Date().timeIntervalSince1970 * 1000)
+        let renewed = YorozuEvent(id: UUID().uuidString, threadId: old.threadId, ts: ts,
+            agentId: device, payload: .message(MessageData(role: .user, text: original.text,
+                attachments: original.attachments, admissionDeadline: ts + 30 * 60_000)))
+        var pending = outbox
+        // A draft's creation and settings must reach the host before its renewed first message.
+        // Their original IDs are safe to retry; the host deduplicates accepted operations.
+        for predecessor in pending.indices where predecessor < index &&
+            pending[predecessor].event.threadId == old.threadId &&
+            pending[predecessor].isExpired(at: Date()) {
+            switch pending[predecessor].event.payload {
+            case .threadCreate, .threadSetModel, .threadSetEffort:
+                pending[predecessor].tries = 0
+                pending[predecessor].nextAttemptAt = nil
+                pending[predecessor].deliveryAttempts = nil
+                pending[predecessor].reconfirmedAt = Date()
+            default: break
+            }
+        }
+        pending[index].replacementId = renewed.id
+        pending.append(OutboxItem(event: renewed))
+        do { try cache?.savePending(pending) }
+        catch {
+            failure = "Could not save pending messages: \(error.localizedDescription)"
+            return
+        }
+        outbox = pending
+        upsert(renewed)
+        armOutboxRetry()
         flush()
     }
 
@@ -659,6 +722,7 @@ public final class ChatModel {
     public func flush() {
         if flushing { flushAgain = true; return }
         guard canDeliver, !outbox.isEmpty, saveOutbox() else { return }
+        queryExpiredAdmissions()
         retryTask?.cancel()
         retryTask = nil
         flushing = true
@@ -708,6 +772,50 @@ public final class ChatModel {
         flush()
     }
 
+    private func reconcile(_ status: AdmissionStatusData) {
+        guard let index = outbox.firstIndex(where: { $0.id == status.eventId }),
+              case .message = outbox[index].event.payload else { return }
+        if let requestId = status.requestId, requestId != outbox[index].lastStatusQueryId { return }
+        if status.requestId == nil && (status.status == .unknown || status.status == .indeterminate) { return }
+        switch status.status {
+        case .accepted, .queued, .running, .completed:
+            receipted(status.eventId)
+        case .rejected, .expired, .unknown, .indeterminate, .withdrawn:
+            outbox[index].admissionStatus = status.status
+            outbox[index].rejectionReason = status.reason
+            saveOutbox()
+            flush()
+        }
+    }
+
+    private func queryExpiredAdmissions() {
+        let now = Date()
+        var pending = outbox
+        var queries: [YorozuEvent] = []
+        for index in pending.indices {
+            let item = pending[index]
+            let due = item.legacyHoldUntil.map { hold in
+                item.lastStatusQueryAt == nil || now >= hold && item.lastStatusQueryAt! < hold ||
+                    now >= hold && now.timeIntervalSince(item.lastStatusQueryAt!) >= 15
+            } ?? (item.admissionDeadline != nil && item.isExpired(at: now) &&
+                now.timeIntervalSince(item.lastStatusQueryAt ?? .distantPast) >= 15)
+            guard item.attemptedAt != nil, item.status(at: now) == .checking, due else { continue }
+            let query = event(.admissionQuery(AdmissionQueryData(eventId: item.id)), in: item.event.threadId)
+            pending[index].lastStatusQueryAt = now
+            pending[index].lastStatusQueryId = query.id
+            if item.legacyHoldUntil.map({ now >= $0 }) == true { pending[index].admissionStatus = nil }
+            queries.append(query)
+        }
+        guard !queries.isEmpty else { return }
+        do { try cache?.savePending(pending) }
+        catch {
+            failure = "Could not save pending messages: \(error.localizedDescription)"
+            return
+        }
+        outbox = pending
+        for query in queries { emit(query) }
+    }
+
     private func bumpTries(of id: String) {
         guard let index = outbox.firstIndex(where: { $0.id == id }) else { return }
         outbox[index].tries += 1
@@ -716,19 +824,35 @@ public final class ChatModel {
     private func pendingHeads(at now: Date, blocking blockedThreads: Set<String> = []) -> [OutboxItem] {
         var threads = blockedThreads
         return outbox.filter { item in
-            guard !item.isExpired(at: now) else { return false }
+            guard !item.isExpired(at: now), item.admissionStatus != .rejected,
+                  item.admissionStatus != .withdrawn, item.replacementId == nil else { return false }
             guard threads.insert(item.event.threadId).inserted else { return false }
             return true
         }
     }
 
     private func armOutboxRetry() {
-        guard canDeliver, let next = pendingHeads(at: Date()).compactMap(\.nextAttemptAt).min() else { return }
+        let now = Date()
+        let sends = canDeliver ? pendingHeads(at: now).compactMap(\.nextAttemptAt) : []
+        let expiries = outbox.compactMap { item -> Date? in
+            if let hold = item.legacyHoldUntil, item.status(at: now) == .checking, canDeliver {
+                return item.lastStatusQueryAt == nil ? now :
+                    item.lastStatusQueryAt! < hold ? hold : max(now, item.lastStatusQueryAt!.addingTimeInterval(15))
+            }
+            guard let deadline = item.admissionDeadline, item.replacementId == nil else { return nil }
+            if deadline > now { return deadline }
+            guard canDeliver, item.status(at: now) == .checking else { return nil }
+            return max(deadline, (item.lastStatusQueryAt ?? .distantPast).addingTimeInterval(15))
+        }
+        guard let next = (sends + expiries).min() else { return }
         retryTask?.cancel()
         retryTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(max(0, next.timeIntervalSinceNow)))
-            guard !Task.isCancelled else { return }
-            self?.flush()
+            guard !Task.isCancelled, let self else { return }
+            // The clock crossed a deadline even if offline; wake observation for the caption.
+            self.outbox = Outbox.pruned(self.outbox)
+            self.flush()
+            if !self.canDeliver { self.armOutboxRetry() }
         }
     }
 
@@ -1271,6 +1395,8 @@ public final class ChatModel {
                 }
             case .receipt(let data):
                 receipted(data.eventId)
+            case .admissionStatus(let data):
+                reconcile(data)
             default:
                 applyEvent(event)
             }

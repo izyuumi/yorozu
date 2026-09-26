@@ -6,12 +6,20 @@ import Testing
     let local = PeerInfoData(appVersion: "1.0")
     #expect(local.compatibility(with: nil) == .legacy)
     #expect(local.compatibility(with: PeerInfoData(appVersion: "99.0-beta")) ==
-        .compatible(version: 1, capabilities: ["peer-info", "host-name", "channel-sequence"]))
+        .compatible(version: 1, capabilities: ["peer-info", "host-name", "channel-sequence",
+            "admission-status-v1", "admission-expiry-v1"]))
     if case .updateRequired = local.compatibility(with: PeerInfoData(appVersion: "1.0", protocolMin: 2, protocolMax: 3)) {} else {
         Issue.record("Disjoint protocols must require an update")
     }
     if case .updateRequired = local.compatibility(with: PeerInfoData(appVersion: "1.0", capabilities: ["peer-info"], requiredCapabilities: [])) {} else {
         Issue.record("Required replay protection cannot be downgraded")
+    }
+    let oldHost = PeerInfoData(appVersion: "old", capabilities: ["peer-info", "host-name", "channel-sequence", "admission-status-v1"])
+    if case .updateRequired = PeerInfoData.local.compatibility(with: oldHost) {} else {
+        Issue.record("New client must require host-enforced message expiry")
+    }
+    if case .compatible = oldHost.compatibility(with: PeerInfoData(appVersion: "new")) {} else {
+        Issue.record("Old client must remain compatible with upgraded host")
     }
 }
 
@@ -90,9 +98,11 @@ private struct PeerWire {
         await client.acceptFrame(try wire.frame(ThreadListData(threads: [], peerInfo: .local), seq: 3))
         #expect(await client.peerInfo == nil)
         #expect(try wire.counters.load()?.recv == 2)
-        await healthy.acceptFrame(try healthyWire.frame(ThreadListData(threads: []), seq: 1))
-        #expect(await healthy.compatibility == .legacy)
-        #expect(try healthyWire.counters.load()?.recv == 1)
+        await healthy.acceptFrame(try healthyWire.frame(ThreadListData(threads: [], peerInfoSupported: true), seq: 1))
+        await healthy.acceptFrame(try healthyWire.frame(ThreadListData(threads: [], peerInfo: .local,
+            peerInfoReplyTo: await healthy.peerInfoRequestID), seq: 2))
+        if case .compatible = await healthy.compatibility {} else { Issue.record("Healthy host did not negotiate") }
+        #expect(try healthyWire.counters.load()?.recv == 2)
     }
 }
 

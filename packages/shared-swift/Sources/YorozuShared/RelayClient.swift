@@ -549,7 +549,8 @@ public actor RelayClient: ChatTransport {
             } else if list.peerInfoSupported == true {
                 if ready { requestPeerInfo() }
                 return
-            } else if peerInfoRequestID != nil || counter.peerInfoRequired == true {
+            } else if peerInfoRequestID != nil || counter.peerInfoRequired == true ||
+                        localPeer.requiredCapabilities.contains("admission-expiry-v1") {
                 failCompatibility("This host no longer advertises required protocol support. Update Yorozu on the host Mac.")
                 return
             }
