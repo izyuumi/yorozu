@@ -92,7 +92,7 @@ Only eligible quick approvals offer Allow/Don't allow notification actions, whic
 - Copyright: 2026 Yumi Izumi.
 - Version release: Manually release this version.
 - Sign-in required: No.
-- Review contact: Yumi Izumi, mail@yumi.to (phone: use the one already on the account).
+- Review contact: Yumi Izumi, contact@yumi.to (phone: use the one already on the account).
 - Screenshots: docs/app-store/screenshots/iphone-6.9/*.png and docs/app-store/screenshots/ipad-13/*.png, in file-name order.
 
 ## Release-source evidence
