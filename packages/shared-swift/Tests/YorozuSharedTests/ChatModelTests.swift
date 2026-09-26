@@ -768,7 +768,8 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     #expect(model.events["home"]?.count == 1)
 
     model.answer("a1", in: "home", .always)
-    #expect(model.answered.contains("a1"))
+    #expect(model.approvalPending("a1"))
+    #expect(!model.answered.contains("a1"))
 
     let sent = await sent(by: transport, atLeast: pairingSends + 2)
     // Pairing asks for everything this device has not seen, and the typed message and the answer
@@ -786,6 +787,10 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     }
     #expect(typed.text == "hi")
     #expect(typed.role == .user)
+    let answer = try #require(sent.first { $0.payload.kind == .approvalAnswer })
+    await transport.yield(.event(event("approval-applied", .approvalStatus(ApprovalStatusData(
+        requestId: answer.id, actionId: "a1", status: .applied)))))
+    #expect(await eventually { model.answered.contains("a1") && !model.approvalPending("a1") })
 }
 
 @MainActor

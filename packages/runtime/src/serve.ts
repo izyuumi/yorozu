@@ -129,6 +129,7 @@ const PING_MS = 30_000;
 const PONG_MS = 10_000;
 /** An unanswered card is not a yes: it expires into a refusal rather than hanging the turn. */
 const APPROVAL_TIMEOUT_MS = 10 * 60_000;
+const APPROVAL_LIFE_MS = 30 * 60_000;
 /**
  * How long a device counts as online for. The relay tells us nothing about a phone's socket —
  * only the phone is told about ours — so "online" here means "has said something recently",
@@ -988,13 +989,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
   };
 
   /** A bounded replay page. An explicit thread request includes its pre-pairing history. */
-  const syncDelta = (lastSeen: Record<string, string>, pairedAt = 0, threadId?: string): YorozuEvent => {
+  const syncDelta = (lastSeen: Record<string, string>, pairedAt = 0, threadId?: string,
+    includeApprovalStatus = true): YorozuEvent => {
     const events: YorozuEvent[] = [];
     let bytes = 0;
     let more = false;
     const selected = listThreads(dir).filter((thread) => threadId ? thread.id === threadId : !thread.archived);
     threads: for (const thread of selected) {
-      const page = eventsAfter(thread.id, lastSeen?.[thread.id], dir, threadId ? 0 : pairedAt);
+      const page = eventsAfter(thread.id, lastSeen?.[thread.id], dir, threadId ? 0 : pairedAt,
+        (event) => includeApprovalStatus || event.kind !== "approval_status");
       if (page.length === SYNC_LIMIT) more = true;
       for (const event of page) {
         const size = Buffer.byteLength(JSON.stringify(event));
@@ -1421,6 +1424,57 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * is a command or a request.
    */
   function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0, from?: string, localDevice?: string): void {
+    if (event.kind === "approval_answer") {
+      const compatibility = from ? devices.get(from)?.compatibility : undefined;
+      const statusSupported = !from || compatibility?.state === "compatible" &&
+        compatibility.capabilities.includes("offline-approval-v1");
+      const rejectLegacy = (): void => reply({ id: randomUUID(), threadId: event.threadId,
+        ts: Date.now(), agentId: MAIN_AGENT, kind: "thought",
+        data: { text: "Update Yorozu to confirm this approval answer." } });
+      if (typeof event.threadId !== "string" || !event.threadId || event.threadId.length > 128 ||
+          typeof event.id !== "string" || !event.id || event.id.length > 128 ||
+          typeof event.data.actionId !== "string" || !event.data.actionId || event.data.actionId.length > 128 ||
+          !["yes", "task", "always", "no", "discuss"].includes(event.data.answer) ||
+          (event.data.source !== undefined && event.data.source !== "notification")) return;
+      const history = readThreadEvents(event.threadId, dir);
+      const previous = history.find((known) => known.kind === "approval_status" && known.data.requestId === event.id);
+      if (previous?.kind === "approval_status") {
+        const accepted = history.find((known) => known.kind === "approval_answer" && known.id === event.id);
+        const same = previous.data.actionId === event.data.actionId &&
+          (!accepted || accepted.kind === "approval_answer" && JSON.stringify(accepted.data) === JSON.stringify(event.data));
+        const response = { ...previous, id: randomUUID(), ts: Date.now(),
+          ...(same ? {} : { data: { requestId: event.id, actionId: event.data.actionId, status: "rejected" as const } }) };
+        if (statusSupported) reply(response);
+        else if (same && previous.data.status === "applied") reply(control({ kind: "receipt", data: { eventId: event.id } }));
+        else rejectLegacy();
+        return;
+      }
+      const status = (() => {
+        const now = Date.now();
+        if (!Number.isSafeInteger(event.ts) || event.ts > now + MAX_CLIENT_CLOCK_LEAD_MS) return "rejected";
+        if (now >= event.ts + APPROVAL_LIFE_MS) return "expired";
+        if (history.some((known) => known.kind === "approval_status" && known.data.actionId === event.data.actionId &&
+            known.data.status === "applied")) return "no-longer-needed";
+        const active = pending.get(event.data.actionId);
+        if ((!active || active.threadId !== event.threadId) && !nativeCards.has(event.data.actionId, event.threadId))
+          return "no-longer-needed";
+        // Notification buttons cannot inherit app-only permission to approve a sensitive card.
+        if (event.data.source === "notification" && quickActions.get(event.data.actionId) !== true &&
+            !nativeCards.quickApprovable(event.data.actionId)) return "rejected";
+        if (!nativeCards.answer(event)) active?.settle({ answer: event.data.answer,
+          ...(event.data.rule ? { rule: event.data.rule } : {}) });
+        if (active) emit(event);
+        return "applied";
+      })();
+      const outcome: YorozuEvent = { id: `approval:${event.id}:status`, threadId: event.threadId,
+        ts: Date.now(), agentId: MAIN_AGENT, kind: "approval_status",
+        data: { requestId: event.id, actionId: event.data.actionId, status } };
+      appendThreadEvent(outcome, dir);
+      if (statusSupported || status === "applied") reply(control({ kind: "receipt", data: { eventId: event.id } }));
+      else rejectLegacy();
+      broadcast(outcome);
+      return;
+    }
     if (event.kind === "interrupt" && event.data.targetEventId === undefined) {
       reply({ id: randomUUID(), threadId: event.threadId, ts: Date.now(), agentId: MAIN_AGENT,
         kind: "thought", data: { text: "Update Yorozu to stop this run safely." } });
@@ -1493,7 +1547,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       } }));
       return;
     }
-    if (event.kind === "admission_status") return;
+    if (event.kind === "admission_status" || event.kind === "approval_status") return;
     if (event.kind === "update_status") return;
     if (event.kind === "update_control") {
       const subscriber = localDevice ?? from;
@@ -1698,7 +1752,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
           completionId: typed ? undefined : completionIdFor(event.threadId, event.id) } } : event;
       appendTranscript(logged, transcripts);
       appendThreadEvent(logged, dir);
-      if (event.kind === "approval_answer") broadcast(threadList());
     }
     // Failed admission never poisons the in-memory dedup window.
     alreadySeen(event.id);
@@ -1708,26 +1761,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
     switch (event.kind) {
       case "interrupt":
         return;
-      case "approval_answer": {
-        // A lock-screen button is honoured only for a card this runtime judged answerable
-        // from one — a Yorozu card or a native agent's alike, and judged before either is
-        // looked up, so no card of any kind settles on a button it was not sent with. The
-        // relay chose which buttons the push drew, and a relay that put Allow under a
-        // purchase card must not be able to move money with it.
-        if (
-          event.data.source === "notification" &&
-          quickActions.get(event.data.actionId) !== true &&
-          !nativeCards.quickApprovable(event.data.actionId)
-        ) {
-          return state("notification-answer-refused");
-        }
-        if (nativeCards.answer(event)) return;
-        pending.get(event.data.actionId)?.settle({
-          answer: event.data.answer,
-          ...(event.data.rule ? { rule: event.data.rule } : {}),
-        });
-        return;
-      }
       case "receipt":
         // Emitted by the runtime, never accepted from a device.
         return;
@@ -1861,9 +1894,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       case "device_remove":
         return forgetDevice(event.data.pub);
-      case "sync_request":
+      case "sync_request": {
         if (event.data.threadId !== undefined && (typeof event.data.threadId !== "string" || !event.data.threadId)) return;
-        return reply(syncDelta(event.data.lastSeen, pairedAt, event.data.threadId));
+        const compatibility = from ? devices.get(from)?.compatibility : undefined;
+        return reply(syncDelta(event.data.lastSeen, pairedAt, event.data.threadId,
+          !from || compatibility?.state === "compatible" && compatibility.capabilities.includes("offline-approval-v1")));
+      }
     }
 
     if (event.kind !== "message" || event.data.role !== "user") return;
@@ -2056,6 +2092,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
     sendTo = (device: string, event: YorozuEvent): void => {
       const known = devices.get(device);
       if (!known || !relayReady || ws.readyState !== WebSocket.OPEN) return;
+      const supportsApprovalStatus = known.compatibility?.state === "compatible" &&
+        known.compatibility.capabilities.includes("offline-approval-v1");
+      if (!supportsApprovalStatus && event.kind === "approval_status") return;
       if (event.kind === "terminal" && !terminalSubscribers.has(device)) return;
       const awaitingCompatibility = known.record.peerInfoRequired && known.compatibility?.state !== "compatible";
       if (awaitingCompatibility && event.kind !== "thread_list") return;

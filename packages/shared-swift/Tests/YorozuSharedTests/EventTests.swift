@@ -60,6 +60,8 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
             .approvalAnswer(
                 ApprovalAnswerData(actionId: "a1", answer: .always, rule: sampleRule)
             )
+        case .approvalStatus:
+            .approvalStatus(ApprovalStatusData(requestId: "answer-1", actionId: "a1", status: .applied))
         case .ruleProposal:
             .ruleProposal(RuleProposalData(proposalId: "p1", rule: sampleRule, approvals: 3))
         case .ruleList: .ruleList(RuleListData(rules: [sampleRule]))

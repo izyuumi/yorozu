@@ -14,6 +14,8 @@ public struct ApprovalCardView: View {
     public let card: ApprovalCardData
     /// Answered cards keep their place in the thread but stop offering buttons.
     public let answered: Bool
+    public let pending: Bool
+    public let disposition: ApprovalStatusData.Status?
     /// What was chosen, when known on this device; nil means answered elsewhere.
     public let chosen: ApprovalAnswerData.Answer?
     public let answer: (ApprovalAnswerData.Answer, ApprovalRule?) -> Void
@@ -26,11 +28,15 @@ public struct ApprovalCardView: View {
     public init(
         card: ApprovalCardData,
         answered: Bool = false,
+        pending: Bool = false,
+        disposition: ApprovalStatusData.Status? = nil,
         chosen: ApprovalAnswerData.Answer? = nil,
         answer: @escaping (ApprovalAnswerData.Answer, ApprovalRule?) -> Void
     ) {
         self.card = card
         self.answered = answered
+        self.pending = pending
+        self.disposition = disposition
         self.chosen = chosen
         self.answer = answer
     }
@@ -53,9 +59,22 @@ public struct ApprovalCardView: View {
             items
             consequence
             if card.mustConfirm == true { confirmNote }
-            if answered {
+            if pending {
+                Text("Answer pending · waiting for host")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else if disposition == .noLongerNeeded || disposition == .expired {
+                Text("No longer needed")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else if answered {
                 outcome
             } else {
+                if disposition == .rejected {
+                    Text("Answer not applied")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
                 if card.nativeAgent != nil {
                     HStack {
                         choice(.yes, "Allow", prominent: true)

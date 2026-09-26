@@ -38,8 +38,8 @@ export function localPeerInfo(appVersion: string, computerName?: string): PeerIn
   return {
     appVersion: boundedText(appVersion, 64) ? appVersion : "unknown",
     protocolMin: 1, protocolMax: 1,
-    capabilities: ["peer-info", "host-name", "channel-sequence", "admission-status-v1", "admission-expiry-v1", "exact-stop-v1"],
-    requiredCapabilities: ["channel-sequence", "exact-stop-v1"],
+    capabilities: ["peer-info", "host-name", "channel-sequence", "admission-status-v1", "admission-expiry-v1", "exact-stop-v1", "offline-approval-v1"],
+    requiredCapabilities: ["channel-sequence", "exact-stop-v1", "offline-approval-v1"],
     ...(boundedText(computerName, 256) ? { computerName } : {}),
   };
 }

@@ -602,7 +602,8 @@ let states: string[] = [];
 let sendRaw: (event: YorozuEvent) => void = () => {};
 
 /** A paired phone plus the session key, so a test can talk sealed events both ways. */
-async function pairedPhone(responses: (() => Response)[], openclaw = false, extra: Partial<ServeOptions> = {}) {
+async function pairedPhone(responses: (() => Response)[], openclaw = false, extra: Partial<ServeOptions> = {},
+  negotiate = false) {
   relay = await startRelay(0);
   const dir = extra.stateDir ?? mkdtempSync(join(tmpdir(), "yorozu-approval-serve-"));
   states = [];
@@ -658,6 +659,11 @@ async function pairedPhone(responses: (() => Response)[], openclaw = false, extr
 
   const isReply = (event: YorozuEvent): boolean =>
     event.kind === "message" && event.data.role === "agent";
+
+  if (negotiate) {
+    const id = send({ kind: "thread_list", data: { threads: [], peerInfo: localPeerInfo("test") } }, "");
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.peerInfoReplyTo === id);
+  }
 
   return { dir, send, eventsUntil, isReply, channel, frame, pub: toBase64Url(phoneKeys.publicKey) };
 }
@@ -1506,14 +1512,15 @@ test("a lock-screen answer is honoured only for a card the runtime judged quick"
     // A local command below every floor: quick.
     () => shellTurn(cmd),
     () => sse("Done."),
-  ]);
+  ], false, {}, true);
 
   send({ kind: "message", data: { role: "user", text: "tell bob" } });
   const external = cardOf(await eventsUntil((event) => event.kind === "approval_card"));
   expect(external.actionClass).toBe("send-message");
   send({ kind: "approval_answer", data: { actionId: external.actionId, answer: "yes", source: "notification" } });
   // Refused: the card is still up, so the same answer from the card itself settles it.
-  await vi.waitFor(() => expect(states).toContain("notification-answer-refused"));
+  await eventsUntil((event) => event.kind === "approval_status" && event.data.actionId === external.actionId &&
+    event.data.status === "rejected");
   send({ kind: "approval_answer", data: { actionId: external.actionId, answer: "no" } });
   await eventsUntil(isReply);
 
@@ -1522,6 +1529,53 @@ test("a lock-screen answer is honoured only for a card the runtime judged quick"
   send({ kind: "approval_answer", data: { actionId: local.actionId, answer: "yes", source: "notification" } });
   const tail = await eventsUntil(isReply);
   expect(tail.filter((event) => event.kind === "tool_result")).toHaveLength(1);
+});
+
+test("stale offline approval cannot act, and an applied answer replays without acting twice", async () => {
+  const { dir, send, eventsUntil } = await pairedPhone([() => shellTurn("echo approval-once"), () => sse("done")], false, {}, true);
+  send({ kind: "message", data: { role: "user", text: "run it" } });
+  const card = cardOf(await eventsUntil((event) => event.kind === "approval_card"));
+  const stale: YorozuEvent = { id: "stale-approval", threadId: "t1", ts: Date.now() - 31 * 60_000,
+    agentId: "phone", kind: "approval_answer", data: { actionId: card.actionId, answer: "yes" } };
+  sendRaw(stale);
+  expect((await eventsUntil((event) => event.kind === "approval_status" && event.data.requestId === stale.id)).at(-1))
+    .toMatchObject({ data: { status: "expired" } });
+  const accepted: YorozuEvent = { ...stale, id: "fresh-approval", ts: Date.now() };
+  sendRaw(accepted);
+  expect((await eventsUntil((event) => event.kind === "approval_status" && event.data.requestId === accepted.id)).at(-1))
+    .toMatchObject({ data: { status: "applied" } });
+  expect(readThreadEvents("t1", dir)).toContainEqual(expect.objectContaining({ kind: "approval_status",
+    data: { requestId: accepted.id, actionId: card.actionId, status: "applied" } }));
+  await eventsUntil((event) => event.kind === "message" && event.data.role === "agent" && event.data.done === true);
+  sendRaw(accepted);
+  expect((await eventsUntil((event) => event.kind === "approval_status" && event.data.requestId === accepted.id)).at(-1))
+    .toMatchObject({ data: { status: "applied" } });
+});
+
+test("older clients see an upgrade request instead of a false approval receipt", async () => {
+  const { dir, send, eventsUntil } = await pairedPhone([() => shellTurn("echo legacy-approval"), () => sse("done")]);
+  send({ kind: "message", data: { role: "user", text: "run it" } });
+  const cardEvent = (await eventsUntil((event) => event.kind === "approval_card")).at(-1)!;
+  const card = cardOf([cardEvent]);
+  sendRaw({ id: "old-stale-answer", threadId: "t1", ts: Date.now() - 31 * 60_000,
+    agentId: "phone", kind: "approval_answer", data: { actionId: card.actionId, answer: "yes" } });
+  const response = await eventsUntil((event) => event.kind === "thought" && event.data.text.includes("Update Yorozu"));
+  expect(response.some((event) => event.kind === "receipt" && event.data.eventId === "old-stale-answer")).toBe(false);
+  expect(response.some((event) => event.kind === "approval_status")).toBe(false);
+  sendRaw({ id: "forged-status", threadId: "t1", ts: Date.now(), agentId: "phone", kind: "approval_status",
+    data: { requestId: "fake", actionId: card.actionId, status: "applied" } });
+  for (let i = 0; i < 201; i++) {
+    appendThreadEvent({ id: `status-${i}`, threadId: "t1", ts: Date.now(), agentId: "main",
+      kind: "approval_status", data: { requestId: `old-${i}`, actionId: `old-action-${i}`, status: "expired" } }, dir);
+  }
+  send({ kind: "sync_request", data: { lastSeen: { t1: cardEvent.id }, threadId: "t1" } }, "");
+  const replay = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1);
+  expect(replay?.kind).toBe("sync_delta");
+  if (replay?.kind === "sync_delta") {
+    expect(replay.data.events).toEqual([]);
+    expect(replay.data.more).toBeUndefined();
+  }
+  expect(readThreadEvents("t1", dir).some((event) => event.id === "forged-status")).toBe(false);
 });
 
 test("a replayed command applies once, and every copy is receipted", async () => {
@@ -2801,14 +2855,15 @@ test("a lock-screen answer never settles a native card the runtime did not judge
     const allowed = await turn.approve!("mcp__mail__send", { to: "bob@example.com" }, turn.signal);
     return { text: `sent:${allowed}`, sessionId: "sdk-session" };
   } };
-  const { send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { "claude-code": runner } });
+  const { send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { "claude-code": runner } }, true);
   send({ kind: "thread_create", data: { agent: "claude-code", cwd: proj } }, "native");
   send({ kind: "message", data: { role: "user", text: "mail bob" } }, "native");
   const card = (await eventsUntil((e) => e.kind === "approval_card")).at(-1)!;
   if (card.kind !== "approval_card") throw new Error("missing approval");
   expect(card.data).toMatchObject({ nativeAgent: "claude-code", actionClass: "mcp__mail__send" });
   send({ kind: "approval_answer", data: { actionId: card.data.actionId, answer: "yes", source: "notification" } }, "native");
-  await vi.waitFor(() => expect(states).toContain("notification-answer-refused"));
+  await eventsUntil((event) => event.kind === "approval_status" && event.data.actionId === card.data.actionId &&
+    event.data.status === "rejected");
   send({ kind: "approval_answer", data: { actionId: card.data.actionId, answer: "no" } }, "native");
   expect((await eventsUntil((e) => e.kind === "message" && e.data.done === true)).at(-1))
     .toMatchObject({ data: { text: "sent:false" } });

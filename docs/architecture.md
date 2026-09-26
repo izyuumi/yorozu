@@ -483,7 +483,16 @@ else gets `approval-review`, whose only button opens the card. A button answer l
 the background, finds the card the push's opaque `event` reference names, sends the same
 `approval_answer` the card would — tagged `source: "notification"` — and hangs up. The runtime
 honours a notification-sourced answer only for a card it judged quick-approvable itself: a relay
-that put **Allow** under a purchase card gets `notification-answer-refused` rather than a purchase.
+that put **Allow** under a purchase card gets a rejected approval status rather than a purchase.
+
+Approval answers stay in the encrypted per-host outbox, ahead of ordinary messages, until the
+host returns `approval_status`; a `receipt` alone does not mark the card answered. Each random
+`actionId` belongs to one live card in one thread and backend invocation. The host applies an
+answer only while that card is still pending, rejects answer intent older than 30 minutes, and
+returns `no-longer-needed` if the card expired or was replaced. Outcomes are flushed to thread
+history before acknowledgment; a retry of a recorded answer ID returns that outcome after restart.
+Negotiating peers require `offline-approval-v1`; older clients receive an upgrade message rather
+than a receipt for a stale answer.
 
 **`yorozu` threads have no Yorozu approval gate.** OpenClaw owns permission prompts for them.
 `progress_card` events are live on this path, translated from the Gateway's plan stream by

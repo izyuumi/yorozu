@@ -42,6 +42,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case toolResult = "tool_result"
         case approvalCard = "approval_card"
         case approvalAnswer = "approval_answer"
+        case approvalStatus = "approval_status"
         case ruleProposal = "rule_proposal"
         case ruleList = "rule_list"
         case ruleUpdate = "rule_update"
@@ -83,6 +84,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case toolResult(ToolResultData)
         case approvalCard(ApprovalCardData)
         case approvalAnswer(ApprovalAnswerData)
+        case approvalStatus(ApprovalStatusData)
         case ruleProposal(RuleProposalData)
         case ruleList(RuleListData)
         case ruleUpdate(RuleUpdateData)
@@ -124,6 +126,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .toolResult: .toolResult
             case .approvalCard: .approvalCard
             case .approvalAnswer: .approvalAnswer
+            case .approvalStatus: .approvalStatus
             case .ruleProposal: .ruleProposal
             case .ruleList: .ruleList
             case .ruleUpdate: .ruleUpdate
@@ -179,6 +182,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .toolResult: payload = .toolResult(try c.decode(ToolResultData.self, forKey: .data))
         case .approvalCard: payload = .approvalCard(try c.decode(ApprovalCardData.self, forKey: .data))
         case .approvalAnswer: payload = .approvalAnswer(try c.decode(ApprovalAnswerData.self, forKey: .data))
+        case .approvalStatus: payload = .approvalStatus(try c.decode(ApprovalStatusData.self, forKey: .data))
         case .ruleProposal: payload = .ruleProposal(try c.decode(RuleProposalData.self, forKey: .data))
         case .ruleList: payload = .ruleList(try c.decode(RuleListData.self, forKey: .data))
         case .ruleUpdate: payload = .ruleUpdate(try c.decode(RuleUpdateData.self, forKey: .data))
@@ -230,6 +234,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .toolResult(let d): try c.encode(d, forKey: .data)
         case .approvalCard(let d): try c.encode(d, forKey: .data)
         case .approvalAnswer(let d): try c.encode(d, forKey: .data)
+        case .approvalStatus(let d): try c.encode(d, forKey: .data)
         case .ruleProposal(let d): try c.encode(d, forKey: .data)
         case .ruleList(let d): try c.encode(d, forKey: .data)
         case .ruleUpdate(let d): try c.encode(d, forKey: .data)
@@ -633,6 +638,20 @@ public struct ApprovalAnswerData: Codable, Equatable, Sendable {
         self.answer = answer
         self.rule = rule
         self.source = source
+    }
+}
+
+public struct ApprovalStatusData: Codable, Equatable, Sendable {
+    public enum Status: String, Codable, Sendable {
+        case applied, noLongerNeeded = "no-longer-needed", expired, rejected
+    }
+    public var requestId: String
+    public var actionId: String
+    public var status: Status
+    public init(requestId: String, actionId: String, status: Status) {
+        self.requestId = requestId
+        self.actionId = actionId
+        self.status = status
     }
 }
 

@@ -10,7 +10,7 @@ public struct PeerInfoData: Codable, Equatable, Sendable {
     public var computerName: String?
 
     public init(appVersion: String, protocolMin: Int = 1, protocolMax: Int = 1,
-        capabilities: [String] = ["peer-info", "host-name", "channel-sequence", "admission-status-v1", "admission-expiry-v1", "exact-stop-v1"],
+        capabilities: [String] = ["peer-info", "host-name", "channel-sequence", "admission-status-v1", "admission-expiry-v1", "exact-stop-v1", "offline-approval-v1"],
         requiredCapabilities: [String] = ["channel-sequence"], computerName: String? = nil) {
         self.appVersion = appVersion
         self.protocolMin = protocolMin
@@ -24,8 +24,8 @@ public struct PeerInfoData: Codable, Equatable, Sendable {
         let version = Bundle.main.object(forInfoDictionaryKey: "YorozuVersionLabel") as? String
             ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
         return PeerInfoData(appVersion: boundedText(version, maxBytes: 64) ? version : "unknown",
-            capabilities: ["peer-info", "host-name", "channel-sequence", "admission-status-v1", "admission-expiry-v1", "exact-stop-v1"],
-            requiredCapabilities: ["channel-sequence", "admission-status-v1", "admission-expiry-v1", "exact-stop-v1"])
+            capabilities: ["peer-info", "host-name", "channel-sequence", "admission-status-v1", "admission-expiry-v1", "exact-stop-v1", "offline-approval-v1"],
+            requiredCapabilities: ["channel-sequence", "admission-status-v1", "admission-expiry-v1", "exact-stop-v1", "offline-approval-v1"])
     }
 
     private enum CodingKeys: String, CodingKey {

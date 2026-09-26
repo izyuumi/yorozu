@@ -169,7 +169,8 @@ private func card(_ id: String, actionId: String, thread: String = "home") -> Yo
     // so iOS suspends the app cleanly.
     #expect(answer == [ApprovalAnswerData(actionId: "a-1", answer: .yes, source: .notification)])
     #expect(sent.first { $0.payload.kind == .approvalAnswer }?.threadId == "home")
-    #expect(model.answered.contains("a-1"))
+    #expect(model.approvalPending("a-1"))
+    #expect(!model.answered.contains("a-1"))
     #expect(await eventually { await transport.closes == 1 })
 }
 
