@@ -463,6 +463,16 @@ under its own `BUNDLE_ID` supervises itself under its own label and cannot touch
 watchdog remains loaded and relaunches the app. Sparkle's update relaunch does not unload it: if
 installation fails, the watchdog is exactly who should notice.
 
+Native-agent turns keep their original user-operation ID and a running marker in `threads.json`.
+After a host restart, the sidecar resumes an unfinished turn in its saved agent session with the
+original request and recent host results, asking it to verify prior effects before repeating
+work. The same reply ID completes the turn; no second user message is logged. Three unsuccessful
+recovery attempts pause it across restarts with **Couldn't resume automatically** and Retry. A new
+completed tool result resets that budget. A persisted Stop prevents automatic recovery.
+If a host restart leaves a native Stop impossible to confirm, the host reports that uncertainty
+and retires the recovery marker; the client keeps a warning with the cached conversation and
+never labels the task Stopped.
+
 ## Approvals, questions and progress
 
 The shipped approval surface is narrower than the wire protocol suggests, and the gap is worth

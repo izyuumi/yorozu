@@ -136,7 +136,7 @@ test("stop aborts the SDK query, says nothing, and keeps the session resumable",
 test("a failure the agent reports is the reply; a transport failure is thrown", async () => {
   const failed = fakeQuery([init("s-4"), { type: "result", subtype: "error_max_turns", session_id: "s-4", is_error: true }]);
   const reported = await claudeCodeRunner(failed.query).run({ threadId: "cc", cwd: "/tmp/proj", text: "x", signal: new AbortController().signal });
-  expect(reported).toEqual({ text: "Claude Code stopped: max turns.", sessionId: "s-4" });
+  expect(reported).toEqual({ text: "Claude Code stopped: max turns.", sessionId: "s-4", failed: true });
 
   const broken = fakeQuery(() => {
     throw new Error("claude is not installed");

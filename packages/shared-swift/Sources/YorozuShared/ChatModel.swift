@@ -901,6 +901,17 @@ public final class ChatModel {
         outbox.contains { $0.event.payload == .interrupt(InterruptData(targetEventId: eventId)) }
     }
 
+    public func hasUnconfirmedStop(in threadId: String) -> Bool {
+        let events = timelines[threadId]?.events ?? []
+        return events.contains { event in
+            guard case .stopStatus(let status) = event.payload, status.status == .unconfirmed else { return false }
+            return !events.contains { known in
+                guard case .message(let reply) = known.payload, reply.role == .agent, reply.done == true else { return false }
+                return known.id.hasSuffix(":\(status.targetEventId):final")
+            }
+        }
+    }
+
     private func queueStop(_ targetEventId: String, in threadId: String) {
         guard !outbox.contains(where: { $0.event.payload == .interrupt(InterruptData(targetEventId: targetEventId)) }) else { return }
         let pending = outbox + [OutboxItem(event: event(.interrupt(InterruptData(targetEventId: targetEventId)), in: threadId))]
@@ -967,9 +978,15 @@ public final class ChatModel {
         guard let index = outbox.firstIndex(where: { item in
             item.id == status.requestId && item.event.payload == .interrupt(InterruptData(targetEventId: status.targetEventId))
         }) else { return }
-        guard status.status == .stopped || status.status == .completed || status.status == .withdrawn else { return }
+        guard status.status == .stopped || status.status == .completed || status.status == .withdrawn ||
+            status.status == .unconfirmed else { return }
         let threadId = outbox[index].event.threadId
         outbox.remove(at: index)
+        if status.status == .unconfirmed {
+            generating.remove(threadId)
+            saveOutbox()
+            return
+        }
         if status.status == .withdrawn, let original = outbox.firstIndex(where: { $0.id == status.targetEventId }) {
             outbox[original].admissionStatus = .withdrawn
         } else if status.status == .stopped || status.status == .completed {

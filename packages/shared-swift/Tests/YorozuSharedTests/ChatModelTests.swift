@@ -997,6 +997,25 @@ private func summary(
 }
 
 @MainActor
+@Test func unconfirmedStopEndsPendingStateWithoutClaimingCessation() async throws {
+    let transport = FakeTransport(autoReceipt: true)
+    let model = await connected(transport)
+    model.send("hi", in: "home")
+    let target = try #require(model.events["home"]?.first?.id)
+    await transport.yield(.event(event("active", .threadList(ThreadListData(threads: [
+        ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1, activeEventId: target)
+    ])))))
+    #expect(await eventually { model.activeEventId(in: "home") == target })
+    model.interrupt(in: "home")
+    let stop = try #require(await sent(by: transport, atLeast: pairingSends + 2)
+        .first { $0.payload == .interrupt(InterruptData(targetEventId: target)) })
+    await transport.yield(.event(event("unconfirmed", .stopStatus(StopStatusData(
+        targetEventId: target, requestId: stop.id, status: .unconfirmed)))))
+    #expect(await eventually { !model.stopPending(in: "home") && model.hasUnconfirmedStop(in: "home") })
+    #expect(!model.generating.contains("home"))
+}
+
+@MainActor
 @Test func sendingWhileATurnRunsSteersItWithoutStoppingIt() async throws {
     let transport = FakeTransport()
     let model = await connected(transport)

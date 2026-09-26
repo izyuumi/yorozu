@@ -877,6 +877,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     public var activeEventId: String?
     public var canResume: Bool?
     public var interruptedTurnId: String?
+    public var recoveryState: String?
     public var bypass: Bool?
     public var id: String
     /// Empty until the runtime auto-titles the thread or the user renames it.
@@ -923,6 +924,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         awaitingApproval: Bool? = nil,
         bypass: Bool? = nil,
         interruptedTurnId: String? = nil,
+        recoveryState: String? = nil,
         activeEventId: String? = nil
     ) {
         self.activeEventId = activeEventId
@@ -941,6 +943,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         self.awaitingApproval = awaitingApproval
         self.bypass = bypass
         self.interruptedTurnId = interruptedTurnId
+        self.recoveryState = recoveryState
     }
 
     /// Hand-written only to tolerate a runtime older than the last two fields: both were added
@@ -962,6 +965,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         bypass = try c.decodeIfPresent(Bool.self, forKey: .bypass)
         canResume = try c.decodeIfPresent(Bool.self, forKey: .canResume)
         interruptedTurnId = try c.decodeIfPresent(String.self, forKey: .interruptedTurnId)
+        recoveryState = try c.decodeIfPresent(String.self, forKey: .recoveryState)
         activeEventId = try c.decodeIfPresent(String.self, forKey: .activeEventId)
         lastReadAt = try c.decodeIfPresent(Double.self, forKey: .lastReadAt)
         lastAgentAt = try c.decodeIfPresent(Double.self, forKey: .lastAgentAt)
@@ -1110,7 +1114,7 @@ public struct InterruptData: Codable, Equatable, Sendable {
 }
 
 public struct StopStatusData: Codable, Equatable, Sendable {
-    public enum Status: String, Codable, Sendable { case requested, stopped, completed, withdrawn, unknown }
+    public enum Status: String, Codable, Sendable { case requested, stopped, completed, withdrawn, unknown, unconfirmed }
     public var targetEventId: String
     public var requestId: String
     public var status: Status
