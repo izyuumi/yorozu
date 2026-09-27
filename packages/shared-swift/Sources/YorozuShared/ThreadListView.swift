@@ -122,24 +122,25 @@ struct HeldThreadOrder {
         rows.map { latest[$0.id] ?? $0 }
     }
 
-    func groups(with threads: [ThreadSummary]) -> ThreadGroups {
+    func groups(with threads: [ThreadSummary], moving: Set<String> = []) -> ThreadGroups {
         let latest = Dictionary(uniqueKeysWithValues: threads.map { ($0.id, $0) })
         var held = groups
         let pinned = refreshed(groups.pinned, from: latest)
         let recent = refreshed(groups.sections.flatMap(\.threads), from: latest)
         let archived = refreshed(groups.archived, from: latest)
-        let newlyPinned = (recent + archived).filter { $0.pinned && !$0.archived }
-        let newlyRecent = (pinned + archived).filter { !$0.pinned && !$0.archived }
-        held.pinned = pinned.filter { $0.pinned && !$0.archived } + newlyPinned
+        let newlyPinned = (recent + archived).filter { moving.contains($0.id) && $0.pinned && !$0.archived }
+        let newlyRecent = (pinned + archived).filter { moving.contains($0.id) && !$0.pinned && !$0.archived }
+        held.pinned = pinned.filter { !moving.contains($0.id) || ($0.pinned && !$0.archived) } + newlyPinned
         let additions = Dictionary(grouping: newlyRecent, by: { threadGroup(for: $0.lastActivityDate) })
         held.sections = ThreadSection.Group.allCases.compactMap { group in
             let old = groups.sections.first(where: { $0.group == group })?.threads ?? []
-            let rows = refreshed(old, from: latest).filter { !$0.pinned && !$0.archived }
+            let rows = refreshed(old, from: latest).filter { !moving.contains($0.id) || (!$0.pinned && !$0.archived) }
                 + (additions[group] ?? [])
             return rows.isEmpty ? nil : ThreadSection(group: group, threads: rows)
         }
         held.recent = held.sections.flatMap(\.threads)
-        held.archived = archived.filter(\.archived) + (pinned + recent).filter(\.archived)
+        held.archived = archived.filter { !moving.contains($0.id) || $0.archived }
+            + (pinned + recent).filter { moving.contains($0.id) && $0.archived }
         return held
     }
 
@@ -668,6 +669,7 @@ public struct ThreadListView<Destination: View>: View {
     @State private var showArchived = false
     @State private var choosingAgent = NewThreadShowcase.agent != nil
     @State private var heldOrder: HeldThreadOrder?
+    @State private var immediateMoves: Set<String> = []
     @State private var listScrollPhase = ScrollPhase.idle
     @State private var touchingList = false
     @State private var visibleRowID: String?
@@ -808,7 +810,7 @@ public struct ThreadListView<Destination: View>: View {
         })
     }
 
-    private var groups: ThreadGroups { heldOrder?.groups(with: threads) ?? liveGroups }
+    private var groups: ThreadGroups { heldOrder?.groups(with: threads, moving: immediateMoves) ?? liveGroups }
 
     private var searchNeedle: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var currentRemoteMatches: [String: ThreadSearchMatch] {
@@ -831,9 +833,20 @@ public struct ThreadListView<Destination: View>: View {
     }
 
     private func settleListOrder() {
+        immediateMoves.removeAll()
         guard heldOrder != nil else { return }
         // `scrollPosition` tracks a row identity across the single reorder transaction.
         withTransaction(Transaction(animation: reduceMotion ? nil : .default)) { heldOrder = nil }
+    }
+
+    private func moveArchive(_ thread: ThreadSummary, _ archived: Bool) {
+        immediateMoves.insert(thread.id)
+        onArchive(thread, archived)
+    }
+
+    private func movePin(_ thread: ThreadSummary, _ pinned: Bool) {
+        immediateMoves.insert(thread.id)
+        onPin(thread, pinned)
     }
 
     public var body: some View {
@@ -1098,7 +1111,7 @@ public struct ThreadListView<Destination: View>: View {
             .listRowBackground(Color.clear)
             .swipeActions(edge: .leading) {
                 if thread.archived {
-                    Button("Restore", systemImage: "tray.and.arrow.up") { settleListOrder(); onArchive(thread, false) }
+                    Button("Restore", systemImage: "tray.and.arrow.up") { moveArchive(thread, false) }
                         .tint(.blue)
                 } else {
                     if thread.isUnread {
@@ -1108,18 +1121,17 @@ public struct ThreadListView<Destination: View>: View {
                     Button(
                         thread.pinned ? String(localized: "Unpin") : String(localized: "Pin"),
                         systemImage: thread.pinned ? "pin.slash" : "pin"
-                    ) { settleListOrder(); onPin(thread, !thread.pinned) }
+                    ) { movePin(thread, !thread.pinned) }
                         .tint(.orange)
                 }
             }
             .swipeActions(edge: .trailing) {
                 if thread.archived {
-                    Button("Restore", systemImage: "tray.and.arrow.up") { settleListOrder(); onArchive(thread, false) }
+                    Button("Restore", systemImage: "tray.and.arrow.up") { moveArchive(thread, false) }
                         .tint(.blue)
                 } else {
                     Button("Archive", systemImage: "archivebox", role: .destructive) {
-                        settleListOrder()
-                        onArchive(thread, true)
+                        moveArchive(thread, true)
                     }
                     Button("Rename", systemImage: "pencil") { renaming = thread }
                 }
@@ -1130,7 +1142,7 @@ public struct ThreadListView<Destination: View>: View {
                     Button(
                         thread.pinned ? String(localized: "Unpin") : String(localized: "Pin"),
                         systemImage: thread.pinned ? "pin.slash" : "pin"
-                    ) { settleListOrder(); onPin(thread, !thread.pinned) }
+                    ) { movePin(thread, !thread.pinned) }
                 }
                 readButton(thread)
                 if let exportMarkdown {
@@ -1139,7 +1151,7 @@ public struct ThreadListView<Destination: View>: View {
                 Button(
                     thread.archived ? String(localized: "Restore") : String(localized: "Archive"),
                     systemImage: thread.archived ? "tray.and.arrow.up" : "archivebox"
-                ) { settleListOrder(); onArchive(thread, !thread.archived) }
+                ) { moveArchive(thread, !thread.archived) }
             }
         }
     }
@@ -1235,6 +1247,7 @@ public struct ThreadSidebar: View {
     @State private var showArchived = false
     @State private var choosingAgent = NewThreadShowcase.agent != nil
     @State private var heldOrder: HeldThreadOrder?
+    @State private var immediateMoves: Set<String> = []
     @State private var visibleRowID: String?
     @State private var listScrollPhase = ScrollPhase.idle
     @State private var pressingList = false
@@ -1287,7 +1300,7 @@ public struct ThreadSidebar: View {
     }
 
     private var liveGroups: ThreadGroups { ThreadGroups(threads) }
-    private var groups: ThreadGroups { heldOrder?.groups(with: threads) ?? liveGroups }
+    private var groups: ThreadGroups { heldOrder?.groups(with: threads, moving: immediateMoves) ?? liveGroups }
 
     private var searchNeedle: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var currentRemoteMatches: [String: ThreadSearchMatch] {
@@ -1310,8 +1323,19 @@ public struct ThreadSidebar: View {
     }
 
     private func settleListOrder() {
+        immediateMoves.removeAll()
         guard heldOrder != nil else { return }
         withTransaction(Transaction(animation: reduceMotion ? nil : .default)) { heldOrder = nil }
+    }
+
+    private func moveArchive(_ thread: ThreadSummary, _ archived: Bool) {
+        immediateMoves.insert(thread.id)
+        onArchive(thread, archived)
+    }
+
+    private func movePin(_ thread: ThreadSummary, _ pinned: Bool) {
+        immediateMoves.insert(thread.id)
+        onPin(thread, pinned)
     }
 
     private var navigationSelection: Binding<String?> {
@@ -1418,8 +1442,7 @@ public struct ThreadSidebar: View {
             .onDeleteCommand {
                 guard let thread = threads.first(where: { $0.id == selection }), !thread.archived
                 else { return }
-                settleListOrder()
-                onArchive(thread, true)
+                moveArchive(thread, true)
             }
         #endif
     }
@@ -1498,7 +1521,7 @@ public struct ThreadSidebar: View {
             Button(
                 thread.pinned ? String(localized: "Unpin") : String(localized: "Pin"),
                 systemImage: thread.pinned ? "pin.slash" : "pin"
-            ) { settleListOrder(); onPin(thread, !thread.pinned) }
+            ) { movePin(thread, !thread.pinned) }
         }
         // A thread the agent has never spoken in cannot be made unread: nothing in it is news.
         if thread.isUnread {
@@ -1514,7 +1537,7 @@ public struct ThreadSidebar: View {
         Button(
             thread.archived ? String(localized: "Restore") : String(localized: "Archive"),
             systemImage: thread.archived ? "tray.and.arrow.up" : "archivebox"
-        ) { settleListOrder(); onArchive(thread, !thread.archived) }
+        ) { moveArchive(thread, !thread.archived) }
     }
 
     @ViewBuilder private func empty(_ groups: ThreadGroups) -> some View {

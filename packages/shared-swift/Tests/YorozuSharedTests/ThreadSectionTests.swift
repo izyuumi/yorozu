@@ -108,7 +108,10 @@ private func thread(_ id: String, _ date: Date, pinned: Bool = false, archived: 
     archivedSecond.archived = true
     var restored = filed
     restored.archived = false
-    let moved = held.groups(with: [first, archivedSecond, pinned, restored])
+    let deferred = held.groups(with: [first, archivedSecond, pinned, restored])
+    #expect(deferred.recent.map(\.id) == ["first", "second"])
+    #expect(deferred.archived.map(\.id) == ["filed"])
+    let moved = held.groups(with: [first, archivedSecond, pinned, restored], moving: ["second", "filed"])
     #expect(moved.recent.map(\.id) == ["first", "filed"])
     #expect(moved.archived.map(\.id) == ["second"])
 }
