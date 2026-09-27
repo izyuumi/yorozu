@@ -26,9 +26,13 @@ final class ConnectionTests: XCTestCase {
         try await launchPaired()
         let notificationAlert = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
         if notificationAlert.waitForExistence(timeout: 2) { notificationAlert.buttons["Allow"].tap() }
-        let empty = app.staticTexts["No threads yet"]
-        XCTAssertTrue(empty.waitForExistence(timeout: 10))
-        let initialFrame = empty.frame
+        try openNewChat()
+        send("toast anchor")
+        XCTAssertTrue(app.textViews["echo: toast anchor"].waitForExistence(timeout: 30))
+        app.navigationBars.buttons["Threads"].tap()
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "toast anchor")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        let initialFrame = row.frame
         let toast = app.descendants(matching: .any)["Connection: Reconnecting"].firstMatch
         try await rig.post("down")
         try await rig.post("heal")
@@ -38,8 +42,8 @@ final class ConnectionTests: XCTestCase {
         try await rig.post("blackhole")
         XCTAssertEqual(status(becomes: "Reconnecting", within: 70), .completed, "A dead link was never shown")
         XCTAssertTrue(toast.waitForExistence(timeout: 8), "A sustained interruption showed no toast")
-        XCTAssertEqual(empty.frame.minY, initialFrame.minY, accuracy: 1, "The toast moved list content")
-        XCTAssertEqual(empty.frame.height, initialFrame.height, accuracy: 1, "The toast resized list content")
+        XCTAssertEqual(row.frame.minY, initialFrame.minY, accuracy: 1, "The toast moved list content")
+        XCTAssertEqual(row.frame.height, initialFrame.height, accuracy: 1, "The toast resized list content")
         XCTAssertEqual(app.descendants(matching: .any)
             .matching(identifier: "Connection: Reconnecting").count, 1)
         let shown = XCTAttachment(screenshot: app.screenshot())
@@ -51,11 +55,11 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(["Mac connection: Reconnecting", "Mac connection: Host isn’t reachable"]
             .contains(persistentStatus), "Dismissing toast cleared persistent status: \(persistentStatus ?? "missing")")
         XCTAssertFalse(toast.waitForExistence(timeout: 3), "Retry showed the same interruption again")
-        XCTAssertEqual(empty.frame.minY, initialFrame.minY, accuracy: 1)
+        XCTAssertEqual(row.frame.minY, initialFrame.minY, accuracy: 1)
         try await rig.post("heal")
         XCTAssertEqual(status(becomes: "Connected", within: 70), .completed, "The link did not come back by itself")
         XCTAssertFalse(toast.exists)
-        XCTAssertEqual(empty.frame.minY, initialFrame.minY, accuracy: 1)
+        XCTAssertEqual(row.frame.minY, initialFrame.minY, accuracy: 1)
     }
 
     /// Messages sent into a dead link say they are unconfirmed, then go through once each, in
