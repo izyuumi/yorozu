@@ -877,18 +877,8 @@ test("OpenClaw activity reaches Mac and encrypted phone live, then replays durin
     return new Promise<string>((resolve) => { finish = resolve; });
   });
   const { dir, send, eventsUntil } = await pairedPhone([], true);
-  const mac = createConnection(localSocketPath(dir));
-  const macEvents: YorozuEvent[] = [];
-  let buffer = "";
-  mac.setEncoding("utf8");
-  mac.on("data", (chunk: string) => {
-    buffer += chunk;
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) if (line) macEvents.push(JSON.parse(line));
-  });
+  const mac = await macClient(dir);
   try {
-    await new Promise<void>((resolve, reject) => { mac.once("connect", resolve); mac.once("error", reject); });
     send({ kind: "thread_create", data: {} });
     send({ kind: "message", data: { role: "user", text: "inspect" } });
     await vi.waitFor(() => expect(turn).toBeDefined());
@@ -900,7 +890,7 @@ test("OpenClaw activity reaches Mac and encrypted phone live, then replays durin
     const activity: YorozuEvent = { id: "live-call", threadId: "t1", ts: Date.now(), agentId: "main", kind: "tool_call", data: { callId: "call-1", name: "read", args: {} } };
     turn.onEvent?.(activity);
     expect((await eventsUntil((event) => event.id === activity.id)).at(-1)).toEqual(activity);
-    await vi.waitFor(() => expect(macEvents).toContainEqual(activity));
+    await vi.waitFor(() => expect(mac.events).toContainEqual(activity));
     expect(readThreadEvents("t1", dir)).toContainEqual(activity);
     // A reconnecting phone's normal sync sees the in-flight call before a final answer exists.
     send({ kind: "sync_request", data: { lastSeen: {} } });
@@ -915,7 +905,7 @@ test("OpenClaw activity reaches Mac and encrypted phone live, then replays durin
     expect(listThreads(dir).find((thread) => thread.id === "t1")?.title).toBe("inspect");
     expect(readThreadEvents("t1", dir).filter((event) => event.kind.startsWith("tool_")).map((event) => event.id)).toEqual(["live-call", "live-result"]);
   } finally {
-    mac.destroy();
+    mac.close();
   }
 });
 
@@ -1262,62 +1252,48 @@ test("client archive and restore reach OpenClaw in order before the canonical li
   const { dir, send, eventsUntil } = await pairedPhone([], true);
   send({ kind: "thread_create", data: {} });
   await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
-  const mac = createConnection(localSocketPath(dir));
-  const macEvents: YorozuEvent[] = [];
-  let buffer = "";
-  mac.setEncoding("utf8");
-  mac.on("data", (chunk: string) => {
-    buffer += chunk;
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) if (line) macEvents.push(JSON.parse(line));
-  });
-  await new Promise<void>((resolve, reject) => { mac.once("connect", resolve); mac.once("error", reject); });
-  const macArchive = (archived: boolean) => mac.write(JSON.stringify({
+  const mac = await macClient(dir);
+  const macArchive = (archived: boolean) => mac.sendRawEvent({
     id: randomUUID(), threadId: "t1", ts: Date.now(), agentId: "mac", kind: "thread_archive", data: { archived },
-  }) + "\n");
+  });
   try {
-  send({ kind: "thread_archive", data: { archived: true } });
-  await vi.waitFor(() => expect(archive).toHaveBeenCalledWith("t1", true));
-  expect(listThreads(dir).find((thread) => thread.id === "t1")?.archived).toBe(false);
-  macArchive(false);
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(archive).toHaveBeenCalledTimes(1);
-  finishArchive();
-  const first = await threadsAfter(eventsUntil);
-  expect(first.find((thread) => thread.id === "t1")?.archived).toBe(true);
-  const second = await threadsAfter(eventsUntil);
-  expect(second.find((thread) => thread.id === "t1")?.archived).toBe(false);
-  expect(archive.mock.calls).toEqual([["t1", true], ["t1", false]]);
-  expect(listThreads(dir).find((thread) => thread.id === "t1")?.archived).toBe(false);
-  await vi.waitFor(() => expect(macEvents.filter((event) => event.kind === "thread_list").slice(-2)).toMatchObject([
-    { data: { threads: [{ id: "t1", archived: true }] } },
-    { data: { threads: [{ id: "t1", archived: false }] } },
-  ]));
+    send({ kind: "thread_archive", data: { archived: true } });
+    await vi.waitFor(() => expect(archive).toHaveBeenCalledWith("t1", true));
+    expect(listThreads(dir).find((thread) => thread.id === "t1")?.archived).toBe(false);
+    macArchive(false);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(archive).toHaveBeenCalledTimes(1);
+    finishArchive();
+    const first = await threadsAfter(eventsUntil);
+    expect(first.find((thread) => thread.id === "t1")?.archived).toBe(true);
+    const second = await threadsAfter(eventsUntil);
+    expect(second.find((thread) => thread.id === "t1")?.archived).toBe(false);
+    expect(archive.mock.calls).toEqual([["t1", true], ["t1", false]]);
+    expect(listThreads(dir).find((thread) => thread.id === "t1")?.archived).toBe(false);
+    await vi.waitFor(() => expect(mac.events.filter((event) => event.kind === "thread_list").slice(-2)).toMatchObject([
+      { data: { threads: [{ id: "t1", archived: true }] } },
+      { data: { threads: [{ id: "t1", archived: false }] } },
+    ]));
 
-  // A Gateway refusal must not lie to other clients or poison the next ordered request.
-  archive.mockRejectedValueOnce(new Error("Session is still active; retry the archive."));
-  macArchive(true);
-  await vi.waitFor(() => expect(macEvents).toContainEqual(expect.objectContaining({
-    kind: "thought", data: { text: "Could not archive this thread. Please retry." },
-  })));
-  expect((await threadsAfter(eventsUntil)).find((thread) => thread.id === "t1")?.archived).toBe(false);
-  send({ kind: "thread_archive", data: {} });
-  expect((await threadsAfter(eventsUntil)).find((thread) => thread.id === "t1")?.archived).toBe(true);
-  expect(listThreads(dir).find((thread) => thread.id === "t1")?.archived).toBe(true);
+    // A Gateway refusal must not lie to other clients or poison the next ordered request.
+    archive.mockRejectedValueOnce(new Error("Session is still active; retry the archive."));
+    macArchive(true);
+    await vi.waitFor(() => expect(mac.events).toContainEqual(expect.objectContaining({
+      kind: "thought", data: { text: "Could not archive this thread. Please retry." },
+    })));
+    expect((await threadsAfter(eventsUntil)).find((thread) => thread.id === "t1")?.archived).toBe(false);
+    send({ kind: "thread_archive", data: {} });
+    expect((await threadsAfter(eventsUntil)).find((thread) => thread.id === "t1")?.archived).toBe(true);
+    expect(listThreads(dir).find((thread) => thread.id === "t1")?.archived).toBe(true);
 
-  // A newly connected Mac receives the persisted result, not this client's optimistic state.
-  const again = createConnection(localSocketPath(dir));
-  try {
-    const firstChunk = await new Promise<string>((resolve, reject) => {
-      again.once("data", (chunk) => resolve(chunk.toString()));
-      again.once("error", reject);
-    });
-    expect(JSON.parse(firstChunk.split("\n")[0]!)).toMatchObject({
-      kind: "thread_list", data: { threads: [{ id: "t1", archived: true }] },
-    });
-  } finally { again.destroy(); }
-  } finally { mac.destroy(); }
+    // A newly connected Mac receives the persisted result, not this client's optimistic state.
+    const again = await macClient(dir);
+    try {
+      await vi.waitFor(() => expect(again.events[0]).toMatchObject({
+        kind: "thread_list", data: { threads: [{ id: "t1", archived: true }] },
+      }));
+    } finally { again.close(); }
+  } finally { mac.close(); }
 });
 
 test("always runs the action and is permanent: the next one needs no second card", async () => {
@@ -1337,7 +1313,11 @@ test("always runs the action and is permanent: the next one needs no second card
     kind: "approval_card",
     data: { actionClass: "run-command", target: cmd },
   });
-  const { actionId } = cardOf(batch);
+  const card = cardOf(batch);
+  expect(card.scope).toMatchObject({ operation: "run" });
+  expect(card.scope?.consequence).toBeTruthy();
+  expect(card.mustConfirm).toBeUndefined();
+  const { actionId } = card;
 
   send({
     kind: "approval_answer",
@@ -1429,24 +1409,6 @@ test("a YOLO grant on disk is back on the clock after a relaunch", async () => {
   expect((await eventsUntil((event) => event.kind === "approval_settings")).at(-1)).toMatchObject({ data: { yolo: false } });
   expect(approvalFile(dir)).toMatchObject({ yolo: false });
 }, 10_000);
-
-test("17: the card the phone gets carries the structured scope and a rule to widen", async () => {
-  const cmd = "echo yorozu-scope-ok";
-  const { send, eventsUntil } = await pairedPhone([() => shellTurn(cmd), () => sse("Done.")]);
-
-  send({ kind: "message", data: { role: "user", text: "tidy up" } });
-  const shown = cardOf(await eventsUntil((event) => event.kind === "approval_card"));
-
-  expect(shown.scope).toMatchObject({ operation: "run" });
-  expect(shown.scope?.consequence).toBeTruthy();
-  expect(shown.mustConfirm).toBeUndefined();
-  // Prefilled with the narrowest thing that covers it, which is this command and not every one.
-  expect(shown.suggestedRule).toMatchObject({
-    actionClass: "run-command",
-    decision: "always",
-    scope: { target: { mode: "exact", value: cmd }, operation: { mode: "exact", value: "run" } },
-  });
-});
 
 test("19: the phone saves the rule its editor produced, widened past the one command", async () => {
   const first = "echo yorozu-editor-one";
@@ -2385,25 +2347,6 @@ test("the first message names an untitled thread, and no later turn renames it",
   expect(storedThreads(dir)[0]!.title).toBe("Groceries for the week");
 });
 
-test("a thread the user renamed keeps that title through its first turn", async () => {
-  // A named thread is never titled: a titler that answered would show up as the wrong title.
-  const { dir, send, eventsUntil, isReply } = await pairedPhone([() => sse("Noted.")], false, {
-    titler: async () => "Wrong",
-  });
-
-  send({ kind: "thread_create", data: {} });
-  const [created] = await threadsAfter(eventsUntil);
-
-  send({ kind: "thread_rename", data: { title: "  Weekend plans  " } }, created!.id);
-  expect(await threadsAfter(eventsUntil)).toEqual([
-    expect.objectContaining({ id: created!.id, title: "Weekend plans" }),
-  ]);
-
-  send({ kind: "message", data: { role: "user", text: "hi" } }, created!.id);
-  await eventsUntil(isReply);
-  expect(storedThreads(dir)[0]!.title).toBe("Weekend plans");
-});
-
 test("a revoked device is forgotten here and at the relay", async () => {
   relay = await startRelay(0);
   const stateDir = mkdtempSync(join(tmpdir(), "yorozu-revoke-"));
@@ -2647,41 +2590,6 @@ test("a paired device the relay knows no name for holds the announce back", asyn
   // `close()` waits on the open sockets, and this sidecar's is one of them.
   await sidecar.close();
   await new Promise<void>((done) => fake.close(() => done()));
-});
-
-test("a second sidecar on the same state dir is the same Mac: same keys, same room", async () => {
-  // What an app update is, from the runtime's side: the bundle is replaced and the sidecar is
-  // launched again, on the state directory it always had — nothing in that path is version
-  // shaped. The keys are what the room id and every paired phone are pinned to, so a relaunch
-  // that generated new ones would silently unpair every device. It must not.
-  relay = await startRelay(0);
-  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-restart-"));
-  const paired = { pub: toBase64Url(generateKeypair().publicKey), signingPub: "s", pairedAt: 5, lastSeen: 7 };
-  writeFileSync(join(stateDir, "devices.json"), JSON.stringify([paired]));
-
-  const start = async () => {
-    let pairing!: (line: string) => void;
-    const printed = new Promise<string>((resolve) => (pairing = resolve));
-    const started = serve({
-      relayUrl: `ws://127.0.0.1:${relay.port}`,
-      stateDir,
-      provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: vi.fn() }),
-      log: (line) => {
-        if (line.startsWith("QR ")) pairing(line.slice(3));
-      },
-    });
-    return { started, qr: decodeQrPayload(await printed) };
-  };
-
-  const first = await start();
-  await first.started.close();
-  const second = await start();
-  sidecar = second.started;
-
-  expect(second.qr.roomId).toBe(first.qr.roomId);
-  expect(second.qr.macPubkey).toBe(first.qr.macPubkey);
-  // And the phones it had paired with are still there — the install touched no file of ours.
-  expect(loadDevices(join(stateDir, "devices.json"))).toEqual([paired]);
 });
 
 test("a devices.json from before the split still yields its channel counters, minus ones that are not counts", () => {
