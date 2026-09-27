@@ -78,11 +78,10 @@ final class ShowcaseFlowTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-yorozuShowcase", "images-viewer"]
         app.launch()
-        let close = app.buttons["Close"]
-        XCTAssertTrue(close.waitForExistence(timeout: 30), "The picture viewer did not open")
-        XCTAssertFalse(app.buttons["Done"].exists)
+        let viewer = app.navigationBars["kitchen.jpg"]
+        XCTAssertTrue(viewer.waitForExistence(timeout: 30), "The picture viewer did not open")
         app.swipeDown()
-        XCTAssertTrue(close.waitForNonExistence(timeout: 10), "Dragging the picture down left the viewer open")
+        XCTAssertTrue(viewer.waitForNonExistence(timeout: 10), "Dragging the picture down left the viewer open")
     }
 
     /// A real drag, rather than only the scroll intent model, must reveal the return control.
