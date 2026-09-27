@@ -580,7 +580,7 @@ export interface SkillOption {
 export interface ModelListData {
   agents?: AgentDescriptor[];
   agentModels?: Record<ThreadAgent, ModelOption[]>;
-  skills?: Record<ThreadAgent, SkillOption[]>;
+  skills?: Partial<Record<ThreadAgent, SkillOption[]>>;
   models: ModelOption[];
 }
 

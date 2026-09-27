@@ -1351,21 +1351,21 @@ public struct ModelOption: Codable, Equatable, Sendable, Identifiable {
 public struct ModelListData: Codable, Equatable, Sendable {
     public var models: [ModelOption]
     public var agentModels: [String: [ModelOption]]?
+    public var agents: [AgentDescriptor]?
     /// What a thread's composer offers after a slash, by the thread's agent. Absent from a
     /// host that predates it.
     public var skills: [String: [SkillOption]]?
-    public var agents: [AgentDescriptor]?
     public init(
         models: [ModelOption], agentModels: [String: [ModelOption]]? = nil,
-        skills: [String: [SkillOption]]? = nil, agents: [AgentDescriptor]? = nil
+        agents: [AgentDescriptor]? = nil, skills: [String: [SkillOption]]? = nil
     ) {
         self.models = models
         self.agentModels = agentModels
-        self.skills = skills
         self.agents = agents
+        self.skills = skills
     }
 
-    private enum CodingKeys: String, CodingKey { case models, agentModels, skills, agents }
+    private enum CodingKeys: String, CodingKey { case models, agentModels, agents, skills }
     private struct OptionalAgent: Decodable {
         let value: AgentDescriptor?
         init(from decoder: Decoder) throws { value = try? AgentDescriptor(from: decoder) }
@@ -1375,8 +1375,8 @@ public struct ModelListData: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         models = try container.decode([ModelOption].self, forKey: .models)
         agentModels = try container.decodeIfPresent([String: [ModelOption]].self, forKey: .agentModels)
-        skills = try? container.decode([String: [SkillOption]].self, forKey: .skills)
         agents = (try? container.decode([OptionalAgent].self, forKey: .agents))?.compactMap(\.value)
+        skills = try? container.decode([String: [SkillOption]].self, forKey: .skills)
     }
 }
 

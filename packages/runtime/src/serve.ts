@@ -1239,12 +1239,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const refreshSkills = (): Promise<void> => {
     if (skillsRefreshing) return skillsRefreshing;
     if (skillsBuiltAt !== undefined && skillNow() - skillsBuiltAt < 600_000) return Promise.resolve();
-    const refresh = Promise.all([
-      openclaw?.listSkills?.().catch(() => [] as SkillOption[]) ?? Promise.resolve([] as SkillOption[]),
-      Promise.all(agentDescriptors.filter(({ id }) => id !== "yorozu").map(async ({ id }) => ({
-        id, skills: await nativeRunners[id]?.skills?.().catch(() => []) ?? [],
-      }))),
-    ]).then(([openclawSkills, nativeSkills]) => {
+    const refresh = Promise.all(agentDescriptors.map(async ({ id }) => {
+      const skills = await Promise.resolve().then(() =>
+        id === "yorozu" ? openclaw?.listSkills?.() ?? [] : nativeRunners[id]?.skills?.() ?? [],
+      ).catch(() => [] as SkillOption[]);
+      return [id, skills as (SkillOption & { path?: string })[]] as const;
+    })).then((listed) => {
       const visible = (skills: SkillOption[]): SkillOption[] => {
         return skills.flatMap((skill) => {
           if (!skill || typeof skill.name !== "string" || !skill.name) return [];
@@ -1254,9 +1254,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
               ? { argumentHint: skill.argumentHint.slice(0, 80) } : {}) }];
         });
       };
-      const next: Record<string, SkillOption[]> = { yorozu: visible(openclawSkills) };
-      for (const { id, skills } of nativeSkills) next[id] = visible(skills);
-      const codexSkills = nativeSkills.find(({ id }) => id === "codex")?.skills ?? [];
+      const next = Object.fromEntries(listed.map(([id, skills]) => [id, visible(skills)]));
+      const codexSkills = listed.find(([id]) => id === "codex")?.[1] ?? [];
       const paths = new Map<string, string>();
       for (const skill of codexSkills) {
         if (skill && typeof skill.path === "string" && !paths.has(skill.name) &&

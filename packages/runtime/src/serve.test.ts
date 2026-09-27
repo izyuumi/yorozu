@@ -935,8 +935,6 @@ test("skill lists refresh on join after ten minutes and broadcast only changes",
   const { dir } = await pairedPhone([], false, { now: () => now, nativeRunners: {
     codex: { run: async () => ({ text: "done" }), skills },
     "claude-code": { run: async () => ({ text: "done" }), skills: async () => { throw new Error("unavailable"); } },
-    "test-harness": { descriptor: { id: "test-harness", label: "Test Harness", needsFolder: false },
-      run: async () => ({ text: "done" }), skills: async () => [{ name: "inspect", description: "Inspect state" }] },
   } });
   const first = await macClient(dir);
   await vi.waitFor(() => expect(first.events.some((event) => event.kind === "model_list" &&
@@ -949,7 +947,6 @@ test("skill lists refresh on join after ten minutes and broadcast only changes",
     { name: "plugin:Shape", description: "Another source" },
   ]);
   expect(listed.data.skills?.["claude-code"]).toEqual([]);
-  expect(listed.data.skills?.["test-harness"]).toEqual([{ name: "inspect", description: "Inspect state" }]);
   expect(JSON.stringify(listed)).not.toContain("/host/shape/SKILL.md");
   expect(skills).toHaveBeenCalledTimes(1);
   catalog = [{ name: "new", description: "New", argumentHint: "", path: "/host/new/SKILL.md" }];
@@ -1184,15 +1181,18 @@ test("a registered agent appears in the catalog and answers a thread without a f
   const runner: NativeAgentRunner = {
     descriptor: { id: "test-harness", label: "Test Harness", description: "Answers test prompts", needsFolder: false },
     models: async () => [{ id: "test/model", label: "Test Model", providerLabel: "Test", efforts: ["low"] }],
+    skills: async () => [{ name: "plugin:Inspect", description: "Inspect a project" }],
     run: async (turn) => { turns.push(turn); turn.onUpdate?.("working"); return { text: "from test harness" }; },
   };
   const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { "test-harness": runner } });
   const catalog = (await eventsUntil((event) => event.kind === "model_list" &&
-    event.data.agents?.some((agent) => agent.id === "test-harness") === true)).at(-1)!;
+    event.data.agents?.some((agent) => agent.id === "test-harness") === true &&
+    event.data.skills?.["test-harness"]?.[0]?.name === "plugin:Inspect")).at(-1)!;
   expect(catalog).toMatchObject({ data: { agents: [
     { id: "yorozu", label: "Yorozu", needsFolder: false },
     { id: "test-harness", label: "Test Harness", description: "Answers test prompts", needsFolder: false },
   ] } });
+  expect(catalog).toMatchObject({ data: { skills: { "test-harness": [{ name: "plugin:Inspect", description: "Inspect a project" }] } } });
   send({ kind: "thread_create", data: { agent: "test-harness" } }, "custom");
   await eventsUntil((event) => event.kind === "thread_list" &&
     event.data.threads.some((thread) => thread.id === "custom" && thread.agent === "test-harness"));
