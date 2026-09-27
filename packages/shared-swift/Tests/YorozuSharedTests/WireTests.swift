@@ -62,11 +62,12 @@ private actor WireRig {
     }
 
     /// When each redial reached the proxy, in seconds. URLSession makes a refused dial as a few
-    /// connections a millisecond apart, so connections that close together are one dial.
+    /// connections hundreds of milliseconds apart on a busy runner. The shortest scheduled
+    /// retry is 750 ms, so connections within 500 ms still belong to one dial.
     func dials() async throws -> [Double] {
         struct Reply: Decodable { var dials: [Double] }
         let accepted = try await get(Reply.self, "dials").dials
-        return accepted.enumerated().filter { $0.offset == 0 || $0.element - accepted[$0.offset - 1] > 50 }
+        return accepted.enumerated().filter { $0.offset == 0 || $0.element - accepted[$0.offset - 1] > 500 }
             .map { $0.element / 1000 }
     }
 
