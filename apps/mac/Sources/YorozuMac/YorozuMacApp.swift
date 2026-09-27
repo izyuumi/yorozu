@@ -161,6 +161,54 @@ final class Sidecar: ObservableObject {
         }
     }
 
+    /// The `PATH` the user's login shell builds, asked for once per launch. An app opened from
+    /// Finder inherits launchd's `/usr/bin:/bin:/usr/sbin:/sbin`, so without it the agents the
+    /// runtime starts find nothing the user installed: no Homebrew, no mise shims, no `gh`.
+    /// Only `PATH` is read back, so the rest of the shell's environment stays out of the sidecar.
+    // ponytail: blocks the first spawn for as long as the profile takes, two seconds at most.
+    // Resolve it off the main actor if a slow profile ever shows at launch.
+    static let loginShellPath: String? = {
+        let found = path(fromLoginShell: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
+        if found == nil { Log.write("sidecar: login shell gave no PATH, keeping the app's own") }
+        return found
+    }()
+
+    /// Nil when the shell cannot be run, fails, outlasts `timeout`, or prints no absolute path.
+    /// The markers cut the answer out of whatever a profile prints on its way past.
+    static func path(fromLoginShell shell: String, timeout: TimeInterval = 2) -> String? {
+        let mark = "__YOROZU_PATH__"
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: shell)
+        process.arguments = ["-lc", "printf '\(mark)%s\(mark)' \"$PATH\""]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
+        guard (try? process.run()) != nil else { return nil }
+        guard exited.wait(timeout: .now() + timeout) == .success else {
+            process.terminate()
+            return nil
+        }
+        guard process.terminationStatus == 0 else { return nil }
+        // What was written, not the stream to its end: a profile that leaves a background job
+        // holding the pipe never ends it.
+        let text = String(decoding: output.fileHandleForReading.availableData, as: UTF8.self)
+        let parts = text.components(separatedBy: mark)
+        guard parts.count == 3, parts[1].hasPrefix("/") else { return nil }
+        return parts[1]
+    }
+
+    /// The login shell's entries first, then what else the app was launched with. A launch that
+    /// already has every login entry came from a shell, and the order it chose stands.
+    static func searchPath(login: String?, inherited: String?) -> String? {
+        let entries = { (path: String?) in (path ?? "").split(separator: ":").map(String.init) }
+        if Set(entries(login)).isSubset(of: entries(inherited)) { return inherited }
+        var seen = Set<String>()
+        return (entries(login) + entries(inherited)).filter { seen.insert($0).inserted }.joined(separator: ":")
+    }
+
     /// What the runtime's `/bin/sh` reads back as exactly `path`, however it is spelt: one
     /// single-quoted word, with any single quote inside it closed, escaped and reopened.
     static func shellQuoted(_ path: String) -> String {
@@ -168,7 +216,8 @@ final class Sidecar: ObservableObject {
     }
 
     private func spawn(generation: Int) {
-        let inherited = ProcessInfo.processInfo.environment
+        var inherited = ProcessInfo.processInfo.environment
+        inherited["PATH"] = Self.searchPath(login: Self.loginShellPath, inherited: inherited["PATH"])
         // Looked up in the full environment — `PATH` is passed through anyway — and then run
         // with only the allowlisted part of it.
         guard let launch = Self.launch(environment: inherited) else {
