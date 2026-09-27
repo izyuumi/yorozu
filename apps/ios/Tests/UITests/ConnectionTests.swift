@@ -66,8 +66,13 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(app.textViews["echo: ordinary title"].waitForExistence(timeout: 30))
         send("search marker 74c9")
         XCTAssertTrue(app.textViews["echo: search marker 74c9"].waitForExistence(timeout: 30))
-        send("newer unrelated answer")
-        XCTAssertTrue(app.textViews["echo: newer unrelated answer"].waitForExistence(timeout: 30))
+        for index in 0..<6 {
+            let latest = "newer unrelated answer \(index)"
+            send(latest)
+            XCTAssertTrue(app.textViews["echo: \(latest)"].waitForExistence(timeout: 30))
+        }
+        let match = app.textViews["search marker 74c9"]
+        XCTAssertFalse(match.exists, "Search fixture must put the older match outside the visible timeline")
         app.navigationBars.buttons["Threads"].tap()
 
         try await rig.post("down")
@@ -81,7 +86,8 @@ final class ConnectionTests: XCTestCase {
         let result = app.buttons.matching(NSPredicate(format: "label CONTAINS 'search marker 74c9'")).firstMatch
         XCTAssertTrue(result.waitForExistence(timeout: 3), "Downloaded older message is missing offline")
         result.tap()
-        XCTAssertTrue(app.textViews["search marker 74c9"].waitForExistence(timeout: 10))
+        XCTAssertTrue(match.waitForExistence(timeout: 10),
+                      "Selecting an older result did not bring its matching message into the visible timeline")
         app.buttons["Close"].tap()
         app.navigationBars.buttons["Threads"].tap()
         app.collectionViews.firstMatch.swipeDown()
