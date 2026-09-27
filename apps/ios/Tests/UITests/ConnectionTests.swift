@@ -57,7 +57,8 @@ final class ConnectionTests: XCTestCase {
     }
 
     /// Search downloaded history while the host is unreachable; an older match stays
-    /// available and its limited scope is stated before the connection recovers.
+    /// available and its limited scope is stated before the connection recovers. Recovery searches
+    /// host history without replacing the query or duplicating that downloaded match.
     @MainActor
     func testOfflineSearchShowsDownloadedHistoryAndKeepsItsQuery() async throws {
         try await launchPaired()
@@ -93,6 +94,14 @@ final class ConnectionTests: XCTestCase {
         app.collectionViews.firstMatch.swipeDown()
         XCTAssertEqual(search.value as? String, "74c9", "Returning lost the search context")
         XCTAssertTrue(result.exists)
+
+        try await rig.post("heal")
+        XCTAssertEqual(status(becomes: "Connected", within: 70), .completed)
+        XCTAssertTrue(app.staticTexts["All host histories searched"].waitForExistence(timeout: 10),
+                      "The offline query was not searched on the host after recovery")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label CONTAINS 'search marker 74c9'")).count, 1,
+                       "Host search duplicated the downloaded result")
+        XCTAssertEqual(search.value as? String, "74c9", "Host results replaced the search query")
     }
 
     /// A silently dead link is noticed and shown, then comes back on its own. Idle, nothing but
