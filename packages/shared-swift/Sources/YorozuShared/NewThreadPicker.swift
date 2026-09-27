@@ -128,7 +128,7 @@ public struct NewThreadPicker: View {
                     if session.hasMultipleHosts {
                         Picker("Host", selection: $selectedHostID) {
                             ForEach(session.sessions) { host in
-                                Text(host.label).tag(Optional(host.id))
+                                Text(session.label(for: host)).tag(Optional(host.id))
                             }
                         }
                         .pickerStyle(.menu)

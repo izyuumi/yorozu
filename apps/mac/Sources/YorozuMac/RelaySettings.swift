@@ -57,7 +57,7 @@ struct HostsView: View {
                     } label: {
                         HStack {
                             if session.hosts.hasMultipleHosts {
-                                Label(host.label, systemImage: "desktopcomputer")
+                                Label(session.hosts.label(for: host), systemImage: "desktopcomputer")
                             } else {
                                 Text("Connection")
                             }
@@ -115,7 +115,7 @@ struct HostsView: View {
             Button("Cancel", role: .cancel) {}
         } message: { host in
             if session.hosts.hasMultipleHosts {
-                Text("Remove \(host.label)’s pairing keys, counters, cached chats, and queued messages from this Mac? Other hosts stay connected.")
+                Text("Remove \(session.hosts.label(for: host))’s pairing keys, counters, cached chats, and queued messages from this Mac? Other hosts stay connected.")
             } else {
                 Text("Yorozu will remove pairing keys, counters, cached chats, and queued messages from this Mac.")
             }

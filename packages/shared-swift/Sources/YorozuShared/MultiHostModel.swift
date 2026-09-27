@@ -85,13 +85,35 @@ public final class MultiHostModel {
     public func session(for hostID: HostID) -> HostSession? { sessions.first { $0.id == hostID } }
     public func model(for id: HostThreadID) -> ChatModel? { session(for: id.hostID)?.model }
 
+    /// Computer names and nicknames can match, including a nickname that looks like another
+    /// host's disambiguated label. Extend only colliding labels until every host is distinct.
+    private var uniqueLabels: [HostID: String] {
+        var labels = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0.label) })
+        var extended: Set<HostID> = []
+        while true {
+            let duplicates = Dictionary(grouping: sessions, by: { labels[$0.id]! }).values.filter { $0.count > 1 }
+            if duplicates.isEmpty { return labels }
+            for group in duplicates {
+                for host in group {
+                    let suffix = extended.insert(host.id).inserted
+                        ? (QrPayload.fingerprint(ofBase64URLKey: host.id) ?? String(host.id.prefix(12)))
+                        : host.id
+                    labels[host.id]! += " · \(suffix)"
+                }
+            }
+        }
+    }
+
+    public func label(for host: HostSession) -> String { uniqueLabels[host.id] ?? host.label }
+
     /// Connection identity still matters while a saved host is offline or being repaired.
     public var hasMultipleHosts: Bool { sessions.count > 1 }
 
     public var threads: [HostThread] {
-        sessions.flatMap { session in
+        let labels = uniqueLabels
+        return sessions.flatMap { session in
             session.model.threads.map {
-                HostThread(id: .init(hostID: session.id, threadID: $0.id), thread: $0, hostLabel: session.label)
+                HostThread(id: .init(hostID: session.id, threadID: $0.id), thread: $0, hostLabel: labels[session.id] ?? session.label)
             }
         }.sorted {
             if $0.thread.lastActivity != $1.thread.lastActivity { return $0.thread.lastActivity > $1.thread.lastActivity }
@@ -103,7 +125,7 @@ public final class MultiHostModel {
     public func thread(for id: HostThreadID) -> HostThread? {
         guard let session = session(for: id.hostID),
             let thread = session.model.threads.first(where: { $0.id == id.threadID }) else { return nil }
-        return HostThread(id: id, thread: thread, hostLabel: session.label)
+        return HostThread(id: id, thread: thread, hostLabel: label(for: session))
     }
 
     public func messageText(for id: HostThreadID) -> String {

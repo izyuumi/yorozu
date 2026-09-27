@@ -59,7 +59,7 @@ struct SettingsView: View {
                                     }
                                     .accessibilityHidden(true)
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(session.hosts.hasMultipleHosts ? host.label : String(localized: "Your Mac"))
+                                        Text(session.hosts.hasMultipleHosts ? session.hosts.label(for: host) : String(localized: "Your Mac"))
                                             .font(.headline)
                                             .foregroundStyle(YorozuPalette.ink)
                                         YorozuStatusLabel(hostStatus(host), tint: statusTint(host))
@@ -240,9 +240,9 @@ private struct HostSettingsView: View {
             .listRowBackground(YorozuPalette.paper)
         }
         .paperList()
-        .navigationTitle(session.hosts.hasMultipleHosts ? host.label : "Connection")
+        .navigationTitle(session.hosts.hasMultipleHosts ? session.hosts.label(for: host) : "Connection")
         .onAppear { nickname = host.nickname ?? ""; host.model.requestApprovalSettings() }
-        .alert(session.hosts.hasMultipleHosts ? "Remove \(host.label)?" : "Remove connection?", isPresented: $confirmingRemoval) {
+        .alert(session.hosts.hasMultipleHosts ? "Remove \(session.hosts.label(for: host))?" : "Remove connection?", isPresented: $confirmingRemoval) {
             Button(session.hosts.hasMultipleHosts ? "Remove host" : "Remove connection", role: .destructive) {
                 removing = true
                 Task {
