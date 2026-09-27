@@ -39,6 +39,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
     }
 
     public enum Kind: String, Codable, Sendable, CaseIterable {
+        /// Local classification only; unknown wire kinds keep their original string in Payload.
+        case unknown = "__unknown"
         case message, thought
         case admissionQuery = "admission_query"
         case admissionStatus = "admission_status"
@@ -86,6 +88,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
     }
 
     public enum Payload: Equatable, Sendable {
+        case unknown(kind: String, data: JSONValue)
         case message(MessageData)
         case admissionQuery(AdmissionQueryData)
         case admissionStatus(AdmissionStatusData)
@@ -134,6 +137,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
 
         public var kind: Kind {
             switch self {
+            case .unknown: .unknown
             case .message: .message
             case .admissionQuery: .admissionQuery
             case .admissionStatus: .admissionStatus
@@ -181,6 +185,19 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .updateControl: .updateControl
             }
         }
+
+        /// Known thread events with unreadable data need a visible gap in the conversation.
+        public var isUnreadableConversation: Bool {
+            guard case .unknown(let rawKind, _) = self, let kind = Kind(rawValue: rawKind) else { return false }
+            switch kind {
+            case .message, .thought, .toolCall, .toolResult, .approvalCard, .approvalAnswer,
+                 .approvalStatus, .ruleProposal, .questionCard, .questionAnswer, .progressCard,
+                 .stopStatus:
+                return true
+            default:
+                return false
+            }
+        }
     }
 
     enum CodingKeys: String, CodingKey {
@@ -196,52 +213,63 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         agentId = try c.decode(String.self, forKey: .agentId)
         parentAgentId = try c.decodeIfPresent(String.self, forKey: .parentAgentId)
         syncCursor = try c.decodeIfPresent(String.self, forKey: .syncCursor)
-        switch try c.decode(Kind.self, forKey: .kind) {
-        case .message: payload = .message(try c.decode(MessageData.self, forKey: .data))
-        case .admissionQuery: payload = .admissionQuery(try c.decode(AdmissionQueryData.self, forKey: .data))
-        case .admissionStatus: payload = .admissionStatus(try c.decode(AdmissionStatusData.self, forKey: .data))
-        case .thought: payload = .thought(try c.decode(ThoughtData.self, forKey: .data))
-        case .toolCall: payload = .toolCall(try c.decode(ToolCallData.self, forKey: .data))
-        case .toolResult: payload = .toolResult(try c.decode(ToolResultData.self, forKey: .data))
-        case .approvalCard: payload = .approvalCard(try c.decode(ApprovalCardData.self, forKey: .data))
-        case .approvalAnswer: payload = .approvalAnswer(try c.decode(ApprovalAnswerData.self, forKey: .data))
-        case .approvalStatus: payload = .approvalStatus(try c.decode(ApprovalStatusData.self, forKey: .data))
-        case .ruleProposal: payload = .ruleProposal(try c.decode(RuleProposalData.self, forKey: .data))
-        case .ruleList: payload = .ruleList(try c.decode(RuleListData.self, forKey: .data))
-        case .ruleUpdate: payload = .ruleUpdate(try c.decode(RuleUpdateData.self, forKey: .data))
-        case .ruleDelete: payload = .ruleDelete(try c.decode(RuleDeleteData.self, forKey: .data))
-        case .approvalSettings: payload = .approvalSettings(try c.decode(ApprovalSettingsData.self, forKey: .data))
-        case .questionCard: payload = .questionCard(try c.decode(QuestionCardData.self, forKey: .data))
-        case .questionAnswer: payload = .questionAnswer(try c.decode(QuestionAnswerData.self, forKey: .data))
-        case .progressCard: payload = .progressCard(try c.decode(ProgressCardData.self, forKey: .data))
-        case .toolResultRequest: payload = .toolResultRequest(try c.decode(ToolResultRequestData.self, forKey: .data))
-        case .threadCreate: payload = .threadCreate(try c.decode(ThreadCreateData.self, forKey: .data))
-        case .threadList: payload = .threadList(try c.decode(ThreadListData.self, forKey: .data))
-        case .threadArchive: payload = .threadArchive(try c.decode(ThreadArchiveData.self, forKey: .data))
-        case .threadRename: payload = .threadRename(try c.decode(ThreadRenameData.self, forKey: .data))
-        case .threadPin: payload = .threadPin(try c.decode(ThreadPinData.self, forKey: .data))
-        case .threadRead: payload = .threadRead(try c.decode(ThreadReadData.self, forKey: .data))
-        case .threadSetModel: payload = .threadSetModel(try c.decode(ThreadSetModelData.self, forKey: .data))
-        case .threadRecover: payload = .threadRecover(try c.decode(ThreadRecoverData.self, forKey: .data))
-        case .threadSetEffort: payload = .threadSetEffort(try c.decode(ThreadSetEffortData.self, forKey: .data))
-        case .modelList: payload = .modelList(try c.decode(ModelListData.self, forKey: .data))
-        case .projectList: payload = .projectList(try c.decode(ProjectListData.self, forKey: .data))
-        case .interrupt: payload = .interrupt(try c.decode(InterruptData.self, forKey: .data))
-        case .stopStatus: payload = .stopStatus(try c.decode(StopStatusData.self, forKey: .data))
-        case .syncRequest: payload = .syncRequest(try c.decode(SyncRequestData.self, forKey: .data))
-        case .syncDelta: payload = .syncDelta(try c.decode(SyncDeltaData.self, forKey: .data))
-        case .threadSearchRequest: payload = .threadSearchRequest(try c.decode(ThreadSearchRequestData.self, forKey: .data))
-        case .threadSearchResult: payload = .threadSearchResult(try c.decode(ThreadSearchResultData.self, forKey: .data))
-        case .attachmentChunk: payload = .attachmentChunk(try c.decode(AttachmentChunkData.self, forKey: .data))
-        case .attachmentProgress: payload = .attachmentProgress(try c.decode(AttachmentProgressData.self, forKey: .data))
-        case .attachmentCommit: payload = .attachmentCommit(try c.decode(AttachmentCommitData.self, forKey: .data))
-        case .attachmentDownloadRequest: payload = .attachmentDownloadRequest(try c.decode(AttachmentDownloadRequestData.self, forKey: .data))
-        case .attachmentDownloadChunk: payload = .attachmentDownloadChunk(try c.decode(AttachmentDownloadChunkData.self, forKey: .data))
-        case .deviceList: payload = .deviceList(try c.decode(DeviceListData.self, forKey: .data))
-        case .deviceRemove: payload = .deviceRemove(try c.decode(DeviceRemoveData.self, forKey: .data))
-        case .receipt: payload = .receipt(try c.decode(ReceiptData.self, forKey: .data))
-        case .updateStatus: payload = .updateStatus(try c.decode(UpdateStatusData.self, forKey: .data))
-        case .updateControl: payload = .updateControl(try c.decode(UpdateControlData.self, forKey: .data))
+        let rawKind = try c.decode(String.self, forKey: .kind)
+        let rawData = try c.decode(JSONValue.self, forKey: .data)
+        guard let kind = Kind(rawValue: rawKind), kind != .unknown else {
+            payload = .unknown(kind: rawKind, data: rawData)
+            return
+        }
+        do {
+            switch kind {
+            case .unknown: payload = .unknown(kind: rawKind, data: rawData)
+            case .message: payload = .message(try c.decode(MessageData.self, forKey: .data))
+            case .admissionQuery: payload = .admissionQuery(try c.decode(AdmissionQueryData.self, forKey: .data))
+            case .admissionStatus: payload = .admissionStatus(try c.decode(AdmissionStatusData.self, forKey: .data))
+            case .thought: payload = .thought(try c.decode(ThoughtData.self, forKey: .data))
+            case .toolCall: payload = .toolCall(try c.decode(ToolCallData.self, forKey: .data))
+            case .toolResult: payload = .toolResult(try c.decode(ToolResultData.self, forKey: .data))
+            case .approvalCard: payload = .approvalCard(try c.decode(ApprovalCardData.self, forKey: .data))
+            case .approvalAnswer: payload = .approvalAnswer(try c.decode(ApprovalAnswerData.self, forKey: .data))
+            case .approvalStatus: payload = .approvalStatus(try c.decode(ApprovalStatusData.self, forKey: .data))
+            case .ruleProposal: payload = .ruleProposal(try c.decode(RuleProposalData.self, forKey: .data))
+            case .ruleList: payload = .ruleList(try c.decode(RuleListData.self, forKey: .data))
+            case .ruleUpdate: payload = .ruleUpdate(try c.decode(RuleUpdateData.self, forKey: .data))
+            case .ruleDelete: payload = .ruleDelete(try c.decode(RuleDeleteData.self, forKey: .data))
+            case .approvalSettings: payload = .approvalSettings(try c.decode(ApprovalSettingsData.self, forKey: .data))
+            case .questionCard: payload = .questionCard(try c.decode(QuestionCardData.self, forKey: .data))
+            case .questionAnswer: payload = .questionAnswer(try c.decode(QuestionAnswerData.self, forKey: .data))
+            case .progressCard: payload = .progressCard(try c.decode(ProgressCardData.self, forKey: .data))
+            case .toolResultRequest: payload = .toolResultRequest(try c.decode(ToolResultRequestData.self, forKey: .data))
+            case .threadCreate: payload = .threadCreate(try c.decode(ThreadCreateData.self, forKey: .data))
+            case .threadList: payload = .threadList(try c.decode(ThreadListData.self, forKey: .data))
+            case .threadArchive: payload = .threadArchive(try c.decode(ThreadArchiveData.self, forKey: .data))
+            case .threadRename: payload = .threadRename(try c.decode(ThreadRenameData.self, forKey: .data))
+            case .threadPin: payload = .threadPin(try c.decode(ThreadPinData.self, forKey: .data))
+            case .threadRead: payload = .threadRead(try c.decode(ThreadReadData.self, forKey: .data))
+            case .threadSetModel: payload = .threadSetModel(try c.decode(ThreadSetModelData.self, forKey: .data))
+            case .threadRecover: payload = .threadRecover(try c.decode(ThreadRecoverData.self, forKey: .data))
+            case .threadSetEffort: payload = .threadSetEffort(try c.decode(ThreadSetEffortData.self, forKey: .data))
+            case .modelList: payload = .modelList(try c.decode(ModelListData.self, forKey: .data))
+            case .projectList: payload = .projectList(try c.decode(ProjectListData.self, forKey: .data))
+            case .interrupt: payload = .interrupt(try c.decode(InterruptData.self, forKey: .data))
+            case .stopStatus: payload = .stopStatus(try c.decode(StopStatusData.self, forKey: .data))
+            case .syncRequest: payload = .syncRequest(try c.decode(SyncRequestData.self, forKey: .data))
+            case .syncDelta: payload = .syncDelta(try c.decode(SyncDeltaData.self, forKey: .data))
+            case .threadSearchRequest: payload = .threadSearchRequest(try c.decode(ThreadSearchRequestData.self, forKey: .data))
+            case .threadSearchResult: payload = .threadSearchResult(try c.decode(ThreadSearchResultData.self, forKey: .data))
+            case .attachmentChunk: payload = .attachmentChunk(try c.decode(AttachmentChunkData.self, forKey: .data))
+            case .attachmentProgress: payload = .attachmentProgress(try c.decode(AttachmentProgressData.self, forKey: .data))
+            case .attachmentCommit: payload = .attachmentCommit(try c.decode(AttachmentCommitData.self, forKey: .data))
+            case .attachmentDownloadRequest: payload = .attachmentDownloadRequest(try c.decode(AttachmentDownloadRequestData.self, forKey: .data))
+            case .attachmentDownloadChunk: payload = .attachmentDownloadChunk(try c.decode(AttachmentDownloadChunkData.self, forKey: .data))
+            case .deviceList: payload = .deviceList(try c.decode(DeviceListData.self, forKey: .data))
+            case .deviceRemove: payload = .deviceRemove(try c.decode(DeviceRemoveData.self, forKey: .data))
+            case .receipt: payload = .receipt(try c.decode(ReceiptData.self, forKey: .data))
+            case .updateStatus: payload = .updateStatus(try c.decode(UpdateStatusData.self, forKey: .data))
+            case .updateControl: payload = .updateControl(try c.decode(UpdateControlData.self, forKey: .data))
+            }
+        } catch {
+            payload = .unknown(kind: rawKind, data: rawData)
         }
     }
 
@@ -254,8 +282,13 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         try c.encode(agentId, forKey: .agentId)
         try c.encodeIfPresent(parentAgentId, forKey: .parentAgentId)
         try c.encodeIfPresent(syncCursor, forKey: .syncCursor)
-        try c.encode(payload.kind, forKey: .kind)
+        if case .unknown(let kind, _) = payload {
+            try c.encode(kind, forKey: .kind)
+        } else {
+            try c.encode(payload.kind, forKey: .kind)
+        }
         switch payload {
+        case .unknown(_, let data): try c.encode(data, forKey: .data)
         case .message(let d): try c.encode(d, forKey: .data)
         case .admissionQuery(let d): try c.encode(d, forKey: .data)
         case .admissionStatus(let d): try c.encode(d, forKey: .data)

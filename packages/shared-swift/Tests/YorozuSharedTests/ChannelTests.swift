@@ -70,8 +70,8 @@ private func envelopeJSON() throws -> [String: Any] {
     #expect(try ChannelEnvelope.decode(JSONSerialization.data(withJSONObject: json)).seq == 1)
 }
 
-/// Decrypting is not what makes the event trusted: one that is not an event is refused.
-@Test func envelopeRejectsAnEventThatIsNotOne() throws {
+/// An event missing its common envelope stays malformed even with an unfamiliar kind.
+@Test func envelopeRejectsMissingEventFields() throws {
     var json = try envelopeJSON()
     json["event"] = ["id": "e1", "kind": "not-a-kind"]
     #expect(throws: (any Error).self) {
@@ -269,6 +269,26 @@ private func greet(_ client: RelayClient, identity: PhoneIdentity, mac: YorozuCr
     try await greet(client, identity: identity, mac: mac, storage: storage, legacy: true)
     await #expect(throws: (any Error).self) { try await client.send(sampleEvent) }
     #expect(storage.saves == 0)
+}
+
+@Test(arguments: [false, true])
+func malformedPeerClaimStillFailsCompatibility(legacy: Bool) async throws {
+    let storage = MemoryCounterStorage()
+    let (client, identity, mac) = try relayClient(counters: storage)
+    let event = #"{"id":"bad","threadId":"","ts":1,"agentId":"main","kind":"thread_list","data":{"threads":[],"peerInfoSupported":"not-a-bool"}}"#
+    let plain = legacy ? Data(event.utf8) : Data(#"{"seq":1,"event":\#(event)}"#.utf8)
+    let key = try legacy
+        ? YorozuCrypto.deriveSessionKey(myPriv: mac.privateKey, theirPub: identity.sessionPublicKey)
+        : YorozuCrypto.deriveChannelKeys(myPriv: mac.privateKey, theirPub: identity.sessionPublicKey, role: .mac).send
+    let box = try YorozuCrypto.seal(key: key, plaintext: plain)
+    let body = try JSONSerialization.data(withJSONObject: [
+        "t": "box", "n": box.nonce.base64URLEncodedString(),
+        "c": box.ciphertext.base64URLEncodedString(),
+    ])
+    await client.acceptFrame(body.base64URLEncodedString())
+
+    guard case .updateRequired(let reason) = await client.compatibility else { return #expect(Bool(false)) }
+    #expect(reason.contains("Invalid peer information"))
 }
 
 @Test func upgradedMacMovesExistingPairingToNumberedChannel() async throws {

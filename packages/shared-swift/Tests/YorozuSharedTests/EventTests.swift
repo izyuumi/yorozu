@@ -20,10 +20,43 @@ private func roundTrip(_ event: YorozuEvent) throws -> YorozuEvent {
     try JSONDecoder().decode(YorozuEvent.self, from: JSONEncoder().encode(event))
 }
 
+@Test func newerEventPayloadsKeepTheirEnvelopeAndOriginalData() throws {
+    let fixture = Vectors.path(source: "ts").deletingLastPathComponent().appending(path: "forward-events.json")
+    let page = try JSONDecoder().decode(YorozuEvent.self, from: Data(contentsOf: fixture))
+    guard case .syncDelta(let delta) = page.payload else { return #expect(Bool(false)) }
+    #expect(delta.events.map(\.id) == ["before", "future", "gap", "approval", "after"])
+
+    for (event, expectedKind) in zip(delta.events[1...3], ["future_housekeeping", "message", "approval_card"]) {
+        guard case .unknown(let kind, let data) = event.payload else { return #expect(Bool(false)) }
+        #expect(kind == expectedKind)
+        #expect(event.threadId == "home")
+        #expect(event.syncCursor != nil)
+        let restored = try roundTrip(event)
+        #expect(restored == event)
+        guard case .unknown(let restoredKind, let restoredData) = restored.payload else { return #expect(Bool(false)) }
+        #expect(restoredKind == kind)
+        #expect(restoredData == data)
+    }
+    #expect(try roundTrip(page) == page)
+}
+
+@Test func invalidJsonAndMissingEventEnvelopeStillFail() {
+    let decoder = JSONDecoder()
+    #expect(throws: (any Error).self) {
+        try decoder.decode(YorozuEvent.self, from: Data(#"{"id": "e1", "#.utf8))
+    }
+    #expect(throws: (any Error).self) {
+        try decoder.decode(YorozuEvent.self, from: Data(
+            #"{"id":"e1","ts":1,"agentId":"main","kind":"future_kind","data":{}}"#.utf8
+        ))
+    }
+}
+
 @Test(arguments: YorozuEvent.Kind.allCases)
 func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     let payload: YorozuEvent.Payload =
         switch kind {
+        case .unknown: .unknown(kind: "future_kind", data: .object(["value": .string("kept")]))
         case .message:
             .message(
                 MessageData(

@@ -122,6 +122,15 @@ private let result = YorozuEvent.Payload.toolResult(
     )
 }
 
+@Test func unreadableDelegatedEventsDoNotStartWorkCards() {
+    let future = event(.unknown(kind: "future_kind", data: .object([:])), id: "future", agent: "calendar", parent: "main")
+    let unreadableMessage = event(.unknown(kind: "message", data: .object([:])), id: "gap", agent: "calendar", parent: "main")
+
+    #expect(delegationCards(from: [future, unreadableMessage]).isEmpty)
+    #expect(chatRows(from: [future]).isEmpty)
+    #expect(chatRows(from: [unreadableMessage]).map(\.id) == ["gap"])
+}
+
 @Test func theMainAgentsOwnToolUseIsItsTrace() {
     let events = [
         event(ask("hi"), id: "ask", agent: "phone"),

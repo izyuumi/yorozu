@@ -64,6 +64,8 @@ public func threadMarkdown(
         case .approval(let event):
             guard case .approvalCard(let card) = event.payload else { break }
             lines += ["", "> **Approval asked** — \(card.actionClass): \(card.target)"]
+        case .unreadable:
+            lines += ["", "> *Update Yorozu to see this event.*"]
         case .proposal(let event):
             guard case .ruleProposal(let data) = event.payload else { break }
             lines += ["", "> **Rule suggested** — \(data.rule.summary)"]
