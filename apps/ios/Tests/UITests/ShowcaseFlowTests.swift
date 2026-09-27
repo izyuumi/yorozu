@@ -69,4 +69,37 @@ final class ShowcaseFlowTests: XCTestCase {
         done.tap()
         XCTAssertTrue(row.waitForExistence(timeout: 10), "A restored thread is not back in the list")
     }
+
+    /// A real drag, rather than only the scroll intent model, must reveal the return control.
+    @MainActor
+    func testReadingOlderContentCanReturnToLatest() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-yorozuShowcase", "chat"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Weeknight dinners"].waitForExistence(timeout: 30))
+
+        let timeline = app.collectionViews.firstMatch
+        XCTAssertTrue(timeline.waitForExistence(timeout: 10))
+        let newest = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Perfect. Remind me before the next one.")).firstMatch
+        XCTAssertTrue(newest.waitForExistence(timeout: 10))
+        XCTAssertTrue(newest.frame.intersects(timeline.frame), "Conversation did not start at latest")
+        let latest = app.buttons["Jump to latest message"]
+        XCTAssertFalse(latest.exists, "Return control appeared while already at latest")
+        timeline.swipeDown()
+        XCTAssertTrue(latest.waitForExistence(timeout: 10), "Reading upward did not reveal Latest")
+        let older = XCTAttachment(screenshot: app.screenshot())
+        older.name = "Reading older content"
+        older.lifetime = .keepAlways
+        add(older)
+
+        latest.tap()
+        XCTAssertTrue(newest.waitForExistence(timeout: 10))
+        XCTAssertTrue(latest.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(newest.frame.intersects(timeline.frame), "Latest did not return to the newest message")
+        let returned = XCTAttachment(screenshot: app.screenshot())
+        returned.name = "Returned to latest"
+        returned.lifetime = .keepAlways
+        add(returned)
+    }
 }
