@@ -89,6 +89,7 @@ import { autoTitle, onDeviceTitler, type Titler } from "./title.js";
 const PING = JSON.stringify({ type: "ping" });
 import {
   appendThreadEvent,
+  attachmentFiles,
   archiveThread,
   createThread,
   currentThread,
@@ -1558,13 +1559,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
           let executionStarted = false;
           try {
             const currentHome = threadHome(threadId, dir);
-            const skillName = agent === "codex" ? /^\/(\S+)(?=\s|$)/.exec(text)?.[1] : undefined;
+            const skillName = !recovering && agent === "codex" ? /^\/(\S+)(?=\s|$)/.exec(text)?.[1] : undefined;
             const skillPath = skillName ? codexSkillPaths.get(skillName) : undefined;
+            // Written inside the attempt, so a full disk is this turn's failure and not the sidecar's.
+            const files = attachmentFiles(threadId, userEventId ?? id, attachments, dir);
+            const attached = files.map((file) =>
+              `[attached: ${JSON.stringify(file.name)} (${JSON.stringify(file.mime)}) at ${file.path}]`).join("\n");
+            const prompt = recovering ? nativeRecoveryPrompt(threadId, text) : withStoppedContext(threadId,
+              skillPath ? text.slice(skillName!.length + 1).trimStart() : text, userEventId);
             const done = await runner.run({
               threadId,
-              text: recovering ? nativeRecoveryPrompt(threadId, text) : withStoppedContext(threadId,
-                skillPath ? text.slice(skillName!.length + 1).trimStart() : text, userEventId),
-              ...(!recovering && skillPath ? { skill: { name: skillName!, path: skillPath } } : {}),
+              text: [prompt, attached].filter(Boolean).join("\n\n"),
+              ...(skillPath ? { skill: { name: skillName!, path: skillPath } } : {}),
+              ...(files.length ? { attachments: files } : {}),
               ...currentHome,
               cwd: home.cwd ?? "",
               bypass: loadSettings(dir).yolo,

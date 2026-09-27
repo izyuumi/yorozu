@@ -58,18 +58,32 @@ test("Codex starts/resumes native threads with cwd, models, effort and independe
   expect(await runner.models!()).toEqual([{ id: "model-a", label: "Model A", providerLabel: "Codex", efforts: ["high", "ultra"] }]);
 });
 
-test("Codex lists enabled host skills and sends a structured skill item beside text", async () => {
+test("Codex sends a structured skill beside text and attached image", async () => {
   const fake = fakeCodex();
   const runner = codexNativeRunner(fake.connect);
   expect(await runner.skills!()).toEqual([
     { name: "caveman", description: "Brief", path: "/host/caveman/SKILL.md" },
     { name: "system:shape", description: "Shape", path: "/host/shape/SKILL.md" },
   ]);
-  await runner.run(turn({ text: "do work", skill: { name: "caveman", path: "/host/caveman/SKILL.md" } }));
+  await runner.run(turn({ text: "do work", skill: { name: "caveman", path: "/host/caveman/SKILL.md" },
+    attachments: [{ name: "photo.png", mime: "image/png", path: "/state/photo.png" }] }));
   expect(fake.calls.find(([method]) => method === "turn/start")?.[1]).toMatchObject({ input: [
     { type: "text", text: "do work", text_elements: [] },
     { type: "skill", name: "caveman", path: "/host/caveman/SKILL.md" },
+    { type: "localImage", path: "/state/photo.png" },
   ] });
+});
+
+test("Codex is given attached pictures as local images, and other files by path alone", async () => {
+  const fake = fakeCodex();
+  await codexNativeRunner(fake.connect).run(turn({ text: "see /state/a.png and /state/b.pdf", attachments: [
+    { name: "a.png", mime: "image/png", path: "/state/a.png" },
+    { name: "b.pdf", mime: "application/pdf", path: "/state/b.pdf" },
+  ] }));
+  expect(fake.calls.find(([m]) => m === "turn/start")?.[1].input).toEqual([
+    { type: "text", text: "see /state/a.png and /state/b.pdf", text_elements: [] },
+    { type: "localImage", path: "/state/a.png" },
+  ]);
 });
 
 test.each([{ cwd: "" }, { cwd: "   " }, { cwd: undefined }])("Codex refuses a turn without a folder before the app server is spawned (%o)", async (folder) => {

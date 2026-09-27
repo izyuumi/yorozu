@@ -11,6 +11,7 @@
 import { query as sdkQuery, type ModelInfo, type Options, type Query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
+import { dirname } from "node:path";
 import type { AgentDescriptor, EventPayload, ModelOption, ReasoningEffort, SkillOption } from "@yorozu/shared";
 
 export interface NativeTurn {
@@ -20,6 +21,11 @@ export interface NativeTurn {
   text: string;
   /** Resolved from the host's current Codex list, never from client input. */
   skill?: { name: string; path: string };
+  /**
+   * What the user attached, already on this Mac's disk, and already named with its path in
+   * `text`. A runner adds only what its agent needs to open them.
+   */
+  attachments?: { name: string; mime: string; path: string }[];
   /** The agent's own session id from the thread's last turn; absent starts a new session. */
   sessionId?: string;
   bypass?: boolean;
@@ -185,6 +191,9 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
         options: {
           abortController: abort,
           cwd,
+          // Attachments live in Yorozu's state, outside cwd: without this each read asks the phone.
+          ...(turn.attachments?.length
+            ? { additionalDirectories: [...new Set(turn.attachments.map((file) => dirname(file.path)))] } : {}),
           // Replaces the CLI's environment: Yorozu's own secrets and other providers' keys stay here.
           env: childEnv(),
           ...(trackedSpawn ? { spawnClaudeCodeProcess: trackedSpawn } : {}),

@@ -221,7 +221,10 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
         if (turn.signal.aborted) return { text: "", sessionId };
         const started = await client.request("turn/start", { threadId: sessionId,
           input: [{ type: "text", text: turn.text, text_elements: [] },
-            ...(turn.skill ? [{ type: "skill", name: turn.skill.name, path: turn.skill.path }] : [])],
+            ...(turn.skill ? [{ type: "skill", name: turn.skill.name, path: turn.skill.path }] : []),
+          // Pictures go in as pictures; any other file is a path in the text, read with Codex's own tools.
+            ...(turn.attachments ?? []).filter((file) => file.mime.startsWith("image/"))
+              .map((file) => ({ type: "localImage", path: file.path }))],
           model: turn.model ?? null, effort: turn.effort ?? null });
         turnId = string(object(started.turn).id) || turnId;
         if (turn.signal.aborted) abort();
