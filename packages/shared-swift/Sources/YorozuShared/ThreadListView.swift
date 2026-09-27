@@ -1034,7 +1034,7 @@ public struct ThreadListView<Destination: View>: View {
                 }
             }
             .allowsHitTesting(false)
-            .animation(reduceMotion ? nil : .default, value: toastShownHere)
+            .animation(reduceMotion ? nil : .default, value: toastShownHereID)
         }
         // Add the inset after the toast overlay so a reconnecting pill stays below the
         // update controls instead of covering their host label or Postpone button.

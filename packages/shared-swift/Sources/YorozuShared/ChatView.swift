@@ -262,7 +262,7 @@ public struct ChatView: View {
                 }
                 // Scoped here: an animation on the transcript would animate its scroll too.
                 .allowsHitTesting(false)
-                .animation(reduceMotion ? nil : .default, value: shownToast)
+                .animation(reduceMotion ? nil : .default, value: shownToastID)
             }
             // Over the transcript rather than above the composer: opening it must not move
             // the messages, and they stay readable around it.

@@ -752,6 +752,7 @@ struct RootView: View {
                 connectionSince: model.interruptedSince,
                 toastState: model.connectionToast.visible,
                 toastID: model.connectionToast.notice?.id,
+                toastAnnouncementRevision: model.connectionToast.notice?.announcementRevision,
                 onBackground: { model.connectionToast.dismiss() },
                 updateStatuses: [UpdateStatusItem(id: "local", status: model.updateStatus,
                     postpone: { model.updateControl(.postpone) },
