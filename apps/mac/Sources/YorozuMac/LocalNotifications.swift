@@ -75,9 +75,14 @@ final class LocalNotifications: NSObject, UNUserNotificationCenterDelegate {
             .filter { $0.kind == .failure }.map(\.threadID))
     }
 
-    func requestAuthorization() async {
-        do { _ = try await center.requestAuthorization(options: [.alert, .sound]) }
-        catch { Log.write("notifications: authorization failed — \(error.localizedDescription)") }
+    func requestAuthorization() async -> String? {
+        do {
+            _ = try await center.requestAuthorization(options: [.alert, .sound])
+            return nil
+        } catch {
+            Log.write("notifications: authorization failed — \(error.localizedDescription)")
+            return error.localizedDescription
+        }
     }
 
     func received(_ event: YorozuEvent, from model: ChatModel) {
@@ -185,6 +190,8 @@ struct MacNotificationsView: View {
     @AppStorage(MacNotificationPreference.previews) private var previews = false
     @AppStorage(MacNotificationPreference.attentionIndicator) private var attentionIndicator = true
     @State private var authorization: UNAuthorizationStatus = .notDetermined
+    @State private var authorizationError: String?
+    @State private var authorizationRequest = UUID()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -210,8 +217,13 @@ struct MacNotificationsView: View {
         .formStyle(.grouped)
         .task { await refreshAuthorization() }
         .onChange(of: enabled) { _, value in
+            let request = UUID()
+            authorizationRequest = request
+            authorizationError = nil
             Task {
-                if value { await LocalNotifications.shared.requestAuthorization() }
+                let error = value ? await LocalNotifications.shared.requestAuthorization() : nil
+                guard authorizationRequest == request else { return }
+                authorizationError = error
                 await refreshAuthorization()
             }
         }
@@ -221,15 +233,21 @@ struct MacNotificationsView: View {
     }
 
     private var authorizationLabel: String {
-        switch authorization {
+        if let authorizationError { return "macOS could not enable notifications: \(authorizationError)" }
+        return switch authorization {
         case .authorized, .provisional, .ephemeral: "Allowed by macOS"
         case .denied: "Denied by macOS. Allow Yorozu in System Settings → Notifications."
-        case .notDetermined: "macOS will ask when you enable notifications."
+        case .notDetermined: enabled
+            ? "Notifications are not active yet. Turn this setting off and on to retry."
+            : "macOS will ask when you enable notifications."
         @unknown default: "Check macOS notification settings."
         }
     }
 
     private func refreshAuthorization() async {
         authorization = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        if authorization != .notDetermined {
+            authorizationError = nil
+        }
     }
 }
