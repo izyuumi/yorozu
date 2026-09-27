@@ -37,6 +37,7 @@ struct GeneralView: View {
                     Text("Enter").tag(false)
                     Text("⌘ Enter").tag(true)
                 }
+                ReplyFontPicker()
             } header: {
                 Text("Chat")
             } footer: {

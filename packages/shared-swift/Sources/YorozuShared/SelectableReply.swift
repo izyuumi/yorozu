@@ -6,7 +6,7 @@
     /// typeface design and colours the bubble set with SwiftUI modifiers, which a UIKit view
     /// cannot read back out of the environment.
     struct ProseStyle: Equatable {
-        var serif: Bool
+        var font: ReplyFont
         var ink: UIColor
         var tint: UIColor
 
@@ -20,7 +20,13 @@
             case .some: (.subheadline, .semibold)
             case nil: (.body, .regular)
             }
-            let design: UIFontDescriptor.SystemDesign = traits.contains(.traitMonoSpace) ? .monospaced : serif ? .serif : .default
+            let design: UIFontDescriptor.SystemDesign = switch font {
+            case _ where traits.contains(.traitMonoSpace): .monospaced
+            case .serif: .serif
+            case .sans: .default
+            case .rounded: .rounded
+            case .monospaced: .monospaced
+            }
             var descriptor = UIFontDescriptor.preferredFontDescriptor(withTextStyle: style)
             descriptor = descriptor.withDesign(design) ?? descriptor
             descriptor = descriptor.addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: weight]])
@@ -219,7 +225,7 @@
                 document.append(placeholder(BlockAttachment(source: text, view: hosted(CodeBlock(language: language, code: text))), paragraph, gap: gap, last: last))
             case .table(let header, let rows):
                 let source = ([header] + rows).map { $0.joined(separator: "\t") }.joined(separator: "\n")
-                document.append(placeholder(BlockAttachment(source: source, view: hosted(MarkdownTable(header: header, rows: rows).fontDesign(style.serif ? .serif : .default))), paragraph, gap: gap, last: last))
+                document.append(placeholder(BlockAttachment(source: source, view: hosted(MarkdownTable(header: header, rows: rows).fontDesign(style.font.design))), paragraph, gap: gap, last: last))
             case .rule:
                 document.append(placeholder(BlockAttachment(source: "———", view: hosted(Divider())), paragraph, gap: gap, last: last))
             }

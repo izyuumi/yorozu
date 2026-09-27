@@ -113,6 +113,48 @@ public struct YorozuQuestion: View {
     }
 }
 
+/// The typeface the agent's replies and thoughts are set in. Serif unless the user chose
+/// otherwise in Settings; the app's own headings keep the serif voice either way.
+public enum ReplyFont: String, CaseIterable, Identifiable, Sendable {
+    case serif, sans, rounded, monospaced
+
+    /// `UserDefaults` key for the choice.
+    public static let key = "replyFont"
+
+    public var id: Self { self }
+
+    public var design: Font.Design {
+        switch self {
+        case .serif: .serif
+        case .sans: .default
+        case .rounded: .rounded
+        case .monospaced: .monospaced
+        }
+    }
+
+    var label: LocalizedStringKey {
+        switch self {
+        case .serif: "Serif"
+        case .sans: "Sans"
+        case .rounded: "Rounded"
+        case .monospaced: "Monospaced"
+        }
+    }
+}
+
+/// The Settings row for ``ReplyFont``, the same on both platforms.
+public struct ReplyFontPicker: View {
+    @AppStorage(ReplyFont.key) private var font = ReplyFont.serif
+
+    public init() {}
+
+    public var body: some View {
+        Picker("Reply font", selection: $font) {
+            ForEach(ReplyFont.allCases) { Text($0.label).tag($0) }
+        }
+    }
+}
+
 /// A dot and a word in one colour, so a state is never told by colour alone.
 public struct YorozuStatusLabel: View {
     private let text: String
