@@ -39,7 +39,7 @@ export class UpdateGate {
     if (this.status.phase !== "none" && this.status.phase !== "installing") this.forced = true;
   }
 
-  get draining(): boolean { return this.drainDeadline > 0 && this.status.phase !== "installing"; }
+  get draining(): boolean { return this.drainDeadline > 0; }
 
   poll(activeThreads: number | null, now: number): UpdateStatusData {
     if (this.status.phase === "none" || this.status.phase === "installing") return this.status;
@@ -69,5 +69,6 @@ export class UpdateGate {
     this.lastPoll = 0;
     this.forced = false;
     this.drainDeadline = 0;
+    this.pending = undefined;
   }
 }

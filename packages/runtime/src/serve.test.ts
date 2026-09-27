@@ -816,6 +816,7 @@ test("phone postponement persists and losing the update controller releases admi
   expect(JSON.parse(readFileSync(join(dir, "update-postponed-until.json"), "utf8"))).toBe(postponed.data.postponedUntil);
   mac.close();
   await eventsUntil((event) => event.kind === "update_status" && event.data.phase === "none");
+  expect(JSON.parse(readFileSync(join(dir, "update-pending-since.json"), "utf8"))).toBeNull();
   const reconnected = await macClient(dir);
   reconnected.send({ kind: "update_control", data: { action: "queue", updateId: "u2", version: "1.0" } });
   expect((await eventsUntil((event) => event.kind === "update_status" && event.data.phase === "postponed")).at(-1))
@@ -856,6 +857,7 @@ test("24-hour drain interrupts a native approval safely and resumes after sideca
   expect(oldClientReply).toMatchObject({ data: { phase: "waiting" } });
   await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === "drain")?.nativeTurn?.state).toBe("interrupted"));
   expect((await status("poll")).phase).toBe("installing");
+  expect(run).toHaveBeenCalledTimes(1);
   expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8")))
     .toEqual([{ threadId: "drain", eventId }, { threadId: "drain", eventId: queuedId }]);
   await sidecar.close();
@@ -869,6 +871,25 @@ test("24-hour drain interrupts a native approval safely and resumes after sideca
   await vi.waitFor(() => expect(readThreadEvents("drain", dir).some((event) =>
     event.id === `native:${queuedId}:final` && event.kind === "message" && event.data.done)).toBe(true));
   expect(resumed).toHaveBeenCalledTimes(2);
+  expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8"))).toEqual([]);
+});
+
+test("retry repairs a logged native message after queue persistence fails", async () => {
+  const run = vi.fn<NativeAgentRunner["run"]>(async () => ({ text: "done", sessionId: "session" }));
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } });
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "retry-queue");
+  const blocker = join(dir, "native-turn-queue.json.tmp");
+  mkdirSync(blocker);
+  const event: YorozuEvent = { id: "queue-retry", threadId: "retry-queue", ts: Date.now(), agentId: "phone",
+    kind: "message", data: { role: "user", text: "once" } };
+  sendRaw(event);
+  await vi.waitFor(() => expect(readThreadEvents("retry-queue", dir).some((known) => known.id === event.id)).toBe(true));
+  expect(run).not.toHaveBeenCalled();
+  rmSync(blocker, { recursive: true });
+  sendRaw(event);
+  await eventsUntil((reply) => reply.kind === "message" && reply.id === `native:${event.id}:final` && reply.data.done === true);
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(readThreadEvents("retry-queue", dir).filter((known) => known.id === event.id)).toHaveLength(1);
   expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8"))).toEqual([]);
 });
 

@@ -1689,7 +1689,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     const previous = turnQueues.get(threadId) ?? Promise.resolve();
     const next = previous.catch(() => {}).then(async () => {
-      while (updateGate.draining && !stopped) {
+      while ((updateGate.draining || updateGate.status.phase === "installing") && !stopped) {
         await new Promise<void>((resolve) => drainWaiters.add(resolve));
       }
       if (stopped) return;
@@ -2284,6 +2284,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
           if (data.action === "cancel") {
             if (updateOwner && updateOwner !== localDevice) return;
             if (updateGate.status.phase !== "none" && data.updateId !== updateGate.status.updateId) return;
+            writeFileAtomic(pendingSinceFile, "null");
+            pendingSince = undefined;
             updateGate.cancel();
             wakeDrainWaiters();
             for (const threadId of drainInterrupted) {
@@ -2420,6 +2422,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // logs second. Every other message — a native agent's thread included — is logged here.
     const admitted = event.kind === "message" && event.data.role === "user" && !typed && viaOpenClaw(event.threadId);
     if (duplicateMessage && !admitted) {
+      if (event.kind === "message" && event.data.role === "user" &&
+          knownMessage?.kind === "message" && knownMessage.data.completionId === completionIdFor(event.threadId, event.id) &&
+          threadAgent(event.threadId, dir) !== "yorozu" && !viaOpenClaw(event.threadId) &&
+          !queuedNative.some((entry) => entry.eventId === event.id) && !admittedTurns.has(event.id) &&
+          !stoppedTurns.has(event.id) &&
+          listThreads(dir).find((thread) => thread.id === event.threadId)?.nativeTurn?.userEventId !== event.id &&
+          !readThreadEvents(event.threadId, dir).some((logged) =>
+            logged.id === completionIdFor(event.threadId, event.id) && logged.kind === "message" && logged.data.done)) {
+        // The message log may have survived a failed queue-journal write. A retry repairs
+        // that admission before it receives the missing receipt.
+        void enqueueTurn(event.threadId, event.data.text, true, event.data.attachments ?? [], event.id);
+      }
       receipt();
       return state("duplicate-message");
     }
@@ -2672,7 +2686,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
       updateSubscribers.delete(device);
       if (updateOwner === device) {
         updateOwner = undefined;
-        if (updateGate.status.phase !== "installing") updateGate.cancel();
+        if (updateGate.status.phase !== "installing") {
+          try { writeFileAtomic(pendingSinceFile, "null"); }
+          catch (error) { state(`update-cancel-error ${error instanceof Error ? error.message : String(error)}`); }
+          pendingSince = undefined;
+          updateGate.cancel();
+          wakeDrainWaiters();
+        }
         pushUpdateStatus();
       }
       pushDevices();

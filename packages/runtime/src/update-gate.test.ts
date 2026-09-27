@@ -25,6 +25,7 @@ test("busy update drains after 24 hours, installs at safe point or hard deadline
   expect(stuck.poll(null, 86_402_000).phase).toBe("unknown");
   expect(stuck.draining).toBe(true);
   expect(stuck.poll(1, 86_701_000).phase).toBe("installing");
+  expect(stuck.draining).toBe(true);
 });
 
 test("manual install overrides postponement; postponement cancels a drain", () => {
@@ -58,4 +59,12 @@ test("postponement survives requeue and requires ten idle seconds after expiry",
   const restored = new UpdateGate(until);
   restored.queue("update", "1.0");
   expect(restored.poll(0, 2_000).phase).toBe("postponed");
+});
+
+test("cancel resets the age of the same update", () => {
+  const gate = new UpdateGate();
+  gate.queue("update", "1.0", 1_000);
+  gate.cancel();
+  gate.queue("update", "1.0", 86_401_000);
+  expect(gate.poll(1, 86_401_000).phase).toBe("waiting");
 });
