@@ -753,6 +753,9 @@ struct RootView: View {
                 toastState: model.connectionToast.visible,
                 toastID: model.connectionToast.notice?.id,
                 onBackground: { model.connectionToast.dismiss() },
+                updateStatuses: [UpdateStatusItem(id: "local", status: model.updateStatus) {
+                    model.updateControl(.postpone)
+                }],
                 path: $path,
                 projects: model.projects,
                 projectListStatus: model.projectListStatus,
@@ -791,15 +794,11 @@ struct RootView: View {
                     notificationEventRef: notification?.eventRef,
                     lastReadAt: notification?.lastReadAt,
                     notificationSyncRevision: notification?.syncRevision,
+                    showsUpdateStatus: false,
                     onCreate: { agent, cwd in
                         path = [model.newDraft(agent: agent, cwd: cwd).id]
                     }
                 )
-            }
-            .safeAreaInset(edge: .top) {
-                if path.isEmpty {
-                    UpdateStatusView(status: model.updateStatus) { model.updateControl(.postpone) }
-                }
             }
             .overlay(alignment: .topTrailing) {
                 if session.isDemo && path.isEmpty {
@@ -836,11 +835,23 @@ struct RootView: View {
     }
 
     private var multiHostContent: some View {
-        MultiHostThreadListView(session: session.hosts, path: $hostPath, onSettings: { settings = true }) { host, thread in
+        MultiHostThreadListView(
+            session: session.hosts,
+            path: $hostPath,
+            onSettings: { settings = true },
+            updateStatuses: session.hosts.sessions.map { host in
+                UpdateStatusItem(
+                    id: host.id,
+                    hostLabel: session.hosts.hasMultipleHosts ? session.hosts.label(for: host) : nil,
+                    status: host.model.updateStatus
+                ) { host.model.updateControl(.postpone) }
+            }
+        ) { host, thread in
             let notification = session.notificationOpen.flatMap { $0.hostID == host.id && $0.threadId == thread.id ? $0 : nil }
             ChatView(model: host.model, thread: thread, resumeRequest: notification?.id,
                      notificationClass: notification?.notificationClass, notificationEventRef: notification?.eventRef,
                      lastReadAt: notification?.lastReadAt, notificationSyncRevision: notification?.syncRevision,
+                     showsUpdateStatus: false,
                      aggregateToast: session.hosts.connectionToastNotice?.notice.state,
                      aggregateToastID: session.hosts.connectionToastNotice?.notice.id,
                      aggregateToastLabel: session.hosts.connectionToastLabel,

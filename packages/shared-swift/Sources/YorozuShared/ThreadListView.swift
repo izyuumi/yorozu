@@ -650,6 +650,7 @@ public struct ThreadListView<Destination: View>: View {
     private let toastID: UUID?
     private let toastLabel: String?
     private let onBackground: (() -> Void)?
+    private let updateStatuses: [UpdateStatusItem]
     @Binding private var path: [String]
     /// Where a coding agent can be started. Empty means the picker offers Yorozu alone.
     private let projects: [ProjectFolder]
@@ -757,6 +758,7 @@ public struct ThreadListView<Destination: View>: View {
         toastID: UUID? = nil,
         toastLabel: String? = nil,
         onBackground: (() -> Void)? = nil,
+        updateStatuses: [UpdateStatusItem] = [],
         path: Binding<[String]>,
         projects: [ProjectFolder] = [],
         projectListStatus: ProjectListStatus = .ready,
@@ -790,6 +792,7 @@ public struct ThreadListView<Destination: View>: View {
         self.toastID = toastID
         self.toastLabel = toastLabel
         self.onBackground = onBackground
+        self.updateStatuses = updateStatuses
         self._path = path
         self.projects = projects
         self.projectListStatus = projectListStatus
@@ -1002,6 +1005,15 @@ public struct ThreadListView<Destination: View>: View {
             }
             .allowsHitTesting(false)
             .animation(reduceMotion ? nil : .default, value: toastShownHere)
+        }
+        // Add the inset after the toast overlay so a reconnecting pill stays below the
+        // update controls instead of covering their host label or Postpone button.
+        .safeAreaInset(edge: .top) {
+            VStack(spacing: 0) {
+                ForEach(updateStatuses) { item in
+                    UpdateStatusView(status: item.status, hostLabel: item.hostLabel, postpone: item.postpone)
+                }
+            }
         }
         .onChange(of: connection, initial: true) { _, actual in
             guard !connectionIsGraced else { return }

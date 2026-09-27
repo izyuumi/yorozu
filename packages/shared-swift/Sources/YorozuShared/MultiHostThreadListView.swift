@@ -79,6 +79,7 @@ public struct MultiHostThreadListView<Destination: View>: View {
     private let session: MultiHostModel
     @Binding private var path: [HostThreadID]
     private let onSettings: (() -> Void)?
+    private let updateStatuses: [UpdateStatusItem]
     private let destination: (HostSession, ThreadSummary) -> Destination
     @State private var choosingHost = false
 
@@ -86,11 +87,13 @@ public struct MultiHostThreadListView<Destination: View>: View {
         session: MultiHostModel,
         path: Binding<[HostThreadID]>,
         onSettings: (() -> Void)? = nil,
+        updateStatuses: [UpdateStatusItem] = [],
         @ViewBuilder destination: @escaping (HostSession, ThreadSummary) -> Destination
     ) {
         self.session = session
         self._path = path
         self.onSettings = onSettings
+        self.updateStatuses = updateStatuses
         self.destination = destination
     }
 
@@ -110,6 +113,7 @@ public struct MultiHostThreadListView<Destination: View>: View {
             toastID: session.connectionToastNotice?.notice.id,
             toastLabel: session.connectionToastLabel,
             onBackground: { for host in session.sessions { host.model.connectionToast.dismiss() } },
+            updateStatuses: updateStatuses,
             path: Binding(get: { path.map(\.listID) }, set: { ids in
                 path = ids.compactMap { adapter.resolve($0)?.id }
                 if let id = path.last { session.lastUsedHostID = id.hostID }

@@ -49,12 +49,30 @@ public struct UpdateControlData: Codable, Equatable, Sendable {
     }
 }
 
+/// A host-qualified update notice for a thread list. The action stays bound to its host.
+public struct UpdateStatusItem: Identifiable {
+    public let id: String
+    public let hostLabel: String?
+    public let status: UpdateStatusData
+    public let postpone: () -> Void
+
+    public init(id: String, hostLabel: String? = nil, status: UpdateStatusData,
+                postpone: @escaping () -> Void) {
+        self.id = id
+        self.hostLabel = hostLabel
+        self.status = status
+        self.postpone = postpone
+    }
+}
+
 public struct UpdateStatusView: View {
     public var status: UpdateStatusData
+    public var hostLabel: String?
     public var postpone: () -> Void
 
-    public init(status: UpdateStatusData, postpone: @escaping () -> Void) {
+    public init(status: UpdateStatusData, hostLabel: String? = nil, postpone: @escaping () -> Void) {
         self.status = status
+        self.hostLabel = hostLabel
         self.postpone = postpone
     }
 
@@ -62,6 +80,9 @@ public struct UpdateStatusView: View {
         if status.phase != .none {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 VStack(alignment: .leading, spacing: 6) {
+                    if let hostLabel {
+                        Text(hostLabel).font(.subheadline.weight(.semibold))
+                    }
                     Label(status.label(at: context.date), systemImage: "arrow.down.circle")
                         .font(.callout)
                     if status.phase != .installing {
