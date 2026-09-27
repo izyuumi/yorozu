@@ -92,6 +92,22 @@ final class ConnectionTests: XCTestCase {
         let transcript = app.collectionViews.firstMatch
         for _ in 0..<4 where !app.textViews["dead link one"].exists { transcript.swipeDown() }
         XCTAssertEqual(bubbles("dead link one"), 1)
+        var sawSecondMessage = false
+        var sawFirstReply = false
+        for _ in 0..<8 {
+            let count = bubbles("dead link two")
+            if count > 0 {
+                XCTAssertEqual(count, 1)
+                sawSecondMessage = true
+            }
+            sawFirstReply = sawFirstReply || app.textViews["echo: dead link one"].exists
+            if sawSecondMessage && sawFirstReply { break }
+            let start = transcript.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+            let end = transcript.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        XCTAssertTrue(sawSecondMessage, "The second message is missing from the chat")
+        XCTAssertTrue(sawFirstReply, "The first reply is missing from the chat")
         let recorded = try await rig.messages().filter { $0.text.contains("dead link") }
         XCTAssertEqual(recorded.filter { $0.role == "user" }.map(\.text),
                        ["dead link one", "dead link two"])
