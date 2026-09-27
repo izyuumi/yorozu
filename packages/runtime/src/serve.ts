@@ -1494,7 +1494,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     try {
       const backend = await legacyReady;
       if (!backend || stopped || turn.signal.aborted) return;
-      await backend.run(threadId, turn.signal,
+      await backend.run(threadId, userEventId, turn.signal,
         (text) => broadcast(message(text)), (text) => emit(message(text, true)));
     } finally {
       if (running.get(threadId) === turn) running.delete(threadId);

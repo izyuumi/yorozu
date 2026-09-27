@@ -12,7 +12,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { stateDir } from "./memory.js";
 import type { Message, Provider } from "./provider.js";
-import { HISTORY_LIMIT, threadFile, threadHistory, threadMessages } from "./threads.js";
+import { HISTORY_LIMIT, threadFile, threadMessages } from "./threads.js";
 
 /** Roughly 600 tokens. The prompt asks for words, which is the unit a model can actually count. */
 const SUMMARY_WORDS = 400;
@@ -73,8 +73,11 @@ export async function updateSummary(
   threadId: string,
   provider: Provider,
   dir = stateDir(),
+  activeUserEventId?: string,
 ): Promise<boolean> {
-  const all = threadMessages(threadId, dir);
+  // A later request may already be durably admitted while this turn finishes. Summarise only
+  // through the finished turn, or a queued request could leak into an earlier turn's context.
+  const all = threadMessages(threadId, dir, false, activeUserEventId);
   // Everything before the window is what the summary is for.
   const evictedCount = all.length - HISTORY_LIMIT;
   const { through, text: previous } = readSummary(threadId, dir);
@@ -110,8 +113,11 @@ export async function updateSummary(
  * the window. The summary goes in as its own system message so it sits between the agent's
  * prompt and the conversation, and reads as background rather than as something anyone said.
  */
-export function contextFor(threadId: string, dir = stateDir(), vision = false): Message[] {
-  const { text } = readSummary(threadId, dir);
-  const window = threadHistory(threadId, dir, vision);
-  return text ? [{ role: "system", content: `Earlier in this thread: ${text}` }, ...window] : window;
+export function contextFor(threadId: string, dir = stateDir(), vision = false, activeUserEventId?: string): Message[] {
+  const { through, text } = readSummary(threadId, dir);
+  const all = threadMessages(threadId, dir, vision, activeUserEventId);
+  const evictedCount = Math.max(0, all.length - HISTORY_LIMIT);
+  // A slow or failed summariser must not make unsummarised messages disappear from context.
+  const recent = all.slice(Math.min(through, evictedCount));
+  return text ? [{ role: "system", content: `Earlier in this thread: ${text}` }, ...recent] : recent;
 }

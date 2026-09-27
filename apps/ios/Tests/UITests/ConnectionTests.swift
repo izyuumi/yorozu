@@ -54,6 +54,9 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(confirming.waitForNonExistence(timeout: 70), "Delivery never confirmed")
         XCTAssertEqual(bubbles("dead link one"), 1)
         XCTAssertEqual(bubbles("dead link two"), 1)
+        XCTAssertTrue(app.textViews["echo: dead link one"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textViews["echo: dead link two"].waitForExistence(timeout: 10),
+                      "The second reply answered the preceding turn")
         let recorded = try await rig.messages().filter { $0.role == "user" && $0.text.hasPrefix("dead link") }.map(\.text)
         XCTAssertEqual(recorded, ["dead link one", "dead link two"])
     }
