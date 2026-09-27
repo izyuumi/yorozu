@@ -73,8 +73,11 @@ export async function updateSummary(
   threadId: string,
   provider: Provider,
   dir = stateDir(),
+  activeUserEventId?: string,
 ): Promise<boolean> {
-  const all = threadMessages(threadId, dir);
+  // A later request may already be durably admitted while this turn finishes. Summarise only
+  // through the finished turn, or a queued request could leak into an earlier turn's context.
+  const all = threadMessages(threadId, dir, false, activeUserEventId);
   // Everything before the window is what the summary is for.
   const evictedCount = all.length - HISTORY_LIMIT;
   const { through, text: previous } = readSummary(threadId, dir);
@@ -110,8 +113,8 @@ export async function updateSummary(
  * the window. The summary goes in as its own system message so it sits between the agent's
  * prompt and the conversation, and reads as background rather than as something anyone said.
  */
-export function contextFor(threadId: string, dir = stateDir(), vision = false): Message[] {
+export function contextFor(threadId: string, dir = stateDir(), vision = false, activeUserEventId?: string): Message[] {
   const { text } = readSummary(threadId, dir);
-  const window = threadHistory(threadId, dir, vision);
+  const window = threadHistory(threadId, dir, vision, activeUserEventId);
   return text ? [{ role: "system", content: `Earlier in this thread: ${text}` }, ...window] : window;
 }

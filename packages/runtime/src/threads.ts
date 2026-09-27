@@ -611,33 +611,56 @@ export function eventsAfter(
 }
 
 /**
- * Every message in the thread as model context, oldest first — the whole log, however long.
+ * Every message in the thread as model context, in turn order, however long.
  * `threadHistory` is the window of it a turn is given; summary.ts reads the rest, which is
  * what it rolls up.
  */
-export function threadMessages(threadId: string, dir = stateDir(), vision = false): Message[] {
-  return readThreadEvents(threadId, dir)
-    .filter((event) => event.kind === "message")
-    .map((event) => {
-      const role = event.data.role === "user" ? ("user" as const) : ("assistant" as const);
-      const attachments = event.data.attachments ?? [];
-      if (attachments.length === 0) return { role, content: event.data.text };
-      // A model that can see gets the bytes. One that cannot is told what came with the
-      // message, because the text alone often does not stand up on its own — "what is wrong
-      // with this?" needs at least the file's name to be answerable.
-      const images = vision ? attachments.filter((item) => item.mime.startsWith("image/")) : [];
-      const named = attachments.filter((item) => !vision || !item.mime.startsWith("image/"));
-      const notes = named.map((item) => `[attached: ${item.name} (${item.mime})]`).join("\n");
-      const content = [event.data.text, notes].filter(Boolean).join("\n\n");
-      if (images.length > 0) {
-        return {
-          role,
-          content,
-          images: images.map(({ mime, data }) => ({ mime, data })),
-        };
-      }
-      return { role, content };
-    });
+export function threadMessages(threadId: string, dir = stateDir(), vision = false, activeUserEventId?: string): Message[] {
+  const events = readThreadEvents(threadId, dir).filter((event) => event.kind === "message");
+  const active = events.find((event) => event.id === activeUserEventId && event.data.role === "user");
+  const activeIndex = active ? events.indexOf(active) : events.length - 1;
+  // Admission can log several user requests before the first turn finishes. The model must
+  // see each completed reply after its own request, and no requests queued after this turn.
+  const futureReplies = new Set(events.slice(activeIndex + 1)
+    .filter((event) => event.data.role === "user").map((event) => event.data.completionId).filter((id) => id !== undefined));
+  const available = events.filter((event, index) =>
+    !(active && index > activeIndex && event.data.role === "user") && !futureReplies.has(event.id));
+  const replies = new Map(available.filter((event) => event.data.role === "agent")
+    .map((event) => [event.id, event]));
+  const paired = new Set(available.filter((event) => event.data.role === "user")
+    .map((event) => event.data.completionId).filter((id) => id && replies.has(id)));
+  const ordered = available.flatMap((event) => {
+    if (paired.has(event.id)) return [];
+    const reply = event.data.role === "user" ? replies.get(event.data.completionId ?? "") : undefined;
+    return reply ? [event, reply] : [event];
+  });
+  if (active && !replies.has(active.data.completionId ?? "")) {
+    const index = ordered.indexOf(active);
+    if (index >= 0) {
+      ordered.splice(index, 1);
+      ordered.push(active);
+    }
+  }
+  return ordered.map((event) => {
+    const role = event.data.role === "user" ? ("user" as const) : ("assistant" as const);
+    const attachments = event.data.attachments ?? [];
+    if (attachments.length === 0) return { role, content: event.data.text };
+    // A model that can see gets the bytes. One that cannot is told what came with the
+    // message, because the text alone often does not stand up on its own — "what is wrong
+    // with this?" needs at least the file's name to be answerable.
+    const images = vision ? attachments.filter((item) => item.mime.startsWith("image/")) : [];
+    const named = attachments.filter((item) => !vision || !item.mime.startsWith("image/"));
+    const notes = named.map((item) => `[attached: ${item.name} (${item.mime})]`).join("\n");
+    const content = [event.data.text, notes].filter(Boolean).join("\n\n");
+    if (images.length > 0) {
+      return {
+        role,
+        content,
+        images: images.map(({ mime, data }) => ({ mime, data })),
+      };
+    }
+    return { role, content };
+  });
 }
 
 /**
@@ -645,8 +668,8 @@ export function threadMessages(threadId: string, dir = stateDir(), vision = fals
  * the front is not dropped — `contextFor` in summary.ts puts a rolling summary of it in front
  * of this.
  */
-export const threadHistory = (threadId: string, dir = stateDir(), vision = false): Message[] =>
-  threadMessages(threadId, dir, vision).slice(-HISTORY_LIMIT);
+export const threadHistory = (threadId: string, dir = stateDir(), vision = false, activeUserEventId?: string): Message[] =>
+  threadMessages(threadId, dir, vision, activeUserEventId).slice(-HISTORY_LIMIT);
 
 /** Written before launching the SDK so a replacement host can recover the same turn. */
 export function setNativeTurn(id: string, turn: ThreadRecord["nativeTurn"], dir = stateDir()): void {

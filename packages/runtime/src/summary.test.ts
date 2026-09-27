@@ -63,6 +63,20 @@ test("a thread that still fits in the window is not summarised at all", async ()
   expect(contextFor(THREAD, dir)).toHaveLength(HISTORY_LIMIT);
 });
 
+test("queued future requests stay out of an earlier turn's summary", async () => {
+  const user = (id: string): YorozuEvent => ({ id, threadId: THREAD, ts: 1, agentId: "main",
+    kind: "message", data: { role: "user", text: id, completionId: `legacy:${id}:final` } });
+  appendThreadEvent(user("current"), dir);
+  for (let i = 0; i < HISTORY_LIMIT + 5; i++) appendThreadEvent(user(`future-${i}`), dir);
+  appendThreadEvent({ id: "legacy:current:final", threadId: THREAD, ts: 2, agentId: "main",
+    kind: "message", data: { role: "agent", text: "done" } }, dir);
+
+  const provider = summariser("premature");
+  expect(await updateSummary(THREAD, provider, dir, "current")).toBe(false);
+  expect(provider.prompts).toHaveLength(0);
+  expect(contextFor(THREAD, dir, false, "future-0").at(-1)).toEqual({ role: "user", content: "future-0" });
+});
+
 test("the first eviction writes a summary of exactly what fell out of the window", async () => {
   say(HISTORY_LIMIT + 3);
   const provider = summariser("They talked about the first three things.");

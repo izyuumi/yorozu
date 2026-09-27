@@ -40,7 +40,7 @@ export function createLegacyRunner(options: LegacyOptions) {
     void options.enqueue(job.threadId, job.instruction).catch((error: unknown) => state(`job-error ${job.id} ${String(error)}`));
   }, { dir });
 
-  async function run(threadId: string, signal: AbortSignal, onUpdate: (text: string) => void, onDone: (text: string) => void): Promise<void> {
+  async function run(threadId: string, userEventId: string | undefined, signal: AbortSignal, onUpdate: (text: string) => void, onDone: (text: string) => void): Promise<void> {
     if (signal.aborted) return;
     // A thread put on a model of its own leads with it and keeps the configured chain behind
     // it, so one unreachable provider is a slower turn rather than a thread that cannot answer.
@@ -97,7 +97,7 @@ export function createLegacyRunner(options: LegacyOptions) {
       provider: turnProvider,
       system,
       // The rolling summary of what has scrolled out, then the recent window.
-      messages: contextFor(threadId, dir, turnProvider.vision === true),
+      messages: contextFor(threadId, dir, turnProvider.vision === true, userEventId),
       tools,
       context: { threadId, agentId: MAIN_AGENT },
       ask,
@@ -133,7 +133,7 @@ export function createLegacyRunner(options: LegacyOptions) {
     onDone(reply);
     // Deliberately not awaited: the summary is only ever needed by the *next* turn, and a thread that has not
     // outgrown its window does no work here at all. A failure leaves the summary as it was.
-    void updateSummary(threadId, turnProvider, dir).catch((e: unknown) =>
+    void updateSummary(threadId, turnProvider, dir, userEventId).catch((e: unknown) =>
       state(`summary-error ${String(e)}`),
     );
   }
