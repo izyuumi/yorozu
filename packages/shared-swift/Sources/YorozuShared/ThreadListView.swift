@@ -621,9 +621,9 @@ struct ConnectionPill: View {
 }
 
 /// The phone's thread list: pinned threads first, then the rest newest first. `+` starts a fresh
-/// draft, a swipe pins or archives, a pull asks the
-/// Mac for everything this device is behind on, and the search field looks through titles and
-/// through what the device has cached of each thread.
+/// draft, a swipe pins or archives, a pull asks the Mac for everything this device is behind on,
+/// and the search field looks through titles and through what the device has cached of each
+/// thread, archived ones included.
 ///
 /// It owns the navigation stack, so `destination` is the chat view to push and `path` is what
 /// lets the app open a thread by itself on launch — set before the first frame, there is no
@@ -1201,8 +1201,7 @@ extension View {
 /// The Mac's thread list: the sidebar half of a split view, so picking a thread selects it
 /// rather than pushing it. Same rows, same ordering and the same dated headings the phone
 /// draws — pinned first, then a section per stretch of time — because a list that groups itself
-/// one way on the phone and another way on the
-/// Mac is two lists to learn.
+/// one way on the phone and another way on the Mac is two lists to learn.
 ///
 /// The row actions are all in the context menu rather than behind a swipe: there is nothing to
 /// swipe with a pointer. Search is the sidebar's own field, over titles and over what each
