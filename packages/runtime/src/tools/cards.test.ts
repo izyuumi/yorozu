@@ -88,7 +88,7 @@ test("report_progress shows a card and re-reports it under the same card id", ()
   expect(shown[1].percent).toBe(100);
 });
 
-test("a model's oversized progress id stays inside a relay frame across updates", () => {
+test("a model's oversized progress id stays bounded and stable across updates", () => {
   const shown: ReturnType<typeof progressCard>[] = [];
   const tool = reportProgressTool((card) => shown.push(card));
   const firstId = "x".repeat(1_100_000);
@@ -100,7 +100,19 @@ test("a model's oversized progress id stays inside a relay frame across updates"
   expect(shown[0].cardId).toBe(shown[1].cardId);
   expect(shown[2].cardId).not.toBe(shown[0].cardId);
   const event = { id: shown[0].cardId, threadId: "t", ts: 0, kind: "progress_card", data: shown[0] };
-  expect(Buffer.byteLength(JSON.stringify(event))).toBeLessThan(1_048_576);
+  expect(Buffer.byteLength(JSON.stringify(event))).toBeLessThan(1_048_576 / 2);
+});
+
+test("short IDs cannot impersonate bounded IDs and distinct UTF-16 IDs stay distinct", () => {
+  const longId = "x".repeat(1_100_000);
+  const shortened = progressCard({ cardId: longId }).cardId;
+  expect(progressCard({ cardId: shortened }).cardId).not.toBe(shortened);
+
+  // Node's default UTF-8 encoder replaces a lone surrogate with U+FFFD.
+  const loneSurrogates = "\uD800".repeat(256);
+  const replacements = "\uFFFD".repeat(256);
+  expect(progressCard({ cardId: loneSurrogates }).cardId)
+    .not.toBe(progressCard({ cardId: replacements }).cardId);
 });
 
 /** Without a card id there is nothing to update in place, so it is the one hard requirement. */

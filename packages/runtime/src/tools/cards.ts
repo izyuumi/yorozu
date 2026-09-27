@@ -131,10 +131,11 @@ const STATES: ReadonlySet<ProgressStep["state"]> = new Set<ProgressStep["state"]
 export function progressCard(args: Record<string, unknown>): ProgressCardData {
   const rawId = String(args.cardId ?? "");
   // The model may supply an arbitrarily long id. Keep update-in-place identity without
-  // letting that id alone exceed an encrypted relay frame.
-  const cardId = Buffer.byteLength(rawId) < 256
+  // letting that id alone exceed a relay frame. Reserve the hash prefix so a raw id
+  // cannot impersonate a shortened one; hash UTF-16 code units to preserve lone surrogates.
+  const cardId = Buffer.byteLength(rawId) < 256 && !rawId.startsWith("progress-sha256:")
     ? rawId
-    : `progress-sha256:${createHash("sha256").update(rawId).digest("hex")}`;
+    : `progress-sha256:${createHash("sha256").update(rawId, "utf16le").digest("hex")}`;
   const steps = (Array.isArray(args.steps) ? args.steps : []).map((entry): ProgressStep => {
     const step = (typeof entry === "object" && entry !== null ? entry : {}) as Record<string, unknown>;
     const state = String(step.state ?? "") as ProgressStep["state"];
