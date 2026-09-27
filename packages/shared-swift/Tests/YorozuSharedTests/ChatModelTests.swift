@@ -1786,6 +1786,8 @@ func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(
     await transport.yield(.event(event("old", .threadSearchResult(ThreadSearchResultData(
         requestId: oldID, matches: [ThreadSearchMatch(threadId: "t", eventId: "old-hit", excerpt: "alpha")]
     )))))
+    await transport.yield(.event(event("after-old", .thought(ThoughtData(text: "processed")), thread: "t")))
+    #expect(await eventually { model.events["t"]?.contains(where: { $0.id == "after-old" }) == true })
     #expect(model.remoteSearch.isEmpty)
     #expect(await eventually {
         await transport.sent.contains { if case .threadSearchRequest(let data) = $0.payload { return data.query == "beta" }; return false }

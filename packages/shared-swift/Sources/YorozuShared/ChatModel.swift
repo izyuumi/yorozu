@@ -83,11 +83,12 @@ public final class ChatModel {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed != searchQuery else { return }
         searchQuery = trimmed
+        searchRequestID = ""
         remoteSearch = [:]
         searchComplete = false
         searchIncomplete = false
         searchTask?.cancel()
-        guard !trimmed.isEmpty else { searchRequestID = ""; return }
+        guard !trimmed.isEmpty else { return }
         searchTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
