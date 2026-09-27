@@ -219,7 +219,7 @@ test.each(["approval", "question"])("abort pending %s clears only that request",
   const cards = new NativeCards((event) => events.push(event));
   const abort = new AbortController();
   const other = new AbortController();
-  const request = kind === "approval" ? cards.approve("cc", "claude-code", "Bash", {}, abort.signal) : cards.ask("cc", "Which?", ["A"], abort.signal);
+  const request = kind === "approval" ? cards.approve("cc", "claude-code", "Bash", {}, abort.signal) : cards.ask("cc", "claude-code", "Which?", ["A"], abort.signal);
   const separate = cards.approve("other", "claude-code", "Edit", {}, other.signal);
   abort.abort();
   expect(await request).toBe(kind === "approval" ? false : undefined);

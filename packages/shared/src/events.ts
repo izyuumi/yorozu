@@ -362,6 +362,8 @@ export interface ApprovalSettingsData {
  * know which way to go. The tool call stays suspended until an answer comes back.
  */
 export interface QuestionCardData {
+  /** Native SDK request. Absent on older hosts and for Yorozu questions. */
+  nativeAgent?: ThreadAgent;
   questionId: string;
   question: string;
   /** The choices offered, in the order the card lists them. May be empty when only free text makes sense. */
@@ -403,7 +405,27 @@ export interface ProgressCardData {
  * which is what every thread from before the field is.
  */
 export const THREAD_AGENTS = ["yorozu", "claude-code", "codex"] as const;
-export type ThreadAgent = (typeof THREAD_AGENTS)[number];
+export type ThreadAgent = string;
+
+export interface AgentDescriptor {
+  id: ThreadAgent;
+  label: string;
+  description?: string;
+  needsFolder: boolean;
+}
+
+export const validAgentId = (id: unknown): id is ThreadAgent =>
+  typeof id === "string" && /^[a-z0-9-]{1,64}$/.test(id);
+
+/** Host-advertised text stays bounded and cannot smuggle a second line into the picker. */
+export const validAgentDescriptor = (value: unknown): value is AgentDescriptor => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  const oneLine = (text: unknown, max: number): boolean =>
+    typeof text === "string" && text.trim().length > 0 && Array.from(text).length <= max && !/[\u0000-\u001f\u007f\u0085\u2028\u2029]/.test(text);
+  return validAgentId(item.id) && oneLine(item.label, 64) &&
+    (item.description === undefined || oneLine(item.description, 200)) && typeof item.needsFolder === "boolean";
+};
 
 export interface ThreadCreateData {
   title?: string;
@@ -556,7 +578,8 @@ export interface SkillOption {
  * the providers themselves, and their keys, never leave the Mac.
  */
 export interface ModelListData {
-  agentModels?: Partial<Record<Exclude<ThreadAgent, "yorozu">, ModelOption[]>>;
+  agents?: AgentDescriptor[];
+  agentModels?: Record<ThreadAgent, ModelOption[]>;
   skills?: Partial<Record<ThreadAgent, SkillOption[]>>;
   models: ModelOption[];
 }

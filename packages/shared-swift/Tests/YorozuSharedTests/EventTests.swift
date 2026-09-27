@@ -26,7 +26,7 @@ private func roundTrip(_ event: YorozuEvent) throws -> YorozuEvent {
     guard case .syncDelta(let delta) = page.payload else { return #expect(Bool(false)) }
     #expect(delta.events.map(\.id) == ["before", "future", "gap", "approval", "after"])
 
-    for (event, expectedKind) in zip(delta.events[1...3], ["future_housekeeping", "message", "approval_card"]) {
+    for (event, expectedKind) in zip(delta.events[1...2], ["future_housekeeping", "message"]) {
         guard case .unknown(let kind, let data) = event.payload else { return #expect(Bool(false)) }
         #expect(kind == expectedKind)
         #expect(event.threadId == "home")
@@ -37,7 +37,33 @@ private func roundTrip(_ event: YorozuEvent) throws -> YorozuEvent {
         #expect(restoredKind == kind)
         #expect(restoredData == data)
     }
+    guard case .approvalCard(let approval) = delta.events[3].payload else { return #expect(Bool(false)) }
+    #expect(approval.nativeAgent == ThreadAgent(rawValue: "future-agent"))
     #expect(try roundTrip(page) == page)
+}
+
+@Test func hostRegisteredAgentIdentityRoundTripsAndInvalidDescriptorsAreIgnored() throws {
+    let agent = try #require(ThreadAgent(rawValue: "test-harness"))
+    #expect(agent.mark == .generic)
+    #expect(ThreadAgent(rawValue: "Bad Agent") == nil)
+    let thread = ThreadSummary(id: "custom", title: "Custom", archived: false, lastActivity: 1, agent: agent)
+    #expect(try JSONDecoder().decode(ThreadSummary.self, from: JSONEncoder().encode(thread)).agent == agent)
+    let creation = YorozuEvent(id: "create", threadId: "custom", ts: 1, agentId: "phone",
+                               payload: .threadCreate(ThreadCreateData(agent: agent)))
+    #expect(try roundTrip(creation) == creation)
+    let approval = YorozuEvent(id: "approval", threadId: "custom", ts: 2, agentId: "main",
+                               payload: .approvalCard(ApprovalCardData(actionId: "a", actionClass: "Edit", target: "file", nativeAgent: agent)))
+    #expect(try roundTrip(approval) == approval)
+    let question = YorozuEvent(id: "question", threadId: "custom", ts: 3, agentId: "main",
+                               payload: .questionCard(QuestionCardData(questionId: "q", question: "Proceed?", options: ["Yes"], nativeAgent: agent)))
+    #expect(try roundTrip(question) == question)
+
+    let json = #"{"models":[],"agents":[{"id":"test-harness","label":"Test Harness","description":"Answers prompts","needsFolder":false},{"id":"invalid!","label":"Bad","needsFolder":false},{"id":"another","label":""# + String(repeating: "X", count: 65) + #"","needsFolder":true}]}"#
+    let list = try JSONDecoder().decode(ModelListData.self, from: Data(json.utf8))
+    #expect(list.agents?.filter(\.isValid).map(\.id) == [agent])
+    let combined = ModelListData(models: [], agents: [AgentDescriptor(id: agent, label: "Test Harness", needsFolder: false)],
+                                 skills: [agent.rawValue: [SkillOption(name: "plugin:Inspect", description: "Inspect a project")]])
+    #expect(try JSONDecoder().decode(ModelListData.self, from: JSONEncoder().encode(combined)) == combined)
 }
 
 @Test func invalidJsonAndMissingEventEnvelopeStillFail() {
@@ -358,7 +384,7 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
 }
 
 /// A thread names the agent that answers it the way the runtime spells it; a plain thread
-/// leaves both new fields out, and an agent this build has never heard of reads as none.
+/// leaves both new fields out, and a valid agent this build has never heard of keeps its ID.
 @Test func aThreadCarriesItsAgentAndWorkingDirectory() throws {
     let native = ThreadSummary(id: "cc", title: "Fix the tests", archived: false, lastActivity: 1, agent: .claudeCode, cwd: "/tmp/proj")
     let encoded = try JSONEncoder().encode(native)
@@ -373,7 +399,7 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     #expect(plainJSON?["cwd"] == nil)
 
     let future = Data(#"{"id":"t1","title":"","archived":false,"lastActivity":1,"agent":"hermes"}"#.utf8)
-    #expect(try JSONDecoder().decode(ThreadSummary.self, from: future).agent == nil)
+    #expect(try JSONDecoder().decode(ThreadSummary.self, from: future).agent == ThreadAgent(rawValue: "hermes"))
 
     let create = try JSONEncoder().encode(ThreadCreateData(agent: .codex, cwd: "/tmp/proj"))
     let createJSON = try JSONSerialization.jsonObject(with: create) as? [String: Any]
