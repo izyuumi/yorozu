@@ -567,7 +567,14 @@ public final class ConnectionToastPresentation {
             dismiss()
             return
         }
-        guard !announced else { return }
+        if announced {
+            if let notice, notice.state != state {
+                let updated = ConnectionToastNotice(id: notice.id, state: state, sequence: notice.sequence)
+                self.notice = updated
+                lastNotice = updated
+            }
+            return
+        }
         announced = true
         Self.nextSequence += 1
         notice = .init(id: UUID(), state: state, sequence: Self.nextSequence)
@@ -703,6 +710,10 @@ public struct ThreadListView<Destination: View>: View {
 
     private var toastShownHere: ConnectionState? { hasSelectedThread ? nil : toastState }
     private var toastShownHereID: UUID? { hasSelectedThread ? nil : toastID }
+    private var toastAnnouncementKey: String? {
+        guard let id = toastShownHereID, let state = toastShownHere else { return nil }
+        return "\(id.uuidString):\(toastLabel ?? state.label)"
+    }
 
     /// Regular width draws the list beside the chat, including on iPhone Duo's inner display.
     /// Compact width keeps the stack; the same `path` drives both layouts during resizing.
@@ -1037,8 +1048,8 @@ public struct ThreadListView<Destination: View>: View {
         }
         // Once per declared change, not once per retry: the presentation only moves after the
         // grace, or on recovery.
-        .onChange(of: toastShownHereID) { _, id in
-            guard id != nil, let state = toastShownHere else { return }
+        .onChange(of: toastAnnouncementKey) { _, key in
+            guard key != nil, let state = toastShownHere else { return }
             AccessibilityNotification.Announcement(toastLabel ?? state.label).post()
         }
         // A search modifier on the root navigation stack otherwise follows pushed chats:

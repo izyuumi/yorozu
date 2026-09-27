@@ -282,13 +282,18 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
 
 @MainActor
 @Test func connectionToastAppearsOncePerOutageAndDismisses() async throws {
-    let toast = ConnectionToastPresentation(duration: .milliseconds(30))
+    let toast = ConnectionToastPresentation(duration: .milliseconds(100))
     let link = ConnectionPresentation(.connected)
     link.onStateChange = { toast.declared($0) }
 
+    link.update(.reconnecting, active: true, since: .now - .seconds(6))
+    let noticeID = toast.notice?.id
+    #expect(noticeID != nil)
     link.update(.offline, active: true, since: .now - .seconds(6))
     #expect(toast.visible == .offline)
-    for _ in 0..<20 where toast.visible != nil {
+    #expect(toast.notice?.id == noticeID)
+    #expect(toast.lastNotice?.state == .offline)
+    for _ in 0..<30 where toast.visible != nil {
         try await Task.sleep(for: .milliseconds(10))
     }
     #expect(toast.visible == nil)

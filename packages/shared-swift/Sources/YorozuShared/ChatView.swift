@@ -159,6 +159,10 @@ public struct ChatView: View {
     private var generating: Bool { model.generating.contains(thread.id) }
     private var shownToast: ConnectionState? { aggregateToast ?? model.connectionToast.visible }
     private var shownToastID: UUID? { aggregateToastID ?? model.connectionToast.notice?.id }
+    private var toastAnnouncementKey: String? {
+        guard let id = shownToastID, let state = shownToast else { return nil }
+        return "\(id.uuidString):\(aggregateToastLabel ?? state.label)"
+    }
 
     /// Every occurrence of the search term in this thread, in reading order.
     private var hits: [SearchHit] { searchHits(in: events, term: search) }
@@ -266,8 +270,8 @@ public struct ChatView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { model.connectionToast.dismiss() }
         }
-        .onChange(of: shownToastID) { _, id in
-            if id != nil, let toast = shownToast {
+        .onChange(of: toastAnnouncementKey) { _, key in
+            if key != nil, let toast = shownToast {
                 AccessibilityNotification.Announcement(aggregateToastLabel ?? toast.label).post()
             }
         }
