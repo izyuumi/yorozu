@@ -973,16 +973,20 @@ test("skill lists refresh on join after ten minutes and broadcast only changes",
   elapsed += 600_001;
   const fifth = await macClient(dir);
   await vi.waitFor(() => expect(skills).toHaveBeenCalledTimes(4));
-  expect(first.events.filter((event) => event.kind === "model_list")).toHaveLength(after);
+  await vi.waitFor(() => expect(first.events.filter((event) => event.kind === "model_list")).toHaveLength(after + 1));
   await vi.waitFor(() => expect(fifth.events.findLast((event) => event.kind === "model_list"))
-    .toMatchObject({ data: { skills: { codex: [{ name: "new" }] } } }));
+    .toMatchObject({ data: { skills: { codex: [], "claude-code": [] } } }));
   unavailable = false;
   catalog = [{ name: "recovered", description: "Recovered", path: "/host/recovered/SKILL.md" }];
   const sixth = await macClient(dir);
+  await vi.waitFor(() => expect(sixth.events.some((event) => event.kind === "model_list")).toBe(true));
+  expect(skills).toHaveBeenCalledTimes(4);
+  elapsed += 600_001;
+  const seventh = await macClient(dir);
   await vi.waitFor(() => expect(skills).toHaveBeenCalledTimes(5));
   await vi.waitFor(() => expect(first.events.findLast((event) => event.kind === "model_list"))
     .toMatchObject({ data: { skills: { codex: [{ name: "recovered" }] } } }));
-  first.close(); second.close(); third.close(); fourth.close(); fifth.close(); sixth.close();
+  first.close(); second.close(); third.close(); fourth.close(); fifth.close(); sixth.close(); seventh.close();
 });
 
 test("Codex translates only a leading known slash skill using the host path", async () => {

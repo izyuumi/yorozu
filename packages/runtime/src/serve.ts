@@ -1241,9 +1241,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
       try {
         const skills = await Promise.resolve().then(() =>
           id === "yorozu" ? openclaw?.listSkills?.() ?? [] : nativeRunners[id]?.skills?.() ?? []);
-        return { id, skills: skills as (SkillOption & { path?: string })[], failed: false };
+        return { id, skills: skills as (SkillOption & { path?: string })[] };
       } catch {
-        return { id, skills: [] as (SkillOption & { path?: string })[], failed: true };
+        return { id, skills: [] as (SkillOption & { path?: string })[] };
       }
     })).then((listed) => {
       const visible = (skills: SkillOption[]): SkillOption[] => {
@@ -1257,18 +1257,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
               ? { argumentHint: skill.argumentHint.slice(0, 80) } : {}) }];
         });
       };
-      const next = { ...skillsByAgent };
-      for (const { id, skills, failed } of listed) if (!failed) next[id] = visible(skills);
+      const next: Record<string, SkillOption[]> = {};
+      for (const { id, skills } of listed) next[id] = visible(skills);
       const codex = listed.find(({ id }) => id === "codex");
-      if (codex && !codex.failed) {
-        const paths = new Map<string, string>();
-        for (const skill of codex.skills) {
-          if (skill && typeof skill.path === "string" && !paths.has(skill.name) &&
-              next.codex?.some((shown) => shown.name === skill.name)) paths.set(skill.name, skill.path);
-        }
-        codexSkillPaths = paths;
+      const paths = new Map<string, string>();
+      for (const skill of codex?.skills ?? []) {
+        if (skill && typeof skill.path === "string" && !paths.has(skill.name) &&
+            next.codex?.some((shown) => shown.name === skill.name)) paths.set(skill.name, skill.path);
       }
-      if (listed.every(({ failed }) => !failed)) skillsBuiltAt = Date.now();
+      codexSkillPaths = paths;
+      skillsBuiltAt = Date.now();
       if (JSON.stringify(next) !== JSON.stringify(skillsByAgent)) {
         skillsByAgent = next;
         if (!stopped) broadcast(modelList());
