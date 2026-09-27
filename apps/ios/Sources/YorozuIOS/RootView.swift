@@ -572,6 +572,7 @@ final class Session {
 
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var session = Session.shared
     /// The thread ids pushed on the list's stack: at most one, and what lets the app open a
     /// thread by itself rather than waiting to be tapped. Seeded from the session, which decided
@@ -791,16 +792,13 @@ struct RootView: View {
                     notificationEventRef: notification?.eventRef,
                     lastReadAt: notification?.lastReadAt,
                     notificationSyncRevision: notification?.syncRevision,
+                    showsUpdateStatus: false,
                     onCreate: { agent, cwd in
                         path = [model.newDraft(agent: agent, cwd: cwd).id]
                     }
                 )
             }
-            .safeAreaInset(edge: .top) {
-                if path.isEmpty {
-                    UpdateStatusView(status: model.updateStatus) { model.updateControl(.postpone) }
-                }
-            }
+            .safeAreaInset(edge: .top) { updateStatus(of: [model], listShown: path.isEmpty) }
             .overlay(alignment: .topTrailing) {
                 if session.isDemo && path.isEmpty {
                     Text("Demo")
@@ -841,6 +839,7 @@ struct RootView: View {
             ChatView(model: host.model, thread: thread, resumeRequest: notification?.id,
                      notificationClass: notification?.notificationClass, notificationEventRef: notification?.eventRef,
                      lastReadAt: notification?.lastReadAt, notificationSyncRevision: notification?.syncRevision,
+                     showsUpdateStatus: false,
                      aggregateToast: session.hosts.connectionToastNotice?.notice.state,
                      aggregateToastID: session.hosts.connectionToastNotice?.notice.id,
                      aggregateToastLabel: session.hosts.connectionToastLabel,
@@ -848,6 +847,9 @@ struct RootView: View {
                      onCreate: { agent, cwd in
                          if let draft = session.hosts.newDraft(on: host.id, agent: agent, cwd: cwd) { hostPath = [draft] }
                      })
+        }
+        .safeAreaInset(edge: .top) {
+            updateStatus(of: session.hosts.sessions.map(\.model), listShown: hostPath.isEmpty)
         }
         .sheet(isPresented: $choosingThreadHost) {
             NewThreadPicker(session: session.hosts) { hostPath = [$0] }
@@ -866,6 +868,21 @@ struct RootView: View {
             if let id { session.rememberHost(id) }
         }
         .onChange(of: session.hosts.sessions.map { session.hosts.label(for: $0) }) { _, _ in session.publishThreads() }
+    }
+
+    /// A host's pending update belongs with the thread list, not with a transcript. A split
+    /// layout keeps the list on screen beside an open thread, so it stays there.
+    private func updateStatus(of models: [ChatModel], listShown: Bool) -> some View {
+        VStack(spacing: 0) {
+            if listShown || sizeClass == .regular {
+                // ponytail: banners carry no host name; add one if two hosts update at once.
+                ForEach(models.indices, id: \.self) { index in
+                    UpdateStatusView(status: models[index].updateStatus) {
+                        models[index].updateControl(.postpone)
+                    }
+                }
+            }
+        }
     }
 
     private var pairingContent: some View {
