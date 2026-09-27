@@ -1316,9 +1316,13 @@ func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(
 
     let before = await transport.sent.count
     model.requestSync()
-    let requests = await sent(by: transport, atLeast: before + 1)
-    guard case .syncRequest(let request) = requests.last?.payload else { return #expect(Bool(false)) }
-    #expect(request.lastSeen["home"] == "cursor-5")
+    #expect(await eventually {
+        let requests = await transport.sent.dropFirst(before)
+        return requests.contains { event in
+            guard case .syncRequest(let request) = event.payload else { return false }
+            return request.lastSeen["home"] == "cursor-5"
+        }
+    })
 
     let liveFuture = try JSONDecoder().decode(YorozuEvent.self, from: Data(
         #"{"id":"live-future","threadId":"home","ts":6,"agentId":"main","kind":"future_housekeeping","data":{"value":"private"}}"#.utf8
