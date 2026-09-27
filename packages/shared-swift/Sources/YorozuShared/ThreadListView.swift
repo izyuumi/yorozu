@@ -964,13 +964,6 @@ public struct ThreadListView<Destination: View>: View {
         .scrollContentBackground(.hidden)
         .background(YorozuPalette.canvas)
         .contentMargins(.vertical, LayoutMetrics.inner)
-        .safeAreaInset(edge: .top) {
-            VStack(spacing: 0) {
-                ForEach(updateStatuses) { item in
-                    UpdateStatusView(status: item.status, hostLabel: item.hostLabel, postpone: item.postpone)
-                }
-            }
-        }
         .animation(.default, value: threads)
         .scrollPosition(id: $visibleRowID, anchor: .top)
         .onScrollPhaseChange { _, phase in
@@ -1012,6 +1005,15 @@ public struct ThreadListView<Destination: View>: View {
             }
             .allowsHitTesting(false)
             .animation(reduceMotion ? nil : .default, value: toastShownHere)
+        }
+        // Add the inset after the toast overlay so a reconnecting pill stays below the
+        // update controls instead of covering their host label or Postpone button.
+        .safeAreaInset(edge: .top) {
+            VStack(spacing: 0) {
+                ForEach(updateStatuses) { item in
+                    UpdateStatusView(status: item.status, hostLabel: item.hostLabel, postpone: item.postpone)
+                }
+            }
         }
         .onChange(of: connection, initial: true) { _, actual in
             guard !connectionIsGraced else { return }
