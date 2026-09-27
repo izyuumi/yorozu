@@ -60,8 +60,10 @@ final class ShowcaseFlowTests: XCTestCase {
         XCTAssertTrue(archive.waitForExistence(timeout: 10), "No archive in Settings after archiving")
         archive.tap()
         XCTAssertTrue(row.waitForExistence(timeout: 10), "The archive does not list the thread")
-        row.press(forDuration: 1)
-        app.buttons["Restore"].tap()
+        row.swipeLeft()
+        let restore = app.buttons["Restore"]
+        XCTAssertTrue(restore.waitForExistence(timeout: 10), "Swipe did not reveal Restore")
+        restore.tap()
         // Restoring the last thread takes the Settings row away, and the archive may leave with it.
         let done = app.buttons["Done"]
         if !done.waitForExistence(timeout: 3) { app.navigationBars["Archived threads"].buttons["Settings"].tap() }

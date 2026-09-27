@@ -169,9 +169,9 @@ public final class ChatModel {
     /// What this device chose for each answered action, so the card can say so afterwards.
     public private(set) var choices: [String: ApprovalAnswerData.Answer] = [:]
     /// One composer draft per thread, so switching threads does not lose what was typed.
-    public var drafts: [String: String] = [:] { didSet { saveComposerSoon() } }
+    public var drafts: [String: String] = [:] { didSet { saveDraftsNow() } }
     /// Files staged in each thread's composer but not yet sent, alongside its draft text.
-    public var attachments: [String: [MessageAttachment]] = [:] { didSet { saveComposerSoon() } }
+    public var attachments: [String: [MessageAttachment]] = [:] { didSet { saveComposerNow() } }
     /// Threads with a turn in flight, so the composer offers Stop rather than Send.
     ///
     /// Set when this device sends, cleared by the agent message flagged `done` or confirmed
@@ -248,7 +248,7 @@ public final class ChatModel {
             if openThread != oldValue {
                 visibleAttachmentMessages.removeAll()
                 reportRead()
-                saveComposerSoon()
+                saveDraftsNow()
                 requestOpenHistory()
             }
         }
@@ -285,6 +285,7 @@ public final class ChatModel {
     private var cache: ThreadCache?
     @ObservationIgnored private var cacheWrite: Task<Void, Never>?
     @ObservationIgnored private var composerWrite: Task<Void, Never>?
+    @ObservationIgnored private var restoringComposer = false
     @ObservationIgnored private var preparedSend: [String: String] = [:]
     @ObservationIgnored private var readingPositions: [String: ThreadCache.ReadingPosition] = [:]
     @ObservationIgnored private var pendingSaveFailure: String?
@@ -308,6 +309,26 @@ public final class ChatModel {
             do { try self.saveComposer() }
             catch { self.failure = "Could not save draft: \(error.localizedDescription)" }
         }
+    }
+
+    /// Keep each text edit durable without re-encrypting staged file bytes on every keystroke.
+    private func saveDraftsNow() {
+        guard cache != nil, !restoringComposer else { return }
+        do { try saveDraftState() }
+        catch { failure = "Could not save draft: \(error.localizedDescription)" }
+    }
+
+    private func saveDraftState() throws {
+        try cache?.save(draftState: .init(drafts: drafts, preparedSend: preparedSend,
+                                          threads: draftThreads, openThread: openThread))
+    }
+
+    /// Staged files change rarely, but must survive immediate termination too.
+    private func saveComposerNow() {
+        guard cache != nil, !restoringComposer else { return }
+        composerWrite?.cancel()
+        do { try saveComposer() }
+        catch { failure = "Could not save draft: \(error.localizedDescription)" }
     }
 
     private func saveComposer() throws {
@@ -401,31 +422,63 @@ public final class ChatModel {
             catch { failure = "Could not save pending-message migration: \(error.localizedDescription)" }
         }
         outbox = Outbox.pruned(pending)
-        if let composer = cache.composer() {
-            drafts = composer.drafts
+        let draftState = cache.draftState()
+        var composerPrepared: [String: String] = [:]
+        restoringComposer = true
+        let composer = cache.composer()
+        if let composer {
+            composerPrepared = composer.preparedSend ?? [:]
+            drafts = draftState?.drafts ?? composer.drafts
             attachments = composer.attachments
-            draftThreads = composer.threads
-            openThread = composer.openThread
+            draftThreads = draftState?.threads ?? composer.threads
+            openThread = draftState == nil ? composer.openThread : draftState?.openThread
             readingPositions = composer.readingPositions ?? [:]
             for thread in composer.knownThreads ?? [] where !synced.contains(where: { $0.id == thread.id }) {
                 synced.append(thread)
             }
-            // A crash can land between the composer marker, outbox write, and composer clear.
-            // The marker names the exact message: committed sends leave the composer; failed
-            // prepares keep it. Never infer this from matching text, which a user may repeat.
-            if let prepared = composer.preparedSend, !prepared.isEmpty {
-                for (threadId, eventId) in prepared where outbox.contains(where: { $0.id == eventId }) {
-                    drafts[threadId] = ""
-                    attachments[threadId] = nil
-                    if let index = draftThreads.firstIndex(where: { $0.id == threadId }) {
-                        let draft = draftThreads.remove(at: index)
-                        if !synced.contains(where: { $0.id == threadId }) { synced.insert(draft, at: 0) }
-                    }
-                }
-                do { try saveComposer() }
-                catch { failure = "Could not save draft: \(error.localizedDescription)" }
-            }
+        } else {
+            drafts = draftState?.drafts ?? [:]
+            draftThreads = draftState?.threads ?? []
+            openThread = draftState?.openThread
         }
+        let activePrepared = draftState?.preparedSend ?? composerPrepared
+        // A crash can land between the composer marker, outbox write, and composer clear.
+        // The marker names the exact message: committed sends leave the composer; failed
+        // prepares keep it. A newer text edit may have replaced the draft marker, while the
+        // older composer still owns sent attachments and draft-thread state.
+        let committedSends = Set((Array(composerPrepared) + Array(activePrepared)).compactMap { threadId, eventId in
+            outbox.contains(where: { $0.id == eventId }) ? threadId : nil
+        })
+        let committedCreates = Set(outbox.compactMap { item -> String? in
+            if case .threadCreate = item.event.payload { return item.event.threadId }
+            return nil
+        })
+        if !composerPrepared.isEmpty || !activePrepared.isEmpty || !committedCreates.isEmpty {
+            for threadId in committedSends {
+                if let eventId = activePrepared[threadId], outbox.contains(where: { $0.id == eventId }) {
+                    drafts[threadId] = ""
+                }
+                attachments[threadId] = nil
+            }
+            // A committed create can precede either cache write that moves a draft into
+            // the thread list. The full composer may also be older than the small draft
+            // record, so use either copy of the summary before saving reconciled state.
+            for threadId in committedSends.union(committedCreates) {
+                var restoredThread = composer?.threads.first(where: { $0.id == threadId })
+                if let index = draftThreads.firstIndex(where: { $0.id == threadId }) {
+                    restoredThread = draftThreads.remove(at: index)
+                }
+                if let restoredThread, !synced.contains(where: { $0.id == threadId }) {
+                    synced.insert(restoredThread, at: 0)
+                }
+            }
+            do {
+                try saveComposer()
+                try saveDraftState()
+            }
+            catch { failure = "Could not save draft: \(error.localizedDescription)" }
+        }
+        restoringComposer = false
         for thread in synced {
             let history = cache.historyState(threadId: thread.id)
             historyCursors[thread.id] = history.cursor
@@ -597,7 +650,10 @@ public final class ChatModel {
         drafts[thread.id] = ""
         self.attachments[thread.id] = nil
         preparedSend[thread.id] = nil
-        do { try saveComposer() }
+        do {
+            try saveComposer()
+            try saveDraftState()
+        }
         catch { failure = "Could not save draft: \(error.localizedDescription)" }
         flush()
     }
@@ -653,7 +709,10 @@ public final class ChatModel {
         let pending = Outbox.pruned(outbox + (commands + [event]).map { OutboxItem(event: $0) })
         if fromComposer {
             preparedSend[threadId] = event.id
-            do { try saveComposer() }
+            do {
+                try saveComposer()
+                try saveDraftState()
+            }
             catch {
                 preparedSend[threadId] = nil
                 failure = "Could not save draft: \(error.localizedDescription)"
@@ -664,7 +723,10 @@ public final class ChatModel {
         catch {
             let cause = error.localizedDescription
             if fromComposer { preparedSend[threadId] = nil }
-            do { try saveComposer() }
+            do {
+                try saveComposer()
+                if fromComposer { try saveDraftState() }
+            }
             catch {
                 failure = "Could not queue or save draft: \(error.localizedDescription)"
                 return false
@@ -680,7 +742,10 @@ public final class ChatModel {
             draftThreads.removeAll { $0.id == threadId }
             synced.insert(draft, at: 0)
             if !fromComposer {
-                do { try saveComposer() }
+                do {
+                    try saveComposer()
+                    try saveDraftState()
+                }
                 catch { failure = "Could not save draft: \(error.localizedDescription)" }
             }
         }
@@ -1369,7 +1434,7 @@ public final class ChatModel {
             cwd: agent == .yorozu ? nil : cwd
         )
         draftThreads.insert(thread, at: 0)
-        saveComposerSoon()
+        saveDraftsNow()
         return thread
     }
 
@@ -1443,6 +1508,7 @@ public final class ChatModel {
         if let index = draftThreads.firstIndex(where: { $0.id == thread.id }) {
             draftThreads[index].model = model
             draftThreads[index].effort = effort
+            saveDraftsNow()
             return
         }
         set(thread.id) { $0.model = model; $0.effort = effort }
@@ -1464,6 +1530,7 @@ public final class ChatModel {
     public func setEffort(_ thread: ThreadSummary, _ effort: ReasoningEffort?) {
         if let index = draftThreads.firstIndex(where: { $0.id == thread.id }) {
             draftThreads[index].effort = effort
+            saveDraftsNow()
             return
         }
         set(thread.id) { $0.effort = effort }
