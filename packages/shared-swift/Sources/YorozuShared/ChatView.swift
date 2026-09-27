@@ -36,6 +36,7 @@ public struct ChatView: View {
     private let focusComposerOnAppear: Bool
     private let aggregateToast: ConnectionState?
     private let aggregateToastID: UUID?
+    private let aggregateToastAnnouncementRevision: UInt64?
     private let aggregateToastLabel: String?
     /// Where a pairing code tapped in a message goes; the app sets it, and the default drops
     /// the link. See ``OpenURLAction/chatLinks(onPairingLink:)``.
@@ -117,6 +118,7 @@ public struct ChatView: View {
         focusComposerOnAppear: Bool = false,
         aggregateToast: ConnectionState? = nil,
         aggregateToastID: UUID? = nil,
+        aggregateToastAnnouncementRevision: UInt64? = nil,
         aggregateToastLabel: String? = nil,
         onNewThread: (() -> Void)? = nil,
         onCreate: ((ThreadAgent, String?) -> Void)? = nil
@@ -132,6 +134,7 @@ public struct ChatView: View {
         self.focusComposerOnAppear = focusComposerOnAppear
         self.aggregateToast = aggregateToast
         self.aggregateToastID = aggregateToastID
+        self.aggregateToastAnnouncementRevision = aggregateToastAnnouncementRevision
         self.aggregateToastLabel = aggregateToastLabel
         self.onNewThread = onNewThread
         self.onCreate = onCreate
@@ -159,6 +162,12 @@ public struct ChatView: View {
     private var generating: Bool { model.generating.contains(thread.id) }
     private var shownToast: ConnectionState? { aggregateToast ?? model.connectionToast.visible }
     private var shownToastID: UUID? { aggregateToastID ?? model.connectionToast.notice?.id }
+    private var toastAnnouncementKey: String? {
+        guard let id = shownToastID, shownToast != nil,
+              let revision = aggregateToastAnnouncementRevision ?? model.connectionToast.notice?.announcementRevision
+        else { return nil }
+        return "\(id.uuidString):\(revision)"
+    }
 
     /// Every occurrence of the search term in this thread, in reading order.
     private var hits: [SearchHit] { searchHits(in: events, term: search) }
@@ -253,7 +262,7 @@ public struct ChatView: View {
                 }
                 // Scoped here: an animation on the transcript would animate its scroll too.
                 .allowsHitTesting(false)
-                .animation(reduceMotion ? nil : .default, value: shownToast)
+                .animation(reduceMotion ? nil : .default, value: shownToastID)
             }
             // Over the transcript rather than above the composer: opening it must not move
             // the messages, and they stay readable around it.
@@ -266,8 +275,8 @@ public struct ChatView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { model.connectionToast.dismiss() }
         }
-        .onChange(of: shownToastID) { _, id in
-            if id != nil, let toast = shownToast {
+        .onChange(of: toastAnnouncementKey) { _, key in
+            if key != nil, let toast = shownToast {
                 AccessibilityNotification.Announcement(aggregateToastLabel ?? toast.label).post()
             }
         }

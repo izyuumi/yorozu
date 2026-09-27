@@ -752,6 +752,7 @@ struct RootView: View {
                 connectionSince: model.interruptedSince,
                 toastState: model.connectionToast.visible,
                 toastID: model.connectionToast.notice?.id,
+                toastAnnouncementRevision: model.connectionToast.notice?.announcementRevision,
                 onBackground: { model.connectionToast.dismiss() },
                 updateStatuses: [UpdateStatusItem(id: "local", status: model.updateStatus,
                     postpone: { model.updateControl(.postpone) },
@@ -856,6 +857,7 @@ struct RootView: View {
                      showsUpdateStatus: false,
                      aggregateToast: session.hosts.connectionToastNotice?.notice.state,
                      aggregateToastID: session.hosts.connectionToastNotice?.notice.id,
+                     aggregateToastAnnouncementRevision: session.hosts.connectionToastNotice?.notice.announcementRevision,
                      aggregateToastLabel: session.hosts.connectionToastLabel,
                      onNewThread: session.hosts.hasMultipleHosts ? { choosingThreadHost = true } : nil,
                      onCreate: { agent, cwd in
