@@ -20,8 +20,8 @@ func skillMatches(for draft: String, in skills: [SkillOption]) -> [SkillOption] 
 struct SkillPicker: View {
     let skills: [SkillOption]
     /// The row the Mac's keys are on. Nil on the phone, which picks by tap alone.
-    var highlighted: SkillOption.ID?
-    var onHover: (SkillOption) -> Void = { _ in }
+    var highlighted: Int?
+    var onHover: (Int) -> Void = { _ in }
     let onPick: (SkillOption) -> Void
     let dismiss: () -> Void
 
@@ -30,10 +30,11 @@ struct SkillPicker: View {
     static func transcriptShare(_ size: DynamicTypeSize) -> CGFloat { size.isAccessibilitySize ? 0.85 : 0.62 }
 
     #if os(macOS)
-        private static let inset: CGFloat = 4
+        private static let inset = LayoutMetrics.tight
     #else
         private static let inset: CGFloat = 0
-        private static let rowPadding: CGFloat = 14
+        private static let rowPadding = LayoutMetrics.cardPadding
+        private static let rowVerticalPadding: CGFloat = 10
     #endif
 
     private var shape: RoundedRectangle {
@@ -62,26 +63,28 @@ struct SkillPicker: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Skills")
         .accessibilityAction(.escape, dismiss)
+        .padding(.horizontal, LayoutMetrics.stack)
     }
 
     private var rows: some View {
         VStack(spacing: 0) {
-            ForEach(Array(skills.enumerated()), id: \.element.id) { index, skill in
+            ForEach(skills.indices, id: \.self) { index in
+                let skill = skills[index]
                 #if os(iOS)
                     if index > 0 {
                         Rectangle().fill(YorozuPalette.rule.opacity(0.72)).frame(height: 0.5)
                             .padding(.leading, Self.rowPadding)
                     }
                 #endif
-                Button { onPick(skill) } label: { row(skill) }
+                Button { onPick(skill) } label: { row(skill, index: index) }
                     .buttonStyle(.plain)
-                    .id(skill.id)
+                    .id(index)
                     .accessibilityLabel(skill.name)
                     .accessibilityValue(
                         [skill.description, skill.argumentHint ?? ""].filter { !$0.isEmpty }.joined(separator: ", "))
-                    .accessibilityAddTraits(skill.id == highlighted ? .isSelected : [])
+                    .accessibilityAddTraits(index == highlighted ? .isSelected : [])
                     #if os(macOS)
-                        .onHover { inside in if inside { onHover(skill) } }
+                        .onHover { inside in if inside { onHover(index) } }
                     #endif
             }
         }
@@ -104,7 +107,7 @@ struct SkillPicker: View {
 
     #if os(macOS)
         /// One line, as a Mac menu row is: the description gives way first.
-        private func row(_ skill: SkillOption) -> some View {
+        private func row(_ skill: SkillOption, index: Int) -> some View {
             HStack(alignment: .firstTextBaseline, spacing: LayoutMetrics.inner) {
                 name(skill).lineLimit(1).layoutPriority(2)
                 hint(skill).lineLimit(1).layoutPriority(1)
@@ -116,13 +119,13 @@ struct SkillPicker: View {
             .padding(.horizontal, LayoutMetrics.inner)
             .frame(minHeight: controlTarget)
             .background(
-                skill.id == highlighted ? YorozuPalette.stone.opacity(0.6) : .clear,
+                index == highlighted ? YorozuPalette.stone.opacity(0.6) : .clear,
                 in: RoundedRectangle(cornerRadius: LayoutMetrics.controlRadius, style: .continuous)
             )
             .contentShape(Rectangle())
         }
     #else
-        private func row(_ skill: SkillOption) -> some View {
+        private func row(_ skill: SkillOption, index: Int) -> some View {
             VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
                 // The hint sits beside the name while both fit on a line, and under it when
                 // the type size or the name's length says they do not.
@@ -146,7 +149,7 @@ struct SkillPicker: View {
             .multilineTextAlignment(.leading)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Self.rowPadding)
-            .padding(.vertical, 10)
+            .padding(.vertical, Self.rowVerticalPadding)
             .frame(minHeight: controlTarget)
             .contentShape(Rectangle())
             .hoverEffect(.highlight)

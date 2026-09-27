@@ -139,9 +139,8 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
         ...(trackedSpawn ? { spawnClaudeCodeProcess: trackedSpawn } : {}) } });
       try {
         const refreshed = await session.reloadSkills();
-        const invocable = new Set((await session.supportedCommands())
-          .filter((command) => !command.builtin).map((command) => command.name));
-        return refreshed.skills.filter((skill) => !skill.builtin && invocable.has(skill.name)).map((skill) => ({
+        const invocable = new Set((await session.supportedCommands()).map((command) => command.name));
+        return refreshed.skills.filter((skill) => invocable.has(skill.name)).map((skill) => ({
           name: skill.name, description: skill.description, argumentHint: skill.argumentHint,
         }));
       } finally { session.close(); }

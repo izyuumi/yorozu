@@ -954,18 +954,17 @@ public struct ChatView: View {
     }
 
     #if os(macOS)
-        private var highlightedSkill: SkillOption? {
-            let choices = skillChoices
-            return choices.isEmpty ? nil : choices[min(skillIndex, choices.count - 1)]
+        private var highlightedSkillIndex: Int? {
+            skillChoices.isEmpty ? nil : min(skillIndex, skillChoices.count - 1)
         }
 
         private func skillKey(_ key: SkillPickerKey) {
             let choices = skillChoices
-            guard let current = highlightedSkill, let index = choices.firstIndex(of: current) else { return }
+            guard let index = highlightedSkillIndex else { return }
             switch key {
             case .down: skillIndex = (index + 1) % choices.count
             case .up: skillIndex = (index + choices.count - 1) % choices.count
-            case .select: pick(current)
+            case .select: pick(choices[index])
             case .dismiss: dismissedSkillDraft = draft.wrappedValue
             }
         }
@@ -987,8 +986,8 @@ public struct ChatView: View {
             GeometryReader { transcript in
                 Group {
                     #if os(macOS)
-                        SkillPicker(skills: choices, highlighted: highlightedSkill?.id,
-                            onHover: { skill in skillIndex = choices.firstIndex(of: skill) ?? 0 },
+                        SkillPicker(skills: choices, highlighted: highlightedSkillIndex,
+                            onHover: { skillIndex = $0 },
                             onPick: pick, dismiss: { dismissedSkillDraft = draft.wrappedValue })
                     #else
                         SkillPicker(skills: choices, onPick: pick,
@@ -996,7 +995,6 @@ public struct ChatView: View {
                     #endif
                 }
                 .frame(maxHeight: transcript.size.height * SkillPicker.transcriptShare(dynamicTypeSize))
-                .padding(.horizontal, 12)
                 .compactQuietComposerLayout()
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }

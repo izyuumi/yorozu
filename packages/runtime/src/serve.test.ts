@@ -926,7 +926,11 @@ test("retry repairs a logged native message after queue persistence fails", asyn
 
 test("skill lists refresh on join after ten minutes and broadcast only changes", async () => {
   let now = 1_000;
-  let catalog = [{ name: "plugin:Shape", description: "x".repeat(250), argumentHint: "y".repeat(100), path: "/host/shape/SKILL.md" }];
+  let catalog = [
+    { name: "plugin:Shape", description: "x".repeat(250), argumentHint: "y".repeat(100), path: "/host/shape/SKILL.md" },
+    { name: "n".repeat(129), description: "Long name", path: "/host/long/SKILL.md" },
+    { name: "plugin:Shape", description: "Another source", path: "/host/duplicate/SKILL.md" },
+  ];
   const skills = vi.fn(async () => catalog);
   const { dir } = await pairedPhone([], false, { now: () => now, nativeRunners: {
     codex: { run: async () => ({ text: "done" }), skills },
@@ -937,7 +941,11 @@ test("skill lists refresh on join after ten minutes and broadcast only changes",
     event.data.skills?.codex?.[0]?.name === "plugin:Shape")).toBe(true));
   const listed = first.events.findLast((event) => event.kind === "model_list");
   if (listed?.kind !== "model_list") throw new Error("missing skill list");
-  expect(listed.data.skills?.codex).toEqual([{ name: "plugin:Shape", description: "x".repeat(200), argumentHint: "y".repeat(80) }]);
+  expect(listed.data.skills?.codex).toEqual([
+    { name: "plugin:Shape", description: "x".repeat(200), argumentHint: "y".repeat(80) },
+    { name: "n".repeat(129), description: "Long name" },
+    { name: "plugin:Shape", description: "Another source" },
+  ]);
   expect(listed.data.skills?.["claude-code"]).toEqual([]);
   expect(JSON.stringify(listed)).not.toContain("/host/shape/SKILL.md");
   expect(skills).toHaveBeenCalledTimes(1);
@@ -964,9 +972,10 @@ test("Codex translates only a leading known slash skill using the host path", as
   const { send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run, skills: async () => [
     { name: "Grill", description: "Questions", path: "/host/grill/SKILL.md" },
     { name: "plugin:Shape", description: "Shape", path: "/host/shape/SKILL.md" },
+    { name: "plugin/inner", description: "Nested", path: "/host/inner/SKILL.md" },
   ] } } });
   send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "skill-turn");
-  for (const text of ["/Grill topic", "/unknown topic", "say /Grill topic", "/plugin:Shape more"]) {
+  for (const text of ["/Grill topic", "/unknown topic", "say /Grill topic", "/plugin:Shape more", "/plugin/inner next"]) {
     send({ kind: "message", data: { role: "user", text } }, "skill-turn");
     await eventsUntil((event) => event.kind === "message" && event.threadId === "skill-turn" && event.data.done === true);
   }
@@ -975,6 +984,7 @@ test("Codex translates only a leading known slash skill using the host path", as
     { text: "/unknown topic", skill: undefined },
     { text: "say /Grill topic", skill: undefined },
     { text: "more", skill: { name: "plugin:Shape", path: "/host/shape/SKILL.md" } },
+    { text: "next", skill: { name: "plugin/inner", path: "/host/inner/SKILL.md" } },
   ]);
 });
 

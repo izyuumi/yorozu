@@ -1322,13 +1322,11 @@ public struct ModelListData: Codable, Equatable, Sendable {
 
 /// One skill the host's agent can be asked for by name. The name and what it is for, never
 /// the skill itself: bodies and host paths do not cross the channel.
-public struct SkillOption: Codable, Equatable, Sendable, Identifiable {
+public struct SkillOption: Codable, Equatable, Sendable {
     public var name: String
     public var description: String
     /// What to type after the name, as the skill's author wrote it, e.g. "[version]".
     public var argumentHint: String?
-    public var id: String { name }
-
     public init(name: String, description: String, argumentHint: String? = nil) {
         self.name = name
         self.description = description

@@ -32,16 +32,18 @@ test("Claude reload exposes user skills and bundled skills without built-in comm
   const reloadSkills = vi.fn().mockResolvedValue({ skills: [
     { name: "grill-me", description: "Ask hard questions", argumentHint: "<topic>" },
     { name: "plugin:shape", description: "Shape", argumentHint: "", builtin: false },
+    { name: "code-review", description: "Bundled review", argumentHint: "", builtin: true },
     { name: "hidden", description: "Not invocable", argumentHint: "" },
-    { name: "clear", description: "Clear", argumentHint: "", builtin: true },
   ] });
   const supportedCommands = vi.fn().mockResolvedValue([
-    { name: "grill-me" }, { name: "plugin:shape" }, { name: "clear", builtin: true },
+    { name: "grill-me" }, { name: "plugin:shape" }, { name: "code-review", builtin: true },
+    { name: "clear", builtin: true },
   ]);
   const catalogQuery: QueryFn = (params) => Object.assign(query(params), { reloadSkills, supportedCommands });
   expect(await claudeCodeRunner(catalogQuery).skills!()).toEqual([
     { name: "grill-me", description: "Ask hard questions", argumentHint: "<topic>" },
     { name: "plugin:shape", description: "Shape", argumentHint: "" },
+    { name: "code-review", description: "Bundled review", argumentHint: "" },
   ]);
   expect(calls[0]).toMatchObject({ tools: [] });
   expect(closes).toHaveLength(1);

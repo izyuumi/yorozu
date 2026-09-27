@@ -1226,11 +1226,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
       nativeRunners.codex?.skills?.().catch(() => []) ?? Promise.resolve([]),
     ]).then(([openclawSkills, claudeSkills, codexSkills]) => {
       const visible = (skills: SkillOption[]): SkillOption[] => {
-        const names = new Set<string>();
         return skills.flatMap((skill) => {
-          if (!skill || typeof skill.name !== "string" || !/^[^\s/]{1,128}$/.test(skill.name) ||
-              names.has(skill.name)) return [];
-          names.add(skill.name);
+          if (!skill || typeof skill.name !== "string" || !skill.name) return [];
           return [{ name: skill.name,
             description: typeof skill.description === "string" ? skill.description.slice(0, 200) : "",
             ...(typeof skill.argumentHint === "string" && skill.argumentHint
@@ -1540,7 +1537,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           let executionStarted = false;
           try {
             const currentHome = threadHome(threadId, dir);
-            const skillName = agent === "codex" ? /^\/([^\s/]+)(?=\s|$)/.exec(text)?.[1] : undefined;
+            const skillName = agent === "codex" ? /^\/(\S+)(?=\s|$)/.exec(text)?.[1] : undefined;
             const skillPath = skillName ? codexSkillPaths.get(skillName) : undefined;
             const done = await runner.run({
               threadId,
