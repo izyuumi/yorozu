@@ -1,55 +1,77 @@
 import SwiftUI
 
-/// Archived threads live outside the working list, but retain the same rows and search.
+/// The archive, reached from Settings: what was put away, most recently active first. A row
+/// opens its thread as the thread list would, and Restore sends it back to that list.
 public struct ArchivedThreadsView: View {
-    private let threads: [ThreadSummary]
-    private let hostLabel: (String) -> String?
-    private let messageText: (String) -> String
-    private let onOpen: (ThreadSummary) -> Void
-    private let onRestore: (ThreadSummary) -> Void
+    private struct Archive {
+        var threads: [ThreadSummary]
+        var hostLabel: (String) -> String? = { _ in nil }
+        var messageText: (String) -> String
+        var open: (ThreadSummary) -> Void
+        var restore: (ThreadSummary) -> Void
+    }
+
+    /// Read in `body` rather than at init, so a restore redraws this list whoever presents it.
+    private let archive: () -> Archive
     @State private var query = ""
 
     public init(model: ChatModel, onOpen: @escaping (String) -> Void) {
-        threads = model.threads.filter(\.archived).sorted { $0.lastActivity > $1.lastActivity }
-        hostLabel = { _ in nil }
-        messageText = { id in
-            (model.events[id] ?? []).compactMap {
-                if case .message(let data) = $0.payload { return data.text }
-                return nil
-            }
-            .joined(separator: "\n\n")
+        archive = {
+            Archive(
+                threads: model.threads.filter(\.archived).sorted { $0.lastActivity > $1.lastActivity },
+                messageText: { id in
+                    (model.events[id] ?? []).compactMap {
+                        if case .message(let data) = $0.payload { return data.text }
+                        return nil
+                    }
+                    .joined(separator: "\n\n")
+                },
+                open: { onOpen($0.id) },
+                restore: { model.setArchived($0, false) }
+            )
         }
-        self.onOpen = { onOpen($0.id) }
-        onRestore = { model.setArchived($0, false) }
     }
 
+    /// Every host's archive in one list, each row labelled with its host when there are several.
     public init(hosts: MultiHostModel, onOpen: @escaping (HostThreadID) -> Void) {
-        let adapter = HostThreadListAdapter(session: hosts)
-        threads = adapter.threads.filter(\.archived).sorted { $0.lastActivity > $1.lastActivity }
-        hostLabel = adapter.hostLabel
-        messageText = adapter.messageText
-        self.onOpen = { thread in
-            if let id = adapter.resolve(thread.id)?.id { onOpen(id) }
-        }
-        onRestore = { thread in adapter.perform(thread) { $0.setArchived($1, false) } }
-    }
-
-    private var shownThreads: [ThreadSummary] {
-        threads.filter {
-            threadMatches($0, query: query, body: messageText($0.id))
-                || !searchRanges(in: hostLabel($0.id) ?? "", term: query).isEmpty
+        archive = {
+            let adapter = HostThreadListAdapter(session: hosts)
+            return Archive(
+                threads: adapter.threads.filter(\.archived),
+                hostLabel: adapter.hostLabel,
+                messageText: adapter.messageText,
+                open: { if let id = adapter.resolve($0.id)?.id { onOpen(id) } },
+                restore: { thread in adapter.perform(thread) { $0.setArchived($1, false) } }
+            )
         }
     }
-
-    private var searchNeedle: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     public var body: some View {
-        list
-            .overlay { empty }
-            .navigationTitle("Archived threads")
-            #if os(iOS)
+        let archive = archive()
+        let shown = archive.threads.filter {
+            threadMatches($0, query: query, body: archive.messageText($0.id))
+                || !searchRanges(in: archive.hostLabel($0.id) ?? "", term: query).isEmpty
+        }
+        List {
+            Section {
+                ForEach(shown) { row($0, in: archive) }
+            } footer: {
+                if !shown.isEmpty {
+                    Text("Restored threads return to the thread list.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(YorozuPalette.canvas)
+        .overlay { if shown.isEmpty { empty } }
+        .navigationTitle("Archived threads")
+        #if os(iOS)
             .searchable(text: $query, prompt: "Search archived threads")
-            #else
+        #else
+            // A sheet on the Mac has no toolbar for a search field or a title to sit in.
             .safeAreaInset(edge: .top) {
                 VStack(alignment: .leading) {
                     Text("Archived threads").font(.headline)
@@ -59,70 +81,45 @@ public struct ArchivedThreadsView: View {
                 .padding(LayoutMetrics.stack)
                 .background(YorozuPalette.canvas)
             }
-            #endif
-    }
-
-    private var list: some View {
-        List {
-            Section {
-                ForEach(shownThreads) { thread in row(thread) }
-            } footer: {
-                Text("Restored threads return to the thread list.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(YorozuPalette.canvas)
-    }
-
-    @ViewBuilder private func row(_ thread: ThreadSummary) -> some View {
-        #if os(iOS)
-        Button { onOpen(thread) } label: {
-            ThreadRow(thread: thread, highlightQuery: query, chevron: true,
-                      hostLabel: hostLabel(thread.id), marksArchived: false)
-        }
-        .buttonStyle(.plain)
-        .swipeActions(edge: .leading) {
-            Button("Restore", systemImage: "tray.and.arrow.up") { onRestore(thread) }
-                .tint(.blue)
-        }
-        .swipeActions(edge: .trailing) {
-            Button("Restore", systemImage: "tray.and.arrow.up") { onRestore(thread) }
-                .tint(.blue)
-        }
-        .contextMenu { restore(thread) }
-        .listRowInsets(EdgeInsets(top: 3, leading: 12, bottom: 3, trailing: 12))
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
-        #else
-        HStack {
-            Button { onOpen(thread) } label: {
-                ThreadRow(thread: thread, highlightQuery: query, hostLabel: hostLabel(thread.id), marksArchived: false)
-            }
-            .buttonStyle(.plain)
-            Button("Restore") { onRestore(thread) }
-        }
-        .contextMenu { restore(thread) }
-        .listRowInsets(EdgeInsets(top: 3, leading: 4, bottom: 3, trailing: 4))
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
         #endif
     }
 
-    private func restore(_ thread: ThreadSummary) -> some View {
-        Button("Restore", systemImage: "tray.and.arrow.up") { onRestore(thread) }
+    @ViewBuilder private func row(_ thread: ThreadSummary, in archive: Archive) -> some View {
+        let restore = Button("Restore", systemImage: "tray.and.arrow.up") { archive.restore(thread) }
+        #if os(iOS)
+            Button { archive.open(thread) } label: { label(thread, in: archive, chevron: true) }
+                .buttonStyle(.plain)
+            .swipeActions(edge: .leading) { restore.tint(.blue) }
+            .swipeActions(edge: .trailing) { restore.tint(.blue) }
+            .contextMenu { restore }
+            .listRowInsets(EdgeInsets(top: 3, leading: 12, bottom: 3, trailing: 12))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+        #else
+            HStack {
+                Button { archive.open(thread) } label: { label(thread, in: archive) }
+                    .buttonStyle(.plain)
+                Button("Restore") { archive.restore(thread) }
+            }
+            .contextMenu { restore }
+            // The plain Mac list already supplies 8 points around its row content.
+            .listRowInsets(EdgeInsets(top: 3, leading: 4, bottom: 3, trailing: 4))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+        #endif
+    }
+
+    private func label(_ thread: ThreadSummary, in archive: Archive, chevron: Bool = false) -> ThreadRow {
+        ThreadRow(thread: thread, highlightQuery: query, chevron: chevron,
+                  hostLabel: archive.hostLabel(thread.id), marksArchived: false)
     }
 
     @ViewBuilder private var empty: some View {
-        if shownThreads.isEmpty {
-            if searchNeedle.isEmpty {
-                ContentUnavailableView("No archived threads", systemImage: "archivebox",
-                                       description: Text("Threads you archive will be here."))
-            } else {
-                ContentUnavailableView.search(text: query)
-            }
+        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            ContentUnavailableView("No archived threads", systemImage: "archivebox",
+                                   description: Text("Threads you archive will be here."))
+        } else {
+            ContentUnavailableView.search(text: query)
         }
     }
 }
