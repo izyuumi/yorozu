@@ -18,4 +18,10 @@ The open-chat test showed the same toast with the keyboard raised and two messag
 
 ![Reconnecting toast over an open chat with keyboard and queued message visible at accessibility text size](screens/issue-76-toast-large-text-chat.png)
 
-These simulator checks cover part of keyboard, safe-area, Dynamic Type, and contrast behavior. Gesture-time list reordering, reduced motion, diagnostics interactions, installed clients, and physical-device handoff still need acceptance checks.
+These simulator checks cover part of keyboard, safe-area, Dynamic Type, and contrast behavior.
+
+## Reduced motion
+
+On 2026-09-28, the same populated-list fault test passed on iPhone 17 Pro / iOS 26.5 with accessibility-extra-large text, increased contrast, and Reduce Motion enabled before app launch. A temporary test assertion confirmed `UIAccessibility.isReduceMotionEnabled` was true inside the simulator; the temporary setup and assertion were removed after the run. The test still observed short-drop silence, one sustained toast without moving or resizing the row, dismissal, persistent disconnected status, and recovery. This checks interaction semantics with the system setting active; it does not measure animation frames or replace installed-client visual review.
+
+Gesture-time list reordering, diagnostics interactions, installed clients, and physical-device handoff still need acceptance checks.
