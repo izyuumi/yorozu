@@ -12,7 +12,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { stateDir } from "./memory.js";
 import type { Message, Provider } from "./provider.js";
-import { HISTORY_LIMIT, threadFile, threadHistory, threadMessages } from "./threads.js";
+import { HISTORY_LIMIT, threadFile, threadMessages } from "./threads.js";
 
 /** Roughly 600 tokens. The prompt asks for words, which is the unit a model can actually count. */
 const SUMMARY_WORDS = 400;
@@ -114,7 +114,10 @@ export async function updateSummary(
  * prompt and the conversation, and reads as background rather than as something anyone said.
  */
 export function contextFor(threadId: string, dir = stateDir(), vision = false, activeUserEventId?: string): Message[] {
-  const { text } = readSummary(threadId, dir);
-  const window = threadHistory(threadId, dir, vision, activeUserEventId);
-  return text ? [{ role: "system", content: `Earlier in this thread: ${text}` }, ...window] : window;
+  const { through, text } = readSummary(threadId, dir);
+  const all = threadMessages(threadId, dir, vision, activeUserEventId);
+  const evictedCount = Math.max(0, all.length - HISTORY_LIMIT);
+  // A slow or failed summariser must not make unsummarised messages disappear from context.
+  const recent = all.slice(Math.min(through, evictedCount));
+  return text ? [{ role: "system", content: `Earlier in this thread: ${text}` }, ...recent] : recent;
 }

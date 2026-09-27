@@ -131,11 +131,13 @@ export function createLegacyRunner(options: LegacyOptions) {
     // The finished reply is always logged, and always sent: unlike the deltas it carries
     // `done`, so even a reply whose text matches the last delta exactly is still news.
     onDone(reply);
-    // Deliberately not awaited: the summary is only ever needed by the *next* turn, and a thread that has not
-    // outgrown its window does no work here at all. A failure leaves the summary as it was.
-    void updateSummary(threadId, turnProvider, dir, userEventId).catch((e: unknown) =>
-      state(`summary-error ${String(e)}`),
-    );
+    // The next queued turn needs this summary before building its context. A failed summary
+    // leaves the log intact; contextFor includes any messages it has not yet covered.
+    try {
+      await updateSummary(threadId, turnProvider, dir, userEventId);
+    } catch (e) {
+      state(`summary-error ${String(e)}`);
+    }
   }
 
   return {

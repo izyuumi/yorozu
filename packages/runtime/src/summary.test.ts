@@ -77,6 +77,14 @@ test("queued future requests stay out of an earlier turn's summary", async () =>
   expect(contextFor(THREAD, dir, false, "future-0").at(-1)).toEqual({ role: "user", content: "future-0" });
 });
 
+test("a queued turn keeps evicted context when the preceding summary has not finished", () => {
+  say(HISTORY_LIMIT + 1);
+
+  const context = contextFor(THREAD, dir);
+  expect(context[0]).toEqual({ role: "user", content: "message 0" });
+  expect(context).toHaveLength(HISTORY_LIMIT + 1);
+});
+
 test("the first eviction writes a summary of exactly what fell out of the window", async () => {
   say(HISTORY_LIMIT + 3);
   const provider = summariser("They talked about the first three things.");
