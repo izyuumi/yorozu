@@ -257,8 +257,8 @@ extension MultiHostModel {
         guard hasMultipleHosts else { return shown.notice.state.label }
         return switch shown.notice.state {
         case .connected: nil
-        case .reconnecting: "Connecting to \(shown.host.label)…"
-        case .offline: "\(shown.host.label) isn’t reachable"
+        case .reconnecting: "Connecting to \(label(for: shown.host))…"
+        case .offline: "\(label(for: shown.host)) isn’t reachable"
         }
     }
 

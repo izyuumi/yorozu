@@ -480,7 +480,7 @@ final class Session {
         }.prefix(10).map { item in
             ShareThread(id: item.id.threadID, title: item.thread.displayTitle, hostID: item.id.hostID, hostLabel: item.hostLabel)
         }
-        ShareBox.save(hosts: hosts.sessions.map { ShareHost(id: $0.id, label: $0.label) }, threads: threads, in: directory)
+        ShareBox.save(hosts: hosts.sessions.map { ShareHost(id: $0.id, label: hosts.label(for: $0)) }, threads: threads, in: directory)
     }
 
     private func connect(_ stored: PairingStore.Stored, start: Bool = true) {
@@ -853,7 +853,7 @@ struct RootView: View {
         .onChange(of: session.hosts.lastUsedHostID) { _, id in
             if let id { session.rememberHost(id) }
         }
-        .onChange(of: session.hosts.sessions.map(\.label)) { _, _ in session.publishThreads() }
+        .onChange(of: session.hosts.sessions.map { session.hosts.label(for: $0) }) { _, _ in session.publishThreads() }
     }
 
     private var pairingContent: some View {

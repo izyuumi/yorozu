@@ -240,6 +240,28 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
 }
 
 @MainActor
+@Test func multiHostThreadLabelsDistinguishHostsWithTheSameName() {
+    let first = HostSession(id: multiHostID(0), model: ChatModel(transport: MultiHostTransport()),
+                            relayURL: "wss://relay.example", nickname: "Same Mac")
+    let second = HostSession(id: multiHostID(1), model: ChatModel(transport: MultiHostTransport()),
+                             relayURL: "wss://relay.example", nickname: "Same Mac")
+    first.model.newDraft()
+    second.model.newDraft()
+    let hosts = MultiHostModel(sessions: [first, second])
+
+    #expect(Set(hosts.threads.map(\.hostLabel)).count == 2)
+    #expect(hosts.threads.allSatisfy { $0.hostLabel.hasPrefix("Same Mac · ") })
+    let mimickedLabel = hosts.threads.first { $0.id.hostID == first.id }!.hostLabel
+    let third = HostSession(id: multiHostID(2), model: ChatModel(transport: MultiHostTransport()),
+                            relayURL: "wss://relay.example", nickname: mimickedLabel)
+    third.model.newDraft()
+    #expect(hosts.add(third))
+    #expect(Set(hosts.threads.map(\.hostLabel)).count == 3)
+    second.nickname = "Other Mac"
+    #expect(Set(hosts.threads.map(\.hostLabel)) == ["Same Mac", "Other Mac", mimickedLabel])
+}
+
+@MainActor
 @Test func multiHostDraftsUseTheSelectedMacAndOfflineQueuesDrainIndependently() async throws {
     let firstTransport = MultiHostTransport(), secondTransport = MultiHostTransport()
     let first = multiHostSession(multiHostID(0), transport: firstTransport)
