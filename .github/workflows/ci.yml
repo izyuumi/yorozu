@@ -34,7 +34,7 @@ jobs:
       - id: paths
         run: |
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            files=$(git diff --name-only HEAD^1 HEAD)
+            files=$(git diff --no-renames --name-only HEAD^1 HEAD)
           else
             files=.github/workflows/ci.yml
           fi
@@ -44,12 +44,11 @@ jobs:
           }
           build='^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json)$'
           {
-            flag ts "^(apps/relay|packages/runtime|packages/shared)/|$build"
+            flag ts "^(apps/relay|packages/runtime|packages/shared)/|^fixtures/swift-vectors\.json$|^apps/mac/Sources/YorozuNative/Apple\.swift$|^catalog/models\.json$|$build"
             flag relay '^apps/relay/|^tsconfig\.base\.json$'
-            # packages/shared holds the vectors the Swift interop tests read; the wire tests run
-            # the relay and sidecar themselves.
-            flag swift "^(packages/shared-swift|packages/shared|packages/runtime|apps/relay|apps/mac)/|$build"
-            flag ios '^(apps/ios|packages/shared-swift)/'
+            # Interop suites read vectors from fixtures/; wire tests run relay and sidecar.
+            flag swift "^(packages/shared-swift|packages/shared|packages/runtime|apps/relay|apps/mac)/|^fixtures/ts-vectors\.json$|$build"
+            flag ios '^(apps/ios|packages/shared-swift)/|^version\.txt$'
             flag web '^apps/web/'
           } >> "$GITHUB_OUTPUT"
 
