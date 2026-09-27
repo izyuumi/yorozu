@@ -26,7 +26,7 @@ public struct ChatView: View {
     public let model: ChatModel
     public let thread: ThreadSummary
     private let onNewThread: (() -> Void)?
-    private let onCreate: ((ThreadAgent, String?) -> Void)?
+    private let onCreate: ((ThreadAgent, String?) -> String?)?
     private let resumeRequest: UUID?
     private let notificationClass: String?
     private let notificationEventRef: String?
@@ -82,6 +82,7 @@ public struct ChatView: View {
     #endif
     @State private var searching = false
     @State private var choosingAgent = false
+    @State private var recoveryMessage: MessageData?
     /// The draft the skill picker was closed over. An edit opens it again.
     @State private var dismissedSkillDraft: String?
     #if os(macOS)
@@ -121,7 +122,7 @@ public struct ChatView: View {
         aggregateToastAnnouncementRevision: UInt64? = nil,
         aggregateToastLabel: String? = nil,
         onNewThread: (() -> Void)? = nil,
-        onCreate: ((ThreadAgent, String?) -> Void)? = nil
+        onCreate: ((ThreadAgent, String?) -> String?)? = nil
     ) {
         self.model = model
         self.thread = thread
@@ -285,9 +286,18 @@ public struct ChatView: View {
         .sheet(isPresented: $choosingAgent) {
             if let onCreate {
                 NewThreadPicker(projects: model.projects, agents: model.availableAgents, status: model.projectListStatus,
-                    onRefresh: { await model.refreshProjects() }, onStart: onCreate)
+                    onRefresh: { await model.refreshProjects() }, onStart: { agent, cwd in
+                        if let id = onCreate(agent, cwd), let recoveryMessage {
+                            model.drafts[id] = recoveryMessage.text
+                            model.attachments[id] = recoveryMessage.attachments
+                        }
+                        recoveryMessage = nil
+                    })
                     .presentationDetents([.medium, .large])
             }
+        }
+        .onChange(of: choosingAgent) { _, shown in
+            if !shown { recoveryMessage = nil }
         }
         #if os(iOS)
             // In the view tree, not a sheet: a presented sheet resigns the composer, and the
@@ -865,6 +875,8 @@ public struct ChatView: View {
             if case .message(let data) = event.payload {
                 let outboxStatus = model.outboxStatus(of: event.id)
                 let rejectionReason = model.outboxRejectionReason(of: event.id)
+                let needsNewChat = rejectionReason?.hasPrefix("thread-create-rejected:") == true ||
+                    rejectionReason == "thread-not-created"
                 MessageBubble(
                     id: event.id,
                     data: data,
@@ -872,11 +884,12 @@ public struct ChatView: View {
                     status: outboxStatus,
                     rejectionReason: rejectionReason,
                     attachmentTransferLabels: model.attachmentTransferLabels(of: event.id),
-                    onRetry: data.role == .user &&
-                        rejectionReason?.hasPrefix("thread-create-rejected:") != true &&
-                        rejectionReason != "thread-not-created" &&
+                    onRetry: data.role == .user && (!needsNewChat || onCreate != nil) &&
                         (outboxStatus == nil || outboxStatus == .rejected || outboxStatus == .withdrawn)
-                        ? { retry(data) } : nil,
+                        ? { if needsNewChat {
+                                recoveryMessage = data
+                                choosingAgent = true
+                            } else { retry(data) } } : nil,
                     onWithdraw: model.canWithdraw(event)
                         ? { model.withdraw(event.id) } : nil,
                     onDelete: { model.delete(event.id, in: thread.id) },

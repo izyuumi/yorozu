@@ -797,7 +797,9 @@ struct RootView: View {
                     notificationSyncRevision: notification?.syncRevision,
                     showsUpdateStatus: false,
                     onCreate: { agent, cwd in
-                        path = [model.newDraft(agent: agent, cwd: cwd).id]
+                        let id = model.newDraft(agent: agent, cwd: cwd).id
+                        path = [id]
+                        return id
                     }
                 )
             }
@@ -861,7 +863,9 @@ struct RootView: View {
                      aggregateToastLabel: session.hosts.connectionToastLabel,
                      onNewThread: session.hosts.hasMultipleHosts ? { choosingThreadHost = true } : nil,
                      onCreate: { agent, cwd in
-                         if let draft = session.hosts.newDraft(on: host.id, agent: agent, cwd: cwd) { hostPath = [draft] }
+                         guard let draft = session.hosts.newDraft(on: host.id, agent: agent, cwd: cwd) else { return nil }
+                         hostPath = [draft]
+                         return draft.threadID
                      })
         }
         .sheet(isPresented: $choosingThreadHost) {

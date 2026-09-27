@@ -46,7 +46,12 @@ struct QuickChatView: View {
                     notificationClass: target?.kind?.rawValue,
                     notificationEventRef: target?.eventID.map(YorozuCrypto.threadRef),
                     showsUpdateStatus: false,
-                    focusComposerOnAppear: target == nil)
+                    focusComposerOnAppear: target == nil,
+                    onCreate: { agent, cwd in
+                        let id = model.newDraft(agent: agent, cwd: cwd).id
+                        selection = id
+                        return id
+                    })
                     .id(thread.id)
             } else {
                 ContentUnavailableView("No chat yet", systemImage: "bubble.left.and.bubble.right",
@@ -153,7 +158,12 @@ private struct ClientChatWindowView: View {
                         aggregateToast: hosts.connectionToastNotice?.notice.state,
                         aggregateToastID: hosts.connectionToastNotice?.notice.id,
                         aggregateToastAnnouncementRevision: hosts.connectionToastNotice?.notice.announcementRevision,
-                        aggregateToastLabel: hosts.connectionToastLabel)
+                        aggregateToastLabel: hosts.connectionToastLabel,
+                        onCreate: { agent, cwd in
+                            guard let draft = hosts.newDraft(on: selection.hostID, agent: agent, cwd: cwd) else { return nil }
+                            self.selection = draft
+                            return draft.threadID
+                        })
                         .environment(\.threadSearchRequest, searchedThread == selection ? searchRequest : nil)
                         .id(selection)
                 } else {
@@ -300,7 +310,12 @@ private struct LocalChatWindowView: View {
         } detail: {
             NavigationStack {
                 if let thread {
-                    ChatView(model: model, thread: thread)
+                    ChatView(model: model, thread: thread,
+                        onCreate: { agent, cwd in
+                            let id = model.newDraft(agent: agent, cwd: cwd).id
+                            selection = id
+                            return id
+                        })
                     .environment(\.threadSearchRequest, searchRequest)
                     // One view per thread, as on a client: switching threads starts the chat's
                     // own state — scroll, search, focus — afresh rather than carrying it over.
