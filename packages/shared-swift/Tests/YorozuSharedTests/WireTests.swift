@@ -15,12 +15,6 @@ private let harness = URL(fileURLWithPath: #filePath)
 private let rigAvailable = ProcessInfo.processInfo.environment["CI"] != nil
     || FileManager.default.fileExists(atPath: harness.appendingPathComponent("dist/serve.js").path)
 
-extension RelayClient.Timing {
-    /// Production's shape in milliseconds: a dead socket is found within half a second.
-    static let wire = Self(firstBackoff: 0.05, maxBackoff: 0.4, pingInterval: .milliseconds(200),
-                           pongDeadline: .milliseconds(300), connectionDeadline: .seconds(1.5))
-}
-
 /// One harness process: a relay, a sidecar paired to nothing yet, and the proxy in front.
 private actor WireRig {
     private let process = Process()
@@ -75,9 +69,9 @@ private actor WireRig {
 }
 
 @MainActor
-private func pairedModel(_ rig: WireRig, timing: RelayClient.Timing = .wire) async throws -> ChatModel {
+private func pairedModel(_ rig: WireRig) async throws -> ChatModel {
     let client = try RelayClient(pairing: await rig.pairing, identity: .generate(),
-                                 counters: MemoryCounterStorage(), timing: timing)
+                                 counters: MemoryCounterStorage())
     let model = ChatModel(transport: client)
     model.start()
     try await until("paired") { model.canDeliver }
@@ -122,45 +116,6 @@ struct WireTests {
         model.close()
     }
 
-    /// The foreground case nothing else catches: an idle phone whose socket died without a
-    /// close. Only the pong deadline can tell, and the link has to come back by itself.
-    @Test func aSilentlyDeadLinkIsNoticedAndReplacedWithoutTheAppAsking() async throws {
-        let rig = try await WireRig()
-        let model = try await pairedModel(rig)
-        try await rig.run("blackhole")
-        // Ping interval plus pong deadline, with room for a loaded CI machine.
-        try await until("the dead link noticed", within: .seconds(2)) { !model.canDeliver }
-        try await rig.run("heal")
-        try await until("the link back") { model.canDeliver }
-        let thread = model.newDraft().id
-        model.send("still there", in: thread)
-        try await until("the answer") { finalReply(in: thread, model).map(\.text) == ["echo: still there"] }
-        model.close()
-    }
-
-    /// What a user sends into a link that died silently reaches the Mac once each, in order.
-    /// Sending is when the dead link matters most, so a send does not wait for the idle ping
-    /// to find out: it is checked within one pong deadline.
-    @Test func messagesSentIntoADeadLinkArriveOnceEachInOrder() async throws {
-        let rig = try await WireRig()
-        // An idle ping that would take half a minute, so only the send itself can notice.
-        let timing = RelayClient.Timing(firstBackoff: 0.05, maxBackoff: 0.4, pingInterval: .seconds(30),
-                                        pongDeadline: .milliseconds(300), connectionDeadline: .seconds(1.5))
-        let model = try await pairedModel(rig, timing: timing)
-        let thread = model.newDraft().id
-        try await rig.run("blackhole")
-        model.send("first", in: thread)
-        model.send("second", in: thread)
-        try await until("the dead link noticed", within: .seconds(2)) { !model.canDeliver }
-        try await rig.run("heal")
-        try await until("both messages receipted") { model.canDeliver && model.outbox.isEmpty }
-        let sent = try await rig.events(in: thread).compactMap { event -> String? in
-            if case .message(let data) = event.payload, data.role == .user { data.text } else { nil }
-        }
-        #expect(sent == ["first", "second"])
-        model.close()
-    }
-
     /// A link that drops while the Mac is streaming an answer, and stays down until the answer is
     /// done, loses none of it and repeats none of it: the phone ends with one complete answer,
     /// just as the Mac recorded it.
@@ -199,32 +154,35 @@ struct WireTests {
     /// after a join, and a nudge from the app skips whatever wait is left.
     @Test func redialsBackOffToACapResetOnJoinAndYieldToAReconnect() async throws {
         let rig = try await WireRig()
-        let timing = RelayClient.Timing(firstBackoff: 0.1, maxBackoff: 1, pingInterval: .seconds(30),
-                                        pongDeadline: .seconds(10), connectionDeadline: .seconds(5))
-        let model = try await pairedModel(rig, timing: timing)
+        let model = try await pairedModel(rig)
 
         var mark = try await rig.dials().count
         try await rig.run("down")
-        try await Task.sleep(for: .seconds(3.5))
+        let end = ContinuousClock.now + .seconds(130)
+        while try await rig.dials().count - mark < 7 {
+            guard ContinuousClock.now < end else { Issue.record("not enough redials: \(try await rig.dials())"); return }
+            try await Task.sleep(for: .milliseconds(100))
+        }
         let refused = try await rig.dials().dropFirst(mark)
         let gaps = zip(refused.dropFirst(), refused).map { $0 - $1 }
-        #expect(gaps.count >= 4, "redialled \(gaps.count) times")
+        #expect(gaps.count >= 6, "redialled \(gaps.count) times")
         // Jitter never overlaps one step and the next, so each wait is longer than the last.
         #expect(zip(gaps.dropFirst(), gaps).prefix(3).allSatisfy { $0 > $1 }, "\(gaps)")
-        #expect(gaps.allSatisfy { $0 < 1.25 }, "\(gaps)")
+        #expect(gaps.last! < 31.25, "two retries capped near 30 seconds: \(gaps)")
 
         // Back by itself, then away again: the first waits are short once more.
         try await rig.run("heal")
-        try await until("the link back") { model.canDeliver }
+        try await until("the link back", within: .seconds(40)) { model.canDeliver }
         mark = try await rig.dials().count
         try await rig.run("down")
-        try await Task.sleep(for: .milliseconds(400))
-        #expect(try await rig.dials().count - mark >= 2, "a join resets the backoff to its first step")
-
-        // Let the waits grow again, then ask right after a refusal, with a second or so to go.
-        try await Task.sleep(for: .seconds(2.5))
+        let resetEnd = ContinuousClock.now + .seconds(5)
+        while try await rig.dials().count - mark < 2 {
+            guard ContinuousClock.now < resetEnd else { Issue.record("join did not reset backoff"); return }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        // Ask right after another refusal, while the next backoff is still pending.
         mark = try await rig.dials().count
-        let refusal = ContinuousClock.now + .seconds(3)
+        let refusal = ContinuousClock.now + .seconds(12)
         while try await rig.dials().count == mark {
             guard ContinuousClock.now < refusal else {
                 Issue.record("no redial while the relay was away; dials: \(try await rig.dials())")
@@ -234,7 +192,7 @@ struct WireTests {
         }
         try await rig.run("heal")
         model.reconnect()
-        try await until("a redial on request", within: .milliseconds(500)) { model.canDeliver }
+        try await until("a redial on request", within: .seconds(2)) { model.canDeliver }
         model.close()
     }
 }

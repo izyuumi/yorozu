@@ -48,6 +48,8 @@ final class ConnectionTests: XCTestCase {
         let confirming = app.staticTexts.matching(
             NSPredicate(format: "label IN %@", ["Confirming delivery…", "Queued"])).firstMatch
         XCTAssertTrue(confirming.waitForExistence(timeout: 10), "The messages claim delivery")
+        XCTAssertTrue(app.descendants(matching: .any)["Connection: Reconnecting"].firstMatch
+            .waitForExistence(timeout: 25), "A send did not probe the dead link before the idle heartbeat")
         try await rig.post("heal")
         XCTAssertTrue(confirming.waitForNonExistence(timeout: 70), "Delivery never confirmed")
         XCTAssertEqual(bubbles("dead link one"), 1)
@@ -63,18 +65,25 @@ final class ConnectionTests: XCTestCase {
     func testALostReceiptSurvivesARelaunchAndSettlesOnce() async throws {
         try await launchPaired()
         try openThread()
+        try await rig.post("hold-answer")
         try await rig.post("drop-host")
         send("lost receipt")
         let confirming = app.descendants(matching: .any)["Confirming delivery…"].firstMatch
         XCTAssertTrue(confirming.waitForExistence(timeout: 10))
         XCTAssertFalse(confirming.waitForNonExistence(timeout: 5), "Delivery claimed without a receipt")
+        let started = Date.now + 30
+        while try await !rig.answerStarted() {
+            guard Date.now < started else { return XCTFail("The Mac never started the turn") }
+            try await Task.sleep(for: .milliseconds(200))
+        }
+
+        app.terminate()
+        try await rig.post("release-answer")
         let answered = Date.now + 30
         while try await !rig.messages().contains(where: { $0.role == "agent" && $0.text == "echo: lost receipt" }) {
             guard Date.now < answered else { return XCTFail("The Mac never answered") }
             try await Task.sleep(for: .milliseconds(200))
         }
-
-        app.terminate()
         try await rig.post("heal")
         app.launchArguments = []
         app.launch()
@@ -196,6 +205,11 @@ private struct Rig {
     func messages() async throws -> [Message] {
         struct Reply: Decodable { var messages: [Message] }
         return try await get(Reply.self, "messages").messages
+    }
+
+    func answerStarted() async throws -> Bool {
+        struct Reply: Decodable { var started: Bool }
+        return try await get(Reply.self, "answer-started").started
     }
 
     private func get<T: Decodable>(_ type: T.Type, _ path: String) async throws -> T {

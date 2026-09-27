@@ -84,25 +84,6 @@ public actor RelayClient: ChatTransport {
     public typealias State = TransportState
     public typealias Update = TransportUpdate
 
-    /// How long the client waits on the network. The apps always use ``production``; the wire
-    /// tests shrink the same numbers so a dead socket is found in milliseconds, not a minute.
-    public struct Timing: Sendable {
-        /// A dropped socket retries with jitter around this, then twice it, … up to
-        /// `maxBackoff`, reset by a join. Seconds.
-        var firstBackoff: Double = 1
-        var maxBackoff: Double = 30
-        /// The relay keeps a socket that is talking; nothing else on an idle phone would.
-        var pingInterval: Duration = .seconds(30)
-        /// A ping the relay does not answer within this is a socket that is open in name only —
-        /// the phone slept, the network changed — and the receive loop would never find out.
-        var pongDeadline: Duration = .seconds(10)
-        var connectionDeadline: Duration = .seconds(15)
-
-        public static let production = Timing()
-    }
-
-    private let timing: Timing
-
     private let pairing: QrPayload
     private let identity: PhoneIdentity
     private let session: URLSession
@@ -172,7 +153,6 @@ public actor RelayClient: ChatTransport {
     ///   - counters: where the sequence counters for this pairing are kept across relaunches.
     ///     The apps pass storage that keeps them in the pairing record next to the identity;
     ///     nil falls back to `UserDefaults.standard`, which an iOS reinstall does not keep.
-    ///   - timing: how long to wait on the network; only tests pass anything but the default.
     ///   - onPaired: called once, the first time the relay accepts this device, so the caller
     ///     can persist that fact. Called off the main actor.
     public init(
@@ -181,7 +161,6 @@ public actor RelayClient: ChatTransport {
         paired: Bool = false,
         session: URLSession = .shared,
         counters: (any ChannelCounterStorage)? = nil,
-        timing: Timing = .production,
         onPaired: (@Sendable () -> Void)? = nil
     ) throws {
         guard let url = URL(string: pairing.relayUrl), url.scheme?.hasPrefix("ws") == true else {
@@ -207,7 +186,6 @@ public actor RelayClient: ChatTransport {
         self.pairing = pairing
         self.identity = identity
         self.session = session
-        self.timing = timing
         self.dial = dial
         self.paired = paired
         self.onPaired = onPaired
@@ -239,6 +217,11 @@ public actor RelayClient: ChatTransport {
         loopGeneration &+= 1
         loop?.cancel()
         socket?.cancel()
+        pinger?.cancel()
+        pongDeadline?.cancel()
+        pongDeadline = nil
+        phaseDeadline?.cancel()
+        phaseDeadline = nil
         intentionalRedial = nil
         stopped = false
         watchNetworkPath()
@@ -278,6 +261,7 @@ public actor RelayClient: ChatTransport {
         phaseDeadline = nil
         pinger?.cancel()
         pongDeadline?.cancel()
+        pongDeadline = nil
         peerExchange?.cancel()
         backoff?.cancel()
         loop?.cancel()
@@ -314,7 +298,7 @@ public actor RelayClient: ChatTransport {
     private func armPhaseDeadline(_ reason: String, on socket: URLSessionWebSocketTask) {
         phaseDeadline?.cancel()
         phaseDeadline = Task {
-            try? await Task.sleep(for: self.timing.connectionDeadline)
+            try? await Task.sleep(for: .seconds(15))
             guard !Task.isCancelled, !stopped, self.socket === socket, !ready else { return }
             phaseDeadline = nil
             updates?.yield(.failed(reason))
@@ -349,9 +333,10 @@ public actor RelayClient: ChatTransport {
             phaseDeadline = nil
             pinger?.cancel()
             pongDeadline?.cancel()
+            pongDeadline = nil
             guard !stopped, !Task.isCancelled else { return }
             // Exponential retry with jitter; back to the first interval after a join.
-            let delay = min(timing.maxBackoff, timing.firstBackoff * pow(2, Double(attempt))) * Double.random(in: 0.75...1.0)
+            let delay = min(30, pow(2, Double(attempt))) * Double.random(in: 0.75...1.0)
             attempt += 1
             let backoff = Task<Void, Never> { try? await Task.sleep(for: .seconds(delay)) }
             self.backoff = backoff
@@ -372,12 +357,12 @@ public actor RelayClient: ChatTransport {
         pinger?.cancel()
         pinger = Task {
             while !Task.isCancelled {
-                try? await Task.sleep(for: self.timing.pingInterval)
+                try? await Task.sleep(for: .seconds(30))
                 guard !Task.isCancelled else { return }
                 // A send that throws means the socket is already gone, and the receive loop is
                 // the one that reports that; there is nothing useful to do with it here.
-                try? await self.send(["type": "ping"])
                 self.armPongDeadline()
+                try? await self.send(["type": "ping"])
             }
         }
     }
@@ -386,7 +371,7 @@ public actor RelayClient: ChatTransport {
         guard pongDeadline == nil else { return }
         let socket = self.socket
         pongDeadline = Task {
-            try? await Task.sleep(for: self.timing.pongDeadline)
+            try? await Task.sleep(for: .seconds(10))
             guard !Task.isCancelled else { return }
             await self.pongMissed(on: socket)
         }
@@ -410,8 +395,8 @@ public actor RelayClient: ChatTransport {
         // A send is when a silently dead socket costs the user something, so it asks the relay
         // now rather than waiting out the idle ping. One probe covers a burst of sends.
         if pongDeadline == nil {
-            try? await send(["type": "ping"])
             armPongDeadline()
+            try? await send(["type": "ping"])
         }
     }
 

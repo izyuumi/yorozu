@@ -12,6 +12,9 @@
 //   POST /drop-host       frames from the Mac stop reaching the phone; the phone's still arrive
 //   POST /down            close every phone connection now, and refuse new ones
 //   POST /lose-joined     the next phone to join is cut off just as the relay says `joined`
+//   POST /hold-answer     pause the next provider answer until /release-answer
+//   GET  /answer-started  {"started"}: whether that paused request reached the provider
+//   POST /release-answer  let the paused provider answer finish
 //   POST /heal            back to normal for new connections and frames; blackholed ones stay dead
 //   GET  /dials           {"dials"}: when each phone connection arrived, ms since start
 //   GET  /events?thread=  {"events"}: the thread's durable events, as the Mac recorded them
@@ -33,13 +36,19 @@ const { serve } = await import("../dist/serve.js");
 const { openaiCompat } = await import("../dist/provider.js");
 const { listThreads, readThreadEvents } = await import("../dist/threads.js");
 
+let heldAnswer;
+let answerStarted = false;
+
 /** Answers every turn with `echo: <text>` in words spaced 50ms apart, so a drop can land mid-reply. */
 const model = async (_url, init) => {
   const { content } = JSON.parse(init.body).messages.at(-1);
+  const release = heldAnswer;
+  if (release) answerStarted = true;
   const words = `echo: ${typeof content === "string" ? content : JSON.stringify(content)}`.split(" ");
   const encoder = new TextEncoder();
   const body = new ReadableStream({
     async start(controller) {
+      if (release) await release.promise;
       for (const [i, word] of words.entries()) {
         const delta = { content: (i ? " " : "") + word };
         const finish = i === words.length - 1 ? "stop" : null;
@@ -118,7 +127,17 @@ const faults = {
   "drop-host"() { fault.dropHost = true; },
   down() { fault.down = true; for (const link of links) { link.phone.terminate(); link.upstream.terminate(); } },
   "lose-joined"() { fault.loseJoined = true; },
-  heal() { fault.blackholed = fault.dropHost = fault.down = fault.loseJoined = false; },
+  "hold-answer"() {
+    heldAnswer?.resolve();
+    heldAnswer = Promise.withResolvers();
+    answerStarted = false;
+  },
+  "release-answer"() { heldAnswer?.resolve(); heldAnswer = undefined; },
+  heal() {
+    fault.blackholed = fault.dropHost = fault.down = fault.loseJoined = false;
+    heldAnswer?.resolve();
+    heldAnswer = undefined;
+  },
 };
 const messages = (thread) => readThreadEvents(thread, stateDir)
   .filter((event) => event.kind === "message" && (event.data.role === "user" || event.data.done))
@@ -131,6 +150,7 @@ const control = createServer((request, response) => {
   if (request.method === "POST" && faults[name]) { faults[name](); body = { ok: name }; }
   else if (name === "pairing") body = { qr: pairing };
   else if (name === "dials") body = { dials };
+  else if (name === "answer-started") body = { started: answerStarted };
   else if (name === "events") body = { events: readThreadEvents(url.searchParams.get("thread"), stateDir) };
   else if (name === "messages") body = { messages: listThreads(stateDir).flatMap((thread) => messages(thread.id)) };
   response.writeHead(body ? 200 : 404, { "content-type": "application/json" });
