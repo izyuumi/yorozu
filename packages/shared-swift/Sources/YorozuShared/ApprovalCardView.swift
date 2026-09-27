@@ -120,6 +120,14 @@ public struct ApprovalCardView: View {
 
     // MARK: Pieces
 
+    private var headerTitle: String {
+        if !answered { return agentLabel ?? card.nativeAgent?.label ?? String(localized: "Yorozu wants to") }
+        if let agent = card.nativeAgent, !ThreadAgent.allCases.contains(agent) {
+            return String(localized: "Approval · \(agentLabel ?? agent.label)")
+        }
+        return String(localized: "Approval")
+    }
+
     private var header: some View {
         HStack(spacing: LayoutMetrics.inner) {
             Image(systemName: "hand.raised.fill")
@@ -127,7 +135,7 @@ public struct ApprovalCardView: View {
                 .foregroundStyle(YorozuPalette.vermilion)
                 .frame(width: 28, height: 28)
                 .background(YorozuPalette.vermilion.opacity(0.12), in: Circle())
-            Text(answered ? String(localized: "Approval") : (agentLabel ?? card.nativeAgent?.label ?? String(localized: "Yorozu wants to")))
+            Text(headerTitle)
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
