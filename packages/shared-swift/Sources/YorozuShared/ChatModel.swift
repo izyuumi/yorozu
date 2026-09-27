@@ -425,7 +425,8 @@ public final class ChatModel {
         let draftState = cache.draftState()
         var composerPrepared: [String: String] = [:]
         restoringComposer = true
-        if let composer = cache.composer() {
+        let composer = cache.composer()
+        if let composer {
             composerPrepared = composer.preparedSend ?? [:]
             drafts = draftState?.drafts ?? composer.drafts
             attachments = composer.attachments
@@ -445,18 +446,30 @@ public final class ChatModel {
         // The marker names the exact message: committed sends leave the composer; failed
         // prepares keep it. A newer text edit may have replaced the draft marker, while the
         // older composer still owns sent attachments and draft-thread state.
-        if !composerPrepared.isEmpty || !activePrepared.isEmpty {
-            let committed = Set((Array(composerPrepared) + Array(activePrepared)).compactMap { threadId, eventId in
-                outbox.contains(where: { $0.id == eventId }) ? threadId : nil
-            })
-            for threadId in committed {
+        let committedSends = Set((Array(composerPrepared) + Array(activePrepared)).compactMap { threadId, eventId in
+            outbox.contains(where: { $0.id == eventId }) ? threadId : nil
+        })
+        let committedCreates = Set(outbox.compactMap { item -> String? in
+            if case .threadCreate = item.event.payload { return item.event.threadId }
+            return nil
+        })
+        if !composerPrepared.isEmpty || !activePrepared.isEmpty || !committedCreates.isEmpty {
+            for threadId in committedSends {
                 if let eventId = activePrepared[threadId], outbox.contains(where: { $0.id == eventId }) {
                     drafts[threadId] = ""
                 }
                 attachments[threadId] = nil
+            }
+            // A committed create can precede either cache write that moves a draft into
+            // the thread list. The full composer may also be older than the small draft
+            // record, so use either copy of the summary before saving reconciled state.
+            for threadId in committedSends.union(committedCreates) {
+                var restoredThread = composer?.threads.first(where: { $0.id == threadId })
                 if let index = draftThreads.firstIndex(where: { $0.id == threadId }) {
-                    let draft = draftThreads.remove(at: index)
-                    if !synced.contains(where: { $0.id == threadId }) { synced.insert(draft, at: 0) }
+                    restoredThread = draftThreads.remove(at: index)
+                }
+                if let restoredThread, !synced.contains(where: { $0.id == threadId }) {
+                    synced.insert(restoredThread, at: 0)
                 }
             }
             do {

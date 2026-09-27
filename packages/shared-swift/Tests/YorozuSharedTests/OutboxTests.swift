@@ -554,6 +554,30 @@ private func reconnect(_ transport: QueueTransport) async {
     #expect(laterDraft.drafts[thread.id] == "next idea")
     #expect(laterDraft.attachments[thread.id] == nil)
     #expect(!laterDraft.isDraft(thread.id))
+    #expect(laterDraft.threads.contains(where: { $0.id == thread.id }))
+}
+
+@MainActor
+@Test func directSendRestoresThreadAfterComposerWriteButBeforeDraftStateWrite() throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let thread = ThreadSummary(id: "shared-thread", title: "New chat", archived: false, lastActivity: 1)
+    let create = YorozuEvent(id: "shared-create", threadId: thread.id, ts: 1, agentId: "phone",
+                             payload: .threadCreate(ThreadCreateData()))
+    let message = YorozuEvent(id: "shared-message", threadId: thread.id, ts: 1, agentId: "phone",
+                              payload: .message(MessageData(role: .user, text: "shared")))
+
+    try cache.savePending([OutboxItem(event: create), OutboxItem(event: message)])
+    try cache.save(composer: .init(drafts: [:], attachments: [:], threads: [],
+                                   knownThreads: [thread], openThread: thread.id))
+    try cache.save(draftState: .init(drafts: [:], preparedSend: [:], threads: [thread],
+                                     openThread: thread.id))
+
+    let restored = ChatModel(transport: QueueTransport(), cache: cache)
+    #expect(!restored.isDraft(thread.id))
+    #expect(restored.threads.contains(where: { $0.id == thread.id }))
+    #expect(restored.outbox.map(\.id) == [create.id, message.id])
 }
 
 @MainActor
