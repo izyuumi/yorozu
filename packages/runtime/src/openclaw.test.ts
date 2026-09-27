@@ -1013,7 +1013,8 @@ describe("OpenClawRunner", () => {
       { name: "off", description: "Off", source: "openclaw-bundled", eligible: false, userInvocable: true, commandVisible: true },
     ] } : {});
     await expect(new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).listSkills())
-      .resolves.toEqual([{ name: "caveman", description: "Brief" }, { name: "bundled", description: "Built in" }]);
+      .resolves.toEqual([{ name: "caveman", description: "Brief" }, { name: "bundled", description: "Built in" },
+        { name: "workspace", description: "Workspace" }]);
     expect(gateway.request).toHaveBeenCalledWith("skills.status", { agentId: "main" });
   });
 

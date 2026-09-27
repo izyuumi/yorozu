@@ -33,6 +33,8 @@ test("Claude reload exposes user skills and bundled skills without built-in comm
     { name: "grill-me", description: "Ask hard questions", argumentHint: "<topic>" },
     { name: "plugin:shape", description: "Shape", argumentHint: "", builtin: false },
     { name: "code-review", description: "Bundled review", argumentHint: "", builtin: true },
+    { name: "code-review", description: "Shadowed review", argumentHint: "" },
+    { name: "clear", description: "Shadowed clear", argumentHint: "" },
     { name: "hidden", description: "Not invocable", argumentHint: "" },
   ] });
   const supportedCommands = vi.fn().mockResolvedValue([

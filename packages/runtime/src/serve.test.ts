@@ -925,16 +925,22 @@ test("retry repairs a logged native message after queue persistence fails", asyn
 });
 
 test("skill lists refresh on join after ten minutes and broadcast only changes", async () => {
-  let now = 1_000;
+  const realNow = Date.now.bind(Date);
+  let elapsed = 0;
+  vi.spyOn(Date, "now").mockImplementation(() => realNow() + elapsed);
+  let unavailable = false;
   let catalog = [
     { name: "plugin:Shape", description: "x".repeat(250), argumentHint: "y".repeat(100), path: "/host/shape/SKILL.md" },
     { name: "n".repeat(129), description: "Long name", path: "/host/long/SKILL.md" },
     { name: "plugin:Shape", description: "Another source", path: "/host/duplicate/SKILL.md" },
   ];
-  const skills = vi.fn(async () => catalog);
-  const { dir } = await pairedPhone([], false, { now: () => now, nativeRunners: {
+  const skills = vi.fn(async () => {
+    if (unavailable) throw new Error("catalog unavailable");
+    return catalog;
+  });
+  const { dir } = await pairedPhone([], false, { nativeRunners: {
     codex: { run: async () => ({ text: "done" }), skills },
-    "claude-code": { run: async () => ({ text: "done" }), skills: async () => { throw new Error("unavailable"); } },
+    "claude-code": { run: async () => ({ text: "done" }), skills: async () => [] },
   } });
   const first = await macClient(dir);
   await vi.waitFor(() => expect(first.events.some((event) => event.kind === "model_list" &&
@@ -944,7 +950,6 @@ test("skill lists refresh on join after ten minutes and broadcast only changes",
   expect(listed.data.skills?.codex).toEqual([
     { name: "plugin:Shape", description: "x".repeat(200), argumentHint: "y".repeat(80) },
     { name: "n".repeat(129), description: "Long name" },
-    { name: "plugin:Shape", description: "Another source" },
   ]);
   expect(listed.data.skills?.["claude-code"]).toEqual([]);
   expect(JSON.stringify(listed)).not.toContain("/host/shape/SKILL.md");
@@ -954,17 +959,30 @@ test("skill lists refresh on join after ten minutes and broadcast only changes",
   await vi.waitFor(() => expect(second.events.some((event) => event.kind === "model_list")).toBe(true));
   expect(skills).toHaveBeenCalledTimes(1);
   const before = first.events.filter((event) => event.kind === "model_list").length;
-  now += 600_001;
+  elapsed += 600_001;
   const third = await macClient(dir);
   await vi.waitFor(() => expect(skills).toHaveBeenCalledTimes(2));
   await vi.waitFor(() => expect(first.events.filter((event) => event.kind === "model_list").length).toBe(before + 1));
   expect(first.events.findLast((event) => event.kind === "model_list")).toMatchObject({ data: { skills: { codex: [{ name: "new" }] } } });
   const after = first.events.filter((event) => event.kind === "model_list").length;
-  now += 600_001;
+  elapsed += 600_001;
   const fourth = await macClient(dir);
   await vi.waitFor(() => expect(skills).toHaveBeenCalledTimes(3));
   expect(first.events.filter((event) => event.kind === "model_list")).toHaveLength(after);
-  first.close(); second.close(); third.close(); fourth.close();
+  unavailable = true;
+  elapsed += 600_001;
+  const fifth = await macClient(dir);
+  await vi.waitFor(() => expect(skills).toHaveBeenCalledTimes(4));
+  expect(first.events.filter((event) => event.kind === "model_list")).toHaveLength(after);
+  await vi.waitFor(() => expect(fifth.events.findLast((event) => event.kind === "model_list"))
+    .toMatchObject({ data: { skills: { codex: [{ name: "new" }] } } }));
+  unavailable = false;
+  catalog = [{ name: "recovered", description: "Recovered", path: "/host/recovered/SKILL.md" }];
+  const sixth = await macClient(dir);
+  await vi.waitFor(() => expect(skills).toHaveBeenCalledTimes(5));
+  await vi.waitFor(() => expect(first.events.findLast((event) => event.kind === "model_list"))
+    .toMatchObject({ data: { skills: { codex: [{ name: "recovered" }] } } }));
+  first.close(); second.close(); third.close(); fourth.close(); fifth.close(); sixth.close();
 });
 
 test("Codex translates only a leading known slash skill using the host path", async () => {
@@ -972,6 +990,7 @@ test("Codex translates only a leading known slash skill using the host path", as
   const { send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run, skills: async () => [
     { name: "Grill", description: "Questions", path: "/host/grill/SKILL.md" },
     { name: "plugin:Shape", description: "Shape", path: "/host/shape/SKILL.md" },
+    { name: "plugin:Shape", description: "Shadowed", path: "/host/shadow/SKILL.md" },
     { name: "plugin/inner", description: "Nested", path: "/host/inner/SKILL.md" },
   ] } } });
   send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "skill-turn");

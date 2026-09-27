@@ -133,7 +133,7 @@ export class OpenClawRunner {
       if (!value || typeof value !== "object" || Array.isArray(value)) return [];
       const skill = value as Record<string, unknown>;
       const source = typeof skill.source === "string" ? skill.source : "";
-      if (source === "openclaw-workspace" || source === "agents-skills-project" ||
+      if (source === "agents-skills-project" ||
           skill.eligible !== true || skill.disabled === true ||
           skill.userInvocable !== true || skill.commandVisible !== true ||
           typeof skill.name !== "string" || !skill.name) return [];

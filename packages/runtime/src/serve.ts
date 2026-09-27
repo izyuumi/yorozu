@@ -432,8 +432,6 @@ export interface ServeOptions {
    * SDK; a kind with no runner answers that it is not available. Test seam for a fake SDK.
    */
   nativeRunners?: Record<string, NativeAgentRunner>;
-  /** Clock for the skill-list refresh window. */
-  now?: () => number;
 }
 
 export interface Sidecar {
@@ -1236,34 +1234,41 @@ export function serve(options: ServeOptions = {}): Sidecar {
   let codexSkillPaths = new Map<string, string>();
   let skillsBuiltAt: number | undefined;
   let skillsRefreshing: Promise<void> | undefined;
-  const skillNow = options.now ?? Date.now;
   const refreshSkills = (): Promise<void> => {
     if (skillsRefreshing) return skillsRefreshing;
-    if (skillsBuiltAt !== undefined && skillNow() - skillsBuiltAt < 600_000) return Promise.resolve();
+    if (skillsBuiltAt !== undefined && Date.now() - skillsBuiltAt < 600_000) return Promise.resolve();
     const refresh = Promise.all(agentDescriptors.map(async ({ id }) => {
-      const skills = await Promise.resolve().then(() =>
-        id === "yorozu" ? openclaw?.listSkills?.() ?? [] : nativeRunners[id]?.skills?.() ?? [],
-      ).catch(() => [] as SkillOption[]);
-      return [id, skills as (SkillOption & { path?: string })[]] as const;
+      try {
+        const skills = await Promise.resolve().then(() =>
+          id === "yorozu" ? openclaw?.listSkills?.() ?? [] : nativeRunners[id]?.skills?.() ?? []);
+        return { id, skills: skills as (SkillOption & { path?: string })[], failed: false };
+      } catch {
+        return { id, skills: [] as (SkillOption & { path?: string })[], failed: true };
+      }
     })).then((listed) => {
       const visible = (skills: SkillOption[]): SkillOption[] => {
+        const seen = new Set<string>();
         return skills.flatMap((skill) => {
-          if (!skill || typeof skill.name !== "string" || !skill.name) return [];
+          if (!skill || typeof skill.name !== "string" || !skill.name || seen.has(skill.name)) return [];
+          seen.add(skill.name);
           return [{ name: skill.name,
             description: typeof skill.description === "string" ? skill.description.slice(0, 200) : "",
             ...(typeof skill.argumentHint === "string" && skill.argumentHint
               ? { argumentHint: skill.argumentHint.slice(0, 80) } : {}) }];
         });
       };
-      const next = Object.fromEntries(listed.map(([id, skills]) => [id, visible(skills)]));
-      const codexSkills = listed.find(([id]) => id === "codex")?.[1] ?? [];
-      const paths = new Map<string, string>();
-      for (const skill of codexSkills) {
-        if (skill && typeof skill.path === "string" && !paths.has(skill.name) &&
-            next.codex?.some((shown) => shown.name === skill.name)) paths.set(skill.name, skill.path);
+      const next = { ...skillsByAgent };
+      for (const { id, skills, failed } of listed) if (!failed) next[id] = visible(skills);
+      const codex = listed.find(({ id }) => id === "codex");
+      if (codex && !codex.failed) {
+        const paths = new Map<string, string>();
+        for (const skill of codex.skills) {
+          if (skill && typeof skill.path === "string" && !paths.has(skill.name) &&
+              next.codex?.some((shown) => shown.name === skill.name)) paths.set(skill.name, skill.path);
+        }
+        codexSkillPaths = paths;
       }
-      codexSkillPaths = paths;
-      skillsBuiltAt = skillNow();
+      if (listed.every(({ failed }) => !failed)) skillsBuiltAt = Date.now();
       if (JSON.stringify(next) !== JSON.stringify(skillsByAgent)) {
         skillsByAgent = next;
         if (!stopped) broadcast(modelList());
