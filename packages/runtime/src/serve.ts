@@ -677,6 +677,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
   let sendToAll: (event: YorozuEvent, maxBuffered?: number) => number = () => 0;
   const liveReplies = new Map<string, YorozuEvent>();
   const partials = new Map<string, YorozuEvent>();
+  // Full-text partials grow quadratically on a slow link. Beyond this preview, pace
+  // relay snapshots by their transfer cost while local Mac clients keep live updates.
+  const LIVE_PARTIAL_BYTES = 16 * 1024;
+  const largePartialAt = new Map<string, number>();
   let partialTimer: NodeJS.Timeout | null = null;
   let nextPartialAt = 0;
   const traces = new Map<string, YorozuEvent[]>();
@@ -855,6 +859,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (event.data.done) {
         liveReplies.delete(event.threadId);
         partials.delete(event.threadId);
+        largePartialAt.delete(event.threadId);
         const queued = traces.get(event.threadId);
         if (queued) {
           traces.delete(event.threadId);
@@ -864,6 +869,20 @@ export function serve(options: ServeOptions = {}): Sidecar {
         }
       } else {
         liveReplies.set(event.threadId, event);
+        if (Buffer.byteLength(event.data.text) > LIVE_PARTIAL_BYTES) {
+          partials.delete(event.threadId);
+          for (const send of locals.values()) send(event);
+          const now = Date.now();
+          if (now < (largePartialAt.get(event.threadId) ?? 0)) return;
+          // Four reference transfer times at 64 KiB/s between snapshots. The actual link
+          // speed is unknown; the relay buffer cap is the second bound. Final is never held.
+          const batches = sendToAll(event, TRACE_BYTES);
+          if (batches > 0) {
+            largePartialAt.set(event.threadId, now + Math.ceil(Buffer.byteLength(event.data.text) * 4_000 / 65_536));
+            if (announce) notifyRelay(event);
+          }
+          return;
+        }
         partials.set(event.threadId, event);
         if (partialTimer || Date.now() < nextPartialAt) {
           if (!partialTimer) partialTimer = setTimeout(flushPartial, nextPartialAt - Date.now());
@@ -1280,6 +1299,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   ): Promise<void> {
     liveReplies.delete(threadId);
     partials.delete(threadId);
+    largePartialAt.delete(threadId);
     // A turn the phone did not send — a due job, a background delegation — is still part of
     // the thread, so it is recorded as the user message it stands in for.
     if (!recorded) {
@@ -3068,6 +3088,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       stopRetries.clear();
       clearTraces();
       partials.clear();
+      largePartialAt.clear();
       if (partialTimer) clearTimeout(partialTimer);
       partialTimer = null;
       catchupSends.clear();
