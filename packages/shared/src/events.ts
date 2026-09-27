@@ -121,10 +121,13 @@ export function attachmentBytes(attachment: MessageAttachment): number {
 }
 
 export function attachmentsWithinLimits(attachments: readonly MessageAttachment[]): boolean {
-  if (attachments.length > MAX_ATTACHMENTS_PER_MESSAGE) return false;
+  if (!Array.isArray(attachments) || attachments.length > MAX_ATTACHMENTS_PER_MESSAGE) return false;
   let total = 0;
   for (const attachment of attachments) {
-    if (typeof attachment.data !== "string" || attachment.data.length > Math.ceil(ATTACHMENT_MAX_BYTES / 3) * 4 ||
+    if (!attachment || typeof attachment.name !== "string" || !attachment.name ||
+        Buffer.byteLength(attachment.name) > 256 || typeof attachment.mime !== "string" || !attachment.mime ||
+        Buffer.byteLength(attachment.mime) > 128 || typeof attachment.data !== "string" ||
+        attachment.data.length > Math.ceil(ATTACHMENT_MAX_BYTES / 3) * 4 ||
         Buffer.from(attachment.data, "base64").toString("base64") !== attachment.data) return false;
     const bytes = attachmentBytes(attachment);
     if (bytes > ATTACHMENT_MAX_BYTES) return false;
