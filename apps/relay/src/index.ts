@@ -15,6 +15,7 @@ import {
   frameWire,
   newBucket,
   MAX_PAYLOAD_BYTES,
+  PHONE_BUFFER_CAP_BYTES,
   MAX_TOKENS_PER_ROOM,
   NOTIFY_PER_MINUTE,
   parseAck,
@@ -94,7 +95,6 @@ export function clientIp(headers: IncomingHttpHeaders, peer: string | undefined,
 }
 
 type Buffered = { raw: string; bytes: number; at: number; seq: number };
-const PHONE_BUFFER_CAP_BYTES = 2 * MAX_PAYLOAD_BYTES;
 
 /** One line per socket event, the same shape as the Worker's, so both relays read alike. */
 function log(ev: string, fields: Record<string, unknown> = {}): void {

@@ -31,6 +31,7 @@ import {
   frameWire,
   isRoomId,
   MAX_PAYLOAD_BYTES,
+  PHONE_BUFFER_CAP_BYTES,
   MAX_TOKENS_PER_ROOM,
   newBucket,
   NOTIFY_PER_MINUTE,
@@ -114,6 +115,9 @@ type Conn = {
   bucket?: Bucket;
   /** When the socket was accepted; the auth deadline counts from here. Optional as above. */
   since?: number;
+  /** Cumulative phone delivery bytes; persisted through Durable Object hibernation. */
+  sentBytes?: number;
+  ackedBytes?: number;
 };
 
 type Buffered = { raw: string; bytes: number; at: number; seq: number };
@@ -344,6 +348,24 @@ export class Room implements DurableObject {
   private notifyOwner(online: boolean): void {
     const raw = JSON.stringify({ type: "owner", online });
     for (const phone of this.sockets("phone")) send(phone, raw);
+  }
+
+  /** Cloudflare has no bufferedAmount. Bound bytes sent since this phone last received them. */
+  private sendPhone(ws: WebSocket, frame: { payload: string; sig: string }): void {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    const conn = ws.deserializeAttachment() as Conn;
+    const sent = conn.sentBytes ?? 0;
+    const acked = conn.ackedBytes ?? 0;
+    const raw = frameWire(frame);
+    // Reserve the maximum JSON overhead for `flowBytes`, so the actual wire stays under the cap.
+    const next = sent + new TextEncoder().encode(raw).byteLength + 32;
+    if (!Number.isSafeInteger(next) || next - acked > PHONE_BUFFER_CAP_BYTES) {
+      log("slow-phone", { unackedBytes: sent - acked });
+      this.drop(ws, 1013, "slow receiver");
+      return;
+    }
+    ws.serializeAttachment({ ...conn, sentBytes: next } satisfies Conn);
+    send(ws, JSON.stringify({ ...frame, type: "frame", flowBytes: next }));
   }
 
   private async entries(): Promise<[string, Buffered][]> {
@@ -615,6 +637,19 @@ export class Room implements DurableObject {
         return await this.ack(ack.seq);
       }
 
+      case "flowAck": {
+        if (conn.role !== "phone") return this.drop(ws, CLOSE_PROTOCOL, "not joined");
+        const bytes = Number(msg.bytes);
+        const sent = conn.sentBytes ?? 0;
+        const acked = conn.ackedBytes ?? 0;
+        if (typeof msg.bytes !== "string" || !/^(0|[1-9][0-9]*)$/.test(msg.bytes)
+          || !Number.isSafeInteger(bytes) || bytes > sent) {
+          return this.drop(ws, CLOSE_PROTOCOL, "bad flow ack");
+        }
+        if (bytes > acked) ws.serializeAttachment({ ...conn, ackedBytes: bytes } satisfies Conn);
+        return;
+      }
+
       // The heartbeat the edge normally answers for us. Handled here too so a socket that
       // somehow reaches the object still gets a pong instead of an "unknown type" close.
       case "ping":
@@ -700,7 +735,7 @@ export class Room implements DurableObject {
           await this.remember(phonePubkey, now);
         }
         ws.serializeAttachment({ ...conn, role: "phone", key: phonePubkey } satisfies Conn);
-        ws.send(JSON.stringify({ type: "joined", roomId: id, ownerOnline: this.ownerOnline() }));
+        ws.send(JSON.stringify({ type: "joined", roomId: id, ownerOnline: this.ownerOnline(), flowControl: true }));
         log("joined", { rejoin: token === undefined, ownerOnline: this.ownerOnline() });
         return;
       }
@@ -774,8 +809,7 @@ export class Room implements DurableObject {
           // Not buffered: a phone that is away catches up by asking the Mac on its next join,
           // which holds the whole history. The relay is only ever the fast path down. A batch
           // is unpacked here: each phone sees plain frames, never the batch.
-          const wires = msg.frames === undefined ? [raw] : frames.map(frameWire);
-          for (const phone of this.sockets("phone")) for (const wire of wires) send(phone, wire);
+          for (const phone of this.sockets("phone")) for (const frame of frames) this.sendPhone(phone, frame);
         }
         return;
       }

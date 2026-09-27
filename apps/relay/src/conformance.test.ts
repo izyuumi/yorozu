@@ -310,7 +310,7 @@ export function conformance(relay: Adapter) {
     for (let i = 0; i < batches; i++) mac.send({ type: "frame", frames: batch });
     for (let i = 0; i < batches * MAX_DEVICES; i++) {
       const copy = batch[i % MAX_DEVICES]!;
-      expect(await phone.next()).toEqual({ type: "frame", payload: copy.payload, sig: copy.sig });
+      expect(await phone.next()).toMatchObject({ type: "frame", payload: copy.payload, sig: copy.sig });
     }
     mac.send({ type: "mint" });
     expect(await mac.next()).toMatchObject({ type: "token" });

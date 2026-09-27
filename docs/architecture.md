@@ -157,10 +157,14 @@ envelope shapes, rate limit, buffer trim — in `apps/relay/src/protocol.ts`:
 - **Self-hosted** — `src/index.ts`, a plain `ws` server with everything in memory (`PORT`,
   default 8787).
 
-The self-hosted relay closes a phone whose outbound socket would buffer more than 2 MiB, then
-the phone rejoins and requests history from the host. Other phones keep receiving live frames.
-The hosted Worker's WebSocket API does not expose `bufferedAmount`; its send failure is isolated
-to that socket, while the host and other phones continue.
+The self-hosted relay closes a phone whose outbound socket would buffer more than 2 MiB. The
+hosted Worker's WebSocket API does not expose `bufferedAmount`, so its `joined` response enables
+flow control: every Mac frame includes cumulative `flowBytes`, and the phone acknowledges bytes
+it has received with `flowAck`. The Worker closes that phone after 2 MiB without an acknowledgment.
+This acknowledgment only bounds transport traffic; it is not durable message acceptance.
+Both relays leave other phones and the host connected; the dropped phone rejoins and requests
+history from the host. Older phones ignore `flowBytes` and do not acknowledge it, so sustained
+traffic beyond 2 MiB requires a client upgrade to stay on the hosted relay's live socket.
 
 ## Push notifications
 
