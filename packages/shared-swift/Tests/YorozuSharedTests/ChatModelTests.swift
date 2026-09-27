@@ -114,6 +114,25 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
 }
 
 @MainActor
+@Test func stagedComposerSurvivesImmediateRelaunchWithoutFlush() {
+    let cache = ThreadCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString),
+                            key: SymmetricKey(size: .bits256))
+    defer { try? FileManager.default.removeItem(at: cache.directory) }
+    let model = ChatModel(transport: FakeTransport(), cache: cache)
+    let thread = model.newDraft(agent: .codex, cwd: "/project")
+    model.openThread = thread.id
+    let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "aGk=")
+    model.attachments[thread.id] = [file]
+    model.drafts[thread.id] = "unfinished"
+
+    let restored = ChatModel(transport: FakeTransport(), cache: cache)
+    #expect(restored.openThread == thread.id)
+    #expect(restored.draft == thread)
+    #expect(restored.drafts[thread.id] == "unfinished")
+    #expect(restored.attachments[thread.id] == [file])
+}
+
+@MainActor
 @Test func updateRestartPreservesDraftsAttachmentsSelectionAndPendingMessages() async throws {
     let cache = ThreadCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString), key: SymmetricKey(size: .bits256))
     defer { try? FileManager.default.removeItem(at: cache.directory) }

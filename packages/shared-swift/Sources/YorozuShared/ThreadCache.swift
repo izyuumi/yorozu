@@ -110,6 +110,8 @@ public struct ThreadCache: Sendable {
     struct DraftState: Codable, Sendable {
         var drafts: [String: String]
         var preparedSend: [String: String]
+        var threads: [ThreadSummary]
+        var openThread: String?
     }
 
     func draftState() -> DraftState? {

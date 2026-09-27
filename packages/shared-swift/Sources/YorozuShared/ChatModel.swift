@@ -248,7 +248,7 @@ public final class ChatModel {
             if openThread != oldValue {
                 visibleAttachmentMessages.removeAll()
                 reportRead()
-                saveComposerNow()
+                saveDraftsNow()
                 requestOpenHistory()
             }
         }
@@ -319,10 +319,11 @@ public final class ChatModel {
     }
 
     private func saveDraftState() throws {
-        try cache?.save(draftState: .init(drafts: drafts, preparedSend: preparedSend))
+        try cache?.save(draftState: .init(drafts: drafts, preparedSend: preparedSend,
+                                          threads: draftThreads, openThread: openThread))
     }
 
-    /// Staged files and navigation change rarely, but must survive immediate termination too.
+    /// Staged files change rarely, but must survive immediate termination too.
     private func saveComposerNow() {
         guard cache != nil, !restoringComposer else { return }
         composerWrite?.cancel()
@@ -422,27 +423,36 @@ public final class ChatModel {
         }
         outbox = Outbox.pruned(pending)
         let draftState = cache.draftState()
-        var recoveredPrepared = draftState?.preparedSend ?? [:]
+        var composerPrepared: [String: String] = [:]
         restoringComposer = true
         if let composer = cache.composer() {
+            composerPrepared = composer.preparedSend ?? [:]
             drafts = draftState?.drafts ?? composer.drafts
             attachments = composer.attachments
-            draftThreads = composer.threads
-            openThread = composer.openThread
+            draftThreads = draftState?.threads ?? composer.threads
+            openThread = draftState == nil ? composer.openThread : draftState?.openThread
             readingPositions = composer.readingPositions ?? [:]
             for thread in composer.knownThreads ?? [] where !synced.contains(where: { $0.id == thread.id }) {
                 synced.append(thread)
             }
-            if draftState == nil { recoveredPrepared = composer.preparedSend ?? [:] }
         } else {
             drafts = draftState?.drafts ?? [:]
+            draftThreads = draftState?.threads ?? []
+            openThread = draftState?.openThread
         }
+        let activePrepared = draftState?.preparedSend ?? composerPrepared
         // A crash can land between the composer marker, outbox write, and composer clear.
         // The marker names the exact message: committed sends leave the composer; failed
-        // prepares keep it. Never infer this from matching text, which a user may repeat.
-        if !recoveredPrepared.isEmpty {
-            for (threadId, eventId) in recoveredPrepared where outbox.contains(where: { $0.id == eventId }) {
-                drafts[threadId] = ""
+        // prepares keep it. A newer text edit may have replaced the draft marker, while the
+        // older composer still owns sent attachments and draft-thread state.
+        if !composerPrepared.isEmpty || !activePrepared.isEmpty {
+            let committed = Set((Array(composerPrepared) + Array(activePrepared)).compactMap { threadId, eventId in
+                outbox.contains(where: { $0.id == eventId }) ? threadId : nil
+            })
+            for threadId in committed {
+                if let eventId = activePrepared[threadId], outbox.contains(where: { $0.id == eventId }) {
+                    drafts[threadId] = ""
+                }
                 attachments[threadId] = nil
                 if let index = draftThreads.firstIndex(where: { $0.id == threadId }) {
                     let draft = draftThreads.remove(at: index)
@@ -719,7 +729,10 @@ public final class ChatModel {
             draftThreads.removeAll { $0.id == threadId }
             synced.insert(draft, at: 0)
             if !fromComposer {
-                do { try saveComposer() }
+                do {
+                    try saveComposer()
+                    try saveDraftState()
+                }
                 catch { failure = "Could not save draft: \(error.localizedDescription)" }
             }
         }
@@ -1408,7 +1421,7 @@ public final class ChatModel {
             cwd: agent == .yorozu ? nil : cwd
         )
         draftThreads.insert(thread, at: 0)
-        saveComposerNow()
+        saveDraftsNow()
         return thread
     }
 
@@ -1482,6 +1495,7 @@ public final class ChatModel {
         if let index = draftThreads.firstIndex(where: { $0.id == thread.id }) {
             draftThreads[index].model = model
             draftThreads[index].effort = effort
+            saveDraftsNow()
             return
         }
         set(thread.id) { $0.model = model; $0.effort = effort }
@@ -1503,6 +1517,7 @@ public final class ChatModel {
     public func setEffort(_ thread: ThreadSummary, _ effort: ReasoningEffort?) {
         if let index = draftThreads.firstIndex(where: { $0.id == thread.id }) {
             draftThreads[index].effort = effort
+            saveDraftsNow()
             return
         }
         set(thread.id) { $0.effort = effort }
