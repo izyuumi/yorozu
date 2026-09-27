@@ -182,6 +182,40 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
 }
 
 @MainActor
+@Test func searchScopeNamesCachedHostResultsWhenTheirHostDisconnects() async throws {
+    let firstTransport = MultiHostTransport(), secondTransport = MultiHostTransport()
+    let first = multiHostSession(multiHostID(0), transport: firstTransport)
+    let second = multiHostSession(multiHostID(1), transport: secondTransport)
+    let hosts = MultiHostModel(sessions: [first, second])
+    defer { first.model.close(); second.model.close() }
+    for transport in [firstTransport, secondTransport] {
+        await transport.online()
+        await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["thread-search-v1"])))
+    }
+    #expect(await multiHostEventually { first.model.canDeliver && second.model.canDeliver })
+    first.model.searchHost("marker")
+    second.model.searchHost("marker")
+    let firstRequest = await multiHostSent(firstTransport, atLeast: multiHostPairingSends + 1)
+        .compactMap { if case .threadSearchRequest(let data) = $0.payload { return data.requestId }; return nil }.last
+    let secondRequest = await multiHostSent(secondTransport, atLeast: multiHostPairingSends + 1)
+        .compactMap { if case .threadSearchRequest(let data) = $0.payload { return data.requestId }; return nil }.last
+    await firstTransport.yield(.event(multiHostEvent("first-search", .threadSearchResult(ThreadSearchResultData(
+        requestId: try #require(firstRequest), matches: [ThreadSearchMatch(threadId: "remote", eventId: "hit",
+            excerpt: "marker", thread: ThreadSummary(id: "remote", title: "Remote", archived: false, lastActivity: 1))]
+    )))))
+    await secondTransport.yield(.event(multiHostEvent("second-search", .threadSearchResult(ThreadSearchResultData(
+        requestId: try #require(secondRequest), matches: []
+    )))))
+    #expect(await multiHostEventually { first.model.remoteSearch["remote"] != nil && second.model.searchComplete })
+    await firstTransport.yield(.state(.connecting))
+    #expect(await multiHostEventually { !first.model.canDeliver && second.model.canDeliver })
+    #expect(hosts.searchScope == "Downloaded conversations, cached and available host results")
+    await secondTransport.yield(.state(.connecting))
+    #expect(await multiHostEventually { !second.model.canDeliver })
+    #expect(hosts.searchScope == "Downloaded conversations and cached host results")
+}
+
+@MainActor
 @Test func multiHostActionsReachOnlyTheirOwningTransportAndReadState() async throws {
     let firstTransport = MultiHostTransport(), secondTransport = MultiHostTransport()
     let first = multiHostSession(multiHostID(0), transport: firstTransport)

@@ -245,12 +245,18 @@ extension MultiHostModel {
             return "Downloaded conversations and partial host results"
         }
         let available = sessions.filter { $0.model.canDeliver && $0.model.supportsHostSearch }
-        guard !available.isEmpty else { return "Downloaded conversations only" }
+        let cached = sessions.contains { !$0.model.remoteSearch.isEmpty && !($0.model.canDeliver && $0.model.supportsHostSearch) }
+        guard !available.isEmpty else {
+            return cached ? "Downloaded conversations and cached host results" : "Downloaded conversations only"
+        }
         if available.count == sessions.count && available.allSatisfy({ $0.model.searchComplete }) {
             return "All host histories searched"
         }
-        return available.allSatisfy({ $0.model.searchComplete })
-            ? "Downloaded conversations and available host history"
+        if available.allSatisfy({ $0.model.searchComplete }) {
+            return cached ? "Downloaded conversations, cached and available host results"
+                : "Downloaded conversations and available host history"
+        }
+        return cached ? "Downloaded conversations and cached host results · searching available hosts…"
             : "Downloaded conversations · searching available hosts…"
     }
 

@@ -1852,6 +1852,13 @@ func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(
         model.remoteSearch["fresh"]?.eventId == "new-hit" && model.searchComplete &&
         model.threads.contains(where: { $0.id == "fresh" })
     })
+    await transport.yield(.state(.connecting))
+    #expect(await eventually { !model.canDeliver })
+    #expect(model.remoteSearch["fresh"]?.eventId == "new-hit")
+    #expect(model.searchScope == "Downloaded conversations and cached host results")
+    await transport.yield(.state(.paired))
+    await transport.yield(.ownerOnline(true))
+    #expect(await eventually { model.canDeliver })
 
     model.searchHost(String(repeating: "x", count: 129))
     #expect(model.searchScope.contains("shorten search"))
