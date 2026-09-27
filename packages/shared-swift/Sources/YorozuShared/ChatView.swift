@@ -178,7 +178,9 @@ public struct ChatView: View {
     public var body: some View {
         VStack(spacing: 0) {
             if showsUpdateStatus {
-                UpdateStatusView(status: model.updateStatus) { model.updateControl(.postpone) }
+                UpdateStatusView(status: model.updateStatus,
+                    postpone: { model.updateControl(.postpone) },
+                    installNow: model.supportsUpdateDrain ? { model.updateControl(.installNow) } : nil)
             }
             // A failure of this device's own, such as a draft that would not save. The link's
             // failures go in the connection toast below, after the grace, not in a banner.

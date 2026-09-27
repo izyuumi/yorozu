@@ -703,7 +703,7 @@ export type EventPayload =
   | { kind: "update_control"; data: UpdateControlData };
 
 export interface UpdateStatusData {
-  phase: "none" | "unknown" | "waiting" | "countdown" | "postponed" | "installing";
+  phase: "none" | "unknown" | "waiting" | "countdown" | "postponed" | "draining" | "installing";
   updateId?: string;
   version?: string;
   activeThreads?: number;
@@ -713,7 +713,7 @@ export interface UpdateStatusData {
 }
 
 export interface UpdateControlData {
-  action: "queue" | "poll" | "cancel" | "postpone" | "status";
+  action: "queue" | "poll" | "cancel" | "postpone" | "install_now" | "status";
   updateId?: string;
   version?: string;
 }

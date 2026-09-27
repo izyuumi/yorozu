@@ -606,6 +606,7 @@ struct YorozuMacApp: App {
             if Updates.pending.status.phase != .none {
                 Text(Updates.pending.status.label()).disabled(true)
                 if Updates.pending.status.phase != .installing {
+                    Button("Install update now") { Updates.pending.installNow() }
                     Button("Postpone update 1 hour") { Updates.pending.postpone() }
                 }
             }

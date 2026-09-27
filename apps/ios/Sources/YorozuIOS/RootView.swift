@@ -753,9 +753,9 @@ struct RootView: View {
                 toastState: model.connectionToast.visible,
                 toastID: model.connectionToast.notice?.id,
                 onBackground: { model.connectionToast.dismiss() },
-                updateStatuses: [UpdateStatusItem(id: "local", status: model.updateStatus) {
-                    model.updateControl(.postpone)
-                }],
+                updateStatuses: [UpdateStatusItem(id: "local", status: model.updateStatus,
+                    postpone: { model.updateControl(.postpone) },
+                    installNow: model.supportsUpdateDrain ? { model.updateControl(.installNow) } : nil)],
                 path: $path,
                 projects: model.projects,
                 projectListStatus: model.projectListStatus,
@@ -843,8 +843,10 @@ struct RootView: View {
                 UpdateStatusItem(
                     id: host.id,
                     hostLabel: session.hosts.hasMultipleHosts ? session.hosts.label(for: host) : nil,
-                    status: host.model.updateStatus
-                ) { host.model.updateControl(.postpone) }
+                    status: host.model.updateStatus,
+                    postpone: { host.model.updateControl(.postpone) },
+                    installNow: host.model.supportsUpdateDrain ? { host.model.updateControl(.installNow) } : nil
+                )
             }
         ) { host, thread in
             let notification = session.notificationOpen.flatMap { $0.hostID == host.id && $0.threadId == thread.id ? $0 : nil }

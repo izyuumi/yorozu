@@ -30,8 +30,12 @@ export type ConnectCodex = (handlers: CodexHandlers) => CodexConnection;
  * Never forward CLI stderr: SDK diagnostics can contain private paths or auth material. The app
  * server gets an allowlisted env, not Yorozu's own, so its tools cannot read the sidecar's secrets.
  */
-export const connectCodex: ConnectCodex = (handlers) => {
+export const connectCodex = (handlers: CodexHandlers, trackProcess?: (pid: number) => () => void): CodexConnection => {
   const child = spawn("codex", ["app-server"], { stdio: ["pipe", "pipe", "ignore"], env: childEnv() });
+  let untrack: (() => void) | undefined;
+  try { if (child.pid) untrack = trackProcess?.(child.pid); }
+  catch (error) { child.once("error", () => {}); child.kill("SIGTERM"); throw error; }
+  child.once("exit", () => { try { untrack?.(); } catch { /* Stale record is checked on restart. */ } });
   const lines = createInterface({ input: child.stdout });
   const pending = new Map<number, { resolve(value: ObjectValue): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
   const prompts = new Map<unknown, AbortController>();
@@ -172,6 +176,7 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
                   ok: !["failed", "declined"].includes(string(item.status)) && item.success !== false && !item.error, output } });
               }
             }
+            if (complete) turn.onToolBoundary?.();
           } else if (method === "turn/completed") {
             const done = object(params.turn);
             if (done.status === "failed") reject(new Error(string(object(done.error).message) || "Codex turn failed"));

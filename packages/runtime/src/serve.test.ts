@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -752,7 +753,7 @@ test("queued updates wait for approvals and queued turns, prioritize new work, a
     const card = (await eventsUntil((event) => event.kind === "approval_card")).at(-1)!;
     if (card.kind !== "approval_card") throw new Error("missing approval");
     expect(await control("queue")).toMatchObject({ phase: "waiting", activeThreads: 1 });
-    now += 86_400_000;
+    now += 86_399_000;
     expect((await control()).phase).toBe("waiting");
     send({ kind: "message", data: { role: "user", text: "failure" } }, "work");
     send({ kind: "message", data: { role: "user", text: "after failure" } }, "work");
@@ -815,11 +816,128 @@ test("phone postponement persists and losing the update controller releases admi
   expect(JSON.parse(readFileSync(join(dir, "update-postponed-until.json"), "utf8"))).toBe(postponed.data.postponedUntil);
   mac.close();
   await eventsUntil((event) => event.kind === "update_status" && event.data.phase === "none");
+  expect(JSON.parse(readFileSync(join(dir, "update-pending-since.json"), "utf8"))).toBeNull();
   const reconnected = await macClient(dir);
   reconnected.send({ kind: "update_control", data: { action: "queue", updateId: "u2", version: "1.0" } });
   expect((await eventsUntil((event) => event.kind === "update_status" && event.data.phase === "postponed")).at(-1))
     .toMatchObject({ data: { postponedUntil: postponed.data.postponedUntil } });
+  const pendingBeforeRestart = JSON.parse(readFileSync(join(dir, "update-pending-since.json"), "utf8"));
+  await sidecar.close();
+  expect(JSON.parse(readFileSync(join(dir, "update-pending-since.json"), "utf8"))).toEqual(pendingBeforeRestart);
   reconnected.close();
+});
+
+test("losing the updater during drain resumes a paused native turn", async () => {
+  const run = vi.fn<NativeAgentRunner["run"]>(async (turn) => {
+    if (turn.text.includes("Resume the interrupted")) return { text: "recovered", sessionId: "session" };
+    await turn.approve!("Bash", { command: "echo safe" }, turn.signal);
+    return { text: "original", sessionId: "session" };
+  });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } });
+  const mac = await macClient(dir);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "disconnect-drain");
+  const eventId = send({ kind: "message", data: { role: "user", text: "do work" } }, "disconnect-drain");
+  await eventsUntil((event) => event.kind === "approval_card" && event.threadId === "disconnect-drain");
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const control = async (action: "queue" | "poll") => {
+    const id = mac.send({ kind: "update_control", data: { action, updateId: "lost-updater", version: "1.0" } });
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "update_status" && event.data.requestId === id)).toBe(true));
+  };
+  await control("queue");
+  now += 86_400_000;
+  await control("poll");
+  await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === "disconnect-drain")?.nativeTurn?.state).toBe("interrupted"));
+  mac.close();
+  await eventsUntil((event) => event.kind === "message" && event.id === `native:${eventId}:final` && event.data.done === true);
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(listThreads(dir).find((thread) => thread.id === "disconnect-drain")?.nativeTurn).toBeUndefined();
+});
+
+test("24-hour drain interrupts a native approval safely and resumes after sidecar restart", async () => {
+  const run = vi.fn<NativeAgentRunner["run"]>(async (turn) => {
+    if (turn.text.includes("Resume the interrupted")) return { text: "recovered", sessionId: "session" };
+    turn.onActivity?.("call:tool", { kind: "tool_call", data: { callId: "tool", name: "Bash", args: {} } });
+    await turn.approve!("Bash", { command: "echo safe" }, turn.signal);
+    return { text: "original", sessionId: "session" };
+  });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } });
+  const mac = await macClient(dir);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "drain");
+  const eventId = send({ kind: "message", data: { role: "user", text: "do work" } }, "drain");
+  await eventsUntil((event) => event.kind === "approval_card" && event.threadId === "drain");
+  const queuedId = send({ kind: "message", data: { role: "user", text: "after drain" } }, "drain");
+  await vi.waitFor(() => expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8")))
+    .toContainEqual({ threadId: "drain", eventId: queuedId }));
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const status = async (action: "queue" | "poll") => {
+    const id = mac.send({ kind: "update_control", data: { action, updateId: "u-drain", version: "1.0" } });
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "update_status" && event.data.requestId === id)).toBe(true));
+    const event = mac.events.find((event) => event.kind === "update_status" && event.data.requestId === id)!;
+    if (event.kind !== "update_status") throw new Error("missing status");
+    return event.data;
+  };
+  expect((await status("queue")).phase).toBe("waiting");
+  now += 86_400_000;
+  expect((await status("poll")).phase).toBe("draining");
+  const oldClientStatus = send({ kind: "update_control", data: { action: "status" } });
+  const oldClientReply = (await eventsUntil((event) => event.kind === "update_status" &&
+    event.data.requestId === oldClientStatus)).at(-1)!;
+  expect(oldClientReply).toMatchObject({ data: { phase: "waiting" } });
+  await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === "drain")?.nativeTurn?.state).toBe("interrupted"));
+  expect((await status("poll")).phase).toBe("installing");
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8")))
+    .toEqual([{ threadId: "drain", eventId }, { threadId: "drain", eventId: queuedId }]);
+  await sidecar.close();
+  mac.close();
+  await relay.close();
+  vi.restoreAllMocks();
+  const resumed = vi.fn<NativeAgentRunner["run"]>(async (turn) => ({ text: turn.text.includes("after drain") ? "queued" : "recovered", sessionId: "session" }));
+  await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run: resumed } } });
+  await vi.waitFor(() => expect(readThreadEvents("drain", dir).some((event) =>
+    event.id === `native:${eventId}:final` && event.kind === "message" && event.data.done)).toBe(true));
+  await vi.waitFor(() => expect(readThreadEvents("drain", dir).some((event) =>
+    event.id === `native:${queuedId}:final` && event.kind === "message" && event.data.done)).toBe(true));
+  expect(resumed).toHaveBeenCalledTimes(2);
+  expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8"))).toEqual([]);
+});
+
+test("retry repairs a logged native message after queue persistence fails", async () => {
+  const run = vi.fn<NativeAgentRunner["run"]>(async () => ({ text: "done", sessionId: "session" }));
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } });
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "retry-queue");
+  const blocker = join(dir, "native-turn-queue.json.tmp");
+  mkdirSync(blocker);
+  const event: YorozuEvent = { id: "queue-retry", threadId: "retry-queue", ts: Date.now(), agentId: "phone",
+    kind: "message", data: { role: "user", text: "once" } };
+  sendRaw(event);
+  await vi.waitFor(() => expect(readThreadEvents("retry-queue", dir).some((known) => known.id === event.id)).toBe(true));
+  expect(run).not.toHaveBeenCalled();
+  rmSync(blocker, { recursive: true });
+  sendRaw(event);
+  await eventsUntil((reply) => reply.kind === "message" && reply.id === `native:${event.id}:final` && reply.data.done === true);
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(readThreadEvents("retry-queue", dir).filter((known) => known.id === event.id)).toHaveLength(1);
+  expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8"))).toEqual([]);
+});
+
+test("startup stops a journaled orphan before native recovery can run", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-orphan-recovery-"));
+  const orphan = spawn("/bin/sleep", ["30"], { stdio: "ignore" });
+  if (!orphan.pid) throw new Error("sleep did not start");
+  const exited = new Promise<void>((resolve) => orphan.once("exit", () => resolve()));
+  const startedAt = execFileSync("/bin/ps", ["-p", String(orphan.pid), "-o", "lstart="], { encoding: "utf8" }).trim();
+  writeFileSync(join(dir, "native-agent-processes.json"), JSON.stringify([
+    { pid: orphan.pid, startedAt, commandLine: "/bin/sleep 30" },
+  ]));
+  try {
+    await pairedPhone([], false, { stateDir: dir });
+    await exited;
+    expect(orphan.signalCode).toBe("SIGTERM");
+    expect(JSON.parse(readFileSync(join(dir, "native-agent-processes.json"), "utf8"))).toEqual([]);
+  } finally { if (orphan.exitCode === null && orphan.signalCode === null) orphan.kill("SIGKILL"); }
 });
 
 test("unreadable agent state blocks updates and a failed postponement can be retried", async () => {

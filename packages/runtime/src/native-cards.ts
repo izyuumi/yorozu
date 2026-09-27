@@ -27,6 +27,10 @@ export class NativeCards {
     return pending?.kind === "approval_answer" && pending.threadId === threadId;
   }
 
+  waitingThreads(): Set<string> {
+    return new Set([...this.waiting.values()].map((item) => item.threadId));
+  }
+
   answer(event: YorozuEvent): boolean {
     if (event.kind !== "approval_answer" && event.kind !== "question_answer") return false;
     const id = event.kind === "approval_answer" ? event.data.actionId : event.data.questionId;

@@ -1,16 +1,42 @@
 import { expect, test } from "vitest";
 import { UpdateGate } from "./update-gate.js";
 
-test("new work, approval waits and retries keep the update queued without a deadline", () => {
+test("idle wins before the 24 hour drain deadline", () => {
   const gate = new UpdateGate();
-  gate.queue("update", "1.0");
+  gate.queue("update", "1.0", 1_000);
   expect(gate.poll(2, 1_000).phase).toBe("waiting");
   expect(gate.poll(3, 86_400_000).phase).toBe("waiting");
-  expect(gate.poll(0, 86_401_000).deadline).toBe(86_411_000);
+  expect(gate.poll(0, 86_400_000).deadline).toBe(86_410_000);
   gate.activity();
-  expect(gate.poll(0, 86_402_000).deadline).toBe(86_412_000);
-  for (let second = 3; second < 12; second++) expect(gate.poll(0, 86_400_000 + second * 1_000).phase).toBe("countdown");
-  expect(gate.poll(0, 86_412_000).phase).toBe("installing");
+  expect(gate.poll(0, 86_400_500).deadline).toBe(86_410_500);
+  for (let second = 1; second < 10; second++) gate.poll(0, 86_400_500 + second * 1_000);
+  expect(gate.poll(0, 86_410_500).phase).toBe("installing");
+});
+
+test("busy update drains after 24 hours, installs at safe point or hard deadline", () => {
+  const gate = new UpdateGate();
+  gate.queue("update", "1.0", 1_000);
+  expect(gate.poll(1, 86_400_999).phase).toBe("waiting");
+  expect(gate.poll(1, 86_401_000)).toMatchObject({ phase: "draining", deadline: 86_701_000 });
+  expect(gate.poll(0, 86_401_001).phase).toBe("installing");
+  const stuck = new UpdateGate();
+  stuck.queue("update", "1.0", 1_000);
+  stuck.poll(1, 86_401_000);
+  expect(stuck.poll(null, 86_402_000).phase).toBe("unknown");
+  expect(stuck.draining).toBe(true);
+  expect(stuck.poll(1, 86_701_000).phase).toBe("installing");
+  expect(stuck.draining).toBe(true);
+});
+
+test("manual install overrides postponement; postponement cancels a drain", () => {
+  const gate = new UpdateGate();
+  gate.queue("update", "1.0", 1_000);
+  gate.postpone(2_000);
+  expect(gate.poll(1, 86_401_000).phase).toBe("draining");
+  gate.postpone(86_402_000);
+  expect(gate.poll(1, 86_403_000).phase).toBe("postponed");
+  gate.installNow();
+  expect(gate.poll(1, 86_403_001).phase).toBe("draining");
 });
 
 test("unknown status and a missing updater heartbeat require a fresh countdown", () => {
@@ -33,4 +59,12 @@ test("postponement survives requeue and requires ten idle seconds after expiry",
   const restored = new UpdateGate(until);
   restored.queue("update", "1.0");
   expect(restored.poll(0, 2_000).phase).toBe("postponed");
+});
+
+test("cancel resets the age of the same update", () => {
+  const gate = new UpdateGate();
+  gate.queue("update", "1.0", 1_000);
+  gate.cancel();
+  gate.queue("update", "1.0", 86_401_000);
+  expect(gate.poll(1, 86_401_000).phase).toBe("waiting");
 });
