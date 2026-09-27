@@ -55,6 +55,8 @@ final class ShowcaseFlowTests: XCTestCase {
         let archive = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Archived'")).firstMatch
         XCTAssertTrue(archive.waitForExistence(timeout: 10))
         archive.tap()
+        // The archive is the last thing in the list; its rows are drawn only once on screen.
+        app.swipeUp()
         XCTAssertTrue(row.waitForExistence(timeout: 10), "The archive does not list the thread")
         row.swipeLeft()
         app.buttons["Restore"].tap()

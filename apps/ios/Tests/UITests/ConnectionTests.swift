@@ -19,20 +19,19 @@ final class ConnectionTests: XCTestCase {
     }
 
     /// A silently dead link is noticed and shown, a brief drop is not, and the link comes back
-    /// on its own. Idle, nothing but the ping can tell: up to 40s, then the 5s grace.
+    /// on its own. Idle, nothing but the ping can tell: up to 40s, then the 5s grace. Read from
+    /// the status the Settings button carries, which stays; the notice over the list is brief.
     @MainActor
     func testAReconnectingLinkIsShownOnlyWhenItLastsAndClearsItself() async throws {
         try await launchPaired()
-        let reconnecting = app.descendants(matching: .any)["Mac connection: Reconnecting"].firstMatch
         try await rig.post("down")
         try await rig.post("heal")
-        XCTAssertFalse(reconnecting.waitForExistence(timeout: 7), "A brief drop flickered the status")
+        XCTAssertNotEqual(status(becomes: "Reconnecting", within: 7), .completed, "A brief drop flickered the status")
 
         try await rig.post("blackhole")
-        XCTAssertTrue(reconnecting.waitForExistence(timeout: 70), "A dead link was never shown")
+        XCTAssertEqual(status(becomes: "Reconnecting", within: 70), .completed, "A dead link was never shown")
         try await rig.post("heal")
-        XCTAssertTrue(reconnecting.waitForNonExistence(timeout: 70), "The link did not come back by itself")
-        XCTAssertEqual(app.buttons["Settings"].value as? String, "Mac connection: Connected")
+        XCTAssertEqual(status(becomes: "Connected", within: 70), .completed, "The link did not come back by itself")
     }
 
     /// Messages sent into a dead link say they are unconfirmed, then go through once each, in
@@ -121,12 +120,20 @@ final class ConnectionTests: XCTestCase {
     }
 
     @MainActor
+    private func status(becomes state: String, within seconds: TimeInterval) -> XCTWaiter.Result {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Mac connection: \(state)"), object: app.buttons["Settings"])
+        return XCTWaiter.wait(for: [expectation], timeout: seconds)
+    }
+
+    @MainActor
     private func waitConnected() throws {
+        // A relaunch reopens the chat that was open, so the list may be one step back.
+        let back = app.navigationBars.buttons["Threads"]
+        if back.waitForExistence(timeout: 5) { back.tap() }
         let settings = app.buttons["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 30), "No thread list")
-        let connected = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == 'Mac connection: Connected'"), object: settings)
-        XCTAssertEqual(XCTWaiter.wait(for: [connected], timeout: 45), .completed, "Never connected")
+        XCTAssertEqual(status(becomes: "Connected", within: 45), .completed, "Never connected")
     }
 
     @MainActor
