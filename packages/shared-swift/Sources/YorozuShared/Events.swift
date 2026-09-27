@@ -904,13 +904,15 @@ public struct RuleDeleteData: Codable, Equatable, Sendable {
 /// an approval card this is not about permission: nothing is pending, the agent simply does not
 /// know which way to go, and its tool call stays suspended until an answer goes back.
 public struct QuestionCardData: Codable, Equatable, Sendable {
+    public var nativeAgent: ThreadAgent?
     public var questionId: String
     public var question: String
     /// The choices, in the order the card lists them. May be empty when only free text fits.
     public var options: [String]
     /// Whether the card also offers a free-text field. Absent on the wire means it does not.
     public var allowOther: Bool?
-    public init(questionId: String, question: String, options: [String], allowOther: Bool? = nil) {
+    public init(questionId: String, question: String, options: [String], allowOther: Bool? = nil, nativeAgent: ThreadAgent? = nil) {
+        self.nativeAgent = nativeAgent
         self.questionId = questionId
         self.question = question
         self.options = options
@@ -984,36 +986,77 @@ public struct ProgressCardData: Codable, Equatable, Sendable {
     public var running: Bool { steps.contains { $0.state == .pending || $0.state == .running } }
 }
 
-/// Who answers a thread. `yorozu` is today's loop; the other two are native CLI coding agents,
-/// each thread one of their sessions. Absent on the wire means `yorozu`.
-public enum ThreadAgent: String, Codable, Equatable, Sendable, CaseIterable, Identifiable {
-    case yorozu
-    case claudeCode = "claude-code"
-    case codex
+/// Open wire identifier. Only the three built-ins have client-owned names and artwork.
+public struct ThreadAgent: RawRepresentable, Codable, Hashable, Sendable, CaseIterable, Identifiable {
+    public let rawValue: String
+    public static let yorozu = Self("yorozu")
+    public static let claudeCode = Self("claude-code")
+    public static let codex = Self("codex")
+    public static let allCases: [Self] = [.yorozu, .claudeCode, .codex]
+
+    private init(_ rawValue: String) { self.rawValue = rawValue }
+    public init?(rawValue: String) {
+        guard !rawValue.isEmpty, rawValue.utf8.count <= 64,
+              rawValue.utf8.allSatisfy({ (97...122).contains($0) || (48...57).contains($0) || $0 == 45 }) else { return nil }
+        self.rawValue = rawValue
+    }
+
+    public init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        guard let agent = Self(rawValue: value) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid agent identifier"))
+        }
+        self = agent
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 
     public var id: Self { self }
 
     /// What a picker and a row call it.
     public var label: String {
-        switch self {
-        case .yorozu: "Yorozu"
-        case .claudeCode: "Claude Code"
-        case .codex: "Codex"
-        }
+        if self == .yorozu { return "Yorozu" }
+        if self == .claudeCode { return "Claude Code" }
+        if self == .codex { return "Codex" }
+        return rawValue
     }
 
     /// The provider-owned mark used only to identify who answers a thread.
     public var mark: AgentMark {
-        switch self {
-        case .yorozu: .yorozu
-        case .claudeCode: .claude
-        case .codex: .openAI
-        }
+        if self == .yorozu { return .yorozu }
+        if self == .claudeCode { return .claude }
+        if self == .codex { return .openAI }
+        return .generic
     }
 
     /// Whether the agent needs a folder to work in. Yorozu works everywhere; the coding agents
     /// each run in one project.
     public var needsFolder: Bool { self != .yorozu }
+}
+
+public struct AgentDescriptor: Codable, Equatable, Sendable, Identifiable {
+    public var id: ThreadAgent
+    public var label: String
+    public var description: String?
+    public var needsFolder: Bool
+
+    public init(id: ThreadAgent, label: String, description: String? = nil, needsFolder: Bool) {
+        self.id = id
+        self.label = label
+        self.description = description
+        self.needsFolder = needsFolder
+    }
+
+    public var isValid: Bool {
+        func oneLine(_ value: String, max: Int) -> Bool {
+            !value.trimmingCharacters(in: .whitespaces).isEmpty && value.unicodeScalars.count <= max &&
+                !value.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) || CharacterSet.newlines.contains($0) }
+        }
+        return oneLine(label, max: 64) && (description.map { oneLine($0, max: 200) } ?? true)
+    }
 }
 
 /// One folder a coding agent's thread can be started in. Only the folder itself is here: what
@@ -1308,9 +1351,24 @@ public struct ModelOption: Codable, Equatable, Sendable, Identifiable {
 public struct ModelListData: Codable, Equatable, Sendable {
     public var models: [ModelOption]
     public var agentModels: [String: [ModelOption]]?
-    public init(models: [ModelOption], agentModels: [String: [ModelOption]]? = nil) {
+    public var agents: [AgentDescriptor]?
+    public init(models: [ModelOption], agentModels: [String: [ModelOption]]? = nil, agents: [AgentDescriptor]? = nil) {
         self.models = models
         self.agentModels = agentModels
+        self.agents = agents
+    }
+
+    private enum CodingKeys: String, CodingKey { case models, agentModels, agents }
+    private struct OptionalAgent: Decodable {
+        let value: AgentDescriptor?
+        init(from decoder: Decoder) throws { value = try? AgentDescriptor(from: decoder) }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        models = try container.decode([ModelOption].self, forKey: .models)
+        agentModels = try container.decodeIfPresent([String: [ModelOption]].self, forKey: .agentModels)
+        agents = (try? container.decode([OptionalAgent].self, forKey: .agents))?.compactMap(\.value)
     }
 }
 

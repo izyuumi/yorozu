@@ -11,7 +11,7 @@
 import { query as sdkQuery, type ModelInfo, type Options, type Query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { spawn } from "node:child_process";
 import { dirname } from "node:path";
-import type { EventPayload, ModelOption, ReasoningEffort } from "@yorozu/shared";
+import type { AgentDescriptor, EventPayload, ModelOption, ReasoningEffort } from "@yorozu/shared";
 
 export interface NativeTurn {
   threadId: string;
@@ -100,6 +100,8 @@ export interface NativeTurnResult {
 }
 
 export interface NativeAgentRunner {
+  /** Required for host-registered agents beyond the built-ins. */
+  descriptor?: AgentDescriptor;
   models?(): Promise<ModelOption[]>;
   run(turn: NativeTurn): Promise<NativeTurnResult>;
 }

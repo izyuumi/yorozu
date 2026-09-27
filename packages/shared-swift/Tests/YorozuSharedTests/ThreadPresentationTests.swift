@@ -6,15 +6,19 @@ private func presentationThread(agent: ThreadAgent? = nil, cwd: String? = nil) -
     ThreadSummary(id: "presentation", title: "", archived: false, lastActivity: 0, agent: agent, cwd: cwd)
 }
 
-@Test func threadPresentationUsesCompatibleAgentFallbackAfterDecoding() throws {
-    for agentField in ["", ",\"agent\":\"future-agent\""] {
-        let wire = "{\"id\":\"legacy\",\"title\":\"\",\"archived\":false,\"lastActivity\":0,\"cwd\":\"/Projects/old\"\(agentField)}"
-        let thread = try JSONDecoder().decode(ThreadSummary.self, from: Data(wire.utf8))
-        let presentation = ThreadPresentation(thread: thread)
-        #expect(presentation.agent == .yorozu)
-        #expect(presentation.projectPath == nil)
-        #expect(presentation.projectName == nil)
-    }
+@Test func threadPresentationKeepsUnknownValidAgentAfterDecoding() throws {
+    let legacy = try JSONDecoder().decode(ThreadSummary.self, from: Data(
+        #"{"id":"legacy","title":"","archived":false,"lastActivity":0,"cwd":"/Projects/old"}"#.utf8))
+    let legacyPresentation = ThreadPresentation(thread: legacy)
+    #expect(legacyPresentation.agent == .yorozu)
+    #expect(legacyPresentation.projectPath == nil)
+
+    let future = try JSONDecoder().decode(ThreadSummary.self, from: Data(
+        #"{"id":"future","title":"","archived":false,"lastActivity":0,"cwd":"/Projects/old","agent":"future-agent"}"#.utf8))
+    let presentation = ThreadPresentation(thread: future)
+    #expect(presentation.agent == ThreadAgent(rawValue: "future-agent"))
+    #expect(presentation.projectPath == "/Projects/old")
+    #expect(presentation.projectName == "old")
 }
 
 @Test func threadPresentationDistinguishesSameNamedCodingProjects() {

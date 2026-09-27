@@ -5,6 +5,7 @@ public enum AgentMark: String, Equatable, Sendable {
     case yorozu
     case claude
     case openAI
+    case generic
 }
 
 /// Provider-owned marks used only beside the agent they identify. The supplied artwork is shown
@@ -38,6 +39,11 @@ public struct AgentMarkView: View {
                     .renderingMode(.original)
                     .scaledToFit()
                     .frame(width: size * 2, height: size * 2)
+            case .generic:
+                Image(systemName: "sparkle")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.secondary)
             }
         }
         .frame(width: size, height: size)
@@ -49,10 +55,12 @@ public struct AgentMarkView: View {
 /// for VoiceOver.
 public struct AgentIdentifierView: View {
     private let agent: ThreadAgent
+    private let label: String
     private let size: CGFloat
 
-    public init(_ agent: ThreadAgent, size: CGFloat = 16) {
+    public init(_ agent: ThreadAgent, size: CGFloat = 16, label: String? = nil) {
         self.agent = agent
+        self.label = label ?? agent.label
         self.size = size
     }
 
@@ -62,7 +70,7 @@ public struct AgentIdentifierView: View {
             .alignmentGuide(.firstTextBaseline) { $0.height * 0.8 }
             .fixedSize()
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(agent.label)
+        .accessibilityLabel(label)
     }
 }
 

@@ -7,6 +7,19 @@ import Testing
     #expect(NewThreadPicker.codingAgents == [.claudeCode, .codex])
 }
 
+@MainActor @Test func hostAgentsGroupByFolderWithBuiltInsFirst() throws {
+    let immediate = try #require(ThreadAgent(rawValue: "helper"))
+    let project = try #require(ThreadAgent(rawValue: "builder"))
+    let groups = NewThreadPicker.groups([
+        AgentDescriptor(id: project, label: "Builder", needsFolder: true),
+        AgentDescriptor(id: .claudeCode, label: "Fake Claude", needsFolder: true),
+        AgentDescriptor(id: immediate, label: "Helper", description: "Answers quickly", needsFolder: false),
+        AgentDescriptor(id: .yorozu, label: "Yorozu", needsFolder: false),
+    ])
+    #expect(groups.assistants.map(\.id) == [.yorozu, immediate])
+    #expect(groups.codingAgents.map(\.id) == [.claudeCode, project])
+}
+
 @MainActor @Test func recentProjectsAppearNewestFirstWithoutReorderingTheRest() {
     let projects = [
         ProjectFolder(path: "/Projects/older", name: "older", lastUsed: 10),

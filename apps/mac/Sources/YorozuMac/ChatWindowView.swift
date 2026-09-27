@@ -261,8 +261,10 @@ private struct LocalChatWindowView: View {
             ThreadSidebar(
                 threads: model.threads,
                 workingThreads: model.generating,
+                agentLabel: { model.agentLabel($0.agent ?? .yorozu) },
                 selection: $selection,
                 projects: model.projects,
+                agents: model.availableAgents,
                 projectListStatus: model.projectListStatus,
                 onRefreshProjects: { await model.refreshProjects() },
                 onCreate: { agent, cwd in selection = model.newDraft(agent: agent, cwd: cwd).id },

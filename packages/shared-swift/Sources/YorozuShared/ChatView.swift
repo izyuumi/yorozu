@@ -130,7 +130,9 @@ public struct ChatView: View {
         self.onCreate = onCreate
     }
 
-    private var presentation: ThreadPresentation { ThreadPresentation(thread: thread) }
+    private var presentation: ThreadPresentation {
+        ThreadPresentation(thread: thread, descriptor: model.descriptor(for: thread.agent ?? .yorozu))
+    }
 
     private var events: [YorozuEvent] { model.timeline(thread.id).events }
 
@@ -263,7 +265,7 @@ public struct ChatView: View {
         .environment(\.fetchToolResult) { model.requestToolResult($0, in: thread.id) }
         .sheet(isPresented: $choosingAgent) {
             if let onCreate {
-                NewThreadPicker(projects: model.projects, status: model.projectListStatus,
+                NewThreadPicker(projects: model.projects, agents: model.availableAgents, status: model.projectListStatus,
                     onRefresh: { await model.refreshProjects() }, onStart: onCreate)
                     .presentationDetents([.medium, .large])
             }
@@ -272,7 +274,7 @@ public struct ChatView: View {
             // In the view tree, not a sheet: a presented sheet resigns the composer, and the
             // keyboard and caret must survive choosing a model mid-sentence.
             .overlay(alignment: .bottom) {
-                if runSettings {
+                if runSettings && !model.models(for: thread).isEmpty {
                     ZStack(alignment: .bottom) {
                         Color.black.opacity(0.28)
                             .ignoresSafeArea()
@@ -299,7 +301,7 @@ public struct ChatView: View {
         .navigationTitle(thread.displayTitle)
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
-            .modifier(AgentSubtitle(text: presentation.agent.label))
+            .modifier(AgentSubtitle(text: presentation.agentLabel))
         #else
             // A thread on a model of its own says so beside its title. Only then — the default
             // is the case that needs no caption. The Mac has a title bar subtitle for exactly
@@ -326,7 +328,7 @@ public struct ChatView: View {
                                         .fill(model.ownerOnline ? YorozuPalette.sage : Color.secondary)
                                         .frame(width: 5, height: 5)
                                         .accessibilityHidden(true)
-                                    Text(presentation.agent.label)
+                                    Text(presentation.agentLabel)
                                         .lineLimit(1)
                                 }
                                 .font(.caption2)
@@ -498,7 +500,7 @@ public struct ChatView: View {
     /// thread is still running on a concrete first model; hiding that identity made the shipped
     /// toolbar materially different from the design and forced a menu open to discover it.
     private var macModelCaption: String {
-        if thread.agent?.needsFolder == true && thread.model == nil { return "Auto" }
+        if presentation.needsFolder && thread.model == nil { return "Auto" }
         let spec = thread.model ?? model.models(for: thread).first?.id
         guard let spec, !spec.isEmpty else { return "" }
         if let option = model.models(for: thread).first(where: { $0.id == spec }) {
@@ -849,7 +851,8 @@ public struct ChatView: View {
                         if model.outboxStatus(of: event.id) == .expired { model.stillSend(event.id) }
                         else { model.retry(event.id) }
                     },
-                    agent: presentation.agent
+                    agent: presentation.agent,
+                    agentLabel: presentation.agentLabel
                 )
                 .id(event.id)
                 .onAppear { model.requestAttachmentDownloads(event) }
@@ -860,6 +863,7 @@ public struct ChatView: View {
             if case .approvalCard(let card) = event.payload {
                 ApprovalCardView(
                     card: card,
+                    agentLabel: card.nativeAgent.map(model.agentLabel),
                     answered: model.answered.contains(card.actionId),
                     pending: model.approvalPending(card.actionId),
                     disposition: model.approvalOutcomes[card.actionId],
@@ -884,6 +888,7 @@ public struct ChatView: View {
             if case .questionCard(let card) = event.payload {
                 QuestionCardView(
                     card: card,
+                    agentLabel: card.nativeAgent.map(model.agentLabel),
                     answered: model.answeredQuestions.contains(card.questionId),
                     chosen: model.questionChoices[card.questionId]
                 ) { model.answerQuestion(card.questionId, in: thread.id, $0) }
@@ -977,7 +982,7 @@ public struct ChatView: View {
 
                 HStack(alignment: .center, spacing: 4) {
                     attachButton
-                    runSettingsButton
+                    if !model.models(for: thread).isEmpty { runSettingsButton }
                     Spacer(minLength: 4)
                     if model.stopPending(in: thread.id) {
                         stopPendingLabel
@@ -1006,8 +1011,9 @@ public struct ChatView: View {
 
                 HStack(alignment: .center, spacing: 4) {
                     attachButton
-                    runSettingsButton
-                        .frame(maxWidth: 280, alignment: .leading)
+                    if !model.models(for: thread).isEmpty {
+                        runSettingsButton.frame(maxWidth: 280, alignment: .leading)
+                    }
                     Spacer(minLength: 4)
                     if model.stopPending(in: thread.id) {
                         stopPendingLabel

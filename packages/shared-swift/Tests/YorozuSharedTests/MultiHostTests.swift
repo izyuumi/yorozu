@@ -79,6 +79,32 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
 }
 
 @MainActor
+@Test func hostAgentCatalogsStaySeparateAndOnlyOfferRegisteredDrafts() async throws {
+    let firstTransport = MultiHostTransport(), secondTransport = MultiHostTransport()
+    let first = multiHostSession(multiHostID(0), transport: firstTransport)
+    let second = multiHostSession(multiHostID(1), transport: secondTransport)
+    let hosts = MultiHostModel(sessions: [first, second])
+    defer { first.model.close(); second.model.close() }
+    let helper = try #require(ThreadAgent(rawValue: "helper"))
+    let builder = try #require(ThreadAgent(rawValue: "builder"))
+    await firstTransport.yield(.event(multiHostEvent("first-agents", .modelList(ModelListData(models: [], agents: [
+        AgentDescriptor(id: .yorozu, label: "Yorozu", needsFolder: false),
+        AgentDescriptor(id: helper, label: "Helper", needsFolder: false),
+    ])))))
+    await secondTransport.yield(.event(multiHostEvent("second-agents", .modelList(ModelListData(models: [], agents: [
+        AgentDescriptor(id: .yorozu, label: "Yorozu", needsFolder: false),
+        AgentDescriptor(id: builder, label: "Builder", needsFolder: true),
+    ])))))
+    #expect(await multiHostEventually {
+        first.model.availableAgents.map(\.id) == [.yorozu, helper] &&
+            second.model.availableAgents.map(\.id) == [.yorozu, builder]
+    })
+    #expect(hosts.newDraft(on: second.id, agent: helper) == nil)
+    #expect(hosts.newDraft(on: first.id, agent: helper)?.hostID == first.id)
+    #expect(hosts.newDraft(on: second.id, agent: builder, cwd: "/Projects/app")?.hostID == second.id)
+}
+
+@MainActor
 @Test func restoredNavigationSelectsOnlyLastUsedHostsExistingThread() {
     let first = HostSession(id: multiHostID(0), model: ChatModel(transport: MultiHostTransport()), relayURL: "wss://relay.example")
     let second = HostSession(id: multiHostID(1), model: ChatModel(transport: MultiHostTransport()), relayURL: "wss://relay.example")
