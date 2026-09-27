@@ -1659,6 +1659,9 @@ func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(
     let restored = ChatModel(transport: FakeTransport(), cache: cache)
     #expect(restored.availableAgents.map(\.id) == [.yorozu, custom, .codex])
     #expect(restored.agentLabel(custom) == "Test Harness")
+    await transport.yield(.event(event("older-host", .modelList(ModelListData(models: [])))))
+    #expect(await eventually { model.availableAgents.map(\.id) == ThreadAgent.allCases })
+    #expect(ChatModel(transport: FakeTransport(), cache: cache).availableAgents.map(\.id) == ThreadAgent.allCases)
     model.close()
 }
 

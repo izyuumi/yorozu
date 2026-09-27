@@ -1202,12 +1202,13 @@ test("bad agent descriptors are not advertised and one model failure leaves othe
       models: async () => [{ id: "good/model", label: "Good Model", providerLabel: "Good", efforts: [] }], run },
     broken: { descriptor: { id: "broken", label: "Broken", needsFolder: true },
       models: () => { throw new Error("model service down"); }, run },
+    constructor: { descriptor: { id: "constructor", label: "Constructor", needsFolder: false }, run },
     oversized: { descriptor: { id: "oversized", label: "X".repeat(65), needsFolder: false }, run },
   } });
   const catalog = (await eventsUntil((event) => event.kind === "model_list" &&
     event.data.agentModels?.good?.length === 1)).at(-1)!;
   if (catalog.kind !== "model_list") throw new Error("expected model list");
-  expect(catalog.data.agents?.map((agent) => agent.id)).toEqual(["yorozu", "good", "broken"]);
+  expect(catalog.data.agents?.map((agent) => agent.id)).toEqual(["yorozu", "good", "broken", "constructor"]);
   expect(catalog.data.agentModels?.broken).toBeUndefined();
   send({ kind: "thread_create", data: { agent: "oversized" } }, "bad");
   const refused = (await eventsUntil((event) => event.kind === "thought" && event.threadId === "bad")).at(-1)!;

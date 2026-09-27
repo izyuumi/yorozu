@@ -532,9 +532,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const agentDescriptors: AgentDescriptor[] = [{ id: "yorozu", label: "Yorozu", needsFolder: false }];
   for (const [id, runner] of Object.entries(nativeRunners)) {
     if (!validAgentId(id) || id === "yorozu") throw new Error(`invalid registered agent "${id}"`);
-    if (runner.descriptor && (runner.descriptor.id !== id || id in builtInAgents))
+    const builtIn = Object.hasOwn(builtInAgents, id);
+    if (runner.descriptor && (runner.descriptor.id !== id || builtIn))
       throw new Error(`agent "${id}" cannot claim a built-in identity`);
-    const descriptor = runner.descriptor ?? builtInAgents[id];
+    const descriptor = runner.descriptor ?? (builtIn ? builtInAgents[id] : undefined);
     if (descriptor && validAgentDescriptor(descriptor) && agentDescriptors.length < 32)
       agentDescriptors.push(descriptor);
   }
