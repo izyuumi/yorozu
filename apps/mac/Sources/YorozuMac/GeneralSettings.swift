@@ -7,8 +7,11 @@ import YorozuShared
 struct GeneralView: View {
     @ObservedObject private var neverSleep = NeverSleep.shared
     @State private var session = MacChatSession.shared
+    @State private var router = ChatWindowRouter.shared
+    @State private var showingArchive = false
     @AppStorage(ChatView.sendWithCommandReturnKey) private var sendWithCommandReturn = false
     @AppStorage(HostWindowMode.key) private var backgroundOnlyHost = false
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Form {
@@ -41,6 +44,18 @@ struct GeneralView: View {
                     ? "Enter starts a new line."
                     : "Shift-Enter starts a new line.")
                     .leadingFooter()
+            }
+            Section {
+                LabeledContent("Archived threads") {
+                    Text(archivedCount == 0 ? String(localized: "None") : archivedCount.formatted())
+                        .foregroundStyle(.secondary)
+                    Button("Show…") { showingArchive = true }
+                        .disabled(archivedCount == 0)
+                }
+            } header: {
+                Text("Threads")
+            } footer: {
+                Text("Searching threads still finds archived ones.").leadingFooter()
             }
             // The one approval setting Yorozu itself still owns: the global bypass the
             // native agents read. Same toggle as the phone's; the runtime stores it.
@@ -102,6 +117,50 @@ struct GeneralView: View {
         .toggleStyle(.switch)
         .scrollContentBackground(.hidden)
         .background(YorozuPalette.canvas)
+        .sheet(isPresented: $showingArchive) {
+            archive
+                .safeAreaInset(edge: .bottom) {
+                    HStack {
+                        Text("Click a thread to open it in the chat window.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Done") { showingArchive = false }
+                            .keyboardShortcut(.defaultAction)
+                    }
+                    .padding()
+                    .background(YorozuPalette.canvas)
+                }
+                .presentationSizing(.form)
+                .background(YorozuPalette.canvas)
+                .yorozuTint()
+        }
+    }
+
+    private var archivedCount: Int {
+        if session.role == .client {
+            session.hosts.sessions.reduce(0) { $0 + $1.model.threads.filter(\.archived).count }
+        } else {
+            session.model.threads.filter(\.archived).count
+        }
+    }
+
+    @ViewBuilder private var archive: some View {
+        if session.role == .client {
+            ArchivedThreadsView(hosts: session.hosts) { openArchivedThread($0.threadID, hostID: $0.hostID) }
+        } else {
+            ArchivedThreadsView(model: session.model) { openArchivedThread($0, hostID: nil) }
+        }
+    }
+
+    private func openArchivedThread(_ threadID: String, hostID: HostID?) {
+        if HostWindowMode.active {
+            HostWindowMode.routeQuickChat(threadID: threadID, eventID: nil, kind: nil)
+        } else {
+            router.threadID = threadID
+            router.hostID = hostID
+            openWindow(id: YorozuMacApp.chatWindow)
+        }
     }
 
 }

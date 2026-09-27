@@ -28,6 +28,7 @@ private func statusTint(_ host: HostSession) -> Color {
 
 struct SettingsView: View {
     let session: Session
+    let onOpenThread: (String, HostID?) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var addingHost = false
     @State private var repairHostID: HostID?
@@ -73,6 +74,20 @@ struct SettingsView: View {
                         Button("Add host", systemImage: "plus") {
                             repairHostID = nil
                             addingHost = true
+                        }
+                    }
+                    .listRowBackground(YorozuPalette.paper)
+                }
+                if archivedCount > 0 {
+                    Section("Threads") {
+                        NavigationLink {
+                            archive
+                        } label: {
+                            LabeledContent {
+                                Text(archivedCount, format: .number)
+                            } label: {
+                                Label("Archived threads", systemImage: "archivebox")
+                            }
                         }
                     }
                     .listRowBackground(YorozuPalette.paper)
@@ -158,6 +173,20 @@ struct SettingsView: View {
             .modifier(PairingConfirmation(session: session, enabled: !addingHost))
         }
         .yorozuTint()
+    }
+
+    private var archivedCount: Int {
+        session.allModels.reduce(0) { $0 + $1.threads.filter(\.archived).count }
+    }
+
+    @ViewBuilder private var archive: some View {
+        if (session.isDemo || session.hosts.sessions.isEmpty), let model = session.model {
+            ArchivedThreadsView(model: model) { onOpenThread($0, nil) }
+                .yorozuTint()
+        } else {
+            ArchivedThreadsView(hosts: session.hosts) { onOpenThread($0.threadID, $0.hostID) }
+                .yorozuTint()
+        }
     }
 }
 

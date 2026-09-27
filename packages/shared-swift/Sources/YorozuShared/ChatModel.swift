@@ -1800,8 +1800,7 @@ public final class ChatModel {
             case .updateControl:
                 break
             case .threadList(let data):
-                // Archived threads are kept: the phone's list draws them in a section of their
-                // own, which is also the only place they can be brought back from.
+                // Archived threads are kept: Settings lists them and thread search finds them.
                 synced = data.threads.map { remote in
                     guard let pending = pendingReads[remote.id] else { return remote }
                     if (remote.lastReadAt ?? 0) >= pending {

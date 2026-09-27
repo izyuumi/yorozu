@@ -40,7 +40,7 @@ final class ShowcaseFlowTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Answer pending · waiting for host"].exists)
     }
 
-    /// An archived thread leaves the list for the archive, and restoring it brings it back.
+    /// An archived thread leaves the live list, restores from Settings, then returns to it.
     @MainActor
     func testArchivingAThreadMovesItToTheArchiveAndRestoreBringsItBack() {
         let app = XCUIApplication()
@@ -54,23 +54,17 @@ final class ShowcaseFlowTests: XCTestCase {
         app.buttons["Archive"].tap()
         XCTAssertTrue(row.waitForNonExistence(timeout: 10), "An archived thread stays in the list")
 
-        // The archive is the last thing in the list, and a list draws its rows only once on screen.
-        let archive = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Archived'")).firstMatch
-        XCTAssertTrue(scrolledTo(archive, in: app), "No archive after archiving")
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Archived'")).firstMatch.exists)
+        app.buttons["Settings"].tap()
+        let archive = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Archived threads'")).firstMatch
+        XCTAssertTrue(archive.waitForExistence(timeout: 10), "No archive in Settings after archiving")
         archive.tap()
-        XCTAssertTrue(scrolledTo(row, in: app), "The archive does not list the thread")
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "The archive does not list the thread")
         row.press(forDuration: 1)
         app.buttons["Restore"].tap()
-        XCTAssertTrue(archive.waitForNonExistence(timeout: 10), "The archive outlives its last thread")
+        let back = app.navigationBars["Archived threads"].buttons["Settings"]
+        if back.exists { back.tap() }
+        app.buttons["Done"].tap()
         XCTAssertTrue(row.waitForExistence(timeout: 10), "A restored thread is not back in the list")
-    }
-
-    /// Scrolls down until `element` is drawn, a few screens at most.
-    @MainActor
-    private func scrolledTo(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
-        // The list itself, not the app: iOS 26 does not scroll a list for a swipe on the window.
-        let list = app.collectionViews.firstMatch
-        for _ in 0..<4 where !element.waitForExistence(timeout: 2) { list.swipeUp() }
-        return element.exists
     }
 }
