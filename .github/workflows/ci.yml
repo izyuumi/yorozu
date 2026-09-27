@@ -47,7 +47,7 @@ jobs:
             flag ts "^(apps/relay|packages/runtime|packages/shared)/|^fixtures/swift-vectors\.json$|^apps/mac/Sources/YorozuNative/Apple\.swift$|^catalog/models\.json$|$build"
             flag relay '^apps/relay/|^tsconfig\.base\.json$'
             # Interop suites read vectors from fixtures/; wire tests run relay and sidecar.
-            flag swift "^(packages/shared-swift|packages/shared|packages/runtime|apps/relay|apps/mac)/|^fixtures/ts-vectors\.json$|$build"
+            flag swift "^(packages/shared-swift|packages/shared|packages/runtime|apps/relay|apps/mac)/|^fixtures/ts-vectors\.json$|^scripts/check-mac-multi-host\.(sh|swift)$|$build"
             flag ios '^(apps/ios|packages/shared-swift)/|^version\.txt$'
             flag web '^apps/web/'
           } >> "$GITHUB_OUTPUT"
@@ -148,6 +148,8 @@ jobs:
         run: env -u SDKROOT swift test --package-path packages/shared-swift
       - if: needs.changes.outputs.swift == 'true'
         run: env -u SDKROOT swift test --package-path apps/mac
+      - if: needs.changes.outputs.swift == 'true'
+        run: bash scripts/check-mac-multi-host.sh
 
   ios:
     needs: changes
