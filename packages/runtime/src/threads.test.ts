@@ -157,18 +157,20 @@ test("a thread declares its agent at creation, and a thread from before the fiel
   // A repeated frame with a different agent does not re-home an existing thread.
   expect(createThread("Groceries", dir, "draft-1", { agent: "codex" }).agent).toBeUndefined();
 
-  expect(() => createThread("x", dir, "draft-4", { agent: "hermes" as never })).toThrow(/unknown agent "hermes"/);
+  const custom = createThread("Custom", dir, "draft-4", { agent: "hermes", cwd: "/tmp/proj" });
+  expect(threadAgent(custom.id, dir)).toBe("hermes");
+  expect(threadSummaries(dir).find((t) => t.id === custom.id)?.agent).toBe("hermes");
   // A native agent has to be told where to run: no folder, no record, so no turn can ever
   // start it in whatever directory the sidecar happens to have.
   expect(() => createThread("x", dir, "draft-5", { agent: "claude-code" })).toThrow(/claude-code thread needs a project folder/);
   expect(() => createThread("x", dir, "draft-5", { agent: "codex", cwd: "   " })).toThrow(/codex thread needs a project folder/);
-  expect(listThreads(dir).map((t) => t.id).sort()).toEqual(["draft-1", "draft-2", "draft-3"]);
+  expect(listThreads(dir).map((t) => t.id).sort()).toEqual(["draft-1", "draft-2", "draft-3", "draft-4"]);
 
-  // On disk, a record hand-edited to an agent the runtime no longer knows still loads — as yorozu's.
+  // An old record with an agent not registered in the current runtime keeps its identity.
   const index = JSON.parse(readFileSync(join(dir, "threads.json"), "utf8")) as Record<string, unknown>[];
   index[0]!.agent = "hermes";
   writeFileSync(join(dir, "threads.json"), JSON.stringify(index));
-  expect(threadAgent(index[0]!.id as string, dir)).toBe("yorozu");
+  expect(threadAgent(index[0]!.id as string, dir)).toBe("hermes");
 });
 
 test("a native thread remembers its agent's session, and never tells the phone", () => {

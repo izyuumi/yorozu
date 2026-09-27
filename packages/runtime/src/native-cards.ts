@@ -53,10 +53,10 @@ export class NativeCards {
     return answer === "yes";
   }
 
-  ask(threadId: string, question: string, options: string[], signal: AbortSignal): Promise<string | undefined> {
+  ask(threadId: string, agent: ThreadAgent, question: string, options: string[], signal: AbortSignal): Promise<string | undefined> {
     const questionId = randomUUID();
     return this.request(threadId, questionId, "question_answer", {
-      kind: "question_card", data: { questionId, question, options, allowOther: true },
+      kind: "question_card", data: { questionId, nativeAgent: agent, question, options, allowOther: true },
     }, signal);
   }
 

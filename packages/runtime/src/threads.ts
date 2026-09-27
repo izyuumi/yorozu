@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, createReadStream, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  THREAD_AGENTS,
+  validAgentId,
   TOOL_RESULT_PREVIEW_CHARS,
   type EventKind,
   type ReasoningEffort,
@@ -183,23 +183,23 @@ export function createThread(
   title?: string,
   dir = stateDir(),
   id: string = randomUUID(),
-  home: { agent?: ThreadAgent; cwd?: string } = {},
+  home: { agent?: ThreadAgent; cwd?: string; needsFolder?: boolean } = {},
 ): ThreadRecord {
   const agent = home.agent ?? "yorozu";
-  if (!THREAD_AGENTS.includes(agent)) throw new Error(`unknown agent "${String(agent)}"`);
+  if (!validAgentId(agent)) throw new Error(`invalid agent "${String(agent)}"`);
   const existing = listThreads(dir).find((thread) => thread.id === id);
   if (existing) return existing;
   const cwd = home.cwd?.trim();
   // A native agent runs in its thread's folder and nowhere else, so a record without one is
   // not written: it would send the agent to whatever directory the sidecar was started in.
-  if (agent !== "yorozu" && !cwd) throw new Error(`a ${agent} thread needs a project folder`);
+  if ((home.needsFolder ?? agent !== "yorozu") && !cwd) throw new Error(`a ${agent} thread needs a project folder`);
   const thread: ThreadRecord = {
     id,
     title: title?.trim() ?? "",
     createdAt: new Date().toISOString(),
     archived: false,
     // Only a native agent has a home of its own; a `yorozu` thread is the default, unspelled.
-    ...(agent !== "yorozu" ? { agent, ...(cwd ? { cwd } : {}) } : {}),
+    ...(agent !== "yorozu" ? { agent, ...(home.needsFolder !== false && cwd ? { cwd } : {}) } : {}),
   };
   saveThreads([...listThreads(dir), thread], dir);
   return thread;
@@ -297,13 +297,12 @@ export const threadEffort = (id: string, dir = stateDir()): ReasoningEffort | un
   listThreads(dir).find((thread) => thread.id === id)?.effort;
 
 /**
- * Who answers `id`. A thread with no agent field, a thread that does not exist, and a record
- * naming an agent this runtime does not know all read as `yorozu`: today's behaviour, and the
- * only one that can never be the wrong one to fall back on.
+ * Who answers `id`. Only an absent agent field defaults to `yorozu`; a removed runner must
+ * never inherit another agent's tools or permissions.
  */
 export function threadAgent(id: string, dir = stateDir()): ThreadAgent {
   const agent = listThreads(dir).find((thread) => thread.id === id)?.agent;
-  return agent && THREAD_AGENTS.includes(agent) ? agent : "yorozu";
+  return agent ?? "yorozu";
 }
 
 /**
@@ -402,7 +401,7 @@ export const threadSummaries = (dir = stateDir(), minTs = 0): ThreadSummary[] =>
           thread.nativeTurn.state === "interrupted" && (thread.nativeTurn.recoveryAttempts ?? 0) < 3)
         ? { recoveryState: "recovering" as const } : {}),
       // Absent on a yorozu thread: that is the default, and what older phones already assume.
-      ...(thread.agent && THREAD_AGENTS.includes(thread.agent) ? { agent: thread.agent } : {}),
+      ...(thread.agent ? { agent: thread.agent } : {}),
       ...(thread.agent && thread.cwd ? { cwd: thread.cwd } : {}),
       // The two the dot is drawn from. Absent rather than 0 when there is nothing to say, so a
       // thread nobody has read and nobody has been answered in is not permanently bold.

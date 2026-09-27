@@ -41,6 +41,7 @@ public struct MessageBubble: View {
     private let id: String
     private let data: MessageData
     private let agent: ThreadAgent
+    private let agentLabel: String
     /// Whether this is the reply still being written, which is what earns the caret.
     private let streaming: Bool
     /// Set while the message is waiting in the outbox, which is what puts a caption under it.
@@ -69,11 +70,13 @@ public struct MessageBubble: View {
         onWithdraw: (() -> Void)? = nil,
         onDelete: (() -> Void)? = nil,
         onResend: (() -> Void)? = nil,
-        agent: ThreadAgent = .yorozu
+        agent: ThreadAgent = .yorozu,
+        agentLabel: String? = nil
     ) {
         self.id = id
         self.data = data
         self.agent = agent
+        self.agentLabel = agentLabel ?? agent.label
         self.streaming = streaming
         self.status = status
         self.rejectionReason = rejectionReason
@@ -106,7 +109,7 @@ public struct MessageBubble: View {
             if (!data.text.isEmpty || streaming), !isUser {
                 HStack(spacing: 6) {
                     AgentMarkView(agent, size: 13)
-                    Text(agent.label)
+                    Text(agentLabel)
                         .font(.caption2.weight(.semibold))
                         .tracking(0.8)
                 }
@@ -114,7 +117,7 @@ public struct MessageBubble: View {
                 // Left audible: alignment is the only other thing saying who spoke, and
                 // VoiceOver cannot hear alignment.
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(agent.label)
+                .accessibilityLabel(agentLabel)
             }
             if !data.text.isEmpty || streaming {
                 bubble

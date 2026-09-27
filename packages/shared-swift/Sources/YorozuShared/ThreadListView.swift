@@ -286,6 +286,7 @@ enum ThreadStatus: Equatable, Sendable {
 /// The status slot scales with Dynamic Type. Mac titles can wrap; previews stay on one line.
 struct ThreadRow: View {
     let thread: ThreadSummary
+    var agentLabel: String? = nil
     var working = false
     var preview: String? = nil
     var highlightQuery = ""
@@ -306,7 +307,7 @@ struct ThreadRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     // Every thread wears its agent's mark, Yorozu's own knot included.
-                    AgentIdentifierView(thread.agent ?? .yorozu, size: mark)
+                    AgentIdentifierView(thread.agent ?? .yorozu, size: mark, label: agentLabel)
                     highlightedText(thread.displayTitle)
                         .font(.body.weight(thread.isUnread ? .semibold : .regular))
                         // An untitled thread is one the runtime has not named yet, so its
@@ -421,7 +422,7 @@ struct ThreadRow: View {
         var parts: [String] = []
         if let hostLabel { parts.append(hostLabel) }
         if let agent = thread.agent, agent != .yorozu {
-            parts.append([agent.label, thread.repoName].compactMap { $0 }.joined(separator: ", "))
+            parts.append([agentLabel ?? agent.label, thread.repoName].compactMap { $0 }.joined(separator: ", "))
         }
         parts.append(thread.displayTitle)
         if status != .working, let preview = preview ?? thread.lastMessage, !preview.isEmpty { parts.append(preview) }
@@ -640,6 +641,7 @@ public struct ThreadListView<Destination: View>: View {
     private let threads: [ThreadSummary]
     private let workingThreads: Set<String>
     private let hostLabel: (String) -> String?
+    private let agentLabel: (ThreadSummary) -> String?
     private let onNewThread: (() -> Void)?
     private let connection: ConnectionState?
     private let connectionStatus: ConnectionState?
@@ -654,6 +656,7 @@ public struct ThreadListView<Destination: View>: View {
     @Binding private var path: [String]
     /// Where a coding agent can be started. Empty means the picker offers Yorozu alone.
     private let projects: [ProjectFolder]
+    private let agents: [AgentDescriptor]?
     private let projectListStatus: ProjectListStatus
     private let onRefreshProjects: (() async -> Void)?
     /// Starts a thread for the chosen agent, in the chosen folder when it needs one.
@@ -748,6 +751,7 @@ public struct ThreadListView<Destination: View>: View {
         threads: [ThreadSummary],
         workingThreads: Set<String> = [],
         hostLabel: @escaping (String) -> String? = { _ in nil },
+        agentLabel: @escaping (ThreadSummary) -> String? = { _ in nil },
         onNewThread: (() -> Void)? = nil,
         connection: ConnectionState? = nil,
         connectionStatus: ConnectionState? = nil,
@@ -761,6 +765,7 @@ public struct ThreadListView<Destination: View>: View {
         updateStatuses: [UpdateStatusItem] = [],
         path: Binding<[String]>,
         projects: [ProjectFolder] = [],
+        agents: [AgentDescriptor]? = nil,
         projectListStatus: ProjectListStatus = .ready,
         onRefreshProjects: (() async -> Void)? = nil,
         onCreate: @escaping (ThreadAgent, String?) -> Void,
@@ -782,6 +787,7 @@ public struct ThreadListView<Destination: View>: View {
         self.threads = threads
         self.workingThreads = workingThreads
         self.hostLabel = hostLabel
+        self.agentLabel = agentLabel
         self.onNewThread = onNewThread
         self.connection = connection
         self.connectionStatus = connectionStatus
@@ -795,6 +801,7 @@ public struct ThreadListView<Destination: View>: View {
         self.updateStatuses = updateStatuses
         self._path = path
         self.projects = projects
+        self.agents = agents
         self.projectListStatus = projectListStatus
         self.onRefreshProjects = onRefreshProjects
         self.onCreate = onCreate
@@ -884,7 +891,7 @@ public struct ThreadListView<Destination: View>: View {
         // Incoming replies change the toolbar's unread actions. Keep the presenter on the
         // navigation container so rebuilding a button cannot hide or reset an open picker.
         .sheet(isPresented: $choosingAgent) {
-            NewThreadPicker(projects: projects, status: projectListStatus, onRefresh: onRefreshProjects, onStart: onCreate)
+            NewThreadPicker(projects: projects, agents: agents, status: projectListStatus, onRefresh: onRefreshProjects, onStart: onCreate)
                 .presentationDetents([.medium, .large])
         }
     }
@@ -1098,6 +1105,7 @@ public struct ThreadListView<Destination: View>: View {
         ForEach(threads) { thread in
             let row = ThreadRow(
                 thread: thread,
+                agentLabel: agentLabel(thread),
                 working: workingThreads.contains(thread.id),
                 preview: preview(thread),
                 highlightQuery: searchNeedle,
@@ -1222,10 +1230,12 @@ public struct ThreadSidebar: View {
     private let threads: [ThreadSummary]
     private let workingThreads: Set<String>
     private let hostLabel: (String) -> String?
+    private let agentLabel: (ThreadSummary) -> String?
     private let onNewThread: (() -> Void)?
     @Binding private var selection: String?
     /// Where a coding agent can be started. Empty means the picker offers Yorozu alone.
     private let projects: [ProjectFolder]
+    private let agents: [AgentDescriptor]?
     private let projectListStatus: ProjectListStatus
     private let onRefreshProjects: (() async -> Void)?
     /// Starts a thread for the chosen agent, in the chosen folder when it needs one.
@@ -1259,9 +1269,11 @@ public struct ThreadSidebar: View {
         threads: [ThreadSummary],
         workingThreads: Set<String> = [],
         hostLabel: @escaping (String) -> String? = { _ in nil },
+        agentLabel: @escaping (ThreadSummary) -> String? = { _ in nil },
         onNewThread: (() -> Void)? = nil,
         selection: Binding<String?>,
         projects: [ProjectFolder] = [],
+        agents: [AgentDescriptor]? = nil,
         projectListStatus: ProjectListStatus = .ready,
         onRefreshProjects: (() async -> Void)? = nil,
         onCreate: @escaping (ThreadAgent, String?) -> Void,
@@ -1281,9 +1293,11 @@ public struct ThreadSidebar: View {
         self.threads = threads
         self.workingThreads = workingThreads
         self.hostLabel = hostLabel
+        self.agentLabel = agentLabel
         self.onNewThread = onNewThread
         self._selection = selection
         self.projects = projects
+        self.agents = agents
         self.projectListStatus = projectListStatus
         self.onRefreshProjects = onRefreshProjects
         self.onCreate = onCreate
@@ -1428,7 +1442,7 @@ public struct ThreadSidebar: View {
             }
         }
         .sheet(isPresented: $choosingAgent) {
-            NewThreadPicker(projects: projects, status: projectListStatus, onRefresh: onRefreshProjects, onStart: onCreate)
+            NewThreadPicker(projects: projects, agents: agents, status: projectListStatus, onRefresh: onRefreshProjects, onStart: onCreate)
         }
         #if os(macOS)
             // What the Mac's File menu acts on. Published from here because a new thread is the
@@ -1472,6 +1486,7 @@ public struct ThreadSidebar: View {
         ForEach(threads) { thread in
             ThreadRow(
                 thread: thread,
+                agentLabel: agentLabel(thread),
                 working: workingThreads.contains(thread.id),
                 preview: preview(thread),
                 highlightQuery: searchNeedle,

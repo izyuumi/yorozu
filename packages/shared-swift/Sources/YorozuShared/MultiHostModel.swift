@@ -184,7 +184,8 @@ public final class MultiHostModel {
 
     @discardableResult
     public func newDraft(on hostID: HostID? = nil, agent: ThreadAgent = .yorozu, cwd: String? = nil) -> HostThreadID? {
-        guard let hostID = hostID ?? preferredHostID, let session = session(for: hostID) else { return nil }
+        guard let hostID = hostID ?? preferredHostID, let session = session(for: hostID),
+              session.model.descriptor(for: agent) != nil else { return nil }
         lastUsedHostID = hostID
         return HostThreadID(hostID: hostID, threadID: session.model.newDraft(agent: agent, cwd: cwd).id)
     }

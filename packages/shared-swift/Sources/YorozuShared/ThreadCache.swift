@@ -55,6 +55,9 @@ public struct ThreadCache: Sendable {
         write(threads, to: "threads")
     }
 
+    public func agents() -> [AgentDescriptor]? { read([AgentDescriptor].self, from: "agents") }
+    public func save(agents: [AgentDescriptor]) { write(agents, to: "agents") }
+
     /// Last authenticated identity details, for an offline host label. Negotiated permission
     /// is deliberately not cached: every live channel negotiates compatibility again.
     public func peerInfo() -> PeerInfoData? { read(PeerInfoData.self, from: "peer-info") }
