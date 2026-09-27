@@ -51,6 +51,19 @@ test("a turn runs in the thread's folder and hands back the session to resume", 
   expect(second.sessionId).toBe("s-1");
 });
 
+test("Claude Code may read the folder its attachments are in, and no other outside cwd", async () => {
+  const { query, calls } = fakeQuery([init("s-1"), result("s-1", "seen")]);
+  const runner = claudeCodeRunner(query);
+  const base = { threadId: "cc", cwd: "/tmp/proj", text: "look", signal: new AbortController().signal };
+  await runner.run({ ...base, attachments: [
+    { name: "a.png", mime: "image/png", path: "/state/threads/cc.attachments/m-0-a.png" },
+    { name: "b.pdf", mime: "application/pdf", path: "/state/threads/cc.attachments/m-1-b.pdf" },
+  ] });
+  expect(calls[0]!.additionalDirectories).toEqual(["/state/threads/cc.attachments"]);
+  await runner.run(base);
+  expect(calls[1]).not.toHaveProperty("additionalDirectories");
+});
+
 test.each([{ cwd: "" }, { cwd: "   " }, {}])("a turn without a folder is refused before the SDK is asked anything (%o)", async (folder) => {
   const { query, calls } = fakeQuery([init("s-none"), result("s-none", "ran anyway")]);
   // The type requires cwd; the cast stands in for a JS caller or a thread record from before it did.

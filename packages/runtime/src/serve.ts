@@ -84,6 +84,7 @@ import { autoTitle, onDeviceTitler, type Titler } from "./title.js";
 const PING = JSON.stringify({ type: "ping" });
 import {
   appendThreadEvent,
+  attachmentFiles,
   archiveThread,
   createThread,
   currentThread,
@@ -1492,9 +1493,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
           let executionStarted = false;
           try {
             const currentHome = threadHome(threadId, dir);
+            // Written inside the attempt, so a full disk is this turn's failure and not the sidecar's.
+            const files = attachmentFiles(threadId, userEventId ?? id, attachments, dir);
+            const attached = files.map((file) => `[attached: ${file.name} (${file.mime}) at ${file.path}]`).join("\n");
+            const prompt = recovering ? nativeRecoveryPrompt(threadId, text) : withStoppedContext(threadId, text, userEventId);
             const done = await runner.run({
               threadId,
-              text: recovering ? nativeRecoveryPrompt(threadId, text) : withStoppedContext(threadId, text, userEventId),
+              text: [prompt, attached].filter(Boolean).join("\n\n"),
+              ...(files.length ? { attachments: files } : {}),
               ...currentHome,
               cwd: home.cwd,
               bypass: loadSettings(dir).yolo,

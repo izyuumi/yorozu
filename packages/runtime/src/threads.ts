@@ -12,6 +12,7 @@ import {
   THREAD_AGENTS,
   TOOL_RESULT_PREVIEW_CHARS,
   type EventKind,
+  type MessageAttachment,
   type ReasoningEffort,
   type ThreadAgent,
   type ThreadSummary,
@@ -464,6 +465,28 @@ export function fullToolResult(
 
 const resultFile = (threadId: string, callId: string, dir: string): string =>
   threadFile(threadId, `.result-${callId.replace(/[^\w.-]/g, "_")}.json`, dir);
+
+/**
+ * A message's attachments as files beside the thread's log, for an agent that reads from disk.
+ * The message id and the names arrive from the phone: they label the file, never place it.
+ */
+export function attachmentFiles(
+  threadId: string,
+  messageId: string,
+  attachments: readonly MessageAttachment[],
+  dir = stateDir(),
+): { name: string; mime: string; path: string }[] {
+  if (attachments.length === 0) return [];
+  const folder = threadFile(threadId, ".attachments", dir);
+  mkdirSync(folder, { recursive: true, mode: 0o700 });
+  const safe = (part: string): string => part.replace(/[^\w.-]/g, "_");
+  return attachments.map(({ name, mime, data }, index) => {
+    // Tail of the name: the extension is what tells an agent how to open it.
+    const path = join(folder, `${safe(messageId).slice(0, 80)}-${index}-${safe(name).slice(-100)}`);
+    writeFileSync(path, Buffer.from(data, "base64"), { mode: 0o600 });
+    return { name, mime, path };
+  });
+}
 
 /** Appends to the thread's log. Control events (sync, thread admin) are not history. */
 export function appendThreadEvent(event: YorozuEvent, dir = stateDir()): void {
