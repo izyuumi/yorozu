@@ -2038,6 +2038,21 @@ test("stale offline approval cannot act, and an applied answer replays without a
     .toMatchObject({ data: { status: "applied" } });
 });
 
+test("routine sync carries a pending card from an archived thread", async () => {
+  const { dir, send, eventsUntil } = await pairedPhone([() => shellTurn("echo archived-card")]);
+  send({ kind: "thread_create", data: {} });
+  await vi.waitFor(() => expect(listThreads(dir).some((thread) => thread.id === "t1")).toBe(true));
+  send({ kind: "message", data: { role: "user", text: "run it" } });
+  const card = (await eventsUntil((event) => event.kind === "approval_card")).at(-1)!;
+  send({ kind: "thread_archive", data: { archived: true } });
+  await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === "t1")?.archived).toBe(true));
+  send({ kind: "sync_request", data: { lastSeen: {} } }, "");
+  const delta = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
+  if (delta.kind !== "sync_delta") throw new Error("missing sync delta");
+  expect(delta.data.events).toEqual([]);
+  expect(delta.data.current).toContainEqual(card);
+});
+
 test("older clients see an upgrade request instead of a false approval receipt", async () => {
   const { dir, send, eventsUntil } = await pairedPhone([() => shellTurn("echo legacy-approval"), () => sse("done")]);
   send({ kind: "message", data: { role: "user", text: "run it" } });
