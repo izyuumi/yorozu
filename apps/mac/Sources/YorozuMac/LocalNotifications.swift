@@ -28,7 +28,7 @@ struct MacAttentionItem: Identifiable {
     let label: String
 
     static func pending(in model: ChatModel) -> [Self] {
-        visibleThreads(model.threads).flatMap { thread -> [Self] in
+        model.threads.sorted { $0.lastActivity > $1.lastActivity }.flatMap { thread -> [Self] in
             let events = model.events[thread.id] ?? []
             var items: [Self] = []
             if thread.awaitingApproval == true {
