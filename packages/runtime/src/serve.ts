@@ -2686,12 +2686,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
       updateSubscribers.delete(device);
       if (updateOwner === device) {
         updateOwner = undefined;
-        if (updateGate.status.phase !== "installing") {
+        if (!stopped && updateGate.status.phase !== "installing") {
           try { writeFileAtomic(pendingSinceFile, "null"); }
           catch (error) { state(`update-cancel-error ${error instanceof Error ? error.message : String(error)}`); }
           pendingSince = undefined;
           updateGate.cancel();
           wakeDrainWaiters();
+          for (const threadId of drainInterrupted) {
+            if (resumeNativeTurn(threadId)) drainInterrupted.delete(threadId);
+          }
         }
         pushUpdateStatus();
       }

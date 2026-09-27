@@ -821,7 +821,37 @@ test("phone postponement persists and losing the update controller releases admi
   reconnected.send({ kind: "update_control", data: { action: "queue", updateId: "u2", version: "1.0" } });
   expect((await eventsUntil((event) => event.kind === "update_status" && event.data.phase === "postponed")).at(-1))
     .toMatchObject({ data: { postponedUntil: postponed.data.postponedUntil } });
+  const pendingBeforeRestart = JSON.parse(readFileSync(join(dir, "update-pending-since.json"), "utf8"));
+  await sidecar.close();
+  expect(JSON.parse(readFileSync(join(dir, "update-pending-since.json"), "utf8"))).toEqual(pendingBeforeRestart);
   reconnected.close();
+});
+
+test("losing the updater during drain resumes a paused native turn", async () => {
+  const run = vi.fn<NativeAgentRunner["run"]>(async (turn) => {
+    if (turn.text.includes("Resume the interrupted")) return { text: "recovered", sessionId: "session" };
+    await turn.approve!("Bash", { command: "echo safe" }, turn.signal);
+    return { text: "original", sessionId: "session" };
+  });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } });
+  const mac = await macClient(dir);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "disconnect-drain");
+  const eventId = send({ kind: "message", data: { role: "user", text: "do work" } }, "disconnect-drain");
+  await eventsUntil((event) => event.kind === "approval_card" && event.threadId === "disconnect-drain");
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const control = async (action: "queue" | "poll") => {
+    const id = mac.send({ kind: "update_control", data: { action, updateId: "lost-updater", version: "1.0" } });
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "update_status" && event.data.requestId === id)).toBe(true));
+  };
+  await control("queue");
+  now += 86_400_000;
+  await control("poll");
+  await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === "disconnect-drain")?.nativeTurn?.state).toBe("interrupted"));
+  mac.close();
+  await eventsUntil((event) => event.kind === "message" && event.id === `native:${eventId}:final` && event.data.done === true);
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(listThreads(dir).find((thread) => thread.id === "disconnect-drain")?.nativeTurn).toBeUndefined();
 });
 
 test("24-hour drain interrupts a native approval safely and resumes after sidecar restart", async () => {
