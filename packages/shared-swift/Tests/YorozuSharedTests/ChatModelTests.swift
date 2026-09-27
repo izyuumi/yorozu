@@ -883,7 +883,7 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
         model.outbox.first(where: { $0.event.threadId == draft.id && $0.event.payload.kind == .message })?.status == .rejected
     })
     let message = try #require(model.outbox.first { $0.event.threadId == draft.id && $0.event.payload.kind == .message })
-    #expect(model.outboxRejectionReason(of: message.id) == "project folder unavailable")
+    #expect(model.outboxRejectionReason(of: message.id) == "thread-create-rejected: project folder unavailable")
     #expect(await transport.sent.allSatisfy { $0.threadId != draft.id || $0.payload.kind != .message })
 }
 

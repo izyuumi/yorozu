@@ -864,14 +864,18 @@ public struct ChatView: View {
         case .message(let event):
             if case .message(let data) = event.payload {
                 let outboxStatus = model.outboxStatus(of: event.id)
+                let rejectionReason = model.outboxRejectionReason(of: event.id)
                 MessageBubble(
                     id: event.id,
                     data: data,
                     streaming: event.id == streamingId,
                     status: outboxStatus,
-                    rejectionReason: model.outboxRejectionReason(of: event.id),
+                    rejectionReason: rejectionReason,
                     attachmentTransferLabels: model.attachmentTransferLabels(of: event.id),
-                    onRetry: data.role == .user && (outboxStatus == nil || outboxStatus == .rejected || outboxStatus == .withdrawn)
+                    onRetry: data.role == .user &&
+                        rejectionReason?.hasPrefix("thread-create-rejected:") != true &&
+                        rejectionReason != "thread-not-created" &&
+                        (outboxStatus == nil || outboxStatus == .rejected || outboxStatus == .withdrawn)
                         ? { retry(data) } : nil,
                     onWithdraw: model.canWithdraw(event)
                         ? { model.withdraw(event.id) } : nil,

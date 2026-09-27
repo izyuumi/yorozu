@@ -1234,6 +1234,32 @@ test("thread creation gets no receipt when storage fails, then accepts the same 
   expect(listThreads(dir).map((thread) => thread.id)).toEqual(["disk"]);
 });
 
+test("an accepted thread creation retry survives a missing folder and refuses changed payload", async () => {
+  const folder = join(projectsRoot, `created-${randomUUID()}`);
+  mkdirSync(folder);
+  try {
+    const { dir, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run: vi.fn() } } });
+    const create: YorozuEvent = { id: "created-once", threadId: "native", ts: Date.now(), agentId: "phone",
+      kind: "thread_create", data: { agent: "codex", cwd: folder } };
+    sendRaw(create);
+    await eventsUntil((event) => event.kind === "thread_list" &&
+      event.data.threads.some((thread) => thread.id === "native"));
+    expect(listThreads(dir).find((thread) => thread.id === "native")?.creation?.eventId).toBe(create.id);
+    rmSync(folder, { recursive: true });
+    sendRaw(create);
+    const retry = await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === create.id);
+    expect(retry.some((event) => event.kind === "admission_status" && event.data.eventId === create.id)).toBe(false);
+    sendRaw({ ...create, data: { agent: "yorozu" } });
+    const conflict = await eventsUntil((event) => event.kind === "admission_status" &&
+      event.data.eventId === create.id);
+    expect(conflict.at(-1)).toMatchObject({ data: { status: "rejected", reason: "conflicting-thread-create" } });
+    expect(conflict.some((event) => event.kind === "receipt" && event.data.eventId === create.id)).toBe(false);
+    expect(listThreads(dir).find((thread) => thread.id === "native")?.agent).toBe("codex");
+  } finally {
+    if (existsSync(folder)) rmSync(folder, { recursive: true });
+  }
+});
+
 test("a registered agent appears in the catalog and answers a thread without a folder", async () => {
   const turns: NativeTurn[] = [];
   const runner: NativeAgentRunner = {

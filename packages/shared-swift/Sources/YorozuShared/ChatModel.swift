@@ -1235,7 +1235,7 @@ public final class ChatModel {
             // and never let a later flush send it to an implicit/default thread.
             for item in outbox.indices where outbox[item].event.threadId == threadId && item >= index {
                 outbox[item].admissionStatus = .rejected
-                outbox[item].rejectionReason = status.reason
+                outbox[item].rejectionReason = "thread-create-rejected: \(status.reason ?? "unknown")"
             }
             saveOutbox()
             flush()

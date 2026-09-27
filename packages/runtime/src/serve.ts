@@ -2507,24 +2507,40 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
     }
     if (event.kind === "thread_create") {
-      const descriptor = agentDescriptors.find(({ id }) => id === (event.data.agent ?? "yorozu"));
-      const cwd = event.data.cwd?.trim();
-      const invalid = !descriptor ? `unregistered agent "${String(event.data.agent)}"`
-        : descriptor.needsFolder && cwd && !isProjectFolder(cwd)
-          ? `"${cwd}" is not one of this Mac's project folders`
-          : descriptor.needsFolder && !cwd ? `a ${descriptor.id} thread needs a project folder` : undefined;
-      if (invalid) {
-        state(`thread-create-error ${invalid}`);
-        reply(control({ kind: "admission_status", data: { eventId: event.id, status: "rejected", reason: invalid } }));
+      const rejectCreate = (reason: string): void => {
+        state(`thread-create-error ${reason}`);
+        reply(control({ kind: "admission_status", data: { eventId: event.id, status: "rejected", reason } }));
         return reply({
           id: randomUUID(), threadId: event.threadId, ts: Date.now(), agentId: MAIN_AGENT,
-          kind: "thought", data: { text: `Could not create this thread: ${invalid}.` },
+          kind: "thought", data: { text: `Could not create this thread: ${reason}.` },
         });
-      }
+      };
       try {
-        // Persist the thread before acknowledging its creation. The client's first message
-        // waits behind this receipt, so a failed create must never release it to another agent.
-        createThread(event.data.title, dir, event.threadId || undefined, { ...event.data, needsFolder: descriptor!.needsFolder });
+        const creation = { eventId: event.id, identity: createHash("sha256").update(JSON.stringify([
+          event.threadId, event.data.title ?? null, event.data.agent ?? null, event.data.cwd ?? null,
+        ])).digest("hex") };
+        const existing = listThreads(dir).find((thread) => thread.id === event.threadId);
+        if (existing) {
+          // A lost receipt still confirms the durable record, even if its folder or agent
+          // disappeared afterward. A reused ID with different content does not.
+          const matches = existing.creation
+            ? existing.creation.eventId === creation.eventId && existing.creation.identity === creation.identity
+            : (existing.agent ?? "yorozu") === (event.data.agent ?? "yorozu") &&
+              existing.cwd === (event.data.cwd?.trim() || undefined);
+          if (!matches) return rejectCreate("conflicting-thread-create");
+        } else {
+          const descriptor = agentDescriptors.find(({ id }) => id === (event.data.agent ?? "yorozu"));
+          const cwd = event.data.cwd?.trim();
+          const invalid = !event.threadId ? "missing-thread-id"
+            : !descriptor ? `unregistered agent "${String(event.data.agent)}"`
+              : descriptor.needsFolder && cwd && !isProjectFolder(cwd)
+                ? `"${cwd}" is not one of this Mac's project folders`
+                : descriptor.needsFolder && !cwd ? `a ${descriptor.id} thread needs a project folder` : undefined;
+          if (invalid) return rejectCreate(invalid);
+          // The client's first message waits behind this receipt.
+          createThread(event.data.title, dir, event.threadId, { ...event.data,
+            needsFolder: descriptor!.needsFolder, creation });
+        }
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         state(`thread-create-error ${reason}`);
