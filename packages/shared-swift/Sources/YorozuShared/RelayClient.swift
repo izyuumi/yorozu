@@ -603,6 +603,10 @@ public actor RelayClient: ChatTransport {
                 rejectMalformedPeerClaim(plain, numbered: false)
                 return
             }
+            if case .unknown(let kind, _) = event.payload, kind == "thread_list" {
+                rejectMalformedPeerClaim(plain, numbered: false)
+                if incompatible { return }
+            }
             if channelFormat == nil {
                 guard case .threadList = event.payload else { return }
                 channelFormat = .legacy
@@ -617,6 +621,10 @@ public actor RelayClient: ChatTransport {
             rejectMalformedPeerClaim(plain, numbered: true)
             logger.notice("dropped box with a malformed envelope")
             return
+        }
+        if case .unknown(let kind, _) = envelope.event.payload, kind == "thread_list" {
+            rejectMalformedPeerClaim(plain, numbered: true)
+            if incompatible { return }
         }
         guard counter.accept(envelope.seq) else {
             logger.notice("dropped box with seq \(envelope.seq) at or below \(self.counter.recv)")

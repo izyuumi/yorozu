@@ -1291,6 +1291,57 @@ func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(
 }
 
 @MainActor
+@Test func unreadableEventsLeaveHistoryAndLiveConversationUsable() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let key = SymmetricKey(size: .bits256)
+    let cache = ThreadCache(directory: directory, key: key)
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    model.start()
+    await transport.yield(.state(.paired))
+    await transport.yield(.ownerOnline(true))
+    #expect(await eventually { model.canDeliver })
+    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 5)
+    await transport.yield(.event(event("threads", .threadList(ThreadListData(threads: [thread])))))
+
+    let fixture = Vectors.path(source: "ts").deletingLastPathComponent().appending(path: "forward-events.json")
+    let page = try JSONDecoder().decode(YorozuEvent.self, from: Data(contentsOf: fixture))
+    await transport.yield(.event(page))
+    #expect(await eventually { model.events["home"]?.count == 5 })
+    #expect(model.timeline("home").rows(generating: false).map(\.id) == ["before", "gap", "approval", "after"])
+    #expect(searchHits(in: model.events["home"] ?? [], term: "unreadable").isEmpty)
+    #expect(model.unreadCount == 0)
+    #expect(model.markdown(of: thread).components(separatedBy: "Update Yorozu to see this event").count == 3)
+
+    let before = await transport.sent.count
+    model.requestSync()
+    let requests = await sent(by: transport, atLeast: before + 1)
+    guard case .syncRequest(let request) = requests.last?.payload else { return #expect(Bool(false)) }
+    #expect(request.lastSeen["home"] == "cursor-5")
+
+    let liveFuture = try JSONDecoder().decode(YorozuEvent.self, from: Data(
+        #"{"id":"live-future","threadId":"home","ts":6,"agentId":"main","kind":"future_housekeeping","data":{"value":"private"}}"#.utf8
+    ))
+    await transport.yield(.event(liveFuture))
+    #expect(await eventually { model.events["home"]?.count == 6 })
+    #expect(model.timeline("home").rows(generating: false).last?.id == "after")
+
+    let live = try JSONDecoder().decode(YorozuEvent.self, from: Data(
+        #"{"id":"live-gap","threadId":"home","ts":7,"agentId":"main","kind":"question_card","data":{"questionId":"q1","question":"Which?"}}"#.utf8
+    ))
+    await transport.yield(.event(live))
+    #expect(await eventually { model.timeline("home").rows(generating: false).last?.id == "live-gap" })
+    #expect((await transport.sent).allSatisfy { $0.payload.kind != .approvalAnswer && $0.payload.kind != .questionAnswer })
+
+    await model.flushCache()
+    let restored = ChatModel(transport: FakeTransport(), cache: ThreadCache(directory: directory, key: key))
+    #expect(restored.events["home"] == model.events["home"])
+    #expect(restored.timeline("home").rows(generating: false).last?.id == "live-gap")
+    model.close()
+}
+
+@MainActor
 @Test func liveEventsCannotMoveSyncPastUnseenPages() async throws {
     let transport = FakeTransport()
     let model = await connected(transport)

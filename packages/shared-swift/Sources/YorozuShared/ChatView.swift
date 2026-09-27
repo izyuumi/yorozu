@@ -822,6 +822,14 @@ public struct ChatView: View {
         switch row {
         case .work(let work):
             WorkRowView(work: work).id(work.id)
+        case .unreadable(let event):
+            Label(String(localized: "Update Yorozu to see this event"), systemImage: "arrow.up.circle")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .accessibilityElement(children: .combine)
+                .id(event.id)
         case .message(let event):
             if case .message(let data) = event.payload {
                 let outboxStatus = model.outboxStatus(of: event.id)

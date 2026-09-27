@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import os
 #if os(iOS)
 import UIKit
 #endif
@@ -14,6 +15,7 @@ import UIKit
 @MainActor
 @Observable
 public final class ChatModel {
+    private static let eventLogger = Logger(subsystem: "to.yumi.yorozu", category: "events")
     /// Every thread, unsent drafts included, newest first once a list has ordered them.
     public var threads: [ThreadSummary] { draftThreads + synced }
     /// The threads the runtime has told us about.
@@ -2464,6 +2466,9 @@ public final class ChatModel {
             thread.insert(event, at: index)
         }
         timeline(event.threadId).events = thread
+        if case .unknown(let kind, _) = event.payload {
+            Self.eventLogger.warning("Unreadable event kind \(kind, privacy: .public) thread \(event.threadId, privacy: .public)")
+        }
         // The agent's last message ends the turn, whether it streamed or arrived whole.
         if case .message(let data) = event.payload, data.role == .agent, data.done == true,
             event.parentAgentId == nil

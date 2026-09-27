@@ -1,0 +1,61 @@
+{
+  "id": "page",
+  "threadId": "",
+  "ts": 6,
+  "agentId": "main",
+  "kind": "sync_delta",
+  "data": {
+    "events": [
+      {
+        "id": "before",
+        "threadId": "home",
+        "ts": 1,
+        "agentId": "main",
+        "syncCursor": "cursor-1",
+        "kind": "message",
+        "data": { "role": "user", "text": "Start" }
+      },
+      {
+        "id": "future",
+        "threadId": "home",
+        "ts": 2,
+        "agentId": "main",
+        "syncCursor": "cursor-2",
+        "kind": "future_housekeeping",
+        "data": { "detail": "opaque", "count": 2 }
+      },
+      {
+        "id": "gap",
+        "threadId": "home",
+        "ts": 3,
+        "agentId": "main",
+        "syncCursor": "cursor-3",
+        "kind": "message",
+        "data": { "role": "future-role", "text": "unreadable" }
+      },
+      {
+        "id": "approval",
+        "threadId": "home",
+        "ts": 4,
+        "agentId": "main",
+        "syncCursor": "cursor-4",
+        "kind": "approval_card",
+        "data": {
+          "actionId": "approve-1",
+          "actionClass": "purchase",
+          "target": "Bookshop",
+          "nativeAgent": "future-agent"
+        }
+      },
+      {
+        "id": "after",
+        "threadId": "home",
+        "ts": 5,
+        "agentId": "main",
+        "syncCursor": "cursor-5",
+        "kind": "message",
+        "data": { "role": "agent", "text": "End", "done": true }
+      }
+    ]
+  }
+}

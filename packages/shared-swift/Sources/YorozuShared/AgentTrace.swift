@@ -38,6 +38,7 @@ public func delegationCards(from events: [YorozuEvent]) -> [DelegationCard] {
 
     for event in events {
         guard event.parentAgentId != nil else { continue }
+        if case .unknown = event.payload { continue }
         let index: Int
         if let open = running[event.agentId] {
             index = open
@@ -174,6 +175,7 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
     case message(YorozuEvent)
     case work(TurnWork)
     case approval(YorozuEvent)
+    case unreadable(YorozuEvent)
     /// A rule Yorozu is offering, not one it has applied.
     case proposal(YorozuEvent)
     case question(YorozuEvent)
@@ -183,6 +185,7 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
         case .message(let event): event.id
         case .work(let work): work.id
         case .approval(let event): event.id
+        case .unreadable(let event): event.id
         case .proposal(let event): event.id
         case .question(let event): event.id
         }
@@ -215,7 +218,10 @@ public func chatRows(from events: [YorozuEvent], generating: Bool = false) -> [C
         turn.removeAll(keepingCapacity: true)
     }
     for event in events {
-        if case .message(let data) = event.payload, data.role == .user {
+        if event.payload.isUnreadableConversation {
+            closeTurn()
+            ordered.append(event)
+        } else if case .message(let data) = event.payload, data.role == .user {
             closeTurn()
             ordered.append(event)
         } else {
@@ -297,6 +303,9 @@ public func chatRows(from events: [YorozuEvent], generating: Bool = false) -> [C
 
         if let card = byStart[event.id] { add(.delegation(card), at: event) }
         switch event.payload {
+        case .unknown where event.payload.isUnreadableConversation:
+            closeWork()
+            rows.append(.unreadable(event))
         case .thought where event.parentAgentId == nil:
             add(.thought(event), at: event)
         case .message where event.parentAgentId == nil:
