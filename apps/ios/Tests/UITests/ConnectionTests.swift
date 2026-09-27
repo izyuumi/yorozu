@@ -33,8 +33,8 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(host.waitForExistence(timeout: 10), "No host in Settings")
         host.tap()
         let copy = app.buttons["Copy diagnostics"]
-        for _ in 0..<6 where !copy.exists { app.collectionViews.firstMatch.swipeUp() }
-        XCTAssertTrue(copy.waitForExistence(timeout: 5), "Copy diagnostics is unreachable")
+        for _ in 0..<6 where !copy.isHittable { app.collectionViews.firstMatch.swipeUp() }
+        XCTAssertTrue(copy.isHittable, "Copy diagnostics is unreachable")
         UIPasteboard.general.string = "clipboard sentinel"
         copy.tap()
         app.navigationBars["Connection"].buttons["Settings"].tap()
@@ -49,7 +49,11 @@ final class ConnectionTests: XCTestCase {
         paste.tap()
         let diagnostics = try XCTUnwrap(composer.value as? String)
         XCTAssertTrue(diagnostics.contains("Yorozu connection diagnostics"))
+        XCTAssertTrue(diagnostics.contains("Connection:"))
+        XCTAssertTrue(diagnostics.contains("Transport:"))
+        XCTAssertTrue(diagnostics.contains("Pending sends:"))
         XCTAssertFalse(diagnostics.contains(secret))
+        XCTAssertFalse(diagnostics.contains("127.0.0.1"), "Diagnostics included the relay URL")
     }
 
     /// A silently dead link is noticed and shown, a brief drop is not, and the link comes back
