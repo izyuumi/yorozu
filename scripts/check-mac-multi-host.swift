@@ -13,7 +13,11 @@ import YorozuShared
 }
 enum OnboardingWindow { static let completedKey = "unused-multi-host-check-onboarding" }
 @MainActor enum PairingConsent { static func ask(_ pairing: MacChatSession.PendingPairing) -> Bool { false } }
-@MainActor enum YoloConsent { static func ask(_ request: ApprovalSettingsRequestData, model: ChatModel) {} }
+@MainActor final class LocalNotifications {
+    static let shared = LocalNotifications()
+    func threadsChanged(_ model: ChatModel) {}
+    func received(_ event: YorozuEvent, from model: ChatModel) {}
+}
 @MainActor struct Updates {
     static let pending = Updates()
     func receive(_ status: UpdateStatusData, from model: ChatModel) {}
