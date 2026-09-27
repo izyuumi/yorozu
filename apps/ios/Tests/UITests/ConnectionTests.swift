@@ -71,8 +71,13 @@ final class ConnectionTests: XCTestCase {
         try await launchPaired()
         try openThread()
         try await rig.post("hold-answer")
-        try await rig.post("drop-host")
-        send("lost receipt")
+        composer.tap()
+        composer.typeText("lost receipt")
+        // Let the message reach the host before blocking its receipt. Dropping host frames
+        // while typing can interrupt pairing first, leaving an honestly queued message.
+        try await rig.post("drop-host-after-phone-frame")
+        app.buttons["Send"].tap()
+        XCTAssertTrue(app.textViews["lost receipt"].waitForExistence(timeout: 10))
         let confirming = app.descendants(matching: .any)["Confirming delivery…"].firstMatch
         XCTAssertTrue(confirming.waitForExistence(timeout: 10))
         XCTAssertFalse(confirming.waitForNonExistence(timeout: 5), "Delivery claimed without a receipt")
@@ -101,6 +106,8 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(bubbles("lost receipt"), 1)
         let recorded = try await rig.messages().filter { $0.text.hasSuffix("lost receipt") }
         XCTAssertEqual(recorded.map(\.role), ["user", "agent"], "Run once, answered once")
+        let starts = try await rig.answerStarts()
+        XCTAssertEqual(starts, 1, "The provider ran the same turn twice")
     }
 
     /// A relaunched app is still paired, still has its history, and still talks.
@@ -215,6 +222,11 @@ private struct Rig {
     func answerStarted() async throws -> Bool {
         struct Reply: Decodable { var started: Bool }
         return try await get(Reply.self, "answer-started").started
+    }
+
+    func answerStarts() async throws -> Int {
+        struct Reply: Decodable { var count: Int }
+        return try await get(Reply.self, "answer-started").count
     }
 
     private func get<T: Decodable>(_ type: T.Type, _ path: String) async throws -> T {
