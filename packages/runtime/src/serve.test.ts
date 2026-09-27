@@ -1313,7 +1313,11 @@ test("always runs the action and is permanent: the next one needs no second card
     kind: "approval_card",
     data: { actionClass: "run-command", target: cmd },
   });
-  const { actionId } = cardOf(batch);
+  const card = cardOf(batch);
+  expect(card.scope).toMatchObject({ operation: "run" });
+  expect(card.scope?.consequence).toBeTruthy();
+  expect(card.mustConfirm).toBeUndefined();
+  const { actionId } = card;
 
   send({
     kind: "approval_answer",
