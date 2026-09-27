@@ -856,6 +856,7 @@ struct RootView: View {
                      showsUpdateStatus: false,
                      aggregateToast: session.hosts.connectionToastNotice?.notice.state,
                      aggregateToastID: session.hosts.connectionToastNotice?.notice.id,
+                     aggregateToastAnnouncementRevision: session.hosts.connectionToastNotice?.notice.announcementRevision,
                      aggregateToastLabel: session.hosts.connectionToastLabel,
                      onNewThread: session.hosts.hasMultipleHosts ? { choosingThreadHost = true } : nil,
                      onCreate: { agent, cwd in

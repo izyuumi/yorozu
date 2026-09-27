@@ -293,6 +293,13 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
     #expect(toast.visible == .offline)
     #expect(toast.notice?.id == noticeID)
     #expect(toast.lastNotice?.state == .offline)
+    let announcementRevision = toast.notice?.announcementRevision
+    link.update(.reconnecting, active: true, since: .now - .seconds(6))
+    #expect(toast.visible == .reconnecting)
+    #expect(toast.notice?.announcementRevision == announcementRevision)
+    link.update(.offline, active: true, since: .now - .seconds(6))
+    #expect(toast.visible == .offline)
+    #expect(toast.notice?.announcementRevision == announcementRevision)
     for _ in 0..<30 where toast.visible != nil {
         try await Task.sleep(for: .milliseconds(10))
     }

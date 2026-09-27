@@ -448,7 +448,7 @@ struct ThreadRow: View {
 
 /// How the phone reports the link to its Mac. Two independent facts collapsed into the one thing
 /// worth saying: the relay has us or it does not, and behind it the Mac is there or it is not.
-public enum ConnectionState: Equatable, Sendable {
+public enum ConnectionState: Hashable, Sendable {
     case connected, reconnecting, offline
 
     public init(state: TransportState, ownerOnline: Bool) {
@@ -546,6 +546,7 @@ public struct ConnectionToastNotice: Equatable, Sendable {
     public let id: UUID
     public let state: ConnectionState
     public let sequence: UInt64
+    public let announcementRevision: UInt64
 }
 
 @MainActor
@@ -556,6 +557,7 @@ public final class ConnectionToastPresentation {
     public private(set) var lastNotice: ConnectionToastNotice?
     public var visible: ConnectionState? { notice?.state }
     private var announced = false
+    private var announcedStates: Set<ConnectionState> = []
     private var dismissal: Task<Void, Never>?
     private let duration: Duration
 
@@ -564,20 +566,26 @@ public final class ConnectionToastPresentation {
     public func declared(_ state: ConnectionState) {
         if state == .connected {
             announced = false
+            announcedStates.removeAll()
             dismiss()
             return
         }
         if announced {
             if let notice, notice.state != state {
-                let updated = ConnectionToastNotice(id: notice.id, state: state, sequence: notice.sequence)
+                let firstAnnouncement = announcedStates.insert(state).inserted
+                let updated = ConnectionToastNotice(
+                    id: notice.id, state: state, sequence: notice.sequence,
+                    announcementRevision: notice.announcementRevision + (firstAnnouncement ? 1 : 0)
+                )
                 self.notice = updated
                 lastNotice = updated
             }
             return
         }
         announced = true
+        announcedStates = [state]
         Self.nextSequence += 1
-        notice = .init(id: UUID(), state: state, sequence: Self.nextSequence)
+        notice = .init(id: UUID(), state: state, sequence: Self.nextSequence, announcementRevision: 0)
         lastNotice = notice
         let duration = self.duration
         dismissal = Task { [weak self] in
@@ -657,6 +665,7 @@ public struct ThreadListView<Destination: View>: View {
     private let connectionSummary: String?
     private let toastState: ConnectionState?
     private let toastID: UUID?
+    private let toastAnnouncementRevision: UInt64?
     private let toastLabel: String?
     private let onBackground: (() -> Void)?
     private let updateStatuses: [UpdateStatusItem]
@@ -711,8 +720,9 @@ public struct ThreadListView<Destination: View>: View {
     private var toastShownHere: ConnectionState? { hasSelectedThread ? nil : toastState }
     private var toastShownHereID: UUID? { hasSelectedThread ? nil : toastID }
     private var toastAnnouncementKey: String? {
-        guard let id = toastShownHereID, let state = toastShownHere else { return nil }
-        return "\(id.uuidString):\(toastLabel ?? state.label)"
+        guard let id = toastShownHereID, let revision = toastAnnouncementRevision,
+              toastShownHere != nil else { return nil }
+        return "\(id.uuidString):\(revision)"
     }
 
     /// Regular width draws the list beside the chat, including on iPhone Duo's inner display.
@@ -771,6 +781,7 @@ public struct ThreadListView<Destination: View>: View {
         connectionSummary: String? = nil,
         toastState: ConnectionState? = nil,
         toastID: UUID? = nil,
+        toastAnnouncementRevision: UInt64? = nil,
         toastLabel: String? = nil,
         onBackground: (() -> Void)? = nil,
         updateStatuses: [UpdateStatusItem] = [],
@@ -807,6 +818,7 @@ public struct ThreadListView<Destination: View>: View {
         self.connectionSummary = connectionSummary
         self.toastState = toastState
         self.toastID = toastID
+        self.toastAnnouncementRevision = toastAnnouncementRevision
         self.toastLabel = toastLabel
         self.onBackground = onBackground
         self.updateStatuses = updateStatuses
@@ -1046,8 +1058,7 @@ public struct ThreadListView<Destination: View>: View {
             guard !connectionIsGraced else { return }
             presentation.update(connection ?? .connected, active: phase != .background, since: connectionSince)
         }
-        // Once per declared change, not once per retry: the presentation only moves after the
-        // grace, or on recovery.
+        // The notice revision changes only for the first announcement of each outage state.
         .onChange(of: toastAnnouncementKey) { _, key in
             guard key != nil, let state = toastShownHere else { return }
             AccessibilityNotification.Announcement(toastLabel ?? state.label).post()

@@ -117,6 +117,7 @@ public struct MultiHostThreadListView<Destination: View>: View {
             connectionSummary: session.hasMultipleHosts ? session.connectionSummary : nil,
             toastState: session.connectionToastNotice?.notice.state,
             toastID: session.connectionToastNotice?.notice.id,
+            toastAnnouncementRevision: session.connectionToastNotice?.notice.announcementRevision,
             toastLabel: session.connectionToastLabel,
             onBackground: { for host in session.sessions { host.model.connectionToast.dismiss() } },
             updateStatuses: updateStatuses,

@@ -36,6 +36,7 @@ public struct ChatView: View {
     private let focusComposerOnAppear: Bool
     private let aggregateToast: ConnectionState?
     private let aggregateToastID: UUID?
+    private let aggregateToastAnnouncementRevision: UInt64?
     private let aggregateToastLabel: String?
     /// Where a pairing code tapped in a message goes; the app sets it, and the default drops
     /// the link. See ``OpenURLAction/chatLinks(onPairingLink:)``.
@@ -117,6 +118,7 @@ public struct ChatView: View {
         focusComposerOnAppear: Bool = false,
         aggregateToast: ConnectionState? = nil,
         aggregateToastID: UUID? = nil,
+        aggregateToastAnnouncementRevision: UInt64? = nil,
         aggregateToastLabel: String? = nil,
         onNewThread: (() -> Void)? = nil,
         onCreate: ((ThreadAgent, String?) -> Void)? = nil
@@ -132,6 +134,7 @@ public struct ChatView: View {
         self.focusComposerOnAppear = focusComposerOnAppear
         self.aggregateToast = aggregateToast
         self.aggregateToastID = aggregateToastID
+        self.aggregateToastAnnouncementRevision = aggregateToastAnnouncementRevision
         self.aggregateToastLabel = aggregateToastLabel
         self.onNewThread = onNewThread
         self.onCreate = onCreate
@@ -160,8 +163,10 @@ public struct ChatView: View {
     private var shownToast: ConnectionState? { aggregateToast ?? model.connectionToast.visible }
     private var shownToastID: UUID? { aggregateToastID ?? model.connectionToast.notice?.id }
     private var toastAnnouncementKey: String? {
-        guard let id = shownToastID, let state = shownToast else { return nil }
-        return "\(id.uuidString):\(aggregateToastLabel ?? state.label)"
+        guard let id = shownToastID, shownToast != nil,
+              let revision = aggregateToastAnnouncementRevision ?? model.connectionToast.notice?.announcementRevision
+        else { return nil }
+        return "\(id.uuidString):\(revision)"
     }
 
     /// Every occurrence of the search term in this thread, in reading order.

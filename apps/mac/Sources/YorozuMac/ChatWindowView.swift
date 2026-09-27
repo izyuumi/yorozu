@@ -152,6 +152,7 @@ private struct ClientChatWindowView: View {
                     ChatView(model: model, thread: item.thread,
                         aggregateToast: hosts.connectionToastNotice?.notice.state,
                         aggregateToastID: hosts.connectionToastNotice?.notice.id,
+                        aggregateToastAnnouncementRevision: hosts.connectionToastNotice?.notice.announcementRevision,
                         aggregateToastLabel: hosts.connectionToastLabel)
                         .environment(\.threadSearchRequest, searchedThread == selection ? searchRequest : nil)
                         .id(selection)
