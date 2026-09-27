@@ -1074,16 +1074,9 @@ public struct ThreadListView<Destination: View>: View {
     }
 
     /// The archive: shut by default, and the only place a thread comes back from.
-    private func archive(_ threads: [ThreadSummary]) -> some View {
-        let title: String = "Archived (\(threads.count))"
-        return DisclosureGroup(isExpanded: $showArchived) {
-            rows(threads)
-        } label: {
-            Label(title, systemImage: "archivebox").font(.subheadline)
-        }
-        // Match the thread rows: the list draws on the canvas, not the system row fill.
-        .listRowBackground(Color.clear)
-        .listRowSeparator(.hidden)
+    @ViewBuilder private func archive(_ threads: [ThreadSummary]) -> some View {
+        ArchiveToggle(count: threads.count, isExpanded: $showArchived)
+        if showArchived { rows(threads) }
     }
 
     @ViewBuilder private func rows(
@@ -1467,21 +1460,7 @@ public struct ThreadSidebar: View {
     }
 
     @ViewBuilder private func archive(_ threads: [ThreadSummary]) -> some View {
-        // DisclosureGroup makes the entire Mac list an outline and indents every thread.
-        Button { showArchived.toggle() } label: {
-            HStack {
-                Image(systemName: showArchived ? "chevron.down" : "chevron.right")
-                    .accessibilityHidden(true)
-                Label("Archived (\(threads.count))", systemImage: "archivebox")
-            }
-            .font(.subheadline)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .accessibilityValue(showArchived ? "Expanded" : "Collapsed")
-        .listRowBackground(Color.clear)
-        .listRowSeparator(.hidden)
+        ArchiveToggle(count: threads.count, isExpanded: $showArchived)
         if showArchived { rows(threads) }
     }
 
@@ -1556,5 +1535,31 @@ public struct ThreadSidebar: View {
                 )
             }
         }
+    }
+}
+
+/// The archive's header row: the whole row opens and shuts it. Not a DisclosureGroup, which
+/// makes the entire Mac list an outline and indents every thread, and on iOS 26 opens only from
+/// its chevron, leaving a row that reads as a button and does nothing when tapped.
+private struct ArchiveToggle: View {
+    let count: Int
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        Button { isExpanded.toggle() } label: {
+            HStack {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .accessibilityHidden(true)
+                Label("Archived (\(count))", systemImage: "archivebox")
+            }
+            .font(.subheadline)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+        // Match the thread rows: the list draws on the canvas, not the system row fill.
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 }

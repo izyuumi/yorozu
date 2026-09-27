@@ -46,7 +46,9 @@ echo "==> build for testing"
 # Signed ad hoc rather than not at all: without its entitlements the app cannot reach the
 # Keychain, where pairings live, and it needs no certificate that CI would have to hold.
 (cd "$ROOT" && tuist generate --no-open --path apps/ios >/dev/null)
-UDID=$(xcrun simctl create yorozu-ui-tests "$DEVICE_TYPE")
+# Pin a runtime with SIMULATOR_RUNTIME (e.g. com.apple.CoreSimulator.SimRuntime.iOS-26-5) to
+# match CI's; otherwise simctl's newest installed one.
+UDID=$(xcrun simctl create yorozu-ui-tests "$DEVICE_TYPE" ${SIMULATOR_RUNTIME:+"$SIMULATOR_RUNTIME"})
 xcodebuild build-for-testing \
   -workspace "$IOS/Yorozu.xcworkspace" -scheme YorozuUITests \
   -destination "id=$UDID" -derivedDataPath "$OUT/dd" \

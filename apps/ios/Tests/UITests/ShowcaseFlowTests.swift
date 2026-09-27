@@ -48,19 +48,29 @@ final class ShowcaseFlowTests: XCTestCase {
         app.launch()
         let row = app.buttons["Invoices. Found the July one in Downloads."]
         XCTAssertTrue(row.waitForExistence(timeout: 30))
-        row.swipeLeft()
+        // The menu rather than a swipe: a tap on a swipe action can land while it is still
+        // sliding in, and then does nothing.
+        row.press(forDuration: 1)
         app.buttons["Archive"].tap()
         XCTAssertTrue(row.waitForNonExistence(timeout: 10), "An archived thread stays in the list")
 
+        // The archive is the last thing in the list, and a list draws its rows only once on screen.
         let archive = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Archived'")).firstMatch
-        XCTAssertTrue(archive.waitForExistence(timeout: 10))
+        XCTAssertTrue(scrolledTo(archive, in: app), "No archive after archiving")
         archive.tap()
-        // The archive is the last thing in the list; its rows are drawn only once on screen.
-        app.swipeUp()
-        XCTAssertTrue(row.waitForExistence(timeout: 10), "The archive does not list the thread")
-        row.swipeLeft()
+        XCTAssertTrue(scrolledTo(row, in: app), "The archive does not list the thread")
+        row.press(forDuration: 1)
         app.buttons["Restore"].tap()
         XCTAssertTrue(archive.waitForNonExistence(timeout: 10), "The archive outlives its last thread")
         XCTAssertTrue(row.waitForExistence(timeout: 10), "A restored thread is not back in the list")
+    }
+
+    /// Scrolls down until `element` is drawn, a few screens at most.
+    @MainActor
+    private func scrolledTo(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+        // The list itself, not the app: iOS 26 does not scroll a list for a swipe on the window.
+        let list = app.collectionViews.firstMatch
+        for _ in 0..<4 where !element.waitForExistence(timeout: 2) { list.swipeUp() }
+        return element.exists
     }
 }
