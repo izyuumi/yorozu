@@ -296,20 +296,21 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
 /// The grace is anchored to when the link was lost: a change of *how* it is lost, part way
 /// through, is declared at the original deadline rather than a fresh one.
 @MainActor
-@Test func connectionPresentationDoesNotRestartGraceWhenInterruptionChangesKind() async throws {
-    let grace = Duration.milliseconds(1200)
+@Test func connectionPresentationDoesNotRestartGraceWhenInterruptionChangesKind() async {
+    let grace = Duration.seconds(20)
     let presentation = ConnectionPresentation(.connected)
 
-    presentation.update(.reconnecting, active: true, grace: grace)
-    try await Task.sleep(for: .milliseconds(700))
+    // Start partway through the original interruption without relying on a sleep that can
+    // overshoot under CI load and let the original deadline pass before this assertion.
+    presentation.update(.reconnecting, active: true, since: .now - .seconds(19), grace: grace)
     #expect(presentation.state == .connected)
 
     let changed = ContinuousClock.now
     presentation.update(.offline, active: true, grace: grace)
     await settled(presentation, at: .offline)
     #expect(presentation.state == .offline)
-    // About 500ms is left of the original window; a restarted one takes at least 1200ms.
-    #expect(ContinuousClock.now - changed < grace)
+    // About one second is left; a restarted window would take another 20 seconds.
+    #expect(ContinuousClock.now - changed < .seconds(10))
 }
 
 /// A view opened mid-outage counts from the host's moment, so one past the grace says so at
