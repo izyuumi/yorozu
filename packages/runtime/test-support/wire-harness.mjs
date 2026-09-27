@@ -9,11 +9,11 @@
 // is signalled:
 //   GET  /pairing         {"qr"}: the pairing string, pointed at the proxy
 //   POST /blackhole       every phone connection, open or new, stays open and carries nothing
-//   POST /drop-host       frames from the Mac stop reaching the phone; the phone's still arrive
+//   POST /drop-host-after-phone-frame  drop host frames after the next encrypted phone frame reaches the relay
 //   POST /down            close every phone connection now, and refuse new ones
 //   POST /lose-joined     the next phone to join is cut off just as the relay says `joined`
 //   POST /hold-answer     pause the next provider answer until /release-answer
-//   GET  /answer-started  {"started"}: whether that paused request reached the provider
+//   GET  /answer-started  {"started","count"}: whether it started and how often the provider ran
 //   POST /release-answer  let the paused provider answer finish
 //   POST /heal            back to normal for new connections and frames; blackholed ones stay dead
 //   GET  /dials           {"dials"}: when each phone connection arrived, ms since start
@@ -45,9 +45,11 @@ if (!Number.isFinite(delayMs) || delayMs < 0 || !Number.isFinite(bytesPerSecond)
 
 let heldAnswer;
 let answerStarted = false;
+let answerStarts = 0;
 
 /** Answers every turn with `echo: <text>` in words spaced 50ms apart, so a drop can land mid-reply. */
 const model = async (_url, init) => {
+  answerStarts++;
   const { content } = JSON.parse(init.body).messages.at(-1);
   const release = heldAnswer;
   if (release) answerStarted = true;
@@ -89,13 +91,18 @@ const sidecar = serve({
 // The phone's side. Frame by frame rather than byte by byte, so dropping one direction leaves
 // a connection that still works the other way, the way a lost receipt looks from the phone.
 const links = new Set();
-const fault = { blackholed: false, dropHost: false, down: false, loseJoined: false };
+const fault = { blackholed: false, dropHost: false, dropHostAfterPhoneFrame: false, down: false, loseJoined: false };
 const dials = [];
 const stats = { phoneToHostBytes: 0, hostToPhoneBytes: 0, droppedHostBytes: 0, peakQueuedBytes: 0 };
 let queuedBytes = 0;
 function recordQueuePeak() {
   const buffered = [...links].reduce((sum, link) => sum + link.phone.bufferedAmount + link.upstream.bufferedAmount, 0);
   stats.peakQueuedBytes = Math.max(stats.peakQueuedBytes, queuedBytes + buffered);
+}
+function isRelayFrame(data, binary) {
+  if (binary) return false;
+  try { return JSON.parse(data.toString()).type === "frame"; }
+  catch { return false; }
 }
 function forward(link, direction, data, binary) {
   const sink = direction === "phoneToHostBytes" ? link.upstream : link.phone;
@@ -113,6 +120,10 @@ function forward(link, direction, data, binary) {
     } else if (!link.dead && sink.readyState === WebSocket.OPEN) {
       sink.send(data, { binary });
       stats[direction] += bytes;
+      if (direction === "phoneToHostBytes" && fault.dropHostAfterPhoneFrame && isRelayFrame(data, binary)) {
+        fault.dropHostAfterPhoneFrame = false;
+        fault.dropHost = true;
+      }
     }
     recordQueuePeak();
   };
@@ -176,17 +187,18 @@ const pairing = (await qrPrinted).replace(
 
 const faults = {
   blackhole() { fault.blackholed = true; for (const link of links) link.dead = true; },
-  "drop-host"() { fault.dropHost = true; },
+  "drop-host-after-phone-frame"() { fault.dropHostAfterPhoneFrame = true; },
   down() { fault.down = true; for (const link of links) { link.phone.terminate(); link.upstream.terminate(); } },
   "lose-joined"() { fault.loseJoined = true; },
   "hold-answer"() {
     heldAnswer?.resolve();
     heldAnswer = Promise.withResolvers();
     answerStarted = false;
+    answerStarts = 0;
   },
   "release-answer"() { heldAnswer?.resolve(); heldAnswer = undefined; },
   heal() {
-    fault.blackholed = fault.dropHost = fault.down = fault.loseJoined = false;
+    fault.blackholed = fault.dropHost = fault.dropHostAfterPhoneFrame = fault.down = fault.loseJoined = false;
     heldAnswer?.resolve();
     heldAnswer = undefined;
   },
@@ -203,7 +215,7 @@ const control = createServer((request, response) => {
   else if (name === "pairing") body = { qr: pairing };
   else if (name === "dials") body = { dials };
   else if (name === "metrics") { recordQueuePeak(); body = { delayMs, bytesPerSecond, ...stats }; }
-  else if (name === "answer-started") body = { started: answerStarted };
+  else if (name === "answer-started") body = { started: answerStarted, count: answerStarts };
   else if (name === "events") body = { events: readThreadEvents(url.searchParams.get("thread"), stateDir) };
   else if (name === "messages") body = { messages: listThreads(stateDir).flatMap((thread) => messages(thread.id)) };
   response.writeHead(body ? 200 : 404, { "content-type": "application/json" });
