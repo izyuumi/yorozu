@@ -1317,9 +1317,9 @@ func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(
     let before = await transport.sent.count
     model.requestSync()
     #expect(await eventually {
-        let requests = await transport.sent.dropFirst(before)
-        return requests.contains { event in
-            guard case .syncRequest(let request) = event.payload else { return false }
+        let sent = await transport.sent
+        return sent.dropFirst(before).contains {
+            guard case .syncRequest(let request) = $0.payload else { return false }
             return request.lastSeen["home"] == "cursor-5"
         }
     })
