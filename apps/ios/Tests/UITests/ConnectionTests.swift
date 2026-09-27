@@ -110,23 +110,29 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(starts, 1, "The provider ran the same turn twice")
     }
 
-    /// A relaunched app is still paired, still has its history, and still talks.
+    /// A relaunched app restores the open chat and unsent text without opening the keyboard;
+    /// the restored draft can still be sent through the real host connection.
     @MainActor
     func testARelaunchedAppRejoinsWithItsHistory() async throws {
         try await launchPaired()
         try openNewChat()
         send("before relaunch")
         XCTAssertTrue(app.textViews["echo: before relaunch"].waitForExistence(timeout: 30))
+        composer.tap()
+        composer.typeText("unsent after relaunch")
+        XCTAssertEqual(composer.value as? String, "unsent after relaunch")
 
         app.terminate()
         app.launchArguments = []
         app.launch()
-        try waitConnected()
-        XCTAssertFalse(app.navigationBars["Pair with your Mac"].exists)
-        let thread = app.buttons.matching(NSPredicate(format: "label CONTAINS 'before relaunch'")).firstMatch
-        XCTAssertTrue(thread.waitForExistence(timeout: 30), "The thread is gone after relaunch")
-        thread.tap()
+        XCTAssertTrue(composer.waitForExistence(timeout: 30), "Relaunch did not restore the open chat")
+        XCTAssertEqual(composer.value as? String, "unsent after relaunch", "Relaunch lost the draft")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 10),
+            "Ordinary relaunch opened the keyboard")
         XCTAssertTrue(app.textViews["echo: before relaunch"].waitForExistence(timeout: 30))
+        XCTAssertEqual(composer.value as? String, "unsent after relaunch")
+        app.buttons["Send"].tap()
+        XCTAssertTrue(app.textViews["echo: unsent after relaunch"].waitForExistence(timeout: 30))
         send("after relaunch")
         XCTAssertTrue(app.textViews["echo: after relaunch"].waitForExistence(timeout: 30))
     }

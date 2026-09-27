@@ -169,9 +169,9 @@ public final class ChatModel {
     /// What this device chose for each answered action, so the card can say so afterwards.
     public private(set) var choices: [String: ApprovalAnswerData.Answer] = [:]
     /// One composer draft per thread, so switching threads does not lose what was typed.
-    public var drafts: [String: String] = [:] { didSet { saveComposerSoon() } }
+    public var drafts: [String: String] = [:] { didSet { saveComposerNow() } }
     /// Files staged in each thread's composer but not yet sent, alongside its draft text.
-    public var attachments: [String: [MessageAttachment]] = [:] { didSet { saveComposerSoon() } }
+    public var attachments: [String: [MessageAttachment]] = [:] { didSet { saveComposerNow() } }
     /// Threads with a turn in flight, so the composer offers Stop rather than Send.
     ///
     /// Set when this device sends, cleared by the agent message flagged `done` or confirmed
@@ -285,6 +285,7 @@ public final class ChatModel {
     private var cache: ThreadCache?
     @ObservationIgnored private var cacheWrite: Task<Void, Never>?
     @ObservationIgnored private var composerWrite: Task<Void, Never>?
+    @ObservationIgnored private var restoringComposer = false
     @ObservationIgnored private var preparedSend: [String: String] = [:]
     @ObservationIgnored private var readingPositions: [String: ThreadCache.ReadingPosition] = [:]
     @ObservationIgnored private var pendingSaveFailure: String?
@@ -308,6 +309,15 @@ public final class ChatModel {
             do { try self.saveComposer() }
             catch { self.failure = "Could not save draft: \(error.localizedDescription)" }
         }
+    }
+
+    /// User-entered text and staged files need a durability boundary before the next app
+    /// suspension or termination; the delayed write is only for navigation and scroll state.
+    private func saveComposerNow() {
+        guard cache != nil, !restoringComposer else { return }
+        composerWrite?.cancel()
+        do { try saveComposer() }
+        catch { failure = "Could not save draft: \(error.localizedDescription)" }
     }
 
     private func saveComposer() throws {
@@ -402,6 +412,7 @@ public final class ChatModel {
         }
         outbox = Outbox.pruned(pending)
         if let composer = cache.composer() {
+            restoringComposer = true
             drafts = composer.drafts
             attachments = composer.attachments
             draftThreads = composer.threads
@@ -425,6 +436,7 @@ public final class ChatModel {
                 do { try saveComposer() }
                 catch { failure = "Could not save draft: \(error.localizedDescription)" }
             }
+            restoringComposer = false
         }
         for thread in synced {
             let history = cache.historyState(threadId: thread.id)
