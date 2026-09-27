@@ -312,6 +312,7 @@ private struct ViewedImage: Identifiable {
 private struct AttachmentsView: View {
     let attachments: [MessageAttachment]
     @State private var viewing: ViewedImage?
+    @Namespace private var zoom
 
     private var split: (images: [GridImage], files: [MessageAttachment]) {
         var images: [GridImage] = []
@@ -352,6 +353,7 @@ private struct AttachmentsView: View {
         }
         .imageViewer(item: $viewing) { selected in
             ImageViewer(images: images, page: selected.index)
+                .zoomed(from: selected.index, in: zoom)
         }
     }
 
@@ -373,6 +375,7 @@ private struct AttachmentsView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
+        .zoomSource(item.id, in: zoom)
         .accessibilityLabel(hidden > 0
             ? "Attached image, \(item.attachment.name), and \(hidden) more"
             : "Attached image, \(item.attachment.name)")
@@ -422,7 +425,9 @@ private struct ImageViewer: View {
                 .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
+                }
                 ToolbarItem(placement: .primaryAction) {
                     if let current = images.first(where: { $0.id == page }) {
                         ShareLink(item: current.image, preview: SharePreview(current.attachment.name, image: current.image))
@@ -435,6 +440,24 @@ private struct ImageViewer: View {
 }
 
 extension View {
+    /// The system zoom: the picture grows out of its thumbnail, and dragging it down or
+    /// pinching it shut sends it back. iOS only; a Mac sheet closes on Escape.
+    @ViewBuilder fileprivate func zoomSource(_ id: Int, in namespace: Namespace.ID) -> some View {
+        #if os(iOS)
+            matchedTransitionSource(id: id, in: namespace)
+        #else
+            self
+        #endif
+    }
+
+    @ViewBuilder fileprivate func zoomed(from id: Int, in namespace: Namespace.ID) -> some View {
+        #if os(iOS)
+            navigationTransition(.zoom(sourceID: id, in: namespace))
+        #else
+            self
+        #endif
+    }
+
     @ViewBuilder fileprivate func imageViewer<Item: Identifiable>(
         item: Binding<Item?>,
         @ViewBuilder content: @escaping (Item) -> some View

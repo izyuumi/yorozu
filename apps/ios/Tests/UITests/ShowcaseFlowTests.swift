@@ -72,6 +72,18 @@ final class ShowcaseFlowTests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 10), "A restored thread is not back in the list")
     }
 
+    /// A picture opened full screen closes by being dragged down, with no button involved.
+    @MainActor
+    func testDraggingAPictureDownClosesTheViewer() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-yorozuShowcase", "images-viewer"]
+        app.launch()
+        let viewer = app.navigationBars["kitchen.jpg"]
+        XCTAssertTrue(viewer.waitForExistence(timeout: 30), "The picture viewer did not open")
+        app.swipeDown()
+        XCTAssertTrue(viewer.waitForNonExistence(timeout: 10), "Dragging the picture down left the viewer open")
+    }
+
     /// A real drag, rather than only the scroll intent model, must reveal the return control.
     @MainActor
     func testReadingOlderContentCanReturnToLatest() {
