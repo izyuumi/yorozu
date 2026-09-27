@@ -1308,9 +1308,31 @@ public struct ModelOption: Codable, Equatable, Sendable, Identifiable {
 public struct ModelListData: Codable, Equatable, Sendable {
     public var models: [ModelOption]
     public var agentModels: [String: [ModelOption]]?
-    public init(models: [ModelOption], agentModels: [String: [ModelOption]]? = nil) {
+    /// What a thread's composer offers after a slash, by the thread's agent. Absent from a
+    /// host that predates it.
+    public var skills: [String: [SkillOption]]?
+    public init(
+        models: [ModelOption], agentModels: [String: [ModelOption]]? = nil, skills: [String: [SkillOption]]? = nil
+    ) {
         self.models = models
         self.agentModels = agentModels
+        self.skills = skills
+    }
+}
+
+/// One skill the host's agent can be asked for by name. The name and what it is for, never
+/// the skill itself: bodies and host paths do not cross the channel.
+public struct SkillOption: Codable, Equatable, Sendable, Identifiable {
+    public var name: String
+    public var description: String
+    /// What to type after the name, as the skill's author wrote it, e.g. "[version]".
+    public var argumentHint: String?
+    public var id: String { name }
+
+    public init(name: String, description: String, argumentHint: String? = nil) {
+        self.name = name
+        self.description = description
+        self.argumentHint = argumentHint
     }
 }
 

@@ -5,6 +5,7 @@
  */
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { tmpdir } from "node:os";
 import { REASONING_EFFORTS, type ModelOption } from "@yorozu/shared";
 import { childEnv, turnCwd } from "./native.js";
 import type { NativeAgentRunner, NativeTurn } from "./native.js";
@@ -105,6 +106,20 @@ async function initialize(client: CodexConnection): Promise<void> {
 
 export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeAgentRunner {
   return {
+    async skills() {
+      const client = connect({ notify() {}, request: async () => { throw new Error("No active turn"); }, ended() {} });
+      try {
+        await initialize(client);
+        const result = await client.request("skills/list", { cwds: [tmpdir()], forceReload: true });
+        return array(object(array(result.data)[0]).skills).flatMap((value) => {
+          const skill = object(value);
+          const name = string(skill.name);
+          const path = string(skill.path);
+          return name && path && skill.enabled === true && skill.scope !== "repo"
+            ? [{ name, description: string(skill.description), path }] : [];
+        });
+      } finally { client.close(); }
+    },
     async models() {
       const client = connect({ notify() {}, request: async () => { throw new Error("No active turn"); }, ended() {} });
       try {
@@ -205,7 +220,9 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
         turn.onSession?.(sessionId);
         if (turn.signal.aborted) return { text: "", sessionId };
         const started = await client.request("turn/start", { threadId: sessionId,
-          input: [{ type: "text", text: turn.text, text_elements: [] }], model: turn.model ?? null, effort: turn.effort ?? null });
+          input: [{ type: "text", text: turn.text, text_elements: [] },
+            ...(turn.skill ? [{ type: "skill", name: turn.skill.name, path: turn.skill.path }] : [])],
+          model: turn.model ?? null, effort: turn.effort ?? null });
         turnId = string(object(started.turn).id) || turnId;
         if (turn.signal.aborted) abort();
         await completion;

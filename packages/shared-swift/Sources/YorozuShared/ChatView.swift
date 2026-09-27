@@ -81,6 +81,13 @@ public struct ChatView: View {
     #endif
     @State private var searching = false
     @State private var choosingAgent = false
+    /// The draft the skill picker was closed over. An edit opens it again.
+    @State private var dismissedSkillDraft: String?
+    #if os(macOS)
+        /// Which match the arrows are on. Reset whenever the draft changes.
+        @State private var skillIndex = 0
+    #endif
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     #if os(iOS)
         /// The model and effort card, open over the chat. Seeded open for the screenshot scene.
         @State private var runSettings = ChatShowcase.modelMenu
@@ -246,6 +253,9 @@ public struct ChatView: View {
                 .allowsHitTesting(false)
                 .animation(reduceMotion ? nil : .default, value: shownToast)
             }
+            // Over the transcript rather than above the composer: opening it must not move
+            // the messages, and they stay readable around it.
+            .overlay(alignment: .bottom) { skillPicker }
             composer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -293,6 +303,12 @@ public struct ChatView: View {
                 }
             }
         #endif
+        .onChange(of: draft.wrappedValue) { _, _ in
+            dismissedSkillDraft = nil
+            #if os(macOS)
+                skillIndex = 0
+            #endif
+        }
         .onChange(of: model.state, initial: true) { _, state in
             if state == .paired { model.requestApprovalSettings() }
         }
@@ -372,6 +388,10 @@ public struct ChatView: View {
         // The Mac reuses this detail view while its sidebar selection changes. A new thread is
         // a new opening intent even when the surrounding `ChatView` value keeps its state.
         .onChange(of: thread.id, initial: true) { _, _ in
+            dismissedSkillDraft = nil
+            #if os(macOS)
+                skillIndex = 0
+            #endif
             atBottom = true
             showJumpToLatest = false
             scrollPhase = .idle
@@ -926,6 +946,66 @@ public struct ChatView: View {
         #endif
     }
 
+    /// What the draft's slash is asking to choose from. Empty is no picker.
+    private var skillChoices: [SkillOption] {
+        let text = draft.wrappedValue
+        guard text != dismissedSkillDraft else { return [] }
+        return skillMatches(for: text, in: model.skills(for: thread))
+    }
+
+    #if os(macOS)
+        private var highlightedSkill: SkillOption? {
+            let choices = skillChoices
+            return choices.isEmpty ? nil : choices[min(skillIndex, choices.count - 1)]
+        }
+
+        private func skillKey(_ key: SkillPickerKey) {
+            let choices = skillChoices
+            guard let current = highlightedSkill, let index = choices.firstIndex(of: current) else { return }
+            switch key {
+            case .down: skillIndex = (index + 1) % choices.count
+            case .up: skillIndex = (index + choices.count - 1) % choices.count
+            case .select: pick(current)
+            case .dismiss: dismissedSkillDraft = draft.wrappedValue
+            }
+        }
+    #endif
+
+    /// The trailing space ends the command's name, so the picker closes by the rule that
+    /// opened it and the argument can be typed straight away.
+    private func pick(_ skill: SkillOption) {
+        draft.wrappedValue = "/\(skill.name) "
+        #if os(macOS)
+            composerFocused = true
+        #endif
+    }
+
+    @ViewBuilder private var skillPicker: some View {
+        let choices = skillChoices
+        if !choices.isEmpty {
+            // Measured, because the cap is a share of the transcript this floats over.
+            GeometryReader { transcript in
+                Group {
+                    #if os(macOS)
+                        SkillPicker(skills: choices, highlighted: highlightedSkill?.id,
+                            onHover: { skill in skillIndex = choices.firstIndex(of: skill) ?? 0 },
+                            onPick: pick, dismiss: { dismissedSkillDraft = draft.wrappedValue })
+                    #else
+                        SkillPicker(skills: choices, onPick: pick,
+                            dismiss: { dismissedSkillDraft = draft.wrappedValue })
+                    #endif
+                }
+                .frame(maxHeight: transcript.size.height * SkillPicker.transcriptShare(dynamicTypeSize))
+                .padding(.horizontal, 12)
+                .compactQuietComposerLayout()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            }
+            .onChange(of: choices.count, initial: true) { _, count in
+                AccessibilityNotification.Announcement(String(localized: "\(count) skills")).post()
+            }
+        }
+    }
+
     private var composer: some View {
         // One surface, like Messages: the attach button, the field, the staged file and the
         // send control all live inside the same rounded container, so the eye reads one thing
@@ -1222,11 +1302,13 @@ public struct ChatView: View {
         /// field's `onSubmit` makes it the newline it was meant to be.
         private var composerKeyMonitor: some View {
             let onPaste: (() -> Void)? = generating ? nil : { pasteImages() }
+            let onPickerKey: ((SkillPickerKey) -> Void)? = skillChoices.isEmpty ? nil : { skillKey($0) }
             return ComposerKeyMonitor(
                 isActive: composerFocused,
                 sendModifiers: sendWithCommandReturn ? .command : [],
                 onSend: sendFromKey,
-                onPaste: onPaste
+                onPaste: onPaste,
+                onPickerKey: onPickerKey
             )
         }
 

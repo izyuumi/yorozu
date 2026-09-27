@@ -605,6 +605,7 @@ let sendRaw: (event: YorozuEvent) => void = () => {};
 /** A paired phone plus the session key, so a test can talk sealed events both ways. */
 async function pairedPhone(responses: (() => Response)[], openclaw = false, extra: Partial<ServeOptions> = {},
   negotiate = false) {
+  if (openclaw && !extra.openclawRunner) vi.spyOn(OpenClawRunner.prototype, "listSkills").mockResolvedValue([]);
   relay = await startRelay(0);
   const dir = extra.stateDir ?? mkdtempSync(join(tmpdir(), "yorozu-approval-serve-"));
   states = [];
@@ -921,6 +922,60 @@ test("retry repairs a logged native message after queue persistence fails", asyn
   expect(run).toHaveBeenCalledTimes(1);
   expect(readThreadEvents("retry-queue", dir).filter((known) => known.id === event.id)).toHaveLength(1);
   expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8"))).toEqual([]);
+});
+
+test("skill lists refresh on join after ten minutes and broadcast only changes", async () => {
+  let now = 1_000;
+  let catalog = [{ name: "plugin:Shape", description: "x".repeat(250), argumentHint: "y".repeat(100), path: "/host/shape/SKILL.md" }];
+  const skills = vi.fn(async () => catalog);
+  const { dir } = await pairedPhone([], false, { now: () => now, nativeRunners: {
+    codex: { run: async () => ({ text: "done" }), skills },
+    "claude-code": { run: async () => ({ text: "done" }), skills: async () => { throw new Error("unavailable"); } },
+  } });
+  const first = await macClient(dir);
+  await vi.waitFor(() => expect(first.events.some((event) => event.kind === "model_list" &&
+    event.data.skills?.codex?.[0]?.name === "plugin:Shape")).toBe(true));
+  const listed = first.events.findLast((event) => event.kind === "model_list");
+  if (listed?.kind !== "model_list") throw new Error("missing skill list");
+  expect(listed.data.skills?.codex).toEqual([{ name: "plugin:Shape", description: "x".repeat(200), argumentHint: "y".repeat(80) }]);
+  expect(listed.data.skills?.["claude-code"]).toEqual([]);
+  expect(JSON.stringify(listed)).not.toContain("/host/shape/SKILL.md");
+  expect(skills).toHaveBeenCalledTimes(1);
+  catalog = [{ name: "new", description: "New", argumentHint: "", path: "/host/new/SKILL.md" }];
+  const second = await macClient(dir);
+  await vi.waitFor(() => expect(second.events.some((event) => event.kind === "model_list")).toBe(true));
+  expect(skills).toHaveBeenCalledTimes(1);
+  const before = first.events.filter((event) => event.kind === "model_list").length;
+  now += 600_001;
+  const third = await macClient(dir);
+  await vi.waitFor(() => expect(skills).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(first.events.filter((event) => event.kind === "model_list").length).toBe(before + 1));
+  expect(first.events.findLast((event) => event.kind === "model_list")).toMatchObject({ data: { skills: { codex: [{ name: "new" }] } } });
+  const after = first.events.filter((event) => event.kind === "model_list").length;
+  now += 600_001;
+  const fourth = await macClient(dir);
+  await vi.waitFor(() => expect(skills).toHaveBeenCalledTimes(3));
+  expect(first.events.filter((event) => event.kind === "model_list")).toHaveLength(after);
+  first.close(); second.close(); third.close(); fourth.close();
+});
+
+test("Codex translates only a leading known slash skill using the host path", async () => {
+  const run = vi.fn<NativeAgentRunner["run"]>(async () => ({ text: "done", sessionId: "session" }));
+  const { send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run, skills: async () => [
+    { name: "Grill", description: "Questions", path: "/host/grill/SKILL.md" },
+    { name: "plugin:Shape", description: "Shape", path: "/host/shape/SKILL.md" },
+  ] } } });
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "skill-turn");
+  for (const text of ["/Grill topic", "/unknown topic", "say /Grill topic", "/plugin:Shape more"]) {
+    send({ kind: "message", data: { role: "user", text } }, "skill-turn");
+    await eventsUntil((event) => event.kind === "message" && event.threadId === "skill-turn" && event.data.done === true);
+  }
+  expect(run.mock.calls.map(([turn]) => ({ text: turn.text, skill: turn.skill }))).toEqual([
+    { text: "topic", skill: { name: "Grill", path: "/host/grill/SKILL.md" } },
+    { text: "/unknown topic", skill: undefined },
+    { text: "say /Grill topic", skill: undefined },
+    { text: "more", skill: { name: "plugin:Shape", path: "/host/shape/SKILL.md" } },
+  ]);
 });
 
 test("startup stops a journaled orphan before native recovery can run", async () => {

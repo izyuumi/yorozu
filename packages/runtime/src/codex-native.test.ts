@@ -26,6 +26,12 @@ function fakeCodex(work: (handlers: CodexHandlers) => Promise<void> = async (h) 
       }
       if (method === "turn/interrupt") handlers.notify("turn/completed", { threadId: "native", turn: { id: "turn-1", status: "interrupted" } });
       if (method === "model/list") return { data: [{ model: "model-a", displayName: "Model A", supportedReasoningEfforts: [{ reasoningEffort: "high" }, { reasoningEffort: "ultra" }] }] };
+      if (method === "skills/list") return { data: [{ skills: [
+        { name: "caveman", description: "Brief", path: "/host/caveman/SKILL.md", scope: "user", enabled: true },
+        { name: "system:shape", description: "Shape", path: "/host/shape/SKILL.md", scope: "system", enabled: true },
+        { name: "private", description: "Hidden", path: "/repo/private/SKILL.md", scope: "repo", enabled: true },
+        { name: "off", description: "Off", path: "/host/off/SKILL.md", scope: "user", enabled: false },
+      ] }] };
       return {};
     },
     notify(method, params) { calls.push([method, params]); },
@@ -50,6 +56,20 @@ test("Codex starts/resumes native threads with cwd, models, effort and independe
   }
   expect(fake.close).toHaveBeenCalledTimes(3);
   expect(await runner.models!()).toEqual([{ id: "model-a", label: "Model A", providerLabel: "Codex", efforts: ["high", "ultra"] }]);
+});
+
+test("Codex lists enabled host skills and sends a structured skill item beside text", async () => {
+  const fake = fakeCodex();
+  const runner = codexNativeRunner(fake.connect);
+  expect(await runner.skills!()).toEqual([
+    { name: "caveman", description: "Brief", path: "/host/caveman/SKILL.md" },
+    { name: "system:shape", description: "Shape", path: "/host/shape/SKILL.md" },
+  ]);
+  await runner.run(turn({ text: "do work", skill: { name: "caveman", path: "/host/caveman/SKILL.md" } }));
+  expect(fake.calls.find(([method]) => method === "turn/start")?.[1]).toMatchObject({ input: [
+    { type: "text", text: "do work", text_elements: [] },
+    { type: "skill", name: "caveman", path: "/host/caveman/SKILL.md" },
+  ] });
 });
 
 test.each([{ cwd: "" }, { cwd: "   " }, { cwd: undefined }])("Codex refuses a turn without a folder before the app server is spawned (%o)", async (folder) => {

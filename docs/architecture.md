@@ -16,8 +16,10 @@ A thread's `agent` is fixed when the thread is created and never changes.
 A thread with no `agent` on the wire is a `yorozu` thread — that is every thread created before
 the field existed.
 
-OpenClaw owns everything about execution for its threads: providers and credentials, model
-choice, tools, permission prompts, skills, scheduling and PAIOS memory. Yorozu holds none of it.
+OpenClaw owns execution for its threads: providers and credentials, model choice, tools,
+permission prompts, skills, scheduling and PAIOS memory. Yorozu keeps only skill names,
+descriptions and argument hints in memory for the client picker; skill files and execution
+remain with OpenClaw.
 On first launch the sidecar pairs a private Ed25519 client identity with the Gateway and stores
 its device token at mode `0600` under `YOROZU_STATE_DIR`. That is client authentication only;
 provider credentials never enter Yorozu.

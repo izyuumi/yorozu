@@ -1002,6 +1002,21 @@ describe("OpenClawRunner", () => {
     expect(gateway.request).toHaveBeenCalledWith("models.list", {});
   });
 
+  test("lists only eligible user-invocable host skills", async () => {
+    const gateway = harness();
+    gateway.request.mockImplementation(async (method: string) => method === "skills.status" ? { skills: [
+      { name: "caveman", description: "Brief", source: "agents-skills-personal", eligible: true, userInvocable: true, commandVisible: true },
+      { name: "bundled", description: "Built in", source: "openclaw-bundled", eligible: true, userInvocable: true, commandVisible: true },
+      { name: "project", description: "Project", source: "agents-skills-project", eligible: true, userInvocable: true, commandVisible: true },
+      { name: "workspace", description: "Workspace", source: "openclaw-workspace", eligible: true, userInvocable: true, commandVisible: true },
+      { name: "hidden", description: "Hidden", source: "openclaw-extra", eligible: true, userInvocable: false, commandVisible: false },
+      { name: "off", description: "Off", source: "openclaw-bundled", eligible: false, userInvocable: true, commandVisible: true },
+    ] } : {});
+    await expect(new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory }).listSkills())
+      .resolves.toEqual([{ name: "caveman", description: "Brief" }, { name: "bundled", description: "Built in" }]);
+    expect(gateway.request).toHaveBeenCalledWith("skills.status", { agentId: "main" });
+  });
+
   test("sends through Gateway and publishes streaming deltas", async () => {
     const gateway = harness();
     const updates: string[] = [];

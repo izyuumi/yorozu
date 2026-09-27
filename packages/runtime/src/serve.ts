@@ -50,6 +50,7 @@ import {
   type PeerCompatibility,
   type ReasoningEffort,
   type MessageAttachment,
+  type SkillOption,
   type ProgressCardData,
   type ThreadAgent,
   type YorozuEvent,
@@ -426,6 +427,8 @@ export interface ServeOptions {
    * SDK; a kind with no runner answers that it is not available. Test seam for a fake SDK.
    */
   nativeRunners?: Partial<Record<Exclude<ThreadAgent, "yorozu">, NativeAgentRunner>>;
+  /** Clock for the skill-list refresh window. */
+  now?: () => number;
 }
 
 export interface Sidecar {
@@ -1209,13 +1212,58 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * at that point would draw an empty menu first.
    */
   const agentModels: Partial<Record<Exclude<ThreadAgent, "yorozu">, ModelOption[]>> = {};
+  let skillsByAgent: Partial<Record<ThreadAgent, SkillOption[]>> = {};
+  let codexSkillPaths = new Map<string, string>();
+  let skillsBuiltAt: number | undefined;
+  let skillsRefreshing: Promise<void> | undefined;
+  const skillNow = options.now ?? Date.now;
+  const refreshSkills = (): Promise<void> => {
+    if (skillsRefreshing) return skillsRefreshing;
+    if (skillsBuiltAt !== undefined && skillNow() - skillsBuiltAt < 600_000) return Promise.resolve();
+    const refresh = Promise.all([
+      openclaw?.listSkills?.().catch(() => [] as SkillOption[]) ?? Promise.resolve([] as SkillOption[]),
+      nativeRunners["claude-code"]?.skills?.().catch(() => []) ?? Promise.resolve([]),
+      nativeRunners.codex?.skills?.().catch(() => []) ?? Promise.resolve([]),
+    ]).then(([openclawSkills, claudeSkills, codexSkills]) => {
+      const visible = (skills: SkillOption[]): SkillOption[] => {
+        const names = new Set<string>();
+        return skills.flatMap((skill) => {
+          if (!skill || typeof skill.name !== "string" || !/^[^\s/]{1,128}$/.test(skill.name) ||
+              names.has(skill.name)) return [];
+          names.add(skill.name);
+          return [{ name: skill.name,
+            description: typeof skill.description === "string" ? skill.description.slice(0, 200) : "",
+            ...(typeof skill.argumentHint === "string" && skill.argumentHint
+              ? { argumentHint: skill.argumentHint.slice(0, 80) } : {}) }];
+        });
+      };
+      const next: Partial<Record<ThreadAgent, SkillOption[]>> = {
+        yorozu: visible(openclawSkills), "claude-code": visible(claudeSkills), codex: visible(codexSkills),
+      };
+      const paths = new Map<string, string>();
+      for (const skill of codexSkills) {
+        if (skill && typeof skill.path === "string" && !paths.has(skill.name) &&
+            next.codex?.some((shown) => shown.name === skill.name)) paths.set(skill.name, skill.path);
+      }
+      codexSkillPaths = paths;
+      skillsBuiltAt = skillNow();
+      if (JSON.stringify(next) !== JSON.stringify(skillsByAgent)) {
+        skillsByAgent = next;
+        if (!stopped) broadcast(modelList());
+      }
+    }).finally(() => { if (skillsRefreshing === refresh) skillsRefreshing = undefined; });
+    skillsRefreshing = refresh;
+    return refresh;
+  };
   const modelsFor = (agent: ThreadAgent): ModelOption[] =>
     agent === "yorozu" ? (provider ? legacy?.models() ?? [] : openclawModels) : agentModels[agent] ?? [];
   /** The efforts a thread may ask for: its model's, or the first model's while it is on Default. */
   const effortsFor = (agent: ThreadAgent, model: string | undefined): ReasoningEffort[] =>
     (modelsFor(agent).find((m) => m.id === model) ?? modelsFor(agent)[0])?.efforts ?? [];
   const modelList = (): YorozuEvent =>
-    control({ kind: "model_list", data: { models: modelsFor("yorozu"), agentModels } });
+    control({ kind: "model_list", data: { models: modelsFor("yorozu"), agentModels, skills: skillsByAgent } });
+
+  void refreshSkills();
 
   for (const agent of ["claude-code", "codex"] as const) {
     void nativeRunners[agent]?.models?.().then((models) => {
@@ -1492,9 +1540,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
           let executionStarted = false;
           try {
             const currentHome = threadHome(threadId, dir);
+            const skillName = agent === "codex" ? /^\/([^\s/]+)(?=\s|$)/.exec(text)?.[1] : undefined;
+            const skillPath = skillName ? codexSkillPaths.get(skillName) : undefined;
             const done = await runner.run({
               threadId,
-              text: recovering ? nativeRecoveryPrompt(threadId, text) : withStoppedContext(threadId, text, userEventId),
+              text: recovering ? nativeRecoveryPrompt(threadId, text) : withStoppedContext(threadId,
+                skillPath ? text.slice(skillName!.length + 1).trimStart() : text, userEventId),
+              ...(!recovering && skillPath ? { skill: { name: skillName!, path: skillPath } } : {}),
               ...currentHome,
               cwd: home.cwd,
               bypass: loadSettings(dir).yolo,
@@ -2670,6 +2722,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       state("local-connected");
       send(threadList());
       send(modelList());
+      void refreshSkills();
       send(projectList());
       pushDevices();
     },
@@ -3007,6 +3060,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         // A phone that has just paired needs the thread list before it can ask for anything.
         sendTo(body.pub, threadList());
         sendTo(body.pub, modelList());
+        void refreshSkills();
         sendTo(body.pub, projectList());
         // And every device's list of devices has just gained one.
         pushDevices();

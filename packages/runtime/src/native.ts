@@ -10,13 +10,16 @@
 
 import { query as sdkQuery, type ModelInfo, type Options, type Query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { spawn } from "node:child_process";
-import type { EventPayload, ModelOption, ReasoningEffort } from "@yorozu/shared";
+import { tmpdir } from "node:os";
+import type { EventPayload, ModelOption, ReasoningEffort, SkillOption } from "@yorozu/shared";
 
 export interface NativeTurn {
   threadId: string;
   /** The folder the agent runs in, fixed at thread creation. The runner refuses to start without one. */
   cwd: string;
   text: string;
+  /** Resolved from the host's current Codex list, never from client input. */
+  skill?: { name: string; path: string };
   /** The agent's own session id from the thread's last turn; absent starts a new session. */
   sessionId?: string;
   bypass?: boolean;
@@ -95,6 +98,7 @@ export interface NativeTurnResult {
 
 export interface NativeAgentRunner {
   models?(): Promise<ModelOption[]>;
+  skills?(): Promise<(SkillOption & { path?: string })[]>;
   run(turn: NativeTurn): Promise<NativeTurnResult>;
 }
 
@@ -130,6 +134,18 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
     return child;
   } : undefined;
   return {
+    async skills() {
+      const session = query({ prompt: (async function* () {})(), options: { tools: [], cwd: tmpdir(), env: childEnv(),
+        ...(trackedSpawn ? { spawnClaudeCodeProcess: trackedSpawn } : {}) } });
+      try {
+        const refreshed = await session.reloadSkills();
+        const invocable = new Set((await session.supportedCommands())
+          .filter((command) => !command.builtin).map((command) => command.name));
+        return refreshed.skills.filter((skill) => !skill.builtin && invocable.has(skill.name)).map((skill) => ({
+          name: skill.name, description: skill.description, argumentHint: skill.argumentHint,
+        }));
+      } finally { session.close(); }
+    },
     async models() {
       // No prompt is submitted while asking the CLI for its own catalog.
       const session = query({ prompt: (async function* () {})(), options: { tools: [], env: childEnv(),
