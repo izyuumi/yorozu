@@ -49,6 +49,13 @@ echo "==> build for testing"
 # Pin a runtime with SIMULATOR_RUNTIME (e.g. com.apple.CoreSimulator.SimRuntime.iOS-26-5) to
 # match CI's; otherwise simctl's newest installed one.
 UDID=$(xcrun simctl create yorozu-ui-tests "$DEVICE_TYPE" ${SIMULATOR_RUNTIME:+"$SIMULATOR_RUNTIME"})
+# Optional accessibility settings for focused visual/interaction runs.
+if [ -n "${SIMULATOR_CONTENT_SIZE:-}" ] || [ -n "${SIMULATOR_INCREASE_CONTRAST:-}" ]; then
+  xcrun simctl boot "$UDID"
+  xcrun simctl bootstatus "$UDID" -b >/dev/null
+  [ -z "${SIMULATOR_CONTENT_SIZE:-}" ] || xcrun simctl ui "$UDID" content_size "$SIMULATOR_CONTENT_SIZE"
+  [ -z "${SIMULATOR_INCREASE_CONTRAST:-}" ] || xcrun simctl ui "$UDID" increase_contrast "$SIMULATOR_INCREASE_CONTRAST"
+fi
 xcodebuild build-for-testing \
   -workspace "$IOS/Yorozu.xcworkspace" -scheme YorozuUITests \
   -destination "id=$UDID" -derivedDataPath "$OUT/dd" \

@@ -78,17 +78,25 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(confirming.waitForExistence(timeout: 10), "The messages claim delivery")
         XCTAssertTrue(app.descendants(matching: .any)["Connection: Reconnecting"].firstMatch
             .waitForExistence(timeout: 25), "A send did not probe the dead link before the idle heartbeat")
+        let shown = XCTAttachment(screenshot: app.screenshot())
+        shown.name = "Connection toast over open chat"
+        shown.lifetime = .keepAlways
+        add(shown)
         try await rig.post("heal")
         XCTAssertTrue(confirming.waitForNonExistence(timeout: 70), "Delivery never confirmed")
         // Counted once the answer has finished streaming: a chat still redrawing every word can
         // outlast the snapshot a count needs.
         XCTAssertTrue(app.textViews["echo: dead link two"].waitForExistence(timeout: 60),
                       "The second reply answered the preceding turn")
+        // UIKit exposes only visible transcript cells at large Dynamic Type sizes.
+        let transcript = app.collectionViews.firstMatch
+        for _ in 0..<4 where !app.textViews["dead link one"].exists { transcript.swipeDown() }
         XCTAssertEqual(bubbles("dead link one"), 1)
-        XCTAssertEqual(bubbles("dead link two"), 1)
-        XCTAssertTrue(app.textViews["echo: dead link one"].waitForExistence(timeout: 10))
-        let recorded = try await rig.messages().filter { $0.role == "user" && $0.text.hasPrefix("dead link") }.map(\.text)
-        XCTAssertEqual(recorded, ["dead link one", "dead link two"])
+        let recorded = try await rig.messages().filter { $0.text.contains("dead link") }
+        XCTAssertEqual(recorded.filter { $0.role == "user" }.map(\.text),
+                       ["dead link one", "dead link two"])
+        XCTAssertEqual(recorded.filter { $0.role == "agent" }.map(\.text),
+                       ["echo: dead link one", "echo: dead link two"])
     }
 
     /// A message whose receipt never arrives stays "Confirming" rather than claiming delivery.
