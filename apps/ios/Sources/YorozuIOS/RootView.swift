@@ -572,7 +572,6 @@ final class Session {
 
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var session = Session.shared
     /// The thread ids pushed on the list's stack: at most one, and what lets the app open a
     /// thread by itself rather than waiting to be tapped. Seeded from the session, which decided
@@ -754,6 +753,9 @@ struct RootView: View {
                 toastState: model.connectionToast.visible,
                 toastID: model.connectionToast.notice?.id,
                 onBackground: { model.connectionToast.dismiss() },
+                updateStatuses: [UpdateStatusItem(id: "local", status: model.updateStatus) {
+                    model.updateControl(.postpone)
+                }],
                 path: $path,
                 projects: model.projects,
                 projectListStatus: model.projectListStatus,
@@ -798,7 +800,6 @@ struct RootView: View {
                     }
                 )
             }
-            .safeAreaInset(edge: .top) { updateStatus(of: [model], listShown: path.isEmpty) }
             .overlay(alignment: .topTrailing) {
                 if session.isDemo && path.isEmpty {
                     Text("Demo")
@@ -834,7 +835,18 @@ struct RootView: View {
     }
 
     private var multiHostContent: some View {
-        MultiHostThreadListView(session: session.hosts, path: $hostPath, onSettings: { settings = true }) { host, thread in
+        MultiHostThreadListView(
+            session: session.hosts,
+            path: $hostPath,
+            onSettings: { settings = true },
+            updateStatuses: session.hosts.sessions.map { host in
+                UpdateStatusItem(
+                    id: host.id,
+                    hostLabel: session.hosts.hasMultipleHosts ? session.hosts.label(for: host) : nil,
+                    status: host.model.updateStatus
+                ) { host.model.updateControl(.postpone) }
+            }
+        ) { host, thread in
             let notification = session.notificationOpen.flatMap { $0.hostID == host.id && $0.threadId == thread.id ? $0 : nil }
             ChatView(model: host.model, thread: thread, resumeRequest: notification?.id,
                      notificationClass: notification?.notificationClass, notificationEventRef: notification?.eventRef,
@@ -847,9 +859,6 @@ struct RootView: View {
                      onCreate: { agent, cwd in
                          if let draft = session.hosts.newDraft(on: host.id, agent: agent, cwd: cwd) { hostPath = [draft] }
                      })
-        }
-        .safeAreaInset(edge: .top) {
-            updateStatus(of: session.hosts.sessions.map(\.model), listShown: hostPath.isEmpty)
         }
         .sheet(isPresented: $choosingThreadHost) {
             NewThreadPicker(session: session.hosts) { hostPath = [$0] }
@@ -868,21 +877,6 @@ struct RootView: View {
             if let id { session.rememberHost(id) }
         }
         .onChange(of: session.hosts.sessions.map { session.hosts.label(for: $0) }) { _, _ in session.publishThreads() }
-    }
-
-    /// A host's pending update belongs with the thread list, not with a transcript. A split
-    /// layout keeps the list on screen beside an open thread, so it stays there.
-    private func updateStatus(of models: [ChatModel], listShown: Bool) -> some View {
-        VStack(spacing: 0) {
-            if listShown || sizeClass == .regular {
-                // ponytail: banners carry no host name; add one if two hosts update at once.
-                ForEach(models.indices, id: \.self) { index in
-                    UpdateStatusView(status: models[index].updateStatus) {
-                        models[index].updateControl(.postpone)
-                    }
-                }
-            }
-        }
     }
 
     private var pairingContent: some View {

@@ -650,6 +650,7 @@ public struct ThreadListView<Destination: View>: View {
     private let toastID: UUID?
     private let toastLabel: String?
     private let onBackground: (() -> Void)?
+    private let updateStatuses: [UpdateStatusItem]
     @Binding private var path: [String]
     /// Where a coding agent can be started. Empty means the picker offers Yorozu alone.
     private let projects: [ProjectFolder]
@@ -757,6 +758,7 @@ public struct ThreadListView<Destination: View>: View {
         toastID: UUID? = nil,
         toastLabel: String? = nil,
         onBackground: (() -> Void)? = nil,
+        updateStatuses: [UpdateStatusItem] = [],
         path: Binding<[String]>,
         projects: [ProjectFolder] = [],
         projectListStatus: ProjectListStatus = .ready,
@@ -790,6 +792,7 @@ public struct ThreadListView<Destination: View>: View {
         self.toastID = toastID
         self.toastLabel = toastLabel
         self.onBackground = onBackground
+        self.updateStatuses = updateStatuses
         self._path = path
         self.projects = projects
         self.projectListStatus = projectListStatus
@@ -961,6 +964,13 @@ public struct ThreadListView<Destination: View>: View {
         .scrollContentBackground(.hidden)
         .background(YorozuPalette.canvas)
         .contentMargins(.vertical, LayoutMetrics.inner)
+        .safeAreaInset(edge: .top) {
+            VStack(spacing: 0) {
+                ForEach(updateStatuses) { item in
+                    UpdateStatusView(status: item.status, hostLabel: item.hostLabel, postpone: item.postpone)
+                }
+            }
+        }
         .animation(.default, value: threads)
         .scrollPosition(id: $visibleRowID, anchor: .top)
         .onScrollPhaseChange { _, phase in
