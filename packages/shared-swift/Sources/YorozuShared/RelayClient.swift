@@ -62,6 +62,8 @@ private struct Inbound: Decodable {
     var payload: String?
     var ownerOnline: Bool?
     var online: Bool?
+    var flowControl: Bool?
+    var flowBytes: Int?
 }
 
 /// Phone side of the blind relay: join a room with the one-time token from the pairing QR,
@@ -129,6 +131,9 @@ public actor RelayClient: ChatTransport {
     private var paired: Bool
     private let onPaired: (@Sendable () -> Void)?
     private var joined = false
+    private var flowControl = false
+    private var lastFlowAckBytes = 0
+    private var flowFramesSinceAck = 0
     /// Set by ``close()``; the only thing that stops the reconnect loop.
     private var stopped = false
     private var attempt = 0
@@ -307,6 +312,9 @@ public actor RelayClient: ChatTransport {
         while !stopped && !Task.isCancelled && generation == loopGeneration {
             updates?.yield(.state(.connecting))
             joined = false
+            flowControl = false
+            lastFlowAckBytes = 0
+            flowFramesSinceAck = 0
             channelFormat = nil
             peerExchange?.cancel()
             peerInfoRequestID = nil
@@ -444,6 +452,7 @@ public actor RelayClient: ChatTransport {
             Task { if generation == loopGeneration { await join() } }
         case "joined":
             joined = true
+            flowControl = message.flowControl == true
             attempt = 0
             phaseDeadline?.cancel()
             phaseDeadline = nil
@@ -487,6 +496,19 @@ public actor RelayClient: ChatTransport {
             }
         case "frame":
             acceptFrame(message.payload)
+            if flowControl, let bytes = message.flowBytes, bytes > lastFlowAckBytes {
+                flowFramesSinceAck += 1
+                if bytes - lastFlowAckBytes >= 1_048_576 || flowFramesSinceAck >= 16 {
+                    lastFlowAckBytes = bytes
+                    flowFramesSinceAck = 0
+                    let generation = loopGeneration
+                    Task {
+                        if generation == loopGeneration {
+                            try? await send(["type": "flowAck", "bytes": String(bytes)])
+                        }
+                    }
+                }
+            }
         default:
             break
         }

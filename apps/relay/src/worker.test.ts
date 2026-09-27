@@ -365,6 +365,36 @@ async function paired() {
   return { mac, macKeys, phone, keys, room };
 }
 
+test("a phone that stops acknowledging frames is dropped and can rejoin without blocking another phone", async () => {
+  const { mac, macKeys, phone: slow, keys: slowKeys, room: name } = await paired();
+  const { phone: fast } = await connectPhone(name, await mintToken(mac));
+  const joined = await fast.next();
+  expect(joined.type).toBe("joined");
+
+  const payload = "x".repeat(128 * 1024);
+  for (let i = 0; i < 20; i++) {
+    await frame(mac, payload, macKeys);
+    const received = await fast.next();
+    expect(received).toMatchObject({ type: "frame", payload });
+    if (joined.flowControl) {
+      fast.send({ type: "flowAck", bytes: String(received.flowBytes) });
+      await settled(fast);
+    }
+  }
+
+  expect(await slow.closed()).toBe(1013);
+  expect(joined.flowControl).toBe(true);
+  const reopened = await connect(name);
+  const { nonce } = await reopened.next();
+  reopened.send({ type: "join", roomId: name, phonePubkey: slowKeys.pub, sig: await sign(nonce, slowKeys) });
+  expect(await reopened.next()).toMatchObject({ type: "joined", ownerOnline: true });
+  await frame(mac, "after rejoin", macKeys);
+  expect(await reopened.next()).toMatchObject({ type: "frame", payload: "after rejoin" });
+  const nextFast = await fast.next();
+  expect(nextFast).toMatchObject({ type: "frame", payload: "after rejoin" });
+  expect(await mintToken(mac)).toMatch(/^[A-Za-z0-9_-]+$/);
+});
+
 const record = async (room: string, pubkey: string): Promise<any> => {
   const rooms = (env as unknown as Env).ROOM;
   return await runInDurableObject(rooms.get(rooms.idFromName(room)), async (_room, state) =>
