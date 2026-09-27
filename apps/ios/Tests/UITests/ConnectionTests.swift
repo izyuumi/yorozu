@@ -52,6 +52,9 @@ final class ConnectionTests: XCTestCase {
             .waitForExistence(timeout: 25), "A send did not probe the dead link before the idle heartbeat")
         try await rig.post("heal")
         XCTAssertTrue(confirming.waitForNonExistence(timeout: 70), "Delivery never confirmed")
+        // Counted once the answer has finished streaming: a chat still redrawing every word can
+        // outlast the snapshot a count needs.
+        XCTAssertTrue(app.textViews["echo: dead link two"].waitForExistence(timeout: 60), "No answer after delivery")
         XCTAssertEqual(bubbles("dead link one"), 1)
         XCTAssertEqual(bubbles("dead link two"), 1)
         let recorded = try await rig.messages().filter { $0.role == "user" && $0.text.hasPrefix("dead link") }.map(\.text)

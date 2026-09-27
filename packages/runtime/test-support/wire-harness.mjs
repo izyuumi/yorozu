@@ -39,9 +39,12 @@ const { listThreads, readThreadEvents } = await import("../dist/threads.js");
 let heldAnswer;
 let answerStarted = false;
 
-/** Answers every turn with `echo: <text>` in words spaced 50ms apart, so a drop can land mid-reply. */
+/**
+ * Answers every turn with `echo: <the latest user message>` in words spaced 50ms apart, so a
+ * drop can land mid-reply.
+ */
 const model = async (_url, init) => {
-  const { content } = JSON.parse(init.body).messages.at(-1);
+  const { content } = JSON.parse(init.body).messages.findLast((message) => message.role === "user");
   const release = heldAnswer;
   if (release) answerStarted = true;
   const words = `echo: ${typeof content === "string" ? content : JSON.stringify(content)}`.split(" ");
