@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { GatewayClient, type DeviceIdentity, type GatewayClientHostDeps } from "@openclaw/gateway-client";
 import type { EventFrame } from "@openclaw/gateway-protocol/frame-guards";
-import { ATTACHMENT_MAX_BYTES, YOROZU_EFFORTS, type EventPayload, type MessageAttachment, type ModelOption, type ReasoningEffort, type YorozuEvent } from "@yorozu/shared";
+import { ATTACHMENT_MAX_BYTES, YOROZU_EFFORTS, type EventPayload, type MessageAttachment, type ModelOption, type ReasoningEffort, type SkillOption, type YorozuEvent } from "@yorozu/shared";
 
 const DEFAULT_GATEWAY_URL = "ws://127.0.0.1:18789";
 const EXECUTION_LOST_MS = 5_000;
@@ -125,6 +125,20 @@ export class OpenClawRunner {
     this.#clientFactory = options.clientFactory ?? ((clientOptions) => new GatewayClient(clientOptions));
     this.#recoveryDelayMs = options.recoveryDelayMs ?? 250;
     this.#fetch = options.fetch ?? fetch;
+  }
+
+  async listSkills(): Promise<SkillOption[]> {
+    const result = await (await this.connect()).request<{ skills?: unknown[] }>("skills.status", { agentId: "main" });
+    return (result.skills ?? []).flatMap((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+      const skill = value as Record<string, unknown>;
+      const source = typeof skill.source === "string" ? skill.source : "";
+      if (source === "agents-skills-project" ||
+          skill.eligible !== true || skill.disabled === true ||
+          skill.userInvocable !== true || skill.commandVisible !== true ||
+          typeof skill.name !== "string" || !skill.name) return [];
+      return [{ name: skill.name, description: typeof skill.description === "string" ? skill.description : "" }];
+    });
   }
 
   /**

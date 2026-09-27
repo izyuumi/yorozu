@@ -115,6 +115,25 @@
         return flags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function]) == sendModifiers
     }
 
+    /// What a key means to the skill picker while it is open.
+    enum SkillPickerKey: Equatable { case up, down, select, dismiss }
+
+    /// The picker's keys: the arrows, Return or Tab to pick, Escape to close. Only unmodified,
+    /// so ⌘Return still sends and ⇧Tab still moves focus, and not while an input method is
+    /// composing, whose arrows and Return choose a conversion.
+    func skillPickerKey(keyCode: UInt16, flags: NSEvent.ModifierFlags, composing: Bool) -> SkillPickerKey? {
+        guard !composing,
+            flags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function]).isEmpty
+        else { return nil }
+        return switch keyCode {
+        case 126: .up
+        case 125: .down
+        case 36, 76, 48: .select
+        case 53: .dismiss
+        default: nil
+        }
+    }
+
     /// The Mac message field's keys that the field must not get. The field is AppKit's text
     /// editor, which handles its keys below the pipeline SwiftUI delivers key presses through:
     /// a key equivalent on the send button and a SwiftUI paste command both go unseen. This
@@ -127,6 +146,8 @@
         /// Returns whether a message went. An Enter with nothing to send reaches the field.
         let onSend: () -> Bool
         let onPaste: (() -> Void)?
+        /// Set while the skill picker is open, which then has its keys before Send and Stop do.
+        let onPickerKey: ((SkillPickerKey) -> Void)?
 
         func makeNSView(context: Context) -> MonitorView { MonitorView() }
 
@@ -135,6 +156,7 @@
             view.sendModifiers = sendModifiers
             view.onSend = onSend
             view.onPaste = onPaste
+            view.onPickerKey = onPickerKey
         }
 
         final class MonitorView: NSView {
@@ -142,6 +164,7 @@
             var sendModifiers: NSEvent.ModifierFlags = []
             var onSend: () -> Bool = { false }
             var onPaste: (() -> Void)?
+            var onPickerKey: ((SkillPickerKey) -> Void)?
             private var monitor: Any?
 
             override func viewDidMoveToWindow() {
@@ -153,6 +176,13 @@
                     // Only this window's field: every open chat has its own monitor.
                     guard let self, self.isActive, event.window === self.window else { return event }
                     let composing = (self.window?.firstResponder as? NSTextView)?.hasMarkedText() == true
+                    if let onPickerKey = self.onPickerKey,
+                        let key = skillPickerKey(
+                            keyCode: event.keyCode, flags: event.modifierFlags, composing: composing)
+                    {
+                        onPickerKey(key)
+                        return nil
+                    }
                     if isSendKey(keyCode: event.keyCode, flags: event.modifierFlags,
                         sendModifiers: self.sendModifiers, composing: composing), self.onSend()
                     {

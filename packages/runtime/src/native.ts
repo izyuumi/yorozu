@@ -10,14 +10,17 @@
 
 import { query as sdkQuery, type ModelInfo, type Options, type Query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
 import { dirname } from "node:path";
-import type { AgentDescriptor, EventPayload, ModelOption, ReasoningEffort } from "@yorozu/shared";
+import type { AgentDescriptor, EventPayload, ModelOption, ReasoningEffort, SkillOption } from "@yorozu/shared";
 
 export interface NativeTurn {
   threadId: string;
   /** The folder the agent runs in, fixed at thread creation. The runner refuses to start without one. */
   cwd: string;
   text: string;
+  /** Resolved from the host's current Codex list, never from client input. */
+  skill?: { name: string; path: string };
   /**
    * What the user attached, already on this Mac's disk, and already named with its path in
    * `text`. A runner adds only what its agent needs to open them.
@@ -103,6 +106,7 @@ export interface NativeAgentRunner {
   /** Required for host-registered agents beyond the built-ins. */
   descriptor?: AgentDescriptor;
   models?(): Promise<ModelOption[]>;
+  skills?(): Promise<(SkillOption & { path?: string })[]>;
   run(turn: NativeTurn): Promise<NativeTurnResult>;
 }
 
@@ -138,6 +142,21 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
     return child;
   } : undefined;
   return {
+    async skills() {
+      const session = query({ prompt: (async function* () {})(), options: { tools: [], cwd: tmpdir(), env: childEnv(),
+        ...(trackedSpawn ? { spawnClaudeCodeProcess: trackedSpawn } : {}) } });
+      try {
+        const refreshed = await session.reloadSkills();
+        const invocable = new Map<string, boolean>();
+        for (const command of await session.supportedCommands()) {
+          if (!invocable.has(command.name) || command.builtin)
+            invocable.set(command.name, command.builtin === true);
+        }
+        return refreshed.skills.filter((skill) => invocable.get(skill.name) === (skill.builtin === true)).map((skill) => ({
+          name: skill.name, description: skill.description, argumentHint: skill.argumentHint,
+        }));
+      } finally { session.close(); }
+    },
     async models() {
       // No prompt is submitted while asking the CLI for its own catalog.
       const session = query({ prompt: (async function* () {})(), options: { tools: [], env: childEnv(),

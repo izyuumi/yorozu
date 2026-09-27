@@ -239,6 +239,13 @@ public final class ChatModel {
         let models = models(for: thread)
         return (models.first { $0.id == model } ?? models.first)?.efforts ?? []
     }
+
+    /// The skills each agent on the Mac offers, by agent. Arrives with the model list.
+    public private(set) var skills: [String: [SkillOption]] = [:]
+
+    public func skills(for thread: ThreadSummary) -> [SkillOption] {
+        skills[(thread.agent ?? .yorozu).rawValue] ?? []
+    }
     /// Where a coding agent's thread can be started, recents first, as the Mac last listed
     /// them. Arrives with the thread list; empty until then.
     public private(set) var projects: [ProjectFolder] = []
@@ -1990,6 +1997,7 @@ public final class ChatModel {
                 agentModels = data.agentModels?.filter { ThreadAgent(rawValue: $0.key) != nil } ?? [:]
                 agents = data.agents.map(Self.acceptedAgents)
                 cache?.save(agents: availableAgents)
+                skills = data.skills?.filter { ThreadAgent(rawValue: $0.key) != nil } ?? [:]
             // And where a coding agent can be started, the same way.
             case .projectList(let data):
                 projects = data.projects

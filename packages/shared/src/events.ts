@@ -568,6 +568,13 @@ export interface ModelOption {
   providerLabel: string;
 }
 
+/** Device-facing skill metadata. Bodies and host paths never cross the channel. */
+export interface SkillOption {
+  name: string;
+  description: string;
+  argumentHint?: string;
+}
+
 /**
  * Every model the Mac is configured for, pushed alongside `thread_list` so a phone's picker
  * has real names rather than specs it would have to invent labels for. Device-facing only:
@@ -576,6 +583,7 @@ export interface ModelOption {
 export interface ModelListData {
   agents?: AgentDescriptor[];
   agentModels?: Record<ThreadAgent, ModelOption[]>;
+  skills?: Partial<Record<ThreadAgent, SkillOption[]>>;
   models: ModelOption[];
 }
 

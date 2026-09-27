@@ -193,10 +193,12 @@ test("the model list names every spec a thread can be put on", () => {
     kind: "model_list",
     data: {
       models: [{ id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude" }],
+      skills: { codex: [{ name: "plugin:Shape", description: "Shape a module", argumentHint: "<module>" }] },
     },
   };
   if (event.kind !== "model_list") throw new Error("unreachable");
   expect(event.data.models[0]?.providerLabel).toBe("Claude");
+  expect(event.data.skills?.codex?.[0]?.name).toBe("plugin:Shape");
   expect(JSON.parse(JSON.stringify(event))).toEqual(event);
 });
 

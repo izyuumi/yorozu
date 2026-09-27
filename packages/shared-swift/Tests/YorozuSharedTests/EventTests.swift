@@ -61,6 +61,9 @@ private func roundTrip(_ event: YorozuEvent) throws -> YorozuEvent {
     let json = #"{"models":[],"agents":[{"id":"test-harness","label":"Test Harness","description":"Answers prompts","needsFolder":false},{"id":"invalid!","label":"Bad","needsFolder":false},{"id":"another","label":""# + String(repeating: "X", count: 65) + #"","needsFolder":true}]}"#
     let list = try JSONDecoder().decode(ModelListData.self, from: Data(json.utf8))
     #expect(list.agents?.filter(\.isValid).map(\.id) == [agent])
+    let combined = ModelListData(models: [], agents: [AgentDescriptor(id: agent, label: "Test Harness", needsFolder: false)],
+                                 skills: [agent.rawValue: [SkillOption(name: "plugin:Inspect", description: "Inspect a project")]])
+    #expect(try JSONDecoder().decode(ModelListData.self, from: JSONEncoder().encode(combined)) == combined)
 }
 
 @Test func invalidJsonAndMissingEventEnvelopeStillFail() {

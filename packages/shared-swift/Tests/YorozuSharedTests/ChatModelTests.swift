@@ -1635,6 +1635,23 @@ func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(
 }
 
 @MainActor
+@Test func skillsArriveWithTheModelListAndBelongToTheThreadsAgent() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    let wire = #"{"models":[],"skills":{"yorozu":[{"name":"remind","description":"Set a reminder"}],"claude-code":[{"name":"review","description":"Review the diff","argumentHint":"[path]"}]}}"#
+    let data = try JSONDecoder().decode(ModelListData.self, from: Data(wire.utf8))
+    await transport.yield(.event(event("skills", .modelList(data))))
+    let review = SkillOption(name: "review", description: "Review the diff", argumentHint: "[path]")
+    #expect(await eventually { model.skills["claude-code"] == [review] })
+    let plain = ThreadSummary(id: "plain", title: "", archived: false, lastActivity: 1)
+    let claude = ThreadSummary(id: "cc", title: "", archived: false, lastActivity: 1, agent: .claudeCode)
+    let codex = ThreadSummary(id: "cx", title: "", archived: false, lastActivity: 1, agent: .codex)
+    #expect(model.skills(for: plain).map(\.name) == ["remind"])
+    #expect(model.skills(for: claude) == [review])
+    #expect(model.skills(for: codex).isEmpty)
+}
+
+@MainActor
 @Test func advertisedAgentCatalogSurvivesOfflineAndKeepsCompiledBuiltInIdentity() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }

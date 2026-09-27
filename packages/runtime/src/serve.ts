@@ -54,6 +54,7 @@ import {
   type PeerCompatibility,
   type ReasoningEffort,
   type MessageAttachment,
+  type SkillOption,
   type ProgressCardData,
   type ThreadAgent,
   type YorozuEvent,
@@ -1229,13 +1230,60 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * at that point would draw an empty menu first.
    */
   const agentModels: Record<string, ModelOption[]> = {};
+  let skillsByAgent: Record<string, SkillOption[]> = {};
+  let codexSkillPaths = new Map<string, string>();
+  let skillsBuiltAt: number | undefined;
+  let skillsRefreshing: Promise<void> | undefined;
+  const refreshSkills = (): Promise<void> => {
+    if (skillsRefreshing) return skillsRefreshing;
+    if (skillsBuiltAt !== undefined && Date.now() - skillsBuiltAt < 600_000) return Promise.resolve();
+    const refresh = Promise.all(agentDescriptors.map(async ({ id }) => {
+      try {
+        const skills = await Promise.resolve().then(() =>
+          id === "yorozu" ? openclaw?.listSkills?.() ?? [] : nativeRunners[id]?.skills?.() ?? []);
+        return { id, skills: skills as (SkillOption & { path?: string })[] };
+      } catch {
+        return { id, skills: [] as (SkillOption & { path?: string })[] };
+      }
+    })).then((listed) => {
+      const visible = (skills: SkillOption[]): SkillOption[] => {
+        const seen = new Set<string>();
+        return skills.flatMap((skill) => {
+          if (!skill || typeof skill.name !== "string" || !skill.name || seen.has(skill.name)) return [];
+          seen.add(skill.name);
+          return [{ name: skill.name,
+            description: typeof skill.description === "string" ? skill.description.slice(0, 200) : "",
+            ...(typeof skill.argumentHint === "string" && skill.argumentHint
+              ? { argumentHint: skill.argumentHint.slice(0, 80) } : {}) }];
+        });
+      };
+      const next: Record<string, SkillOption[]> = {};
+      for (const { id, skills } of listed) next[id] = visible(skills);
+      const codex = listed.find(({ id }) => id === "codex");
+      const paths = new Map<string, string>();
+      for (const skill of codex?.skills ?? []) {
+        if (skill && typeof skill.path === "string" && !paths.has(skill.name) &&
+            next.codex?.some((shown) => shown.name === skill.name)) paths.set(skill.name, skill.path);
+      }
+      codexSkillPaths = paths;
+      skillsBuiltAt = Date.now();
+      if (JSON.stringify(next) !== JSON.stringify(skillsByAgent)) {
+        skillsByAgent = next;
+        if (!stopped) broadcast(modelList());
+      }
+    }).finally(() => { if (skillsRefreshing === refresh) skillsRefreshing = undefined; });
+    skillsRefreshing = refresh;
+    return refresh;
+  };
   const modelsFor = (agent: ThreadAgent): ModelOption[] =>
     agent === "yorozu" ? (provider ? legacy?.models() ?? [] : openclawModels) : agentModels[agent] ?? [];
   /** The efforts a thread may ask for: its model's, or the first model's while it is on Default. */
   const effortsFor = (agent: ThreadAgent, model: string | undefined): ReasoningEffort[] =>
     (modelsFor(agent).find((m) => m.id === model) ?? modelsFor(agent)[0])?.efforts ?? [];
   const modelList = (): YorozuEvent =>
-    control({ kind: "model_list", data: { models: modelsFor("yorozu"), agentModels, agents: agentDescriptors } });
+    control({ kind: "model_list", data: { models: modelsFor("yorozu"), agentModels, agents: agentDescriptors, skills: skillsByAgent } });
+
+  void refreshSkills();
 
   for (const { id: agent } of agentDescriptors.filter(({ id }) => id !== "yorozu")) {
     const runner = nativeRunners[agent];
@@ -1514,14 +1562,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
           let executionStarted = false;
           try {
             const currentHome = threadHome(threadId, dir);
+            const skillName = !recovering && agent === "codex" ? /^\/(\S+)(?=\s|$)/.exec(text)?.[1] : undefined;
+            const skillPath = skillName ? codexSkillPaths.get(skillName) : undefined;
             // Written inside the attempt, so a full disk is this turn's failure and not the sidecar's.
             const files = attachmentFiles(threadId, userEventId ?? id, attachments, dir);
             const attached = files.map((file) =>
               `[attached: ${JSON.stringify(file.name)} (${JSON.stringify(file.mime)}) at ${file.path}]`).join("\n");
-            const prompt = recovering ? nativeRecoveryPrompt(threadId, text) : withStoppedContext(threadId, text, userEventId);
+            const prompt = recovering ? nativeRecoveryPrompt(threadId, text) : withStoppedContext(threadId,
+              skillPath ? text.slice(skillName!.length + 1).trimStart() : text, userEventId);
             const done = await runner.run({
               threadId,
               text: [prompt, attached].filter(Boolean).join("\n\n"),
+              ...(skillPath ? { skill: { name: skillName!, path: skillPath } } : {}),
               ...(files.length ? { attachments: files } : {}),
               ...currentHome,
               cwd: home.cwd ?? "",
@@ -2700,6 +2752,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       state("local-connected");
       send(threadList());
       send(modelList());
+      void refreshSkills();
       send(projectList());
       pushDevices();
     },
@@ -3053,6 +3106,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         // A phone that has just paired needs the thread list before it can ask for anything.
         sendTo(body.pub, threadList());
         sendTo(body.pub, modelList());
+        void refreshSkills();
         sendTo(body.pub, projectList());
         // And every device's list of devices has just gained one.
         pushDevices();

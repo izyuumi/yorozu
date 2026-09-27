@@ -27,6 +27,30 @@ const said = (session_id: string, text: string) => ({
 });
 const result = (session_id: string, text: string) => ({ type: "result", subtype: "success", session_id, result: text });
 
+test("Claude reload exposes user skills and bundled skills without built-in commands", async () => {
+  const { query, calls, closes } = fakeQuery([]);
+  const reloadSkills = vi.fn().mockResolvedValue({ skills: [
+    { name: "grill-me", description: "Ask hard questions", argumentHint: "<topic>" },
+    { name: "plugin:shape", description: "Shape", argumentHint: "", builtin: false },
+    { name: "code-review", description: "Bundled review", argumentHint: "", builtin: true },
+    { name: "code-review", description: "Shadowed review", argumentHint: "" },
+    { name: "clear", description: "Shadowed clear", argumentHint: "" },
+    { name: "hidden", description: "Not invocable", argumentHint: "" },
+  ] });
+  const supportedCommands = vi.fn().mockResolvedValue([
+    { name: "grill-me" }, { name: "plugin:shape" }, { name: "code-review", builtin: true },
+    { name: "clear", builtin: true },
+  ]);
+  const catalogQuery: QueryFn = (params) => Object.assign(query(params), { reloadSkills, supportedCommands });
+  expect(await claudeCodeRunner(catalogQuery).skills!()).toEqual([
+    { name: "grill-me", description: "Ask hard questions", argumentHint: "<topic>" },
+    { name: "plugin:shape", description: "Shape", argumentHint: "" },
+    { name: "code-review", description: "Bundled review", argumentHint: "" },
+  ]);
+  expect(calls[0]).toMatchObject({ tools: [] });
+  expect(closes).toHaveLength(1);
+});
+
 test("a turn runs in the thread's folder and hands back the session to resume", async () => {
   const { query, calls, closes } = fakeQuery([init("s-1"), said("s-1", "hello from claude"), result("s-1", "hello from claude")]);
   const runner = claudeCodeRunner(query);
