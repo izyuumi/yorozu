@@ -37,4 +37,8 @@ private actor IdleAttentionTransport: ChatTransport {
 
     #expect(Set(items.compactMap(\.eventID)) == ["approval-1", "approval-2", "question-1", "question-2"])
     #expect(Set(items.map(\.id)).count == 4)
+    #expect(Set(items.map(\.label)) == [
+        "Build · Approval 1 of 2", "Build · Approval 2 of 2",
+        "Build · Question 1 of 2", "Build · Question 2 of 2"
+    ])
 }

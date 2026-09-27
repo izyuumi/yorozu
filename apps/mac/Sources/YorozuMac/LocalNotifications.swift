@@ -32,21 +32,29 @@ struct MacAttentionItem: Identifiable {
             let events = model.events[thread.id] ?? []
             var items: [Self] = []
             if thread.awaitingApproval == true {
-                for event in events {
+                let approvals = events.filter { event in
                     guard case .approvalCard(let card) = event.payload,
                           !model.answered.contains(card.actionId),
                           model.approvalOutcomes[card.actionId] != .expired,
-                          model.approvalOutcomes[card.actionId] != .noLongerNeeded else { continue }
+                          model.approvalOutcomes[card.actionId] != .noLongerNeeded else { return false }
+                    return true
+                }
+                for (index, event) in approvals.enumerated() {
+                    let suffix = approvals.count > 1 ? " \(index + 1) of \(approvals.count)" : ""
                     items.append(Self(id: "approval:\(thread.id):\(event.id)", threadID: thread.id, eventID: event.id,
-                        kind: .approval, label: "\(thread.displayTitle) · Approval"))
+                        kind: .approval, label: "\(thread.displayTitle) · Approval\(suffix)"))
                 }
             }
             if thread.awaitingQuestion == true {
-                for event in events {
+                let questions = events.filter { event in
                     guard case .questionCard(let card) = event.payload,
-                          !model.answeredQuestions.contains(card.questionId) else { continue }
+                          !model.answeredQuestions.contains(card.questionId) else { return false }
+                    return true
+                }
+                for (index, event) in questions.enumerated() {
+                    let suffix = questions.count > 1 ? " \(index + 1) of \(questions.count)" : ""
                     items.append(Self(id: "question:\(thread.id):\(event.id)", threadID: thread.id, eventID: event.id,
-                        kind: .question, label: "\(thread.displayTitle) · Question"))
+                        kind: .question, label: "\(thread.displayTitle) · Question\(suffix)"))
                 }
             }
             if thread.needsAttention == true || thread.interruptedTurnId != nil {
