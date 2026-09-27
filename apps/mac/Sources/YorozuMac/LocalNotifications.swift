@@ -191,6 +191,7 @@ struct MacNotificationsView: View {
     @AppStorage(MacNotificationPreference.attentionIndicator) private var attentionIndicator = true
     @State private var authorization: UNAuthorizationStatus = .notDetermined
     @State private var authorizationError: String?
+    @State private var authorizationRequest = UUID()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -216,8 +217,13 @@ struct MacNotificationsView: View {
         .formStyle(.grouped)
         .task { await refreshAuthorization() }
         .onChange(of: enabled) { _, value in
+            let request = UUID()
+            authorizationRequest = request
+            authorizationError = nil
             Task {
-                authorizationError = value ? await LocalNotifications.shared.requestAuthorization() : nil
+                let error = value ? await LocalNotifications.shared.requestAuthorization() : nil
+                guard authorizationRequest == request else { return }
+                authorizationError = error
                 await refreshAuthorization()
             }
         }
