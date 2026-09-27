@@ -2038,6 +2038,47 @@ test("stale offline approval cannot act, and an applied answer replays without a
     .toMatchObject({ data: { status: "applied" } });
 });
 
+test("routine sync carries a pending card from an archived thread", async () => {
+  const { dir, send, eventsUntil } = await pairedPhone([() => shellTurn("echo archived-card")]);
+  send({ kind: "thread_create", data: {} });
+  await vi.waitFor(() => expect(listThreads(dir).some((thread) => thread.id === "t1")).toBe(true));
+  send({ kind: "message", data: { role: "user", text: "run it" } });
+  const card = (await eventsUntil((event) => event.kind === "approval_card")).at(-1)!;
+  send({ kind: "thread_archive", data: { archived: true } });
+  await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === "t1")?.archived).toBe(true));
+  send({ kind: "sync_request", data: { lastSeen: {} } }, "");
+  const delta = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
+  if (delta.kind !== "sync_delta") throw new Error("missing sync delta");
+  expect(delta.data.events).toEqual([]);
+  expect(delta.data.current).toContainEqual(card);
+});
+
+test("archived current cards honor the pairing cutoff", async () => {
+  let pairedAt = 0;
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(pairedAt - 1);
+    const answer = turn.approve!("Bash", { command: "pwd" }, turn.signal);
+    clock.mockRestore();
+    await answer;
+    return { text: "done", sessionId: "session" };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
+  await vi.waitFor(() => expect(loadDevices(join(dir, "devices.json"))).toHaveLength(1));
+  pairedAt = loadDevices(join(dir, "devices.json"))[0]!.pairedAt!;
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "native");
+  await vi.waitFor(() => expect(listThreads(dir).some((thread) => thread.id === "native")).toBe(true));
+  send({ kind: "message", data: { role: "user", text: "work" } }, "native");
+  await vi.waitFor(() => expect(readThreadEvents("native", dir).some((event) => event.kind === "approval_card")).toBe(true));
+  const card = readThreadEvents("native", dir).find((event) => event.kind === "approval_card")!;
+  send({ kind: "thread_archive", data: { archived: true } }, "native");
+  await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === "native")?.archived).toBe(true));
+  send({ kind: "sync_request", data: { lastSeen: {} } }, "");
+  const delta = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
+  if (delta.kind !== "sync_delta") throw new Error("missing sync delta");
+  expect(delta.data.current ?? []).not.toContainEqual(card);
+  if (card.kind === "approval_card") send({ kind: "approval_answer", data: { actionId: card.data.actionId, answer: "no" } }, "native");
+});
+
 test("older clients see an upgrade request instead of a false approval receipt", async () => {
   const { dir, send, eventsUntil } = await pairedPhone([() => shellTurn("echo legacy-approval"), () => sse("done")]);
   send({ kind: "message", data: { role: "user", text: "run it" } });
@@ -3408,7 +3449,7 @@ test("catch-up excludes an answered question from current state", async () => {
   const ask = () => new Response(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0,
     id: "call_ask", function: { name: "ask_user", arguments: JSON.stringify({ question: "Which?", options: ["A", "B"] }) },
   }] }, finish_reason: "tool_calls" }] })}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
-  const { send, eventsUntil } = await pairedPhone([ask, () => sse("done")]);
+  const { dir, send, eventsUntil } = await pairedPhone([ask, () => sse("done")]);
   send({ kind: "thread_create", data: {} });
   await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
   send({ kind: "message", data: { role: "user", text: "ask me" } });
@@ -3418,13 +3459,18 @@ test("catch-up excludes an answered question from current state", async () => {
   const active = await eventsUntil((event) => event.kind === "sync_delta");
   const activeDelta = active.at(-1)!;
   expect(activeDelta.kind === "sync_delta" && activeDelta.data.current).toContainEqual(question);
+  send({ kind: "thread_archive", data: { archived: true } });
+  await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === "t1")?.archived).toBe(true));
+  send({ kind: "sync_request", data: { lastSeen: {} } }, "");
+  const archived = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
+  expect(archived.kind === "sync_delta" && archived.data.current).toContainEqual(question);
   if (question.kind !== "question_card") throw new Error("expected question card");
   send({ kind: "question_answer", data: { questionId: question.data.questionId, answer: "A" } });
   await eventsUntil((event) => event.kind === "message" && event.data.done === true);
   send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "t1" } }, "");
   const settled = await eventsUntil((event) => event.kind === "sync_delta");
   const settledDelta = settled.at(-1)!;
-  expect(settledDelta.kind === "sync_delta" && settledDelta.data.current).not.toContainEqual(question);
+  expect(settledDelta.kind === "sync_delta" ? settledDelta.data.current ?? [] : []).not.toContainEqual(question);
 });
 
 test("current snapshot honors the pairing cutoff for live replies", async () => {

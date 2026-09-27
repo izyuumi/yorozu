@@ -1356,12 +1356,23 @@ export function serve(options: ServeOptions = {}): Sidecar {
     replayBytes = SYNC_PAGE_BYTES, replayEvents = SYNC_LIMIT, phoneCanDownload: boolean | null = null): YorozuEvent[] => {
     const events: YorozuEvent[] = [];
     const cards: YorozuEvent[] = [];
-    const selected = listThreads(dir).filter((thread) => threadId ? thread.id === threadId : !thread.archived);
+    const allThreads = listThreads(dir);
+    const selected = allThreads.filter((thread) => threadId ? thread.id === threadId : !thread.archived);
     const focused = !threadId && selected.find((thread) => thread.id === focusThreadId);
     if (focused) {
       selected.splice(selected.indexOf(focused), 1);
       selected.unshift(focused);
     }
+    const activeCards = (id: string, history: YorozuEvent[]): YorozuEvent[] => {
+      const answered = new Set(history.flatMap((event) => event.kind === "approval_answer" ? [event.data.actionId]
+        : event.kind === "approval_status" && event.data.status !== "rejected" ? [event.data.actionId]
+        : event.kind === "question_answer" ? [event.data.questionId] : []));
+      return history.filter((event) => event.kind === "approval_card"
+        ? !answered.has(event.data.actionId) &&
+          (pending.get(event.data.actionId)?.threadId === id || nativeCards.has(event.data.actionId, id))
+        : event.kind === "question_card" && !answered.has(event.data.questionId) &&
+          questions.has(event.data.questionId, id));
+    };
     let latest: YorozuEvent | undefined;
     if (focused && includeCurrent) {
       const history = readThreadEvents(focused.id, dir).filter((event) => event.ts >= pairedAt);
@@ -1369,15 +1380,17 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const reply = live && live.ts >= pairedAt ? live : undefined;
       latest = reply ?? history.findLast((event) =>
         event.kind === "message" && event.data.role === "agent" && !event.parentAgentId);
-      if (running.has(focused.id)) {
-        const answered = new Set(history.flatMap((event) => event.kind === "approval_answer" ? [event.data.actionId]
-          : event.kind === "approval_status" && event.data.status !== "rejected" ? [event.data.actionId]
-          : event.kind === "question_answer" ? [event.data.questionId] : []));
-        cards.push(...history.filter((event) => event.kind === "approval_card"
-          ? !answered.has(event.data.actionId) &&
-              (pending.get(event.data.actionId)?.threadId === focused.id || nativeCards.has(event.data.actionId, focused.id))
-          : event.kind === "question_card" && !answered.has(event.data.questionId) &&
-              questions.has(event.data.questionId, focused.id)));
+      if (running.has(focused.id)) cards.push(...activeCards(focused.id, history));
+    }
+    if (!threadId && includeCurrent) {
+      const waiting = new Set([...pending.values()].map((card) => card.threadId));
+      for (const id of nativeCards.waitingThreads()) waiting.add(id);
+      for (const id of questions.waitingThreads()) waiting.add(id);
+      for (const thread of allThreads) {
+        if (thread.archived && waiting.has(thread.id)) {
+          cards.push(...activeCards(thread.id,
+            readThreadEvents(thread.id, dir).filter((event) => event.ts >= pairedAt)));
+        }
       }
     }
     // Keep active cards ahead of the current reply and historical replay within a bounded frame.

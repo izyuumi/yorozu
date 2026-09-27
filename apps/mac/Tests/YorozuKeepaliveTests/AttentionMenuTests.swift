@@ -16,8 +16,12 @@ private actor IdleAttentionTransport: ChatTransport {
         .appendingPathComponent("yorozu-attention-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
     let cache = ThreadCache(directory: directory, key: SymmetricKey(size: .bits256))
-    cache.save(threads: [ThreadSummary(id: "thread", title: "Build", archived: false,
-                                       lastActivity: 100, awaitingApproval: true, awaitingQuestion: true)])
+    cache.save(threads: [
+        ThreadSummary(id: "thread", title: "Build", archived: false,
+                      lastActivity: 100, awaitingApproval: true, awaitingQuestion: true),
+        ThreadSummary(id: "archived", title: "Archive", archived: true,
+                      lastActivity: 50, awaitingApproval: true)
+    ])
     func event(_ id: String, _ ts: Int, _ payload: YorozuEvent.Payload) -> YorozuEvent {
         YorozuEvent(id: id, threadId: "thread", ts: ts, agentId: "main", payload: payload)
     }
@@ -31,14 +35,18 @@ private actor IdleAttentionTransport: ChatTransport {
         event("question-answered", 7, .questionCard(QuestionCardData(questionId: "question-answered", question: "Done?", options: ["C"]))),
         event("question-answer", 8, .questionAnswer(QuestionAnswerData(questionId: "question-answered", answer: "C")))
     ], threadId: "thread")
+    cache.save(events: [YorozuEvent(id: "archived-card", threadId: "archived", ts: 9, agentId: "main",
+                                    payload: .approvalCard(ApprovalCardData(actionId: "archived-action",
+                                                                            actionClass: "shell", target: "pwd")))],
+               threadId: "archived")
 
     let model = ChatModel(transport: IdleAttentionTransport(), cache: cache)
     let items = MacAttentionItem.pending(in: model)
 
-    #expect(Set(items.compactMap(\.eventID)) == ["approval-1", "approval-2", "question-1", "question-2"])
-    #expect(Set(items.map(\.id)).count == 4)
+    #expect(Set(items.compactMap(\.eventID)) == ["approval-1", "approval-2", "question-1", "question-2", "archived-card"])
+    #expect(Set(items.map(\.id)).count == 5)
     #expect(Set(items.map(\.label)) == [
         "Build · Approval 1 of 2", "Build · Approval 2 of 2",
-        "Build · Question 1 of 2", "Build · Question 2 of 2"
+        "Build · Question 1 of 2", "Build · Question 2 of 2", "Archive · Approval"
     ])
 }
