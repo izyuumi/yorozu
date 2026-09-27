@@ -76,6 +76,7 @@ final class Sidecar: ObservableObject {
         let root = URL(fileURLWithPath: #filePath)  // apps/mac/Sources/YorozuMac/YorozuMacApp.swift
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
         let serve = root.appending(path: "packages/runtime/dist/serve.js")
         guard FileManager.default.isReadableFile(atPath: serve.path),
               let node = executable(named: "node", environment: environment)
@@ -567,7 +568,8 @@ struct YorozuMacApp: App {
             Divider()
             Button(HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost)
                 ? "Quit Yorozu…" : "Quit Yorozu") {
-                (NSApp.delegate as? AppDelegate)?.requestQuit()
+                // SwiftUI owns NSApp.delegate; use the adaptor instance for this action.
+                delegate.requestQuit()
             }
         } label: {
             Image(systemName: (session.role == .client ? session.hosts.sessions.contains { $0.model.canDeliver } : session.model.state == .paired) ? "circle.fill" : "circle.dotted")
