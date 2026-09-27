@@ -19,6 +19,8 @@
 //   GET  /dials           {"dials"}: when each phone connection arrived, ms since start
 //   GET  /events?thread=  {"events"}: the thread's durable events, as the Mac recorded them
 //   GET  /messages        {"messages"}: every user message and finished answer the Mac recorded
+//   GET  /metrics         content-free traffic and queue byte counts
+// Set LINK_DELAY_MS and LINK_BYTES_PER_SECOND to shape both phone directions.
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -35,6 +37,11 @@ mkdirSync(process.env.YOROZU_PROJECTS_DIR);
 const { serve } = await import("../dist/serve.js");
 const { openaiCompat } = await import("../dist/provider.js");
 const { listThreads, readThreadEvents } = await import("../dist/threads.js");
+const delayMs = Number(process.env.LINK_DELAY_MS ?? 0);
+const bytesPerSecond = Number(process.env.LINK_BYTES_PER_SECOND ?? 0);
+if (!Number.isFinite(delayMs) || delayMs < 0 || !Number.isFinite(bytesPerSecond) || bytesPerSecond < 0) {
+  throw new Error("LINK_DELAY_MS and LINK_BYTES_PER_SECOND must be nonnegative finite numbers");
+}
 
 let heldAnswer;
 let answerStarted = false;
@@ -44,13 +51,15 @@ const model = async (_url, init) => {
   const { content } = JSON.parse(init.body).messages.at(-1);
   const release = heldAnswer;
   if (release) answerStarted = true;
-  const words = `echo: ${typeof content === "string" ? content : JSON.stringify(content)}`.split(" ");
+  const large = content === "__large_answer__";
+  const words = large ? Array(48).fill("x".repeat(2048))
+    : `echo: ${typeof content === "string" ? content : JSON.stringify(content)}`.split(" ");
   const encoder = new TextEncoder();
   const body = new ReadableStream({
     async start(controller) {
       if (release) await release.promise;
       for (const [i, word] of words.entries()) {
-        const delta = { content: (i ? " " : "") + word };
+        const delta = { content: (i && !large ? " " : "") + word };
         const finish = i === words.length - 1 ? "stop" : null;
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: finish }] })}\n\n`));
         await new Promise((resolve) => setTimeout(resolve, 50));
@@ -82,6 +91,34 @@ const sidecar = serve({
 const links = new Set();
 const fault = { blackholed: false, dropHost: false, down: false, loseJoined: false };
 const dials = [];
+const stats = { phoneToHostBytes: 0, hostToPhoneBytes: 0, droppedHostBytes: 0, peakQueuedBytes: 0 };
+let queuedBytes = 0;
+function recordQueuePeak() {
+  const buffered = [...links].reduce((sum, link) => sum + link.phone.bufferedAmount + link.upstream.bufferedAmount, 0);
+  stats.peakQueuedBytes = Math.max(stats.peakQueuedBytes, queuedBytes + buffered);
+}
+function forward(link, direction, data, binary) {
+  const sink = direction === "phoneToHostBytes" ? link.upstream : link.phone;
+  const bytes = data.byteLength;
+  const now = performance.now();
+  const lane = direction === "phoneToHostBytes" ? "toHostAt" : "toPhoneAt";
+  const readyAt = Math.max(now + delayMs, link[lane]) + (bytesPerSecond ? bytes * 1000 / bytesPerSecond : 0);
+  link[lane] = readyAt;
+  queuedBytes += bytes;
+  recordQueuePeak();
+  const deliver = () => {
+    queuedBytes -= bytes;
+    if (direction === "hostToPhoneBytes" && fault.dropHost) {
+      stats.droppedHostBytes += bytes;
+    } else if (!link.dead && sink.readyState === WebSocket.OPEN) {
+      sink.send(data, { binary });
+      stats[direction] += bytes;
+    }
+    recordQueuePeak();
+  };
+  if (readyAt > now) setTimeout(deliver, readyAt - now);
+  else deliver();
+}
 const phones = new WebSocketServer({ noServer: true });
 const proxy = createServer();
 proxy.on("upgrade", (request, socket, head) => {
@@ -89,30 +126,45 @@ proxy.on("upgrade", (request, socket, head) => {
   if (fault.down) return socket.destroy();
   phones.handleUpgrade(request, socket, head, (phone) => {
     const upstream = new WebSocket(`ws://127.0.0.1:${relay.port}${request.url}`);
-    const link = { phone, upstream, dead: fault.blackholed };
+    const link = { phone, upstream, dead: fault.blackholed, toHostAt: 0, toPhoneAt: 0 };
     links.add(link);
     const early = [];
     phone.on("message", (data, binary) => {
       if (link.dead) return;
-      if (upstream.readyState === WebSocket.OPEN) upstream.send(data, { binary });
-      else early.push([data, binary]);
+      if (upstream.readyState === WebSocket.OPEN) forward(link, "phoneToHostBytes", data, binary);
+      else { early.push([data, binary]); queuedBytes += data.byteLength; recordQueuePeak(); }
     });
-    upstream.on("open", () => { for (const [data, binary] of early.splice(0)) upstream.send(data, { binary }); });
+    upstream.on("open", () => {
+      for (const [data, binary] of early.splice(0)) {
+        queuedBytes -= data.byteLength;
+        forward(link, "phoneToHostBytes", data, binary);
+      }
+    });
     upstream.on("message", (data, binary) => {
       if (fault.loseJoined && !binary && data.toString().includes('"type":"joined"')) {
         fault.loseJoined = false;
         return phone.terminate();
       }
-      if (!link.dead && !fault.dropHost) phone.send(data, { binary });
+      if (!link.dead && !fault.dropHost) forward(link, "hostToPhoneBytes", data, binary);
+      else if (fault.dropHost) stats.droppedHostBytes += data.byteLength;
     });
-    const drop = () => { phone.terminate(); upstream.terminate(); links.delete(link); };
+    const forget = () => {
+      if (links.delete(link)) {
+        for (const [data] of early.splice(0)) queuedBytes -= data.byteLength;
+      }
+      recordQueuePeak();
+    };
+    const drop = () => {
+      forget();
+      phone.terminate(); upstream.terminate();
+    };
     // A close the relay says out loud reaches the phone as it was said; its reason is what the
     // phone acts on. 1005 and 1006 mean nothing was said, and cannot be sent on.
     const closedByRelay = (code, reason) => {
       if (link.dead || code === 1005 || code === 1006) return drop();
+      forget();
       phone.close(code, reason);
       upstream.terminate();
-      links.delete(link);
     };
     phone.on("close", drop).on("error", drop);
     upstream.on("close", closedByRelay).on("error", drop);
@@ -150,6 +202,7 @@ const control = createServer((request, response) => {
   if (request.method === "POST" && faults[name]) { faults[name](); body = { ok: name }; }
   else if (name === "pairing") body = { qr: pairing };
   else if (name === "dials") body = { dials };
+  else if (name === "metrics") { recordQueuePeak(); body = { delayMs, bytesPerSecond, ...stats }; }
   else if (name === "answer-started") body = { started: answerStarted };
   else if (name === "events") body = { events: readThreadEvents(url.searchParams.get("thread"), stateDir) };
   else if (name === "messages") body = { messages: listThreads(stateDir).flatMap((thread) => messages(thread.id)) };

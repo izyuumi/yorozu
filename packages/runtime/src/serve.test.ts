@@ -1120,6 +1120,33 @@ test("rapid reply revisions converge to the latest partial and final answer", as
     .map((event) => event.kind === "message" ? event.data.text : "")).toEqual(["draft 0", "draft 19", "finished"]);
 });
 
+test("large answer pacing keeps local streaming and gives the phone progress before final", async () => {
+  const finish = Promise.withResolvers<void>();
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    turn.onUpdate?.("x".repeat(17_000));
+    turn.onUpdate?.("y".repeat(18_000));
+    await finish.promise;
+    return { text: "finished" };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
+  const mac = await macClient(dir);
+  try {
+    send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "cc");
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "cc"));
+    send({ kind: "message", data: { role: "user", text: "write" } }, "cc");
+    await eventsUntil((event) => event.kind === "message" && event.data.role === "agent" && event.data.text.length === 17_000);
+    await vi.waitFor(() => expect(mac.events).toContainEqual(expect.objectContaining({
+      kind: "message", data: expect.objectContaining({ role: "agent", text: "y".repeat(18_000) }),
+    })));
+    finish.resolve();
+    expect((await eventsUntil((event) => event.kind === "message" && event.data.done === true)).at(-1))
+      .toMatchObject({ data: { text: "finished", done: true } });
+  } finally {
+    finish.resolve();
+    mac.close();
+  }
+});
+
 test("a trace burst cannot delay the final answer or lose durable history", async () => {
   let release!: () => void;
   const firstReplay = new Promise<void>((resolve) => { release = resolve; });

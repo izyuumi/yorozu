@@ -21,10 +21,13 @@ private actor WireRig {
     private let control: URL
     private(set) var pairing: QrPayload!
 
-    init() async throws {
+    init(delayMs: Int = 0, bytesPerSecond: Int = 0) async throws {
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["node", harness.appendingPathComponent("test-support/wire-harness.mjs").path]
+        process.environment = ProcessInfo.processInfo.environment.merging([
+            "LINK_DELAY_MS": String(delayMs), "LINK_BYTES_PER_SECOND": String(bytesPerSecond)
+        ]) { _, profile in profile }
         // Held open for the harness's lifetime: it stops when this end closes.
         process.standardInput = Pipe()
         process.standardOutput = output
@@ -66,6 +69,27 @@ private actor WireRig {
         return accepted.enumerated().filter { $0.offset == 0 || $0.element - accepted[$0.offset - 1] > 50 }
             .map { $0.element / 1000 }
     }
+
+    func answerStarted() async throws -> Bool {
+        struct Reply: Decodable { var started: Bool }
+        return try await get(Reply.self, "answer-started").started
+    }
+
+    struct Metrics: Decodable {
+        var delayMs: Int
+        var bytesPerSecond: Int
+        var phoneToHostBytes: Int
+        var hostToPhoneBytes: Int
+        var droppedHostBytes: Int
+        var peakQueuedBytes: Int
+    }
+
+    func metrics() async throws -> Metrics { try await get(Metrics.self, "metrics") }
+}
+
+private func elapsedMs(since start: ContinuousClock.Instant) -> Int {
+    let parts = (ContinuousClock.now - start).components
+    return Int(parts.seconds) * 1000 + Int(parts.attoseconds / 1_000_000_000_000_000)
 }
 
 @MainActor
@@ -103,6 +127,94 @@ private func finalReply(in thread: String, _ model: ChatModel) -> [MessageData] 
 @Suite(.serialized, .enabled(if: rigAvailable, "needs `pnpm -r build` for the wire harness"))
 @MainActor
 struct WireTests {
+    /// Real relay and sidecar on a shaped 100 ms / 64 KiB/s phone link. A receipt must be
+    /// measured for this exact message, and recovery starts before redial, not after handshake.
+    @Test func slowLinkProfileMeasuresAcceptanceCatchupAndLargeAnswer() async throws {
+        let rig = try await WireRig(delayMs: 100, bytesPerSecond: 65_536)
+        let model = try await pairedModel(rig)
+        let thread = model.newDraft().id
+        model.send("warm", in: thread)
+        try await until("warm answer", within: .seconds(10)) {
+            finalReply(in: thread, model).contains { $0.text == "echo: warm" }
+        }
+
+        let acceptanceStart = ContinuousClock.now
+        model.send("profile acceptance", in: thread)
+        let sentID = try #require(model.outbox.last?.id)
+        let queuedOperationBytes = model.outbox.reduce(0) { total, item in
+            total + ((try? JSONEncoder().encode(item.event).count) ?? 0)
+        }
+        try await until("profile receipt", within: .seconds(10)) {
+            !model.outbox.contains { $0.id == sentID }
+        }
+        let acceptanceMs = elapsedMs(since: acceptanceStart)
+
+        let beforeLarge = try await rig.metrics()
+        model.send("__large_answer__", in: thread)
+        let largeEnd = ContinuousClock.now + .seconds(20)
+        while !finalReply(in: thread, model).contains(where: { $0.text.utf8.count == 98_304 }) {
+            guard ContinuousClock.now < largeEnd else {
+                let hostSizes = try await rig.events(in: thread).compactMap { event -> Int? in
+                    if case .message(let data) = event.payload, data.role == .agent, data.done == true {
+                        return data.text.utf8.count
+                    }
+                    return nil
+                }
+                Issue.record("large answer missing: host=\(hostSizes), phone=\(finalReply(in: thread, model).map { $0.text.utf8.count }), metrics=\(try await rig.metrics())")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let responseBytes = try #require(finalReply(in: thread, model)
+            .first(where: { $0.text.utf8.count == 98_304 })).text.utf8.count
+        let largeAnswerWireBytes = try await rig.metrics().hostToPhoneBytes - beforeLarge.hostToPhoneBytes
+
+        try await rig.run("hold-answer")
+        model.send("profile catchup", in: thread)
+        let providerEnd = ContinuousClock.now + .seconds(10)
+        while try await !rig.answerStarted() {
+            guard ContinuousClock.now < providerEnd else { Issue.record("provider never started catch-up turn"); return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await rig.run("down")
+        try await rig.run("release-answer")
+        let hostEnd = ContinuousClock.now + .seconds(10)
+        while try await !rig.events(in: thread).contains(where: {
+            if case .message(let data) = $0.payload {
+                return data.role == .agent && data.done == true && data.text == "echo: profile catchup"
+            }
+            return false
+        }) {
+            guard ContinuousClock.now < hostEnd else { Issue.record("host never finished while phone was down"); return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let catchupStart = ContinuousClock.now
+        try await rig.run("heal")
+        model.reconnect()
+        try await until("caught-up answer", within: .seconds(15)) {
+            finalReply(in: thread, model).contains { $0.text == "echo: profile catchup" }
+        }
+        let catchupMs = elapsedMs(since: catchupStart)
+        let metrics = try await rig.metrics()
+        #expect(metrics.delayMs == 100 && metrics.bytesPerSecond == 65_536)
+        #expect(metrics.phoneToHostBytes > 0 && metrics.hostToPhoneBytes >= 98_304)
+        #expect(metrics.peakQueuedBytes > 0 && queuedOperationBytes > 0)
+        #expect(responseBytes == 98_304 && largeAnswerWireBytes >= responseBytes)
+        #expect(acceptanceMs >= 150 && acceptanceMs <= 3_000, "slow-link acceptance: \(acceptanceMs) ms")
+        #expect(catchupMs <= 10_000, "recovery through the shaped link: \(catchupMs) ms")
+        #expect(metrics.hostToPhoneBytes <= 1_048_576, "superseded snapshots flooded the link")
+        #expect(largeAnswerWireBytes <= 786_432, "large-answer snapshots flooded the link")
+        #expect(metrics.peakQueuedBytes <= 524_288, "the proxy queued too many encrypted frames")
+        #expect(finalReply(in: thread, model).filter { $0.text == "echo: profile catchup" }.count == 1)
+        print("YOROZU-NETWORK-PROFILE acceptanceMs=\(acceptanceMs) catchupMs=\(catchupMs) " +
+            "queuedOperationBytes=\(queuedOperationBytes) responseBytes=\(responseBytes) " +
+            "largeAnswerWireBytes=\(largeAnswerWireBytes) " +
+            "phoneToHostBytes=\(metrics.phoneToHostBytes) hostToPhoneBytes=\(metrics.hostToPhoneBytes) " +
+            "droppedHostBytes=\(metrics.droppedHostBytes) peakQueuedBytes=\(metrics.peakQueuedBytes)")
+        model.close()
+    }
+
     /// The relay spends a pairing code before it says `joined`. A first join cut off in between
     /// leaves the phone remembered but unaware of it, and the code is gone: the phone has to
     /// come back as the device the room knows, not keep offering a code that cannot work.
