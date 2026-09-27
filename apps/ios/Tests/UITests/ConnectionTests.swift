@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 /// What a failing network looks like on screen, against the real relay and Mac sidecar behind a
 /// proxy that fails on request (packages/runtime/test-support/wire-harness.mjs). Run through
@@ -16,6 +17,43 @@ final class ConnectionTests: XCTestCase {
         rig = Rig(control: control)
         try await rig.post("heal")
         app = await XCUIApplication()
+    }
+
+    /// The Settings action copies useful connection state without leaking chat content.
+    @MainActor
+    func testCopiedDiagnosticsExcludeMessageContent() async throws {
+        try await launchPaired()
+        try openThread()
+        let secret = "private diagnostics marker 8f6c"
+        send(secret)
+        XCTAssertTrue(app.textViews["echo: \(secret)"].waitForExistence(timeout: 30))
+        app.navigationBars.buttons["Threads"].tap()
+        app.buttons["Settings"].tap()
+        let host = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Your Mac")).firstMatch
+        XCTAssertTrue(host.waitForExistence(timeout: 10), "No host in Settings")
+        host.tap()
+        let copy = app.buttons["Copy diagnostics"]
+        for _ in 0..<6 where !copy.isHittable { app.collectionViews.firstMatch.swipeUp() }
+        XCTAssertTrue(copy.isHittable, "Copy diagnostics is unreachable")
+        UIPasteboard.general.string = "clipboard sentinel"
+        copy.tap()
+        app.navigationBars["Connection"].buttons["Settings"].tap()
+        app.buttons["Done"].tap()
+        let thread = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", secret)).firstMatch
+        XCTAssertTrue(thread.waitForExistence(timeout: 10))
+        thread.tap()
+        composer.tap()
+        composer.press(forDuration: 1)
+        let paste = app.descendants(matching: .any)["Paste"].firstMatch
+        XCTAssertTrue(paste.waitForExistence(timeout: 5), "No Paste action in the composer")
+        paste.tap()
+        let diagnostics = try XCTUnwrap(composer.value as? String)
+        XCTAssertTrue(diagnostics.contains("Yorozu connection diagnostics"))
+        XCTAssertTrue(diagnostics.contains("Connection:"))
+        XCTAssertTrue(diagnostics.contains("Transport:"))
+        XCTAssertTrue(diagnostics.contains("Pending sends:"))
+        XCTAssertFalse(diagnostics.contains(secret))
+        XCTAssertFalse(diagnostics.contains("127.0.0.1"), "Diagnostics included the relay URL")
     }
 
     /// A silently dead link is noticed and shown, a brief drop is not, and the link comes back
