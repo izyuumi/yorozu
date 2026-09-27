@@ -105,6 +105,21 @@ public struct ThreadCache: Sendable {
         try writeRequired(composer, to: "composer")
     }
 
+    /// Text changes far more often than staged file bytes. Keep it and the send marker in a
+    /// small sealed record so a keystroke never rewrites every attachment in the composer.
+    struct DraftState: Codable, Sendable {
+        var drafts: [String: String]
+        var preparedSend: [String: String]
+    }
+
+    func draftState() -> DraftState? {
+        read(DraftState.self, from: "drafts")
+    }
+
+    func save(draftState: DraftState) throws {
+        try writeRequired(draftState, to: "drafts")
+    }
+
     public func savePending(_ outbox: [OutboxItem]) throws {
         try writeRequired(outbox, to: "outbox")
     }

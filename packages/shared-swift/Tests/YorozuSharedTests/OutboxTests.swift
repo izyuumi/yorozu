@@ -521,21 +521,31 @@ private func reconnect(_ transport: QueueTransport) async {
     let prepared = ThreadCache.ComposerState(drafts: [thread.id: "hello"], attachments: [:],
                                              threads: [thread], knownThreads: nil, openThread: thread.id,
                                              preparedSend: [thread.id: message.id])
+    let pendingDraft = ThreadCache.DraftState(drafts: [thread.id: "hello"],
+                                               preparedSend: [thread.id: message.id])
 
     // Crash before outbox write: original draft remains usable.
     try cache.save(composer: prepared)
+    try cache.save(draftState: pendingDraft)
     let notCommitted = ChatModel(transport: QueueTransport(), cache: cache)
     #expect(notCommitted.drafts[thread.id] == "hello")
     #expect(notCommitted.isDraft(thread.id))
 
     // Crash after outbox write but before composer clear: one queued operation owns input.
     try cache.save(composer: prepared)
+    try cache.save(draftState: pendingDraft)
     try cache.savePending([OutboxItem(event: create), OutboxItem(event: message)])
     let committed = ChatModel(transport: QueueTransport(), cache: cache)
     #expect(committed.drafts[thread.id] == "")
     #expect(!committed.isDraft(thread.id))
     #expect(committed.outbox.map(\.id) == [create.id, message.id])
     #expect(cache.composer()?.drafts[thread.id] == "")
+
+    // A later unsent edit wins over a stale full snapshot whose prepared marker did not clear.
+    try cache.save(composer: prepared)
+    try cache.save(draftState: .init(drafts: [thread.id: "next idea"], preparedSend: [:]))
+    let laterDraft = ChatModel(transport: QueueTransport(), cache: cache)
+    #expect(laterDraft.drafts[thread.id] == "next idea")
 }
 
 @MainActor
