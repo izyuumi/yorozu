@@ -24,7 +24,8 @@ concurrency:
 permissions: {}
 
 jobs:
-  # Nothing is signed or uploaded until the iOS UI tests pass on the source commit.
+  # Nothing is signed or uploaded until the iOS UI tests have passed on the source commit,
+  # here or in an earlier run.
   ui-tests:
     if: >-
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
@@ -33,7 +34,7 @@ jobs:
        github.event.workflow_run.head_repository.full_name == github.repository)
     permissions:
       contents: read
-      actions: read
+      checks: read
     uses: ./.github/workflows/ui-tests.yml
     with:
       ref: ${{ github.event.workflow_run.head_sha || inputs.source_branch }}
