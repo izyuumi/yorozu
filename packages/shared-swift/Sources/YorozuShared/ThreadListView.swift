@@ -82,7 +82,7 @@ public func threadSections(
 }
 
 /// What the phone's list draws, in the order it draws it: pinned threads lead, then the rest
-/// under a heading per stretch of time, and the archive is folded away at the bottom. Each
+/// under a heading per stretch of time. Archived threads remain available from Settings. Each
 /// group is most recently active first.
 ///
 /// Pure, so a test can check the partition without a view.
@@ -102,8 +102,8 @@ public struct ThreadGroups: Equatable, Sendable {
         archived = threads.filter(\.archived).sorted { $0.lastActivity > $1.lastActivity }
     }
 
-    /// True when there is nothing at all to draw, which is what puts the empty state up.
-    public var isEmpty: Bool { pinned.isEmpty && recent.isEmpty && archived.isEmpty }
+    /// True when there is nothing live to draw, which is what puts the empty state up.
+    public var isEmpty: Bool { pinned.isEmpty && recent.isEmpty }
 }
 
 /// Keep positions while a list gesture is active; still draw the newest row contents.
@@ -292,6 +292,7 @@ struct ThreadRow: View {
     var selected = false
     var chevron = false
     var hostLabel: String? = nil
+    var marksArchived = true
 
     @ScaledMetric(relativeTo: .body) private var dot = 9
     @ScaledMetric(relativeTo: .body) private var mark = 16
@@ -351,7 +352,16 @@ struct ThreadRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-                if let hostLabel {
+                if marksArchived && thread.archived {
+                    Label {
+                        Text(hostLabel.map { "\(String(localized: "Archived")) · \($0)" } ?? String(localized: "Archived"))
+                    } icon: {
+                        Image(systemName: "archivebox")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                } else if let hostLabel {
                     Text(hostLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -416,6 +426,7 @@ struct ThreadRow: View {
         parts.append(thread.displayTitle)
         if status != .working, let preview = preview ?? thread.lastMessage, !preview.isEmpty { parts.append(preview) }
         if let status { parts.append(status.label) }
+        if marksArchived && thread.archived { parts.append(String(localized: "Archived")) }
         return parts.joined(separator: ". ")
     }
 
@@ -609,8 +620,8 @@ struct ConnectionPill: View {
     }
 }
 
-/// The phone's thread list: pinned threads first, then the rest newest first, with the archive
-/// folded away at the bottom. `+` starts a fresh draft, a swipe pins or archives, a pull asks the
+/// The phone's thread list: pinned threads first, then the rest newest first. `+` starts a fresh
+/// draft, a swipe pins or archives, a pull asks the
 /// Mac for everything this device is behind on, and the search field looks through titles and
 /// through what the device has cached of each thread.
 ///
@@ -665,8 +676,6 @@ public struct ThreadListView<Destination: View>: View {
     @State private var renaming: ThreadSummary?
     @State private var query = ThreadListShowcase.query
     @State private var searchRequest: ThreadSearchRequest?
-    /// The archive opens closed: it is where threads go to stop being in the way.
-    @State private var showArchived = false
     @State private var choosingAgent = NewThreadShowcase.agent != nil
     @State private var heldOrder: HeldThreadOrder?
     @State private var immediateMoves: Set<String> = []
@@ -928,9 +937,6 @@ public struct ThreadListView<Destination: View>: View {
                 ForEach(groups.sections) { section in
                     Section(section.title) { rows(section.threads) }
                 }
-                if !groups.archived.isEmpty {
-                    Section { archive(groups.archived) }
-                }
             } else {
                 Section {
                     Text(shownSearchScope)
@@ -1073,12 +1079,6 @@ public struct ThreadListView<Destination: View>: View {
             #endif
     }
 
-    /// The archive: shut by default, and the only place a thread comes back from.
-    @ViewBuilder private func archive(_ threads: [ThreadSummary]) -> some View {
-        ArchiveToggle(count: threads.count, isExpanded: $showArchived)
-        if showArchived { rows(threads) }
-    }
-
     @ViewBuilder private func rows(
         _ threads: [ThreadSummary],
         preview: @escaping (ThreadSummary) -> String? = { _ in nil }
@@ -1200,8 +1200,8 @@ extension View {
 
 /// The Mac's thread list: the sidebar half of a split view, so picking a thread selects it
 /// rather than pushing it. Same rows, same ordering and the same dated headings the phone
-/// draws — pinned first, then a section per stretch of time, with the archive folded away at
-/// the bottom — because a list that groups itself one way on the phone and another way on the
+/// draws — pinned first, then a section per stretch of time — because a list that groups itself
+/// one way on the phone and another way on the
 /// Mac is two lists to learn.
 ///
 /// The row actions are all in the context menu rather than behind a swipe: there is nothing to
@@ -1236,8 +1236,6 @@ public struct ThreadSidebar: View {
     @State private var renaming: ThreadSummary?
     @State private var query = ThreadListShowcase.query
     @State private var searchThreadID: String?
-    /// The archive opens closed: it is where threads go to stop being in the way.
-    @State private var showArchived = false
     @State private var choosingAgent = NewThreadShowcase.agent != nil
     @State private var heldOrder: HeldThreadOrder?
     @State private var immediateMoves: Set<String> = []
@@ -1352,9 +1350,6 @@ public struct ThreadSidebar: View {
                 ForEach(groups.sections) { section in
                     Section(section.title) { rows(section.threads) }
                 }
-                if !groups.archived.isEmpty {
-                    Section { archive(groups.archived) }
-                }
             } else {
                 Section {
                     Text(shownSearchScope)
@@ -1431,7 +1426,7 @@ public struct ThreadSidebar: View {
             .focusedSceneValue(\.threadCommands, ThreadCommands(newThread: newThread))
             // Delete on a selected row puts it away, as it does in every Mac list. Archiving
             // rather than deleting, because that is the only removal this list has — and it
-            // is undone from the Archived section rather than with ⌘Z.
+            // is undone from Settings › Archived threads rather than with ⌘Z.
             .onDeleteCommand {
                 guard let thread = threads.first(where: { $0.id == selection }), !thread.archived
                 else { return }
@@ -1457,11 +1452,6 @@ public struct ThreadSidebar: View {
             ? nil : ThreadSearchRequest(threadId: id, query: needle, eventId: remote?.eventId)
         searchThreadID = request?.threadId
         onSearchSelect?(request)
-    }
-
-    @ViewBuilder private func archive(_ threads: [ThreadSummary]) -> some View {
-        ArchiveToggle(count: threads.count, isExpanded: $showArchived)
-        if showArchived { rows(threads) }
     }
 
     @ViewBuilder private func rows(
@@ -1535,31 +1525,5 @@ public struct ThreadSidebar: View {
                 )
             }
         }
-    }
-}
-
-/// The archive's header row: the whole row opens and shuts it. Not a DisclosureGroup, which
-/// makes the entire Mac list an outline and indents every thread, and on iOS 26 opens only from
-/// its chevron, leaving a row that reads as a button and does nothing when tapped.
-private struct ArchiveToggle: View {
-    let count: Int
-    @Binding var isExpanded: Bool
-
-    var body: some View {
-        Button { isExpanded.toggle() } label: {
-            HStack {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .accessibilityHidden(true)
-                Label("Archived (\(count))", systemImage: "archivebox")
-            }
-            .font(.subheadline)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-        // Match the thread rows: the list draws on the canvas, not the system row fill.
-        .listRowBackground(Color.clear)
-        .listRowSeparator(.hidden)
     }
 }

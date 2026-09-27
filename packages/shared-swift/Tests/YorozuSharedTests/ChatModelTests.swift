@@ -469,8 +469,7 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     #expect(await eventually { model.state == .paired && !model.threads.isEmpty })
     #expect(model.ownerOnline)
     #expect(paired)
-    // Archived threads are kept now — the phone's list draws them in a section of their own —
-    // so what leaves them out is the ordering the lists ask for rather than the model.
+    // Archived threads are kept because Settings lists them and thread search finds them.
     #expect(model.threads.map(\.title) == ["Home", "Groceries", "Gone"])
     #expect(visibleThreads(model.threads).map(\.title) == ["Groceries", "Home"])
     #expect(ThreadGroups(model.threads).archived.map(\.title) == ["Gone"])
@@ -960,6 +959,7 @@ private func summary(
     #expect(groups.archived.map(\.id) == ["filed", "filed-pin"])
     #expect(!groups.isEmpty)
     #expect(ThreadGroups([]).isEmpty)
+    #expect(ThreadGroups([summary("filed", minutesAgo: 1, archived: true)]).isEmpty)
 }
 
 @Test func searchLooksAtTheTitleThePreviewAndTheThreadItself() {

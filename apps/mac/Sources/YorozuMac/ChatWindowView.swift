@@ -129,6 +129,7 @@ private struct QuickChatToolbar: ToolbarContent {
 
 private struct ClientChatWindowView: View {
     let session: MacChatSession
+    @State private var router = ChatWindowRouter.shared
     @State private var selection: HostThreadID?
     @State private var searchedThread: HostThreadID?
     @State private var searchRequest: ThreadSearchRequest?
@@ -182,6 +183,14 @@ private struct ClientChatWindowView: View {
             if selection == nil { open() }
             updateReading()
         }
+        .onChange(of: router.threadID, initial: true) { _, id in
+            guard let id else { return }
+            defer { router.threadID = nil; router.hostID = nil }
+            guard let hostID = router.hostID else { return }
+            let thread = HostThreadID(hostID: hostID, threadID: id)
+            guard hosts.thread(for: thread) != nil else { return }
+            selection = thread
+        }
         .onAppear { open() }
         .onDisappear {
             for host in hosts.sessions { host.model.foreground = false }
@@ -222,6 +231,7 @@ private struct ClientChatWindowView: View {
 
 private struct LocalChatWindowView: View {
     @State private var session = MacChatSession.shared
+    @State private var router = ChatWindowRouter.shared
     @State private var selection: String?
     @State private var searchRequest: ThreadSearchRequest?
     /// `.key` is this window being the key window of the active app, which is exactly the Mac's
@@ -324,6 +334,13 @@ private struct LocalChatWindowView: View {
             // Screenshot harness only — see ``Showcase``.
             if launchArgument("yorozuWindow") == "settings" { openSettings() }
         }
+        .onChange(of: router.threadID, initial: true) { _, id in
+            guard let id else { return }
+            defer { router.threadID = nil; router.hostID = nil }
+            guard model.threads.contains(where: { $0.id == id }) else { return }
+            model.openThread = id
+            selection = id
+        }
         .onChange(of: model.listed) { _, listed in if listed { open() } }
         .onDisappear { model.foreground = false }
         // Screenshot harness only: prints the window number `screencapture -l` wants. Inert
@@ -369,6 +386,14 @@ private struct SidebarFooter: View {
 final class SettingsPaneRouter {
     static let shared = SettingsPaneRouter()
     var selection: String?
+}
+
+/// The thread Settings asked the chat window to show.
+@MainActor @Observable
+final class ChatWindowRouter {
+    static let shared = ChatWindowRouter()
+    var threadID: String?
+    var hostID: HostID?
 }
 
 struct SettingsView: View {

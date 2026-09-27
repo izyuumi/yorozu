@@ -4760,7 +4760,6 @@
       }
     },
     "Threads" : {
-      "extractionState" : "stale",
       "localizations" : {
         "es" : {
           "stringUnit" : {
@@ -5577,6 +5576,78 @@
             "value" : "把 Mac 上的代理装进口袋。"
           }
         }
+      }
+    },
+    "Archived threads" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Hilos archivados" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アーカイブしたスレッド" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "보관된 스레드" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已归档线程" } }
+      }
+    },
+    "Search archived threads" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Buscar hilos archivados" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アーカイブしたスレッドを検索" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "보관된 스레드 검색" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "搜索已归档线程" } }
+      }
+    },
+    "No archived threads" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No hay hilos archivados" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アーカイブしたスレッドはありません" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "보관된 스레드 없음" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "没有已归档线程" } }
+      }
+    },
+    "Threads you archive will be here." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Los hilos que archives aparecerán aquí." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アーカイブしたスレッドはここに表示されます。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "보관한 스레드가 여기에 표시됩니다." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "你归档的线程会显示在这里。" } }
+      }
+    },
+    "Restored threads return to the thread list." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Los hilos restaurados vuelven a la lista de hilos." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "復元したスレッドはスレッド一覧に戻ります。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "복원한 스레드가 스레드 목록으로 돌아갑니다." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "恢复的线程会回到线程列表。" } }
+      }
+    },
+    "Restore" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Restaurar" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "復元" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "복원" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "恢复" } }
+      }
+    },
+    "Show…" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Mostrar…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "表示…" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "보기…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "显示…" } }
+      }
+    },
+    "Searching threads still finds archived ones." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "La búsqueda de hilos también encuentra los archivados." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スレッド検索ではアーカイブしたスレッドも見つかります。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "스레드를 검색하면 보관된 스레드도 찾습니다." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "搜索线程时仍会找到已归档的线程。" } }
+      }
+    },
+    "Click a thread to open it in the chat window." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Haz clic en un hilo para abrirlo en la ventana de chat." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スレッドをクリックしてチャットウインドウで開きます。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "스레드를 클릭하면 채팅 창에서 엽니다." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "点按线程即可在聊天窗口中打开。" } }
       }
     }
   },

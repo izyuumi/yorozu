@@ -622,7 +622,13 @@ struct RootView: View {
             // A pairing code tapped inside a chat takes the same road as one tapped in Messages.
             .environment(\.onPairingLink) { session.handlePairingLink($0) }
             .modifier(PairingConfirmation(session: session, enabled: !settings))
-            .sheet(isPresented: $settings) { SettingsView(session: session) }
+            .sheet(isPresented: $settings) {
+                SettingsView(session: session) { threadID, hostID in
+                    settings = false
+                    if let hostID { hostPath = [HostThreadID(hostID: hostID, threadID: threadID)] }
+                    else { path = [threadID] }
+                }
+            }
             // iOS suspends the app and its socket with it. Coming back is the moment to re-dial,
             // rather than waiting out a backoff that ran down while nothing was executing — and
             // the moment to pick up anything shared while it was away.
