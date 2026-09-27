@@ -329,6 +329,16 @@ private actor IdleTransport: ChatTransport {
 /// but no sequence counters, and can lose the old value when Keychain rejects the new write.
 struct MacClientKeychain: Sendable {
     let service: String
+    static var defaultService: String {
+        #if DEBUG
+        // Disposable UI runs must not read or change the installed app's Keychain items.
+        if ProcessInfo.processInfo.environment["YOROZU_EPHEMERAL_RUN"] == "1",
+           let isolated = ProcessInfo.processInfo.environment["YOROZU_TEST_KEYCHAIN_SERVICE"],
+           !isolated.isEmpty { return isolated }
+        #endif
+        return "to.yumi.yorozu.mac-client"
+    }
+
     private func query(_ account: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
          kSecAttrAccount as String: account]
@@ -387,7 +397,7 @@ final class MacPairingStore: @unchecked Sendable {
     private let erase: @Sendable (String) throws -> Void
 
     init(directory: URL = .applicationSupportDirectory, defaults: UserDefaults = .standard,
-         service: String = "to.yumi.yorozu.mac-client",
+         service: String = MacClientKeychain.defaultService,
          read: (@Sendable (String) throws -> Data?)? = nil,
          write: (@Sendable (Data, String) throws -> Void)? = nil,
          erase: (@Sendable (String) throws -> Void)? = nil) {
@@ -509,7 +519,7 @@ struct MacPairingCounterStorage: ChannelCounterStorage {
 private enum MacCacheStore {
     static func openLocal() throws -> ThreadCache {
         let directory = URL(fileURLWithPath: LocalSocketTransport.defaultPath()).deletingLastPathComponent().appending(path: "host-client-cache")
-        let keychain = MacClientKeychain(service: "to.yumi.yorozu.mac-client")
+        let keychain = MacClientKeychain(service: MacClientKeychain.defaultService)
         let account = "host-thread-cache-key"
         let key: SymmetricKey
         if let data = try keychain.load(account) {
