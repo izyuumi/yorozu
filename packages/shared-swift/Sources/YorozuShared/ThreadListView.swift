@@ -125,12 +125,21 @@ struct HeldThreadOrder {
     func groups(with threads: [ThreadSummary]) -> ThreadGroups {
         let latest = Dictionary(uniqueKeysWithValues: threads.map { ($0.id, $0) })
         var held = groups
-        held.pinned = refreshed(groups.pinned, from: latest)
-        held.sections = groups.sections.map { section in
-            ThreadSection(group: section.group, threads: refreshed(section.threads, from: latest))
+        let pinned = refreshed(groups.pinned, from: latest)
+        let recent = refreshed(groups.sections.flatMap(\.threads), from: latest)
+        let archived = refreshed(groups.archived, from: latest)
+        let newlyPinned = (recent + archived).filter { $0.pinned && !$0.archived }
+        let newlyRecent = (pinned + archived).filter { !$0.pinned && !$0.archived }
+        held.pinned = pinned.filter { $0.pinned && !$0.archived } + newlyPinned
+        let additions = Dictionary(grouping: newlyRecent, by: { threadGroup(for: $0.lastActivityDate) })
+        held.sections = ThreadSection.Group.allCases.compactMap { group in
+            let old = groups.sections.first(where: { $0.group == group })?.threads ?? []
+            let rows = refreshed(old, from: latest).filter { !$0.pinned && !$0.archived }
+                + (additions[group] ?? [])
+            return rows.isEmpty ? nil : ThreadSection(group: group, threads: rows)
         }
         held.recent = held.sections.flatMap(\.threads)
-        held.archived = refreshed(groups.archived, from: latest)
+        held.archived = archived.filter(\.archived) + (pinned + recent).filter(\.archived)
         return held
     }
 

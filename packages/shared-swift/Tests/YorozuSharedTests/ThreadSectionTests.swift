@@ -80,7 +80,8 @@ private func thread(_ id: String, _ date: Date, pinned: Bool = false, archived: 
     let first = thread("first", at(9, 11))
     let second = thread("second", at(9, 10))
     let pinned = thread("pinned", at(9, 1), pinned: true)
-    let starting = [first, second, pinned]
+    let filed = thread("filed", at(9, 2), archived: true)
+    let starting = [first, second, pinned, filed]
     let held = HeldThreadOrder(
         groups: ThreadGroups(starting, now: now, calendar: calendar),
         results: ThreadSearchResults(threads: starting, query: "second", messageText: { _ in "" })
@@ -102,6 +103,14 @@ private func thread(_ id: String, _ date: Date, pinned: Bool = false, archived: 
     #expect(held.results(with: changed).threads.map(\.id) == ["second"])
     #expect(ThreadGroups(changed, now: now, calendar: calendar).recent.map(\.id) == ["new", "second", "first"])
     #expect(ThreadSearchResults(threads: changed, query: "second", messageText: { _ in "" }).threads.map(\.id) == ["new", "second"])
+
+    var archivedSecond = updatedSecond
+    archivedSecond.archived = true
+    var restored = filed
+    restored.archived = false
+    let moved = held.groups(with: [first, archivedSecond, pinned, restored])
+    #expect(moved.recent.map(\.id) == ["first", "filed"])
+    #expect(moved.archived.map(\.id) == ["second"])
 }
 
 @Test func threadTimesStayCompactWithoutAgo() {
