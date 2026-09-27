@@ -167,7 +167,9 @@ public struct MessageBubble: View {
             }
         }
         if let onRetry {
-            Button("Retry", systemImage: "arrow.clockwise", action: onRetry)
+            Button(rejectionReason?.hasPrefix("thread-create-rejected:") == true || rejectionReason == "thread-not-created"
+                ? String(localized: "Use in new chat") : String(localized: "Retry"),
+                systemImage: "arrow.clockwise", action: onRetry)
         }
         if let onWithdraw {
             Button("Cancel send", systemImage: "xmark.circle", action: onWithdraw)
@@ -230,7 +232,10 @@ public struct MessageBubble: View {
     }
 
     private var rejectionDescription: String {
-        switch rejectionReason {
+        if rejectionReason?.hasPrefix("thread-create-rejected:") == true {
+            return String(localized: "Not sent · chat could not be created. Use in new chat to keep attachments.")
+        }
+        return switch rejectionReason {
         case "oversized-attachments": String(localized: "Not sent · attachments too large")
         case "invalid-attachment-upload", "invalid-attachment-chunk", "invalid-attachment-commit":
             String(localized: "Not sent · attachment could not be read")
@@ -240,6 +245,8 @@ public struct MessageBubble: View {
         case "client-clock-ahead": String(localized: "Not sent · device clock is ahead")
         case "conflicting-message-id": String(localized: "Not sent · message changed after sending")
         case "invalid-admission-deadline": String(localized: "Not sent · invalid message deadline")
+        case "thread-not-created": String(localized: "Not sent · chat does not exist. Use in new chat to keep attachments.")
+        case "conflicting-thread-create": String(localized: "Not sent · chat creation changed")
         default: String(localized: "Not sent · rejected by host")
         }
     }

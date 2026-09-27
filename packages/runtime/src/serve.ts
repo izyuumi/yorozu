@@ -2498,6 +2498,57 @@ export function serve(options: ServeOptions = {}): Sidecar {
           rejected("expired", "admission-deadline");
           return;
         }
+        // Deadline-bearing clients create draft threads first. A failed create must not
+        // silently route its first message to the default agent through threadAgent().
+        if (!listThreads(dir).some((thread) => thread.id === event.threadId)) {
+          rejected("rejected", "thread-not-created");
+          return;
+        }
+      }
+    }
+    if (event.kind === "thread_create") {
+      const rejectCreate = (reason: string): void => {
+        state(`thread-create-error ${reason}`);
+        reply(control({ kind: "admission_status", data: { eventId: event.id, status: "rejected", reason } }));
+        return reply({
+          id: randomUUID(), threadId: event.threadId, ts: Date.now(), agentId: MAIN_AGENT,
+          kind: "thought", data: { text: `Could not create this thread: ${reason}.` },
+        });
+      };
+      try {
+        const creation = { eventId: event.id, identity: createHash("sha256").update(JSON.stringify([
+          event.threadId, event.data.title ?? null, event.data.agent ?? null, event.data.cwd ?? null,
+        ])).digest("hex") };
+        const existing = listThreads(dir).find((thread) => thread.id === event.threadId);
+        if (existing) {
+          // A lost receipt still confirms the durable record, even if its folder or agent
+          // disappeared afterward. A reused ID with different content does not.
+          const matches = existing.creation
+            ? existing.creation.eventId === creation.eventId && existing.creation.identity === creation.identity
+            : (existing.agent ?? "yorozu") === (event.data.agent ?? "yorozu") &&
+              existing.cwd === (event.data.cwd?.trim() || undefined);
+          if (!matches) return rejectCreate("conflicting-thread-create");
+        } else {
+          const descriptor = agentDescriptors.find(({ id }) => id === (event.data.agent ?? "yorozu"));
+          const cwd = event.data.cwd?.trim();
+          const invalid = !event.threadId ? "missing-thread-id"
+            : !descriptor ? `unregistered agent "${String(event.data.agent)}"`
+              : descriptor.needsFolder && cwd && !isProjectFolder(cwd)
+                ? `"${cwd}" is not one of this Mac's project folders`
+                : descriptor.needsFolder && !cwd ? `a ${descriptor.id} thread needs a project folder` : undefined;
+          if (invalid) return rejectCreate(invalid);
+          // The client's first message waits behind this receipt.
+          createThread(event.data.title, dir, event.threadId, { ...event.data,
+            needsFolder: descriptor!.needsFolder, creation });
+        }
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        state(`thread-create-error ${reason}`);
+        // Storage can recover. Leave this command in the client's outbox for retry.
+        return reply({
+          id: randomUUID(), threadId: event.threadId, ts: Date.now(), agentId: MAIN_AGENT,
+          kind: "thought", data: { text: `Could not create this thread: ${reason}.` },
+        });
       }
     }
     if (seenCommands.has(event.id)) {
@@ -2598,29 +2649,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       // Thread admin is answered to every device, so a second phone sees the same list.
       case "thread_create":
-        // The device minted the id: the message it typed follows straight after this frame.
-        try {
-          const descriptor = agentDescriptors.find(({ id }) => id === (event.data.agent ?? "yorozu"));
-          if (!descriptor) throw new Error(`unregistered agent "${String(event.data.agent)}"`);
-          // A coding agent runs where the picker offered, and nowhere else: a path typed into a
-          // frame by hand is not a folder this Mac agreed to open an agent in.
-          // A missing folder is refused by `createThread` itself, after it has checked the agent.
-          const cwd = event.data.cwd?.trim();
-          if (descriptor.needsFolder && cwd && !isProjectFolder(cwd)) {
-            throw new Error(`"${cwd}" is not one of this Mac's project folders`);
-          }
-          createThread(event.data.title, dir, event.threadId || undefined, { ...event.data, needsFolder: descriptor.needsFolder });
-        } catch (error) {
-          // An agent this runtime does not know: no thread is made, and the device that asked
-          // is told why in the thread it is looking at, since the message it sends next has
-          // nowhere to land.
-          const reason = error instanceof Error ? error.message : String(error);
-          state(`thread-create-error ${reason}`);
-          return reply({
-            id: randomUUID(), threadId: event.threadId, ts: Date.now(), agentId: MAIN_AGENT,
-            kind: "thought", data: { text: `Could not create this thread: ${reason}.` },
-          });
-        }
         broadcast(threadList());
         // A folder just started in is a recent now.
         if (event.data.cwd) broadcast(projectList());

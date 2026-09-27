@@ -1227,8 +1227,21 @@ public final class ChatModel {
     }
 
     private func reconcile(_ status: AdmissionStatusData) {
-        guard let index = outbox.firstIndex(where: { $0.id == status.eventId }),
-              case .message = outbox[index].event.payload else { return }
+        guard let index = outbox.firstIndex(where: { $0.id == status.eventId }) else { return }
+        if case .threadCreate = outbox[index].event.payload {
+            guard status.status == .rejected else { return }
+            let threadId = outbox[index].event.threadId
+            // Creation failed permanently. Keep its first message as a visible rejected bubble,
+            // and never let a later flush send it to an implicit/default thread.
+            for item in outbox.indices where outbox[item].event.threadId == threadId && item >= index {
+                outbox[item].admissionStatus = .rejected
+                outbox[item].rejectionReason = "thread-create-rejected: \(status.reason ?? "unknown")"
+            }
+            saveOutbox()
+            flush()
+            return
+        }
+        guard case .message = outbox[index].event.payload else { return }
         if let requestId = status.requestId, requestId != outbox[index].lastStatusQueryId { return }
         if status.requestId == nil && (status.status == .unknown || status.status == .indeterminate) { return }
         switch status.status {

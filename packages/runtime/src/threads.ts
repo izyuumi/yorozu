@@ -38,6 +38,8 @@ export const SYNC_LIMIT = 200;
 export const SYNC_PAGE_BYTES = 512 * 1024;
 
 export interface ThreadRecord {
+  /** Durable identity of the client command that created this thread, when known. */
+  creation?: { eventId: string; identity: string };
   bypass?: boolean;
   nativeTurn?: { id: string; state: "running" | "interrupted"; userEventId?: string; recoveryAttempts?: number; recoveryActive?: boolean };
   id: string;
@@ -126,6 +128,9 @@ function validThread(value: unknown): value is ThreadRecord {
     && ["model", "effort", "agent", "cwd", "nativeSessionId"].every((key) => t[key] === undefined || typeof t[key] === "string")
     && ["pinned", "bypass"].every((key) => t[key] === undefined || typeof t[key] === "boolean")
     && (t.lastReadAt === undefined || typeof t.lastReadAt === "number" && Number.isFinite(t.lastReadAt))
+    && (t.creation === undefined || !!t.creation && typeof t.creation === "object"
+      && typeof (t.creation as Record<string, unknown>).eventId === "string"
+      && /^[a-f0-9]{64}$/.test(String((t.creation as Record<string, unknown>).identity)))
     && (turn === undefined || !!turn && typeof turn === "object"
       && typeof turn.id === "string" && ["running", "interrupted"].includes(turn.state)
       && (turn.userEventId === undefined || typeof turn.userEventId === "string" && turn.userEventId.length <= 128)
@@ -184,7 +189,7 @@ export function createThread(
   title?: string,
   dir = stateDir(),
   id: string = randomUUID(),
-  home: { agent?: ThreadAgent; cwd?: string; needsFolder?: boolean } = {},
+  home: { agent?: ThreadAgent; cwd?: string; needsFolder?: boolean; creation?: ThreadRecord["creation"] } = {},
 ): ThreadRecord {
   const agent = home.agent ?? "yorozu";
   if (!validAgentId(agent)) throw new Error(`invalid agent "${String(agent)}"`);
@@ -199,6 +204,7 @@ export function createThread(
     title: title?.trim() ?? "",
     createdAt: new Date().toISOString(),
     archived: false,
+    ...(home.creation ? { creation: home.creation } : {}),
     // Only a native agent has a home of its own; a `yorozu` thread is the default, unspelled.
     ...(agent !== "yorozu" ? { agent, ...(home.needsFolder !== false && cwd ? { cwd } : {}) } : {}),
   };

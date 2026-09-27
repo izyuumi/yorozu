@@ -869,6 +869,25 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
 }
 
 @MainActor
+@Test func rejectedThreadCreationKeepsItsMessageVisibleAndOffTheWire() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    let draft = model.newDraft(agent: .codex, cwd: "/tmp/missing-project")
+    model.send("fix tests", in: draft.id)
+    let create = try #require((await sent(by: transport, atLeast: pairingSends + 1))
+        .first { $0.threadId == draft.id && $0.payload.kind == .threadCreate })
+    await transport.yield(.event(event("create-rejected", .admissionStatus(AdmissionStatusData(
+        eventId: create.id, status: .rejected, reason: "project folder unavailable")))))
+    #expect(await eventually {
+        model.outbox.first(where: { $0.event.threadId == draft.id && $0.event.payload.kind == .message })?.status == .rejected
+    })
+    let message = try #require(model.outbox.first { $0.event.threadId == draft.id && $0.event.payload.kind == .message })
+    #expect(model.outboxRejectionReason(of: message.id) == "thread-create-rejected: project folder unavailable")
+    #expect(await transport.sent.allSatisfy { $0.threadId != draft.id || $0.payload.kind != .message })
+}
+
+@MainActor
 @Test func draftsWithInputSurviveNavigationNewSessionsAndSync() async throws {
     let transport = FakeTransport(autoReceipt: true)
     let model = await connected(transport)

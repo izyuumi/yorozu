@@ -1140,9 +1140,22 @@ test("a thread is answered by the agent it was created for, and an unknown agent
   const { send, eventsUntil } = await pairedPhone([], true, { stateDir: dir, nativeRunners: { codex: { run: vi.fn() } } });
 
   // Nobody answers a thread for an agent that does not exist, and no thread is made for it.
-  send({ kind: "thread_create", data: { agent: "hermes" } }, "bad");
-  const refused = (await eventsUntil((event) => event.kind === "thought")).at(-1)!;
+  const badCreateId = send({ kind: "thread_create", data: { agent: "hermes" } }, "bad");
+  const refusal = await eventsUntil((event) => event.kind === "thought");
+  const refused = refusal.at(-1)!;
   expect(refused).toMatchObject({ threadId: "bad", data: { text: expect.stringMatching(/unregistered agent "hermes"/) } });
+  const rejected = refusal.find((event) => event.kind === "admission_status" && event.data.eventId === badCreateId);
+  expect(rejected).toMatchObject({ data: { eventId: badCreateId, status: "rejected",
+    reason: expect.stringMatching(/unregistered agent "hermes"/) } });
+  expect(refusal.some((event) => event.kind === "receipt" && event.data.eventId === badCreateId)).toBe(false);
+  const now = Date.now();
+  sendRaw({ id: "bad-first-message", threadId: "bad", ts: now, agentId: "phone", kind: "message",
+    data: { role: "user", text: "run on Hermes", admissionDeadline: now + 30 * 60_000 } });
+  const missingThread = (await eventsUntil((event) => event.kind === "admission_status" &&
+    event.data.eventId === "bad-first-message")).at(-1)!;
+  expect(missingThread).toMatchObject({ data: { status: "rejected", reason: "thread-not-created" } });
+  expect(run).not.toHaveBeenCalled();
+  expect(readThreadEvents("bad", dir)).toEqual([]);
   expect(listThreads(dir).map((thread) => thread.id)).toEqual(["cc"]);
   expect(states).toContain('thread-create-error unregistered agent "hermes"');
   // Nor is a folder the picker never offered: a path typed into a frame is not a folder this
@@ -1197,6 +1210,54 @@ test("a thread is answered by the agent it was created for, and an unknown agent
   expect(run).toHaveBeenCalledTimes(1);
   send({ kind: "thread_archive", data: { archived: true } }, "t1");
   await vi.waitFor(() => expect(archive).toHaveBeenCalledWith("t1", true));
+});
+
+test("thread creation gets no receipt when storage fails, then accepts the same ID on retry", async () => {
+  const { dir, eventsUntil } = await pairedPhone([]);
+  const blocked = join(dir, "threads.json.tmp");
+  const create: YorozuEvent = { id: "create-retry", threadId: "disk", ts: Date.now(), agentId: "phone",
+    kind: "thread_create", data: {} };
+  mkdirSync(blocked);
+  try {
+    sendRaw(create);
+    const failed = await eventsUntil((event) => event.kind === "thought" && event.threadId === "disk");
+    expect(failed.some((event) => event.kind === "receipt" && event.data.eventId === create.id)).toBe(false);
+    expect(failed.some((event) => event.kind === "admission_status" && event.data.eventId === create.id)).toBe(false);
+    expect(listThreads(dir)).toEqual([]);
+  } finally {
+    rmSync(blocked, { recursive: true });
+  }
+  sendRaw(create);
+  const accepted = await eventsUntil((event) => event.kind === "thread_list" &&
+    event.data.threads.some((thread) => thread.id === "disk"));
+  expect(accepted.some((event) => event.kind === "receipt" && event.data.eventId === create.id)).toBe(true);
+  expect(listThreads(dir).map((thread) => thread.id)).toEqual(["disk"]);
+});
+
+test("an accepted thread creation retry survives a missing folder and refuses changed payload", async () => {
+  const folder = join(projectsRoot, `created-${randomUUID()}`);
+  mkdirSync(folder);
+  try {
+    const { dir, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run: vi.fn() } } });
+    const create: YorozuEvent = { id: "created-once", threadId: "native", ts: Date.now(), agentId: "phone",
+      kind: "thread_create", data: { agent: "codex", cwd: folder } };
+    sendRaw(create);
+    await eventsUntil((event) => event.kind === "thread_list" &&
+      event.data.threads.some((thread) => thread.id === "native"));
+    expect(listThreads(dir).find((thread) => thread.id === "native")?.creation?.eventId).toBe(create.id);
+    rmSync(folder, { recursive: true });
+    sendRaw(create);
+    const retry = await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === create.id);
+    expect(retry.some((event) => event.kind === "admission_status" && event.data.eventId === create.id)).toBe(false);
+    sendRaw({ ...create, data: { agent: "yorozu" } });
+    const conflict = await eventsUntil((event) => event.kind === "admission_status" &&
+      event.data.eventId === create.id);
+    expect(conflict.at(-1)).toMatchObject({ data: { status: "rejected", reason: "conflicting-thread-create" } });
+    expect(conflict.some((event) => event.kind === "receipt" && event.data.eventId === create.id)).toBe(false);
+    expect(listThreads(dir).find((thread) => thread.id === "native")?.agent).toBe("codex");
+  } finally {
+    if (existsSync(folder)) rmSync(folder, { recursive: true });
+  }
 });
 
 test("a registered agent appears in the catalog and answers a thread without a folder", async () => {
