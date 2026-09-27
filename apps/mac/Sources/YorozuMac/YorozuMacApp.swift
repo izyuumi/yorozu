@@ -76,6 +76,7 @@ final class Sidecar: ObservableObject {
         let root = URL(fileURLWithPath: #filePath)  // apps/mac/Sources/YorozuMac/YorozuMacApp.swift
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
         let serve = root.appending(path: "packages/runtime/dist/serve.js")
         guard FileManager.default.isReadableFile(atPath: serve.path),
               let node = executable(named: "node", environment: environment)
