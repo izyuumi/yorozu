@@ -5,6 +5,7 @@ import type { YorozuEvent } from "@yorozu/shared";
 import { beforeEach, expect, test, vi } from "vitest";
 import {
   appendThreadEvent,
+  attachmentFiles,
   archiveThread,
   createThread,
   eventsAfter,
@@ -442,6 +443,14 @@ test("a thread's reasoning effort persists and can return to provider default", 
   expect(setThreadEffort(thread.id, null, dir)).toBe(true);
   expect(threadEffort(thread.id, dir)).toBeUndefined();
   expect(listThreads(dir)[0]).not.toHaveProperty("effort");
+});
+
+test("retry materializes attachments without overwriting files from the first attempt", () => {
+  const first = attachmentFiles("thread", "message", [{ name: "photo.png", mime: "image/png", data: "YQ==" }], dir)[0]!;
+  const retry = attachmentFiles("thread", "message", [{ name: "photo.png", mime: "image/png", data: "Yg==" }], dir)[0]!;
+  expect(retry.path).not.toBe(first.path);
+  expect(readFileSync(first.path, "utf8")).toBe("a");
+  expect(readFileSync(retry.path, "utf8")).toBe("b");
 });
 
 test("an attachment reaches a vision model as bytes and a text-only one as its name", () => {

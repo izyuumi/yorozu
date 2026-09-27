@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import {
   ATTACHMENT_MAX_BYTES,
+  attachmentsWithinLimits,
   decodeQrPayload,
   decodePairingString,
   encodePairingString,
@@ -269,4 +270,13 @@ test("messages carry multiple mixed attachments", () => {
   const event: YorozuEvent = { ...base, kind: "message", data: { role: "user", text: "", attachments: [image, pdf] } };
   if (event.kind !== "message") throw new Error("unreachable");
   expect(event.data.attachments).toEqual([image, pdf]);
+});
+
+test("direct message attachments reject malformed names and media types before admission", () => {
+  const valid = { name: "photo.png", mime: "image/png", data: "YQ==" };
+  expect(attachmentsWithinLimits([valid])).toBe(true);
+  expect(attachmentsWithinLimits([{ ...valid, mime: null } as never])).toBe(false);
+  expect(attachmentsWithinLimits([{ ...valid, name: "" }])).toBe(false);
+  expect(attachmentsWithinLimits([{ ...valid, name: "x".repeat(257) }])).toBe(false);
+  expect(attachmentsWithinLimits([{ ...valid, mime: "x".repeat(129) }])).toBe(false);
 });

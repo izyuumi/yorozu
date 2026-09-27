@@ -482,8 +482,9 @@ export function attachmentFiles(
   const safe = (part: string): string => part.replace(/[^\w.-]/g, "_");
   return attachments.map(({ name, mime, data }, index) => {
     // Tail of the name: the extension is what tells an agent how to open it.
-    const path = join(folder, `${safe(messageId).slice(0, 80)}-${index}-${safe(name).slice(-100)}`);
-    writeFileSync(path, Buffer.from(data, "base64"), { mode: 0o600 });
+    const path = join(folder, `${safe(messageId).slice(0, 80)}-${index}-${randomUUID()}-${safe(name).slice(-100)}`);
+    // Never follow a file planted by an agent that can read this folder. Recovery gets a fresh path.
+    writeFileSync(path, Buffer.from(data, "base64"), { mode: 0o600, flag: "wx" });
     return { name, mime, path };
   });
 }

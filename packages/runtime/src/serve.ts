@@ -1495,7 +1495,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
             const currentHome = threadHome(threadId, dir);
             // Written inside the attempt, so a full disk is this turn's failure and not the sidecar's.
             const files = attachmentFiles(threadId, userEventId ?? id, attachments, dir);
-            const attached = files.map((file) => `[attached: ${file.name} (${file.mime}) at ${file.path}]`).join("\n");
+            const attached = files.map((file) =>
+              `[attached: ${JSON.stringify(file.name)} (${JSON.stringify(file.mime)}) at ${file.path}]`).join("\n");
             const prompt = recovering ? nativeRecoveryPrompt(threadId, text) : withStoppedContext(threadId, text, userEventId);
             const done = await runner.run({
               threadId,
