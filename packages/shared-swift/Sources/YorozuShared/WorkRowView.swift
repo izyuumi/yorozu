@@ -9,6 +9,7 @@ import SwiftUI
 public struct WorkRowView: View {
     private let work: TurnWork
     @State private var expanded: Bool
+    @AppStorage(ReplyFont.key) private var replyFont = ReplyFont.serif
 
     public init(work: TurnWork) {
         self.work = work
@@ -33,7 +34,7 @@ public struct WorkRowView: View {
                         if case .thought(let data) = event.payload {
                             Text(data.text)
                                 .font(.callout)
-                                .fontDesign(.serif)
+                                .fontDesign(replyFont.design)
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                         }

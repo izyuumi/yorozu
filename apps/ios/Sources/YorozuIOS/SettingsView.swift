@@ -109,6 +109,8 @@ struct SettingsView: View {
                     }
                     .listRowBackground(YorozuPalette.paper)
                 }
+                Section("Chat") { ReplyFontPicker() }
+                    .listRowBackground(YorozuPalette.paper)
                 if let failure = session.failure {
                     Section { Label(failure, systemImage: "exclamationmark.circle").foregroundStyle(.secondary) }
                         .listRowBackground(YorozuPalette.paper)

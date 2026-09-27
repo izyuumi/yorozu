@@ -5649,6 +5649,54 @@
         "ko" : { "stringUnit" : { "state" : "translated", "value" : "스레드를 클릭하면 채팅 창에서 엽니다." } },
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "点按线程即可在聊天窗口中打开。" } }
       }
+    },
+    "Reply font": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Fuente de las respuestas" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "返信のフォント" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "답변 글꼴" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "回复字体" } }
+      }
+    },
+    "Serif": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Serif" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "セリフ" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "세리프" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "衬线" } }
+      }
+    },
+    "Sans": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Sans" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "サンセリフ" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "산세리프" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "无衬线" } }
+      }
+    },
+    "Rounded": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Redondeada" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "丸ゴシック" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "둥근 글꼴" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "圆体" } }
+      }
+    },
+    "Monospaced": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Monoespaciada" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "等幅" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "고정폭" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "等宽" } }
+      }
+    },
+    "Chat": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Chat" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "チャット" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "채팅" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "聊天" } }
+      }
     }
   },
   "version" : "1.0"

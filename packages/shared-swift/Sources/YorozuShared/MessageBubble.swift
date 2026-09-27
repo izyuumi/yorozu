@@ -56,6 +56,7 @@ public struct MessageBubble: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Set by the thread's search field; every hit inside this bubble is drawn highlighted.
     @Environment(\.searchHighlight) private var highlight
+    @AppStorage(ReplyFont.key) private var replyFont = ReplyFont.serif
 
     public init(
         id: String = "",
@@ -248,7 +249,7 @@ public struct MessageBubble: View {
         }
         .padding(.horizontal, isUser ? LayoutMetrics.stack : 0)
         .padding(.vertical, isUser ? LayoutMetrics.inner : 0)
-        .fontDesign(isUser ? .default : .serif)
+        .fontDesign(isUser ? .default : replyFont.design)
         .foregroundStyle(isUser ? AnyShapeStyle(Color.white) : AnyShapeStyle(YorozuPalette.ink))
         // Links draw in the tint, and the user capsule is filled with it: accent on accent.
         .tint(isUser ? Color.white : YorozuPalette.vermilion)
@@ -261,7 +262,7 @@ public struct MessageBubble: View {
             // The reply as one UITextView, so a long press selects by word and letter in place
             // and across blocks; the same design and colours the modifiers above give `Text`.
             .environment(\.proseStyle, ProseStyle(
-                serif: !isUser,
+                font: isUser ? .sans : replyFont,
                 ink: isUser ? .white : UIColor(YorozuPalette.ink),
                 tint: isUser ? .white : UIColor(YorozuPalette.vermilion)
             ))
