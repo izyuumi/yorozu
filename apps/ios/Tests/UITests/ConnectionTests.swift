@@ -56,6 +56,39 @@ final class ConnectionTests: XCTestCase {
         XCTAssertFalse(diagnostics.contains("127.0.0.1"), "Diagnostics included the relay URL")
     }
 
+    /// Search downloaded history while the host is unreachable; an older match stays
+    /// available and its limited scope is stated before the connection recovers.
+    @MainActor
+    func testOfflineSearchShowsDownloadedHistoryAndKeepsItsQuery() async throws {
+        try await launchPaired()
+        try openNewChat()
+        send("ordinary title")
+        XCTAssertTrue(app.textViews["echo: ordinary title"].waitForExistence(timeout: 30))
+        send("search marker 74c9")
+        XCTAssertTrue(app.textViews["echo: search marker 74c9"].waitForExistence(timeout: 30))
+        send("newer unrelated answer")
+        XCTAssertTrue(app.textViews["echo: newer unrelated answer"].waitForExistence(timeout: 30))
+        app.navigationBars.buttons["Threads"].tap()
+
+        try await rig.post("down")
+        XCTAssertEqual(status(becomes: "Reconnecting", within: 15), .completed)
+        app.collectionViews.firstMatch.swipeDown()
+        let search = app.searchFields["Search threads"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10), "Thread search is unreachable offline")
+        search.tap()
+        search.typeText("74c9")
+        XCTAssertTrue(app.staticTexts["Downloaded conversations only"].waitForExistence(timeout: 3))
+        let result = app.buttons.matching(NSPredicate(format: "label CONTAINS 'search marker 74c9'")).firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 3), "Downloaded older message is missing offline")
+        result.tap()
+        XCTAssertTrue(app.textViews["search marker 74c9"].waitForExistence(timeout: 10))
+        app.buttons["Close"].tap()
+        app.navigationBars.buttons["Threads"].tap()
+        app.collectionViews.firstMatch.swipeDown()
+        XCTAssertEqual(search.value as? String, "74c9", "Returning lost the search context")
+        XCTAssertTrue(result.exists)
+    }
+
     /// A silently dead link is noticed and shown, a brief drop is not, and the link comes back
     /// on its own. Idle, nothing but the ping can tell: up to 40s, then the 5s grace. The
     /// notice is brief and overlays the list without moving its content; Settings stays truthful.
