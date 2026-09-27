@@ -535,7 +535,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (runner.descriptor && (runner.descriptor.id !== id || id in builtInAgents))
       throw new Error(`agent "${id}" cannot claim a built-in identity`);
     const descriptor = runner.descriptor ?? builtInAgents[id];
-    if (descriptor && validAgentDescriptor(descriptor) && agentDescriptors.length < 32)
+    if (!descriptor) throw new Error(`agent "${id}" needs a descriptor`);
+    if (validAgentDescriptor(descriptor) && agentDescriptors.length < 32)
       agentDescriptors.push(descriptor);
   }
   const log = options.log ?? ((line: string) => void stdout.write(`${line}\n`));

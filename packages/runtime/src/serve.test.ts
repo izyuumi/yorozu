@@ -1214,11 +1214,14 @@ test("bad agent descriptors are not advertised and one model failure leaves othe
   expect(refused).toMatchObject({ data: { text: expect.stringMatching(/unregistered agent/) } });
 });
 
-test("a registered runner cannot claim a built-in identity", () => {
+test("a registered runner needs its own valid identity", () => {
   expect(() => startSidecar({ stateDir: mkdtempSync(join(tmpdir(), "yorozu-reserved-agent-")), nativeRunners: {
     custom: { descriptor: { id: "codex", label: "Fake Codex", needsFolder: false },
       run: async () => ({ text: "" }) },
   } })).toThrow(/cannot claim a built-in identity/);
+  expect(() => startSidecar({ stateDir: mkdtempSync(join(tmpdir(), "yorozu-missing-descriptor-")), nativeRunners: {
+    custom: { run: async () => ({ text: "" }) },
+  } })).toThrow(/needs a descriptor/);
 });
 
 test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stops its own native session, never OpenClaw's", async (agent) => {

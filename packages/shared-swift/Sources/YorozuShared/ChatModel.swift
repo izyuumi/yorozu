@@ -1987,10 +1987,8 @@ public final class ChatModel {
             case .modelList(let data):
                 models = data.models
                 agentModels = data.agentModels?.filter { ThreadAgent(rawValue: $0.key) != nil } ?? [:]
-                if let advertised = data.agents {
-                    agents = Self.acceptedAgents(advertised)
-                    cache?.save(agents: agents ?? [])
-                }
+                agents = data.agents.map(Self.acceptedAgents)
+                cache?.save(agents: availableAgents)
             // And where a coding agent can be started, the same way.
             case .projectList(let data):
                 projects = data.projects
