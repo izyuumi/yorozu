@@ -95,11 +95,12 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(result.exists)
     }
 
-    /// A silently dead link is noticed and shown, a brief drop is not, and the link comes back
-    /// on its own. Idle, nothing but the ping can tell: up to 40s, then the 5s grace. The
-    /// notice is brief and overlays the list without moving its content; Settings stays truthful.
+    /// A silently dead link is noticed and shown, then comes back on its own. Idle, nothing but
+    /// the ping can tell: up to 40s, then the 5s grace. The notice overlays the list without
+    /// moving its content; Settings stays truthful. Short interruptions are covered by the
+    /// connection presentation tests, where recovery timing is controlled.
     @MainActor
-    func testAReconnectingLinkIsShownOnlyWhenItLastsAndClearsItself() async throws {
+    func testReconnectingLinkToastClearsAfterSustainedOutage() async throws {
         try await launchPaired()
         let notificationAlert = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
         if notificationAlert.waitForExistence(timeout: 2) { notificationAlert.buttons["Allow"].tap() }
@@ -111,11 +112,6 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 10))
         let initialFrame = row.frame
         let toast = app.descendants(matching: .any)["Connection: Reconnecting"].firstMatch
-        try await rig.post("down")
-        try await rig.post("heal")
-        XCTAssertNotEqual(status(becomes: "Reconnecting", within: 7), .completed, "A brief drop flickered the status")
-        XCTAssertFalse(toast.exists, "A brief drop showed a toast")
-
         try await rig.post("blackhole")
         XCTAssertEqual(status(becomes: "Reconnecting", within: 70), .completed, "A dead link was never shown")
         XCTAssertTrue(toast.waitForExistence(timeout: 8), "A sustained interruption showed no toast")
