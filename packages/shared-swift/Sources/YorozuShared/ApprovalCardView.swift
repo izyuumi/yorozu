@@ -12,6 +12,7 @@ import SwiftUI
 /// See docs/spec-v1.html section 6 and docs/spec-v1.5.md.
 public struct ApprovalCardView: View {
     public let card: ApprovalCardData
+    public let agentLabel: String?
     /// Answered cards keep their place in the thread but stop offering buttons.
     public let answered: Bool
     public let pending: Bool
@@ -27,6 +28,7 @@ public struct ApprovalCardView: View {
 
     public init(
         card: ApprovalCardData,
+        agentLabel: String? = nil,
         answered: Bool = false,
         pending: Bool = false,
         disposition: ApprovalStatusData.Status? = nil,
@@ -34,6 +36,7 @@ public struct ApprovalCardView: View {
         answer: @escaping (ApprovalAnswerData.Answer, ApprovalRule?) -> Void
     ) {
         self.card = card
+        self.agentLabel = agentLabel
         self.answered = answered
         self.pending = pending
         self.disposition = disposition
@@ -103,7 +106,7 @@ public struct ApprovalCardView: View {
         }
         .sensoryFeedback(.warning, trigger: appeared) { _, shown in shown && !answered }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Approval needed: \(verb.sentence)")
+        .accessibilityLabel("\(agentLabel ?? card.nativeAgent?.label ?? "Yorozu") approval needed: \(verb.sentence)")
         // The rule the "Always allow" button is really about. Nothing is saved until Save.
         .sheet(item: $editingRule) { rule in
             RuleEditorView(rule: rule, title: "Always allow") { edited in
@@ -117,6 +120,14 @@ public struct ApprovalCardView: View {
 
     // MARK: Pieces
 
+    private var headerTitle: String {
+        if !answered { return agentLabel ?? card.nativeAgent?.label ?? String(localized: "Yorozu wants to") }
+        if let agent = card.nativeAgent, !ThreadAgent.allCases.contains(agent) {
+            return String(localized: "Approval · \(agentLabel ?? agent.label)")
+        }
+        return String(localized: "Approval")
+    }
+
     private var header: some View {
         HStack(spacing: LayoutMetrics.inner) {
             Image(systemName: "hand.raised.fill")
@@ -124,7 +135,7 @@ public struct ApprovalCardView: View {
                 .foregroundStyle(YorozuPalette.vermilion)
                 .frame(width: 28, height: 28)
                 .background(YorozuPalette.vermilion.opacity(0.12), in: Circle())
-            Text(answered ? String(localized: "Approval") : (card.nativeAgent?.label ?? String(localized: "Yorozu wants to")))
+            Text(headerTitle)
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)

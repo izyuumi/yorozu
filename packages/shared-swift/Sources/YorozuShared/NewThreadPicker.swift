@@ -19,6 +19,7 @@ public struct NewThreadPicker: View {
     private let fallbackProjects: [ProjectFolder]
     private let fallbackStatus: ProjectListStatus
     private let fallbackRefresh: (() async -> Void)?
+    private let fallbackAgents: [AgentDescriptor]
     private let onStart: (ThreadAgent, String?) -> Void
     private let session: MultiHostModel?
     private let onHostStart: ((HostThreadID) -> Void)?
@@ -30,11 +31,13 @@ public struct NewThreadPicker: View {
 
     public init(
         projects: [ProjectFolder],
+        agents: [AgentDescriptor]? = nil,
         status: ProjectListStatus = .ready,
         onRefresh: (() async -> Void)? = nil,
         onStart: @escaping (ThreadAgent, String?) -> Void
     ) {
         self.fallbackProjects = projects
+        self.fallbackAgents = agents ?? ThreadAgent.allCases.map { AgentDescriptor(id: $0, label: $0.label, needsFolder: $0.needsFolder) }
         self.fallbackStatus = status
         self.fallbackRefresh = onRefresh
         self.onStart = onStart
@@ -46,6 +49,7 @@ public struct NewThreadPicker: View {
     /// and pops any agent's folder step before a draft can be created on another Mac.
     public init(session: MultiHostModel, onStart: @escaping (HostThreadID) -> Void) {
         self.fallbackProjects = []
+        self.fallbackAgents = []
         self.fallbackStatus = .ready
         self.fallbackRefresh = nil
         self.onStart = { _, _ in }
@@ -64,6 +68,14 @@ public struct NewThreadPicker: View {
         return true
     }
     private var projects: [ProjectFolder] { selectedHost?.model.projects ?? fallbackProjects }
+    private var agents: [AgentDescriptor] { selectedHost?.model.availableAgents ?? fallbackAgents }
+    private var assistants: [AgentDescriptor] { Self.groups(agents).assistants }
+    private var codingAgents: [AgentDescriptor] { Self.groups(agents).codingAgents }
+    private func descriptor(_ agent: ThreadAgent) -> AgentDescriptor? { agents.first { $0.id == agent } }
+    private func label(_ agent: ThreadAgent) -> String {
+        ThreadAgent.allCases.contains(agent) ? agent.label : descriptor(agent)?.label ?? agent.label
+    }
+    private func needsFolder(_ agent: ThreadAgent) -> Bool { descriptor(agent)?.needsFolder ?? agent.needsFolder }
     private var status: ProjectListStatus { selectedHost?.model.projectListStatus ?? fallbackStatus }
     private var onRefresh: (() async -> Void)? {
         if let model = selectedHost?.model { return { await model.refreshProjects() } }
@@ -73,6 +85,12 @@ public struct NewThreadPicker: View {
     /// The runtime that answers anywhere, and the ones that need a folder on the Mac first.
     static let assistants = ThreadAgent.allCases.filter { !$0.needsFolder }
     static let codingAgents = ThreadAgent.allCases.filter(\.needsFolder)
+
+    static func groups(_ offered: [AgentDescriptor]) -> (assistants: [AgentDescriptor], codingAgents: [AgentDescriptor]) {
+        let ordered = ThreadAgent.allCases.compactMap { builtIn in offered.first { $0.id == builtIn } } +
+            offered.filter { !ThreadAgent.allCases.contains($0.id) }
+        return (ordered.filter { !$0.needsFolder }, ordered.filter(\.needsFolder))
+    }
 
     /// Folders used before, most recent first, then the rest in the order the Mac sent them.
     static func sections(_ projects: [ProjectFolder]) -> (recent: [ProjectFolder], other: [ProjectFolder]) {
@@ -88,6 +106,7 @@ public struct NewThreadPicker: View {
         case .yorozu: String(localized: "Your assistant on OpenClaw, with its own tools. Starts right away.")
         case .claudeCode: String(localized: "Anthropic’s coding agent, working in a project on your Mac.")
         case .codex: String(localized: "OpenAI’s coding agent, working in a project on your Mac.")
+        default: agent.label
         }
     }
 
@@ -149,8 +168,8 @@ public struct NewThreadPicker: View {
                 .listRowBackground(YorozuPalette.paper)
             }
             Section {
-                ForEach(Self.assistants) { agent in
-                    Button { start(agent, nil) } label: { runtime(agent) }
+                ForEach(assistants) { descriptor in
+                    Button { start(descriptor.id, nil) } label: { runtime(descriptor) }
                         .disabled(!canStart)
                         .listRowBackground(YorozuPalette.paper)
                         .accessibilityHint("Starts a thread now")
@@ -159,8 +178,8 @@ public struct NewThreadPicker: View {
                 YorozuQuestion("Who should answer?")
             }
             Section {
-                ForEach(Self.codingAgents) { agent in
-                    NavigationLink(value: agent) { runtime(agent) }
+                ForEach(codingAgents) { descriptor in
+                    NavigationLink(value: descriptor.id) { runtime(descriptor) }
                         .disabled(!canStart)
                         .listRowBackground(YorozuPalette.paper)
                         .accessibilityHint("Then choose a project folder")
@@ -174,18 +193,19 @@ public struct NewThreadPicker: View {
         .paperList()
     }
 
-    private func runtime(_ agent: ThreadAgent) -> some View {
-        HStack(spacing: 12) {
+    private func runtime(_ descriptor: AgentDescriptor) -> some View {
+        let agent = descriptor.id
+        return HStack(spacing: 12) {
             YorozuGlyphTile {
                 // Yorozu's own knot rather than the generic chip the thread list uses: this is
                 // the one place the runtimes are introduced side by side.
                 if agent == .yorozu { YorozuMark(dimension: 22) } else { AgentMarkView(agent) }
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(agent.label)
+                Text(label(agent))
                     .font(.headline)
                     .foregroundStyle(YorozuPalette.ink)
-                Text(Self.summary(agent))
+                Text(ThreadAgent.allCases.contains(agent) ? Self.summary(agent) : descriptor.description ?? "")
                     .font(.subheadline)
                     // Not `.secondary`: inside a Button label it picks up the vermilion tint.
                     .foregroundStyle(YorozuPalette.ink.opacity(0.62))
@@ -211,7 +231,7 @@ public struct NewThreadPicker: View {
                     rows(recent, agent: agent)
                 } header: {
                     VStack(alignment: .leading, spacing: 12) {
-                        YorozuQuestion("Where should \(agent.label) work?")
+                        YorozuQuestion("Where should \(label(agent)) work?")
                         Text("Recent")
                     }
                 }
@@ -220,7 +240,7 @@ public struct NewThreadPicker: View {
                 Section {
                     rows(other, agent: agent)
                 } header: {
-                    if recent.isEmpty { YorozuQuestion("Where should \(agent.label) work?") } else { Text("Other folders") }
+                    if recent.isEmpty { YorozuQuestion("Where should \(label(agent)) work?") } else { Text("Other folders") }
                 }
             }
             Section {
@@ -239,7 +259,7 @@ public struct NewThreadPicker: View {
             }
         }
         .paperList()
-        .navigationTitle(agent.label)
+        .navigationTitle(label(agent))
         .onAppear { NewThreadShowcase.onFoldersAppear?() }
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -319,7 +339,7 @@ public struct NewThreadPicker: View {
             // The full-width list row is the button, so paths can use their required height.
             .buttonStyle(.plain)
             .listRowBackground(YorozuPalette.paper)
-            .accessibilityLabel("\(folder.name), \(agent.label)")
+            .accessibilityLabel("\(folder.name), \(label(agent))")
             .accessibilityValue(folder.path)
             .accessibilityHint("Starts a thread in this folder on the host Mac")
             #if os(macOS)
@@ -330,7 +350,7 @@ public struct NewThreadPicker: View {
 
     private func start(_ agent: ThreadAgent, _ cwd: String?) {
         if let session {
-            guard canStart, !agent.needsFolder || projects.contains(where: { $0.path == cwd }),
+            guard canStart, !needsFolder(agent) || projects.contains(where: { $0.path == cwd }),
                 let selectedHostID, selectedHost != nil,
                 let id = session.newDraft(on: selectedHostID, agent: agent, cwd: cwd)
             else { return }

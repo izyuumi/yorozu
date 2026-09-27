@@ -40,6 +40,10 @@ import {
   threadRef,
   toBase64Url,
   REASONING_EFFORTS,
+  THREAD_AGENTS,
+  validAgentDescriptor,
+  validAgentId,
+  type AgentDescriptor,
   type ApprovalCardData,
   type ChannelKeys,
   type DeviceInfo,
@@ -426,7 +430,7 @@ export interface ServeOptions {
    * The native coding agents, by thread agent kind. Defaults to Claude Code through the Agent
    * SDK; a kind with no runner answers that it is not available. Test seam for a fake SDK.
    */
-  nativeRunners?: Partial<Record<Exclude<ThreadAgent, "yorozu">, NativeAgentRunner>>;
+  nativeRunners?: Record<string, NativeAgentRunner>;
   /** Clock for the skill-list refresh window. */
   now?: () => number;
 }
@@ -524,6 +528,21 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const viaOpenClaw = (threadId: string): boolean => openclaw !== undefined && threadAgent(threadId, dir) === "yorozu";
   const nativeRunners = options.nativeRunners ?? { "claude-code": claudeCodeRunner(undefined, trackAgentProcess),
     codex: codexNativeRunner((handlers) => connectCodex(handlers, trackAgentProcess)) };
+  const builtInAgents: Record<string, AgentDescriptor> = {
+    "claude-code": { id: "claude-code", label: "Claude Code", needsFolder: true },
+    codex: { id: "codex", label: "Codex", needsFolder: true },
+  };
+  const agentDescriptors: AgentDescriptor[] = [{ id: "yorozu", label: "Yorozu", needsFolder: false }];
+  for (const [id, runner] of Object.entries(nativeRunners)) {
+    if (!validAgentId(id) || id === "yorozu") throw new Error(`invalid registered agent "${id}"`);
+    const builtIn = Object.hasOwn(builtInAgents, id);
+    if (runner.descriptor && (runner.descriptor.id !== id || builtIn))
+      throw new Error(`agent "${id}" cannot claim a built-in identity`);
+    const descriptor = runner.descriptor ?? (builtIn ? builtInAgents[id] : undefined);
+    if (!descriptor) throw new Error(`agent "${id}" needs a descriptor`);
+    if (validAgentDescriptor(descriptor) && agentDescriptors.length < 32)
+      agentDescriptors.push(descriptor);
+  }
   const log = options.log ?? ((line: string) => void stdout.write(`${line}\n`));
   const heartbeat = options.heartbeat ?? { pingMs: PING_MS, pongMs: PONG_MS };
   const state = (name: string) => log(`STATE ${name}`);
@@ -1211,8 +1230,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * phone's model picker is one tap away from the thread it is about, and asking for the list
    * at that point would draw an empty menu first.
    */
-  const agentModels: Partial<Record<Exclude<ThreadAgent, "yorozu">, ModelOption[]>> = {};
-  let skillsByAgent: Partial<Record<ThreadAgent, SkillOption[]>> = {};
+  const agentModels: Record<string, ModelOption[]> = {};
+  let skillsByAgent: Record<string, SkillOption[]> = {};
   let codexSkillPaths = new Map<string, string>();
   let skillsBuiltAt: number | undefined;
   let skillsRefreshing: Promise<void> | undefined;
@@ -1222,9 +1241,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (skillsBuiltAt !== undefined && skillNow() - skillsBuiltAt < 600_000) return Promise.resolve();
     const refresh = Promise.all([
       openclaw?.listSkills?.().catch(() => [] as SkillOption[]) ?? Promise.resolve([] as SkillOption[]),
-      nativeRunners["claude-code"]?.skills?.().catch(() => []) ?? Promise.resolve([]),
-      nativeRunners.codex?.skills?.().catch(() => []) ?? Promise.resolve([]),
-    ]).then(([openclawSkills, claudeSkills, codexSkills]) => {
+      Promise.all(agentDescriptors.filter(({ id }) => id !== "yorozu").map(async ({ id }) => ({
+        id, skills: await nativeRunners[id]?.skills?.().catch(() => []) ?? [],
+      }))),
+    ]).then(([openclawSkills, nativeSkills]) => {
       const visible = (skills: SkillOption[]): SkillOption[] => {
         return skills.flatMap((skill) => {
           if (!skill || typeof skill.name !== "string" || !skill.name) return [];
@@ -1234,9 +1254,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
               ? { argumentHint: skill.argumentHint.slice(0, 80) } : {}) }];
         });
       };
-      const next: Partial<Record<ThreadAgent, SkillOption[]>> = {
-        yorozu: visible(openclawSkills), "claude-code": visible(claudeSkills), codex: visible(codexSkills),
-      };
+      const next: Record<string, SkillOption[]> = { yorozu: visible(openclawSkills) };
+      for (const { id, skills } of nativeSkills) next[id] = visible(skills);
+      const codexSkills = nativeSkills.find(({ id }) => id === "codex")?.skills ?? [];
       const paths = new Map<string, string>();
       for (const skill of codexSkills) {
         if (skill && typeof skill.path === "string" && !paths.has(skill.name) &&
@@ -1258,12 +1278,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const effortsFor = (agent: ThreadAgent, model: string | undefined): ReasoningEffort[] =>
     (modelsFor(agent).find((m) => m.id === model) ?? modelsFor(agent)[0])?.efforts ?? [];
   const modelList = (): YorozuEvent =>
-    control({ kind: "model_list", data: { models: modelsFor("yorozu"), agentModels, skills: skillsByAgent } });
+    control({ kind: "model_list", data: { models: modelsFor("yorozu"), agentModels, agents: agentDescriptors, skills: skillsByAgent } });
 
   void refreshSkills();
 
-  for (const agent of ["claude-code", "codex"] as const) {
-    void nativeRunners[agent]?.models?.().then((models) => {
+  for (const { id: agent } of agentDescriptors.filter(({ id }) => id !== "yorozu")) {
+    const runner = nativeRunners[agent];
+    if (!runner?.models) continue;
+    void Promise.resolve().then(() => runner.models!()).then((models) => {
       agentModels[agent] = models;
       if (!stopped) broadcast(modelList());
     }).catch(() => state(`native-model-list-unavailable ${agent}`));
@@ -1495,8 +1517,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
         broadcast(final);
       };
       // Finished, so the composer is not left offering Stop for a turn nobody is running.
-      if (!runner) {
-        finish(`${agent} is not available in this build yet.`, true);
+      if (!runner || !agentDescriptors.some(({ id }) => id === agent)) {
+        finish(`${agent} is no longer registered on this host.`, true);
         setNativeTurn(threadId, undefined, dir);
         broadcast(threadList());
         return;
@@ -1504,7 +1526,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       // No folder, no agent: a thread from before folders were required, or one whose folder
       // has since left `~/Projects`, would otherwise run the agent wherever this sidecar sits.
       const home = threadHome(threadId, dir);
-      if (!home.cwd || !isProjectFolder(home.cwd)) {
+      if (agentDescriptors.find(({ id }) => id === agent)?.needsFolder && (!home.cwd || !isProjectFolder(home.cwd))) {
         state("native-cwd-refused");
         finish(`${agent} needs one of this Mac's project folders, and this thread has none.`, true);
         setNativeTurn(threadId, undefined, dir);
@@ -1545,7 +1567,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
                 skillPath ? text.slice(skillName!.length + 1).trimStart() : text, userEventId),
               ...(!recovering && skillPath ? { skill: { name: skillName!, path: skillPath } } : {}),
               ...currentHome,
-              cwd: home.cwd,
+              cwd: home.cwd ?? "",
               bypass: loadSettings(dir).yolo,
               model: threadModel(threadId, dir),
               effort: threadEffort(threadId, dir),
@@ -1553,7 +1575,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
               onSession: (sessionId) => { executionStarted = true; setThreadSession(threadId, sessionId, dir); },
               approve: async (tool, input, signal) =>
                 loadSettings(dir).yolo || nativeCards.approve(threadId, agent, tool, input, signal),
-              ask: (question, options, signal) => nativeCards.ask(threadId, question, options, signal),
+              ask: (question, options, signal) => nativeCards.ask(threadId, agent, question, options, signal),
               beforeTool: async (signal) => {
                 while (updateGate.draining && !signal.aborted) {
                   pauseAtSafePoint(threadId);
@@ -2556,14 +2578,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
       case "thread_create":
         // The device minted the id: the message it typed follows straight after this frame.
         try {
+          const descriptor = agentDescriptors.find(({ id }) => id === (event.data.agent ?? "yorozu"));
+          if (!descriptor) throw new Error(`unregistered agent "${String(event.data.agent)}"`);
           // A coding agent runs where the picker offered, and nowhere else: a path typed into a
           // frame by hand is not a folder this Mac agreed to open an agent in.
           // A missing folder is refused by `createThread` itself, after it has checked the agent.
           const cwd = event.data.cwd?.trim();
-          if (event.data.agent && event.data.agent !== "yorozu" && cwd && !isProjectFolder(cwd)) {
+          if (descriptor.needsFolder && cwd && !isProjectFolder(cwd)) {
             throw new Error(`"${cwd}" is not one of this Mac's project folders`);
           }
-          createThread(event.data.title, dir, event.threadId || undefined, event.data);
+          createThread(event.data.title, dir, event.threadId || undefined, { ...event.data, needsFolder: descriptor.needsFolder });
         } catch (error) {
           // An agent this runtime does not know: no thread is made, and the device that asked
           // is told why in the thread it is looking at, since the message it sends next has
@@ -2884,6 +2908,20 @@ export function serve(options: ServeOptions = {}): Sidecar {
       return { t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) };
     };
 
+    const forAgentCapability = (event: YorozuEvent, supportsOpenAgents: boolean): YorozuEvent => {
+      if (supportsOpenAgents) return event;
+      if (event.kind === "sync_delta") return { ...event, data: { ...event.data,
+        events: event.data.events.map((item) => forAgentCapability(item, false)),
+        ...(event.data.current ? { current: event.data.current.map((item) => forAgentCapability(item, false)) } : {}),
+      } };
+      if ((event.kind === "approval_card" || event.kind === "question_card") &&
+          event.data.nativeAgent && !THREAD_AGENTS.includes(event.data.nativeAgent as typeof THREAD_AGENTS[number])) {
+        const { nativeAgent: _, ...data } = event.data;
+        return { ...event, data } as YorozuEvent;
+      }
+      return event;
+    };
+
     const boxesFor = (device: string, event: YorozuEvent): FrameBody[] => {
       const known = devices.get(device);
       if (!known || !relayReady || ws.readyState !== WebSocket.OPEN) return [];
@@ -2906,6 +2944,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
           ...(known.compatibility?.state === "update-required" ? { peerInfoError: known.compatibility.reason } : {}),
         } };
       }
+      event = forAgentCapability(event, known.compatibility?.state === "compatible" &&
+        known.compatibility.capabilities.includes("open-agents-v1"));
       if (event.kind === "message") event = phoneTrace(event,
         known.compatibility?.state === "compatible" &&
         known.compatibility.capabilities.includes("attachment-chunks-v1"));

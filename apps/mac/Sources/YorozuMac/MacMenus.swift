@@ -31,8 +31,7 @@ struct ChatMenus: Commands {
             Button("Stop") { chat?.stop?() }
                 .keyboardShortcut(".")
                 .disabled(chat?.stop == nil)
-            Menu("Model") { models }
-                .disabled(chat?.models.isEmpty != false)
+            if chat?.models.isEmpty == false { Menu("Model") { models } }
             Divider()
             Button("Export as Markdown…") { export() }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
