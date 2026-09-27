@@ -6,7 +6,7 @@
  * has nobody to ask and nowhere to draw — would pick them up.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { ProgressCardData, ProgressStep, QuestionCardData } from "@yorozu/shared";
 import type { Tool, TurnContext } from "../index.js";
 
@@ -129,6 +129,12 @@ const STATES: ReadonlySet<ProgressStep["state"]> = new Set<ProgressStep["state"]
 
 /** Model output, so every field is checked: a card that cannot be drawn is worse than none. */
 export function progressCard(args: Record<string, unknown>): ProgressCardData {
+  const rawId = String(args.cardId ?? "");
+  // The model may supply an arbitrarily long id. Keep update-in-place identity without
+  // letting that id alone exceed an encrypted relay frame.
+  const cardId = Buffer.byteLength(rawId) < 256
+    ? rawId
+    : `progress-sha256:${createHash("sha256").update(rawId).digest("hex")}`;
   const steps = (Array.isArray(args.steps) ? args.steps : []).map((entry): ProgressStep => {
     const step = (typeof entry === "object" && entry !== null ? entry : {}) as Record<string, unknown>;
     const state = String(step.state ?? "") as ProgressStep["state"];
@@ -139,7 +145,7 @@ export function progressCard(args: Record<string, unknown>): ProgressCardData {
   });
   const percent = Number(args.percent);
   return {
-    cardId: String(args.cardId ?? ""),
+    cardId,
     title: String(args.title ?? ""),
     steps,
     ...(Number.isFinite(percent) ? { percent: Math.min(100, Math.max(0, percent)) } : {}),

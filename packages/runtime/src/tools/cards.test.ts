@@ -88,6 +88,21 @@ test("report_progress shows a card and re-reports it under the same card id", ()
   expect(shown[1].percent).toBe(100);
 });
 
+test("a model's oversized progress id stays inside a relay frame across updates", () => {
+  const shown: ReturnType<typeof progressCard>[] = [];
+  const tool = reportProgressTool((card) => shown.push(card));
+  const firstId = "x".repeat(1_100_000);
+  tool.run({ cardId: firstId, title: "Working", steps: [] });
+  tool.run({ cardId: firstId, title: "Done", steps: [] });
+  tool.run({ cardId: `${firstId}y`, title: "Other work", steps: [] });
+
+  expect(shown).toHaveLength(3);
+  expect(shown[0].cardId).toBe(shown[1].cardId);
+  expect(shown[2].cardId).not.toBe(shown[0].cardId);
+  const event = { id: shown[0].cardId, threadId: "t", ts: 0, kind: "progress_card", data: shown[0] };
+  expect(Buffer.byteLength(JSON.stringify(event))).toBeLessThan(1_048_576);
+});
+
 /** Without a card id there is nothing to update in place, so it is the one hard requirement. */
 test("report_progress refuses a card it could never move", () => {
   const shown: unknown[] = [];
