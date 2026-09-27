@@ -6,6 +6,7 @@ import SwiftUI
 /// this asks which thing to do, and the agent's tool call is waiting on the answer.
 public struct QuestionCardView: View {
     public let card: QuestionCardData
+    public let agentLabel: String?
     /// Answered cards keep their place in the thread but stop offering buttons.
     public let answered: Bool
     public let chosen: String?
@@ -16,11 +17,13 @@ public struct QuestionCardView: View {
 
     public init(
         card: QuestionCardData,
+        agentLabel: String? = nil,
         answered: Bool = false,
         chosen: String? = nil,
         answer: @escaping (String) -> Void
     ) {
         self.card = card
+        self.agentLabel = agentLabel
         self.answered = answered
         self.chosen = chosen
         self.answer = answer
@@ -28,6 +31,7 @@ public struct QuestionCardView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
+            if let agentLabel { Text(agentLabel).font(.subheadline).foregroundStyle(.secondary) }
             Label(card.question, systemImage: "questionmark.bubble")
                 .font(.headline)
                 .fixedSize(horizontal: false, vertical: true)

@@ -195,6 +195,34 @@ public final class ChatModel {
     /// thread list; empty until then, which is a picker that offers only Default.
     public private(set) var models: [ModelOption] = []
     public private(set) var agentModels: [String: [ModelOption]] = [:]
+    public private(set) var agents: [AgentDescriptor]?
+
+    public var availableAgents: [AgentDescriptor] {
+        agents ?? ThreadAgent.allCases.map { AgentDescriptor(id: $0, label: $0.label, needsFolder: $0.needsFolder) }
+    }
+
+    public func descriptor(for agent: ThreadAgent) -> AgentDescriptor? {
+        availableAgents.first { $0.id == agent }
+    }
+
+    public func agentLabel(_ agent: ThreadAgent) -> String {
+        if ThreadAgent.allCases.contains(agent) { return agent.label }
+        return descriptor(for: agent)?.label ?? agent.label
+    }
+
+    public func needsFolder(_ agent: ThreadAgent) -> Bool {
+        descriptor(for: agent)?.needsFolder ?? agent.needsFolder
+    }
+
+    private static func acceptedAgents(_ advertised: [AgentDescriptor]) -> [AgentDescriptor] {
+        var seen = Set<ThreadAgent>()
+        return Array(advertised.filter { $0.isValid && seen.insert($0.id).inserted }.prefix(32)).map { descriptor in
+            let id = descriptor.id
+            return ThreadAgent.allCases.contains(id)
+                ? AgentDescriptor(id: id, label: id.label, needsFolder: id.needsFolder)
+                : descriptor
+        }
+    }
 
     public func models(for thread: ThreadSummary) -> [ModelOption] {
         guard let agent = thread.agent, agent != .yorozu else { return models }
@@ -414,6 +442,7 @@ public final class ChatModel {
         toastLink.onStateChange = { [weak self] state in self?.connectionToast.declared(state) }
         guard let cache else { return }
         peerInfo = cache.peerInfo()
+        agents = cache.agents().map(Self.acceptedAgents)
         synced = cache.threads()
         syncLastSeen = cache.lastSeen()
         let storedPending = cache.outbox()
@@ -1957,7 +1986,11 @@ public final class ChatModel {
             // What the model picker offers, sent with every thread list. Not a thread's event.
             case .modelList(let data):
                 models = data.models
-                agentModels = data.agentModels ?? [:]
+                agentModels = data.agentModels?.filter { ThreadAgent(rawValue: $0.key) != nil } ?? [:]
+                if let advertised = data.agents {
+                    agents = Self.acceptedAgents(advertised)
+                    cache?.save(agents: agents ?? [])
+                }
             // And where a coding agent can be started, the same way.
             case .projectList(let data):
                 projects = data.projects

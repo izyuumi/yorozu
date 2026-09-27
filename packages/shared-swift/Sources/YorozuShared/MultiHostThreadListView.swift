@@ -35,6 +35,11 @@ struct HostThreadListAdapter {
         session.hasMultipleHosts ? records[listID]?.hostLabel : nil
     }
 
+    func agentLabel(_ thread: ThreadSummary) -> String? {
+        guard let item = resolve(thread.id), let model = session.model(for: item.id) else { return nil }
+        return model.agentLabel(item.thread.agent ?? .yorozu)
+    }
+
     func resolve(_ listID: String) -> HostThread? {
         records[listID].flatMap { session.thread(for: $0.id) }
     }
@@ -103,6 +108,7 @@ public struct MultiHostThreadListView<Destination: View>: View {
             threads: adapter.threads,
             workingThreads: adapter.workingThreads,
             hostLabel: adapter.hostLabel,
+            agentLabel: adapter.agentLabel,
             onNewThread: { choosingHost = true },
             connection: session.connectionState,
             connectionStatus: session.statusConnectionState,
@@ -194,6 +200,7 @@ public struct MultiHostThreadSidebar: View {
             threads: adapter.threads,
             workingThreads: adapter.workingThreads,
             hostLabel: adapter.hostLabel,
+            agentLabel: adapter.agentLabel,
             onNewThread: { choosingHost = true },
             selection: Binding(get: { selection?.listID }, set: { id in
                 selection = id.flatMap { adapter.resolve($0)?.id }

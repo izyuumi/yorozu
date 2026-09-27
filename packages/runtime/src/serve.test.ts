@@ -1047,31 +1047,32 @@ test("a thread is answered by the agent it was created for, and an unknown agent
   vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
   const run = vi.spyOn(OpenClawRunner.prototype, "run").mockResolvedValue("from openclaw");
   const archive = vi.spyOn(OpenClawRunner.prototype, "setArchived").mockResolvedValue(undefined);
-  const { dir, send, eventsUntil } = await pairedPhone([], true, { nativeRunners: {} });
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-removed-agent-"));
+  createThread("Old coding thread", dir, "cc", { agent: "claude-code", cwd: proj });
+  const { send, eventsUntil } = await pairedPhone([], true, { stateDir: dir, nativeRunners: { codex: { run: vi.fn() } } });
 
   // Nobody answers a thread for an agent that does not exist, and no thread is made for it.
-  send({ kind: "thread_create", data: { agent: "hermes" as never } }, "bad");
+  send({ kind: "thread_create", data: { agent: "hermes" } }, "bad");
   const refused = (await eventsUntil((event) => event.kind === "thought")).at(-1)!;
-  expect(refused).toMatchObject({ threadId: "bad", data: { text: expect.stringMatching(/unknown agent "hermes"/) } });
-  expect(listThreads(dir).map((thread) => thread.id)).toEqual([]);
-  expect(states).toContain('thread-create-error unknown agent "hermes"');
+  expect(refused).toMatchObject({ threadId: "bad", data: { text: expect.stringMatching(/unregistered agent "hermes"/) } });
+  expect(listThreads(dir).map((thread) => thread.id)).toEqual(["cc"]);
+  expect(states).toContain('thread-create-error unregistered agent "hermes"');
   // Nor is a folder the picker never offered: a path typed into a frame is not a folder this
   // Mac agreed to open an agent in.
-  send({ kind: "thread_create", data: { agent: "claude-code", cwd: "/etc" } }, "bad2");
+  send({ kind: "thread_create", data: { agent: "codex", cwd: "/etc" } }, "bad2");
   const refusedFolder = (await eventsUntil((event) => event.kind === "thought")).at(-1)!;
   expect(refusedFolder).toMatchObject({ threadId: "bad2", data: { text: expect.stringMatching(/not one of this Mac's project folders/) } });
-  expect(listThreads(dir).map((thread) => thread.id)).toEqual([]);
+  expect(listThreads(dir).map((thread) => thread.id)).toEqual(["cc"]);
   // Nor no folder at all: an agent with nowhere to run would run where the sidecar does.
   for (const [id, cwd] of [["bad3", undefined], ["bad4", "  "]] as const) {
     send({ kind: "thread_create", data: { agent: "codex", ...(cwd ? { cwd } : {}) } }, id);
     const refusedHomeless = (await eventsUntil((event) => event.kind === "thought")).at(-1)!;
     expect(refusedHomeless).toMatchObject({ threadId: id, data: { text: expect.stringMatching(/a codex thread needs a project folder/) } });
   }
-  expect(listThreads(dir).map((thread) => thread.id)).toEqual([]);
+  expect(listThreads(dir).map((thread) => thread.id)).toEqual(["cc"]);
   expect(states).toContain("thread-create-error a codex thread needs a project folder");
 
   // The list carries who answers each thread; a plain thread says nothing, as it always has.
-  send({ kind: "thread_create", data: { agent: "claude-code", cwd: proj } }, "cc");
   send({ kind: "thread_create", data: {} }, "t1");
   const threads = (await eventsUntil((event) =>
     event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"),
@@ -1083,7 +1084,7 @@ test("a thread is answered by the agent it was created for, and an unknown agent
   // runner is wired the answer is that it is not, finished, so the composer is not left waiting.
   const ccMessageId = send({ kind: "message", data: { role: "user", text: "fix the tests" } }, "cc");
   const reply = (await eventsUntil((event) => event.kind === "message" && event.data.done === true)).at(-1)!;
-  expect(reply).toMatchObject({ threadId: "cc", data: { role: "agent", text: expect.stringMatching(/claude-code.*not available/i) } });
+  expect(reply).toMatchObject({ threadId: "cc", data: { role: "agent", text: expect.stringMatching(/claude-code.*no longer registered/i) } });
   expect(run).not.toHaveBeenCalled();
   expect(readThreadEvents("cc", dir).map((event) => event.kind)).toEqual(["message", "message"]);
 
@@ -1108,6 +1109,116 @@ test("a thread is answered by the agent it was created for, and an unknown agent
   expect(run).toHaveBeenCalledTimes(1);
   send({ kind: "thread_archive", data: { archived: true } }, "t1");
   await vi.waitFor(() => expect(archive).toHaveBeenCalledWith("t1", true));
+});
+
+test("a registered agent appears in the catalog and answers a thread without a folder", async () => {
+  const turns: NativeTurn[] = [];
+  const runner: NativeAgentRunner = {
+    descriptor: { id: "test-harness", label: "Test Harness", description: "Answers test prompts", needsFolder: false },
+    models: async () => [{ id: "test/model", label: "Test Model", providerLabel: "Test", efforts: ["low"] }],
+    run: async (turn) => { turns.push(turn); turn.onUpdate?.("working"); return { text: "from test harness" }; },
+  };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { "test-harness": runner } });
+  const catalog = (await eventsUntil((event) => event.kind === "model_list" &&
+    event.data.agents?.some((agent) => agent.id === "test-harness") === true)).at(-1)!;
+  expect(catalog).toMatchObject({ data: { agents: [
+    { id: "yorozu", label: "Yorozu", needsFolder: false },
+    { id: "test-harness", label: "Test Harness", description: "Answers test prompts", needsFolder: false },
+  ] } });
+  send({ kind: "thread_create", data: { agent: "test-harness" } }, "custom");
+  await eventsUntil((event) => event.kind === "thread_list" &&
+    event.data.threads.some((thread) => thread.id === "custom" && thread.agent === "test-harness"));
+  send({ kind: "message", data: { role: "user", text: "hello" } }, "custom");
+  const reply = (await eventsUntil((event) => event.kind === "message" && event.threadId === "custom" &&
+    event.data.done === true)).at(-1)!;
+  expect(reply).toMatchObject({ data: { text: "from test harness" } });
+  expect(turns).toHaveLength(1);
+  expect(turns[0]?.cwd).toBe("");
+  expect(listThreads(dir).find((thread) => thread.id === "custom")?.agent).toBe("test-harness");
+});
+
+test("a removed agent's thread stays readable and works again when its runner returns", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-returning-agent-"));
+  createThread("Saved", dir, "custom", { agent: "test-harness", needsFolder: false });
+  const first = await pairedPhone([], false, { stateDir: dir, nativeRunners: {} });
+  const listed = (await first.eventsUntil((event) => event.kind === "thread_list")).at(-1)!;
+  expect(listed).toMatchObject({ data: { threads: [expect.objectContaining({ id: "custom", agent: "test-harness" })] } });
+  first.send({ kind: "message", data: { role: "user", text: "first" } }, "custom");
+  const refusal = (await first.eventsUntil((event) => event.kind === "message" && event.threadId === "custom" &&
+    event.data.done === true)).at(-1)!;
+  expect(refusal).toMatchObject({ data: { failed: true, text: expect.stringMatching(/no longer registered/) } });
+  await sidecar.close();
+  await relay.close();
+
+  const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "back again" });
+  const second = await pairedPhone([], false, { stateDir: dir, nativeRunners: {
+    "test-harness": { descriptor: { id: "test-harness", label: "Test Harness", needsFolder: false }, run },
+  } });
+  second.send({ kind: "message", data: { role: "user", text: "second" } }, "custom");
+  const reply = (await second.eventsUntil((event) => event.kind === "message" && event.threadId === "custom" &&
+    event.data.done === true)).at(-1)!;
+  expect(reply).toMatchObject({ data: { text: "back again" } });
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(readThreadEvents("custom", dir).filter((event) => event.kind === "message").length).toBe(4);
+});
+
+test.each([false, true])("an %s open-agent peer can answer registered agent cards", async (modern) => {
+  const runner: NativeAgentRunner = {
+    descriptor: { id: "test-harness", label: "Test Harness", needsFolder: false },
+    run: async (turn) => {
+      const approved = await turn.approve?.("Edit", { path: "test.txt" }, turn.signal);
+      const choice = await turn.ask?.("Proceed?", ["Yes", "No"], turn.signal);
+      return { text: `${approved} ${choice}` };
+    },
+  };
+  const { send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { "test-harness": runner } }, modern);
+  send({ kind: "thread_create", data: { agent: "test-harness" } }, "custom");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "custom"));
+  send({ kind: "message", data: { role: "user", text: "edit" } }, "custom");
+  const approval = (await eventsUntil((event) => event.kind === "approval_card" && event.threadId === "custom")).at(-1)!;
+  if (approval.kind !== "approval_card") throw new Error("expected approval card");
+  expect(approval.data.nativeAgent).toBe(modern ? "test-harness" : undefined);
+  send({ kind: "sync_request", data: { lastSeen: {}, threadId: "custom" } }, "");
+  const replay = (await eventsUntil((event) => event.kind === "sync_delta" &&
+    event.data.events.some((item) => item.id === approval.id))).at(-1)!;
+  if (replay.kind !== "sync_delta") throw new Error("expected replay page");
+  const replayedCard = replay.data.events.find((item) => item.id === approval.id);
+  expect(replayedCard?.kind === "approval_card" ? replayedCard.data.nativeAgent : undefined)
+    .toBe(modern ? "test-harness" : undefined);
+  send({ kind: "approval_answer", data: { actionId: approval.data.actionId, answer: "yes" } }, "custom");
+  const question = (await eventsUntil((event) => event.kind === "question_card" && event.threadId === "custom")).at(-1)!;
+  if (question.kind !== "question_card") throw new Error("expected question card");
+  expect(question.data.nativeAgent).toBe(modern ? "test-harness" : undefined);
+  send({ kind: "question_answer", data: { questionId: question.data.questionId, answer: "Yes" } }, "custom");
+  const reply = (await eventsUntil((event) => event.kind === "message" && event.data.done === true &&
+    event.threadId === "custom")).at(-1)!;
+  expect(reply).toMatchObject({ data: { text: "true Yes" } });
+});
+
+test("bad agent descriptors are not advertised and one model failure leaves other agents available", async () => {
+  const run: NativeAgentRunner["run"] = async () => ({ text: "ok" });
+  const { send, eventsUntil } = await pairedPhone([], false, { nativeRunners: {
+    good: { descriptor: { id: "good", label: "Good", needsFolder: false },
+      models: async () => [{ id: "good/model", label: "Good Model", providerLabel: "Good", efforts: [] }], run },
+    broken: { descriptor: { id: "broken", label: "Broken", needsFolder: true },
+      models: () => { throw new Error("model service down"); }, run },
+    oversized: { descriptor: { id: "oversized", label: "X".repeat(65), needsFolder: false }, run },
+  } });
+  const catalog = (await eventsUntil((event) => event.kind === "model_list" &&
+    event.data.agentModels?.good?.length === 1)).at(-1)!;
+  if (catalog.kind !== "model_list") throw new Error("expected model list");
+  expect(catalog.data.agents?.map((agent) => agent.id)).toEqual(["yorozu", "good", "broken"]);
+  expect(catalog.data.agentModels?.broken).toBeUndefined();
+  send({ kind: "thread_create", data: { agent: "oversized" } }, "bad");
+  const refused = (await eventsUntil((event) => event.kind === "thought" && event.threadId === "bad")).at(-1)!;
+  expect(refused).toMatchObject({ data: { text: expect.stringMatching(/unregistered agent/) } });
+});
+
+test("a registered runner cannot claim a built-in identity", () => {
+  expect(() => startSidecar({ stateDir: mkdtempSync(join(tmpdir(), "yorozu-reserved-agent-")), nativeRunners: {
+    custom: { descriptor: { id: "codex", label: "Fake Codex", needsFolder: false },
+      run: async () => ({ text: "" }) },
+  } })).toThrow(/cannot claim a built-in identity/);
 });
 
 test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stops its own native session, never OpenClaw's", async (agent) => {

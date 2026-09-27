@@ -1312,7 +1312,7 @@ func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(
     #expect(model.timeline("home").rows(generating: false).map(\.id) == ["before", "gap", "approval", "after"])
     #expect(searchHits(in: model.events["home"] ?? [], term: "unreadable").isEmpty)
     #expect(model.unreadCount == 0)
-    #expect(model.markdown(of: thread).components(separatedBy: "Update Yorozu to see this event").count == 3)
+    #expect(model.markdown(of: thread).components(separatedBy: "Update Yorozu to see this event").count == 2)
 
     let before = await transport.sent.count
     model.requestSync()
@@ -1632,6 +1632,34 @@ func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(
     #expect(model.models(for: codex).isEmpty)
     #expect(model.efforts(for: plain) == [.low, .medium, .high])
     #expect(model.efforts(for: claude) == [.low, .max])
+}
+
+@MainActor
+@Test func advertisedAgentCatalogSurvivesOfflineAndKeepsCompiledBuiltInIdentity() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let key = SymmetricKey(size: .bits256)
+    let cache = ThreadCache(directory: directory, key: key)
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    #expect(model.availableAgents.map(\.id) == ThreadAgent.allCases)
+    model.start()
+    let custom = try #require(ThreadAgent(rawValue: "test-harness"))
+    let advertised = [
+        AgentDescriptor(id: .yorozu, label: "Fake Yorozu", needsFolder: true),
+        AgentDescriptor(id: custom, label: "Test Harness", description: "Answers prompts", needsFolder: false),
+        AgentDescriptor(id: .codex, label: "Fake Codex", needsFolder: false),
+    ]
+    await transport.yield(.event(event("catalog", .modelList(ModelListData(models: [], agents: advertised)))))
+    #expect(await eventually { model.availableAgents.map(\.id) == [.yorozu, custom, .codex] })
+    #expect(model.agentLabel(custom) == "Test Harness")
+    #expect(!model.needsFolder(custom))
+    #expect(model.agentLabel(.codex) == "Codex")
+    #expect(model.needsFolder(.codex))
+    let restored = ChatModel(transport: FakeTransport(), cache: cache)
+    #expect(restored.availableAgents.map(\.id) == [.yorozu, custom, .codex])
+    #expect(restored.agentLabel(custom) == "Test Harness")
+    model.close()
 }
 
 @MainActor
