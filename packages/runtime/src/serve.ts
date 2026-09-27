@@ -2498,6 +2498,41 @@ export function serve(options: ServeOptions = {}): Sidecar {
           rejected("expired", "admission-deadline");
           return;
         }
+        // Deadline-bearing clients create draft threads first. A failed create must not
+        // silently route its first message to the default agent through threadAgent().
+        if (!listThreads(dir).some((thread) => thread.id === event.threadId)) {
+          rejected("rejected", "thread-not-created");
+          return;
+        }
+      }
+    }
+    if (event.kind === "thread_create") {
+      const descriptor = agentDescriptors.find(({ id }) => id === (event.data.agent ?? "yorozu"));
+      const cwd = event.data.cwd?.trim();
+      const invalid = !descriptor ? `unregistered agent "${String(event.data.agent)}"`
+        : descriptor.needsFolder && cwd && !isProjectFolder(cwd)
+          ? `"${cwd}" is not one of this Mac's project folders`
+          : descriptor.needsFolder && !cwd ? `a ${descriptor.id} thread needs a project folder` : undefined;
+      if (invalid) {
+        state(`thread-create-error ${invalid}`);
+        reply(control({ kind: "admission_status", data: { eventId: event.id, status: "rejected", reason: invalid } }));
+        return reply({
+          id: randomUUID(), threadId: event.threadId, ts: Date.now(), agentId: MAIN_AGENT,
+          kind: "thought", data: { text: `Could not create this thread: ${invalid}.` },
+        });
+      }
+      try {
+        // Persist the thread before acknowledging its creation. The client's first message
+        // waits behind this receipt, so a failed create must never release it to another agent.
+        createThread(event.data.title, dir, event.threadId || undefined, { ...event.data, needsFolder: descriptor!.needsFolder });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        state(`thread-create-error ${reason}`);
+        // Storage can recover. Leave this command in the client's outbox for retry.
+        return reply({
+          id: randomUUID(), threadId: event.threadId, ts: Date.now(), agentId: MAIN_AGENT,
+          kind: "thought", data: { text: `Could not create this thread: ${reason}.` },
+        });
       }
     }
     if (seenCommands.has(event.id)) {
@@ -2598,29 +2633,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       // Thread admin is answered to every device, so a second phone sees the same list.
       case "thread_create":
-        // The device minted the id: the message it typed follows straight after this frame.
-        try {
-          const descriptor = agentDescriptors.find(({ id }) => id === (event.data.agent ?? "yorozu"));
-          if (!descriptor) throw new Error(`unregistered agent "${String(event.data.agent)}"`);
-          // A coding agent runs where the picker offered, and nowhere else: a path typed into a
-          // frame by hand is not a folder this Mac agreed to open an agent in.
-          // A missing folder is refused by `createThread` itself, after it has checked the agent.
-          const cwd = event.data.cwd?.trim();
-          if (descriptor.needsFolder && cwd && !isProjectFolder(cwd)) {
-            throw new Error(`"${cwd}" is not one of this Mac's project folders`);
-          }
-          createThread(event.data.title, dir, event.threadId || undefined, { ...event.data, needsFolder: descriptor.needsFolder });
-        } catch (error) {
-          // An agent this runtime does not know: no thread is made, and the device that asked
-          // is told why in the thread it is looking at, since the message it sends next has
-          // nowhere to land.
-          const reason = error instanceof Error ? error.message : String(error);
-          state(`thread-create-error ${reason}`);
-          return reply({
-            id: randomUUID(), threadId: event.threadId, ts: Date.now(), agentId: MAIN_AGENT,
-            kind: "thought", data: { text: `Could not create this thread: ${reason}.` },
-          });
-        }
         broadcast(threadList());
         // A folder just started in is a recent now.
         if (event.data.cwd) broadcast(projectList());
