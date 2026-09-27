@@ -17,6 +17,42 @@ permissions:
   contents: read
 
 jobs:
+  # Pull requests run only the jobs their paths can break; a job skipped here passes required
+  # checks. Pushes to main and release branches, and edits to this file, run everything.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      ts: ${{ steps.paths.outputs.ts }}
+      relay: ${{ steps.paths.outputs.relay }}
+      swift: ${{ steps.paths.outputs.swift }}
+      ios: ${{ steps.paths.outputs.ios }}
+      web: ${{ steps.paths.outputs.web }}
+    steps:
+      # Depth 2 holds the pull request's merge commit and the base it merges into.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { fetch-depth: 2 }
+      - id: paths
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            files=$(git diff --name-only HEAD^1 HEAD)
+          else
+            files=.github/workflows/ci.yml
+          fi
+          printf '%s\n' "$files"
+          flag() {
+            if grep -qE "$2|^\.github/workflows/ci\.yml$" <<<"$files"; then echo "$1=true"; else echo "$1=false"; fi
+          }
+          build='^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json)$'
+          {
+            flag ts "^(apps/relay|packages/runtime|packages/shared)/|$build"
+            flag relay '^apps/relay/|^tsconfig\.base\.json$'
+            # packages/shared holds the vectors the Swift interop tests read; the wire tests run
+            # the relay and sidecar themselves.
+            flag swift "^(packages/shared-swift|packages/shared|packages/runtime|apps/relay|apps/mac)/|$build"
+            flag ios '^(apps/ios|packages/shared-swift)/'
+            flag web '^apps/web/'
+          } >> "$GITHUB_OUTPUT"
+
   release-checks:
     runs-on: ubuntu-latest
     steps:
@@ -42,6 +78,8 @@ jobs:
         run: node --test scripts/asc-candidate.test.mjs
 
   relay-image:
+    needs: changes
+    if: needs.changes.outputs.relay == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -71,41 +109,50 @@ jobs:
             }
           '
 
-  node:
-    runs-on: macos-latest
+  # The website tests import only Node built-ins, so they need neither macOS nor pnpm.
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 26
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - run: pnpm -r test
       - name: Test website interactions
         run: node --test apps/web/tests/*.test.mjs
 
-  swift:
+  # One macOS runner for the TypeScript workspaces and the Swift packages: both need the same
+  # install and build, and each runner boot costs more than the steps a pull request skips.
+  macos:
+    needs: changes
+    if: needs.changes.outputs.ts == 'true' || needs.changes.outputs.swift == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The hosted image's default Xcode can lag; this project needs the newest stable.
-      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
-        with: { xcode-version: latest-stable }
-      # The wire tests run the phone client against the real relay and sidecar, built here.
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 26
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The Swift wire tests run the phone client against the relay and sidecar built here.
       - run: pnpm -r build
+      - if: needs.changes.outputs.ts == 'true'
+        run: pnpm -r test
+      # The hosted image's default Xcode can lag; this project needs the newest stable.
+      - if: needs.changes.outputs.swift == 'true'
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with: { xcode-version: latest-stable }
       # `swift test` already builds this package; a separate build compiled it twice.
-      - run: env -u SDKROOT swift test --package-path packages/shared-swift
-      - run: env -u SDKROOT swift test --package-path apps/mac
+      - if: needs.changes.outputs.swift == 'true'
+        run: env -u SDKROOT swift test --package-path packages/shared-swift
+      - if: needs.changes.outputs.swift == 'true'
+        run: env -u SDKROOT swift test --package-path apps/mac
 
   ios:
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
     runs-on: macos-latest
     # Compile only. The UI tests (scheme YorozuUITests) took twenty minutes of
     # simulator boot and install on the hosted VM for two minutes of tests, and one starved VM
