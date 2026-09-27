@@ -24,7 +24,54 @@ concurrency:
 permissions: {}
 
 jobs:
+  source:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch || inputs.source_branch }}
+      SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Pin trusted source
+        id: resolve
+        run: |
+          set -eu
+          python3 - <<'PY_SOURCE'
+          import os, re
+          assert re.fullmatch(r"main|release/[0-9]+\.[0-9]+", os.environ["SOURCE_BRANCH"]), "use main or release/X.Y"
+          assert os.environ["GITHUB_RUN_ATTEMPT"] == "1", "dispatch a fresh Release run to rebuild; use Promote for publication retries"
+          PY_SOURCE
+          if [ -z "$SOURCE_SHA" ]; then
+            SOURCE_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$SOURCE_BRANCH" --jq .object.sha)
+          fi
+          printf 'sha=%s\n' "$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+  # Nothing is signed or uploaded until the iOS UI tests have passed on the source commit,
+  # here or in an earlier run.
+  ui-tests:
+    needs: source
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    permissions:
+      contents: read
+      checks: read
+    uses: ./.github/workflows/ui-tests.yml
+    with:
+      ref: ${{ needs.source.outputs.sha }}
+
   candidate:
+    needs: [source, ui-tests]
     if: >-
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
@@ -39,30 +86,16 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       PUBLIC: ${{ github.repository }}
       SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch || inputs.source_branch }}
-      SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
       REQUESTED_VERSION: ${{ inputs.version }}
     steps:
-      - name: Resolve trusted source
-        id: source
-        run: |
-          set -eu
-          python3 - <<'PY_SOURCE'
-          import os, re
-          assert re.fullmatch(r"main|release/[0-9]+\.[0-9]+", os.environ["SOURCE_BRANCH"]), "use main or release/X.Y"
-          assert os.environ["GITHUB_RUN_ATTEMPT"] == "1", "dispatch a fresh Release run to rebuild; use Promote for publication retries"
-          PY_SOURCE
-          if [ -z "$SOURCE_SHA" ]; then
-            SOURCE_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$SOURCE_BRANCH" --jq .object.sha)
-          fi
-          printf 'sha=%s\n' "$SOURCE_SHA" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ steps.source.outputs.sha }}
+          ref: ${{ needs.source.outputs.sha }}
           fetch-depth: 0
       - name: Verify CI and allocate candidate
         id: candidate
         env:
-          CANDIDATE_SHA: ${{ steps.source.outputs.sha }}
+          CANDIDATE_SHA: ${{ needs.source.outputs.sha }}
         run: |
           set -eu
           CI_RUN_ID=$(python3 scripts/release.py check-ci --source "$CANDIDATE_SHA" --branch "$SOURCE_BRANCH")

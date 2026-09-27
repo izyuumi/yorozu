@@ -219,9 +219,15 @@ final class Session {
             failure = error.localizedDescription
         }
         #if DEBUG
+        // UI tests launch with the same injected code every time; a host this phone already
+        // holds is kept as it is, not offered for repair.
+        let held = PairingStore.loadAll()
         do {
-            if let injected = launchArgument("yorozuPair") { try pair(with: injected) }
-            if let second = launchArgument("yorozuPairSecond") { try pair(with: second) }
+            for injected in [launchArgument("yorozuPair"), launchArgument("yorozuPairSecond")].compactMap({ $0 }) {
+                if let payload = try? QrPayload.decode(injected),
+                   held.contains(where: { $0.pairing.macPubkey == payload.macPubkey }) { continue }
+                try pair(with: injected)
+            }
         } catch { failure = error.localizedDescription }
         #endif
     }

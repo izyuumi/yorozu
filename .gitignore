@@ -10,6 +10,7 @@ __pycache__/
 apps/ios/Derived/
 apps/ios/e2e/.logs/
 apps/ios/e2e/.screens/
+apps/ios/e2e/.ui/
 *.dmg
 
 # Local Cloudflare deployment state and cache.

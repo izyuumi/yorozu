@@ -93,17 +93,25 @@ jobs:
       # The hosted image's default Xcode can lag; this project needs the newest stable.
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with: { xcode-version: latest-stable }
+      # The wire tests run the phone client against the real relay and sidecar, built here.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
       # `swift test` already builds this package; a separate build compiled it twice.
       - run: env -u SDKROOT swift test --package-path packages/shared-swift
       - run: env -u SDKROOT swift test --package-path apps/mac
 
   ios:
     runs-on: macos-latest
-    # Compile only. The keyboard UI test (scheme YorozuKeyboardUITests) took twenty minutes of
+    # Compile only. The UI tests (scheme YorozuUITests) took twenty minutes of
     # simulator boot and install on the hosted VM for two minutes of tests, and one starved VM
     # in ten failed it; it runs locally, on a booted simulator with the hardware keyboard off:
     #   env -u SDKROOT xcodebuild test -workspace apps/ios/Yorozu.xcworkspace \
-    #     -scheme YorozuKeyboardUITests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+    #     -scheme YorozuUITests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
     #     CODE_SIGNING_ALLOWED=NO
     timeout-minutes: 20
     steps:

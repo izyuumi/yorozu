@@ -14,7 +14,8 @@ final class ThreadSelectionTests: XCTestCase {
     }
 
     @MainActor
-    func testIPadThreadRowsOpenAndSwitchDetail() {
+    func testIPadThreadRowsOpenAndSwitchDetail() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "split view is iPad only")
         let app = XCUIApplication()
         app.launchArguments = ["-yorozuShowcase", "threads"]
         app.launch()

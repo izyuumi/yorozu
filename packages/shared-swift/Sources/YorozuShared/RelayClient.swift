@@ -84,15 +84,6 @@ public actor RelayClient: ChatTransport {
     public typealias State = TransportState
     public typealias Update = TransportUpdate
 
-    /// A dropped socket retries with jitter around 1s, 2s, 4s … up to this, reset by a join.
-    private static let maxBackoff: Double = 30
-    /// The relay keeps a socket that is talking; nothing else on an idle phone would.
-    private static let pingInterval: Duration = .seconds(30)
-    /// A ping the relay does not answer within this is a socket that is open in name only —
-    /// the phone slept, the network changed — and the receive loop would never find out.
-    private static let pongDeadline: Duration = .seconds(10)
-    private static let connectionDeadline: Duration = .seconds(15)
-
     private let pairing: QrPayload
     private let identity: PhoneIdentity
     private let session: URLSession
@@ -129,6 +120,9 @@ public actor RelayClient: ChatTransport {
     /// True once the relay has accepted this device, so later joins need no token. Seeded by
     /// the caller from whatever it persisted, and `onPaired` is how it learns to persist it.
     private var paired: Bool
+    /// The relay refused the pairing code as unknown: it may have spent it on this very device
+    /// on a socket lost before `joined` arrived, so joins prove the device as a known one.
+    private var codeSpent = false
     private let onPaired: (@Sendable () -> Void)?
     private var joined = false
     private var flowControl = false
@@ -223,6 +217,11 @@ public actor RelayClient: ChatTransport {
         loopGeneration &+= 1
         loop?.cancel()
         socket?.cancel()
+        pinger?.cancel()
+        pongDeadline?.cancel()
+        pongDeadline = nil
+        phaseDeadline?.cancel()
+        phaseDeadline = nil
         intentionalRedial = nil
         stopped = false
         watchNetworkPath()
@@ -262,6 +261,7 @@ public actor RelayClient: ChatTransport {
         phaseDeadline = nil
         pinger?.cancel()
         pongDeadline?.cancel()
+        pongDeadline = nil
         peerExchange?.cancel()
         backoff?.cancel()
         loop?.cancel()
@@ -298,7 +298,7 @@ public actor RelayClient: ChatTransport {
     private func armPhaseDeadline(_ reason: String, on socket: URLSessionWebSocketTask) {
         phaseDeadline?.cancel()
         phaseDeadline = Task {
-            try? await Task.sleep(for: Self.connectionDeadline)
+            try? await Task.sleep(for: .seconds(15))
             guard !Task.isCancelled, !stopped, self.socket === socket, !ready else { return }
             phaseDeadline = nil
             updates?.yield(.failed(reason))
@@ -333,9 +333,10 @@ public actor RelayClient: ChatTransport {
             phaseDeadline = nil
             pinger?.cancel()
             pongDeadline?.cancel()
+            pongDeadline = nil
             guard !stopped, !Task.isCancelled else { return }
             // Exponential retry with jitter; back to the first interval after a join.
-            let delay = min(Self.maxBackoff, pow(2, Double(attempt))) * Double.random(in: 0.75...1.0)
+            let delay = min(30, pow(2, Double(attempt))) * Double.random(in: 0.75...1.0)
             attempt += 1
             let backoff = Task<Void, Never> { try? await Task.sleep(for: .seconds(delay)) }
             self.backoff = backoff
@@ -356,12 +357,12 @@ public actor RelayClient: ChatTransport {
         pinger?.cancel()
         pinger = Task {
             while !Task.isCancelled {
-                try? await Task.sleep(for: Self.pingInterval)
+                try? await Task.sleep(for: .seconds(30))
                 guard !Task.isCancelled else { return }
                 // A send that throws means the socket is already gone, and the receive loop is
                 // the one that reports that; there is nothing useful to do with it here.
-                try? await self.send(["type": "ping"])
                 self.armPongDeadline()
+                try? await self.send(["type": "ping"])
             }
         }
     }
@@ -370,7 +371,7 @@ public actor RelayClient: ChatTransport {
         guard pongDeadline == nil else { return }
         let socket = self.socket
         pongDeadline = Task {
-            try? await Task.sleep(for: Self.pongDeadline)
+            try? await Task.sleep(for: .seconds(10))
             guard !Task.isCancelled else { return }
             await self.pongMissed(on: socket)
         }
@@ -391,6 +392,12 @@ public actor RelayClient: ChatTransport {
             throw YorozuCrypto.CryptoError.malformed("Host compatibility has not been established")
         }
         try await sendEncrypted(event)
+        // A send is when a silently dead socket costs the user something, so it asks the relay
+        // now rather than waiting out the idle ping. One probe covers a burst of sends.
+        if pongDeadline == nil {
+            armPongDeadline()
+            try? await send(["type": "ping"])
+        }
     }
 
     private func sendEncrypted(_ event: YorozuEvent) async throws {
@@ -427,6 +434,9 @@ public actor RelayClient: ChatTransport {
                 guard !Task.isCancelled, generation == loopGeneration, self.socket === socket else { return }
                 try handle(text)
             } catch {
+                if !paired, socket.closeReason.flatMap({ String(data: $0, encoding: .utf8) }) == "unknown token" {
+                    codeSpent = true
+                }
                 // Our own cancellation is not a failure worth reporting.
                 let redial = intentionalRedial === socket
                 if redial { intentionalRedial = nil }
@@ -519,7 +529,8 @@ public actor RelayClient: ChatTransport {
     /// come back after a background, a network change or a relaunch without pairing again.
     private func join() async {
         do {
-            let challenge = paired ? nonce : pairing.token
+            let rejoin = paired || codeSpent
+            let challenge = rejoin ? nonce : pairing.token
             let signature = try YorozuCrypto.signFrame(
                 priv: identity.signingPrivateKey,
                 data: Data(challenge.utf8)
@@ -530,7 +541,7 @@ public actor RelayClient: ChatTransport {
                 "phonePubkey": identity.signingPublicKey.base64URLEncodedString(),
                 "sig": signature.base64URLEncodedString(),
             ]
-            if !paired { message["token"] = pairing.token }
+            if !rejoin { message["token"] = pairing.token }
             try await send(message)
         } catch {
             updates?.yield(.failed(error.localizedDescription))
