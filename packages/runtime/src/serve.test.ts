@@ -3449,7 +3449,7 @@ test("catch-up excludes an answered question from current state", async () => {
   const ask = () => new Response(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0,
     id: "call_ask", function: { name: "ask_user", arguments: JSON.stringify({ question: "Which?", options: ["A", "B"] }) },
   }] }, finish_reason: "tool_calls" }] })}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
-  const { send, eventsUntil } = await pairedPhone([ask, () => sse("done")]);
+  const { dir, send, eventsUntil } = await pairedPhone([ask, () => sse("done")]);
   send({ kind: "thread_create", data: {} });
   await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
   send({ kind: "message", data: { role: "user", text: "ask me" } });
@@ -3459,13 +3459,18 @@ test("catch-up excludes an answered question from current state", async () => {
   const active = await eventsUntil((event) => event.kind === "sync_delta");
   const activeDelta = active.at(-1)!;
   expect(activeDelta.kind === "sync_delta" && activeDelta.data.current).toContainEqual(question);
+  send({ kind: "thread_archive", data: { archived: true } });
+  await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === "t1")?.archived).toBe(true));
+  send({ kind: "sync_request", data: { lastSeen: {} } }, "");
+  const archived = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
+  expect(archived.kind === "sync_delta" && archived.data.current).toContainEqual(question);
   if (question.kind !== "question_card") throw new Error("expected question card");
   send({ kind: "question_answer", data: { questionId: question.data.questionId, answer: "A" } });
   await eventsUntil((event) => event.kind === "message" && event.data.done === true);
   send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "t1" } }, "");
   const settled = await eventsUntil((event) => event.kind === "sync_delta");
   const settledDelta = settled.at(-1)!;
-  expect(settledDelta.kind === "sync_delta" && settledDelta.data.current).not.toContainEqual(question);
+  expect(settledDelta.kind === "sync_delta" ? settledDelta.data.current ?? [] : []).not.toContainEqual(question);
 });
 
 test("current snapshot honors the pairing cutoff for live replies", async () => {
