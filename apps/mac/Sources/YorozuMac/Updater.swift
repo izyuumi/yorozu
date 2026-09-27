@@ -202,6 +202,15 @@ final class PendingUpdate {
         }
     }
 
+    func installNow() {
+        guard handler != nil, status.phase != .installing else { return }
+        if MacChatSession.shared.role == .host {
+            MacChatSession.shared.model.updateControl(.installNow)
+        } else {
+            install()
+        }
+    }
+
     private func install() {
         guard !preparing, !installStarted, handler != nil else { return }
         preparing = true

@@ -110,7 +110,7 @@ import {
   threadModel,
   threadSummaries,
 } from "./threads.js";
-import { codexNativeRunner } from "./codex-native.js";
+import { codexNativeRunner, connectCodex } from "./codex-native.js";
 import { NativeCards } from "./native-cards.js";
 import { claudeCodeRunner, type NativeAgentRunner } from "./native.js";
 import { isProjectFolder, listProjects } from "./projects.js";
@@ -445,6 +445,64 @@ export function serve(options: ServeOptions = {}): Sidecar {
   env.YOROZU_STATE_DIR = dir;
   // Before anything is read or written under it: keys, pairings and transcripts all live here.
   ensureStateDir(dir);
+  // A SIGKILL cannot run the SDK's exit cleanup. Stop an orphaned CLI before any native
+  // recovery starts; a live old CLI beside a resumed one could repeat external tool effects.
+  const agentProcessesFile = join(dir, "native-agent-processes.json");
+  type AgentProcess = { pid: number; startedAt: string; commandLine: string };
+  const agentProcesses: AgentProcess[] = existsSync(agentProcessesFile)
+    ? JSON.parse(readFileSync(agentProcessesFile, "utf8")) as AgentProcess[] : [];
+  if (!Array.isArray(agentProcesses) || !agentProcesses.every((entry) =>
+    Number.isSafeInteger(entry?.pid) && entry.pid > 0 &&
+    typeof entry.startedAt === "string" && !!entry.startedAt &&
+    typeof entry.commandLine === "string" && !!entry.commandLine)) throw new Error("Invalid native agent process journal");
+  const agentIdentity = (pid: number): { startedAt: string; commandLine: string; state: string } | undefined => {
+    try {
+      const ps = (field: string) => execFileSync("/bin/ps", ["-p", String(pid), "-o", `${field}=`],
+        { encoding: "utf8", timeout: 1_000, maxBuffer: 4_096 }).trim();
+      const startedAt = ps("lstart");
+      return startedAt ? { startedAt, commandLine: ps("command"), state: ps("stat") } : undefined;
+    } catch { return undefined; }
+  };
+  for (const agent of agentProcesses) {
+    const matches = () => {
+      const identity = agentIdentity(agent.pid);
+      if (!identity) {
+        let alive = false;
+        try { process.kill(agent.pid, 0); alive = true; } catch {}
+        if (alive) throw new Error("Could not identify orphaned native agent");
+        return false;
+      }
+      return identity.startedAt === agent.startedAt && identity.commandLine === agent.commandLine &&
+        !identity.state.startsWith("Z");
+    };
+    if (!matches()) continue;
+    try { process.kill(agent.pid, "SIGTERM"); }
+    catch (error) { if (matches()) throw error; }
+    const limit = Date.now() + 3_000;
+    while (matches() && Date.now() < limit) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+    if (matches()) {
+      try { process.kill(agent.pid, "SIGKILL"); }
+      catch (error) { if (matches()) throw error; }
+      const killLimit = Date.now() + 1_000;
+      while (matches() && Date.now() < killLimit) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+      if (matches()) throw new Error("Orphaned native agent did not stop; refusing duplicate recovery");
+    }
+  }
+  agentProcesses.length = 0;
+  const saveAgentProcesses = (): void => writeFileAtomic(agentProcessesFile, JSON.stringify(agentProcesses));
+  saveAgentProcesses();
+  const trackAgentProcess = (pid: number): (() => void) => {
+    const identity = agentIdentity(pid);
+    if (!identity || !identity.commandLine) throw new Error("Could not identify native agent process");
+    const entry = { pid, commandLine: identity.commandLine, startedAt: identity.startedAt };
+    agentProcesses.push(entry);
+    try { saveAgentProcesses(); }
+    catch (error) { agentProcesses.pop(); throw error; }
+    return () => {
+      const index = agentProcesses.indexOf(entry);
+      if (index >= 0) { agentProcesses.splice(index, 1); saveAgentProcesses(); }
+    };
+  };
   // An older build stored a terminal opt-in. Retire it on first launch so rollback cannot
   // silently restore that permission after interactive sessions have been removed.
   rmSync(join(dir, "terminal-settings.json"), { force: true });
@@ -461,7 +519,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * whichever backend the rest of the runtime is on.
    */
   const viaOpenClaw = (threadId: string): boolean => openclaw !== undefined && threadAgent(threadId, dir) === "yorozu";
-  const nativeRunners = options.nativeRunners ?? { "claude-code": claudeCodeRunner(), codex: codexNativeRunner() };
+  const nativeRunners = options.nativeRunners ?? { "claude-code": claudeCodeRunner(undefined, trackAgentProcess),
+    codex: codexNativeRunner((handlers) => connectCodex(handlers, trackAgentProcess)) };
   const log = options.log ?? ((line: string) => void stdout.write(`${line}\n`));
   const heartbeat = options.heartbeat ?? { pingMs: PING_MS, pongMs: PONG_MS };
   const state = (name: string) => log(`STATE ${name}`);
@@ -544,16 +603,49 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const running = new Map<string, AbortController>();
   const runningEventIds = new Map<string, string>();
   const turnQueues = new Map<string, Promise<void>>();
+  const nativeQueueFile = join(dir, "native-turn-queue.json");
+  type NativeQueueEntry = { threadId: string; eventId: string };
+  const queuedNative: NativeQueueEntry[] = existsSync(nativeQueueFile)
+    ? JSON.parse(readFileSync(nativeQueueFile, "utf8")) as NativeQueueEntry[] : [];
+  if (!Array.isArray(queuedNative) || !queuedNative.every((entry) =>
+    typeof entry?.threadId === "string" && !!entry.threadId &&
+    typeof entry.eventId === "string" && !!entry.eventId)) throw new Error("Invalid native turn queue");
+  const saveNativeQueue = (): void => writeFileAtomic(nativeQueueFile, JSON.stringify(queuedNative));
+  const removeNativeQueue = (eventId: string): void => {
+    const index = queuedNative.findIndex((entry) => entry.eventId === eventId);
+    if (index >= 0) { queuedNative.splice(index, 1); saveNativeQueue(); }
+  };
   const nativeRecoveryStarted = new Set<string>();
   const admittedTurns = new Map<string, Promise<void>>();
   const activeTurnIds = new Set<string>();
   const postponeFile = join(dir, "update-postponed-until.json");
+  const pendingSinceFile = join(dir, "update-pending-since.json");
   let postponedUntil = 0;
   try {
     const stored: unknown = JSON.parse(readFileSync(postponeFile, "utf8"));
     if (typeof stored === "number" && Number.isFinite(stored)) postponedUntil = stored;
   } catch {}
-  const updateGate = new UpdateGate(postponedUntil);
+  let pendingSince: { updateId: string; since: number } | undefined;
+  try {
+    const stored: unknown = JSON.parse(readFileSync(pendingSinceFile, "utf8"));
+    if (stored && typeof stored === "object" && !Array.isArray(stored) &&
+        typeof (stored as { updateId?: unknown }).updateId === "string" &&
+        Number.isSafeInteger((stored as { since?: unknown }).since)) {
+      pendingSince = stored as { updateId: string; since: number };
+    }
+  } catch {}
+  const updateGate = new UpdateGate(postponedUntil, pendingSince);
+  const openToolCalls = new Map<string, Set<string>>();
+  const drainPauses = new Map<string, () => void>();
+  const drainInterrupted = new Set<string>();
+  const drainWaiters = new Set<() => void>();
+  const wakeDrainWaiters = (): void => {
+    for (const wake of drainWaiters) wake();
+    drainWaiters.clear();
+  };
+  const pauseAtSafePoint = (threadId: string): void => {
+    if (updateGate.draining && !(openToolCalls.get(threadId)?.size)) drainPauses.get(threadId)?.();
+  };
   let updateOwner: string | undefined;
   const updateSubscribers = new Set<string>();
   let legacy: ReturnType<typeof createLegacyRunner> | undefined;
@@ -899,9 +991,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const currentUpdateStatus = (requestId?: string) =>
     ({ ...updateGate.status, ...(requestId ? { requestId } : {}) });
 
+  const updateStatusFor = (device: string | undefined, requestId?: string) => {
+    const status = currentUpdateStatus(requestId);
+    const compatibility = device ? devices.get(device)?.compatibility : undefined;
+    if (status.phase === "draining" && device && devices.has(device) &&
+        (compatibility?.state !== "compatible" || !compatibility.capabilities.includes("update-drain-v1"))) {
+      return { ...status, phase: "waiting" as const, deadline: undefined };
+    }
+    return status;
+  };
+
   function pushUpdateStatus(): void {
-    const event = control({ kind: "update_status", data: currentUpdateStatus() });
     for (const device of updateSubscribers) {
+      const event = control({ kind: "update_status", data: updateStatusFor(device) });
       const send = locals.get(device);
       if (send) send(event);
       else if (devices.has(device)) sendTo(device, event);
@@ -1371,6 +1473,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
       let recoveryAttempts = previous?.userEventId === userEventId ? previous?.recoveryAttempts ?? 0 : 0;
       let recovering = previous?.state === "interrupted" && previous.userEventId === userEventId;
       let paused = false;
+      const pauseForUpdate = (): void => {
+        if (paused || turn.signal.aborted) return;
+        paused = true;
+        drainInterrupted.add(threadId);
+        setNativeTurn(threadId, { id, state: "interrupted", ...(userEventId ? { userEventId } : {}), recoveryAttempts }, dir);
+        broadcast(threadList());
+        turn.abort();
+      };
+      drainPauses.set(threadId, pauseForUpdate);
       const seenResults = new Set(readThreadEvents(threadId, dir).filter((event) => event.kind === "tool_result").map((event) => event.id));
       try {
         while (!turn.signal.aborted) {
@@ -1394,9 +1505,29 @@ export function serve(options: ServeOptions = {}): Sidecar {
               approve: async (tool, input, signal) =>
                 loadSettings(dir).yolo || nativeCards.approve(threadId, agent, tool, input, signal),
               ask: (question, options, signal) => nativeCards.ask(threadId, question, options, signal),
+              beforeTool: async (signal) => {
+                while (updateGate.draining && !signal.aborted) {
+                  pauseAtSafePoint(threadId);
+                  if (signal.aborted) break;
+                  await new Promise<void>((resolve) => {
+                    const wake = (): void => { signal.removeEventListener("abort", wake); drainWaiters.delete(wake); resolve(); };
+                    drainWaiters.add(wake);
+                    signal.addEventListener("abort", wake, { once: true });
+                  });
+                }
+                return !signal.aborted && updateGate.status.phase !== "installing";
+              },
+              onToolBoundary: () => pauseAtSafePoint(threadId),
               onUpdate: (reply) => { if (!turn.signal.aborted) { executionStarted = true; broadcast(message(reply)); } },
               onActivity: (key, payload) => {
                 executionStarted = true;
+                if (payload.kind === "tool_call") {
+                  const calls = openToolCalls.get(threadId) ?? new Set<string>();
+                  calls.add(payload.data.callId);
+                  openToolCalls.set(threadId, calls);
+                } else if (payload.kind === "tool_result") {
+                  openToolCalls.get(threadId)?.delete(payload.data.callId);
+                }
                 const event: YorozuEvent = { id: `${agent}:${threadId}:${key}`, threadId, ts: Date.now(), agentId: MAIN_AGENT, ...payload };
                 const newResult = event.kind === "tool_result" && event.data.ok && !seenResults.has(event.id);
                 emit(event.kind === "tool_result" ? stashToolResult(event, dir) : event);
@@ -1406,6 +1537,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
                   setNativeTurn(threadId, { id, state: "running", ...(userEventId ? { userEventId } : {}), recoveryAttempts,
                     recoveryActive: recovering }, dir);
                 }
+                if (payload.kind === "tool_result") { pauseAtSafePoint(threadId); wakeDrainWaiters(); }
               },
             });
             if (done.sessionId && done.sessionId !== currentHome.sessionId) setThreadSession(threadId, done.sessionId, dir);
@@ -1414,6 +1546,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
             finish(done.text);
             return;
           } catch (error) {
+            openToolCalls.delete(threadId);
             if (turn.signal.aborted) return;
             state(`native-error ${error instanceof Error ? error.message : String(error)}`);
             process.stderr.write(`native-error ${threadId}: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
@@ -1434,6 +1567,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
           }
         }
       } finally {
+        drainPauses.delete(threadId);
+        openToolCalls.delete(threadId);
         if (running.get(threadId) === turn) running.delete(threadId);
         if (runningEventIds.get(threadId) === userEventId) runningEventIds.delete(threadId);
         const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
@@ -1546,8 +1681,17 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     const admitted = userEventId ? admittedTurns.get(userEventId) : undefined;
     if (admitted) return admitted;
+    if (userEventId && !viaOpenClaw(threadId) && threadAgent(threadId, dir) !== "yorozu" &&
+        !queuedNative.some((entry) => entry.eventId === userEventId)) {
+      queuedNative.push({ threadId, eventId: userEventId });
+      try { saveNativeQueue(); }
+      catch (error) { queuedNative.pop(); throw error; }
+    }
     const previous = turnQueues.get(threadId) ?? Promise.resolve();
     const next = previous.catch(() => {}).then(async () => {
+      while (updateGate.draining && !stopped) {
+        await new Promise<void>((resolve) => drainWaiters.add(resolve));
+      }
       if (stopped) return;
       if (userEventId && stoppedTurns.has(userEventId)) {
         openclaw?.discardPending(userEventId);
@@ -1573,6 +1717,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
     void next.finally(() => {
       if (turnQueues.get(threadId) === next) turnQueues.delete(threadId);
       if (userEventId && admittedTurns.get(userEventId) === next) admittedTurns.delete(userEventId);
+      if (!updateGate.draining && updateGate.status.phase !== "installing" && drainInterrupted.has(threadId) &&
+          resumeNativeTurn(threadId)) drainInterrupted.delete(threadId);
+      if (userEventId && queuedNative.some((entry) => entry.eventId === userEventId) &&
+          readThreadEvents(threadId, dir).some((event) =>
+            event.id === completionIdFor(threadId, userEventId) && event.kind === "message" && event.data.done)) {
+        removeNativeQueue(userEventId);
+      }
     }).catch(() => {});
     return next;
   }
@@ -2104,6 +2255,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
           const now = Date.now();
           writeFileAtomic(postponeFile, JSON.stringify(now + 3_600_000));
           updateGate.postpone(now);
+          wakeDrainWaiters();
+          for (const threadId of drainInterrupted) {
+            if (resumeNativeTurn(threadId)) drainInterrupted.delete(threadId);
+          }
+          alreadySeen(event.id);
+        }
+      } else if (data.action === "install_now") {
+        if (!seenCommands.has(event.id) && updateGate.status.phase !== "none" && updateGate.status.phase !== "installing") {
+          updateGate.installNow();
           alreadySeen(event.id);
         }
       } else if (data.action !== "status") {
@@ -2114,27 +2274,47 @@ export function serve(options: ServeOptions = {}): Sidecar {
           if (updateOwner && updateOwner !== localDevice) return;
           if (updateGate.status.phase === "installing" && updateGate.status.updateId !== data.updateId) return;
           updateOwner = localDevice;
+          if (pendingSince?.updateId !== data.updateId) {
+            const next = { updateId: data.updateId, since: Date.now() };
+            writeFileAtomic(pendingSinceFile, JSON.stringify(next));
+            pendingSince = next;
+          }
           updateGate.queue(data.updateId, data.version);
         } else {
           if (data.action === "cancel") {
             if (updateOwner && updateOwner !== localDevice) return;
             if (updateGate.status.phase !== "none" && data.updateId !== updateGate.status.updateId) return;
             updateGate.cancel();
+            wakeDrainWaiters();
+            for (const threadId of drainInterrupted) {
+              if (resumeNativeTurn(threadId)) drainInterrupted.delete(threadId);
+            }
             updateOwner = undefined;
           } else if (data.action !== "poll" || updateOwner !== localDevice || data.updateId !== updateGate.status.updateId) return;
         }
         if (data.action !== "cancel") {
           let active: number | null;
           try {
-            active = new Set([...running.keys(), ...turnQueues.keys(), ...archiveUpdates.keys(),
-              ...listThreads(dir).filter((thread) => thread.nativeTurn?.state === "interrupted").map((thread) => thread.id),
-              ...(openclaw?.pendingTurns(true) ?? []).map((turn) => turn.threadId)]).size;
+            // A broken Gateway recovery ledger is unknown, even though live OpenClaw runs
+            // survive the sidecar and do not hold this update gate.
+            openclaw?.pendingTurns(true);
+            const interrupted = updateGate.draining ? [] : listThreads(dir)
+              .filter((thread) => thread.nativeTurn?.state === "interrupted").map((thread) => thread.id);
+            active = new Set([
+              ...[...running.keys(), ...(!updateGate.draining ? turnQueues.keys() : [])]
+                .filter((id) => !viaOpenClaw(id)),
+              ...archiveUpdates.keys(), ...interrupted,
+            ]).size;
           } catch { active = null; }
           updateGate.poll(active, Date.now());
+          if (updateGate.draining) {
+            for (const threadId of nativeCards.waitingThreads()) drainPauses.get(threadId)?.();
+          }
+          wakeDrainWaiters();
         }
       }
       if (data.action !== "status") pushUpdateStatus();
-      reply(control({ kind: "update_status", data: currentUpdateStatus(event.id) }));
+      reply(control({ kind: "update_status", data: updateStatusFor(from, event.id) }));
       return;
     }
     // Old encrypted clients may still send a terminal command. The deprecated error frame
@@ -2148,8 +2328,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const requiresAdmission = event.kind === "message" && event.data.role === "user" ||
       event.kind === "thread_create" || event.kind === "thread_archive" ||
       event.kind === "thread_recover" && event.data.action === "continue";
-    if (updateGate.status.phase === "installing" && requiresAdmission) {
-      if (updateSubscribers.has(localDevice ?? from ?? "")) reply(control({ kind: "update_status", data: currentUpdateStatus() }));
+    if ((updateGate.status.phase === "installing" || updateGate.status.phase === "draining") && requiresAdmission) {
+      if (updateSubscribers.has(localDevice ?? from ?? "")) reply(control({ kind: "update_status", data: updateStatusFor(from) }));
       return;
     }
     const rejectUserMessage = (reason: string): void => {
@@ -2256,6 +2436,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
           completionId: typed ? undefined : completionIdFor(event.threadId, event.id) } } : event;
       appendTranscript(logged, transcripts);
       appendThreadEvent(logged, dir);
+      if (event.kind === "message" && event.data.role === "user" && !typed &&
+          threadAgent(event.threadId, dir) !== "yorozu") {
+        admittedTurn = enqueueTurn(event.threadId, event.data.text, true,
+          event.data.attachments ?? [], event.id, event);
+      }
     }
     // Failed admission never poisons the in-memory dedup window.
     alreadySeen(event.id);
@@ -2372,6 +2557,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           resumeNativeTurn(event.threadId, true);
         } else {
           setNativeTurn(event.threadId, undefined, dir);
+          if (thread.nativeTurn.userEventId) removeNativeQueue(thread.nativeTurn.userEventId);
           broadcast(threadList());
         }
         return;
@@ -3067,6 +3253,23 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
   }
 
+  for (const entry of [...queuedNative]) {
+    if (admittedTurns.has(entry.eventId)) continue;
+    if (stoppedTurns.has(entry.eventId)) { removeNativeQueue(entry.eventId); continue; }
+    const marker = listThreads(dir).find((thread) => thread.id === entry.threadId)?.nativeTurn;
+    if (marker?.state === "interrupted" && marker.userEventId === entry.eventId) continue;
+    const events = readThreadEvents(entry.threadId, dir);
+    if (events.some((event) => event.id === completionIdFor(entry.threadId, entry.eventId) &&
+        event.kind === "message" && event.data.done)) {
+      removeNativeQueue(entry.eventId);
+      continue;
+    }
+    const original = events.find((event) => event.id === entry.eventId &&
+      event.kind === "message" && event.data.role === "user");
+    if (original?.kind === "message") void enqueueTurn(entry.threadId, original.data.text, true,
+      original.data.attachments ?? [], entry.eventId);
+  }
+
   // Production never installs legacy agents or starts its scheduler. Initialization remains
   // async so importing the sidecar does not load the old provider/tool graph.
   const legacyReady = provider ? import("./legacy.js").then(({ createLegacyRunner }) => {
@@ -3084,6 +3287,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     close: async () => {
       stopped = true;
+      wakeDrainWaiters();
       for (const retry of stopRetries.values()) clearTimeout(retry);
       stopRetries.clear();
       clearTraces();
@@ -3135,6 +3339,17 @@ if (import.meta.main) {
       // gateway. Ordinary launches have no argument and keep OpenClaw as their backend.
       const { chainFromEnv } = await import("./chain.js");
       const sidecar = serve(command === "--direct-provider" ? { provider: chainFromEnv() } : {});
+      let shuttingDown = false;
+      process.once("SIGTERM", () => {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        const deadline = setTimeout(() => process.exit(143), 5_000);
+        deadline.unref();
+        void sidecar.close().then(
+          () => { clearTimeout(deadline); process.exit(0); },
+          () => { clearTimeout(deadline); process.exit(143); },
+        );
+      });
       // The Mac app's "New code" button, and the only thing stdin is for. Skipped on a
       // terminal: reading one from a backgrounded shell job earns a SIGTTIN, and a person
       // running the sidecar by hand has no button to press anyway.

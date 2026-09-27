@@ -89,11 +89,13 @@ test("Codex maps native thought, tool and reply streams to existing trace events
   });
   const onActivity = vi.fn();
   const onUpdate = vi.fn();
-  expect(await codexNativeRunner(fake.connect).run(turn({ onActivity, onUpdate }))).toEqual({ text: "Done", sessionId: "native" });
+  const onToolBoundary = vi.fn();
+  expect(await codexNativeRunner(fake.connect).run(turn({ onActivity, onUpdate, onToolBoundary }))).toEqual({ text: "Done", sessionId: "native" });
   expect(onActivity.mock.calls.map((c) => c[1].kind)).toEqual(["thought", "tool_call", "tool_result"]);
   expect(onActivity.mock.calls[2]?.[1].data.output).toHaveLength(5000);
   expect(onActivity.mock.calls[2]?.[1].data.callId).toBe("turn-1:cmd");
   expect(onUpdate.mock.calls).toEqual([["Do"], ["Done"]]);
+  expect(onToolBoundary).toHaveBeenCalledTimes(3);
 });
 
 test.each(["approval", "question"])("Stop interrupts Codex while %s is pending, keeps native session and closes process", async (kind) => {

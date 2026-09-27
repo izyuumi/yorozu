@@ -62,6 +62,13 @@ public final class ChatModel {
         return false
     }
 
+    public var supportsUpdateDrain: Bool {
+        if case .compatible(_, let capabilities) = compatibility {
+            return capabilities.contains("update-drain-v1")
+        }
+        return false
+    }
+
     public var searchScope: String {
         if searchQuery.utf8.count > 128 { return "Downloaded conversations only · shorten search for host history" }
         if searchIncomplete { return "Downloaded conversations and partial host results" }

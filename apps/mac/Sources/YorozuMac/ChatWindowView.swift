@@ -165,7 +165,8 @@ private struct ClientChatWindowView: View {
         .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
         .background(YorozuPalette.canvas)
         .safeAreaInset(edge: .top) {
-            UpdateStatusView(status: Updates.pending.status) { Updates.pending.postpone() }
+            UpdateStatusView(status: Updates.pending.status, postpone: { Updates.pending.postpone() },
+                             installNow: { Updates.pending.installNow() })
         }
         .yorozuTint()
         .onChange(of: selection, initial: true) { old, new in
@@ -313,7 +314,8 @@ private struct LocalChatWindowView: View {
         .background(YorozuPalette.canvas)
         .safeAreaInset(edge: .top) {
             if session.role != .host {
-                UpdateStatusView(status: Updates.pending.status) { Updates.pending.postpone() }
+                UpdateStatusView(status: Updates.pending.status, postpone: { Updates.pending.postpone() },
+                                 installNow: { Updates.pending.installNow() })
             }
         }
         .yorozuTint()

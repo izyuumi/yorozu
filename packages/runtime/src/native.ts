@@ -9,6 +9,7 @@
  */
 
 import { query as sdkQuery, type ModelInfo, type Options, type Query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { spawn } from "node:child_process";
 import type { EventPayload, ModelOption, ReasoningEffort } from "@yorozu/shared";
 
 export interface NativeTurn {
@@ -32,6 +33,8 @@ export interface NativeTurn {
   onSession?: (sessionId: string) => void;
   approve?: (tool: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<boolean>;
   ask?: (question: string, options: string[], signal: AbortSignal) => Promise<string | undefined>;
+  beforeTool?: (signal: AbortSignal) => Promise<boolean>;
+  onToolBoundary?: () => void;
 }
 
 /**
@@ -113,11 +116,24 @@ function claudeModelLabel(model: ModelInfo): string {
  *
  * Permission decisions and questions are relayed without Yorozu action classification.
  */
-export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
+export function claudeCodeRunner(query: QueryFn = sdkQuery,
+  trackProcess?: (pid: number, command: string) => () => void): NativeAgentRunner {
+  const trackedSpawn: Options["spawnClaudeCodeProcess"] | undefined = trackProcess ? (options) => {
+    const child = spawn(options.command, options.args, {
+      cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "ignore"], signal: options.signal,
+    });
+    if (!child.pid) { child.once("error", () => {}); throw new Error("Claude Code did not start"); }
+    let untrack: () => void;
+    try { untrack = trackProcess(child.pid, options.command); }
+    catch (error) { child.once("error", () => {}); child.kill("SIGTERM"); throw error; }
+    child.once("exit", () => { try { untrack(); } catch { /* Stale record is checked on restart. */ } });
+    return child;
+  } : undefined;
   return {
     async models() {
       // No prompt is submitted while asking the CLI for its own catalog.
-      const session = query({ prompt: (async function* () {})(), options: { tools: [], env: childEnv() } });
+      const session = query({ prompt: (async function* () {})(), options: { tools: [], env: childEnv(),
+        ...(trackedSpawn ? { spawnClaudeCodeProcess: trackedSpawn } : {}) } });
       try {
         return (await session.supportedModels()).map((model) => ({
           id: model.value, label: claudeModelLabel(model), providerLabel: "Claude Code",
@@ -154,19 +170,26 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery): NativeAgentRunner {
           cwd,
           // Replaces the CLI's environment: Yorozu's own secrets and other providers' keys stay here.
           env: childEnv(),
+          ...(trackedSpawn ? { spawnClaudeCodeProcess: trackedSpawn } : {}),
           ...(turn.sessionId ? { resume: turn.sessionId } : {}),
           ...(turn.model ? { model: turn.model } : {}),
           ...(claudeEffort(turn.effort) ? { effort: claudeEffort(turn.effort) } : {}),
           includePartialMessages: true,
           permissionMode: turn.bypass ? "bypassPermissions" : "default",
           allowDangerouslySkipPermissions: turn.bypass === true,
-          hooks: { PreToolUse: [{ matcher: "AskUserQuestion", timeout: 86400, hooks: [async (input, _id, options) => {
+          hooks: { PreToolUse: [
+            { timeout: 610, hooks: [async (_input, _id, options) => {
+              const allowed = await turn.beforeTool?.(AbortSignal.any([turn.signal, options.signal]));
+              return allowed === false ? { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny" as const } } : {};
+            }] },
+            { matcher: "AskUserQuestion", timeout: 86400, hooks: [async (input, _id, options) => {
             if (input.hook_event_name !== "PreToolUse") return {};
             if (!input.tool_input || typeof input.tool_input !== "object" || Array.isArray(input.tool_input)) return {};
             const updatedInput = await answerQuestions(input.tool_input as Record<string, unknown>, AbortSignal.any([turn.signal, options.signal]));
             return { hookSpecificOutput: { hookEventName: "PreToolUse",
               permissionDecision: updatedInput ? "allow" : "deny", ...(updatedInput ? { updatedInput } : {}) } };
-          }] }] },
+          }] },
+          ] },
           canUseTool: async (toolName, input, options) => {
             const signal = AbortSignal.any([turn.signal, options.signal]);
             const deny = { behavior: "deny" as const, message: "User declined or request cancelled." };

@@ -251,11 +251,24 @@ test.each([true, false])("Claude questions use PreToolUse even when permission c
   await claudeCodeRunner(query).run({ threadId: "cc", cwd: "/tmp/proj", text: "go", bypass, ask, signal: new AbortController().signal });
   const hooks = calls[0]!.hooks as { PreToolUse: { hooks: Function[] }[] };
   const input = { questions: [{ question: "Pick", options: [{ label: "A" }] }, { question: "Name", options: [] }] };
-  const answer = await hooks.PreToolUse[0]!.hooks[0]!({ hook_event_name: "PreToolUse", tool_input: input }, "id", { signal: new AbortController().signal });
+  const answer = await hooks.PreToolUse[1]!.hooks[0]!({ hook_event_name: "PreToolUse", tool_input: input }, "id", { signal: new AbortController().signal });
   expect(answer.hookSpecificOutput).toEqual({ hookEventName: "PreToolUse", permissionDecision: "allow", updatedInput: { ...input, answers: { Pick: "A", Name: "custom" } } });
   const stopped = new AbortController(); stopped.abort();
-  expect((await hooks.PreToolUse[0]!.hooks[0]!({ hook_event_name: "PreToolUse", tool_input: input }, "id", { signal: stopped.signal })).hookSpecificOutput.permissionDecision).toBe("deny");
+  expect((await hooks.PreToolUse[1]!.hooks[0]!({ hook_event_name: "PreToolUse", tool_input: input }, "id", { signal: stopped.signal })).hookSpecificOutput.permissionDecision).toBe("deny");
   expect(ask).toHaveBeenCalledTimes(2);
+});
+
+test("Claude holds every tool through the unmatched drain hook", async () => {
+  const { query, calls } = fakeQuery([]);
+  const beforeTool = vi.fn().mockResolvedValue(false);
+  await claudeCodeRunner(query).run({ threadId: "cc", cwd: "/tmp/proj", text: "go",
+    signal: new AbortController().signal, beforeTool });
+  const hooks = calls[0]!.hooks as { PreToolUse: { matcher?: string; timeout: number; hooks: Function[] }[] };
+  expect(hooks.PreToolUse[0]!.matcher).toBeUndefined();
+  expect(hooks.PreToolUse[0]!.timeout).toBeGreaterThan(300);
+  expect((await hooks.PreToolUse[0]!.hooks[0]!({ hook_event_name: "PreToolUse", tool_name: "Bash" }, "id",
+    { signal: new AbortController().signal })).hookSpecificOutput.permissionDecision).toBe("deny");
+  expect(beforeTool).toHaveBeenCalledTimes(1);
 });
 
 test("childEnv keeps the shell basics and the agents' own variables", () => {
