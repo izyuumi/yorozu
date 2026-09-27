@@ -31,25 +31,23 @@ struct MacAttentionItem: Identifiable {
         visibleThreads(model.threads).flatMap { thread -> [Self] in
             let events = model.events[thread.id] ?? []
             var items: [Self] = []
-            if thread.awaitingApproval == true,
-               let event = events.last(where: {
-                   if case .approvalCard(let card) = $0.payload {
-                       return !model.answered.contains(card.actionId)
-                   }
-                   return false
-               }) {
-                items.append(Self(id: "approval:\(thread.id)", threadID: thread.id, eventID: event.id, kind: .approval,
-                    label: "\(thread.displayTitle) · Approval"))
+            if thread.awaitingApproval == true {
+                for event in events {
+                    guard case .approvalCard(let card) = event.payload,
+                          !model.answered.contains(card.actionId),
+                          model.approvalOutcomes[card.actionId] != .expired,
+                          model.approvalOutcomes[card.actionId] != .noLongerNeeded else { continue }
+                    items.append(Self(id: "approval:\(thread.id):\(event.id)", threadID: thread.id, eventID: event.id,
+                        kind: .approval, label: "\(thread.displayTitle) · Approval"))
+                }
             }
-            if thread.awaitingQuestion == true,
-               let event = events.last(where: {
-                   if case .questionCard(let card) = $0.payload {
-                       return !model.answeredQuestions.contains(card.questionId)
-                   }
-                   return false
-               }) {
-                items.append(Self(id: "question:\(thread.id)", threadID: thread.id, eventID: event.id, kind: .question,
-                    label: "\(thread.displayTitle) · Question"))
+            if thread.awaitingQuestion == true {
+                for event in events {
+                    guard case .questionCard(let card) = event.payload,
+                          !model.answeredQuestions.contains(card.questionId) else { continue }
+                    items.append(Self(id: "question:\(thread.id):\(event.id)", threadID: thread.id, eventID: event.id,
+                        kind: .question, label: "\(thread.displayTitle) · Question"))
+                }
             }
             if thread.needsAttention == true || thread.interruptedTurnId != nil {
                 items.append(Self(id: "failure:\(thread.id)", threadID: thread.id, eventID: nil, kind: .failure,
