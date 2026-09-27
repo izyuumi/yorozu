@@ -1388,7 +1388,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
       for (const id of questions.waitingThreads()) waiting.add(id);
       for (const thread of allThreads) {
         if (thread.archived && waiting.has(thread.id)) {
-          cards.push(...activeCards(thread.id, readThreadEvents(thread.id, dir)));
+          cards.push(...activeCards(thread.id,
+            readThreadEvents(thread.id, dir).filter((event) => event.ts >= pairedAt)));
         }
       }
     }
