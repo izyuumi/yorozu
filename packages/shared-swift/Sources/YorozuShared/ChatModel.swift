@@ -74,7 +74,9 @@ public final class ChatModel {
     public var searchScope: String {
         if searchQuery.utf8.count > 128 { return "Downloaded conversations only · shorten search for host history" }
         if searchIncomplete { return "Downloaded conversations and partial host results" }
-        guard canDeliver, supportsHostSearch else { return "Downloaded conversations only" }
+        guard canDeliver, supportsHostSearch else {
+            return remoteSearch.isEmpty ? "Downloaded conversations only" : "Downloaded conversations and cached host results"
+        }
         return searchComplete ? "Host history searched" : "Downloaded conversations · searching host…"
     }
 
