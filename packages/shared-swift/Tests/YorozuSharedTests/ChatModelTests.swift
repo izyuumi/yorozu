@@ -1316,9 +1316,13 @@ func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(
 
     let before = await transport.sent.count
     model.requestSync()
-    let requests = await sent(by: transport, atLeast: before + 1)
-    guard case .syncRequest(let request) = requests.last?.payload else { return #expect(Bool(false)) }
-    #expect(request.lastSeen["home"] == "cursor-5")
+    #expect(await eventually {
+        let sent = await transport.sent
+        return sent.dropFirst(before).contains {
+            guard case .syncRequest(let request) = $0.payload else { return false }
+            return request.lastSeen["home"] == "cursor-5"
+        }
+    })
 
     let liveFuture = try JSONDecoder().decode(YorozuEvent.self, from: Data(
         #"{"id":"live-future","threadId":"home","ts":6,"agentId":"main","kind":"future_housekeeping","data":{"value":"private"}}"#.utf8
@@ -1767,6 +1771,8 @@ func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(
     await transport.yield(.event(event("old", .threadSearchResult(ThreadSearchResultData(
         requestId: oldID, matches: [ThreadSearchMatch(threadId: "t", eventId: "old-hit", excerpt: "alpha")]
     )))))
+    await transport.yield(.event(event("after-old", .thought(ThoughtData(text: "processed")), thread: "t")))
+    #expect(await eventually { model.events["t"]?.contains(where: { $0.id == "after-old" }) == true })
     #expect(model.remoteSearch.isEmpty)
     #expect(await eventually {
         await transport.sent.contains { if case .threadSearchRequest(let data) = $0.payload { return data.query == "beta" }; return false }
