@@ -1,6 +1,7 @@
 packages:
   - packages/*
   - apps/relay
+  - apps/web
 
 allowBuilds:
   esbuild: true

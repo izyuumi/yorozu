@@ -198,8 +198,8 @@ the feed and archive-signature format.
   may need to retry after its cache expires. Stable releases and release-branch candidates remain available.
 - The `0.4.0 (293)` download redirect points to `v0.4.0/Yorozu.dmg`; its appcast uses that URL.
 - The website's `/mac` route prefers `Yorozu.dmg` and supports older lowercase assets.
-  Deploy the website Worker with `apps/relay/node_modules/.bin/wrangler deploy
-  --config apps/web/wrangler.jsonc` from the repository root after updating it.
+  Build and deploy the website Worker with `pnpm --filter @yorozu/web run deploy` from the
+  repository root after updating it.
 - Model lists come live from OpenClaw's `models.list`, Claude SDK's `supportedModels()`, and
   Codex's paginated `model/list`. No release `models.json` asset is needed. The dormant
   direct-provider catalog reads `main/catalog/models.json` directly with cache/bundled fallback;

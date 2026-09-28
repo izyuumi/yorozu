@@ -37,7 +37,7 @@ blind push notifications, and the thread/sync model.
 | `apps/mac` | SwiftUI menu bar app and the `yorozu-native` helper (SwiftPM, macOS 15+) |
 | `apps/ios` | SwiftUI iOS app, Tuist-generated project (iOS 18+) |
 | `apps/relay` | blind websocket relay — a Cloudflare Worker and a self-hostable `ws` server |
-| `apps/web` | the static `yorozu.yumi.to` site (Cloudflare, no build step) |
+| `apps/web` | the `yorozu.yumi.to` site (Astro static build on a Cloudflare Worker) |
 | `packages/runtime` | the Node sidecar: relay bridge, OpenClaw Gateway client, native agent runners |
 | `packages/shared` | protocol event types shared by the TypeScript workspaces |
 | `packages/shared-swift` | SwiftUI views and the chat model shared by both apps |

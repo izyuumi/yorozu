@@ -93,6 +93,6 @@ do not redraw, crop, add shadows to, or otherwise modify the device artwork.
 Refresh every screenshot referenced by the website after a newly merged release,
 including the iPhone chat and approval captures. Reuse the existing showcase
 harnesses. Optimize WebP files, retain image dimensions and descriptive alt text,
-then inspect desktop/mobile and light/dark. Run `node --test apps/web/tests/*.test.mjs`.
+then inspect desktop/mobile and light/dark. Run `pnpm --filter @yorozu/web build && pnpm --filter @yorozu/web test`.
 The local Codex automation checks every six hours, skips unchanged releases, and
 publishes only after checks pass. Release v0.4.0 is its initial baseline.
