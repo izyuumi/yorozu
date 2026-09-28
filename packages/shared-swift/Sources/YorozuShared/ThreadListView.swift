@@ -150,6 +150,25 @@ struct HeldThreadOrder {
     }
 }
 
+/// Search scope changes as hosts answer or disconnect. Reserve the tallest current label at
+/// the device's own text size so the first result cannot shift under a finger when it changes.
+private struct SearchScopeText: View {
+    let scope: String
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            Text("Downloaded conversations and cached host results · searching available hosts…")
+                .hidden()
+            Text(scope)
+        }
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(scope)
+    }
+}
+
 /// Whether a thread answers a search. `body` is everything said in it that the device still
 /// holds, so a thread is findable by a word in it and not only by the title the runtime picked.
 /// An empty query matches everything, which is what makes the unsearched list the whole list.
@@ -972,9 +991,7 @@ public struct ThreadListView<Destination: View>: View {
                 }
             } else {
                 Section {
-                    Text(shownSearchScope)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    SearchScopeText(scope: shownSearchScope)
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
                 }
@@ -1399,9 +1416,7 @@ public struct ThreadSidebar: View {
                 }
             } else {
                 Section {
-                    Text(shownSearchScope)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    SearchScopeText(scope: shownSearchScope)
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
                 }

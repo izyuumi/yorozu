@@ -16,10 +16,12 @@ rm -rf "$OUT"
 mkdir -p "$OUT"
 UDID=""
 HARNESS=""
+HARNESS2=""
 
 cleanup() {
   local status=$?
   [ -n "$HARNESS" ] && kill "$HARNESS" 2>/dev/null || true
+  [ -n "$HARNESS2" ] && kill "$HARNESS2" 2>/dev/null || true
   if [ -n "$UDID" ]; then
     # The app's own log dies with the simulator, and on failure it is the other half of the story.
     [ "$status" -ne 0 ] && xcrun simctl spawn "$UDID" log show --last 30m --style compact \
@@ -41,6 +43,15 @@ exec 3>"$OUT/stdin"
 for _ in $(seq 1 100); do [ -s "$OUT/ready" ] && break; sleep 0.1; done
 PORT=$(sed -E 's/.*"control":([0-9]+).*/\1/' "$OUT/ready")
 [ -n "$PORT" ] || { echo "the harness did not start; see $OUT/harness.log" >&2; exit 1; }
+
+# A second independent host lets the UI test check mixed availability and merged search results.
+mkfifo "$OUT/stdin2"
+node "$ROOT/packages/runtime/test-support/wire-harness.mjs" <"$OUT/stdin2" >"$OUT/ready2" 2>"$OUT/harness2.log" &
+HARNESS2=$!
+exec 4>"$OUT/stdin2"
+for _ in $(seq 1 100); do [ -s "$OUT/ready2" ] && break; sleep 0.1; done
+PORT2=$(sed -E 's/.*"control":([0-9]+).*/\1/' "$OUT/ready2")
+[ -n "$PORT2" ] || { echo "the second harness did not start; see $OUT/harness2.log" >&2; exit 1; }
 
 echo "==> build for testing"
 # Signed ad hoc rather than not at all: without its entitlements the app cannot reach the
@@ -64,7 +75,8 @@ xcodebuild build-for-testing \
 
 echo "==> test"
 # TEST_RUNNER_ variables reach the test process without the prefix.
-TEST_RUNNER_YOROZU_RIG="http://127.0.0.1:$PORT" xcodebuild test-without-building \
+TEST_RUNNER_YOROZU_RIG="http://127.0.0.1:$PORT" \
+TEST_RUNNER_YOROZU_RIG2="http://127.0.0.1:$PORT2" xcodebuild test-without-building \
   -workspace "$IOS/Yorozu.xcworkspace" -scheme YorozuUITests \
   -destination "id=$UDID" -derivedDataPath "$OUT/dd" \
   -resultBundlePath "$OUT/results.xcresult" "$@"

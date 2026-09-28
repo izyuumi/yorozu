@@ -13,7 +13,7 @@
 //   POST /down            close every phone connection now, and refuse new ones
 //   POST /lose-joined     the next phone to join is cut off just as the relay says `joined`
 //   POST /hold-answer     pause the next provider answer until /release-answer
-//   GET  /answer-started  {"started","count"}: whether it started and how often the provider ran
+//   GET  /answer-started[?text=...]  {"started","count"}: provider starts, optionally for one prompt
 //   POST /release-answer  let the paused provider answer finish
 //   POST /heal            back to normal for new connections and frames; blackholed ones stay dead
 //   GET  /dials           {"dials"}: when each phone connection arrived, ms since start
@@ -46,16 +46,18 @@ if (!Number.isFinite(delayMs) || delayMs < 0 || !Number.isFinite(bytesPerSecond)
 let heldAnswer;
 let answerStarted = false;
 let answerStarts = 0;
+const answerStartsByPrompt = new Map();
 
 /** Answers every turn with `echo: <text>` in words spaced 50ms apart, so a drop can land mid-reply. */
 const model = async (_url, init) => {
   answerStarts++;
   const { content } = JSON.parse(init.body).messages.at(-1);
+  const prompt = typeof content === "string" ? content : JSON.stringify(content);
+  answerStartsByPrompt.set(prompt, (answerStartsByPrompt.get(prompt) ?? 0) + 1);
   const release = heldAnswer;
   if (release) answerStarted = true;
   const large = content === "__large_answer__";
-  const words = large ? Array(48).fill("x".repeat(2048))
-    : `echo: ${typeof content === "string" ? content : JSON.stringify(content)}`.split(" ");
+  const words = large ? Array(48).fill("x".repeat(2048)) : `echo: ${prompt}`.split(" ");
   const encoder = new TextEncoder();
   const body = new ReadableStream({
     async start(controller) {
@@ -214,6 +216,7 @@ const faults = {
     heldAnswer = Promise.withResolvers();
     answerStarted = false;
     answerStarts = 0;
+    answerStartsByPrompt.clear();
   },
   "release-answer"() { heldAnswer?.resolve(); heldAnswer = undefined; },
   heal() {
@@ -243,7 +246,11 @@ const control = createServer((request, response) => {
   }
   else if (name === "dials") body = { dials };
   else if (name === "metrics") { recordQueuePeak(); body = { delayMs, bytesPerSecond, ...stats }; }
-  else if (name === "answer-started") body = { started: answerStarted, count: answerStarts };
+  else if (name === "answer-started") {
+    const prompt = url.searchParams.get("text");
+    const count = prompt === null ? answerStarts : (answerStartsByPrompt.get(prompt) ?? 0);
+    body = { started: prompt === null ? answerStarted : count > 0, count };
+  }
   else if (name === "events") body = { events: readThreadEvents(url.searchParams.get("thread"), stateDir) };
   else if (name === "messages") body = { messages: listThreads(stateDir).flatMap((thread) => messages(thread.id)) };
   response.writeHead(body ? 200 : 404, { "content-type": "application/json" });

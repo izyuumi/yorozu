@@ -89,7 +89,7 @@ final class ConnectionTests: XCTestCase {
         result.tap()
         XCTAssertTrue(match.waitForExistence(timeout: 10),
                       "Selecting an older result did not bring its matching message into the visible timeline")
-        app.buttons["Close"].tap()
+        app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch.tap()
         app.navigationBars.buttons["Threads"].tap()
         app.collectionViews.firstMatch.swipeDown()
         XCTAssertEqual(search.value as? String, "74c9", "Returning lost the search context")
@@ -102,6 +102,78 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label CONTAINS 'search marker 74c9'")).count, 1,
                        "Host search duplicated the downloaded result")
         XCTAssertEqual(search.value as? String, "74c9", "Host results replaced the search query")
+    }
+
+    /// Two real hosts contribute one downloaded match each. Losing one host keeps both results
+    /// visible while the scope names the mixed availability; recovery merges host history.
+    @MainActor
+    func testMixedHostSearchKeepsResultsAndContext() async throws {
+        let second = try XCTUnwrap(ProcessInfo.processInfo.environment["YOROZU_RIG2"].flatMap(URL.init(string:)))
+        let rig2 = Rig(control: second)
+        try await rig2.post("heal")
+        let marker = "mixed search marker 8f4a"
+        let secondPair = try await rig2.pairing()
+        let secondID = try XCTUnwrap(URLComponents(string: secondPair)?.queryItems?
+            .first(where: { $0.name == "key" })?.value)
+        addTeardownBlock { [weak self] in
+            guard let self else { return }
+            self.app.terminate()
+            self.app.launchArguments = ["-yorozuRemoveHost", secondID]
+            self.app.launch()
+            try self.waitConnected()
+            self.app.terminate()
+        }
+        app.launchArguments = ["-yorozuPair", try await rig.pairing(),
+                               "-yorozuPairSecond", secondPair,
+                               "-yorozuSend", marker]
+        app.launch()
+        for host in [rig!, rig2] {
+            let deadline = Date.now + 60
+            while try await !host.messages().contains(where: { $0.role == "agent" && $0.text == "echo: \(marker)" }) {
+                guard Date.now < deadline else { return XCTFail("A host did not answer the search fixture") }
+                try await Task.sleep(for: .milliseconds(200))
+            }
+        }
+        // The debug auto-send hook creates a fresh thread on every pairing. Relaunch without
+        // that hook before faulting a host, so a reconnect cannot change the fixture itself.
+        app.terminate()
+        app.launchArguments = []
+        app.launch()
+        let back = app.navigationBars.buttons["Threads"]
+        if back.waitForExistence(timeout: 5) { back.tap() }
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 10), "No thread list after relaunch")
+        let list = app.collectionViews.firstMatch
+        XCTAssertTrue(list.waitForExistence(timeout: 15))
+        list.swipeDown()
+        let search = app.searchFields["Search threads"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10))
+        search.tap()
+        search.typeText("8f4a")
+        let matches = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", marker))
+        let both = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 2"), object: matches)
+        XCTAssertEqual(XCTWaiter.wait(for: [both], timeout: 15), .completed,
+                       "One host's downloaded result is missing")
+        XCTAssertTrue(app.staticTexts["All host histories searched"].waitForExistence(timeout: 30))
+        XCTAssertEqual(matches.count, 2, "Host results duplicated downloaded matches")
+
+        try await rig2.post("down")
+        XCTAssertTrue(app.staticTexts["Downloaded conversations, cached and available host results"]
+            .waitForExistence(timeout: 20), "Mixed host availability was not stated truthfully")
+        XCTAssertEqual(matches.count, 2, "Disconnect hid a downloaded match")
+        let anchor = matches.firstMatch.frame.minY
+        try await rig2.post("heal")
+        XCTAssertTrue(app.staticTexts["All host histories searched"].waitForExistence(timeout: 70))
+        XCTAssertEqual(matches.count, 2, "Recovery duplicated a match")
+        XCTAssertEqual(matches.firstMatch.frame.minY, anchor, accuracy: 2,
+                       "Host results moved the visible search row")
+        matches.firstMatch.tap()
+        XCTAssertTrue(app.textViews[marker].waitForExistence(timeout: 10),
+                      "Search result did not open its matching message")
+        app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch.tap()
+        app.navigationBars.buttons["Threads"].tap()
+        list.swipeDown()
+        XCTAssertEqual(search.value as? String, "8f4a", "Back navigation lost the search query")
+        XCTAssertEqual(matches.count, 2, "Back navigation lost the search results")
     }
 
     /// A silently dead link is noticed and shown, then comes back on its own. Idle, nothing but
@@ -206,6 +278,8 @@ final class ConnectionTests: XCTestCase {
         try openThread()
         try await rig.post("hold-answer")
         composer.tap()
+        if !app.keyboards.firstMatch.waitForExistence(timeout: 5) { composer.tap() }
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10), "Composer did not take focus")
         composer.typeText("lost receipt")
         // Let the message reach the host before blocking its receipt. Dropping host frames
         // while typing can interrupt pairing first, leaving an honestly queued message.
@@ -216,7 +290,7 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(confirming.waitForExistence(timeout: 10))
         XCTAssertFalse(confirming.waitForNonExistence(timeout: 5), "Delivery claimed without a receipt")
         let started = Date.now + 30
-        while try await !rig.answerStarted() {
+        while try await !rig.answerStarted(for: "lost receipt") {
             guard Date.now < started else { return XCTFail("The Mac never started the turn") }
             try await Task.sleep(for: .milliseconds(200))
         }
@@ -240,7 +314,7 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(bubbles("lost receipt"), 1)
         let recorded = try await rig.messages().filter { $0.text.hasSuffix("lost receipt") }
         XCTAssertEqual(recorded.map(\.role), ["user", "agent"], "Run once, answered once")
-        let starts = try await rig.answerStarts()
+        let starts = try await rig.answerStarts(for: "lost receipt")
         XCTAssertEqual(starts, 1, "The provider ran the same turn twice")
     }
 
@@ -359,17 +433,18 @@ private struct Rig {
         return try await get(Reply.self, "messages").messages
     }
 
-    func answerStarted() async throws -> Bool {
+    func answerStarted(for text: String) async throws -> Bool {
         struct Reply: Decodable { var started: Bool }
-        return try await get(Reply.self, "answer-started").started
+        return try await get(Reply.self, "answer-started", query: [URLQueryItem(name: "text", value: text)]).started
     }
 
-    func answerStarts() async throws -> Int {
+    func answerStarts(for text: String) async throws -> Int {
         struct Reply: Decodable { var count: Int }
-        return try await get(Reply.self, "answer-started").count
+        return try await get(Reply.self, "answer-started", query: [URLQueryItem(name: "text", value: text)]).count
     }
 
-    private func get<T: Decodable>(_ type: T.Type, _ path: String) async throws -> T {
-        try JSONDecoder().decode(type, from: try await URLSession.shared.data(from: control.appending(path: path)).0)
+    private func get<T: Decodable>(_ type: T.Type, _ path: String, query: [URLQueryItem] = []) async throws -> T {
+        let url = control.appending(path: path).appending(queryItems: query)
+        return try JSONDecoder().decode(type, from: try await URLSession.shared.data(from: url).0)
     }
 }
