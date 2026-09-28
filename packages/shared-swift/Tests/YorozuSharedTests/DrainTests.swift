@@ -232,3 +232,65 @@ private func card(_ id: String, actionId: String, thread: String = "home") -> Yo
     #expect(await eventually { await transport.connects == 2 })
     #expect(await eventually { await transport.closes == 2 })
 }
+
+private func threadList(_ ids: [String], archived: Bool = false) -> TransportUpdate {
+    .event(YorozuEvent(id: UUID().uuidString, threadId: "", ts: 1, agentId: "main", payload: .threadList(
+        ThreadListData(threads: ids.map { ThreadSummary(id: $0, title: $0, archived: archived, lastActivity: 1) }))))
+}
+
+private func sentText(_ transport: DrainTransport) async -> [YorozuEvent] {
+    await transport.sent.filter {
+        if case .message = $0.payload { return true }
+        return false
+    }
+}
+
+@MainActor
+@Test func aWatchReplyIsSentReceiptedAndTheSocketHungUp() async throws {
+    let transport = DrainTransport()
+    let model = ChatModel(transport: transport)
+    model.start()
+    #expect(await eventually { await transport.connects == 1 })
+    await transport.deliver(threadList(["home"]))
+    #expect(await eventually { await MainActor.run { model.threads.count == 1 } })
+
+    async let result = model.sendFromBackground("on my way", in: "home", timeout: .seconds(10))
+    #expect(await eventually { await sentText(transport).count == 1 })
+    let message = try #require(await sentText(transport).first)
+    #expect(message.threadId == "home")
+    #expect(message.payload == .message(MessageData(role: .user, text: "on my way",
+        admissionDeadline: message.ts + 30 * 60_000)))
+    await transport.deliver(.event(YorozuEvent(id: "r1", threadId: "home", ts: 2, agentId: "main",
+        payload: .receipt(ReceiptData(eventId: message.id)))))
+
+    #expect(await result == .sent)
+    #expect(await eventually { await transport.closes == 1 })
+}
+
+@MainActor
+@Test func aWatchReplyTheHostNeverReceiptsStaysInTheOutbox() async throws {
+    let transport = DrainTransport()
+    let model = ChatModel(transport: transport)
+    model.start()
+    #expect(await eventually { await transport.connects == 1 })
+    await transport.deliver(threadList(["home"]))
+    #expect(await eventually { await MainActor.run { model.threads.count == 1 } })
+
+    #expect(await model.sendFromBackground("on my way", in: "home", timeout: .milliseconds(200)) == .queued)
+    #expect(model.outbox.count == 1)
+}
+
+@MainActor
+@Test func aWatchReplyToAThreadThisPhoneCannotReplyInIsRefused() async throws {
+    let transport = DrainTransport()
+    let model = ChatModel(transport: transport)
+    model.start()
+    #expect(await eventually { await transport.connects == 1 })
+    await transport.deliver(threadList(["gone"], archived: true))
+    #expect(await eventually { await MainActor.run { model.threads.count == 1 } })
+
+    #expect(await model.sendFromBackground("hello", in: "gone", timeout: .milliseconds(200)) == .rejected)
+    #expect(await model.sendFromBackground("hello", in: "never-existed", timeout: .milliseconds(200)) == .rejected)
+    #expect(model.outbox.isEmpty)
+    #expect(await sentText(transport).isEmpty)
+}

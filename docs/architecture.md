@@ -401,6 +401,32 @@ encrypted `ThreadCache`, having no Keychain access group on purpose, so the app 
 host-qualified IDs, host labels and titles into the container, without pairing secrets or
 transcripts. Removing a host removes its destinations and pending shares alone.
 
+## The watch app
+
+`YorozuWatch` replies to threads that already exist, by dictation, and does nothing else. It is
+not a paired device: it holds no Mac's key, no relay socket and no thread cache. watchOS allows
+no WebSocket outside an audio or call session, so the watch could not reach the relay if it
+tried; it asks the phone over WatchConnectivity, and the phone answers from the threads it
+holds and sends the reply through its own outbox (`ChatModel.sendFromBackground`). A request
+launches the phone app in the background when it is not running.
+
+| Watch asks | Phone answers |
+| --- | --- |
+| `threads` | the 20 newest threads that can be replied to: no drafts, no archive |
+| `messages` | the last 6 messages of one thread, each cut to 700 characters |
+| `send` | `sent` once the host receipts it, `queued` when it is in the outbox and the host is away, `rejected` otherwise |
+
+Encryption between the two is the system's and nothing is added to it: WatchConnectivity
+carries messages end to end encrypted between a watch and the phone it is paired with, and
+delivers them only to the same developer's app on the other side. The watch keeps no
+conversation text: a list is asked for when the app opens and held in memory.
+
+The phone checks what it receives regardless: a `send` needs a thread this phone holds and
+text a composer would accept, and a request id is acted on once.
+
+Text input is the system's — dictation, Scribble or the keyboard, through `TextFieldLink`. The
+app uses no microphone or speech API of its own.
+
 ## The Mac app
 
 A Mac is a **host** or a **client**, chosen on the first page of onboarding and stored as

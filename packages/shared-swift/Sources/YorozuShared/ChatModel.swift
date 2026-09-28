@@ -679,6 +679,39 @@ public final class ChatModel {
         return true
     }
 
+    public enum BackgroundSend: Sendable, Equatable {
+        /// The host receipted it.
+        case sent
+        /// In the durable outbox, which sends it the next time the host can be reached.
+        case queued
+        /// Not a thread that can be replied to, or the outbox could not be written.
+        case rejected
+    }
+
+    /// Sends a reply that was not typed in this app's composer — the watch's — with the app
+    /// possibly suspended: queue it, dial, wait for the host's receipt, and hang up.
+    ///
+    /// The message is the composer's own: same outbox, same id on every retry, same admission
+    /// deadline. Only an existing, unarchived thread can be replied to.
+    public func sendFromBackground(
+        _ text: String, in threadId: String, timeout: Duration = .seconds(20)
+    ) async -> BackgroundSend {
+        guard synced.contains(where: { $0.id == threadId && !$0.archived }) else { return .rejected }
+        let held = Set(outbox.map(\.id))
+        guard queueMessage(text, in: threadId, attachments: []),
+              let id = outbox.first(where: { !held.contains($0.id) })?.id else { return .rejected }
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        if started { reconnect() } else { start() }
+        defer { if !foreground { suspend() } }
+        flush()
+        // Pairing flushes the outbox by itself; the receipt is what takes the message out of it.
+        while outbox.contains(where: { $0.id == id }), ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        await flushCache()
+        return outbox.contains(where: { $0.id == id }) ? .queued : .sent
+    }
+
     /// The approval card whose event id the push referenced, wherever it is.
     private func approvalCard(eventRef: String) -> (String, ApprovalCardData)? {
         var match: (String, ApprovalCardData)?

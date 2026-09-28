@@ -48,6 +48,8 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         // a token the relay was never told is a phone it cannot wake. Permission is a separate
         // question — ``Session/requestNotifications()`` — and the silent catch-up needs none.
         application.registerForRemoteNotifications()
+        // Here rather than in a view: a watch's request launches the app with no scene at all.
+        WatchBridge.shared.start()
         return true
     }
 
