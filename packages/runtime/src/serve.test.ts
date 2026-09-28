@@ -4078,3 +4078,23 @@ test("OpenClaw delivers into threads, and user messages wait for the plugin's ac
   again.close();
   mac.close();
 });
+
+test("channel threads are titled from their opening message", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-channel-title-"));
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, titler: async () => "Weekend plans" });
+  await vi.waitFor(() => expect(existsSync(channelSocketPath(dir))).toBe(true));
+  const plugin = await channelPlugin(dir);
+  const mac = await macClient(dir);
+
+  // Typed by the user: titled like any thread, even though OpenClaw answers with no turn here.
+  createThread(undefined, dir, "chat");
+  mac.send({ kind: "message", data: { role: "user", text: "what should we do on saturday" }, threadId: "chat" } as never);
+  await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === "chat")?.title).toBe("Weekend plans"));
+
+  // Opened by OpenClaw with no title of its own: titled from what it said.
+  plugin.send({ type: "deliver", id: "cron-2", threadId: "news", text: "Morning briefing" });
+  await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === "news")?.title).toBe("Weekend plans"));
+  plugin.close();
+  mac.close();
+});
