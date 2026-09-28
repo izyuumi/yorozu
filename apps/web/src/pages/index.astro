@@ -18,7 +18,7 @@ import Base from '../layouts/Base.astro';
           <a class="button" href="/mac">Download for Mac</a>
           <a class="button ghost" href="/iphone">Join iPhone TestFlight</a>
         </div>
-        <p class="fine">Mac: macOS 15+ · Apple silicon · <a href="https://openclaw.ai">OpenClaw</a> on the host<br>iPhone: iOS 18+ · public beta · <a href="https://github.com/izyuumi/yorozu">Open source, MIT</a></p>
+        <p class="fine">Mac: macOS 15+ · Apple silicon · <a href="https://openclaw.ai">OpenClaw</a> on the host<br>iPhone: iOS 18+ · public beta · <a href="#setup-with-an-agent">Set up with an agent</a> · <a href="https://github.com/izyuumi/yorozu">Open source, MIT</a></p>
       </div>
       <figure class="phone">
         <div class="iphone-device">
@@ -27,6 +27,19 @@ import Base from '../layouts/Base.astro';
         </div>
       </figure>
     </div>
+  </section>
+
+  <section class="agent-setup" id="setup-with-an-agent" aria-labelledby="agent-setup-title">
+    <div class="agent-setup-text">
+      <h2 id="agent-setup-title">Set it up with one prompt.</h2>
+      <p>Paste this into Claude Code, Codex or any coding agent on your Mac. It checks what you already have, then walks you through installing both apps, permissions, OpenClaw and pairing your iPhone. It asks before every change and never decides for you.</p>
+    </div>
+    <div class="prompt">
+      <pre><code id="agent-prompt">Read https://raw.githubusercontent.com/izyuumi/yorozu/main/Start.md and follow it to set up Yorozu on my devices. Ask me before configuring anything.</code></pre>
+      <button type="button" class="copy" data-copy="agent-prompt" hidden>Copy</button>
+    </div>
+    <p class="copy-status" id="agent-prompt-status" role="status" aria-atomic="true"></p>
+    <p class="fine">The guide is <a href="https://github.com/izyuumi/yorozu/blob/main/Start.md">Start.md</a> in the repository. Prefer to do it yourself? <a href="#iphone-availability">Install</a> and <a href="#pair">pair</a> by hand. Either way, read <a href="#before-you-install">Before you install</a> first.</p>
   </section>
 
   <section class="proof" aria-labelledby="approve-title">
@@ -124,7 +137,7 @@ import Base from '../layouts/Base.astro';
     </div>
   </section>
 
-  <section class="steps" aria-labelledby="steps-title">
+  <section class="steps" id="pair" aria-labelledby="steps-title">
     <h2 id="steps-title">Then pair once.</h2>
     <p class="steps-intro">You’ll need an Apple silicon Mac with macOS 15 or later and OpenClaw configured. Keep your host Mac awake and online to reach it from your phone.</p>
     <ol>
@@ -144,19 +157,6 @@ import Base from '../layouts/Base.astro';
         <p>Every thread lives on the Mac. Your phone, and any other Mac, just reaches it.</p>
       </li>
     </ol>
-  </section>
-
-  <section class="agent-setup" id="setup-with-an-agent" aria-labelledby="agent-setup-title">
-    <div class="agent-setup-text">
-      <h2 id="agent-setup-title">Or let an agent set it up.</h2>
-      <p>Already using Claude Code, Codex or another coding agent? Paste this into it. The guide checks what is installed, asks what you want, and walks you through pairing, permissions and OpenClaw without deciding anything for you.</p>
-    </div>
-    <div class="prompt">
-      <pre><code id="agent-prompt">Read https://raw.githubusercontent.com/izyuumi/yorozu/main/Start.md and follow it to set up Yorozu on my devices. Ask me before configuring anything.</code></pre>
-      <button type="button" class="copy" data-copy="agent-prompt" hidden>Copy</button>
-    </div>
-    <p class="copy-status" id="agent-prompt-status" role="status" aria-atomic="true"></p>
-    <p class="fine">The guide is <a href="https://github.com/izyuumi/yorozu/blob/main/Start.md">Start.md</a> in the repository. Read it yourself first if you want to know what the agent will ask.</p>
   </section>
 
   <section class="warning" id="before-you-install" aria-labelledby="risk-title">
