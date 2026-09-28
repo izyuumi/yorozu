@@ -1047,7 +1047,8 @@ describe("OpenClawRunner", () => {
       if (method === "chat.send") return { runId: "run-1" };
       if (method === "chat.history") return { messages: [
         { role: "assistant", runId: "other", stopReason: "stop", content: [{ type: "image", artifactId: "artifact_managed_image_x" }] },
-        { role: "assistant", runId: "run-1", stopReason: "stop", content: [
+        // Real Gateway shape: the CLI harness tags its run only via this idempotency key.
+        { role: "assistant", api: "cli", idempotencyKey: "cli-assistant:run-1", stopReason: "stop", content: [
           { type: "text", text: "Mac screen now" },
           { type: "image", artifactId: "artifact_managed_image_a1", mimeType: "image/png", alt: "screen.png", url: "/api/chat/media/outgoing/k/a1/full" },
         ] },

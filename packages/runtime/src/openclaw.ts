@@ -713,7 +713,7 @@ export class OpenClawRunner {
       })).messages ?? [];
       for (const value of messages) {
         const message = record(value);
-        if (message.role !== "assistant" || string(record(message.__openclaw).runId ?? message.runId) !== pending.runId) continue;
+        if (message.role !== "assistant" || messageRunId(message) !== pending.runId) continue;
         for (const blockValue of Array.isArray(message.content) ? message.content : []) {
           const block = record(blockValue);
           const artifactId = string(block.artifactId);
@@ -1001,13 +1001,20 @@ function createIdentity(): DeviceIdentity {
 function rawPublicKey(pem: string): Buffer {
   return createPublicKey(pem).export({ type: "spki", format: "der" }).subarray(-32);
 }
+/** Mirrors OpenClaw's session projection: CLI-harness replies carry their run only as `cli-assistant:<runId>`. */
+function messageRunId(message: Record<string, unknown>): string {
+  const meta = record(message.__openclaw);
+  const runId = string(meta.runId ?? message.runId);
+  if (runId) return runId;
+  const key = string(meta.idempotencyKey ?? message.idempotencyKey);
+  return key.startsWith("cli-assistant:") ? key.slice("cli-assistant:".length) : key;
+}
 interface History { messages?: unknown[]; inFlightRun?: Record<string, unknown>; inputReceipts?: Array<{ runId?: string; state?: string }> }
 function correlatedFinal(messages: unknown[], pending: Pick<PendingTurn, "runId" | "awaitsAnnouncement" | "childRunIds">): { found: boolean; text: string; failed?: boolean } {
   for (const value of [...messages].reverse()) {
     const message = record(value);
     if (message.role !== "assistant") continue;
-    const meta = record(message.__openclaw);
-    const runId = string(meta.runId ?? message.runId);
+    const runId = messageRunId(message);
     const terminal = ["stop", "length", "error"].includes(string(message.stopReason));
     const exact = pending.awaitsAnnouncement
       ? announcementMatches(runId, pending.childRunIds)
