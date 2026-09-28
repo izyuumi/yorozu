@@ -263,7 +263,7 @@ test("Claude publishes SDK models and passes selected model/effort on each resum
   const { query, calls } = fakeQuery([result("s-model", "ok")]);
   const models = vi.fn().mockResolvedValue([
     { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus", description: "", supportedEffortLevels: ["low", "high", "max"] },
-    { value: "fable", resolvedModel: "claude-fable-5-1", displayName: "Fable", description: "" },
+    { value: "fable", resolvedModel: "claude-fable-5-1", displayName: "Fable 5.1", description: "" },
     { value: "haiku[1m]", resolvedModel: "claude-haiku-4-5-20251001", displayName: "Haiku (1M context)", description: "" },
     { value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default (recommended)", description: "" },
   ]);
