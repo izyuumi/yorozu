@@ -195,7 +195,8 @@ final class ConnectionTests: XCTestCase {
         let firstResult = matches.matching(NSPredicate(format: "label != %@", secondResultLabel)).firstMatch
         XCTAssertTrue(firstResult.exists)
         firstResult.tap()
-        app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch.tap()
+        app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         send("first result route probe")
         XCTAssertTrue(app.textViews["echo: first result route probe"].waitForExistence(timeout: 30))
         app.navigationBars.buttons["Threads"].tap()
@@ -205,7 +206,8 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(returnedSecondResult.waitForExistence(timeout: 10),
                       "Back navigation lost the second host's result")
         returnedSecondResult.tap()
-        app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch.tap()
+        app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         send("second result route probe")
         XCTAssertTrue(app.textViews["echo: second result route probe"].waitForExistence(timeout: 30))
 
