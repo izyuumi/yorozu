@@ -217,7 +217,7 @@ struct MacNotificationsView: View {
                 Toggle("Show menu-bar attention indicator", isOn: $attentionIndicator)
             }
             Text("These choices affect this Mac only. Paired devices keep their own notifications, and all tasks and questions remain available in Quick Chat.")
-                .font(.caption)
+                .font(.scaled(.caption))
                 .foregroundStyle(.secondary)
         }
         .formStyle(.grouped)

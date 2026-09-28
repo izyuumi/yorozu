@@ -74,7 +74,7 @@ public struct RuleEditorView: View {
                 if draft.canSave {
                     Section {
                         LabeledContent("This rule covers", value: draft.rule.summary)
-                            .font(.callout)
+                            .font(.scaled(.callout))
                     }
                 }
             }
@@ -82,7 +82,7 @@ public struct RuleEditorView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if let message = draft.validationMessage {
                     Label(message, systemImage: "exclamationmark.circle")
-                        .font(.callout)
+                        .font(.scaled(.callout))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -127,7 +127,7 @@ public struct RuleEditorView: View {
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .accessibilityLabel("Any \(field.label.lowercased())")
-                    Text("Any").font(.caption).foregroundStyle(.secondary)
+                    Text("Any").font(.scaled(.caption)).foregroundStyle(.secondary)
                 }
                 if !field.isAny {
                     HStack(spacing: LayoutMetrics.inner) {
@@ -342,30 +342,30 @@ public struct RuleProposalCardView: View {
         VStack(alignment: .leading, spacing: LayoutMetrics.stack) {
             HStack(spacing: LayoutMetrics.inner) {
                 Image(systemName: "lightbulb.fill")
-                    .font(.body.weight(.semibold))
+                    .font(.scaled(.body).weight(.semibold))
                     .foregroundStyle(.tint)
                     .frame(width: 28, height: 28)
                     .background(.tint.opacity(0.14), in: Circle())
                 Text("Suggestion")
-                    .font(.subheadline.weight(.medium))
+                    .font(.scaled(.subheadline).weight(.medium))
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
             }
             Text("Yorozu noticed you always allow this. Make it a rule?")
-                .font(.headline)
+                .font(.scaled(.headline))
                 .fixedSize(horizontal: false, vertical: true)
             Text(proposal.rule.summary)
-                .font(.callout)
+                .font(.scaled(.callout))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Text("^[\(proposal.approvals) approval](inflect: true) in the last month. Nothing is saved until you say so.")
-                .font(.caption)
+                .font(.scaled(.caption))
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if handled || dismissed {
                 Text(dismissed ? String(localized: "Not now") : String(localized: "Reviewed"))
-                    .font(.subheadline)
+                    .font(.scaled(.subheadline))
                     .foregroundStyle(.secondary)
                     .frame(minHeight: 32)
             } else {
@@ -430,14 +430,14 @@ public struct RuleRowView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Image(systemName: rule.decision == .never ? "nosign" : "checkmark.seal.fill")
-                        .font(.caption)
+                        .font(.scaled(.caption))
                         .foregroundStyle(rule.decision == .never ? Color.orange : Color.accentColor)
                     Text(rule.summary)
-                        .font(.callout)
+                        .font(.scaled(.callout))
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Text(usage)
-                    .font(.caption)
+                    .font(.scaled(.caption))
                     .foregroundStyle(.secondary)
             }
             .opacity(rule.isEnabled ? 1 : 0.5)

@@ -16,8 +16,12 @@ import YorozuShared
 struct ChatWindowView: View {
     @State private var session = MacChatSession.shared
     var body: some View {
-        if session.role == .client { ClientChatWindowView(session: session) }
-        else { LocalChatWindowView() }
+        Group {
+            if session.role == .client { ClientChatWindowView(session: session) }
+            else { LocalChatWindowView() }
+        }
+        // Text with no font of its own, the composer's included, follows ⌘+ and ⌘− too.
+        .font(.scaled(.body))
     }
 }
 
@@ -63,6 +67,7 @@ struct QuickChatView: View {
                 onNew: newChat, onSelect: { router.target = nil; selection = $0 })
         }
         .focusedSceneValue(\.threadCommands, ThreadCommands(newThread: newChat))
+        .font(.scaled(.body))
         .background(YorozuPalette.canvas)
         .yorozuTint()
         .onAppear { open() }
@@ -390,7 +395,7 @@ private struct SidebarFooter: View {
             Text(connection)
                 .foregroundStyle(.secondary)
         }
-        .font(.caption)
+        .font(.scaled(.caption))
         .padding(12)
         .background(YorozuPalette.paper)
     }

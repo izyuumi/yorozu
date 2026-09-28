@@ -187,12 +187,12 @@ public struct LinkPreviewRow: View {
                         icon(preview)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(preview.title)
-                                .font(.subheadline)
+                                .font(.scaled(.subheadline))
                                 .foregroundStyle(.primary)
                                 .lineLimit(2)
                                 .multilineTextAlignment(.leading)
                             Text(preview.host)
-                                .font(.caption)
+                                .font(.scaled(.caption))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
@@ -223,7 +223,7 @@ public struct LinkPreviewRow: View {
                 .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
         } else {
             Image(systemName: "globe")
-                .font(.caption)
+                .font(.scaled(.caption))
                 .foregroundStyle(.secondary)
                 .frame(width: iconSize, height: iconSize)
         }

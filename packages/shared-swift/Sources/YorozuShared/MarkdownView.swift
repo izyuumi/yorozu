@@ -73,10 +73,10 @@ public struct MarkdownText: View {
     /// Relative sizes, so every heading tracks Dynamic Type instead of pinning a point size.
     private func headingFont(_ level: Int) -> Font {
         switch level {
-        case 1: .title2.weight(.bold)
-        case 2: .title3.weight(.semibold)
-        case 3: .headline
-        default: .subheadline.weight(.semibold)
+        case 1: .scaled(.title2).weight(.bold)
+        case 2: .scaled(.title3).weight(.semibold)
+        case 3: .scaled(.headline)
+        default: .scaled(.subheadline).weight(.semibold)
         }
     }
 }
@@ -127,7 +127,7 @@ struct CodeBlock: View {
             HStack {
                 if let language {
                     Text(language)
-                        .font(.caption2.monospaced())
+                        .font(.scaled(.caption2).monospaced())
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
@@ -136,7 +136,7 @@ struct CodeBlock: View {
                     withAnimation(reduceMotion ? nil : .default) { copied = true }
                 } label: {
                     Label(copied ? String(localized: "Copied") : String(localized: "Copy"), systemImage: copied ? "checkmark" : "doc.on.doc")
-                        .font(.caption)
+                        .font(.scaled(.caption))
                         .labelStyle(.iconOnly)
                         .frame(minWidth: controlTarget, minHeight: controlTarget)
                         .contentShape(.rect)
@@ -156,7 +156,7 @@ struct CodeBlock: View {
             // Wrapping code changes what it means, so it scrolls instead.
             ScrollView(.horizontal) {
                 Text(code)
-                    .font(.callout.monospaced())
+                    .font(.scaled(.callout).monospaced())
                     .fixedSize(horizontal: true, vertical: true)
                     .textSelection(.enabled)
                     .padding(.horizontal, 10)
@@ -219,7 +219,7 @@ struct MarkdownTable: View {
             GridRow {
                 ForEach(Array(cells(header).enumerated()), id: \.offset) { _, cell in
                     Text(AttributedString.chatInline(cell, highlight: highlight))
-                        .font(.footnote.weight(.semibold))
+                        .font(.scaled(.footnote).weight(.semibold))
                         .accessibilityAddTraits(.isHeader)
                 }
             }
@@ -228,7 +228,7 @@ struct MarkdownTable: View {
                 GridRow {
                     ForEach(Array(cells(row).enumerated()), id: \.offset) { _, cell in
                         Text(AttributedString.chatInline(cell, highlight: highlight))
-                            .font(.footnote)
+                            .font(.scaled(.footnote))
                     }
                 }
             }

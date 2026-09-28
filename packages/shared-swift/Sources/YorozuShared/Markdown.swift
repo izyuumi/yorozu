@@ -224,7 +224,7 @@ extension AttributedString {
             .filter { $0.inlinePresentationIntent?.contains(.code) == true }
             .map(\.range)
         for range in code {
-            attributed[range].font = .body.monospaced()
+            attributed[range].font = .scaled(.body).monospaced()
             attributed[range].backgroundColor = .secondary.opacity(0.15)
         }
         // Markdown only links what is written as a link; a bare URL or address is prose to it.

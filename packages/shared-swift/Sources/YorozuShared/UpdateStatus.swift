@@ -87,10 +87,10 @@ public struct UpdateStatusView: View {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 VStack(alignment: .leading, spacing: 6) {
                     if let hostLabel {
-                        Text(hostLabel).font(.subheadline.weight(.semibold))
+                        Text(hostLabel).font(.scaled(.subheadline).weight(.semibold))
                     }
                     Label(status.label(at: context.date), systemImage: "arrow.down.circle")
-                        .font(.callout)
+                        .font(.scaled(.callout))
                     if status.phase != .installing {
                         HStack {
                             if let installNow { Button("Install now", action: installNow) }

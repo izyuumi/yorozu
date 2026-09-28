@@ -17,7 +17,7 @@ struct RunSettingsCard: View {
         VStack(spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Model and effort")
-                    .font(.headline)
+                    .font(.scaled(.headline))
                     .foregroundStyle(YorozuPalette.ink)
                     .accessibilityAddTraits(.isHeader)
                 Spacer(minLength: 8)
@@ -96,7 +96,7 @@ struct YorozuCaption: View {
 
     var body: some View {
         Text(text)
-            .font(.footnote.weight(.medium))
+            .font(.scaled(.footnote).weight(.medium))
             .foregroundStyle(YorozuPalette.ink.opacity(0.62))
             .padding(.leading, 4)
             .accessibilityAddTraits(.isHeader)
@@ -125,7 +125,7 @@ struct YorozuChoiceCard: View {
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 8)
                         Image(systemName: "checkmark")
-                            .font(.body.weight(.semibold))
+                            .font(.scaled(.body).weight(.semibold))
                             .foregroundStyle(YorozuPalette.vermilion)
                             .opacity(choice.selected ? 1 : 0)
                     }
@@ -165,7 +165,7 @@ struct YorozuPillPicker: View {
                     withAnimation(reduceMotion ? nil : .snappy(duration: 0.2), choice.pick)
                 } label: {
                     Text(choice.label)
-                        .font(.subheadline.weight(choice.selected ? .semibold : .regular))
+                        .font(.scaled(.subheadline).weight(choice.selected ? .semibold : .regular))
                         // Paper on vermilion, not white: white on the dark-mode vermilion is under 4.5:1.
                         .foregroundStyle(choice.selected ? YorozuPalette.paper : YorozuPalette.ink)
                         .lineLimit(1)

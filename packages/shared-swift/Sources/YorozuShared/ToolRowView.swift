@@ -31,17 +31,17 @@ public struct ToolGroupView: View {
                 } label: {
                     HStack(spacing: LayoutMetrics.inner) {
                         Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                            .font(.caption2)
+                            .font(.scaled(.caption2))
                             .foregroundStyle(.tertiary)
                         if running {
                             ProgressView().controlSize(.small)
                         } else {
                             Image(systemName: failed > 0 ? "exclamationmark.triangle" : "checkmark.circle")
-                                .font(.caption)
+                                .font(.scaled(.caption))
                                 .foregroundStyle(.secondary)
                         }
                         Text(summary)
-                            .font(.caption)
+                            .font(.scaled(.caption))
                             .foregroundStyle(.secondary)
                         Spacer(minLength: 0)
                     }
@@ -119,15 +119,15 @@ public struct ToolRowView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: LayoutMetrics.inner) {
             Image(systemName: activity.symbol)
-                .font(.caption)
+                .font(.scaled(.caption))
                 .foregroundStyle(.secondary)
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(activity.name)
-                    .font(.subheadline.weight(.medium))
+                    .font(.scaled(.subheadline).weight(.medium))
                 if !activity.argsSummary.isEmpty {
                     Text(activity.argsSummary)
-                        .font(.caption)
+                        .font(.scaled(.caption))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -136,12 +136,12 @@ public struct ToolRowView: View {
             Spacer(minLength: 8)
             if let diff = outputDiff {
                 Text(diff.counts)
-                    .font(.caption.monospacedDigit())
+                    .font(.scaled(.caption).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             if let duration = activity.duration {
                 Text(duration, format: .units(allowed: [.seconds, .milliseconds], width: .narrow))
-                    .font(.caption.monospacedDigit())
+                    .font(.scaled(.caption).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             status
@@ -154,7 +154,7 @@ public struct ToolRowView: View {
             ProgressView().controlSize(.small)
         } else {
             Image(systemName: activity.ok ? "checkmark.circle" : "exclamationmark.triangle")
-                .font(.caption)
+                .font(.scaled(.caption))
                 .foregroundStyle(activity.ok ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
                 .accessibilityLabel(activity.ok ? String(localized: "Done") : String(localized: "Failed"))
         }
@@ -164,7 +164,7 @@ public struct ToolRowView: View {
         VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
             if !activity.argsDetail.isEmpty {
                 Text(activity.argsDetail)
-                    .font(.caption.monospaced())
+                    .font(.scaled(.caption).monospaced())
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -182,7 +182,7 @@ public struct ToolRowView: View {
                         Button("Show all \(lineCount(output)) lines") {
                             withAnimation(.snappy) { showingAll = true }
                         }
-                        .font(.caption)
+                        .font(.scaled(.caption))
                         .buttonStyle(.plain)
                         .foregroundStyle(.tint)
                         .frame(minHeight: controlTarget)
@@ -202,7 +202,7 @@ public struct ToolRowView: View {
                                 Text(fetching ? "Fetching the rest…" : "Output was cut · Show full output")
                             }
                         }
-                        .font(.caption)
+                        .font(.scaled(.caption))
                         .buttonStyle(.plain)
                         .foregroundStyle(.tint)
                         .frame(minHeight: controlTarget)
@@ -212,12 +212,12 @@ public struct ToolRowView: View {
                         .accessibilityHint("Fetches the rest of the output from the Mac")
                     } else {
                         Text("Output was cut; the rest is on the Mac.")
-                            .font(.caption)
+                            .font(.scaled(.caption))
                             .foregroundStyle(.secondary)
                     }
                 }
             } else if !activity.running {
-                Text("No output.").font(.caption).foregroundStyle(.secondary)
+                Text("No output.").font(.scaled(.caption)).foregroundStyle(.secondary)
             }
         }
         .padding(LayoutMetrics.inner)
@@ -231,7 +231,7 @@ public struct ToolRowView: View {
             DiffView(diff: diff, lines: visibleLineLimit)
         } else {
             Text(shown(output))
-                .font(.caption.monospaced())
+                .font(.scaled(.caption).monospaced())
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -270,7 +270,7 @@ public struct DiffView: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(lines.map { Array(diff.lines.prefix($0)) } ?? diff.lines) { line in
                 Text(line.text.isEmpty ? " " : line.text)
-                    .font(.caption.monospaced())
+                    .font(.scaled(.caption).monospaced())
                     .foregroundStyle(colour(line.kind))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 4)
