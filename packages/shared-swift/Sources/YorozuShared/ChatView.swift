@@ -343,6 +343,10 @@ public struct ChatView: View {
             // this; the phone has one from iOS 26, and a compact identity in its `.principal`
             // item before that.
             .navigationSubtitle(macModelCaption)
+            // The bar draws its own backdrop, always. Left to decide for itself it went clear
+            // over a transcript that reached it and opaque over a project row that did not,
+            // so the bar had an edge in one kind of thread and none in the other.
+            .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
         #endif
         #if os(iOS)
         .toolbar {
