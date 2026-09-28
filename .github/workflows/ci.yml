@@ -44,7 +44,7 @@ jobs:
           }
           build='^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json)$'
           {
-            flag ts "^(apps/relay|packages/runtime|packages/shared|packages/openclaw-channel)/|^fixtures/swift-vectors\.json$|^apps/mac/Sources/YorozuNative/Apple\.swift$|^catalog/models\.json$|$build"
+            flag ts "^(apps/relay|packages/runtime|packages/shared)/|^fixtures/swift-vectors\.json$|^apps/mac/Sources/YorozuNative/Apple\.swift$|^catalog/models\.json$|$build"
             flag relay '^apps/relay/|^tsconfig\.base\.json$'
             # Interop suites read vectors from fixtures/; wire tests run relay and sidecar.
             flag swift "^(packages/shared-swift|packages/shared|packages/runtime|apps/relay|apps/mac)/|^fixtures/ts-vectors\.json$|^scripts/check-mac-multi-host\.(sh|swift)$|$build"

@@ -207,18 +207,20 @@ none of it. Each Yorozu thread is its own OpenClaw conversation, and OpenClaw ca
 1. If the probe found no `openclaw` on PATH, install and onboard OpenClaw per its own docs
    (this guide does not own that). Have them configure at least one provider there and confirm
    the Gateway runs.
-2. Add the Yorozu channel. The plugin ships inside Yorozu.app; `--link` keeps it updated with
-   the app. Tell them this changes their OpenClaw config and restarts the Gateway, which drops
-   their other OpenClaw channels for a few seconds, and ask before running:
+2. Add the Yorozu channel, a public plugin at
+   <https://github.com/izyuumi/yorozu-openclaw-channel>. Tell them this changes their OpenClaw
+   config and restarts the Gateway, which drops their other OpenClaw channels for a few seconds,
+   and ask before running:
 
    ```sh
-   openclaw plugins install --link --accept-capabilities /Applications/Yorozu.app/Contents/Resources/openclaw-channel
+   openclaw plugins install git:github.com/izyuumi/yorozu-openclaw-channel --accept-capabilities
    openclaw config set channels.yorozu.enabled true
    openclaw agents bind --bind yorozu
    openclaw gateway restart
    ```
 
-   OpenClaw warns that the plugin is not from ClawHub; that is expected for a local plugin.
+   OpenClaw asks to confirm a source outside ClawHub; that is expected. In a non-interactive
+   shell, add `--force` to the install line. Update later with `openclaw plugins update yorozu`.
    `agents bind` routes Yorozu to OpenClaw's default agent. If they have several agents, ask
    which one should answer Yorozu and add `--agent <id>`. Without a binding, OpenClaw rejects
    every Yorozu message when more than one agent is configured.

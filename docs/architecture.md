@@ -500,9 +500,9 @@ exists while it is open and replies have to keep arriving either way.
 ### Host: the channel socket
 
 `yorozu` threads reach OpenClaw through a second owner-only socket beside `local.sock`:
-`<state dir>/channel.sock`. OpenClaw's `yorozu` channel plugin (`packages/openclaw-channel`,
-bundled at `Yorozu.app/Contents/Resources/openclaw-channel`) runs inside the Gateway and
-connects to it. The wire is newline-delimited JSON, and the socket's `0600` mode is the access
+`<state dir>/channel.sock`. OpenClaw's `yorozu` channel plugin
+([izyuumi/yorozu-openclaw-channel](https://github.com/izyuumi/yorozu-openclaw-channel)) runs
+inside the Gateway and connects to it. The wire is newline-delimited JSON, and the socket's `0600` mode is the access
 control, so every inbound message is the owner's.
 
 | Frame | Direction | Meaning |
@@ -520,7 +520,7 @@ answers. Messages are text only; attachments are not forwarded yet.
 Setup, once per host (README → Install, step 5):
 
 ```sh
-openclaw plugins install --link --accept-capabilities /Applications/Yorozu.app/Contents/Resources/openclaw-channel
+openclaw plugins install git:github.com/izyuumi/yorozu-openclaw-channel --accept-capabilities
 openclaw config set channels.yorozu.enabled true
 openclaw agents bind --bind yorozu
 openclaw gateway restart
