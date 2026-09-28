@@ -3018,8 +3018,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
       return boxes;
     };
     sendTo = (device, event) => { for (const box of boxesFor(device, event)) sendFrame(box); };
+    /** Phones holding a socket on the relay, by its count. Undefined until it says. */
+    let phones: number | undefined;
     const emptyBatchBytes = Buffer.byteLength(JSON.stringify({ type: "frame", frames: [] }));
     sendToAll = (event, maxBuffered) => {
+      // The relay keeps nothing the Mac sends, so a frame into a room with no phone in it is
+      // only a bill. Unknown stays as it was: an older relay never says.
+      if (phones === 0) return 0;
       if (maxBuffered !== undefined) {
         // Cover both current and legacy boxes without burning sequence numbers while held.
         const estimate = devices.size * (Buffer.byteLength(JSON.stringify(event)) * 3 + 1_024);
@@ -3252,7 +3257,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
                 ),
               }),
             );
+          case "phones":
+            phones = typeof msg.count === "number" ? msg.count : undefined;
+            return;
           case "registered":
+            phones = typeof msg.phones === "number" ? msg.phones : undefined;
             room = String(msg.roomId);
             relayReady = true;
             state("registered");
@@ -3323,6 +3332,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
     ws.on("close", () => {
       relayReady = false;
+      phones = undefined;
       clearTraces();
       catchupSends.clear();
       if (catchupTimer) clearTimeout(catchupTimer);

@@ -35,14 +35,19 @@ export function client(target: Target, room?: string) {
   const ws = new WebSocket(url);
   const queue: any[] = [];
   const waiters: ((v: any) => void)[] = [];
+  const phones: number[] = [];
   ws.on("message", (d) => {
     const msg = JSON.parse(d.toString());
+    // Unsolicited, so kept out of the ordered queue the rest of a test reads from.
+    if (msg.type === "phones") return void phones.push(msg.count);
     const waiter = waiters.shift();
     if (waiter) waiter(msg);
     else queue.push(msg);
   });
   return {
     ws,
+    /** Every phone count the relay has reported to this socket, oldest first. */
+    phones,
     send: (msg: unknown) => ws.send(JSON.stringify(msg)),
     /** Signs and sends an opaque frame the way a paired device does. */
     frame: (payload: string, keys: Keys) =>

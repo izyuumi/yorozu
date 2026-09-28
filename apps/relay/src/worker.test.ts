@@ -63,8 +63,10 @@ async function connect(room: string) {
   const waiters: ((v: any) => void)[] = [];
   let closeCode: number | null = null;
   const closers: ((v: number) => void)[] = [];
+  const phones: number[] = [];
   ws.addEventListener("message", (event: MessageEvent) => {
     const msg = JSON.parse(String(event.data));
+    if (msg.type === "phones") return void phones.push(msg.count);
     const waiter = waiters.shift();
     if (waiter) waiter(msg);
     else queue.push(msg);
@@ -76,6 +78,7 @@ async function connect(room: string) {
   ws.accept();
   return {
     ws,
+    phones,
     send: (msg: unknown) => ws.send(JSON.stringify(msg)),
     raw: (text: string) => ws.send(text),
     close: (code?: number, reason?: string) => ws.close(code, reason),
