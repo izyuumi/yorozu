@@ -36,7 +36,7 @@ struct GeneralView: View {
                     Button("Run Again…") { OnboardingWindow.show() }
                 }
             }
-            if session.role == .host { RelayView(sidecar: sidecar) }
+            if session.role == .host { RelayView(status: sidecar.state) }
             Section {
                 Picker("Send message with", selection: $sendWithCommandReturn) {
                     Text("Enter").tag(false)
