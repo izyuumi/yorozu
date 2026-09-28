@@ -479,6 +479,8 @@ public struct MessageAttachment: Codable, Equatable, Sendable {
     /// The bytes back, or nil if what arrived was not base64 after all.
     public var bytes: Data? { Data(base64Encoded: data) }
     private var legacyDescriptor: (bytes: Int, hash: String)? {
+        // Asked of every attachment on every draw: never walk megabytes of file to say no.
+        guard data.hasPrefix("yorozu-deferred-v1:") else { return nil }
         let parts = data.split(separator: ":", omittingEmptySubsequences: false)
         guard parts.count == 3, parts[0] == "yorozu-deferred-v1",
               let size = Int(parts[1]), size > 0, size <= Self.maxBytes,

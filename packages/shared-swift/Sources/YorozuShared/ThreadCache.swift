@@ -19,6 +19,20 @@ public struct ThreadCache: Sendable {
         var historyLoaded: Bool?
     }
 
+    /// Staged and pending files, each sealed once under the hash of its contents. The records
+    /// naming them change with every retry date and upload offset, and are written on the main
+    /// actor: megabytes of unchanged file must not be re-encoded and rewritten each time.
+    private final class Files: @unchecked Sendable {
+        let lock = NSLock()
+        /// Content already hashed, so a save finds its file by comparing, not by hashing.
+        var known: [(data: String, name: String)] = []
+        /// Files each record names. Nothing is swept until both records have been seen.
+        var named: [String: Set<String>] = [:]
+        var swept: Set<String>?
+    }
+    private let files = Files()
+    private static let fileReference = "yorozu-file-v1:"
+
     public init(directory: URL, key: SymmetricKey) {
         self.directory = directory
         self.key = key
@@ -71,11 +85,14 @@ public struct ThreadCache: Sendable {
     /// Messages typed while there was nowhere to send them, oldest first. Sealed like the rest:
     /// a message waiting to go out is as much of a secret as one that went.
     public func outbox() -> [OutboxItem] {
-        read([OutboxItem].self, from: "outbox") ?? []
+        var used: Set<String> = []
+        let outbox = (read([OutboxItem].self, from: "outbox") ?? []).map { $0.mappingFiles { loaded($0, &used) } }
+        keep(used, for: "outbox")
+        return outbox
     }
 
     public func save(outbox: [OutboxItem]) {
-        write(outbox, to: "outbox")
+        try? savePending(outbox)
     }
 
     public struct ComposerState: Codable, Sendable {
@@ -101,11 +118,21 @@ public struct ThreadCache: Sendable {
     }
 
     public func composer() -> ComposerState? {
-        read(ComposerState.self, from: "composer")
+        var used: Set<String> = []
+        var composer = read(ComposerState.self, from: "composer")
+        if let attachments = composer?.attachments {
+            composer?.attachments = attachments.mapValues { $0.map { loaded($0, &used) } }
+        }
+        keep(used, for: "composer")
+        return composer
     }
 
     public func save(composer: ComposerState) throws {
+        var composer = composer
+        var used: Set<String> = []
+        composer.attachments = try composer.attachments.mapValues { try $0.map { try stored($0, &used) } }
         try writeRequired(composer, to: "composer")
+        keep(used, for: "composer")
     }
 
     /// Text changes far more often than staged file bytes. Keep it and the send marker in a
@@ -128,7 +155,56 @@ public struct ThreadCache: Sendable {
     }
 
     public func savePending(_ outbox: [OutboxItem]) throws {
-        try writeRequired(outbox, to: "outbox")
+        var used: Set<String> = []
+        try writeRequired(outbox.map { try $0.mappingFiles { try stored($0, &used) } }, to: "outbox")
+        keep(used, for: "outbox")
+    }
+
+    /// The file is written before the record that names it, and swept only after a record
+    /// stops naming it, so a crash between the two leaves nothing a record cannot find.
+    private func stored(_ file: MessageAttachment, _ used: inout Set<String>) throws -> MessageAttachment {
+        guard !file.data.isEmpty, !file.isDeferred, !file.data.hasPrefix(Self.fileReference) else { return file }
+        let name: String
+        if let known = files.lock.withLock({ files.known.first { $0.data == file.data }?.name }) {
+            name = known
+        } else {
+            name = "file-" + SHA256.hash(data: Data(file.data.utf8)).map { String(format: "%02x", $0) }.joined()
+            files.lock.withLock { files.known.append((file.data, name)) }
+        }
+        if !FileManager.default.fileExists(atPath: url(name).path) {
+            try seal(Data(file.data.utf8), to: name)
+        }
+        used.insert(name)
+        var file = file
+        file.data = Self.fileReference + name
+        return file
+    }
+
+    private func loaded(_ file: MessageAttachment, _ used: inout Set<String>) -> MessageAttachment {
+        guard file.data.hasPrefix(Self.fileReference) else { return file }
+        let name = String(file.data.dropFirst(Self.fileReference.count))
+        used.insert(name)
+        guard let plain = open(name) else { return file }
+        var file = file
+        file.data = String(decoding: plain, as: UTF8.self)
+        files.lock.withLock { files.known.append((file.data, name)) }
+        return file
+    }
+
+    private func keep(_ used: Set<String>, for record: String) {
+        let kept: Set<String>? = files.lock.withLock {
+            files.named[record] = used
+            guard files.named.count == 2 else { return nil }
+            let kept = files.named.values.reduce(into: Set<String>()) { $0.formUnion($1) }
+            guard kept != files.swept else { return nil }
+            files.swept = kept
+            files.known.removeAll { !kept.contains($0.name) }
+            return kept
+        }
+        guard let kept, let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else { return }
+        for name in names where name.hasPrefix("file-") && !kept.contains(String(name.dropLast(4))) {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+        }
     }
 
     public func events(threadId: String) -> [YorozuEvent] {
@@ -174,18 +250,34 @@ public struct ThreadCache: Sendable {
     }
 
     private func writeRequired(_ value: some Encodable, to name: String) throws {
-        let plain = try JSONEncoder().encode(value)
+        try seal(JSONEncoder().encode(value), to: name)
+    }
+
+    private func seal(_ plain: Data, to name: String) throws {
         let sealed = try AES.GCM.seal(plain, using: key).combined!
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try sealed.write(to: url(name), options: .atomic)
     }
 
     private func read<T: Decodable>(_ type: T.Type, from name: String) -> T? {
+        open(name).flatMap { try? JSONDecoder().decode(type, from: $0) }
+    }
+
+    private func open(_ name: String) -> Data? {
         guard let raw = try? Data(contentsOf: url(name)),
-            let box = try? AES.GCM.SealedBox(combined: raw),
-            let plain = try? AES.GCM.open(box, using: key)
+            let box = try? AES.GCM.SealedBox(combined: raw)
         else { return nil }
-        return try? JSONDecoder().decode(type, from: plain)
+        return try? AES.GCM.open(box, using: key)
+    }
+}
+
+private extension OutboxItem {
+    func mappingFiles(_ change: (MessageAttachment) throws -> MessageAttachment) rethrows -> OutboxItem {
+        guard case .message(var message) = event.payload, !message.attachments.isEmpty else { return self }
+        var item = self
+        message.attachments = try message.attachments.map(change)
+        item.event.payload = .message(message)
+        return item
     }
 }
 
