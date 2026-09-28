@@ -200,8 +200,8 @@ public final class ChatModel {
     public private(set) var devices: [DeviceInfo] = []
     /// Includes empty replies, so pairing can await a confirmed list before showing its code.
     public private(set) var deviceListRevision = 0
-    /// Whether each agent would answer here, newest answer wins. Nil until the runtime answers
-    /// ``requestAgentStatus()``; only the host Mac asks.
+    /// Whether each agent would answer here. Nil while ``requestAgentStatus()`` waits for the
+    /// runtime, so a check that finds nothing new still reads as a check; only the host Mac asks.
     public private(set) var agentStatus: AgentStatusData?
     /// Every model a thread can be put on, as the Mac has it configured. Arrives with the
     /// thread list; empty until then, which is a picker that offers only Default.
@@ -1874,8 +1874,9 @@ public final class ChatModel {
             "\(platform) \(version.majorVersion).\(version.minorVersion)\(patch)")), in: "")
     }
 
-    /// Asks the runtime which agents would answer. The previous answer stays until a new one lands.
+    /// Asks the runtime which agents would answer, forgetting the last answer until this one lands.
     public func requestAgentStatus() {
+        agentStatus = nil
         emit(.agentStatus(AgentStatusData()), in: "")
     }
 
