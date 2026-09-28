@@ -151,18 +151,27 @@ test("an address that keeps dialling is refused before any object is touched", a
     SELF.fetch(`https://relay.test/?room=${"A".repeat(43)}`, {
       headers: { Upgrade: "websocket", "CF-Connecting-IP": "203.0.113.7" },
     });
-  for (let i = 0; i < 30; i++) {
-    const response = await dial();
-    expect(response.status).toBe(101);
-    response.webSocket!.accept();
-    response.webSocket!.close();
-  }
   const rooms = (env as unknown as Env).ROOM;
   const named = vi.spyOn(rooms, "idFromName");
   try {
-    const refused = await dial();
-    expect(refused.status).toBe(429);
-    expect(named).not.toHaveBeenCalled();
+    // The limiter's minute may turn over part way through, so the refusal is looked for
+    // across two of them rather than expected on exactly the thirty-first dial.
+    let accepted = 0;
+    let refused: Response | undefined;
+    while (!refused && accepted <= 60) {
+      const response = await dial();
+      if (response.status === 429) refused = response;
+      else {
+        expect(response.status).toBe(101);
+        response.webSocket!.accept();
+        response.webSocket!.close();
+        accepted++;
+      }
+    }
+    expect(refused).toBeDefined();
+    expect(accepted).toBeGreaterThanOrEqual(30);
+    // Every accepted dial named a room; the refused one did not.
+    expect(named).toHaveBeenCalledTimes(accepted);
   } finally {
     named.mockRestore();
   }
