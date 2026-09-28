@@ -638,6 +638,7 @@ struct YorozuMacApp: App {
                     OnboardingWindow.openChat = {
                         if !HostWindowMode.active { openWindow(id: Self.chatWindow) }
                     }
+                    SettingsPaneRouter.openWindow = { openWindow(id: Self.settingsWindow) }
                     HostWindowMode.openQuickChat = { openQuickChat() }
                     if HostWindowMode.pendingExplicitOpen {
                         HostWindowMode.pendingExplicitOpen = false

@@ -137,6 +137,18 @@ struct DevicesView: View {
     }
 }
 
+/// What pairing can offer while the sidecar is in a given `STATE`. A stop or a restart recovers
+/// on its own and a code comes back without a click, so only a failure asks anything of the user.
+enum PairingAvailability: Equatable {
+    case available, restarting, failed
+
+    init(sidecarState state: String) {
+        if state.hasPrefix("failed") { self = .failed }
+        else if state == "stopped" || state == "closed" || state.hasPrefix("restarting") { self = .restarting }
+        else { self = .available }
+    }
+}
+
 /// The pairing payload, as a QR to scan and a string to paste. One sheet rather than a tab:
 /// pairing is something you do once per device, not a setting.
 struct PairingSheet: View {
@@ -153,6 +165,7 @@ struct PairingSheet: View {
     @State private var progress = DevicePairingProgress()
     @State private var preparationFailed = false
     @State private var attempt = 0
+    @AppStorage(RelaySettings.key) private var relayURL = RelaySettings.defaultUrl
 
     private var model: ChatModel { MacChatSession.shared.model }
 
@@ -174,7 +187,7 @@ struct PairingSheet: View {
                     VStack(spacing: 8) {
                         if preparationFailed {
                             Text("Couldn’t load paired devices").font(.scaled(.headline))
-                            Text("Check the connection in General settings, then try again.")
+                            Text("This Mac didn’t hear back from Yorozu’s background service in time.")
                                 .font(.scaled(.callout)).foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
                             Button("Try again") { attempt += 1 }
@@ -190,16 +203,28 @@ struct PairingSheet: View {
                         .frame(width: 220, height: 220)
                         .accessibilityLabel("Pairing QR code")
                     Text("Scan with Yorozu on your iPhone or iPad.").font(.scaled(.caption)).foregroundStyle(.secondary)
+                    Text("Don’t have Yorozu on your iPhone? [Get it](https://yorozu.yumi.to/iphone)")
+                        .font(.scaled(.caption)).foregroundStyle(.secondary)
                 } else {
-                    if sidecar.state == "stopped" || sidecar.state == "closed"
-                        || sidecar.state.hasPrefix("restarting") || sidecar.state.hasPrefix("failed") {
+                    let availability = PairingAvailability(sidecarState: sidecar.state)
+                    if availability != .available {
                         VStack(spacing: 8) {
                             Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
                                 .font(.scaled(.largeTitle))
-                            Text("Pairing is temporarily unavailable").font(.scaled(.headline))
-                            Text("Check the connection in General settings. When Yorozu reconnects, request a new code.")
-                                .font(.scaled(.callout))
-                                .foregroundStyle(.secondary)
+                                .accessibilityHidden(true)
+                            if availability == .failed {
+                                Text("Yorozu’s background service stopped").font(.scaled(.headline))
+                                Text("Relay: \(relayURL)")
+                                    .font(.scaled(.callout)).foregroundStyle(.secondary)
+                                    .lineLimit(1).truncationMode(.middle)
+                                Button("Open General Settings") { SettingsPaneRouter.shared.open("general") }
+                            } else {
+                                Text("Yorozu’s background service is restarting. A new code appears here when it’s back.")
+                                    .font(.scaled(.callout))
+                                    .multilineTextAlignment(.center)
+                            }
+                            Text(sidecar.state)
+                                .font(.scaled(.caption)).foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
                         }
                         .frame(height: 220)
@@ -235,6 +260,9 @@ struct PairingSheet: View {
                     // Codes are not revoked by minting another: the runtime and the relay keep
                     // recent ones until they expire, so "keep it private" is the whole advice.
                     Text("Or paste it into Connect to another Mac on a Mac, or Enter code manually on an iPhone or iPad. Codes work once and expire; keep this one private.")
+                        .font(.scaled(.caption)).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Text("Messages are end-to-end encrypted. The relay passes them along but can’t read them. [Privacy](https://yorozu.yumi.to/privacy)")
                         .font(.scaled(.caption)).foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
