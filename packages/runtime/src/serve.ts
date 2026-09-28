@@ -85,6 +85,7 @@ import type { AssignMode } from "./assign.js";
 import type { TurnContext } from "./index.js";
 import type { createLegacyRunner } from "./legacy.js";
 import { localSocketPath, startLocalChannel, type Send } from "./local.js";
+import { startChannelHost } from "./channel.js";
 import type { Provider } from "./provider.js";
 import { autoTitle, onDeviceTitler, type Titler } from "./title.js";
 // Mirrors PING in apps/relay/src/protocol.ts; the shipped runtime must not depend on the relay package.
@@ -432,6 +433,11 @@ export interface ServeOptions {
   /** Test seam for Gateway restart/recovery integration. */
   openclawRunner?: OpenClawRunner;
   /**
+   * `yorozu` threads talk to OpenClaw through its `yorozu` channel plugin on `channel.sock`
+   * instead of the Gateway client. Defaults to `YOROZU_OPENCLAW_CHANNEL=1`.
+   */
+  openclawChannel?: boolean;
+  /**
    * The native coding agents, by thread agent kind. Defaults to Claude Code through the Agent
    * SDK; a kind with no runner answers that it is not available. Test seam for a fake SDK.
    */
@@ -522,7 +528,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const keys = loadKeys(dir);
   const provider = options.provider;
   const titler = options.titler ?? onDeviceTitler;
-  const openclaw = provider ? undefined : options.openclawRunner ?? new OpenClawRunner({ stateDir: dir });
+  const openclawChannel = !provider && (options.openclawChannel ?? env.YOROZU_OPENCLAW_CHANNEL === "1");
+  const openclaw = provider || openclawChannel ? undefined : options.openclawRunner ?? new OpenClawRunner({ stateDir: dir });
   /**
    * Whether this thread's turns, stops and archives go through the OpenClaw bridge. Only a
    * `yorozu` thread does; a native agent's thread is its own session and never Gateway's,
@@ -2588,6 +2595,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
         // that admission before it receives the missing receipt.
         void enqueueTurn(event.threadId, event.data.text, true, event.data.attachments ?? [], event.id);
       }
+      // Logged but maybe never queued, if the host died in between. The plugin dedupes by id.
+      if (event.kind === "message" && event.data.role === "user" && !typed &&
+          openclawChannel && threadAgent(event.threadId, dir) === "yorozu") {
+        channel.forward({ id: event.id, threadId: event.threadId, ts: event.ts, text: event.data.text,
+          ...(event.data.attachments?.length ? { attachments: event.data.attachments } : {}) });
+      }
       receipt();
       return state("duplicate-message");
     }
@@ -2598,10 +2611,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
       admittedTurn = enqueueTurn(event.threadId, event.data.text, true,
         event.data.attachments ?? [], event.id, event);
     } else {
+      // A channel message has no completion of its own: OpenClaw answers when it answers.
+      const turnless = typed || openclawChannel && threadAgent(event.threadId, dir) === "yorozu";
       const logged = event.kind === "message" && event.data.role === "user"
         ? { ...event, data: { ...event.data,
-          runId: typed ? undefined : completionIdFor(event.threadId, event.id),
-          completionId: typed ? undefined : completionIdFor(event.threadId, event.id) } } : event;
+          runId: turnless ? undefined : completionIdFor(event.threadId, event.id),
+          completionId: turnless ? undefined : completionIdFor(event.threadId, event.id) } } : event;
       appendTranscript(logged, transcripts);
       appendThreadEvent(logged, dir);
       if (event.kind === "message" && event.data.role === "user" && !typed &&
@@ -2779,6 +2794,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // turn. Only this thread's: a "yes" typed into another chat is a message there, not an
     // answer to whatever happens to be the oldest card anywhere.
     if (typed && oldest) return oldest.settle(typed);
+    if (openclawChannel && threadAgent(event.threadId, dir) === "yorozu") {
+      channel.forward({ id: event.id, threadId: event.threadId, ts: event.ts, text: event.data.text,
+        ...(event.data.attachments?.length ? { attachments: event.data.attachments } : {}) });
+      return broadcast(event);
+    }
     const queued = admittedTurn ?? enqueueTurn(event.threadId, event.data.text, true,
       event.data.attachments ?? [], event.id, event);
     // Admission is durable now. Echoing by id is harmless and converges all clients.
@@ -2794,6 +2814,21 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
     });
   }
+
+  /** OpenClaw's `yorozu` channel plugin. Its messages land like any agent reply: logged, synced, pushed. */
+  const channel = startChannelHost({
+    dir,
+    onError: (message) => state(`channel-${message}`),
+    deliver: ({ id, threadId, text, title }) => {
+      const thread = listThreads(dir).find((known) => known.id === threadId);
+      if (thread && (thread.agent ?? "yorozu") !== "yorozu") throw new Error("not-a-channel-thread");
+      if (!thread) createThread(title, dir, threadId);
+      if (readThreadEvents(threadId, dir).some((known) => known.id === id)) return;
+      emit({ id, threadId, ts: Date.now(), agentId: MAIN_AGENT, kind: "message",
+        data: { role: "agent", text, done: true } });
+      if (!thread) broadcast(threadList());
+    },
+  });
 
   /**
    * The relay-free path in: the Mac app's own chat UI connects here instead of pairing. Its
@@ -3494,6 +3529,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       for (const turn of running.values()) turn.abort();
       if (retry) clearTimeout(retry);
       await local.close();
+      await channel.close();
       await legacyReady?.catch(() => undefined);
       await legacy?.close();
       return new Promise<void>((done) => {

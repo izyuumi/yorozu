@@ -14,15 +14,18 @@ import { dirname, join } from "node:path";
 import type { YorozuEvent } from "@yorozu/shared";
 
 /** Writes one event to a single connected client. */
-export type Send = (event: YorozuEvent) => void;
+export type Send<Out = YorozuEvent> = (event: Out) => void;
+
+let narrowed = 0;
+let outerUmask = 0;
 
 export const localSocketPath = (dir: string): string => join(dir, "local.sock");
 
-export interface LocalChannelOptions {
+export interface LocalChannelOptions<In = YorozuEvent, Out = YorozuEvent> {
   path: string;
   /** A client connected. `device` is its id for the lifetime of the connection. */
-  onOpen(device: string, send: Send): void;
-  onEvent(device: string, event: YorozuEvent): void;
+  onOpen(device: string, send: Send<Out>): void;
+  onEvent(device: string, event: In): void;
   onClose(device: string): void;
   onError?(message: string): void;
 }
@@ -32,7 +35,7 @@ export interface LocalChannel {
   close(): Promise<void>;
 }
 
-export function startLocalChannel(options: LocalChannelOptions): LocalChannel {
+export function startLocalChannel<In = YorozuEvent, Out = YorozuEvent>(options: LocalChannelOptions<In, Out>): LocalChannel {
   // Keys and plaintext logs live in the state dir, so nobody but the owner may even list it.
   // It is usually there already (loadKeys and the transcripts make it); this is for when it is not.
   mkdirSync(dirname(options.path), { recursive: true, mode: 0o700 });
@@ -49,7 +52,7 @@ export function startLocalChannel(options: LocalChannelOptions): LocalChannel {
     socket.setEncoding("utf8");
     let buffer = "";
 
-    const send: Send = (event) => {
+    const send: Send<Out> = (event) => {
       if (!socket.destroyed) socket.write(`${JSON.stringify(event)}\n`);
     };
 
@@ -62,7 +65,7 @@ export function startLocalChannel(options: LocalChannelOptions): LocalChannel {
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
-          options.onEvent(device, JSON.parse(line) as YorozuEvent);
+          options.onEvent(device, JSON.parse(line) as In);
         } catch (e) {
           // A bad line is one bad line: never a reason to drop the connection.
           options.onError?.(`local-frame-error ${e instanceof Error ? e.message : String(e)}`);
@@ -85,11 +88,14 @@ export function startLocalChannel(options: LocalChannelOptions): LocalChannel {
   // the start. It is put back as soon as listen settles, either way, so a failed bind does not
   // leave the whole process at 0o077 — and again from close(), because a server closed before
   // `listening` fires never fires it at all. Only the first restore does anything.
-  let previous: number | undefined = process.umask(0o077);
+  // Binds can overlap (local.sock and channel.sock start together): the first one in saves the
+  // umask and the last one out puts it back.
+  if (narrowed++ === 0) outerUmask = process.umask(0o077);
+  let restored = false;
   const restore = () => {
-    if (previous === undefined) return;
-    process.umask(previous);
-    previous = undefined;
+    if (restored) return;
+    restored = true;
+    if (--narrowed === 0) process.umask(outerUmask);
   };
   server.once("error", restore);
   server.listen(options.path, () => {

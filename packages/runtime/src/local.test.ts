@@ -865,3 +865,16 @@ test("a channel closed before it ever listened still puts the umask back", async
   await bareChannel(join(tmp, "state", "local.sock")).close();
   expect(process.umask()).toBe(before);
 });
+
+test("overlapping binds put the umask back once both settle", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "yorozu-umask-"));
+  const before = process.umask();
+  const quiet = { onOpen: () => {}, onEvent: () => {}, onClose: () => {} };
+  const a = startLocalChannel({ path: join(tmp, "a.sock"), ...quiet });
+  const b = startLocalChannel({ path: join(tmp, "b.sock"), ...quiet });
+  await vi.waitFor(() => expect(existsSync(join(tmp, "b.sock"))).toBe(true));
+  await vi.waitFor(() => expect(process.umask()).toBe(before));
+  await a.close();
+  await b.close();
+  expect(process.umask()).toBe(before);
+});

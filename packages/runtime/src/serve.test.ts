@@ -38,6 +38,7 @@ import type { NativeAgentRunner, NativeTurn } from "./native.js";
 import * as schedulerModule from "./scheduler.js";
 import { OpenClawRunner, type OpenClawTurn } from "./openclaw.js";
 import { localSocketPath } from "./local.js";
+import { channelSocketPath, type HostFrame, type PluginFrame } from "./channel.js";
 import { SYNC_PAGE_BYTES, setNativeTurn, setThreadSession, appendThreadEvent, createThread, eventsAfter, listThreads, readThreadEvents } from "./threads.js";
 import { readTranscripts, transcriptDir } from "./transcripts.js";
 
@@ -4280,4 +4281,59 @@ test("agent_status is answered to the asker with every agent the runtime has", a
   expect(answer.data.openclaw).toEqual({ ok: true });
   expect(answer.data.claude).toHaveProperty("ok");
   expect(answer.data.codex).toHaveProperty("ok");
+});
+
+/** OpenClaw's `yorozu` channel plugin on `channel.sock`: raw frames, everything it hears. */
+async function channelPlugin(dir: string) {
+  const socket = createConnection(channelSocketPath(dir));
+  const frames: HostFrame[] = [];
+  let buffer = "";
+  socket.setEncoding("utf8");
+  socket.on("data", (chunk: string) => {
+    buffer += chunk;
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) if (line) frames.push(JSON.parse(line));
+  });
+  await new Promise<void>((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
+  return { frames, send: (frame: PluginFrame) => socket.write(`${JSON.stringify(frame)}\n`), close: () => socket.destroy() };
+}
+
+test("channel mode: OpenClaw delivers into threads, and user messages wait for the plugin's ack", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-channel-"));
+  const runner = new OpenClawRunner({ stateDir: dir });
+  const run = vi.spyOn(runner, "run");
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, openclawChannel: true, openclawRunner: runner });
+  await vi.waitFor(() => expect(existsSync(channelSocketPath(dir))).toBe(true));
+  const plugin = await channelPlugin(dir);
+  const mac = await macClient(dir);
+
+  // Proactive: a thread OpenClaw names is created, logged and published.
+  plugin.send({ type: "deliver", id: "cron-1", threadId: "reports", text: "Nikkei closed up", title: "Reports" });
+  await vi.waitFor(() => expect(plugin.frames).toContainEqual({ type: "ack", id: "cron-1" }));
+  plugin.send({ type: "deliver", id: "cron-1", threadId: "reports", text: "Nikkei closed up" });
+  await vi.waitFor(() => expect(plugin.frames.filter((frame) => frame.type === "ack")).toHaveLength(2));
+  expect(readThreadEvents("reports", dir).filter((event) => event.id === "cron-1")).toMatchObject([
+    { kind: "message", data: { role: "agent", text: "Nikkei closed up", done: true } }]);
+  expect(listThreads(dir).find((thread) => thread.id === "reports")?.title).toBe("Reports");
+  await vi.waitFor(() => expect(mac.events.some((event) => event.id === "cron-1")).toBe(true));
+
+  // A native thread is not the channel's to write into.
+  createThread(undefined, dir, "code", { agent: "codex", cwd: proj });
+  plugin.send({ type: "deliver", id: "x", threadId: "code", text: "no" });
+  await vi.waitFor(() => expect(plugin.frames).toContainEqual({ type: "error", id: "x", reason: "not-a-channel-thread" }));
+
+  // Outbound: a user message goes to the plugin, not the Gateway runner, and survives a reconnect until acked.
+  mac.send({ kind: "message", data: { role: "user", text: "thanks" }, threadId: "reports" } as never);
+  const inbound = () => plugin.frames.find((frame) => frame.type === "inbound");
+  await vi.waitFor(() => expect(inbound()).toMatchObject({ message: { threadId: "reports", text: "thanks" } }));
+  plugin.close();
+  const again = await channelPlugin(dir);
+  await vi.waitFor(() => expect(again.frames).toContainEqual(inbound()));
+  if (inbound()?.type === "inbound") again.send({ type: "ack", id: (inbound() as { message: { id: string } }).message.id });
+  await vi.waitFor(() => expect(JSON.parse(readFileSync(join(dir, "channel-outbox.json"), "utf8"))).toEqual([]));
+  expect(run).not.toHaveBeenCalled();
+  again.close();
+  mac.close();
 });
