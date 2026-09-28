@@ -192,7 +192,11 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(app.textViews["echo: first result route probe"].waitForExistence(timeout: 30))
         app.navigationBars.buttons["Threads"].tap()
         list.swipeDown()
-        app.buttons[secondResultLabel].tap()
+        let returnedSecondResult = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", secondFingerprint)).firstMatch
+        XCTAssertTrue(returnedSecondResult.waitForExistence(timeout: 10),
+                      "Back navigation lost the second host's result")
+        returnedSecondResult.tap()
         app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch.tap()
         send("second result route probe")
         XCTAssertTrue(app.textViews["echo: second result route probe"].waitForExistence(timeout: 30))
