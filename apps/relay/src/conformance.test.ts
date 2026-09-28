@@ -12,6 +12,8 @@ import { CLOSE_BAD_SIGNATURE, CLOSE_PROTOCOL, CLOSE_RATE_LIMIT, FRAMES_PER_SEC, 
 export type Keys = { pub: string; sign(data: string): Promise<string> };
 
 export type Peer = {
+  /** Every phone count the relay has reported to this socket, oldest first. */
+  phones: number[];
   send(msg: unknown): void;
   /** Bytes straight onto the socket, for what `JSON.stringify` would never produce. */
   raw(text: string): void;
@@ -374,6 +376,27 @@ export function conformance(relay: Adapter) {
     expect(await phone.next()).toMatchObject({ type: "owner", online: false });
     await connectMac(macKeys);
     expect(await phone.next()).toMatchObject({ type: "owner", online: true });
+  });
+
+  test("tells the mac how many phones are listening", async () => {
+    const macKeys = await keypair();
+    const room = await roomId(macKeys.pub);
+    const mac = await connectMac(macKeys);
+    const { phone } = await connectPhone(room, await mintToken(mac));
+    expect(await phone.next()).toMatchObject({ type: "joined" });
+    await vi.waitFor(() => expect(mac.phones).toEqual([1]));
+    phone.close();
+    await vi.waitFor(() => expect(mac.phones).toEqual([1, 0]));
+
+    // A Mac that registers late learns the count from the reply, with nothing to wait for.
+    const { phone: second } = await connectPhone(room, await mintToken(mac));
+    expect(await second.next()).toMatchObject({ type: "joined" });
+    mac.close();
+    expect(await second.next()).toMatchObject({ type: "owner", online: false });
+    const again = await connect(room);
+    const { nonce } = await again.next();
+    again.send({ type: "register", pubkey: macKeys.pub, nonceSig: await macKeys.sign(nonce) });
+    expect(await again.next()).toMatchObject({ type: "registered", phones: 1 });
   });
 
   test("answers the heartbeat, and a phone can ask about presence again", async () => {

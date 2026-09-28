@@ -2990,6 +2990,63 @@ test("announces the paired list to the relay as soon as it has registered", asyn
   await new Promise<void>((done) => fake.close(() => done()));
 });
 
+test.each([
+  ["the relay counts one", { type: "phones", count: 1 }],
+  ["a live frame arrives from one", { type: "frame", payload: "not-a-frame" }],
+])("nothing is streamed into a room the relay says is empty, until %s", async (_how, arrival) => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-empty-room-"));
+  createThread("Home", stateDir, "quiet-thread");
+  writeFileSync(join(stateDir, "devices.json"), JSON.stringify([
+    { pub: toBase64Url(generateKeypair().publicKey), signingPub: "phone", pairedAt: 1, lastSeen: 1 },
+  ]));
+  const seen: Record<string, unknown>[] = [];
+  const lines: string[] = [];
+  const fake = new WebSocketServer({ port: 0 });
+  let macSocket!: import("ws").WebSocket;
+  fake.on("connection", (ws) => {
+    macSocket = ws;
+    ws.send(JSON.stringify({ type: "nonce", nonce: "n" }));
+    ws.on("message", (data) => {
+      const msg = JSON.parse(data.toString()) as Record<string, unknown>;
+      seen.push(msg);
+      if (msg.type === "register") ws.send(JSON.stringify({ type: "registered", roomId: "r", phones: 0 }));
+    });
+  });
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${(fake.address() as AddressInfo).port}`,
+    stateDir,
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: async () => sse("answered") }),
+    log: (line) => void lines.push(line),
+  });
+  const local = createConnection(localSocketPath(stateDir));
+  local.on("data", () => {});
+  const finals = (): number => readThreadEvents("quiet-thread", stateDir)
+    .filter((event) => event.kind === "message" && event.data.role === "agent" && event.data.done).length;
+  const ask = (id: string): void => void local.write(JSON.stringify({ id, threadId: "quiet-thread", ts: Date.now(), agentId: "mac", kind: "message", data: { role: "user", text: "hello" } }) + "\n");
+  try {
+    await vi.waitFor(() => expect(seen.some((msg) => msg.type === "devices")).toBe(true));
+    ask("unheard");
+    await vi.waitFor(() => expect(finals()).toBe(1));
+    // The wake still goes out: a phone that is away is exactly who a notification is for.
+    await vi.waitFor(() => expect(seen.some((msg) => msg.type === "notify")).toBe(true));
+    expect(seen.filter((msg) => msg.type === "frame")).toHaveLength(0);
+
+    // The socket is read in order, so a pairing string drawn from the token that follows the
+    // arrival is proof the arrival has been taken in.
+    const drawn = lines.filter((line) => line.startsWith("PAIR ")).length;
+    macSocket.send(JSON.stringify(arrival));
+    macSocket.send(JSON.stringify({ type: "token", token: "t" }));
+    await vi.waitFor(() => expect(lines.filter((line) => line.startsWith("PAIR "))).toHaveLength(drawn + 1));
+    ask("heard");
+    await vi.waitFor(() => expect(finals()).toBe(2));
+    await vi.waitFor(() => expect(seen.map((msg) => msg.type)).toContain("frame"));
+  } finally {
+    local.destroy();
+    await sidecar.close();
+    await new Promise<void>((done) => fake.close(() => done()));
+  }
+});
+
 test("an open relay socket holds notifications until registration completes", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "yorozu-registering-"));
   createThread("Home", stateDir, "early-thread");

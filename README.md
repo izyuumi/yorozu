@@ -35,12 +35,12 @@ blind push notifications, and the thread/sync model.
 | Path | What it is |
 | --- | --- |
 | `apps/mac` | SwiftUI menu bar app and the `yorozu-native` helper (SwiftPM, macOS 15+) |
-| `apps/ios` | SwiftUI iOS app, Tuist-generated project (iOS 18+) |
+| `apps/ios` | SwiftUI iOS app and its watchOS companion, Tuist-generated project (iOS 18+, watchOS 11+) |
 | `apps/relay` | blind websocket relay — a Cloudflare Worker and a self-hostable `ws` server |
 | `apps/web` | the `yorozu.yumi.to` site (Astro static build on a Cloudflare Worker) |
 | `packages/runtime` | the Node sidecar: relay bridge, OpenClaw Gateway client, native agent runners |
 | `packages/shared` | protocol event types shared by the TypeScript workspaces |
-| `packages/shared-swift` | SwiftUI views and the chat model shared by both apps |
+| `packages/shared-swift` | SwiftUI views and the chat model shared by both apps, and the phone–watch wire types |
 
 `packages/runtime` also carries a dormant in-house provider loop that ships but never runs — see
 [docs/legacy-runtime.md](docs/legacy-runtime.md).

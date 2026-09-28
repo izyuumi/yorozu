@@ -51,6 +51,7 @@ final class KeyboardChooserTests: XCTestCase {
         delivered.tap()
         XCTAssertTrue(app.textViews["Message"].waitForExistence(timeout: step), "Folder choice must open the new draft")
         XCTAssertTrue(delivered.waitForNonExistence(timeout: 5), "Starting a thread must dismiss the picker")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: step), "A new thread must open with its composer focused")
     }
 
     @MainActor

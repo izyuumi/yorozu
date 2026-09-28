@@ -3021,8 +3021,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
       return boxes;
     };
     sendTo = (device, event) => { for (const box of boxesFor(device, event)) sendFrame(box); };
+    /** Phones holding a socket on the relay, by its count. Undefined until it says. */
+    let phones: number | undefined;
     const emptyBatchBytes = Buffer.byteLength(JSON.stringify({ type: "frame", frames: [] }));
     sendToAll = (event, maxBuffered) => {
+      // The relay keeps nothing the Mac sends, so a frame into a room with no phone in it is
+      // only a bill. Unknown stays as it was: an older relay never says.
+      if (phones === 0) return 0;
       if (maxBuffered !== undefined) {
         // Cover both current and legacy boxes without burning sequence numbers while held.
         const estimate = devices.size * (Buffer.byteLength(JSON.stringify(event)) * 3 + 1_024);
@@ -3255,7 +3260,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
                 ),
               }),
             );
+          case "phones":
+            phones = typeof msg.count === "number" ? msg.count : undefined;
+            return;
           case "registered":
+            phones = typeof msg.phones === "number" ? msg.phones : undefined;
             retryMs = RECONNECT_MS;
             room = String(msg.roomId);
             relayReady = true;
@@ -3297,6 +3306,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
             // rather than deleted by the ack of the one after it. Live frames carry no `seq`.
             // A body that is not a frame at all is different: nothing will ever handle it, so
             // it is logged and acked, or it would sit at the head of the buffer for good.
+            // A live frame is a phone speaking now, whatever the count says: believe the frame.
+            if (phones === 0 && typeof msg.seq !== "number") phones = undefined;
             const body = parseFrameBody(msg.payload);
             if (!body) {
               state("frame-error malformed body");
