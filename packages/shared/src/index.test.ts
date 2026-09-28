@@ -4,6 +4,7 @@ import {
   attachmentsWithinLimits,
   decodeQrPayload,
   decodePairingString,
+  encodePairingLink,
   encodePairingString,
   type EventKind,
   type QrPayload,
@@ -246,6 +247,20 @@ test("pairing strings round-trip and untrusted input is rejected", () => {
   expect(bad("v=2&relay=ws://r&key=AAA&token=t")).toThrow(); // wrong version
   expect(bad("v=1&relay=ws://r&key=not+base64!&token=t")).toThrow();
   expect(() => decodePairingString("nonsense")).toThrow();
+});
+
+test("the QR's web link carries the same pairing in its fragment, and nothing else passes for it", () => {
+  const qr: QrPayload = { v: 1, relayUrl: "wss://relay.yumi.to", macPubkey: "AAA", token: "t-_", roomId: "r", secret: "s" };
+  const link = encodePairingLink(qr);
+  // Everything after `#`: a browser opening the link never sends the pairing to the site.
+  expect(link.startsWith("https://yorozu.yumi.to/pair#v=1&")).toBe(true);
+  expect(decodeQrPayload(link)).toEqual(qr);
+  const fragment = link.split("#")[1];
+  expect(decodePairingString(`https://yorozu.yumi.to/pair/#${fragment}`)).toEqual(qr);
+  expect(() => decodePairingString(`https://example.com/pair#${fragment}`)).toThrow();
+  expect(() => decodePairingString(`https://yorozu.yumi.to/other#${fragment}`)).toThrow();
+  expect(() => decodePairingString(`https://yorozu.yumi.to/pair?${fragment}`)).toThrow();
+  expect(() => decodePairingString(`http://yorozu.yumi.to/pair#${fragment}`)).toThrow();
 });
 
 test("a message can carry attachments, and the cap is the same 5 MB Swift enforces", () => {

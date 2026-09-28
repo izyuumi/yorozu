@@ -1613,10 +1613,21 @@ public struct QrPayload: Codable, Equatable, Sendable {
         return string
     }
 
-    /// The one parser for every way a pairing arrives: the QR, a pasted string, or a tapped
-    /// `yorozu://` link. Throws on anything that is not a v1 pairing string.
+    /// The page a pairing QR opens, and the universal link the phone app claims: the same query
+    /// as the `yorozu://` form, in the fragment, so a browser never sends it anywhere.
+    public static let link = "https://yorozu.yumi.to/pair"
+
+    /// The one parser for every way a pairing arrives: the QR, a pasted string, a tapped
+    /// `yorozu://` link or the web link the QR carries. Throws on anything that is not a v1
+    /// pairing string.
     public static func decode(_ text: String) throws -> QrPayload {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let web = URLComponents(string: text), web.scheme?.lowercased() == "https",
+           web.host?.lowercased() == URLComponents(string: link)?.host,
+           web.path == "/pair" || web.path == "/pair/", web.percentEncodedQuery == nil,
+           let fragment = web.percentEncodedFragment {
+            return try decodePairingString("yorozu://pair?\(fragment)")
+        }
         return try decodePairingString(text)
     }
 

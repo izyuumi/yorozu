@@ -795,12 +795,27 @@ export const encodePairingString = (payload: QrPayload): string => {
   return `yorozu://pair?${query}`;
 };
 
+/**
+ * The page a pairing QR opens, and the universal link the phone app claims. It carries the
+ * same query as the `yorozu://` form, in the fragment, so a browser never sends it anywhere:
+ * with the app installed the camera opens Yorozu, without it the page offers the download.
+ */
+export const PAIRING_LINK = "https://yorozu.yumi.to/pair";
+
+/** The QR's form of the pairing string. The copyable form stays `yorozu://` for older apps. */
+export const encodePairingLink = (payload: QrPayload): string =>
+  `${PAIRING_LINK}#${new URL(encodePairingString(payload)).search.slice(1)}`;
+
 /** base64url alphabet, unpadded: Buffer's decoder would happily skip anything else. */
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 
 /** Parses an untrusted pairing string. Throws on anything that is not a v1 payload. */
 export function decodePairingString(text: string): QrPayload {
-  const url = new URL(text.trim());
+  let url = new URL(text.trim());
+  if (url.protocol === "https:" && url.hostname === new URL(PAIRING_LINK).hostname
+    && (url.pathname === "/pair" || url.pathname === "/pair/") && !url.search) {
+    url = new URL(`yorozu://pair?${url.hash.slice(1)}`);
+  }
   if (url.protocol !== "yorozu:" || url.hostname !== "pair") {
     throw new Error("not a Yorozu v1 pairing string");
   }
