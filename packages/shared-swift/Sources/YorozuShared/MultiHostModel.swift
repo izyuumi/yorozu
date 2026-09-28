@@ -154,6 +154,9 @@ public final class MultiHostModel {
     /// live collection if two add flows complete together.
     @discardableResult public func add(_ session: HostSession) -> Bool {
         guard self.session(for: session.id) == nil else { return false }
+        if let query = sessions.first?.model.searchQuery, !query.isEmpty {
+            session.model.searchHost(query)
+        }
         sessions.append(session)
         session.model.foreground = foreground
         return true
