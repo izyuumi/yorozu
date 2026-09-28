@@ -5135,6 +5135,22 @@
         }
       }
     },
+    "Open Yorozu" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Abrir Yorozu" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozuを開く" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu 열기" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开 Yorozu" } }
+      }
+    },
+    "Open Yorozu from your Home Screen." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Abre Yorozu desde la pantalla de inicio." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホーム画面からYorozuを開きます。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "홈 화면에서 Yorozu를 엽니다." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "从主屏幕打开 Yorozu。" } }
+      }
+    },
     "Yorozu" : {
       "localizations" : {
         "es" : {
