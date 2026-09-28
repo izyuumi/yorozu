@@ -141,7 +141,10 @@ While the Mac is offline, phone frames are buffered per room and replayed in ord
 each tagged with a `seq` the Mac acks; an unacked frame is replayed to the next registration
 rather than lost. Mac frames are never buffered: the phone treats the socket as a fast path only,
 and on every join asks the Mac for the thread list, a sync, and the devices, so nothing depends
-on the socket having been up. The Mac's fan-out to every paired phone travels as one `frames`
+on the socket having been up. The relay tells the Mac how many phones hold a socket — in
+`registered`, then `{"type":"phones","count":…}` on every join and close — and the Mac sends no
+frames while that count is zero; a wake-up `notify` still goes. A relay that never reports a
+count is sent everything, as before. The Mac's fan-out to every paired phone travels as one `frames`
 batch and costs one token.
 
 Clients pass the room as `?room=<roomId>` on the websocket URL. The room only appears on the wire

@@ -180,6 +180,11 @@ function sendPhone(phone: WebSocket, raw: string): void {
  * banner instead of a silent send. This is routing state the relay already keeps — it says
  * nothing about the ciphertext, so the relay stays blind.
  */
+/** Tells the Mac how many phones are listening, so it can stop streaming into an empty room. */
+function notifyPhones(room: Room): void {
+  room.mac?.send(JSON.stringify({ type: "phones", count: room.phones.size }));
+}
+
 function notifyOwner(room: Room, online: boolean): void {
   const raw = JSON.stringify({ type: "owner", online });
   for (const phone of room.phones) sendPhone(phone, raw);
@@ -352,7 +357,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           conn.roomId = id;
           conn.key = key;
           clearTimeout(authTimer);
-          ws.send(JSON.stringify({ type: "registered", roomId: id }));
+          ws.send(JSON.stringify({ type: "registered", roomId: id, phones: room.phones.size }));
           log("registered", { phones: room.phones.size });
           notifyOwner(room, true);
           drainBuffer(room, ws, now);
@@ -459,6 +464,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           conn.key = key;
           clearTimeout(authTimer);
           ws.send(JSON.stringify({ type: "joined", roomId: id, ownerOnline: room.mac !== null }));
+          notifyPhones(room);
           return;
         }
 
@@ -530,7 +536,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
         room.mac = null;
         notifyOwner(room, false);
       }
-      room.phones.delete(ws);
+      if (room.phones.delete(ws)) notifyPhones(room);
       dropRoomIfIdle(id, room);
     });
   });

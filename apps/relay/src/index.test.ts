@@ -42,6 +42,7 @@ const adapter: Adapter = {
     peers.push(peer);
     await peer.open;
     return {
+      phones: peer.phones,
       send: peer.send,
       raw: (text) => peer.ws.send(text),
       close: (code, reason) => peer.ws.close(code, reason),

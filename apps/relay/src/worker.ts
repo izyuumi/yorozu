@@ -204,6 +204,7 @@ export class Room implements DurableObject {
     if (conn?.role === "mac" && !this.sockets("mac").some((other) => other !== ws)) {
       this.notifyOwner(false);
     }
+    if (conn?.role === "phone") this.notifyPhones(ws);
   }
 
   webSocketError(ws: WebSocket, error: unknown): void {
@@ -305,8 +306,9 @@ export class Room implements DurableObject {
       .filter((ws) => (ws.deserializeAttachment() as Conn | null)?.role === role);
   }
 
+  /** The Mac socket that is open. One it replaced lingers, closing, until its peer answers. */
   private mac(): WebSocket | null {
-    return this.sockets("mac")[0] ?? null;
+    return this.sockets("mac").find((ws) => ws.readyState === WebSocket.OPEN) ?? null;
   }
 
   /**
@@ -349,6 +351,20 @@ export class Room implements DurableObject {
   private notifyOwner(online: boolean): void {
     const raw = JSON.stringify({ type: "owner", online });
     for (const phone of this.sockets("phone")) send(phone, raw);
+  }
+
+  /** How many phones hold a socket, not counting one that is on its way out. */
+  private phoneCount(leaving?: WebSocket): number {
+    return this.sockets("phone").filter((ws) => ws !== leaving).length;
+  }
+
+  /**
+   * Tells the Mac how many phones are listening, so it can stop streaming into a room nobody
+   * is in. Routing state again: a count of sockets, nothing about what they carry.
+   */
+  private notifyPhones(leaving?: WebSocket): void {
+    const mac = this.mac();
+    if (mac) send(mac, JSON.stringify({ type: "phones", count: this.phoneCount(leaving) }));
   }
 
   /** Cloudflare has no bufferedAmount. Bound bytes sent since this phone last received them. */
@@ -624,7 +640,7 @@ export class Room implements DurableObject {
           if (stale !== ws) this.drop(stale, CLOSE_PROTOCOL, "replaced");
         }
         ws.serializeAttachment({ ...conn, role: "mac", key: pubkey } satisfies Conn);
-        ws.send(JSON.stringify({ type: "registered", roomId: id }));
+        ws.send(JSON.stringify({ type: "registered", roomId: id, phones: this.phoneCount() }));
         log("registered", { phones: this.sockets("phone").length });
         this.notifyOwner(true);
         return await this.drain(ws, now);
@@ -738,6 +754,7 @@ export class Room implements DurableObject {
         ws.serializeAttachment({ ...conn, role: "phone", key: phonePubkey } satisfies Conn);
         ws.send(JSON.stringify({ type: "joined", roomId: id, ownerOnline: this.ownerOnline(), flowControl: true }));
         log("joined", { rejoin: token === undefined, ownerOnline: this.ownerOnline() });
+        this.notifyPhones();
         return;
       }
 
