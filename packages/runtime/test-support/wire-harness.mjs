@@ -19,8 +19,10 @@
 //   GET  /dials           {"dials"}: when each phone connection arrived, ms since start
 //   GET  /events?thread=  {"events"}: the thread's durable events, as the Mac recorded them
 //   GET  /messages        {"messages"}: every user message and finished answer the Mac recorded
+//   POST /seed-search     write a host-only search match without broadcasting it to the phone
 //   GET  /metrics         content-free traffic and queue byte counts
 // Set LINK_DELAY_MS and LINK_BYTES_PER_SECOND to shape both phone directions.
+import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -36,7 +38,7 @@ process.env.YOROZU_PROJECTS_DIR = join(stateDir, "projects");
 mkdirSync(process.env.YOROZU_PROJECTS_DIR);
 const { serve } = await import("../dist/serve.js");
 const { openaiCompat } = await import("../dist/provider.js");
-const { listThreads, readThreadEvents } = await import("../dist/threads.js");
+const { appendThreadEvent, createThread, listThreads, readThreadEvents } = await import("../dist/threads.js");
 const delayMs = Number(process.env.LINK_DELAY_MS ?? 0);
 const bytesPerSecond = Number(process.env.LINK_BYTES_PER_SECOND ?? 0);
 if (!Number.isFinite(delayMs) || delayMs < 0 || !Number.isFinite(bytesPerSecond) || bytesPerSecond < 0) {
@@ -234,6 +236,17 @@ const control = createServer((request, response) => {
   const name = url.pathname.slice(1);
   let body;
   if (request.method === "POST" && faults[name]) { faults[name](); body = { ok: name }; }
+  else if (request.method === "POST" && name === "seed-search") {
+    const thread = createThread("Host-only search fixture", stateDir);
+    const old = Date.now() - 100_000;
+    appendThreadEvent({ id: randomUUID(), threadId: thread.id, ts: old, agentId: "main",
+      kind: "message", data: { role: "user", text: "host-only marker 6e72" } }, stateDir);
+    for (let index = 0; index < 45; index++) {
+      appendThreadEvent({ id: randomUUID(), threadId: thread.id, ts: old + (index + 1) * 1_000,
+        agentId: "main", kind: "message", data: { role: "user", text: `newer ordinary message ${index}` } }, stateDir);
+    }
+    body = { threadId: thread.id };
+  }
   else if (name === "pairing") {
     freshPairing().then((qr) => {
       response.writeHead(200, { "content-type": "application/json" });

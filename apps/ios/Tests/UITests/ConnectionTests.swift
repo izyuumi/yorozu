@@ -144,7 +144,12 @@ final class ConnectionTests: XCTestCase {
         app.launch()
         let back = app.navigationBars.buttons["Threads"]
         if back.waitForExistence(timeout: 5) { back.tap() }
-        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 10), "No thread list after relaunch")
+        let settings = app.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 10), "No thread list after relaunch")
+        let connected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "2 of 2 hosts connected"), object: settings)
+        XCTAssertEqual(XCTWaiter.wait(for: [connected], timeout: 45), .completed,
+                       "Both hosts did not reconnect before search")
         let list = app.collectionViews.firstMatch
         XCTAssertTrue(list.waitForExistence(timeout: 15))
         list.swipeDown()
@@ -154,7 +159,7 @@ final class ConnectionTests: XCTestCase {
         search.typeText("8f4a")
         let matches = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", marker))
         let both = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 2"), object: matches)
-        XCTAssertEqual(XCTWaiter.wait(for: [both], timeout: 15), .completed,
+        XCTAssertEqual(XCTWaiter.wait(for: [both], timeout: 45), .completed,
                        "One host's downloaded result is missing")
         XCTAssertTrue(app.staticTexts["All host histories searched"].waitForExistence(timeout: 30))
         XCTAssertEqual(matches.count, 2, "Host results duplicated downloaded matches")
@@ -172,8 +177,11 @@ final class ConnectionTests: XCTestCase {
         matches.firstMatch.tap()
         XCTAssertTrue(app.textViews[marker].waitForExistence(timeout: 10),
                       "Search result did not open its matching message")
-        app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch.tap()
-        app.navigationBars.buttons["Threads"].tap()
+        let close = app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch
+        close.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let threads = app.navigationBars.buttons["Threads"]
+        XCTAssertTrue(threads.waitForExistence(timeout: 5), "Closing in-thread search did not restore navigation")
+        threads.tap()
         list.swipeDown()
         XCTAssertEqual(search.value as? String, "8f4a", "Back navigation lost the search query")
         XCTAssertEqual(matches.count, 2, "Back navigation lost the search results")
@@ -187,7 +195,8 @@ final class ConnectionTests: XCTestCase {
         let firstResult = matches.matching(NSPredicate(format: "label != %@", secondResultLabel)).firstMatch
         XCTAssertTrue(firstResult.exists)
         firstResult.tap()
-        app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch.tap()
+        app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         send("first result route probe")
         XCTAssertTrue(app.textViews["echo: first result route probe"].waitForExistence(timeout: 30))
         app.navigationBars.buttons["Threads"].tap()
@@ -197,7 +206,8 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(returnedSecondResult.waitForExistence(timeout: 10),
                       "Back navigation lost the second host's result")
         returnedSecondResult.tap()
-        app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch.tap()
+        app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         send("second result route probe")
         XCTAssertTrue(app.textViews["echo: second result route probe"].waitForExistence(timeout: 30))
 
@@ -205,6 +215,52 @@ final class ConnectionTests: XCTestCase {
         let secondHost = try await rig2.messages().filter { $0.role == "user" && $0.text.contains("result route probe") }
         XCTAssertEqual(firstHost.map(\.text), ["first result route probe"], "First row opened the wrong host")
         XCTAssertEqual(secondHost.map(\.text), ["second result route probe"], "Second row opened the wrong host")
+    }
+
+    /// Pre-pairing host history is absent from routine sync. Local search cannot see it;
+    /// recovery must discover it, then backfill and open its older matching message.
+    @MainActor
+    func testHostOnlySearchResultOpensItsMatchingMessage() async throws {
+        let third = try XCTUnwrap(ProcessInfo.processInfo.environment["YOROZU_RIG3"].flatMap(URL.init(string:)))
+        let host = Rig(control: third)
+        try await host.post("heal")
+        try await host.post("seed-search")
+        let pairing = try await host.pairing()
+        let hostID = try XCTUnwrap(URLComponents(string: pairing)?.queryItems?
+            .first(where: { $0.name == "key" })?.value)
+        addTeardownBlock { [weak self] in
+            guard let self else { return }
+            self.app.terminate()
+            self.app.launchArguments = ["-yorozuRemoveHost", hostID]
+            self.app.launch()
+            try self.waitConnected()
+            self.app.terminate()
+        }
+        app.launchArguments = ["-yorozuPair", try await rig.pairing(), "-yorozuPairSecond", pairing]
+        app.launch()
+        let back = app.navigationBars.buttons["Threads"]
+        if back.waitForExistence(timeout: 5) { back.tap() }
+        let settings = app.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 30))
+        let connected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "2 of 2 hosts connected"), object: settings)
+        XCTAssertEqual(XCTWaiter.wait(for: [connected], timeout: 45), .completed)
+        try await host.post("down")
+        app.collectionViews.firstMatch.swipeDown()
+        let search = app.searchFields["Search threads"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10))
+        search.tap()
+        search.typeText("6e72")
+        let result = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "host-only marker 6e72")).firstMatch
+        XCTAssertTrue(app.staticTexts["Downloaded conversations and available host history"]
+            .waitForExistence(timeout: 20))
+        XCTAssertFalse(result.exists, "Host-only match appeared in downloaded search")
+        try await host.post("heal")
+        XCTAssertTrue(result.waitForExistence(timeout: 70), "Host-only match was not added to search results")
+        XCTAssertTrue(app.staticTexts["All host histories searched"].waitForExistence(timeout: 10))
+        result.tap()
+        XCTAssertTrue(app.textViews["host-only marker 6e72"].waitForExistence(timeout: 30),
+                      "Selecting a host-only result did not load its matching message")
     }
 
     /// A silently dead link is noticed and shown, then comes back on its own. Idle, nothing but

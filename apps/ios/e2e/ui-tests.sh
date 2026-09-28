@@ -17,11 +17,13 @@ mkdir -p "$OUT"
 UDID=""
 HARNESS=""
 HARNESS2=""
+HARNESS3=""
 
 cleanup() {
   local status=$?
   [ -n "$HARNESS" ] && kill "$HARNESS" 2>/dev/null || true
   [ -n "$HARNESS2" ] && kill "$HARNESS2" 2>/dev/null || true
+  [ -n "$HARNESS3" ] && kill "$HARNESS3" 2>/dev/null || true
   if [ -n "$UDID" ]; then
     # The app's own log dies with the simulator, and on failure it is the other half of the story.
     [ "$status" -ne 0 ] && xcrun simctl spawn "$UDID" log show --last 30m --style compact \
@@ -53,6 +55,15 @@ for _ in $(seq 1 100); do [ -s "$OUT/ready2" ] && break; sleep 0.1; done
 PORT2=$(sed -E 's/.*"control":([0-9]+).*/\1/' "$OUT/ready2")
 [ -n "$PORT2" ] || { echo "the second harness did not start; see $OUT/harness2.log" >&2; exit 1; }
 
+# Keep host-only search history older than this phone's first pairing even in the full suite.
+mkfifo "$OUT/stdin3"
+node "$ROOT/packages/runtime/test-support/wire-harness.mjs" <"$OUT/stdin3" >"$OUT/ready3" 2>"$OUT/harness3.log" &
+HARNESS3=$!
+exec 5>"$OUT/stdin3"
+for _ in $(seq 1 100); do [ -s "$OUT/ready3" ] && break; sleep 0.1; done
+PORT3=$(sed -E 's/.*"control":([0-9]+).*/\1/' "$OUT/ready3")
+[ -n "$PORT3" ] || { echo "the third harness did not start; see $OUT/harness3.log" >&2; exit 1; }
+
 echo "==> build for testing"
 # Signed ad hoc rather than not at all: without its entitlements the app cannot reach the
 # Keychain, where pairings live, and it needs no certificate that CI would have to hold.
@@ -76,7 +87,8 @@ xcodebuild build-for-testing \
 echo "==> test"
 # TEST_RUNNER_ variables reach the test process without the prefix.
 TEST_RUNNER_YOROZU_RIG="http://127.0.0.1:$PORT" \
-TEST_RUNNER_YOROZU_RIG2="http://127.0.0.1:$PORT2" xcodebuild test-without-building \
+TEST_RUNNER_YOROZU_RIG2="http://127.0.0.1:$PORT2" \
+TEST_RUNNER_YOROZU_RIG3="http://127.0.0.1:$PORT3" xcodebuild test-without-building \
   -workspace "$IOS/Yorozu.xcworkspace" -scheme YorozuUITests \
   -destination "id=$UDID" -derivedDataPath "$OUT/dd" \
   -resultBundlePath "$OUT/results.xcresult" "$@"
