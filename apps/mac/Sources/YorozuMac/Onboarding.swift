@@ -152,15 +152,15 @@ struct OnboardingView: View {
         page(
             progress: (3, 4, "Permissions"),
             title: "Choose what Yorozu can do",
-            detail: "All optional. Grant only what you want; each row re-checks itself and is always in Settings › Permissions."
+            detail: "All optional. Grant only what you want; each row re-checks itself and stays in Settings."
         ) {
-            PermissionsView(showSetupButton: false, scope: .onboarding)
+            PermissionsView(scope: .onboarding)
                 .padding(.horizontal, -24)
         } footer: {
             // Back rebuilds the sheet with a fresh baseline, so its earlier success is over.
             Button("Back") { devicePaired = false; step = .hostPair }
             Spacer()
-            Text("Files and personal data: Settings › Permissions")
+            Text("Files: Settings › Permissions")
                 .font(.scaled(.caption)).foregroundStyle(.secondary)
             Button("Finish") { step = .hostDone }
                 .buttonStyle(.borderedProminent)

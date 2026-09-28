@@ -87,9 +87,6 @@ struct DevicesView: View {
                 }
                 .leadingFooter()
             }
-            Section("Relay") {
-                LabeledContent("Status", value: sidecar.state)
-            }
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)

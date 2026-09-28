@@ -20,11 +20,13 @@ enum RelaySettings {
 }
 
 struct RelayView: View {
+    let status: String
     @AppStorage(RelaySettings.key) private var url = RelaySettings.defaultUrl
 
     var body: some View {
         Section {
             TextField("Relay", text: $url)
+            LabeledContent("Status", value: status)
         } footer: {
             Group {
                 Text("The blind relay your phone reaches this Mac through. Restart to apply.")

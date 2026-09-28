@@ -443,7 +443,6 @@ struct SettingsView: View {
             panes.append(("permissions", "Permissions", "lock.shield"))
             if backgroundOnlyHost {
                 panes.append(("notifications", "Notifications", "bell"))
-                panes.append(("updates", "Updates", "arrow.triangle.2.circlepath"))
             }
         } else if session.hosts.hasMultipleHosts {
             panes.append(("hosts", "Hosts", "desktopcomputer"))
@@ -464,9 +463,8 @@ struct SettingsView: View {
                 case "devices": DevicesView(sidecar: sidecar)
                 case "permissions": PermissionsView()
                 case "notifications": MacNotificationsView()
-                case "updates": UpdatesSettingsView()
                 case "hosts": HostsView()
-                default: GeneralView()
+                default: GeneralView(sidecar: sidecar)
                 }
             }
             .navigationTitle(pane.title)
