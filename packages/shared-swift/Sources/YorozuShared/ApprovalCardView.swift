@@ -51,7 +51,7 @@ public struct ApprovalCardView: View {
             if let amount = card.amount {
                 let formattedAmount = ApprovalAmountFormatter.string(amount: amount, currency: card.currency)
                 Text(formattedAmount)
-                    .font(.title2.weight(.semibold).monospacedDigit())
+                    .font(.scaled(.title2).weight(.semibold).monospacedDigit())
                     // The label must carry the number: a bare "Amount" replaced it.
                     .accessibilityLabel(
                         "Amount: \(formattedAmount)"
@@ -64,18 +64,18 @@ public struct ApprovalCardView: View {
             if card.mustConfirm == true { confirmNote }
             if pending {
                 Text("Answer pending · waiting for host")
-                    .font(.subheadline)
+                    .font(.scaled(.subheadline))
                     .foregroundStyle(.secondary)
             } else if disposition == .noLongerNeeded || disposition == .expired {
                 Text("No longer needed")
-                    .font(.subheadline)
+                    .font(.scaled(.subheadline))
                     .foregroundStyle(.secondary)
             } else if answered {
                 outcome
             } else {
                 if disposition == .rejected {
                     Text("Answer not applied")
-                        .font(.subheadline)
+                        .font(.scaled(.subheadline))
                         .foregroundStyle(.secondary)
                 }
                 if card.nativeAgent != nil {
@@ -131,12 +131,12 @@ public struct ApprovalCardView: View {
     private var header: some View {
         HStack(spacing: LayoutMetrics.inner) {
             Image(systemName: "hand.raised.fill")
-                .font(.body.weight(.semibold))
+                .font(.scaled(.body).weight(.semibold))
                 .foregroundStyle(YorozuPalette.vermilion)
                 .frame(width: 28, height: 28)
                 .background(YorozuPalette.vermilion.opacity(0.12), in: Circle())
             Text(headerTitle)
-                .font(.subheadline.weight(.medium))
+                .font(.scaled(.subheadline).weight(.medium))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
         }
@@ -147,12 +147,12 @@ public struct ApprovalCardView: View {
     private var subject: some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
             Text(verb.sentence)
-                .font(.headline)
+                .font(.scaled(.headline))
                 .fixedSize(horizontal: false, vertical: true)
             if !card.target.isEmpty {
                 ApprovalDetailText(
                     text: card.target,
-                    font: verb.isCode ? .callout.monospaced() : .callout,
+                    font: verb.isCode ? .scaled(.callout).monospaced() : .scaled(.callout),
                     previewLines: verb.isCode ? 6 : 3,
                     expandLabel: "Show full action",
                     collapseLabel: "Show less action",
@@ -176,11 +176,11 @@ public struct ApprovalCardView: View {
                 ForEach(rows, id: \.label) { row in
                     HStack(alignment: .firstTextBaseline, spacing: LayoutMetrics.inner) {
                         Text(row.label)
-                            .font(.caption.weight(.medium))
+                            .font(.scaled(.caption).weight(.medium))
                             .foregroundStyle(.secondary)
                             .frame(width: 74, alignment: .leading)
                         Text(row.value)
-                            .font(.callout)
+                            .font(.scaled(.callout))
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
@@ -196,7 +196,7 @@ public struct ApprovalCardView: View {
         if let summary = card.scope?.contentSummary, !summary.isEmpty {
             ApprovalDetailText(
                 text: summary,
-                font: .callout,
+                font: .scaled(.callout),
                 previewLines: 5,
                 expandLabel: "Show full content",
                 collapseLabel: "Show less content",
@@ -220,9 +220,9 @@ public struct ApprovalCardView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: itemsExpanded ? "chevron.down" : "chevron.right")
-                            .font(.caption2.weight(.semibold))
+                            .font(.scaled(.caption2).weight(.semibold))
                         Text("^[\(items.count) item](inflect: true) in this batch")
-                            .font(.subheadline.weight(.medium))
+                            .font(.scaled(.subheadline).weight(.medium))
                         Spacer(minLength: 0)
                     }
                     .frame(minHeight: controlTarget)
@@ -238,11 +238,11 @@ public struct ApprovalCardView: View {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text("•").foregroundStyle(.tertiary)
                         VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
-                            Text(item.label).font(.callout)
+                            Text(item.label).font(.scaled(.callout))
                                 .fixedSize(horizontal: false, vertical: true)
                             if let detail = item.detail, !detail.isEmpty {
                                 Text(detail)
-                                    .font(.callout)
+                                    .font(.scaled(.callout))
                                     .foregroundStyle(.secondary)
                                     .lineLimit(itemsExpanded ? nil : 1)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -255,7 +255,7 @@ public struct ApprovalCardView: View {
                 }
                 if !itemsExpanded, items.count > Self.itemsShown {
                     Text("and \(items.count - Self.itemsShown) more")
-                        .font(.caption)
+                        .font(.scaled(.caption))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -272,8 +272,8 @@ public struct ApprovalCardView: View {
     @ViewBuilder private var consequence: some View {
         if let line = card.scope?.consequence, !line.isEmpty {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: "arrow.turn.down.right").font(.caption)
-                Text(line).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                Image(systemName: "arrow.turn.down.right").font(.scaled(.caption))
+                Text(line).font(.scaled(.subheadline)).fixedSize(horizontal: false, vertical: true)
             }
             .foregroundStyle(.secondary)
         }
@@ -282,9 +282,9 @@ public struct ApprovalCardView: View {
     /// Set on the actions no rule may ever stand in for, so the card says why it is here.
     private var confirmNote: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(systemName: "exclamationmark.shield.fill").font(.caption)
+            Image(systemName: "exclamationmark.shield.fill").font(.scaled(.caption))
             Text("Yorozu always asks about this kind of action, whatever rules are saved.")
-                .font(.caption)
+                .font(.scaled(.caption))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .foregroundStyle(.orange)
@@ -322,7 +322,7 @@ public struct ApprovalCardView: View {
                     choice(.no, "Don't allow", prominent: false)
                     Button { answer(.discuss, nil) } label: {
                         Text("Discuss first")
-                            .font(.subheadline)
+                            .font(.scaled(.subheadline))
                             .frame(maxWidth: .infinity, minHeight: controlTarget)
                     }
                         .buttonStyle(.bordered)
@@ -332,14 +332,14 @@ public struct ApprovalCardView: View {
             #endif
             #if os(macOS)
                 Button("Discuss first") { answer(.discuss, nil) }
-                    .font(.subheadline)
+                    .font(.scaled(.subheadline))
                     .buttonStyle(.plain)
                     .foregroundStyle(.tint)
                     .frame(minHeight: controlTarget)
                     .accessibilityHint("Ask Yorozu to explain before deciding")
             #endif
             Text(grantNote)
-                .font(.caption)
+                .font(.scaled(.caption))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -350,7 +350,7 @@ public struct ApprovalCardView: View {
     @ViewBuilder private func choice(_ value: ApprovalAnswerData.Answer, _ title: String, prominent: Bool) -> some View {
         let button = Button { answer(value, nil) } label: {
             Text(title)
-                .font(.body.weight(prominent ? .semibold : .regular))
+                .font(.scaled(.body).weight(prominent ? .semibold : .regular))
                 .frame(maxWidth: .infinity, minHeight: controlTarget)
         }
         if prominent { button.buttonStyle(.borderedProminent) }
@@ -363,17 +363,17 @@ public struct ApprovalCardView: View {
                 Image(systemName: chosen == .no ? "xmark.circle.fill" : "checkmark.circle.fill")
                     .foregroundStyle(chosen == .no ? Color.secondary : Color.accentColor)
                 Text(outcomeText)
-                    .font(.subheadline)
+                    .font(.scaled(.subheadline))
                     .foregroundStyle(.secondary)
             }
             if chosen == .always, let rule = card.suggestedRule {
                 HStack(spacing: LayoutMetrics.inner) {
                     Text("Rule saved: \(rule.summary)")
-                        .font(.caption)
+                        .font(.scaled(.caption))
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 0)
                     Button("Edit") { editingRule = rule }
-                        .font(.caption)
+                        .font(.scaled(.caption))
                         .buttonStyle(.plain)
                         .foregroundStyle(.tint)
                         .frame(minWidth: controlTarget, minHeight: controlTarget)
@@ -483,7 +483,7 @@ private struct ApprovalDetailText: View {
             if expanded || fullHeight > previewHeight + 0.5 {
                 Button { expanded.toggle() } label: {
                     Text(expanded ? "Show less" : expandLabel)
-                        .font(.subheadline)
+                        .font(.scaled(.subheadline))
                         .frame(maxWidth: .infinity, minHeight: controlTarget, alignment: .leading)
                         .contentShape(Rectangle())
                 }

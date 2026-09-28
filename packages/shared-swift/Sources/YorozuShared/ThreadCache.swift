@@ -115,6 +115,8 @@ public struct ThreadCache: Sendable {
         var preparedSend: [String: String]
         var threads: [ThreadSummary]
         var openThread: String?
+        /// The model and effort last chosen for each agent, which a new thread starts on.
+        var lastRun: [String: RunChoice]?
     }
 
     func draftState() -> DraftState? {
@@ -185,4 +187,10 @@ public struct ThreadCache: Sendable {
         else { return nil }
         return try? JSONDecoder().decode(type, from: plain)
     }
+}
+
+/// A model and effort chosen together; nil for either is the provider's default.
+struct RunChoice: Codable, Equatable, Sendable {
+    var model: String?
+    var effort: ReasoningEffort?
 }

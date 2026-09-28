@@ -264,17 +264,17 @@
             case .link(let url):
                 HStack(spacing: 12) {
                     Image(systemName: "link")
-                        .font(.title3)
+                        .font(.scaled(.title3))
                         .foregroundStyle(.tint)
                         .frame(width: 28)
                     VStack(alignment: .leading, spacing: 2) {
                         // The host is what identifies a link at a glance; the path is the detail
                         // under it, and is the part worth truncating.
                         Text(url.host() ?? url.absoluteString)
-                            .font(.headline)
+                            .font(.scaled(.headline))
                             .lineLimit(1)
                         Text(url.absoluteString)
-                            .font(.caption)
+                            .font(.scaled(.caption))
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
                             .truncationMode(.middle)
@@ -287,7 +287,7 @@
                         .fill(.tint)
                         .frame(width: 3)
                     Text(text)
-                        .font(.callout)
+                        .font(.scaled(.callout))
                         .lineLimit(6)
                 }
                 .fixedSize(horizontal: false, vertical: true)
@@ -295,14 +295,14 @@
                 HStack(spacing: 12) {
                     Thumbnail(image: image)
                     Text(size(of: attachment))
-                        .font(.callout)
+                        .font(.scaled(.callout))
                         .foregroundStyle(.secondary)
                 }
             case .tooLarge(let image):
                 HStack(spacing: 12) {
                     Thumbnail(image: image).opacity(0.4)
                     Text("Too large to send")
-                        .font(.callout)
+                        .font(.scaled(.callout))
                         .foregroundStyle(.secondary)
                 }
             case .unsupported:
@@ -348,7 +348,7 @@
                             Text(title).lineLimit(1)
                             if let subtitle {
                                 Text(subtitle)
-                                    .font(.caption)
+                                    .font(.scaled(.caption))
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                             }
@@ -361,7 +361,7 @@
                     Spacer()
                     if selected {
                         Image(systemName: "checkmark")
-                            .font(.body.weight(.semibold))
+                            .font(.scaled(.body).weight(.semibold))
                             .foregroundStyle(YorozuPalette.vermilion)
                     }
                 }

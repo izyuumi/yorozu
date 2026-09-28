@@ -100,7 +100,7 @@ struct SkillPicker: View {
     @ViewBuilder private func hint(_ skill: SkillOption) -> some View {
         if let hint = skill.argumentHint, !hint.isEmpty {
             Text(hint)
-                .font(.subheadline.monospaced())
+                .font(.scaled(.subheadline).monospaced())
                 .foregroundStyle(.secondary)
         }
     }
@@ -141,7 +141,7 @@ struct SkillPicker: View {
                 }
                 if !skill.description.isEmpty {
                     Text(skill.description)
-                        .font(.subheadline)
+                        .font(.scaled(.subheadline))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }

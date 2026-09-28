@@ -105,7 +105,7 @@ struct AttachButton: View {
         } label: {
             Group {
                 if isLoading { ProgressView().controlSize(.small) }
-                else { Image(systemName: "plus").font(.body.weight(.semibold)) }
+                else { Image(systemName: "plus").font(.scaled(.body).weight(.semibold)) }
             }
                 .foregroundStyle(.secondary)
                 .frame(width: controlTarget, height: controlTarget)
@@ -427,7 +427,7 @@ private struct StagedThumbnail: View {
                     Image(systemName: "xmark.circle.fill")
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(.white, .black.opacity(0.6))
-                        .font(.body)
+                        .font(.scaled(.body))
                         .padding(2)
                         // Hit area wider than the glyph; hangs past the thumbnail's corner.
                         .frame(width: controlTarget, height: controlTarget, alignment: .topTrailing)
@@ -449,15 +449,15 @@ private struct StagedThumbnail: View {
             image.resizable().scaledToFill()
         } else {
             VStack(spacing: 2) {
-                Image(systemName: "doc").font(.title3).foregroundStyle(.secondary)
+                Image(systemName: "doc").font(.scaled(.title3)).foregroundStyle(.secondary)
                 Text(attachment.name)
-                    .font(.caption2)
+                    .font(.scaled(.caption2))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 2)
                 Text(attachment.size)
-                    .font(.caption2)
+                    .font(.scaled(.caption2))
                     .foregroundStyle(.secondary)
             }
             .frame(width: Self.side, height: Self.side)

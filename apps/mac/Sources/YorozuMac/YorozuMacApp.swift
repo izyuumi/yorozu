@@ -411,6 +411,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
+            TextScale.acceptUnshiftedPlus()
             let event = NSAppleEventManager.shared().currentAppleEvent
             let loginLaunch = event?.eventID == kAEOpenApplication
                 && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem

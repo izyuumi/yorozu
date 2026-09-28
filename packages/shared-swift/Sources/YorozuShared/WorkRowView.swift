@@ -33,7 +33,7 @@ public struct WorkRowView: View {
                     case .thought(let event):
                         if case .thought(let data) = event.payload {
                             Text(data.text)
-                                .font(.callout)
+                                .font(.scaled(.callout))
                                 .fontDesign(replyFont.design)
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
@@ -51,11 +51,11 @@ public struct WorkRowView: View {
                 YorozuMark(dimension: 20)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(work.running ? "IN PROGRESS" : "ACTIVITY")
-                        .font(.caption2.weight(.semibold))
+                        .font(.scaled(.caption2).weight(.semibold))
                         .tracking(0.8)
                         .foregroundStyle(work.running ? YorozuPalette.vermilion : YorozuPalette.sage)
                     Text(summary)
-                        .font(.subheadline.weight(.medium))
+                        .font(.scaled(.subheadline).weight(.medium))
                         .foregroundStyle(YorozuPalette.ink)
                         .lineLimit(2)
                 }

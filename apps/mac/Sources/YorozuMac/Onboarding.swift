@@ -77,7 +77,7 @@ struct OnboardingView: View {
             Spacer(minLength: 0)
             YorozuMark(dimension: 44)
             VStack(spacing: 5) {
-                Text("How will this Mac use Yorozu?").font(.title2.bold())
+                Text("How will this Mac use Yorozu?").font(.scaled(.title2).bold())
                 Text("You can change this later in Settings › General.").foregroundStyle(.secondary)
             }
             .multilineTextAlignment(.center)
@@ -161,7 +161,7 @@ struct OnboardingView: View {
             Button("Back") { devicePaired = false; step = .hostPair }
             Spacer()
             Text("Files and personal data: Settings › Permissions")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.scaled(.caption)).foregroundStyle(.secondary)
             Button("Finish") { step = .hostDone }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
@@ -186,13 +186,13 @@ struct OnboardingView: View {
                         Text(pairedDeviceCount == 0
                             ? "No devices paired yet"
                             : "^[\(pairedDeviceCount) device](inflect: true) paired")
-                        Text("Pair more any time from Settings › Devices").font(.caption).foregroundStyle(.secondary)
+                        Text("Pair more any time from Settings › Devices").font(.scaled(.caption)).foregroundStyle(.secondary)
                     }
                     Divider()
                     summaryRow("Next") {
                         Text("Set up the agent you use on this Mac")
                         Text("OpenClaw for assistant chats. Claude Code or Codex for coding threads. A thread picks its agent when you start it.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.scaled(.caption)).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -248,7 +248,7 @@ struct OnboardingView: View {
                 if clientConnecting {
                     ProgressView(clientProgressLabel)
                     Text("The host Mac has to be online for the first handshake. This can take a few seconds.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.scaled(.caption)).foregroundStyle(.secondary)
                 }
                 if let clientErrorMessage {
                     Label {
@@ -256,7 +256,7 @@ struct OnboardingView: View {
                     } icon: {
                         Image(systemName: "exclamationmark.circle").foregroundStyle(.red)
                     }
-                    .font(.caption)
+                    .font(.scaled(.caption))
                 }
             }
         } footer: {
@@ -308,14 +308,14 @@ struct OnboardingView: View {
                         Text(status.label)
                         if status == .hostOffline {
                             Text("Threads catch up when it is back. Yorozu keeps trying in the background.")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(.scaled(.caption)).foregroundStyle(.secondary)
                         }
                     }
                     Divider()
                     summaryRow("Next") {
                         Text("Open Yorozu and start a thread")
                         Text("Which agent answers is set up on the host Mac.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.scaled(.caption)).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -342,7 +342,7 @@ struct OnboardingView: View {
             stepIndicator(progress.0, of: progress.1, label: progress.2)
             if let title {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(title).font(.title2.bold())
+                    Text(title).font(.scaled(.title2).bold())
                     if let detail {
                         Text(detail).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
@@ -364,7 +364,7 @@ struct OnboardingView: View {
             Text(label)
             Text("· \(current) of \(total)")
         }
-        .font(.caption2)
+        .font(.scaled(.caption2))
         .foregroundStyle(.secondary)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Step \(current) of \(total)"))
@@ -373,7 +373,7 @@ struct OnboardingView: View {
     private func completion(systemImage: String, tint: Color, title: LocalizedStringKey, detail: LocalizedStringKey) -> some View {
         VStack(spacing: 8) {
             Image(systemName: systemImage).font(.system(size: 56)).foregroundStyle(tint).accessibilityHidden(true)
-            Text(title).font(.title2.bold())
+            Text(title).font(.scaled(.title2).bold())
             Text(detail).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
@@ -392,7 +392,7 @@ struct OnboardingView: View {
             VStack(alignment: .leading, spacing: 2) { value() }
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .font(.callout)
+        .font(.scaled(.callout))
     }
 }
 
@@ -406,10 +406,10 @@ private struct RoleChoiceButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                Image(systemName: systemImage).font(.title2).frame(width: 32)
+                Image(systemName: systemImage).font(.scaled(.title2)).frame(width: 32)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.headline)
-                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                    Text(title).font(.scaled(.headline))
+                    Text(detail).font(.scaled(.caption)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .multilineTextAlignment(.leading)

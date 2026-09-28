@@ -25,6 +25,19 @@ struct ChatMenus: Commands {
                 .keyboardShortcut("f")
                 .disabled(chat == nil)
         }
+        // In View, where a Mac keeps text size. ⌘0 is Actual Size, as in Safari and Mail.
+        CommandGroup(after: .toolbar) {
+            Divider()
+            Button("Make Text Bigger") { TextScale.shared.grow() }
+                .keyboardShortcut("+")
+                .disabled(!TextScale.shared.canGrow)
+            Button("Make Text Smaller") { TextScale.shared.shrink() }
+                .keyboardShortcut("-")
+                .disabled(!TextScale.shared.canShrink)
+            Button("Actual Size") { TextScale.shared.reset() }
+                .keyboardShortcut("0")
+                .disabled(TextScale.shared.value == 1)
+        }
         // One app menu rather than two with an item or two each: everything here acts on the
         // open thread, and a menu is where a Mac keeps commands it has to be able to find again.
         CommandMenu("Thread") {
@@ -162,5 +175,18 @@ enum WindowPresence {
 
     static func modeChanged() {
         NSApp.setActivationPolicy(HostWindowMode.active || !isOpen ? .accessory : .regular)
+    }
+}
+
+extension TextScale {
+    /// ⌘= is ⌘+ without Shift, and what most people press for bigger text; a menu item holds
+    /// only one shortcut, so the unshifted one is caught here.
+    @MainActor static func acceptUnshiftedPlus() {
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+                  event.charactersIgnoringModifiers == "=" else { return event }
+            shared.grow()
+            return nil
+        }
     }
 }

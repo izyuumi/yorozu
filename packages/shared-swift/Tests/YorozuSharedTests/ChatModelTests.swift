@@ -1581,6 +1581,23 @@ func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(
     #expect(created.dropFirst(before).allSatisfy { $0.threadId == draft.id })
 }
 
+/// A new thread starts on the model and effort last picked for its agent, not on Auto, and
+/// that memory outlives the app. Each agent keeps its own: a Codex pick is not Claude Code's.
+@MainActor
+@Test func aNewThreadStartsOnTheLastModelPickedForItsAgent() {
+    let cache = ThreadCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString),
+                            key: SymmetricKey(size: .bits256))
+    defer { try? FileManager.default.removeItem(at: cache.directory) }
+    let model = ChatModel(transport: FakeTransport(), cache: cache)
+    let codex = model.newDraft(agent: .codex, cwd: "/project")
+    model.setModel(codex, "codex/gpt-5.6")
+
+    let restored = ChatModel(transport: FakeTransport(), cache: cache)
+    #expect(restored.newDraft(agent: .codex, cwd: "/project").model == "codex/gpt-5.6")
+    #expect(restored.newDraft(agent: .claudeCode, cwd: "/project").model == nil)
+    #expect(restored.newDraft().model == nil)
+}
+
 @MainActor
 @Test func effortIsOptimisticAndAChoiceOnADraftPrecedesItsFirstMessage() async throws {
     let transport = FakeTransport(autoReceipt: true)

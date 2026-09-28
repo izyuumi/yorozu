@@ -18,7 +18,7 @@ public struct ProgressCardView: View {
             header
             if let note = card.note {
                 MarkdownText(note)
-                    .font(.callout)
+                    .font(.scaled(.callout))
                     .foregroundStyle(YorozuPalette.ink)
             }
             if let fraction = card.fraction { progress(fraction) }
@@ -29,7 +29,7 @@ public struct ProgressCardView: View {
             }
             if card.running, let activity {
                 Text(activity)
-                    .font(.caption)
+                    .font(.scaled(.caption))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .contentTransition(.opacity)
@@ -48,11 +48,11 @@ public struct ProgressCardView: View {
             YorozuMark(dimension: 22)
             VStack(alignment: .leading, spacing: 2) {
                 Text("ACTIVITY")
-                    .font(.caption2.weight(.semibold))
+                    .font(.scaled(.caption2).weight(.semibold))
                     .tracking(0.9)
                     .foregroundStyle(YorozuPalette.vermilion)
                 Text(card.title)
-                    .font(.headline)
+                    .font(.scaled(.headline))
                     .foregroundStyle(YorozuPalette.ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -71,10 +71,10 @@ public struct ProgressCardView: View {
     private func progress(_ fraction: Double) -> some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
             HStack {
-                Text("Progress").font(.caption).foregroundStyle(.secondary)
+                Text("Progress").font(.scaled(.caption)).foregroundStyle(.secondary)
                 Spacer(minLength: 8)
                 Text(fraction, format: .percent.precision(.fractionLength(0)))
-                    .font(.caption.monospacedDigit().weight(.medium))
+                    .font(.scaled(.caption).monospacedDigit().weight(.medium))
                     .foregroundStyle(YorozuPalette.ink)
             }
             ProgressView(value: fraction)
@@ -97,12 +97,12 @@ public struct ProgressCardView: View {
             }
             HStack(alignment: .firstTextBaseline, spacing: LayoutMetrics.inner) {
                 Text(step.label)
-                    .font(.subheadline)
+                    .font(.scaled(.subheadline))
                     .foregroundStyle(step.state == .pending ? AnyShapeStyle(.secondary) : AnyShapeStyle(YorozuPalette.ink))
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 Text(stateLabel(step.state))
-                    .font(.caption.weight(.medium))
+                    .font(.scaled(.caption).weight(.medium))
                     .foregroundStyle(stateColour(step.state))
             }
             .padding(.top, 2)
@@ -113,7 +113,7 @@ public struct ProgressCardView: View {
 
     private func numberMark(_ number: Int, state: ProgressStep.State) -> some View {
         Text(number.formatted(.number.precision(.integerLength(2))))
-            .font(.caption2.monospacedDigit().weight(.semibold))
+            .font(.scaled(.caption2).monospacedDigit().weight(.semibold))
             .foregroundStyle(markForeground(state))
             .frame(width: 26, height: 26)
             .background(markBackground(state), in: Circle())

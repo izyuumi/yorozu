@@ -71,9 +71,9 @@ public struct DelegationCardView: View {
                     .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(card.agentId)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.scaled(.subheadline).weight(.semibold))
                     Text(card.done ? "\(String(localized: "Done")) · \(card.events.count)" : String(localized: "Running…"))
-                        .font(.caption)
+                        .font(.scaled(.caption))
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
@@ -146,10 +146,10 @@ private struct TraceRow: View {
     private func row(_ symbol: String, _ title: String, _ detail: String) -> some View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.subheadline.weight(.medium))
+                Text(title).font(.scaled(.subheadline).weight(.medium))
                 if !detail.isEmpty {
                     Text(detail)
-                        .font(.caption)
+                        .font(.scaled(.caption))
                         .fontDesign(replyFont.design)
                         .foregroundStyle(.secondary)
                         .lineLimit(3)
