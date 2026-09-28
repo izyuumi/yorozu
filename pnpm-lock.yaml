@@ -48,6 +48,8 @@ importers:
         specifier: ^4.137.0
         version: 4.137.0(@cloudflare/workers-types@5.20260923.1)(@types/node@26.6.2)
 
+  packages/openclaw-channel: {}
+
   packages/runtime:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
