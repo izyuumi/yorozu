@@ -159,6 +159,10 @@ pnpm --filter @yorozu/runtime --prod --legacy --config.node-linker=hoisted \
 # --prod above leaves the *workspace* modules directory pruned to production too, which
 # breaks the next `pnpm -r build` (no typescript). Put the dev dependencies back.
 pnpm install --frozen-lockfile
+# The OpenClaw channel plugin, for `openclaw plugins install --link` from inside the bundle so
+# it updates with the app. OpenClaw loads its TypeScript directly; it has no dependencies.
+mkdir -p "$APP/Contents/Resources/openclaw-channel"
+cp packages/openclaw-channel/*.ts packages/openclaw-channel/*.json "$APP/Contents/Resources/openclaw-channel/"
 
 # The NS…UsageDescription strings, taken from the helper's own Info.plist rather than
 # written out again here: TCC reads them from whichever binary is asking, so the app and

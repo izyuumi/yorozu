@@ -12,7 +12,7 @@ two backends, fixed when the thread is created:
 
 | Thread agent | Answered by |
 | --- | --- |
-| `yorozu` (the default) | the OpenClaw Gateway (`@openclaw/gateway-client`) on loopback, which owns agent execution, providers, tools, permissions and PAIOS |
+| `yorozu` (the default) | OpenClaw, with Yorozu as one of its chat channels: OpenClaw's `yorozu` channel plugin connects to the sidecar's `channel.sock`. OpenClaw owns agent execution, providers, tools, permissions and PAIOS |
 | `claude-code`, `codex` | a native CLI coding agent in-process, one session per thread, running in a folder under `~/Projects` |
 
 The phone never reaches the Mac directly. Both ends meet at a relay that forwards ciphertext and
@@ -38,7 +38,8 @@ blind push notifications, and the thread/sync model.
 | `apps/ios` | SwiftUI iOS app and its watchOS companion, Tuist-generated project (iOS 18+, watchOS 11+) |
 | `apps/relay` | blind websocket relay — a Cloudflare Worker and a self-hostable `ws` server |
 | `apps/web` | the `yorozu.yumi.to` site (Astro static build on a Cloudflare Worker) |
-| `packages/runtime` | the Node sidecar: relay bridge, OpenClaw Gateway client, native agent runners |
+| `packages/runtime` | the Node sidecar: relay bridge, OpenClaw channel socket, native agent runners |
+| `packages/openclaw-channel` | the `yorozu` channel plugin for OpenClaw, bundled in the Mac app |
 | `packages/shared` | protocol event types shared by the TypeScript workspaces |
 | `packages/shared-swift` | SwiftUI views and the chat model shared by both apps, and the phone–watch wire types |
 
@@ -130,7 +131,6 @@ The main sidecar settings are:
 | --- | --- |
 | `YOROZU_STATE_DIR` | `~/Library/Application Support/Yorozu` — keys, threads, devices, settings |
 | `YOROZU_RELAY_URL` | `wss://relay.yumi.to` |
-| `OPENCLAW_BIN` | `openclaw` on `PATH` |
 | `YOROZU_PROJECTS_DIR` | `~/Projects` — the folders a coding-agent thread can start in |
 | `YOROZU_RUNTIME_CMD` | unset — the Mac app runs the bundled sidecar, else the dev checkout it was built from. Set to override: split into words like `sh` would (quotes and backslashes, no expansion) and run directly, not through a shell, with the state directory as working directory, so use absolute paths |
 
@@ -154,8 +154,18 @@ A host then continues:
    its System Settings pane and re-checks itself, and the same list is always available from
    Settings → **Permissions**. Start at Login and Never Sleep are on that page too — never-sleep
    is a `caffeinate` child process the app owns, and it dies with the app.
-5. Install and configure OpenClaw. Yorozu connects to its loopback Gateway; provider credentials,
-   models, tools, permissions, browser and PAIOS all stay in OpenClaw, never in Yorozu.
+5. Install and configure [OpenClaw](https://docs.openclaw.ai/install), then add Yorozu as one of
+   its chat channels. The plugin ships inside the app, and linking it keeps it updated with the app:
+
+   ```sh
+   openclaw plugins install --link --accept-capabilities /Applications/Yorozu.app/Contents/Resources/openclaw-channel
+   openclaw config set channels.yorozu.enabled true
+   openclaw agents bind --bind yorozu   # routes Yorozu to OpenClaw's default agent; add --agent <id> for another
+   openclaw gateway restart
+   ```
+
+   `openclaw channels status` then lists **Yorozu** as connected. Provider credentials, models,
+   tools, permissions, browser and PAIOS all stay in OpenClaw, never in Yorozu.
 
 Updates use Sparkle: the app checks hourly and downloads in the background. Automatic and
 manual installs wait for this Mac's Yorozu agents to finish, then count down 10 idle seconds.

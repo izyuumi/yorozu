@@ -25,7 +25,7 @@ Rules that apply throughout:
   do; never push a grant they have no use for.
 - You may open panes and run probe commands, but **the person clicks Allow**. macOS grants
   cannot be scripted and you must not try (`tccutil`, editing `TCC.db`, etc.).
-- Never read, print, or ask for provider credentials, API keys, the OpenClaw device token, or
+- Never read, print, or ask for provider credentials, API keys, or
   the contents of `~/Library/Application Support/Yorozu`. You do not need them.
 - Pairing codes are secrets while they are valid. Don't echo them into logs or summaries.
 - Speak plainly. If they are not technical, skip the terminal. The iPhone app installs from the
@@ -44,6 +44,7 @@ ls /Applications/Yorozu.app 2>/dev/null        # installed?
 defaults read to.yumi.yorozu onboardingCompleted 2>/dev/null   # 1 = wizard already finished
 command -v openclaw claude codex node          # which agents/tools are on PATH
 openclaw --version 2>/dev/null
+openclaw channels status 2>/dev/null | grep -i yorozu   # Yorozu channel set up in OpenClaw?
 claude auth status --json 2>/dev/null          # {"loggedIn":true} is what Yorozu checks
 codex login status 2>&1                        # prints "logged in" / "not logged in"
 ls ~/Projects 2>/dev/null                      # folders coding agents can start in
@@ -196,22 +197,35 @@ that they understand the sentence above. Do not recommend it.
 
 ### 3g. OpenClaw (required on a host)
 
-Yorozu's default `yorozu` threads are answered by the **OpenClaw Gateway** on loopback
-(`ws://127.0.0.1:18789`). Providers, credentials, models, tools, permissions, browser,
-scheduling and memory all live in OpenClaw — Yorozu holds none of it.
+Yorozu's default `yorozu` threads are answered by **OpenClaw**, with Yorozu as one of its chat
+channels, like Signal or Telegram. OpenClaw's `yorozu` channel plugin connects to the sidecar's
+owner-only socket `~/Library/Application Support/Yorozu/channel.sock`. Providers, credentials,
+models, tools, permissions, browser, scheduling and memory all live in OpenClaw — Yorozu holds
+none of it. Each Yorozu thread is its own OpenClaw conversation, and OpenClaw can also start one
+(cron, heartbeat or its `message` tool with target `yorozu:<threadId>`).
 
-If the probe found no `openclaw` on PATH:
+1. If the probe found no `openclaw` on PATH, install and onboard OpenClaw per its own docs
+   (this guide does not own that). Have them configure at least one provider there and confirm
+   the Gateway runs.
+2. Add the Yorozu channel. The plugin ships inside Yorozu.app; `--link` keeps it updated with
+   the app. Tell them this changes their OpenClaw config and restarts the Gateway, which drops
+   their other OpenClaw channels for a few seconds, and ask before running:
 
-1. Install and onboard OpenClaw per its own docs (this guide does not own that). Have them
-   configure at least one provider there and confirm the Gateway runs.
-2. Yorozu must be able to find the binary. If `openclaw` isn't on the app's PATH, set
-   `OPENCLAW_BIN` to its full path (advanced; most installs put it on PATH).
-3. On first use, the sidecar runs `openclaw qr --setup-code-only` to pair itself with the
-   Gateway as an operator client and stores a device token (`0600`) in the state dir. If
-   OpenClaw asks to approve a new device named **Yorozu**, that is this — approve it.
+   ```sh
+   openclaw plugins install --link --accept-capabilities /Applications/Yorozu.app/Contents/Resources/openclaw-channel
+   openclaw config set channels.yorozu.enabled true
+   openclaw agents bind --bind yorozu
+   openclaw gateway restart
+   ```
 
-Verify: open a new thread on the Mac (default agent), send "hello". A reply proves the whole
-chain: app → sidecar → Gateway → provider.
+   OpenClaw warns that the plugin is not from ClawHub; that is expected for a local plugin.
+   `agents bind` routes Yorozu to OpenClaw's default agent. If they have several agents, ask
+   which one should answer Yorozu and add `--agent <id>`. Without a binding, OpenClaw rejects
+   every Yorozu message when more than one agent is configured.
+
+Verify: `openclaw channels status` shows **Yorozu** as `connected` (Yorozu must be running).
+Then open a new thread on the Mac (default agent) and send "hello". A reply proves the whole
+chain: app → sidecar → `channel.sock` → OpenClaw → provider.
 
 ### 3h. Claude Code and Codex (optional native agents)
 
@@ -305,7 +319,7 @@ chosen, and what they skipped (with where to turn it on later). Don't include pa
 | --- | --- |
 | No menu bar icon after launch | It's a status-bar app; check the top-right. Hidden by a menu bar manager? |
 | Wizard never appeared | `onboardingCompleted` already set. Use Settings instead — every step is there. |
-| `yorozu` thread never replies | OpenClaw Gateway not running / not on PATH / device not approved. Check `openclaw` works standalone first; then `OPENCLAW_BIN`. |
+| `yorozu` thread never replies | Check `openclaw channels status`. **Yorozu** missing: redo 3g. Not connected: Yorozu isn't running, or the Gateway wasn't restarted. Connected but silent: look for `AgentSelectionRequiredError` in the Gateway log, then add the binding in 3g. Messages sent meanwhile are kept and delivered once the channel reconnects. |
 | "claude-code could not answer: claude is not on PATH" / "not logged in" | Install / log in to the CLI (3h). Same for codex. |
 | Folder picker empty for coding agent | `~/Projects` missing or has no subfolders (`YOROZU_PROJECTS_DIR` to move it). |
 | Pairing code "invalid or expired" | Generate a **New code** on the host; codes are single-use and short-lived. |
@@ -327,7 +341,6 @@ Set on the sidecar; normal users never touch these.
 | --- | --- |
 | `YOROZU_STATE_DIR` | `~/Library/Application Support/Yorozu` |
 | `YOROZU_RELAY_URL` | `wss://relay.yumi.to` (Settings → General writes this) |
-| `OPENCLAW_BIN` | `openclaw` on PATH |
 | `YOROZU_PROJECTS_DIR` | `~/Projects` |
 | `YOROZU_RUNTIME_CMD` | set by the app; the bundled sidecar |
 

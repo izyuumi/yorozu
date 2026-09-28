@@ -1,8 +1,8 @@
 # The legacy runtime
 
 `packages/runtime` carries a complete in-house agent loop — tools, memory, scheduling
-and an approval engine — that **a shipped Yorozu never runs**. It predates the move to the
-OpenClaw Gateway. It is still built, still tested, and still the backend the end-to-end harness
+and an approval engine — that **a shipped Yorozu never runs**. It predates the move to
+OpenClaw. It is still built, still tested, and still the backend the end-to-end harness
 drives, which is why it has not been deleted.
 
 One exception: a shipped launch still passes `titler: chainFromEnv()` to `serve()` (`serve.ts`,
@@ -65,8 +65,8 @@ legacy tool wrappers around it are not.
 
 The legacy catalog reads `catalog/models.json` directly from the repository's `main` branch,
 with cached and bundled copies as offline fallbacks. Releases no longer carry this catalog,
-and there is no catalog-publishing workflow. Shipped model pickers instead use OpenClaw's
-`models.list`, Claude SDK's `supportedModels()`, and Codex's paginated `model/list`.
+and there is no catalog-publishing workflow. Shipped model pickers instead use Claude SDK's
+`supportedModels()` and Codex's paginated `model/list`; `yorozu` threads leave the model to OpenClaw.
 
 ## Two things that look live and are not
 
@@ -90,7 +90,7 @@ threads belong to OpenClaw.
 ## Removing it
 
 The loop is self-contained behind `legacy.ts` and the `--direct-provider` flag. Deleting it would
-mean replacing the end-to-end harness's fake backend with something that speaks the Gateway
-protocol, and dropping the `probe`, `models`, `assign`, `assign-revert` and `assign-cron`
+mean replacing the end-to-end harness's fake backend with a fake OpenClaw channel plugin on
+`channel.sock`, and dropping the `probe`, `models`, `assign`, `assign-revert` and `assign-cron`
 subcommands. Preserve the provider chain used by automatic thread
 titles, or migrate titling first. Until then, treat the dormant subsystems above as historical.
