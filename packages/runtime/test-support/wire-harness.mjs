@@ -7,7 +7,7 @@
 //
 // Prints {"control": port} once ready, then serves on 127.0.0.1:port until stdin closes or it
 // is signalled:
-//   GET  /pairing         {"qr"}: the pairing string, pointed at the proxy
+//   GET  /pairing         {"qr"}: a fresh pairing string, pointed at the proxy
 //   POST /blackhole       every phone connection, open or new, stays open and carries nothing
 //   POST /drop-host-after-phone-frame  drop host frames after the next encrypted phone frame reaches the relay
 //   POST /down            close every phone connection now, and refuse new ones
@@ -74,8 +74,9 @@ const model = async (_url, init) => {
 };
 
 const relay = await startRelay(0);
-let qrLine;
-const qrPrinted = new Promise((resolve) => (qrLine = resolve));
+let firstQr;
+const qrPrinted = new Promise((resolve) => (firstQr = resolve));
+const pendingQr = [];
 const sidecar = serve({
   relayUrl: `ws://127.0.0.1:${relay.port}`,
   stateDir,
@@ -83,7 +84,11 @@ const sidecar = serve({
   nativeRunners: {},
   titler: async () => "",
   log: (line) => {
-    if (line.startsWith("QR ")) qrLine(line.slice(3));
+    if (line.startsWith("QR ")) {
+      const qr = line.slice(3);
+      if (firstQr) { firstQr(qr); firstQr = undefined; }
+      else pendingQr.shift()?.(qr);
+    }
     else process.stderr.write(`${line}\n`);
   },
 });
@@ -182,8 +187,22 @@ proxy.on("upgrade", (request, socket, head) => {
   });
 });
 await new Promise((resolve) => proxy.listen(0, "127.0.0.1", resolve));
-const pairing = (await qrPrinted).replace(
-  /relay=[^&]+/, `relay=${encodeURIComponent(`ws://127.0.0.1:${proxy.address().port}`)}`);
+await qrPrinted;
+function freshPairing() {
+  // CI can spend longer than the relay's 10-minute token lifetime building iOS tests.
+  return new Promise((resolve, reject) => {
+    const onQr = (qr) => {
+      clearTimeout(timeout);
+      resolve(qr.replace(/relay=[^&]+/, `relay=${encodeURIComponent(`ws://127.0.0.1:${proxy.address().port}`)}`));
+    };
+    const timeout = setTimeout(() => {
+      pendingQr.splice(pendingQr.indexOf(onQr), 1);
+      reject(new Error("pairing token unavailable"));
+    }, 10_000);
+    pendingQr.push(onQr);
+    sidecar.mint();
+  });
+}
 
 const faults = {
   blackhole() { fault.blackholed = true; for (const link of links) link.dead = true; },
@@ -212,7 +231,16 @@ const control = createServer((request, response) => {
   const name = url.pathname.slice(1);
   let body;
   if (request.method === "POST" && faults[name]) { faults[name](); body = { ok: name }; }
-  else if (name === "pairing") body = { qr: pairing };
+  else if (name === "pairing") {
+    freshPairing().then((qr) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ qr }));
+    }, () => {
+      response.writeHead(503, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "pairing token unavailable" }));
+    });
+    return;
+  }
   else if (name === "dials") body = { dials };
   else if (name === "metrics") { recordQueuePeak(); body = { delayMs, bytesPerSecond, ...stats }; }
   else if (name === "answer-started") body = { started: answerStarted, count: answerStarts };

@@ -86,6 +86,11 @@ private actor WireRig {
     }
 
     func metrics() async throws -> Metrics { try await get(Metrics.self, "metrics") }
+
+    func freshPairing() async throws -> QrPayload {
+        struct Pairing: Decodable { var qr: String }
+        return try QrPayload.decode(try await get(Pairing.self, "pairing").qr)
+    }
 }
 
 private func elapsedMs(since start: ContinuousClock.Instant) -> Int {
@@ -128,6 +133,13 @@ private func finalReply(in thread: String, _ model: ChatModel) -> [MessageData] 
 @Suite(.serialized, .enabled(if: rigAvailable, "needs `pnpm -r build` for the wire harness"))
 @MainActor
 struct WireTests {
+    @Test func pairingEndpointMintsAUniqueJoinTokenEachTime() async throws {
+        let rig = try await WireRig()
+        let first = await rig.pairing.token
+        let second = try await rig.freshPairing().token
+        #expect(first != second)
+    }
+
     /// Real relay and sidecar on a shaped 100 ms / 64 KiB/s phone link. A receipt must be
     /// measured for this exact message, and recovery starts before redial, not after handshake.
     @Test func slowLinkProfileMeasuresAcceptanceCatchupAndLargeAnswer() async throws {
