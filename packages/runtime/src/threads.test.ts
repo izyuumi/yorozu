@@ -366,11 +366,14 @@ test("history is the thread's messages, compacted to the last HISTORY_LIMIT", ()
 test("queued turns give the model their own latest request after earlier replies", () => {
   const first = { ...message("e1", "first"), data: { role: "user" as const, text: "first", completionId: "legacy:e1:final" } };
   const second = { ...message("e2", "second"), data: { role: "user" as const, text: "second", completionId: "legacy:e2:final" } };
+  const third = { ...message("e3", "third"), data: { role: "user" as const, text: "third", completionId: "legacy:e3:final" } };
   appendThreadEvent(first, dir);
   appendThreadEvent(second, dir);
+  appendThreadEvent(third, dir);
   expect(threadHistory(HOME, dir, false, first.id)).toEqual([{ role: "user", content: "first" }]);
 
-  appendThreadEvent({ ...agentMessage("e3", "answer first"), id: first.data.completionId }, dir);
+  appendThreadEvent({ ...agentMessage("reply", "answer first"), id: first.data.completionId }, dir);
+  appendThreadEvent({ ...second, ts: 100, clientTs: second.ts }, dir);
   expect(threadHistory(HOME, dir, false, second.id)).toEqual([
     { role: "user", content: "first" },
     { role: "assistant", content: "answer first" },

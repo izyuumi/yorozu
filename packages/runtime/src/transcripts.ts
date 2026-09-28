@@ -42,7 +42,10 @@ export function readTranscripts(since: Date, dir = transcriptDir()): YorozuEvent
       }
     }
   }
-  return events.sort((a, b) => a.ts - b.ts);
+  const corrected = new Map(events.flatMap((event, index) =>
+    event.clientTs !== undefined ? [[event.id, index] as const] : []));
+  return events.filter((event, index) => !corrected.has(event.id) || corrected.get(event.id) === index)
+    .sort((a, b) => a.ts - b.ts);
 }
 
 /** One readable line per event; message text is what consolidation actually needs. */

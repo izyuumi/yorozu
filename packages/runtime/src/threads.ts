@@ -517,7 +517,9 @@ export function readThreadEvents(threadId: string, dir = stateDir()): YorozuEven
       // A half-written last line must not lose the thread.
     }
   }
-  return events;
+  const corrected = new Map(events.flatMap((event, index) =>
+    event.clientTs !== undefined ? [[event.id, index] as const] : []));
+  return events.filter((event, index) => !corrected.has(event.id) || corrected.get(event.id) === index);
 }
 
 /** Stream a small slice of host history without blocking message/control handling. */
@@ -652,8 +654,14 @@ export function threadMessages(threadId: string, dir = stateDir(), vision = fals
   // see each completed reply after its own request, and no requests queued after this turn.
   const futureReplies = new Set(events.slice(activeIndex + 1)
     .filter((event) => event.data.role === "user").map((event) => event.data.completionId).filter((id) => id !== undefined));
+  const completedReplies = new Set(events.filter((event) => event.data.role === "agent").map((event) => event.id));
+  // A later queued request can still precede the active one in the append-only log until
+  // its own turn starts and its corrected position is appended.
   const available = events.filter((event, index) =>
-    !(active && index > activeIndex && event.data.role === "user") && !futureReplies.has(event.id));
+    !(active && event.data.role === "user" && event.id !== active.id &&
+      (index > activeIndex || event.data.completionId !== undefined &&
+        !completedReplies.has(event.data.completionId))) &&
+    !futureReplies.has(event.id));
   const replies = new Map(available.filter((event) => event.data.role === "agent")
     .map((event) => [event.id, event]));
   const paired = new Set(available.filter((event) => event.data.role === "user")

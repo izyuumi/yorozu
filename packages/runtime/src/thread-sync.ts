@@ -59,7 +59,9 @@ export function syncPage(file: string, afterId: string | undefined, minTs: numbe
         if (event) {
           // Legacy ids keep their old semantics. New cursors identify each occurrence,
           // survive appends, and become unknown if anything before them was rewritten.
-          index.after.set(event.id, line.end);
+          // A retimed queued message repeats its id after the preceding reply. Legacy
+          // id-only cursors must resume at its first copy or they skip that reply.
+          if (event.clientTs === undefined || !index.after.has(event.id)) index.after.set(event.id, line.end);
           index.cursors.set(line.end, prefix.copy().digest("base64url"));
         }
       }

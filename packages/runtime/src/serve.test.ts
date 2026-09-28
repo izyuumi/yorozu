@@ -38,7 +38,7 @@ import type { NativeAgentRunner, NativeTurn } from "./native.js";
 import * as schedulerModule from "./scheduler.js";
 import { OpenClawRunner, type OpenClawTurn } from "./openclaw.js";
 import { localSocketPath } from "./local.js";
-import { SYNC_PAGE_BYTES, setNativeTurn, setThreadSession, appendThreadEvent, createThread, listThreads, readThreadEvents } from "./threads.js";
+import { SYNC_PAGE_BYTES, setNativeTurn, setThreadSession, appendThreadEvent, createThread, eventsAfter, listThreads, readThreadEvents } from "./threads.js";
 import { readTranscripts, transcriptDir } from "./transcripts.js";
 
 /** No native helper here: a thread takes its first words unless a test brings its own titler. */
@@ -1598,6 +1598,44 @@ test("stopping a turn persists its latest unsent draft", async () => {
     .toHaveLength(1);
 });
 
+test("steered messages follow the turns they interrupt in live and saved history", async () => {
+  const firstFinished = Promise.withResolvers<void>();
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    if (turn.text === "first") await firstFinished.promise;
+    return { text: `reply to ${turn.text}` };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "steered");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "steered"));
+  const first = send({ kind: "message", data: { role: "user", text: "first" } }, "steered");
+  await eventsUntil((event) => event.kind === "thread_list" &&
+    event.data.threads.some((thread) => thread.id === "steered" && thread.activeEventId === first));
+  const second = send({ kind: "message", data: { role: "user", text: "second" } }, "steered");
+  const third = send({ kind: "message", data: { role: "user", text: "third" } }, "steered");
+  await eventsUntil((event) => event.kind === "message" && event.id === third);
+  const frozenNow = Date.now();
+  const clock = vi.spyOn(Date, "now").mockReturnValue(frozenNow);
+  firstFinished.resolve();
+  let live: YorozuEvent[];
+  try {
+    live = await eventsUntil((event) => event.kind === "message" && event.data.role === "agent" &&
+      event.data.text === "reply to third" && event.data.done === true);
+  } finally { clock.mockRestore(); }
+  expect(live.filter((event) => event.kind === "message" && [second, third].includes(event.id) &&
+    event.clientTs !== undefined).map((event) => event.id)).toEqual([second, third]);
+  const history = readThreadEvents("steered", dir).filter((event) => event.kind === "message");
+  expect(history.map((event) => event.data.text)).toEqual([
+    "first", "reply to first", "second", "reply to second", "third", "reply to third",
+  ]);
+  expect(history.map((event) => event.ts)).toEqual([...history.map((event) => event.ts)].sort((a, b) => a - b));
+  expect(readTranscripts(new Date(0), transcriptDir(dir)).filter((event) => event.threadId === "steered" &&
+    event.kind === "message").map((event) => event.data.text)).toEqual([
+    "first", "reply to first", "second", "reply to second", "third", "reply to third",
+  ]);
+  expect(eventsAfter("steered", second, dir).some((event) => event.kind === "message" &&
+    event.data.text === "reply to first")).toBe(true);
+});
+
 test.each([
   { outcome: "stopped" as const, text: "partial", interrupted: true, failed: false },
   { outcome: "completed" as const, text: "finished", interrupted: false, failed: false },
@@ -1648,8 +1686,8 @@ test.each([
   const queuedStored = history.find((event) => event.id === queued)!;
   const nextFinal = history.find((event) => event.kind === "message" && event.data.role === "agent" &&
     event.data.text === "next answer")!;
-  expect(queuedStored.ts).toBeGreaterThan(final.ts);
-  expect(nextFinal.ts).toBeGreaterThan(queuedStored.ts);
+  expect(queuedStored.ts).toBeGreaterThanOrEqual(final.ts);
+  expect(nextFinal.ts).toBeGreaterThanOrEqual(queuedStored.ts);
   sendRaw(queuedEcho);
   await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === queued);
   expect(readThreadEvents("t1", dir).filter((event) => event.id === queued)).toHaveLength(1);
