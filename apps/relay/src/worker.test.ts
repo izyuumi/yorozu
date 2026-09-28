@@ -143,6 +143,27 @@ async function frame(client: Client, payload: string, keys: Keys): Promise<void>
   client.send({ type: "frame", payload, sig: await sign(payload, keys) });
 }
 
+test("the phone count reaches the mac that holds the room, not one it replaced", async () => {
+  const keys = await keypair();
+  const name = await roomId(keys.pub);
+  // Dialled first, registered last: the socket it replaces was accepted after it and is left
+  // closing, which is the order that used to be mistaken for the room's Mac.
+  const holder = await connect(name);
+  const replaced = await connect(name);
+  const register = async (mac: Client) => {
+    const { nonce } = await mac.next();
+    mac.send({ type: "register", pubkey: keys.pub, nonceSig: await sign(nonce, keys) });
+    expect(await mac.next()).toMatchObject({ type: "registered" });
+  };
+  await register(replaced);
+  await register(holder);
+
+  const { phone } = await connectPhone(name, await mintToken(holder));
+  expect(await phone.next()).toMatchObject({ type: "joined", ownerOnline: true });
+  await vi.waitFor(() => expect(holder.phones).toEqual([1]));
+  expect(replaced.phones).toEqual([]);
+});
+
 test("a plain GET answers without upgrading, and an upgrade needs a room", async () => {
   expect(await (await SELF.fetch("https://relay.test/")).text()).toBe("yorozu relay\n");
   const missing = await SELF.fetch("https://relay.test/", { headers: { Upgrade: "websocket" } });

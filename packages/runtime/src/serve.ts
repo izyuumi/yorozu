@@ -3302,6 +3302,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
             // rather than deleted by the ack of the one after it. Live frames carry no `seq`.
             // A body that is not a frame at all is different: nothing will ever handle it, so
             // it is logged and acked, or it would sit at the head of the buffer for good.
+            // A live frame is a phone speaking now, whatever the count says: believe the frame.
+            if (phones === 0 && typeof msg.seq !== "number") phones = undefined;
             const body = parseFrameBody(msg.payload);
             if (!body) {
               state("frame-error malformed body");
@@ -3332,7 +3334,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
     ws.on("close", () => {
       relayReady = false;
-      phones = undefined;
       clearTraces();
       catchupSends.clear();
       if (catchupTimer) clearTimeout(catchupTimer);

@@ -2990,7 +2990,10 @@ test("announces the paired list to the relay as soon as it has registered", asyn
   await new Promise<void>((done) => fake.close(() => done()));
 });
 
-test("nothing is streamed into a room the relay says is empty", async () => {
+test.each([
+  ["the relay counts one", { type: "phones", count: 1 }],
+  ["a live frame arrives from one", { type: "frame", payload: "not-a-frame" }],
+])("nothing is streamed into a room the relay says is empty, until %s", async (_how, arrival) => {
   const stateDir = mkdtempSync(join(tmpdir(), "yorozu-empty-room-"));
   createThread("Home", stateDir, "quiet-thread");
   writeFileSync(join(stateDir, "devices.json"), JSON.stringify([
@@ -3029,9 +3032,9 @@ test("nothing is streamed into a room the relay says is empty", async () => {
     expect(seen.filter((msg) => msg.type === "frame")).toHaveLength(0);
 
     // The socket is read in order, so a pairing string drawn from the token that follows the
-    // count is proof the count has been taken in.
+    // arrival is proof the arrival has been taken in.
     const drawn = lines.filter((line) => line.startsWith("PAIR ")).length;
-    macSocket.send(JSON.stringify({ type: "phones", count: 1 }));
+    macSocket.send(JSON.stringify(arrival));
     macSocket.send(JSON.stringify({ type: "token", token: "t" }));
     await vi.waitFor(() => expect(lines.filter((line) => line.startsWith("PAIR "))).toHaveLength(drawn + 1));
     ask("heard");

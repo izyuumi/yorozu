@@ -305,8 +305,9 @@ export class Room implements DurableObject {
       .filter((ws) => (ws.deserializeAttachment() as Conn | null)?.role === role);
   }
 
+  /** The Mac socket that is open. One it replaced lingers, closing, until its peer answers. */
   private mac(): WebSocket | null {
-    return this.sockets("mac")[0] ?? null;
+    return this.sockets("mac").find((ws) => ws.readyState === WebSocket.OPEN) ?? null;
   }
 
   /**
