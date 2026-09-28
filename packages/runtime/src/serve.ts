@@ -126,6 +126,8 @@ import { appendTranscript, readTranscripts, transcriptDir } from "./transcripts.
 
 const DEFAULT_STATE_DIR = join(homedir(), "Library", "Application Support", "Yorozu");
 const RECONNECT_MS = 2_000;
+/** Where the redial delay stops doubling while the relay keeps turning this Mac away. */
+const RECONNECT_MAX_MS = 30_000;
 /**
  * Heartbeat on the relay socket. Without it a quiet Mac is silently dropped by whatever sits
  * between it and the relay — the relay then tells every phone the Mac is offline, while this
@@ -773,6 +775,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // OPEN only means transport connected; the relay accepts application traffic after register.
   let relayReady = false;
   let retry: NodeJS.Timeout | null = null;
+  let retryMs = RECONNECT_MS;
   let stopped = false;
   const catchupSends = new Map<string, { connection: WebSocket | null; device: PairedDevice;
     responses: YorozuEvent[]; next: number }>();
@@ -3262,6 +3265,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
             return;
           case "registered":
             phones = typeof msg.phones === "number" ? msg.phones : undefined;
+            retryMs = RECONNECT_MS;
             room = String(msg.roomId);
             relayReady = true;
             state("registered");
@@ -3340,7 +3344,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
       catchupTimer = null;
       stopHeartbeat();
       state("disconnected");
-      if (!stopped) retry = setTimeout(connect, RECONNECT_MS);
+      // Doubling until a registration lands: a Mac the relay keeps refusing would otherwise
+      // spend the whole household's connection allowance on its own redials.
+      if (!stopped) retry = setTimeout(connect, retryMs);
+      retryMs = Math.min(retryMs * 2, RECONNECT_MAX_MS);
     });
   }
 
