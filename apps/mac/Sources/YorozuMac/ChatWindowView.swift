@@ -412,6 +412,16 @@ private struct SidebarFooter: View {
 final class SettingsPaneRouter {
     static let shared = SettingsPaneRouter()
     var selection: String?
+    /// Opens the Settings window. Set by ``YorozuMacApp``, whose `openWindow` is the one that
+    /// works from windows outside the scene graph, such as setup.
+    static var openWindow: (() -> Void)?
+
+    /// Shows `pane`, opening Settings or bringing it forward.
+    func open(_ pane: String) {
+        selection = pane
+        NSApp.activate(ignoringOtherApps: true)
+        Self.openWindow?()
+    }
 }
 
 /// The thread Settings asked the chat window to show.
@@ -477,7 +487,10 @@ struct SettingsView: View {
                 }
             }
         }
-        .onAppear { if let pane = route.selection { selection = pane } }
+        // Taken once, so asking for the same pane again later still counts as a change.
+        .onAppear { if let pane = route.selection { selection = pane; route.selection = nil } }
+        // Asked for while already open: the window is only brought forward, so it will not appear again.
+        .onChange(of: route.selection) { _, pane in if let pane { selection = pane; route.selection = nil } }
         .onChange(of: route.selection) { _, pane in if let pane { selection = pane } }
         .onChange(of: session.role) { _, _ in selection = "general" }
         .onChange(of: backgroundOnlyHost) { _, active in if !active { selection = "general" } }
