@@ -117,8 +117,12 @@ class FakeGitHub(publication.GitHub):
         elif action == "edit":
             if self.fail_publish:
                 raise RuntimeError("simulated publish failure")
-            self.releases[tag]["isDraft"] = False
-            self.releases[tag]["isPrerelease"] = "--prerelease=true" in args
+            if "--draft=false" in args:
+                self.releases[tag]["isDraft"] = False
+            if "--prerelease=true" in args or "--prerelease=false" in args:
+                self.releases[tag]["isPrerelease"] = "--prerelease=true" in args
+            if "--title" in args:
+                self.releases[tag]["name"] = args[args.index("--title") + 1]
             if "--notes" in args:
                 self.releases[tag]["notes"] = args[args.index("--notes") + 1]
         elif action == "delete":
@@ -199,7 +203,7 @@ class ReleaseTests(ReleaseFixture):
                             prerelease=True, source=OTHER, name=f"Yorozu Beta {tag}")
         self.gh.add_release("candidate-0.5.0-10099", prerelease=True)
         self.publish()
-        self.assertEqual(self.gh.releases[self.tag]["name"], f"Yorozu {self.tag}")
+        self.assertEqual(self.gh.releases[self.tag]["name"], self.tag)
 
     def test_new_main_candidate_removes_older_main_betas_only_after_publication(self):
         previous = self.publish()
@@ -212,9 +216,12 @@ class ReleaseTests(ReleaseFixture):
                             "mac": {**previous["mac"], "asset": "yorozu.dmg"}}).encode()},
                             prerelease=True, source=OTHER, name=f"Yorozu Beta {old_tag}")
         self.gh.add_release("candidate-0.5.0-10040", prerelease=True)
+        self.gh.add_release("v0.4.0-beta", prerelease=True, name="Yorozu v0.4.0-beta")
+        self.gh.add_release("v0.4.1-beta", prerelease=True, name="v0.4.1-beta")
         self.publish()
-        self.assertNotIn(old_tag, self.gh.releases)
-        self.assertNotIn(old_tag, self.gh.tags)
+        for tag in (old_tag, "v0.4.0-beta", "v0.4.1-beta"):
+            self.assertNotIn(tag, self.gh.releases)
+            self.assertNotIn(tag, self.gh.tags)
         self.assertIn("candidate-0.5.0-10040", self.gh.releases)
         self.assertLess(next(i for i, event in enumerate(self.gh.events) if event[:3] == ("release", "edit", self.tag)),
                         next(i for i, event in enumerate(self.gh.events) if event[:3] == ("release", "delete", old_tag)))
@@ -335,6 +342,12 @@ class ReleaseTests(ReleaseFixture):
 
     def test_existing_published_candidate_is_identical_or_rejected(self):
         self.publish()
+        self.gh.releases[self.tag]["name"] = f"Yorozu {self.tag}"
+        self.gh.events.clear()
+        self.publish()
+        self.assertEqual(self.gh.releases[self.tag]["name"], self.tag)
+        self.assertEqual([event for event in self.mutations() if event[:2] == ("release", "edit")],
+                         [("release", "edit", self.tag, "--repo", self.gh.repo, "--title", self.tag)])
         self.gh.events.clear()
         self.publish()
         self.assertEqual(self.mutations(), [])
