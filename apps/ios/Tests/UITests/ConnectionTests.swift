@@ -104,6 +104,75 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(search.value as? String, "74c9", "Host results replaced the search query")
     }
 
+    /// Two real hosts contribute one downloaded match each. Losing one host keeps both results
+    /// visible while the scope names the mixed availability; recovery merges host history.
+    @MainActor
+    func testMixedHostSearchKeepsResultsAndContext() async throws {
+        let second = try XCTUnwrap(ProcessInfo.processInfo.environment["YOROZU_RIG2"].flatMap(URL.init(string:)))
+        let rig2 = Rig(control: second)
+        try await rig2.post("heal")
+        let marker = "mixed search marker 8f4a"
+        let secondPair = try await rig2.pairing()
+        let secondID = try XCTUnwrap(URLComponents(string: secondPair)?.queryItems?
+            .first(where: { $0.name == "key" })?.value)
+        addTeardownBlock { [weak self] in
+            guard let self else { return }
+            self.app.terminate()
+            self.app.launchArguments = ["-yorozuRemoveHost", secondID]
+            self.app.launch()
+            try self.waitConnected()
+            self.app.terminate()
+        }
+        app.launchArguments = ["-yorozuPair", try await rig.pairing(),
+                               "-yorozuPairSecond", secondPair,
+                               "-yorozuSend", marker]
+        app.launch()
+        for host in [rig!, rig2] {
+            let deadline = Date.now + 60
+            while try await !host.messages().contains(where: { $0.role == "agent" && $0.text == "echo: \(marker)" }) {
+                guard Date.now < deadline else { return XCTFail("A host did not answer the search fixture") }
+                try await Task.sleep(for: .milliseconds(200))
+            }
+        }
+        // The debug auto-send hook creates a fresh thread on every pairing. Relaunch without
+        // that hook before faulting a host, so a reconnect cannot change the fixture itself.
+        app.terminate()
+        app.launchArguments = []
+        app.launch()
+        let list = app.collectionViews.firstMatch
+        XCTAssertTrue(list.waitForExistence(timeout: 15))
+        list.swipeDown()
+        let search = app.searchFields["Search threads"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10))
+        search.tap()
+        search.typeText("8f4a")
+        let matches = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", marker))
+        let both = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 2"), object: matches)
+        XCTAssertEqual(XCTWaiter.wait(for: [both], timeout: 15), .completed,
+                       "One host's downloaded result is missing")
+        XCTAssertTrue(app.staticTexts["All host histories searched"].waitForExistence(timeout: 30))
+        XCTAssertEqual(matches.count, 2, "Host results duplicated downloaded matches")
+
+        try await rig2.post("down")
+        XCTAssertTrue(app.staticTexts["Downloaded conversations, cached and available host results"]
+            .waitForExistence(timeout: 20), "Mixed host availability was not stated truthfully")
+        XCTAssertEqual(matches.count, 2, "Disconnect hid a downloaded match")
+        let anchor = matches.firstMatch.frame.minY
+        try await rig2.post("heal")
+        XCTAssertTrue(app.staticTexts["All host histories searched"].waitForExistence(timeout: 70))
+        XCTAssertEqual(matches.count, 2, "Recovery duplicated a match")
+        XCTAssertEqual(matches.firstMatch.frame.minY, anchor, accuracy: 2,
+                       "Host results moved the visible search row")
+        matches.firstMatch.tap()
+        XCTAssertTrue(app.textViews[marker].waitForExistence(timeout: 10),
+                      "Search result did not open its matching message")
+        app.buttons["Close"].tap()
+        app.navigationBars.buttons["Threads"].tap()
+        list.swipeDown()
+        XCTAssertEqual(search.value as? String, "8f4a", "Back navigation lost the search query")
+        XCTAssertEqual(matches.count, 2, "Back navigation lost the search results")
+    }
+
     /// A silently dead link is noticed and shown, then comes back on its own. Idle, nothing but
     /// the ping can tell: up to 40s, then the 5s grace. The notice overlays the list without
     /// moving its content; Settings stays truthful. Short interruptions are covered by the
