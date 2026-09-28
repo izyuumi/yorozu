@@ -175,6 +175,23 @@ Both relays leave other phones and the host connected; the dropped phone rejoins
 history from the host. Older phones ignore `flowBytes` and do not acknowledge it, so sustained
 traffic beyond 2 MiB requires a client upgrade to stay on the hosted relay's live socket.
 
+### Direct over Tailscale (opt-in)
+
+Off by default. With **Direct connection over Tailscale** on in the Mac's General settings,
+the app runs `tailscale serve --bg --https=8443 http://127.0.0.1:8443` (or shows that command
+when the CLI is missing, Tailscale is down, or the tailnet has no HTTPS certificates) and starts
+the sidecar with `YOROZU_DIRECT_PORT`/`YOROZU_DIRECT_URL`. The sidecar then listens on
+127.0.0.1 only (`packages/runtime/src/direct.ts`), speaking the relay's wire: `nonce`, a
+nonce-signed `join` from an already paired device, signed `frame`s carrying the same sealed
+boxes. No pairing, tokens, buffering or APNs happen there; those stay on the relay.
+
+The `wss://…ts.net` address reaches phones only as `directUrl` inside a replay-protected
+`thread_list`, so the relay never learns it. `RelayClient` keeps it per host key, dials it
+first, and on any failure falls back to the relay without a banner until the next foreground
+or network change. A phone joined directly gets its boxes there and not from the relay; the
+`seq` window drops anything seen twice. Off, the sidecar binds nothing, sends no `directUrl`,
+and phones forget the address on the next thread list.
+
 ## Push notifications
 
 APNs alerts every registered phone. What that costs in privacy is the point of the design, so it

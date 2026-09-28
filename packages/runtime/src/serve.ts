@@ -86,6 +86,7 @@ import type { TurnContext } from "./index.js";
 import type { createLegacyRunner } from "./legacy.js";
 import { localSocketPath, startLocalChannel, type Send } from "./local.js";
 import { startChannelHost } from "./channel.js";
+import { startDirect, type Direct } from "./direct.js";
 import type { Provider } from "./provider.js";
 import { autoTitle, onDeviceTitler, type Titler } from "./title.js";
 // Mirrors PING in apps/relay/src/protocol.ts; the shipped runtime must not depend on the relay package.
@@ -429,6 +430,12 @@ export interface ServeOptions {
    * something a test can wait for rather than something only a real half-open socket reaches.
    */
   heartbeat?: { pingMs: number; pongMs: number };
+  /**
+   * The opt-in direct path: a loopback port `tailscale serve` publishes, and the tailnet URL
+   * paired phones are told inside the sealed channel. Defaults to `YOROZU_DIRECT_PORT` and
+   * `YOROZU_DIRECT_URL`; with either missing nothing listens and nothing is said.
+   */
+  direct?: { port: number; url: string };
   /**
    * The native coding agents, by thread agent kind. Defaults to Claude Code through the Agent
    * SDK; a kind with no runner answers that it is not available. Test seam for a fake SDK.
@@ -785,6 +792,20 @@ export function serve(options: ServeOptions = {}): Sidecar {
    */
   const pairingSecrets = new Set<string>();
   const PAIRING_SECRETS = 4;
+  /** A relay-format frame body from a phone on the direct path. Replaced per relay connection. */
+  let onDirectFrame: (payload: string) => void = () => {};
+  const directPort = Number(env.YOROZU_DIRECT_PORT);
+  const directConfig = options.direct ?? (Number.isInteger(directPort) && directPort > 0 && env.YOROZU_DIRECT_URL
+    ? { port: directPort, url: env.YOROZU_DIRECT_URL } : undefined);
+  const direct: Direct | undefined = directConfig && startDirect({
+    port: directConfig.port,
+    known: (pub) => [...devices.values()].some(({ record }) => record.signingPub === pub),
+    onFrame: (_, payload) => onDirectFrame(payload),
+    onError: state,
+  });
+  /** The direct socket a device is on right now, if any; its boxes skip the relay. */
+  const directFor = (known: PairedDevice): WebSocket | undefined =>
+    known.record.signingPub ? direct?.socketFor(known.record.signingPub) : undefined;
   /** Seals and sends to one paired device. Replaced per connection, a no-op while there is none. */
   let sendTo: (device: string, event: YorozuEvent) => void = () => {};
   // A negative result means a trace was held (-1) or is too large to send live (-2).
@@ -1315,7 +1336,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
     activeSearchRequests.delete(pub);
     devices.delete(pub);
     saveDevices();
-    if (known.record.signingPub) revokeAtRelay(known.record.signingPub);
+    if (known.record.signingPub) {
+      revokeAtRelay(known.record.signingPub);
+      direct?.drop(known.record.signingPub);
+    }
     state("revoked");
     pushDevices();
   };
@@ -2807,7 +2831,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
     const boxesFor = (device: string, event: YorozuEvent): FrameBody[] => {
       const known = devices.get(device);
-      if (!known || !relayReady || ws.readyState !== WebSocket.OPEN) return [];
+      if (!known || ((!relayReady || ws.readyState !== WebSocket.OPEN) && !directFor(known))) return [];
       const supportsApprovalStatus = known.compatibility?.state === "compatible" &&
         known.compatibility.capabilities.includes("offline-approval-v1");
       if (!supportsApprovalStatus && event.kind === "approval_status") return [];
@@ -2825,6 +2849,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
           ...(event.data.peerInfoReplyTo ? { peerInfoReplyTo: event.data.peerInfoReplyTo } : {}),
           ...(known.peerClaimReceived ? { peerInfo: localPeerInfo(peerInfo.appVersion, name) } : {}),
           ...(known.compatibility?.state === "update-required" ? { peerInfoError: known.compatibility.reason } : {}),
+          // Only inside a replay-protected box: the relay never learns the tailnet name.
+          ...(directConfig && known.format === "current" ? { directUrl: directConfig.url } : {}),
         } };
       }
       event = forAgentCapability(event, known.compatibility?.state === "compatible" &&
@@ -2845,14 +2871,29 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       return boxes;
     };
-    sendTo = (device, event) => { for (const box of boxesFor(device, event)) sendFrame(box); };
+    sendTo = (device, event) => {
+      const known = devices.get(device);
+      const directSocket = known && directFor(known);
+      for (const box of boxesFor(device, event)) {
+        if (directSocket) directSocket.send(JSON.stringify({ type: "frame", ...signedFrame(box) }));
+        else sendFrame(box);
+      }
+    };
     /** Phones holding a socket on the relay, by its count. Undefined until it says. */
     let phones: number | undefined;
     const emptyBatchBytes = Buffer.byteLength(JSON.stringify({ type: "frame", frames: [] }));
     sendToAll = (event, maxBuffered) => {
+      // Phones on the direct path get theirs there, whatever the relay is doing. Sent last,
+      // once the relay has not asked to hold the event, so a held event is not sent twice.
+      const sendDirect = (): void => {
+        for (const [device, known] of devices) {
+          const directSocket = directFor(known);
+          if (directSocket) for (const box of boxesFor(device, event)) directSocket.send(JSON.stringify({ type: "frame", ...signedFrame(box) }));
+        }
+      };
       // The relay keeps nothing the Mac sends, so a frame into a room with no phone in it is
       // only a bill. Unknown stays as it was: an older relay never says.
-      if (phones === 0) return 0;
+      if (phones === 0) { sendDirect(); return 0; }
       if (maxBuffered !== undefined) {
         // Cover both current and legacy boxes without burning sequence numbers while held.
         const estimate = devices.size * (Buffer.byteLength(JSON.stringify(event)) * 3 + 1_024);
@@ -2869,7 +2910,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         frames = [];
         bytes = emptyBatchBytes;
       };
-      for (const device of devices.keys()) for (const box of boxesFor(device, event)) {
+      for (const [device, known] of devices) for (const box of directFor(known) ? [] : boxesFor(device, event)) {
         const frame = signedFrame(box);
         const size = Buffer.byteLength(JSON.stringify(frame)) + (frames.length ? 1 : 0);
         // Stay below the relay's 1 MiB message ceiling, including JSON envelope overhead.
@@ -2883,7 +2924,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (total > maxBuffered) return -2;
         if (ws.bufferedAmount + total > maxBuffered) return -1;
       }
-      for (const batch of batches) ws.send(batch);
+      sendDirect();
+      if (relayReady && ws.readyState === WebSocket.OPEN) for (const batch of batches) ws.send(batch);
       return batches.length;
     };
 
@@ -3035,6 +3077,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (known?.record.peerInfoRequired && known.compatibility?.state !== "compatible") return;
       handleEvent(event, (answer) => sendTo(device, answer), known?.record.pairedAt ?? 0, device);
     }
+
+    onDirectFrame = (payload) => {
+      const body = parseFrameBody(payload);
+      if (!body) return state("frame-error malformed body");
+      onFrame(body);
+    };
 
     /**
      * One ping every PING_MS, and the socket is declared dead if the pong does not come back
@@ -3232,6 +3280,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (retry) clearTimeout(retry);
       await local.close();
       await channel.close();
+      await direct?.close();
       await legacyReady?.catch(() => undefined);
       await legacy?.close();
       return new Promise<void>((done) => {

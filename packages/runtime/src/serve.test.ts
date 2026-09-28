@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startRelay, type Relay } from "@yorozu/relay";
-import { connectPhone, rejoinPhone } from "@yorozu/relay/dist/testing.js";
+import { connectPhone, keypair, rejoinPhone } from "@yorozu/relay/dist/testing.js";
 import {
   decodeEnvelope,
   decodeNotificationPreview,
@@ -29,7 +29,8 @@ import {
 } from "@yorozu/shared";
 import { listRules, type AskResult, type Rule } from "./approval.js";
 import type { AddressInfo } from "node:net";
-import { createConnection } from "node:net";
+import { createConnection, createServer } from "node:net";
+import { networkInterfaces } from "node:os";
 import { afterEach, expect, test, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import { openaiCompat } from "./provider.js";
@@ -666,7 +667,7 @@ async function pairedPhone(responses: (() => Response)[], openclaw = false, extr
     await eventsUntil((event) => event.kind === "thread_list" && event.data.peerInfoReplyTo === id);
   }
 
-  return { dir, send, eventsUntil, isReply, channel, frame, pub: toBase64Url(phoneKeys.publicKey) };
+  return { dir, send, eventsUntil, isReply, channel, frame, pub: toBase64Url(phoneKeys.publicKey), keys, qr };
 }
 
 test("a box whose seq cannot be recorded is not acted on, and is taken when it comes again", async () => {
@@ -4097,4 +4098,49 @@ test("channel threads are titled from their opening message", async () => {
   await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === "news")?.title).toBe("Weekend plans"));
   plugin.close();
   mac.close();
+});
+
+test("the direct path is off unless configured: nothing listens and no address is sent", async () => {
+  const { eventsUntil, send } = await pairedPhone([]);
+  const id = send({ kind: "thread_list", data: { threads: [], peerInfo: localPeerInfo("test") } }, "");
+  const list = (await eventsUntil((event) => event.kind === "thread_list" && event.data.peerInfoReplyTo === id)).at(-1)!;
+  expect(list.kind === "thread_list" && list.data).not.toHaveProperty("directUrl");
+});
+
+test("the direct path takes paired devices only, carries the same sealed boxes, and names itself sealed", async () => {
+  const port = await new Promise<number>((resolve) => {
+    const probe = createServer().listen(0, "127.0.0.1", () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => resolve(port));
+    });
+  });
+  const url = "wss://mac.example.ts.net:8443";
+  const { eventsUntil, send, channel, keys, qr } = await pairedPhone([], false, { direct: { port, url } });
+  // The address rides only inside the replay-protected thread list.
+  const id = send({ kind: "thread_list", data: { threads: [], peerInfo: localPeerInfo("test") } }, "");
+  const sealed = (await eventsUntil((event) => event.kind === "thread_list" && event.data.peerInfoReplyTo === id)).at(-1)!;
+  expect(sealed.kind === "thread_list" && sealed.data.directUrl).toBe(url);
+
+  // Loopback only.
+  const bound = await new Promise<boolean>((resolve) => {
+    const other = Object.values(networkInterfaces()).flat().find((i) => i?.family === "IPv4" && !i.internal);
+    if (!other) return resolve(false);
+    const probe = createConnection(port, other.address);
+    probe.once("connect", () => { probe.destroy(); resolve(true); });
+    probe.once("error", () => resolve(false));
+  });
+  expect(bound).toBe(false);
+
+  // A stranger is refused, even with a well-signed join.
+  const stranger = await rejoinPhone(port, qr.roomId!, keypair());
+  expect(await stranger.closed).toBe(4001);
+
+  // The paired phone rejoins by nonce, and its sealed request is answered on the same socket.
+  const direct = await rejoinPhone(port, qr.roomId!, keys);
+  expect(await direct.next()).toMatchObject({ type: "joined" });
+  direct.frame(channel.box({ id: "direct-sync", threadId: "", ts: Date.now(), agentId: "phone",
+    kind: "sync_request", data: { lastSeen: {} } }), keys);
+  const answer = await nextModernEnvelope(direct, channel);
+  expect(answer.event.kind).toBe("receipt");
+  direct.ws.close();
 });

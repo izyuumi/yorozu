@@ -10,6 +10,7 @@ trap 'rm -rf "$CHECK_DIR"' EXIT HUP INT TERM
 mkdir -p "$CHECK_DIR/Sources/Check" "$CHECK_DIR/Sources/YorozuKeepalive"
 ln -s "$YOROZU_CHECK_ROOT/apps/mac/Sources/YorozuMac/MacChatSession.swift" "$CHECK_DIR/Sources/Check/MacChatSession.swift"
 ln -s "$YOROZU_CHECK_ROOT/apps/mac/Sources/YorozuMac/RelaySettings.swift" "$CHECK_DIR/Sources/Check/RelaySettings.swift"
+ln -s "$YOROZU_CHECK_ROOT/apps/mac/Sources/YorozuMac/DirectSettings.swift" "$CHECK_DIR/Sources/Check/DirectSettings.swift"
 ln -s "$YOROZU_CHECK_ROOT/scripts/check-mac-multi-host.swift" "$CHECK_DIR/Sources/Check/Check.swift"
 ln -s "$YOROZU_CHECK_ROOT/apps/mac/Sources/YorozuKeepalive/Keepalive.swift" "$CHECK_DIR/Sources/YorozuKeepalive/Keepalive.swift"
 cat > "$CHECK_DIR/Package.swift" <<'SWIFT'

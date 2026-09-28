@@ -506,6 +506,11 @@ export interface ThreadListData {
   peerInfoError?: string;
   /** Echoes the current peer-information request, distinguishing it from in-flight broadcasts. */
   peerInfoReplyTo?: string;
+  /**
+   * The host's opt-in direct address (`wss://…ts.net`), sent only sealed. A phone dials it
+   * first and falls back to the relay; absent means the host has it off, so forget any old one.
+   */
+  directUrl?: string;
 }
 
 /**

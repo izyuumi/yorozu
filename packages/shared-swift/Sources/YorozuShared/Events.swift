@@ -1257,16 +1257,19 @@ public struct ThreadListData: Codable, Equatable, Sendable {
     public var peerInfo: PeerInfoData?
     public var peerInfoError: String?
     public var peerInfoReplyTo: String?
+    /// The host's opt-in direct address, only ever inside a sealed box. See ``RelayClient``.
+    public var directUrl: String?
     public init(threads: [ThreadSummary], peerInfoSupported: Bool? = nil, peerInfo: PeerInfoData? = nil,
-        peerInfoError: String? = nil, peerInfoReplyTo: String? = nil) {
+        peerInfoError: String? = nil, peerInfoReplyTo: String? = nil, directUrl: String? = nil) {
         self.threads = threads
+        self.directUrl = directUrl
         self.peerInfoSupported = peerInfoSupported
         self.peerInfo = peerInfo
         self.peerInfoError = peerInfoError
         self.peerInfoReplyTo = peerInfoReplyTo
     }
 
-    private enum CodingKeys: String, CodingKey { case threads, peerInfoSupported, peerInfo, peerInfoError, peerInfoReplyTo }
+    private enum CodingKeys: String, CodingKey { case threads, peerInfoSupported, peerInfo, peerInfoError, peerInfoReplyTo, directUrl }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         threads = try c.decode([ThreadSummary].self, forKey: .threads)
@@ -1274,6 +1277,9 @@ public struct ThreadListData: Codable, Equatable, Sendable {
         peerInfo = c.contains(.peerInfo) ? try c.decode(PeerInfoData.self, forKey: .peerInfo) : nil
         peerInfoError = c.contains(.peerInfoError) ? try c.decode(String.self, forKey: .peerInfoError) : nil
         peerInfoReplyTo = c.contains(.peerInfoReplyTo) ? try c.decode(String.self, forKey: .peerInfoReplyTo) : nil
+        // An address this client would not dial is no address: dropped, not a decode failure.
+        directUrl = (try? c.decodeIfPresent(String.self, forKey: .directUrl))
+            .flatMap { $0 }.flatMap { URL(string: $0)?.scheme == "wss" ? $0 : nil }
         if let peerInfoReplyTo, peerInfoReplyTo.isEmpty || peerInfoReplyTo.utf8.count > 128
             || peerInfoReplyTo.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) {
             throw DecodingError.dataCorruptedError(forKey: .peerInfoReplyTo, in: c, debugDescription: "Invalid peer-information reply ID")

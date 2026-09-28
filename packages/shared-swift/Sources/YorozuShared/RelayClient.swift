@@ -115,6 +115,19 @@ public actor RelayClient: ChatTransport {
 
     private var socket: URLSessionWebSocketTask?
     private var intentionalRedial: URLSessionWebSocketTask?
+    /// The host's opt-in direct address, learned sealed and kept per host key. Dialled first;
+    /// the relay is the fallback, and stays the only way to pair and to be woken.
+    /// `UserDefaults` suite; nil is `.standard`. A name rather than the store, which is not `Sendable`.
+    private let directSuite: String?
+    private var directStore: UserDefaults { directSuite.flatMap(UserDefaults.init(suiteName:)) ?? .standard }
+    private let directKey: String
+    private var directUrl: URL?
+    /// Set when the direct dial failed; the relay is used until the next ``connect()`` or
+    /// ``reconnect()``, which try direct again.
+    private var skipDirect = false
+    /// Whether the current socket is the direct one. Its failures are not the user's problem:
+    /// the relay is dialled next without a banner or a backoff.
+    private var onDirect = false
     /// The challenge the relay issued on this socket; a rejoin signs it.
     private var nonce = ""
     /// True once the relay has accepted this device, so later joins need no token. Seeded by
@@ -161,6 +174,7 @@ public actor RelayClient: ChatTransport {
         paired: Bool = false,
         session: URLSession = .shared,
         counters: (any ChannelCounterStorage)? = nil,
+        directSuite: String? = nil,
         onPaired: (@Sendable () -> Void)? = nil
     ) throws {
         guard let url = URL(string: pairing.relayUrl), url.scheme?.hasPrefix("ws") == true else {
@@ -204,6 +218,29 @@ public actor RelayClient: ChatTransport {
             peerPub: macPub
         )
         self.counter = try counterStore.load() ?? ChannelCounter()
+        self.directSuite = directSuite
+        self.directKey = "yorozu.directUrl." + pairing.macPubkey
+        self.directUrl = (directSuite.flatMap(UserDefaults.init(suiteName:)) ?? .standard)
+            .string(forKey: directKey).flatMap(URL.init(string:))
+    }
+
+    /// The direct address this client would dial, for tests and diagnostics.
+    public var currentDirectUrl: URL? { directUrl }
+
+    private func learnDirect(_ value: String?) {
+        let url = value.flatMap(URL.init(string:))
+        guard url != directUrl else { return }
+        directUrl = url
+        if let value, url != nil { directStore.set(value, forKey: directKey) }
+        else { directStore.removeObject(forKey: directKey) }
+    }
+
+    /// The direct address with the same `?room=` the relay URL carries, or nil to use the relay.
+    private func directDial() -> URL? {
+        guard paired, !skipDirect, let directUrl,
+              var components = URLComponents(url: directUrl, resolvingAgainstBaseURL: false) else { return nil }
+        components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "room", value: pairing.roomId)]
+        return components.url
     }
 
     /// Dials, and keeps re-dialling after every drop, yielding every update until ``close()``.
@@ -224,6 +261,7 @@ public actor RelayClient: ChatTransport {
         phaseDeadline = nil
         intentionalRedial = nil
         stopped = false
+        skipDirect = false
         watchNetworkPath()
         let generation = loopGeneration
         loop = Task { await self.reconnectLoop(generation: generation) }
@@ -246,6 +284,7 @@ public actor RelayClient: ChatTransport {
     public func reconnect() {
         guard !stopped else { return }
         attempt = 0
+        skipDirect = false
         backoff?.cancel()
         intentionalRedial = socket
         socket?.cancel()
@@ -301,7 +340,7 @@ public actor RelayClient: ChatTransport {
             try? await Task.sleep(for: .seconds(15))
             guard !Task.isCancelled, !stopped, self.socket === socket, !ready else { return }
             phaseDeadline = nil
-            updates?.yield(.failed(reason))
+            if !onDirect { updates?.yield(.failed(reason)) }
             socket.cancel()
         }
     }
@@ -323,7 +362,9 @@ public actor RelayClient: ChatTransport {
             peerInfo = nil
             compatibility = .legacy
             nonce = ""
-            let socket = session.webSocketTask(with: dial)
+            let direct = directDial()
+            onDirect = direct != nil
+            let socket = session.webSocketTask(with: direct ?? dial)
             self.socket = socket
             socket.resume()
             armPhaseDeadline("relay connection timed out", on: socket)
@@ -335,6 +376,11 @@ public actor RelayClient: ChatTransport {
             pongDeadline?.cancel()
             pongDeadline = nil
             guard !stopped, !Task.isCancelled else { return }
+            // A direct socket that ends, joined or not, hands over to the relay at once.
+            if direct != nil {
+                skipDirect = true
+                continue
+            }
             // Exponential retry with jitter; back to the first interval after a join.
             let delay = min(30, pow(2, Double(attempt))) * Double.random(in: 0.75...1.0)
             attempt += 1
@@ -380,7 +426,7 @@ public actor RelayClient: ChatTransport {
     private func pongMissed(on socket: URLSessionWebSocketTask?) {
         pongDeadline = nil
         guard !stopped, let socket, socket === self.socket else { return }
-        updates?.yield(.failed("relay stopped answering"))
+        if !onDirect { updates?.yield(.failed("relay stopped answering")) }
         socket.cancel()
     }
 
@@ -440,7 +486,7 @@ public actor RelayClient: ChatTransport {
                 // Our own cancellation is not a failure worth reporting.
                 let redial = intentionalRedial === socket
                 if redial { intentionalRedial = nil }
-                if !redial, !stopped, !Task.isCancelled, generation == loopGeneration {
+                if !redial, !onDirect, !stopped, !Task.isCancelled, generation == loopGeneration {
                     updates?.yield(.failed(error.localizedDescription))
                 }
                 return
@@ -645,6 +691,8 @@ public actor RelayClient: ChatTransport {
 
     private func receiveAuthenticated(_ event: YorozuEvent) {
         if case .threadList(let list) = event.payload {
+            // Only a replay-protected box speaks for the host: a legacy one can be reflected.
+            if channelFormat == .current { learnDirect(list.directUrl) }
             if peerInfoRequestID == nil && (list.peerInfoSupported == true || list.peerInfo != nil || list.peerInfoError != nil) {
                 requestPeerInfo()
                 return
