@@ -27,6 +27,9 @@ public final class ChatModel {
     private var lastRun: [String: RunChoice] = [:]
     /// The newest unsent draft.
     public var draft: ThreadSummary? { draftThreads.first }
+    /// The thread this run of the app last started, whose composer opens focused. Not saved:
+    /// a relaunch restores the draft, and must not raise the keyboard over it.
+    public private(set) var startedThread: String?
 
     public func isDraft(_ threadId: String) -> Bool {
         draftThreads.contains { $0.id == threadId }
@@ -1536,6 +1539,7 @@ public final class ChatModel {
         thread.model = last?.model
         thread.effort = last?.effort
         draftThreads.insert(thread, at: 0)
+        startedThread = thread.id
         saveDraftsNow()
         return thread
     }
