@@ -59,7 +59,6 @@ struct OnboardingView: View {
             case .clientDone: clientDone
             }
         }
-        .padding(24)
         .frame(minWidth: 560, minHeight: 600)
         .background(YorozuPalette.canvas)
         .yorozuTint()
@@ -97,6 +96,7 @@ struct OnboardingView: View {
             Spacer(minLength: 0)
             Spacer(minLength: 0)
         }
+        .padding(Self.inset)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -152,17 +152,15 @@ struct OnboardingView: View {
         page(
             progress: (3, 4, "Permissions"),
             title: "Choose what Yorozu can do",
-            detail: "All optional. Grant only what you want; each row re-checks itself and stays in Settings."
+            detail: "All optional. Grant only what you want; each row re-checks itself and stays in Settings.",
+            edgeToEdge: true
         ) {
             PermissionsView(scope: .onboarding)
-                .padding(.horizontal, -24)
         } footer: {
             // Back rebuilds the sheet with a fresh baseline, so its earlier success is over.
             Button("Back") { devicePaired = false; step = .hostPair }
             Spacer()
-            Text("Files: Settings › Permissions")
-                .font(.scaled(.caption)).foregroundStyle(.secondary)
-            Button("Finish") { step = .hostDone }
+            Button("Continue") { step = .hostDone }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
         }
@@ -172,6 +170,8 @@ struct OnboardingView: View {
     private var pairedDeviceCount: Int {
         session.model.devices.filter { $0.via == .relay }.count
     }
+    /// The list revision when the summary asked, so an old or empty list is not read as the answer.
+    @State private var devicesAskedAt: Int?
 
     private var hostDone: some View {
         page(progress: (4, 4, "Done"), title: nil, detail: nil) {
@@ -183,9 +183,13 @@ struct OnboardingView: View {
                 )
                 summary {
                     summaryRow("Devices") {
-                        Text(pairedDeviceCount == 0
-                            ? "No devices paired yet"
-                            : "^[\(pairedDeviceCount) device](inflect: true) paired")
+                        if devicesAskedAt.map({ session.model.deviceListRevision == $0 }) ?? true {
+                            Text("Checking…")
+                        } else {
+                            Text(pairedDeviceCount == 0
+                                ? "No devices paired yet"
+                                : "^[\(pairedDeviceCount) device](inflect: true) paired")
+                        }
                         Text("Pair more any time from Settings › Devices").font(.scaled(.caption)).foregroundStyle(.secondary)
                     }
                     Divider()
@@ -196,7 +200,10 @@ struct OnboardingView: View {
                     }
                 }
             }
-            .task { session.model.requestDevices() }
+            .task {
+                devicesAskedAt = session.model.deviceListRevision
+                session.model.requestDevices()
+            }
         } footer: {
             Button("Back") { step = .hostPermissions }
             Spacer()
@@ -331,35 +338,48 @@ struct OnboardingView: View {
     // MARK: Layout
 
     /// A step: progress, a heading, the flexible middle, and a footer that stays where it is.
+    /// The window's margin. A page applies it itself, so an `edgeToEdge` grouped Form can span
+    /// the width and inset its own sections the way Settings does.
+    private static let inset: CGFloat = 24
+
     private func page<Content: View, Footer: View>(
         progress: (Int, Int, LocalizedStringKey),
         title: LocalizedStringKey?,
         detail: LocalizedStringKey?,
+        edgeToEdge: Bool = false,
         @ViewBuilder content: () -> Content,
         @ViewBuilder footer: () -> Footer
     ) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            stepIndicator(progress.0, of: progress.1, label: progress.2)
-            if let title {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(title).font(.scaled(.title2).bold())
-                    if let detail {
-                        Text(detail).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 16) {
+                stepIndicator(progress.0, of: progress.1, label: progress.2)
+                if let title {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(title).font(.scaled(.title2).bold())
+                        if let detail {
+                            Text(detail).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
             }
+            .padding([.horizontal, .top], Self.inset)
             content()
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.horizontal, edgeToEdge ? 0 : Self.inset)
             HStack(spacing: 8) { footer() }
+                .padding([.horizontal, .bottom], Self.inset)
         }
     }
+
+    /// The progress dots' diameter: this component's own geometry, not a layout guess.
+    private static let stepDot: CGFloat = 6
 
     private func stepIndicator(_ current: Int, of total: Int, label: LocalizedStringKey) -> some View {
         HStack(spacing: 6) {
             ForEach(1...total, id: \.self) { index in
                 Circle()
                     .fill(index < current ? YorozuPalette.sage : index == current ? YorozuPalette.vermilion : YorozuPalette.stone)
-                    .frame(width: 6, height: 6)
+                    .frame(width: Self.stepDot, height: Self.stepDot)
             }
             Text(label)
             Text("· \(current) of \(total)")
@@ -367,7 +387,7 @@ struct OnboardingView: View {
         .font(.scaled(.caption2))
         .foregroundStyle(.secondary)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Step \(current) of \(total)"))
+        .accessibilityLabel(Text("\(Text(label)), step \(current) of \(total)"))
     }
 
     private func completion(systemImage: String, tint: Color, title: LocalizedStringKey, detail: LocalizedStringKey) -> some View {
@@ -380,15 +400,17 @@ struct OnboardingView: View {
         .padding(.top, 20)
     }
 
+    /// A grid, so the label column is as wide as its widest label at any text size or language.
+    /// A row that is not a ``summaryRow`` — a divider — spans both columns.
     private func summary<Rows: View>(@ViewBuilder rows: () -> Rows) -> some View {
-        VStack(alignment: .leading, spacing: 10) { rows() }
+        Grid(alignment: .topLeading, horizontalSpacing: 10, verticalSpacing: 10) { rows() }
             .frame(maxWidth: .infinity, alignment: .leading)
             .yorozuPaperCard()
     }
 
     private func summaryRow<Value: View>(_ label: LocalizedStringKey, @ViewBuilder value: () -> Value) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text(label).foregroundStyle(.secondary).frame(width: 92, alignment: .leading)
+        GridRow {
+            Text(label).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 2) { value() }
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -397,6 +419,9 @@ struct OnboardingView: View {
 }
 
 private struct RoleChoiceButton: View {
+    /// One column for every card's symbol, so the titles line up whatever the symbol's width.
+    private static let iconColumn: CGFloat = 32
+
     let title: LocalizedStringKey
     let detail: LocalizedStringKey
     let systemImage: String
@@ -406,7 +431,7 @@ private struct RoleChoiceButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                Image(systemName: systemImage).font(.scaled(.title2)).frame(width: 32)
+                Image(systemName: systemImage).font(.scaled(.title2)).frame(width: Self.iconColumn)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(.scaled(.headline))
                     Text(detail).font(.scaled(.caption)).foregroundStyle(.secondary)
