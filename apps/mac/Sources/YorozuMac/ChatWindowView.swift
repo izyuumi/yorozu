@@ -255,7 +255,7 @@ private struct LocalChatWindowView: View {
     /// half of "somebody is looking at this": `.active` is a window in the active app that is
     /// not key, and `.inactive` is the whole app sitting behind something else.
     @Environment(\.controlActiveState) private var controlActiveState
-    @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
 
     private var model: ChatModel { session.model }
 
@@ -357,7 +357,7 @@ private struct LocalChatWindowView: View {
         .onAppear {
             if model.listed { open() }
             // Screenshot harness only — see ``Showcase``.
-            if launchArgument("yorozuWindow") == "settings" { openSettings() }
+            if launchArgument("yorozuWindow") == "settings" { openWindow(id: YorozuMacApp.settingsWindow) }
         }
         .onChange(of: router.threadID, initial: true) { _, id in
             guard let id else { return }
@@ -385,11 +385,11 @@ private struct LocalChatWindowView: View {
 /// Updates and Quit are in the menu bar item and the app menu, as on every Mac.
 private struct SidebarFooter: View {
     let connection: String
-    @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         HStack {
-            Button { openSettings() } label: { Label("Settings", systemImage: "gearshape") }
+            Button { openWindow(id: YorozuMacApp.settingsWindow) } label: { Label("Settings", systemImage: "gearshape") }
                 .buttonStyle(.plain)
             Spacer()
             Text(connection)
@@ -402,11 +402,12 @@ private struct SidebarFooter: View {
 }
 
 /// Everything that is not chat. These used to be stacked in the menu bar window itself; the
-/// window is the chat now, so they live in the standard Settings scene where ⌘, and the
+/// window is the chat now, so they live in the Settings window where ⌘, and the
 /// sidebar's Settings button both find them.
 ///
-/// A toolbar of tabs, as every Mac app's Settings is: a sidebar split view in a Settings
-/// window grew a blank toolbar strip and a second selection colour, for three panes.
+/// A sidebar of panes under one toolbar, as System Settings is. The toolbar is what makes
+/// the sidebar run the full height of the window: without an item in it the window keeps a
+/// plain title bar across the top.
 @MainActor @Observable
 final class SettingsPaneRouter {
     static let shared = SettingsPaneRouter()
@@ -427,37 +428,71 @@ struct SettingsView: View {
     @State private var route = SettingsPaneRouter.shared
     @AppStorage(HostWindowMode.key) private var backgroundOnlyHost = false
     // The pane, or the one a screenshot asked for — see ``Showcase``.
-    @State private var selection = launchArgument("yorozuSettingsPane") ?? "general"
+    @State private var selection: String? = launchArgument("yorozuSettingsPane") ?? "general"
+
+    /// The panes walked through, for Back and Forward, and where in them this is.
+    @State private var visited: [String] = []
+    @State private var position = 0
+
+    private typealias Pane = (id: String, title: LocalizedStringKey, icon: String)
+
+    private var panes: [Pane] {
+        var panes: [Pane] = [("general", "General", "gearshape")]
+        if session.role == .host {
+            panes.append(("devices", "Devices", "iphone.and.arrow.forward"))
+            panes.append(("permissions", "Permissions", "lock.shield"))
+            if backgroundOnlyHost {
+                panes.append(("notifications", "Notifications", "bell"))
+                panes.append(("updates", "Updates", "arrow.triangle.2.circlepath"))
+            }
+        } else if session.hosts.hasMultipleHosts {
+            panes.append(("hosts", "Hosts", "desktopcomputer"))
+        } else {
+            panes.append(("hosts", "Connection", "link"))
+        }
+        return panes
+    }
 
     var body: some View {
-        TabView(selection: $selection) {
-            Tab("General", systemImage: "gearshape", value: "general") { GeneralView() }
-            if session.role == .host {
-                Tab("Devices", systemImage: "iphone.and.arrow.forward", value: "devices") {
-                    DevicesView(sidecar: sidecar)
+        let pane = panes.first { $0.id == selection } ?? panes[0]
+        NavigationSplitView {
+            List(panes, id: \.id, selection: $selection) { Label($0.title, systemImage: $0.icon) }
+                .toolbar(removing: .sidebarToggle)
+        } detail: {
+            Group {
+                switch pane.id {
+                case "devices": DevicesView(sidecar: sidecar)
+                case "permissions": PermissionsView()
+                case "notifications": MacNotificationsView()
+                case "updates": UpdatesSettingsView()
+                case "hosts": HostsView()
+                default: GeneralView()
                 }
-                Tab("Permissions", systemImage: "lock.shield", value: "permissions") {
-                    PermissionsView()
-                }
-                if backgroundOnlyHost {
-                    Tab("Notifications", systemImage: "bell", value: "notifications") {
-                        MacNotificationsView()
-                    }
-                    Tab("Updates", systemImage: "arrow.triangle.2.circlepath", value: "updates") {
-                        UpdatesSettingsView()
-                    }
-                }
-            } else {
-                Tab(session.hosts.hasMultipleHosts ? "Hosts" : "Connection",
-                    systemImage: session.hosts.hasMultipleHosts ? "desktopcomputer" : "link", value: "hosts") {
-                    HostsView()
+            }
+            .navigationTitle(pane.title)
+            .toolbar {
+                ToolbarItemGroup(placement: .navigation) {
+                    Button("Back", systemImage: "chevron.left") { go(-1) }
+                        .disabled(position == 0)
+                    Button("Forward", systemImage: "chevron.right") { go(1) }
+                        .disabled(position >= visited.count - 1)
                 }
             }
         }
-        .frame(width: 600, height: 620)
         .onAppear { if let pane = route.selection { selection = pane } }
         .onChange(of: route.selection) { _, pane in if let pane { selection = pane } }
         .onChange(of: session.role) { _, _ in selection = "general" }
         .onChange(of: backgroundOnlyHost) { _, active in if !active { selection = "general" } }
+        .onChange(of: selection, initial: true) { _, pane in
+            // Back and Forward land here too, on the pane already at `position`.
+            guard let pane, visited.isEmpty || visited[position] != pane else { return }
+            visited = visited.prefix(position + 1) + [pane]
+            position = visited.count - 1
+        }
+    }
+
+    private func go(_ step: Int) {
+        position += step
+        selection = visited[position]
     }
 }

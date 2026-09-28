@@ -495,7 +495,6 @@ struct YorozuMacApp: App {
     @StateObject private var sidecar = Sidecar.shared
     @State private var session = MacChatSession.shared
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.openSettings) private var openSettings
     @Environment(\.dismissWindow) private var dismissWindow
     /// Whether setup was finished, so the menu can offer the way back to it until it was.
     @AppStorage(OnboardingWindow.completedKey) private var onboardingCompleted = false
@@ -505,6 +504,7 @@ struct YorozuMacApp: App {
     /// The chat window's id, so the status item can ask for it by name.
     static let chatWindow = "chat"
     static let quickChatWindow = "quick-chat"
+    static let settingsWindow = "settings"
 
     private func openQuickChat() {
         openWindow(id: Self.quickChatWindow)
@@ -588,7 +588,7 @@ struct YorozuMacApp: App {
                         if Updates.pending.failure != nil {
                             Button("Update needs attention") {
                                 SettingsPaneRouter.shared.selection = "updates"
-                                openSettings()
+                                openWindow(id: Self.settingsWindow)
                             }
                         }
                     }
@@ -598,7 +598,7 @@ struct YorozuMacApp: App {
                 Button("Finish Setup…") { OnboardingWindow.show() }
             }
             Divider()
-            SettingsLink { Text("Settings…") }
+            Button("Settings…") { openWindow(id: Self.settingsWindow) }
             CheckForUpdatesButton()
             if HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost),
                let check = Updates.checkResult.message {
@@ -652,8 +652,21 @@ struct YorozuMacApp: App {
                 }
         }
 
-        Settings { SettingsView(sidecar: sidecar) }
-            .commands { HostQuitCommands(backgroundOnly: HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost)) }
+        // A window rather than a `Settings` scene: that one's window has a title bar of its
+        // own, which stops the sidebar short of the top and leaves the pane without a toolbar.
+        Window("Settings", id: Self.settingsWindow) {
+            SettingsView(sidecar: sidecar)
+                .onAppear { NSApp.activate(ignoringOtherApps: true) }
+        }
+        .defaultSize(width: 800, height: 580)
+        .restorationBehavior(.disabled)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { openWindow(id: Self.settingsWindow) }
+                    .keyboardShortcut(",")
+            }
+            HostQuitCommands(backgroundOnly: HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost))
+        }
     }
 }
 
