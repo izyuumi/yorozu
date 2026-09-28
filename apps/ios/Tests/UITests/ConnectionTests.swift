@@ -176,6 +176,30 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(matches.count, 2, "Back navigation lost the search results")
     }
 
+    /// Pre-pairing host history is absent from routine sync. Local search cannot see it;
+    /// recovery must discover it, then backfill and open its older matching message.
+    @MainActor
+    func testHostOnlySearchResultOpensItsMatchingMessage() async throws {
+        try await rig.post("seed-search")
+        try await launchPaired()
+        try await rig.post("down")
+        XCTAssertEqual(status(becomes: "Reconnecting", within: 15), .completed)
+        app.collectionViews.firstMatch.swipeDown()
+        let search = app.searchFields["Search threads"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10))
+        search.tap()
+        search.typeText("6e72")
+        let result = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "host-only marker 6e72")).firstMatch
+        XCTAssertTrue(app.staticTexts["Downloaded conversations only"].waitForExistence(timeout: 3))
+        XCTAssertFalse(result.exists, "Host-only match appeared in downloaded search")
+        try await rig.post("heal")
+        XCTAssertTrue(result.waitForExistence(timeout: 70), "Host-only match was not added to search results")
+        XCTAssertTrue(app.staticTexts["All host histories searched"].waitForExistence(timeout: 10))
+        result.tap()
+        XCTAssertTrue(app.textViews["host-only marker 6e72"].waitForExistence(timeout: 30),
+                      "Selecting a host-only result did not load its matching message")
+    }
+
     /// A silently dead link is noticed and shown, then comes back on its own. Idle, nothing but
     /// the ping can tell: up to 40s, then the 5s grace. The notice overlays the list without
     /// moving its content; Settings stays truthful. Short interruptions are covered by the
