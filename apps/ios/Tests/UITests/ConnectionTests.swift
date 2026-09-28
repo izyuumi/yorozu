@@ -89,7 +89,7 @@ final class ConnectionTests: XCTestCase {
         result.tap()
         XCTAssertTrue(match.waitForExistence(timeout: 10),
                       "Selecting an older result did not bring its matching message into the visible timeline")
-        app.buttons["Close"].tap()
+        app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch.tap()
         app.navigationBars.buttons["Threads"].tap()
         app.collectionViews.firstMatch.swipeDown()
         XCTAssertEqual(search.value as? String, "74c9", "Returning lost the search context")
@@ -139,6 +139,9 @@ final class ConnectionTests: XCTestCase {
         app.terminate()
         app.launchArguments = []
         app.launch()
+        let back = app.navigationBars.buttons["Threads"]
+        if back.waitForExistence(timeout: 5) { back.tap() }
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 10), "No thread list after relaunch")
         let list = app.collectionViews.firstMatch
         XCTAssertTrue(list.waitForExistence(timeout: 15))
         list.swipeDown()
@@ -166,7 +169,7 @@ final class ConnectionTests: XCTestCase {
         matches.firstMatch.tap()
         XCTAssertTrue(app.textViews[marker].waitForExistence(timeout: 10),
                       "Search result did not open its matching message")
-        app.buttons["Close"].tap()
+        app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch.tap()
         app.navigationBars.buttons["Threads"].tap()
         list.swipeDown()
         XCTAssertEqual(search.value as? String, "8f4a", "Back navigation lost the search query")
@@ -275,6 +278,8 @@ final class ConnectionTests: XCTestCase {
         try openThread()
         try await rig.post("hold-answer")
         composer.tap()
+        if !app.keyboards.firstMatch.waitForExistence(timeout: 5) { composer.tap() }
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10), "Composer did not take focus")
         composer.typeText("lost receipt")
         // Let the message reach the host before blocking its receipt. Dropping host frames
         // while typing can interrupt pairing first, leaving an honestly queued message.
