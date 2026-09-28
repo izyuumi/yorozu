@@ -118,8 +118,23 @@ let project = Project(
                 // Embedded in the app's PlugIns, which is how an extension ships at all.
                 .target(name: "YorozuShare"),
                 .target(name: "YorozuNotificationService"),
+                .target(name: "YorozuWidget"),
             ],
             settings: signing(["ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon"])
+        ),
+        .target(
+            name: "YorozuWidget",
+            destinations: .iOS,
+            product: .appExtension,
+            bundleId: "to.yumi.yorozu.ios.widget",
+            deploymentTargets: .iOS("18.0"),
+            infoPlist: .extendingDefault(with: version.merging([
+                "CFBundleDisplayName": "Yorozu",
+                "NSExtension": ["NSExtensionPointIdentifier": "com.apple.widgetkit-extension"],
+            ]) { a, _ in a }),
+            sources: ["Sources/YorozuWidget/**"],
+            resources: ["Resources/Assets.xcassets", "Resources/Localizable.xcstrings"],
+            settings: signing()
         ),
         .target(
             name: "YorozuNotificationService",
