@@ -248,6 +248,10 @@ final class MacChatSession {
         let path = LocalSocketTransport.defaultPath()
         try? FileManager.default.removeItem(atPath: path)
         Sidecar.shared.start()
+        // Off by default, so this only does anything for a Mac that opted in.
+        if UserDefaults.standard.bool(forKey: DirectConnection.key) {
+            DirectConnection.shared.apply { Sidecar.shared.stop(); Sidecar.shared.start() }
+        }
         do { local = try Self.localModel() }
         catch {
             failure = "Could not open encrypted local cache: \(error.localizedDescription)"

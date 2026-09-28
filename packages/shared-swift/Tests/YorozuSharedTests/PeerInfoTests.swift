@@ -54,9 +54,10 @@ private struct PeerWire {
     let identity = PhoneIdentity.generate()
     let mac = YorozuCrypto.generateKeypair()
     let counters = PeerCounters()
+    let directSuite = "yorozu.test.\(UUID().uuidString)"
     func client() throws -> RelayClient {
         try RelayClient(pairing: QrPayload(relayUrl: "ws://127.0.0.1:1", macPubkey: mac.publicKey.base64URLEncodedString(), token: "t", roomId: "r"),
-            identity: identity, counters: counters)
+            identity: identity, counters: counters, directSuite: directSuite)
     }
     func frame(_ list: ThreadListData, seq: Int, tamper: Bool = false) throws -> String {
         let event = YorozuEvent(id: "greeting", threadId: "", ts: 1, agentId: "main", payload: .threadList(list))
@@ -214,4 +215,23 @@ private struct PeerReceiveTransport: ChatTransport {
     #expect(await client.peerInfo?.computerName == "Office Mac")
     if case .compatible = await client.compatibility {} else { Issue.record("New exchange did not complete") }
     #expect(try wire.counters.load()?.recv == 12)
+}
+
+@Test func directAddressIsLearnedOnlyFromSealedHostAndForgottenWhenOff() async throws {
+    let wire = PeerWire(), client = try wire.client()
+    #expect(await client.currentDirectUrl == nil)
+    await client.acceptFrame(try wire.frame(ThreadListData(threads: [], peerInfoSupported: true), seq: 1))
+    await client.acceptFrame(try wire.frame(ThreadListData(threads: [], peerInfo: .local,
+        peerInfoReplyTo: await client.peerInfoRequestID, directUrl: "wss://mac.example.ts.net:8443"), seq: 2))
+    #expect(await client.currentDirectUrl?.absoluteString == "wss://mac.example.ts.net:8443")
+    // Remembered for the next launch, per host key.
+    #expect(try await wire.client().currentDirectUrl?.absoluteString == "wss://mac.example.ts.net:8443")
+    // Only `wss` is taken: a host cannot steer the phone onto a plain socket.
+    await client.acceptFrame(try wire.frame(ThreadListData(threads: [], directUrl: "ws://100.1.1.1:8443"), seq: 3))
+    #expect(await client.currentDirectUrl == nil)
+    // A host that turned it off says nothing, and the phone forgets.
+    await client.acceptFrame(try wire.frame(ThreadListData(threads: [], directUrl: "wss://mac.example.ts.net:8443"), seq: 4))
+    await client.acceptFrame(try wire.frame(ThreadListData(threads: []), seq: 5))
+    #expect(await client.currentDirectUrl == nil)
+    #expect(try await wire.client().currentDirectUrl == nil)
 }

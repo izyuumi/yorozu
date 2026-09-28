@@ -27,6 +27,7 @@ struct RelayView: View {
         Section {
             TextField("Relay", text: $url)
             LabeledContent("Status", value: status)
+            DirectConnectionRow(direct: .shared) { Sidecar.shared.stop(); Sidecar.shared.start() }
         } footer: {
             Group {
                 Text("The blind relay your phone reaches this Mac through. Restart to apply.")

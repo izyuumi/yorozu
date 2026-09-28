@@ -242,6 +242,10 @@ final class Sidecar: ObservableObject {
         // The relay chosen in General; an explicit YOROZU_RELAY_URL in the app's own
         // environment still wins, for dev runs.
         if environment[RelaySettings.key] == nil { environment[RelaySettings.key] = RelaySettings.url }
+        // The opt-in direct path, only once `tailscale serve` publishes it; absent, nothing listens.
+        for (key, value) in DirectConnection.shared.sidecarEnvironment ?? [:] where environment[key] == nil {
+            environment[key] = value
+        }
         // The native tool host, if this build is bundled. Quoted because the *runtime* runs
         // this one through /bin/sh — see `nativeCommand` in packages/runtime — and an .app can
         // sit in a path with spaces in it.
