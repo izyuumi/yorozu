@@ -1047,7 +1047,8 @@ describe("OpenClawRunner", () => {
       if (method === "chat.send") return { runId: "run-1" };
       if (method === "chat.history") return { messages: [
         { role: "assistant", runId: "other", stopReason: "stop", content: [{ type: "image", artifactId: "artifact_managed_image_x" }] },
-        { role: "assistant", runId: "run-1", stopReason: "stop", content: [
+        // Real Gateway shape: the CLI harness tags its run only via this idempotency key.
+        { role: "assistant", api: "cli", idempotencyKey: "cli-assistant:run-1", stopReason: "stop", content: [
           { type: "text", text: "Mac screen now" },
           { type: "image", artifactId: "artifact_managed_image_a1", mimeType: "image/png", alt: "screen.png", url: "/api/chat/media/outgoing/k/a1/full" },
         ] },
@@ -1067,6 +1068,31 @@ describe("OpenClawRunner", () => {
     expect(String(fetchMock.mock.calls[0]![0])).toBe("http://127.0.0.1:18789/api/chat/media/outgoing/k/a1/full?mediaTicket=v1.t");
     expect(events.filter((event) => event.kind === "message")).toEqual([expect.objectContaining({
       id: "openclaw:run-1:image:artifact_managed_image_a1", threadId: "shot", agentId: "main", kind: "message",
+      data: { role: "agent", text: "", attachments: [{ name: "screen.png", mime: "image/png", data: png.toString("base64") }] },
+    })]);
+  });
+
+  test("delivers images carried by the final event even before history has them", async () => {
+    const gateway = harness();
+    const png = Buffer.from("png-bytes");
+    gateway.request.mockImplementation(async (method: string) => {
+      if (method === "chat.send") return { runId: "run-1" };
+      if (method === "chat.history") return { messages: [] };
+      if (method === "artifacts.download") return { url: "/api/chat/media/outgoing/k/a1/full?mediaTicket=v1.t" };
+      return {};
+    });
+    const fetchMock = vi.fn(async () => new Response(png, { headers: { "content-type": "image/png" } }));
+    const events: YorozuEvent[] = [];
+    const result = new OpenClawRunner({ stateDir: gateway.dir, clientFactory: gateway.clientFactory, fetch: fetchMock }).run({
+      threadId: "shot", text: "screenshot please", onEvent: (event) => events.push(event),
+    });
+    await vi.waitFor(() => expect(gateway.request).toHaveBeenCalledWith("chat.send", expect.anything()));
+    gateway.event({ state: "final", sessionKey: "agent:main:yorozu:shot", runId: "run-1", seq: 1, message: { role: "assistant", content: [
+      { type: "image", artifactId: "artifact_managed_image_a1", mimeType: "image/png", alt: "screen.png" },
+    ] } });
+    await expect(result).resolves.toBe("");
+    expect(events.filter((event) => event.kind === "message")).toEqual([expect.objectContaining({
+      id: "openclaw:run-1:image:artifact_managed_image_a1",
       data: { role: "agent", text: "", attachments: [{ name: "screen.png", mime: "image/png", data: png.toString("base64") }] },
     })]);
   });

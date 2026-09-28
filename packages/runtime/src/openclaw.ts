@@ -689,7 +689,7 @@ export class OpenClawRunner {
       if (pending.text) pending.onUpdate?.(pending.text);
     } else if (payload.state === "final") {
       const text = messageText(payload.message) || pending.text;
-      if (!pending.awaitsAnnouncement || announcementMatches(runId, pending.childRunIds)) void this.finish(this.#client, pending, text);
+      if (!pending.awaitsAnnouncement || announcementMatches(runId, pending.childRunIds)) void this.finish(this.#client, pending, text, undefined, false, payload.message);
       else if (text) pending.onUpdate?.(text);
     } else if (payload.state === "aborted") {
       // An unexpected backend abort can be continued after history confirms no run remains.
@@ -701,19 +701,20 @@ export class OpenClawRunner {
   }
 
   /**
-   * Images the agent sent (message tool, image generation) live only in the transcript as
-   * Gateway-hosted blocks: the final chat event carries text alone. Each becomes its own
+   * Images the agent sent (`MEDIA:` lines, message tool, image generation) arrive as
+   * Gateway-hosted blocks on the final event and/or in the run's transcript. Each becomes its own
    * inline agent message before the text final, so a relay client shows it like a user photo.
    * Fetch failures drop the image rather than the turn.
    */
-  private async finish(client: Gateway | undefined, pending: PendingTurn, text: string, messages?: unknown[], failed = false): Promise<void> {
+  private async finish(client: Gateway | undefined, pending: PendingTurn, text: string, messages?: unknown[], failed = false, finalMessage?: unknown): Promise<void> {
     if (client && pending.onEvent) try {
       messages ??= (await client.request<History>("chat.history", {
         sessionKey: pending.sessionKey, limit: 1000, inputRunIds: [pending.runId],
       })).messages ?? [];
-      for (const value of messages) {
+      // The final event already belongs to this run and carries its media, so no history race.
+      for (const value of [finalMessage, ...messages]) {
         const message = record(value);
-        if (message.role !== "assistant" || string(record(message.__openclaw).runId ?? message.runId) !== pending.runId) continue;
+        if (message.role !== "assistant" || (value !== finalMessage && messageRunId(message) !== pending.runId)) continue;
         for (const blockValue of Array.isArray(message.content) ? message.content : []) {
           const block = record(blockValue);
           const artifactId = string(block.artifactId);
@@ -1001,13 +1002,20 @@ function createIdentity(): DeviceIdentity {
 function rawPublicKey(pem: string): Buffer {
   return createPublicKey(pem).export({ type: "spki", format: "der" }).subarray(-32);
 }
+/** Mirrors OpenClaw's session projection: CLI-harness replies carry their run only as `cli-assistant:<runId>`. */
+function messageRunId(message: Record<string, unknown>): string {
+  const meta = record(message.__openclaw);
+  const runId = string(meta.runId ?? message.runId);
+  if (runId) return runId;
+  const key = string(meta.idempotencyKey ?? message.idempotencyKey);
+  return key.startsWith("cli-assistant:") ? key.slice("cli-assistant:".length) : key;
+}
 interface History { messages?: unknown[]; inFlightRun?: Record<string, unknown>; inputReceipts?: Array<{ runId?: string; state?: string }> }
 function correlatedFinal(messages: unknown[], pending: Pick<PendingTurn, "runId" | "awaitsAnnouncement" | "childRunIds">): { found: boolean; text: string; failed?: boolean } {
   for (const value of [...messages].reverse()) {
     const message = record(value);
     if (message.role !== "assistant") continue;
-    const meta = record(message.__openclaw);
-    const runId = string(meta.runId ?? message.runId);
+    const runId = messageRunId(message);
     const terminal = ["stop", "length", "error"].includes(string(message.stopReason));
     const exact = pending.awaitsAnnouncement
       ? announcementMatches(runId, pending.childRunIds)
