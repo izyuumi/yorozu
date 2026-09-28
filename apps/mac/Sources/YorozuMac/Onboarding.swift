@@ -189,10 +189,10 @@ struct OnboardingView: View {
                         Text("Pair more any time from Settings › Devices").font(.scaled(.caption)).foregroundStyle(.secondary)
                     }
                     Divider()
-                    summaryRow("Next") {
-                        Text("Set up the agent you use on this Mac")
-                        Text("OpenClaw for assistant chats. Claude Code or Codex for coding threads. A thread picks its agent when you start it.")
+                    summaryRow("Agents") {
+                        Text("A thread picks its agent when you start it. Set up the ones you’ll use.")
                             .font(.scaled(.caption)).foregroundStyle(.secondary)
+                        AgentReadinessList(model: session.model)
                     }
                 }
             }
