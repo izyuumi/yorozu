@@ -302,6 +302,24 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     #expect(throws: (any Error).self) { try QrPayload.decode("yorozu://nonsense") }
 }
 
+/// The QR's web link, as the runtime writes it: the pairing rides in the fragment. Only the
+/// site's own `/pair` page counts, so a look-alike link cannot pass for a pairing.
+@Test func thePairingWebLinkDecodesAndLookAlikesDoNot() throws {
+    let fragment = "v=1&relay=wss%3A%2F%2Frelay.yumi.to&key=AAA&token=t-_&room=r&secret=s"
+    let payload = try QrPayload.decode("https://yorozu.yumi.to/pair#\(fragment)")
+    #expect(payload == QrPayload(relayUrl: "wss://relay.yumi.to", macPubkey: "AAA", token: "t-_", roomId: "r", secret: "s"))
+    #expect(try QrPayload.decode("https://Yorozu.yumi.to/pair/#\(fragment)") == payload)
+    for lookAlike in [
+        "https://example.com/pair#\(fragment)",
+        "https://yorozu.yumi.to/other#\(fragment)",
+        "https://yorozu.yumi.to/pair?\(fragment)",
+        "http://yorozu.yumi.to/pair#\(fragment)",
+        "https://yorozu.yumi.to/pair",
+    ] {
+        #expect(throws: (any Error).self) { try QrPayload.decode(lookAlike) }
+    }
+}
+
 @Test func aPairingCodeOnlyPointsAtARelayWorthDialling() throws {
     // TLS anywhere; cleartext only back to this machine, which is what a dev relay is.
     #expect(QrPayload.isAcceptableRelayUrl("wss://relay.yumi.to"))

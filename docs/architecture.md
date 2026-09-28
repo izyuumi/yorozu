@@ -61,9 +61,13 @@ string:
 yorozu://pair?v=1&relay=<urlencoded>&key=<base64url>&token=<base64url>&room=<base64url>
 ```
 
-The QR encodes that same string, so one parser — `decodePairingString` in `packages/shared`,
-`QrPayload.decode` in `packages/shared-swift` — serves the scanner, the paste field and the
-`yorozu://` link a phone opens when the code is tapped in Messages.
+The QR encodes the same query as a web link, `https://yorozu.yumi.to/pair#v=1&relay=…`, with
+the pairing in the fragment so a browser never sends it to the site. A phone camera with Yorozu
+installed hands it to the app as a universal link; without Yorozu it opens a page that offers the
+download. One parser — `decodePairingString` in `packages/shared`, `QrPayload.decode` in
+`packages/shared-swift` — accepts both forms and serves the scanner, the paste field and the
+`yorozu://` link a phone opens when the code is tapped in Messages. The copyable code stays
+`yorozu://`, which older apps still read.
 
 The phone joins the room, announces its own X25519 key in one cleartext `hello` frame, and every
 frame after that is ChaCha20-Poly1305 sealed. The X25519 secret yields one key per direction

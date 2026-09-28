@@ -112,6 +112,9 @@ let project = Project(
                 // ever talks to api.push.apple.com — so there is one environment here rather
                 // than a debug build quietly registering for tokens the relay cannot use.
                 "aps-environment": "production",
+                // The pairing QR is a web link (`/pair#…`) so a camera without Yorozu lands on
+                // the download; with Yorozu installed, this hands the link to the app instead.
+                "com.apple.developer.associated-domains": ["applinks:yorozu.yumi.to"],
             ]),
             dependencies: [
                 .package(product: "YorozuShared"),

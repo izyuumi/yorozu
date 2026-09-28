@@ -615,6 +615,12 @@ struct RootView: View {
                     session.drainShares()
                 case "pair":
                     session.handlePairingLink(url)
+                case "yorozu.yumi.to":
+                    // The QR's web link, which the camera hands to the app when it is installed.
+                    // Turned into the `yorozu://` form so it asks the same consent question.
+                    if let code = try? QrPayload.decode(url.absoluteString).encoded(), let link = URL(string: code) {
+                        session.handlePairingLink(link)
+                    }
                 default:
                     break
                 }

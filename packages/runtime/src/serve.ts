@@ -22,6 +22,7 @@ import {
   deriveChannelKeys,
   deriveSessionKey,
   encodeEnvelope,
+  encodePairingLink,
   encodePairingString,
   fromBase64Url,
   generateKeypair,
@@ -3291,17 +3292,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
               const [oldest] = pairingSecrets;
               pairingSecrets.delete(oldest!);
             }
-            const pairing = encodePairingString({
-              v: 1,
+            const payload = {
+              v: 1 as const,
               relayUrl,
               macPubkey: toBase64Url(keys.session.publicKey),
               token: String(msg.token),
               ...(room ? { roomId: room } : {}),
               secret,
-            });
-            // The same string twice: one line the Mac draws as a QR, one it offers to copy.
-            log(`QR ${pairing}`);
-            return log(`PAIR ${pairing}`);
+            };
+            // One payload twice: a web link the Mac draws as a QR, so a phone camera without
+            // Yorozu lands on the download, and the `yorozu://` string it offers to copy.
+            log(`QR ${encodePairingLink(payload)}`);
+            return log(`PAIR ${encodePairingString(payload)}`);
           }
           case "frame": {
             // A replayed frame carries the relay's buffer sequence; acking it is what lets the
