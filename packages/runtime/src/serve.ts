@@ -1781,6 +1781,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       catch (error) { queuedNative.pop(); throw error; }
     }
     const previous = turnQueues.get(threadId) ?? Promise.resolve();
+    const queuedBehindTurn = turnQueues.has(threadId);
     const next = previous.catch(() => {}).then(async () => {
       while ((updateGate.draining || updateGate.status.phase === "installing") && !stopped) {
         await new Promise<void>((resolve) => drainWaiters.add(resolve));
@@ -1790,16 +1791,20 @@ export function serve(options: ServeOptions = {}): Sidecar {
         openclaw?.discardPending(userEventId);
         return;
       }
-      const logged = deferredEvent;
+      const logged = deferredEvent ?? (queuedBehindTurn ? acceptedEvent : undefined);
       if (logged) {
-        // The device admitted this message before Stop settled. Give its durable copy the
-        // preceding final's timestamp so live and restored timelines show the same order.
+        // A steered message was admitted while an earlier turn ran. Append its corrected
+        // position after that turn, leaving the original log entry for replay cursors.
         const prior = readThreadEvents(threadId, dir);
-        const ordered = { ...logged, ts: (prior.at(-1)?.ts ?? Date.now()) + 1,
-          clientTs: logged.ts };
-        if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === logged.id)) appendTranscript(ordered, transcripts);
-        if (!prior.some((known) => known.id === logged.id)) appendThreadEvent(ordered, dir);
-        broadcast(ordered);
+        const existing = prior.find((known) => known.id === logged.id);
+        if (existing?.clientTs === undefined) {
+          const original = existing?.kind === "message" ? existing : logged;
+          const ordered = { ...original, ts: Math.max(Date.now(), prior.at(-1)?.ts ?? 0),
+            clientTs: original.clientTs ?? original.ts };
+          appendTranscript(ordered, transcripts);
+          appendThreadEvent(ordered, dir);
+          broadcast(ordered);
+        }
       }
       if (userEventId) activeTurnIds.add(userEventId);
       try { await runTurn(threadId, text, recorded, attachments, userEventId); }
@@ -3431,7 +3436,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const original = events.find((event) => event.id === entry.eventId &&
       event.kind === "message" && event.data.role === "user");
     if (original?.kind === "message") void enqueueTurn(entry.threadId, original.data.text, true,
-      original.data.attachments ?? [], entry.eventId);
+      original.data.attachments ?? [], entry.eventId, original);
   }
 
   // Production never installs legacy agents or starts its scheduler. Initialization remains
