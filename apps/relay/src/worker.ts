@@ -56,6 +56,7 @@ import * as apns from "./apns.js";
 
 export interface Env extends apns.ApnsEnv {
   ROOM: DurableObjectNamespace;
+  CONNECT_LIMIT?: RateLimit;
   RELAY_MAX_TOKENS_PER_ROOM?: string;
   RELAY_NOTIFY_PER_MINUTE?: string;
 }
@@ -821,7 +822,7 @@ export class Room implements DurableObject {
 }
 
 export default {
-  fetch(request: Request, env: Env): Response | Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const room = new URL(request.url).searchParams.get("room");
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("yorozu relay\n", { headers: { "content-type": "text/plain" } });
@@ -830,6 +831,13 @@ export default {
     // Refused here, before a Durable Object is named: a name no key could hash to would
     // otherwise create and bill an object for nothing.
     if (!isRoomId(room)) return new Response("bad ?room", { status: 400 });
+    // Counted per address, also before an object is named: every accepted socket wakes and
+    // bills a room, so a redial loop or a flood is turned away here. Cloudflare sets the header
+    // on every request it proxies; only local runs lack it. A limiter that is missing or
+    // failing lets the socket through: it guards the bill, and must not become the outage.
+    const address = request.headers.get("CF-Connecting-IP");
+    const verdict = address ? await env.CONNECT_LIMIT?.limit({ key: address }).catch(() => undefined) : undefined;
+    if (verdict?.success === false) return new Response("too many connections", { status: 429 });
     return env.ROOM.get(env.ROOM.idFromName(room)).fetch(request);
   },
 } satisfies ExportedHandler<Env>;
