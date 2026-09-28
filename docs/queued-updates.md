@@ -7,7 +7,8 @@ updated count; work on other hosts and unrelated Terminal agents does not.
 Running and queued native turns, approval/input waits, recovery and pending retries
 block the initial idle installation. Final failures and completed cancellations do
 not. Unknown runtime status is never idle. Open chat windows do not block updates.
-OpenClaw turns do not hold the update gate: their Gateway run survives the sidecar.
+OpenClaw messages do not hold the update gate: they have no Yorozu turn, and one OpenClaw has
+not yet taken waits in the channel outbox across the restart.
 Builds with interactive remote terminals block update installation until every session
 is closed. The updated host removes the old terminal opt-in on first launch and does not
 restore terminal sessions. Force quitting an older host still ends its live sessions.

@@ -4,7 +4,7 @@
 # Agent setup, linked from the Mac's setup window. Swap a target without an app release.
 /setup/claude https://code.claude.com/docs/en/setup 302
 /setup/codex https://learn.chatgpt.com/docs/codex/cli 302
-/setup/openclaw https://docs.openclaw.ai/install 302
+/setup/openclaw https://github.com/izyuumi/yorozu#install 302
 /appcast.xml https://github.com/izyuumi/yorozu/releases/latest/download/appcast.xml 302
 # Preserve the shipped pre-candidate feed's latest-relative URL during migration.
 /download/Yorozu-0.4.0-293.dmg https://github.com/izyuumi/yorozu/releases/download/v0.4.0/Yorozu.dmg 302

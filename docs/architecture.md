@@ -9,7 +9,7 @@ A thread's `agent` is fixed when the thread is created and never changes.
 
 | Agent | Who answers | Where it runs |
 | --- | --- | --- |
-| `yorozu` | the OpenClaw Gateway | loopback websocket, `ws://127.0.0.1:18789` by default |
+| `yorozu` | OpenClaw, through its `yorozu` channel plugin | in the OpenClaw Gateway; the plugin connects to `<state dir>/channel.sock` |
 | `claude-code` | Claude Agent SDK | in-process in the sidecar, one session per thread |
 | `codex` | Codex SDK | in-process in the sidecar, one session per thread |
 
@@ -17,12 +17,11 @@ A thread with no `agent` on the wire is a `yorozu` thread — that is every thre
 the field existed.
 
 OpenClaw owns execution for its threads: providers and credentials, model choice, tools,
-permission prompts, skills, scheduling and PAIOS memory. Yorozu keeps only skill names,
-descriptions and argument hints in memory for the client picker; skill files and execution
-remain with OpenClaw.
-On first launch the sidecar pairs a private Ed25519 client identity with the Gateway and stores
-its device token at mode `0600` under `YOROZU_STATE_DIR`. That is client authentication only;
-provider credentials never enter Yorozu.
+permission prompts, skills, scheduling and PAIOS memory. To OpenClaw, Yorozu is a chat channel
+like Signal: each `yorozu` thread is one direct conversation (target `yorozu:<threadId>`), and
+OpenClaw's cron, heartbeat and `message` tool can post into a thread or open a new one. Yorozu
+holds no OpenClaw credentials and no provider credentials. See [the channel
+socket](#host-the-channel-socket) for the wire and setup.
 
 A native-agent thread is the opposite: its own SDK session, in its own working directory under
 `~/Projects` chosen at creation, with that agent's own tools and its own permission prompts.
@@ -481,6 +480,35 @@ browser, schedule and PAIOS controls all belong to OpenClaw. The model is built 
 from `applicationDidFinishLaunching` rather than from the window, because a menu bar window only
 exists while it is open and replies have to keep arriving either way.
 
+### Host: the channel socket
+
+`yorozu` threads reach OpenClaw through a second owner-only socket beside `local.sock`:
+`<state dir>/channel.sock`. OpenClaw's `yorozu` channel plugin (`packages/openclaw-channel`,
+bundled at `Yorozu.app/Contents/Resources/openclaw-channel`) runs inside the Gateway and
+connects to it. The wire is newline-delimited JSON, and the socket's `0600` mode is the access
+control, so every inbound message is the owner's.
+
+| Frame | Direction | Meaning |
+| --- | --- | --- |
+| `inbound` | host → plugin | A user message typed in a `yorozu` thread. Kept in `channel-outbox.json` until acked, resent on every connect. |
+| `deliver` | plugin → host | An OpenClaw reply for a thread. Logged, synced and pushed like any agent message; an unknown thread id opens a new thread. |
+| `ack` / `error` | both | Receipt by id. Delivery is at least once in both directions and both sides dedupe by id. |
+
+The plugin acks an `inbound` only once OpenClaw has dispatched it. A message OpenClaw refuses —
+for example no routing binding while several agents are configured — stays in the outbox and is
+resent when the plugin next connects. A channel message has no turn in Yorozu: nothing for Stop
+to interrupt, no progress rows or trace pages, no model or skill picker. OpenClaw answers when it
+answers. Messages are text only; attachments are not forwarded yet.
+
+Setup, once per host (README → Install, step 5):
+
+```sh
+openclaw plugins install --link --accept-capabilities /Applications/Yorozu.app/Contents/Resources/openclaw-channel
+openclaw config set channels.yorozu.enabled true
+openclaw agents bind --bind yorozu
+openclaw gateway restart
+```
+
 ### Permissions
 
 `apps/mac/Sources/YorozuPermissions/Permission.swift` is one enum over everything the wizard and
@@ -557,14 +585,13 @@ Backend context after Stop:
 | --- | --- |
 | Claude Code SDK | The SDK query is closed with its abort controller. Its session ID survives; whether an incomplete assistant message is included on resume is undocumented and unverified. |
 | Codex app server | `turn/interrupt` ends the turn and `thread/resume` keeps the thread ID. The protocol exposes streamed deltas, but does not promise that incomplete assistant text enters the next model context; unverified. |
-| OpenClaw Gateway | [Gateway docs](https://docs.openclaw.ai/web/control-ui/chat#abort-partial-retention) say buffered aborted text is saved in transcript history with abort metadata. They do not guarantee that all streamed text was buffered or included in the next model context. |
 
 Yorozu therefore supplies the stopped partial (up to its last 4,000 characters) and a reminder
-to verify prior actions with the next prompt to all three backends. The user's saved message
+to verify prior actions with the next prompt to both native backends. `yorozu` threads have no
+Yorozu turn to stop; see [the channel socket](#host-the-channel-socket). The user's saved message
 stays unchanged. A Stop before text supplies a short note. A same-thread prompt can be admitted
 while Stop is pending, but its thread-log entry and execution wait for the exact Stop outcome
-so the interrupted reply stays ahead of it. Inconclusive Gateway abort checks retry while that
-thread remains queued; they do not release another run into an uncertain session.
+so the interrupted reply stays ahead of it.
 
 ## Approvals, questions and progress
 
@@ -605,19 +632,9 @@ Negotiating peers require `offline-approval-v1`; older clients receive an upgrad
 than a receipt for a stale answer.
 
 **`yorozu` threads have no Yorozu approval gate.** OpenClaw owns permission prompts for them.
-`progress_card` events are live on this path, translated from the Gateway's plan stream by
-`openclaw.ts`; `thought`, `tool_call`, `tool_result` and `message` come the same way and drive the
-work rows and trace pages.
-
-OpenClaw turns retain their Gateway run ID and original input in the sidecar's pending ledger.
-After restart, the sidecar reattaches to an active run or safely resends an input with no Gateway
-receipt. A consumed input with no active run, final answer, or delegated announcement for five
-seconds is continued in the same Gateway session with the original request and bounded history
-of prior tool effects. The same Yorozu user event and final ID remain in use. Three lost
-continuations pause the turn for Retry or Dismiss; Gateway connection retries do not use this
-budget. A new successful tool result resets it. Delegated task and announcement delivery states
-are checked with Gateway before continuation; late events from a settled child cannot finish the
-new run. A Stop fences continuation before sending.
+Only OpenClaw's replies come back — no `progress_card`,
+`thought` or tool events. A user message survives a host or Gateway restart in the channel
+outbox until the plugin acks it.
 
 The approval **rule engine** in `approval.ts` — the floor, action classes, structured scopes,
 rules with `always`/`never` precedence, rule proposals — is fully implemented, wire-supported

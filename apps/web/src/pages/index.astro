@@ -32,7 +32,7 @@ import Base from '../layouts/Base.astro';
   <section class="agent-setup" id="setup-with-an-agent" aria-labelledby="agent-setup-title">
     <div class="agent-setup-text">
       <h2 id="agent-setup-title">Set it up with one prompt.</h2>
-      <p>Paste this into Claude Code, Codex or any coding agent on your Mac. It checks what you already have, then walks you through installing both apps, permissions, OpenClaw and pairing your iPhone. It asks before every change and never decides for you.</p>
+      <p>Paste this into Claude Code, Codex or any coding agent on your Mac. It checks what you already have, then walks you through installing both apps, permissions, OpenClaw with its Yorozu channel, and pairing your iPhone. It asks before every change and never decides for you.</p>
     </div>
     <div class="prompt">
       <pre><code id="agent-prompt">Read https://raw.githubusercontent.com/izyuumi/yorozu/main/Start.md and follow it to set up Yorozu on my devices. Ask me before configuring anything.</code></pre>
@@ -59,7 +59,7 @@ import Base from '../layouts/Base.astro';
   <section class="proof flip" aria-labelledby="mac-title">
     <div class="proof-text">
       <h2 id="mac-title">Your Mac does the work.</h2>
-      <p>OpenClaw answers by default, with the providers, models, tools and memory you configured there. Open a thread as <strong>Claude Code</strong> or <strong>Codex</strong> instead and it runs in a folder under <code>~/Projects</code>, with that agent's own permissions.</p>
+      <p>OpenClaw answers by default, with Yorozu as one of its chat channels and the providers, models, tools and memory you configured there. Its scheduled jobs can post into a Yorozu thread too. Open a thread as <strong>Claude Code</strong> or <strong>Codex</strong> instead and it runs in a folder under <code>~/Projects</code>, with that agent's own permissions.</p>
       <p>Threads sync between the Mac and every paired device. Pick up on the desktop exactly where the phone left off.</p>
     </div>
     <figure class="shot mac-shot">
@@ -139,12 +139,12 @@ import Base from '../layouts/Base.astro';
 
   <section class="steps" id="pair" aria-labelledby="steps-title">
     <h2 id="steps-title">Then pair once.</h2>
-    <p class="steps-intro">You’ll need an Apple silicon Mac with macOS 15 or later and OpenClaw configured. Keep your host Mac awake and online to reach it from your phone.</p>
+    <p class="steps-intro">You’ll need an Apple silicon Mac with macOS 15 or later and <a href="https://docs.openclaw.ai/install">OpenClaw</a> configured. Keep your host Mac awake and online to reach it from your phone.</p>
     <ol>
       <li>
         <span class="num" aria-hidden="true">1</span>
         <h3>Set up your host Mac</h3>
-        <p>Open Yorozu from the menu bar, choose “Host Yorozu on this Mac” and grant the permissions you want.</p>
+        <p>Open Yorozu from the menu bar, choose “Host Yorozu on this Mac” and grant the permissions you want. Then add Yorozu to OpenClaw as a chat channel with <a href="https://github.com/izyuumi/yorozu#install">four commands</a>.</p>
       </li>
       <li>
         <span class="num" aria-hidden="true">2</span>

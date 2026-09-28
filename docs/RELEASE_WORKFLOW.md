@@ -200,8 +200,8 @@ the feed and archive-signature format.
 - The website's `/mac` route prefers `Yorozu.dmg` and supports older lowercase assets.
   The website Worker deploys automatically when a push to `main` changes `apps/web`
   (`.github/workflows/deploy-web.yml`). To deploy by hand, run `pnpm --filter @yorozu/web run deploy`.
-- Model lists come live from OpenClaw's `models.list`, Claude SDK's `supportedModels()`, and
-  Codex's paginated `model/list`. No release `models.json` asset is needed. The dormant
+- Model lists come live from Claude SDK's `supportedModels()` and Codex's paginated
+  `model/list`; OpenClaw picks the model for `yorozu` threads. No release `models.json` asset is needed. The dormant
   direct-provider catalog reads `main/catalog/models.json` directly with cache/bundled fallback;
   `/models.json` remains a compatibility redirect for older legacy consumers.
 
