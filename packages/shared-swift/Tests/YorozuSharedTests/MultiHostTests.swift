@@ -216,6 +216,29 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
 }
 
 @MainActor
+@Test func hostAddedDuringSearchJoinsTheCurrentQuery() async throws {
+    let firstTransport = MultiHostTransport(), secondTransport = MultiHostTransport()
+    let first = multiHostSession(multiHostID(0), transport: firstTransport)
+    let second = multiHostSession(multiHostID(1), transport: secondTransport)
+    let hosts = MultiHostModel(sessions: [first])
+    defer { first.model.close(); second.model.close() }
+    await firstTransport.online()
+    await firstTransport.yield(.compatibility(.compatible(version: 1, capabilities: ["thread-search-v1"])))
+    #expect(await multiHostEventually { first.model.canDeliver })
+    first.model.searchHost("marker")
+    #expect(await multiHostEventually { first.model.searchQuery == "marker" })
+
+    #expect(hosts.add(second))
+    await secondTransport.online()
+    await secondTransport.yield(.compatibility(.compatible(version: 1, capabilities: ["thread-search-v1"])))
+    let sent = await multiHostSent(secondTransport, atLeast: multiHostPairingSends + 1)
+    #expect(sent.contains {
+        if case .threadSearchRequest(let data) = $0.payload { return data.query == "marker" }
+        return false
+    })
+}
+
+@MainActor
 @Test func multiHostActionsReachOnlyTheirOwningTransportAndReadState() async throws {
     let firstTransport = MultiHostTransport(), secondTransport = MultiHostTransport()
     let first = multiHostSession(multiHostID(0), transport: firstTransport)
