@@ -133,7 +133,6 @@ header nav a.button:hover { background: var(--red); color: var(--on-red); }
 .lede { max-width: 32em; margin-top: 24px; font-size: clamp(18px, 1.6vw, 21px); line-height: 1.5; color: oklch(0.24 0.05 65); }
 .kana { font-weight: 500; }
 .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
-.availability-note { max-width: 34em; margin-top: 20px; font-size: 16px; }
 .hero .fine { margin-top: 22px; }
 .fine { font-size: 14px; color: var(--muted); }
 .hero .fine { color: var(--amber-ink); }
@@ -193,7 +192,7 @@ section[id] { scroll-margin-top: 24px; }
 .duo-bezel { position: relative; width: 100%; height: auto; pointer-events: none; }
 .duo-shot figcaption { margin-top: 12px; }
 
-/* Relay */
+/* Relay and fact grids */
 
 .relay { color: var(--ink); }
 .diagram { position: relative; max-width: 720px; margin: 40px auto 0; color: var(--ink); font: clamp(10px, 1.5vw, 12px) ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -201,9 +200,9 @@ section[id] { scroll-margin-top: 24px; }
 .diagram-encryption { position: absolute; top: 6%; inset-inline: 0; text-align: center; }
 .diagram-labels { position: absolute; bottom: 7%; inset-inline: 0; display: grid; grid-template-columns: 16% 64% 20%; text-align: center; }
 .diagram-relay { color: var(--muted); }
-.relay dl { margin: clamp(32px, 5vw, 56px) 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 32px clamp(24px, 4vw, 56px); }
-.relay dt { font-weight: 650; font-size: 18px; }
-.relay dd { margin: 6px 0 0; color: var(--muted); }
+.facts { margin: clamp(32px, 5vw, 56px) 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 32px clamp(24px, 4vw, 56px); }
+.facts dt { font-weight: 650; font-size: 18px; }
+.facts dd { margin: 6px 0 0; color: var(--muted); }
 
 /* Agent setup + copy button */
 

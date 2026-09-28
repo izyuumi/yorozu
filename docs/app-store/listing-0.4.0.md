@@ -100,7 +100,7 @@ Only eligible quick approvals offer Allow/Don't allow notification actions, whic
 All paths below refer to build 10 source commit
 `5aea5016c906aba37047682e382619d5bbc3ee77`, not uncommitted worktree changes.
 
-- Agent backends and Mac requirements: `README.md`; disclosures align with `apps/web/public/terms/index.html`.
+- Agent backends and Mac requirements: `README.md`; disclosures align with `apps/web/src/pages/terms.astro`.
 - iOS 18 minimum and text/link/image sharing: `apps/ios/Project.swift`.
 - Pairing improvements, demo entry and sample threads: `apps/ios/Sources/YorozuIOS/PairingFlowView.swift`, `apps/ios/Sources/YorozuIOS/RootView.swift`, and `packages/shared-swift/Sources/YorozuShared/ChatModel.swift`.
 - Authenticated quick approval actions: `apps/ios/Sources/YorozuIOS/PushDelegate.swift`.
