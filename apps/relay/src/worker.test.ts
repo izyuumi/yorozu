@@ -146,6 +146,28 @@ test("a plain GET answers without upgrading, and an upgrade needs a room", async
   expect(missing.status).toBe(400);
 });
 
+test("an address that keeps dialling is refused before any object is touched", async () => {
+  const dial = () =>
+    SELF.fetch(`https://relay.test/?room=${"A".repeat(43)}`, {
+      headers: { Upgrade: "websocket", "CF-Connecting-IP": "203.0.113.7" },
+    });
+  for (let i = 0; i < 30; i++) {
+    const response = await dial();
+    expect(response.status).toBe(101);
+    response.webSocket!.accept();
+    response.webSocket!.close();
+  }
+  const rooms = (env as unknown as Env).ROOM;
+  const named = vi.spyOn(rooms, "idFromName");
+  try {
+    const refused = await dial();
+    expect(refused.status).toBe(429);
+    expect(named).not.toHaveBeenCalled();
+  } finally {
+    named.mockRestore();
+  }
+});
+
 test.each([
   "short",
   "A".repeat(42),

@@ -135,6 +135,7 @@ close the connection. The limits live in `apps/relay/src/protocol.ts`:
 | Offline buffer TTL | 24 hours |
 | Offline buffer cap | 5 MB per room, oldest dropped first |
 | Rate limit | 60 frames/second per socket |
+| New sockets, hosted relay | 30/minute per client address, refused with `429` before a room is woken |
 
 While the Mac is offline, phone frames are buffered per room and replayed in order on reconnect,
 each tagged with a `seq` the Mac acks; an unacked frame is replayed to the next registration
