@@ -290,7 +290,7 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(confirming.waitForExistence(timeout: 10))
         XCTAssertFalse(confirming.waitForNonExistence(timeout: 5), "Delivery claimed without a receipt")
         let started = Date.now + 30
-        while try await !rig.answerStarted() {
+        while try await !rig.answerStarted(for: "lost receipt") {
             guard Date.now < started else { return XCTFail("The Mac never started the turn") }
             try await Task.sleep(for: .milliseconds(200))
         }
@@ -314,7 +314,7 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(bubbles("lost receipt"), 1)
         let recorded = try await rig.messages().filter { $0.text.hasSuffix("lost receipt") }
         XCTAssertEqual(recorded.map(\.role), ["user", "agent"], "Run once, answered once")
-        let starts = try await rig.answerStarts()
+        let starts = try await rig.answerStarts(for: "lost receipt")
         XCTAssertEqual(starts, 1, "The provider ran the same turn twice")
     }
 
@@ -433,17 +433,18 @@ private struct Rig {
         return try await get(Reply.self, "messages").messages
     }
 
-    func answerStarted() async throws -> Bool {
+    func answerStarted(for text: String) async throws -> Bool {
         struct Reply: Decodable { var started: Bool }
-        return try await get(Reply.self, "answer-started").started
+        return try await get(Reply.self, "answer-started", query: [URLQueryItem(name: "text", value: text)]).started
     }
 
-    func answerStarts() async throws -> Int {
+    func answerStarts(for text: String) async throws -> Int {
         struct Reply: Decodable { var count: Int }
-        return try await get(Reply.self, "answer-started").count
+        return try await get(Reply.self, "answer-started", query: [URLQueryItem(name: "text", value: text)]).count
     }
 
-    private func get<T: Decodable>(_ type: T.Type, _ path: String) async throws -> T {
-        try JSONDecoder().decode(type, from: try await URLSession.shared.data(from: control.appending(path: path)).0)
+    private func get<T: Decodable>(_ type: T.Type, _ path: String, query: [URLQueryItem] = []) async throws -> T {
+        let url = control.appending(path: path).appending(queryItems: query)
+        return try JSONDecoder().decode(type, from: try await URLSession.shared.data(from: url).0)
     }
 }
