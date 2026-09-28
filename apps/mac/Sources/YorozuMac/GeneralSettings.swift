@@ -5,6 +5,7 @@ import YorozuShared
 /// Yorozu transport and app lifecycle. Agent, model, tool, browser, and credential settings
 /// belong to OpenClaw and intentionally do not appear here.
 struct GeneralView: View {
+    @ObservedObject var sidecar: Sidecar
     @ObservedObject private var neverSleep = NeverSleep.shared
     @State private var session = MacChatSession.shared
     @State private var router = ChatWindowRouter.shared
@@ -25,13 +26,17 @@ struct GeneralView: View {
                     Text(session.hosts.hasMultipleHosts ? "Manage paired Macs in Hosts." : "Manage pairing in Connection.")
                         .foregroundStyle(.secondary)
                 } else if session.role == .host {
-                    Toggle("Background-only host", isOn: $backgroundOnlyHost)
-                        .onChange(of: backgroundOnlyHost) { _, _ in WindowPresence.modeChanged() }
-                    Text("Keep hosting from the menu bar. Quick Chat and Settings remain available without a Dock icon.")
-                        .foregroundStyle(.secondary)
+                    Toggle(isOn: $backgroundOnlyHost) {
+                        Text("Background-only host")
+                        Text("Runs as a menu bar–only app. Quick Chat and Settings open from the menu bar.")
+                    }
+                    .onChange(of: backgroundOnlyHost) { _, _ in WindowPresence.modeChanged() }
+                }
+                LabeledContent("Setup wizard") {
+                    Button("Run Again…") { OnboardingWindow.show() }
                 }
             }
-            if session.role == .host { RelayView() }
+            if session.role == .host { RelayView(sidecar: sidecar) }
             Section {
                 Picker("Send message with", selection: $sendWithCommandReturn) {
                     Text("Enter").tag(false)
@@ -105,8 +110,9 @@ struct GeneralView: View {
                     .leadingFooter()
                 }
             }
-            if !HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost) {
-                UpdatesSettingsSection()
+            UpdatesSettingsSection()
+            if HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost) {
+                UpdatesStatusSection()
             }
             Section {
                 Text(ProviderMarkAttribution.notice)

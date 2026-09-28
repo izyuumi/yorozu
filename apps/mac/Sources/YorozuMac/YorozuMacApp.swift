@@ -586,7 +586,7 @@ struct YorozuMacApp: App {
                         }
                         if Updates.pending.failure != nil {
                             Button("Update needs attention") {
-                                SettingsPaneRouter.shared.selection = "updates"
+                                SettingsPaneRouter.shared.selection = "general"
                                 openSettings()
                             }
                         }

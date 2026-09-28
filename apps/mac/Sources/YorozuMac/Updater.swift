@@ -354,7 +354,7 @@ struct CheckForUpdatesButton: View {
         if let controller = Updates.controller {
             Button("Check for Updates…") {
                 if HostWindowMode.active {
-                    SettingsPaneRouter.shared.selection = "updates"
+                    SettingsPaneRouter.shared.selection = "general"
                     openSettings()
                     Updates.checkResult.message = "Checking for updates…"
                     controller.updater.checkForUpdatesInBackground()
@@ -366,23 +366,20 @@ struct CheckForUpdatesButton: View {
     }
 }
 
-struct UpdatesSettingsView: View {
+/// Update progress for a background-only host, which has no chat window to show it in.
+struct UpdatesStatusSection: View {
     @State private var checkResult = Updates.checkResult
     @State private var pending = Updates.pending
 
     var body: some View {
-        Form {
-            UpdatesSettingsSection()
-            Section("Status") {
-                if let message = checkResult.message { Text(message) }
-                if pending.status.phase != .none { Text(pending.status.label()) }
-                if let failure = pending.failure { Text(failure).foregroundStyle(.red) }
-                if checkResult.message == nil && pending.status.phase == .none && pending.failure == nil {
-                    Text("Updates check quietly in the background.").foregroundStyle(.secondary)
-                }
+        Section("Update status") {
+            if let message = checkResult.message { Text(message) }
+            if pending.status.phase != .none { Text(pending.status.label()) }
+            if let failure = pending.failure { Text(failure).foregroundStyle(.red) }
+            if checkResult.message == nil && pending.status.phase == .none && pending.failure == nil {
+                Text("Updates check quietly in the background.").foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
     }
 }
 

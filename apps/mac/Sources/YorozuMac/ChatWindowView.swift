@@ -426,7 +426,7 @@ struct SettingsView: View {
 
     var body: some View {
         TabView(selection: $selection) {
-            Tab("General", systemImage: "gearshape", value: "general") { GeneralView() }
+            Tab("General", systemImage: "gearshape", value: "general") { GeneralView(sidecar: sidecar) }
             if session.role == .host {
                 Tab("Devices", systemImage: "iphone.and.arrow.forward", value: "devices") {
                     DevicesView(sidecar: sidecar)
@@ -437,9 +437,6 @@ struct SettingsView: View {
                 if backgroundOnlyHost {
                     Tab("Notifications", systemImage: "bell", value: "notifications") {
                         MacNotificationsView()
-                    }
-                    Tab("Updates", systemImage: "arrow.triangle.2.circlepath", value: "updates") {
-                        UpdatesSettingsView()
                     }
                 }
             } else {

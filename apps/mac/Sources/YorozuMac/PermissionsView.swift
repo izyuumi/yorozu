@@ -96,48 +96,41 @@ private struct PermissionSection: Identifiable {
     let systemImage: String
     let permissions: [Permission]
 
-    static let all = [
-        PermissionSection(
-            id: "availability",
-            title: String(localized: "Stay available"),
-            detail: String(localized: "Keep Yorozu reachable from your iPhone, including after login and while you are away."),
-            systemImage: "antenna.radiowaves.left.and.right",
-            permissions: [.startAtLogin, .neverSleep]
-        ),
-        PermissionSection(
-            id: "control",
-            title: String(localized: "Control this Mac"),
-            detail: String(localized: "See and operate apps when you ask Yorozu to do something on your Mac."),
-            systemImage: "macwindow.on.rectangle",
-            permissions: [.accessibility, .inputMonitoring, .screenRecording, .automation]
-        ),
-        PermissionSection(
-            id: "files",
-            title: String(localized: "Files"),
-            detail: String(localized: "Work with documents, downloads, cloud drives, and app data."),
-            systemImage: "folder",
-            permissions: [.files, .fullDiskAccess]
-        ),
-        PermissionSection(
-            id: "personal",
-            title: String(localized: "Apps and personal data"),
-            detail: String(localized: "Use only the services you want Yorozu to help with."),
-            systemImage: "person.crop.circle.badge.checkmark",
-            permissions: [.calendars, .reminders, .contacts, .photos, .music, .location, .camera, .microphone]
-        ),
-    ]
+    static let availability = PermissionSection(
+        id: "availability",
+        title: String(localized: "Stay available"),
+        detail: String(localized: "Keep Yorozu reachable from your iPhone, including after login and while you are away."),
+        systemImage: "antenna.radiowaves.left.and.right",
+        permissions: [.startAtLogin, .neverSleep]
+    )
+    static let control = PermissionSection(
+        id: "control",
+        title: String(localized: "Control this Mac"),
+        detail: String(localized: "Let Claude Code and Codex threads see and operate apps on this Mac."),
+        systemImage: "macwindow.on.rectangle",
+        permissions: [.accessibility, .screenRecording, .automation]
+    )
+    static let files = PermissionSection(
+        id: "files",
+        title: String(localized: "Files"),
+        detail: String(localized: "Let Claude Code and Codex threads work with documents, downloads, cloud drives, and app data."),
+        systemImage: "folder",
+        permissions: [.files, .fullDiskAccess]
+    )
 }
 
-/// Grants grouped by what they enable, with availability first because remote access depends
-/// on it even when every privacy grant is already in place.
+/// Grants grouped by what they enable. They reach the Claude Code and Codex processes Yorozu
+/// starts, never OpenClaw, which is its own process with its own grants. Onboarding leads with
+/// availability because remote access depends on it; Settings keeps those two switches in General.
 struct PermissionsView: View {
     enum Scope { case onboarding, all }
 
-    var showSetupButton = true
     var scope: Scope = .all
 
     private var sections: [PermissionSection] {
-        scope == .onboarding ? Array(PermissionSection.all.prefix(2)) : PermissionSection.all
+        scope == .onboarding
+            ? [.availability, .control]
+            : [.control, .files]
     }
 
     var body: some View {
@@ -156,11 +149,11 @@ struct PermissionsView: View {
                     }
                 }
             }
-            if showSetupButton {
+            if scope == .all {
                 Section {
-                    LabeledContent("Setup wizard") {
-                        Button("Run Again…") { OnboardingWindow.show() }
-                    }
+                    Text("OpenClaw runs as its own process and asks macOS for its own permissions.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
