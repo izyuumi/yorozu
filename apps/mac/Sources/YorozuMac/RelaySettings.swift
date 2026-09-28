@@ -69,7 +69,7 @@ struct HostsView: View {
                                     .accessibilityHidden(true)
                                 Text(connectionLabel(host))
                             }
-                            .font(.callout)
+                            .font(.scaled(.callout))
                             .foregroundStyle(connectionTint(host))
                         }
                     }
@@ -78,7 +78,7 @@ struct HostsView: View {
             Section("Add Host") {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("On the host Mac, open Settings › Devices › Pair Another Device, then paste its code here.")
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(.scaled(.callout)).foregroundStyle(.secondary)
                     TextField("Pairing code", text: $pairingCode, axis: .vertical)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityLabel("New host pairing code")
@@ -87,7 +87,7 @@ struct HostsView: View {
                 }
             }
             if let failure = session.failure {
-                Text(failure).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                Text(failure).font(.scaled(.caption)).foregroundStyle(.red).textSelection(.enabled)
             }
         }
         .formStyle(.grouped)
@@ -176,15 +176,15 @@ private struct HostConnectionDetails: View {
             case .updateRequired(let reason):
                 Label("Update required", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
-                Text(reason).font(.callout).foregroundStyle(.secondary)
+                Text(reason).font(.scaled(.callout)).foregroundStyle(.secondary)
             }
             if let failure = session.hostFailures[host.id] ?? host.model.failure {
-                Text(failure).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                Text(failure).font(.scaled(.caption)).foregroundStyle(.red).textSelection(.enabled)
             }
             if !host.model.canDeliver {
                 Button("Retry connection") { session.retryConnection(host.id) }
                 Text("Pairing and conversations stay saved while this host reconnects.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.scaled(.caption)).foregroundStyle(.secondary)
             }
             Button("Copy diagnostics") {
                 NSPasteboard.general.clearContents()
@@ -196,7 +196,7 @@ private struct HostConnectionDetails: View {
                 .disabled(!host.model.canDeliver)
             if host.model.yoloMode {
                 Text("Every tool request on this host runs without asking, including purchases, messages, commands, and deletes.")
-                    .font(.caption).foregroundStyle(.red)
+                    .font(.scaled(.caption)).foregroundStyle(.red)
             }
             Button(session.hosts.hasMultipleHosts ? "Remove Host…" : "Unpair…", role: .destructive, action: remove)
                 .buttonStyle(.bordered)

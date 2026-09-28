@@ -56,7 +56,7 @@ struct PermissionStatusRow: View {
                 }
             }
             Text(permission.detail)
-                .font(.caption)
+                .font(.scaled(.caption))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if permission.canPrompt || permission.settingsURL != nil {
@@ -144,7 +144,7 @@ struct PermissionsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Label(section.title, systemImage: section.systemImage)
                         Text(section.detail)
-                            .font(.caption)
+                            .font(.scaled(.caption))
                             .foregroundStyle(.secondary)
                     }
                 }

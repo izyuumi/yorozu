@@ -161,7 +161,7 @@ private struct SearchScopeText: View {
                 .hidden()
             Text(scope)
         }
-        .font(.footnote)
+        .font(.scaled(.footnote))
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
@@ -328,7 +328,7 @@ struct ThreadRow: View {
                     // Every thread wears its agent's mark, Yorozu's own knot included.
                     AgentIdentifierView(thread.agent ?? .yorozu, size: mark, label: agentLabel)
                     highlightedText(thread.displayTitle)
-                        .font(.body.weight(thread.isUnread ? .semibold : .regular))
+                        .font(.scaled(.body).weight(thread.isUnread ? .semibold : .regular))
                         // An untitled thread is one the runtime has not named yet, so its
                         // placeholder is drawn as the aside it is.
                         .foregroundStyle(
@@ -346,7 +346,7 @@ struct ThreadRow: View {
                     TimelineView(.periodic(from: .now, by: thread.lastActivityDate > .now - 120 ? 1 : 60)) {
                         Text(compactThreadTime(thread.lastActivityDate, now: $0.date))
                     }
-                    .font(.caption)
+                    .font(.scaled(.caption))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     // "1h" is for the eye; VoiceOver gets the phrase it stands for.
@@ -358,17 +358,17 @@ struct ThreadRow: View {
                 }
                 if status == .working {
                     Text("Working…")
-                        .font(.subheadline)
+                        .font(.scaled(.subheadline))
                         .foregroundStyle(.secondary)
                 } else if let preview = preview ?? thread.lastMessage, !preview.isEmpty {
                     highlightedText(preview)
-                        .font(.subheadline)
+                        .font(.scaled(.subheadline))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 } else if let repo = thread.repoName {
                     // Nothing said yet: the repo is the one thing worth a second line.
                     Text(repo)
-                        .font(.subheadline)
+                        .font(.scaled(.subheadline))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -378,12 +378,12 @@ struct ThreadRow: View {
                     } icon: {
                         Image(systemName: "archivebox")
                     }
-                    .font(.caption)
+                    .font(.scaled(.caption))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 } else if let hostLabel {
                     Text(hostLabel)
-                        .font(.caption)
+                        .font(.scaled(.caption))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -394,11 +394,11 @@ struct ThreadRow: View {
                 switch status {
                 case .needsAnswer:
                     Image(systemName: "questionmark.circle.fill")
-                        .font(.footnote.weight(.semibold))
+                        .font(.scaled(.footnote).weight(.semibold))
                         .foregroundStyle(.tint)
                 case .needsAttention:
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.footnote.weight(.semibold))
+                        .font(.scaled(.footnote).weight(.semibold))
                         .foregroundStyle(YorozuPalette.warning)
                 case .working:
                     ProgressView().controlSize(.small)
@@ -415,7 +415,7 @@ struct ThreadRow: View {
             .accessibilityHidden(status == nil)
             if chevron {
                 Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
+                    .font(.scaled(.footnote).weight(.semibold))
                     .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
             }
@@ -638,7 +638,7 @@ struct ConnectionPill: View {
     var body: some View {
         let content = HStack(spacing: 5) {
             Circle().fill(state.tint).frame(width: dot, height: dot)
-            Text(label ?? state.label).font(.caption.weight(.medium))
+            Text(label ?? state.label).font(.scaled(.caption).weight(.medium))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)

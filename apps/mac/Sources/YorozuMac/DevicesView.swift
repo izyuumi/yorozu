@@ -34,7 +34,7 @@ struct DevicesView: View {
                             .accessibilityLabel(isMac(device) ? "Mac" : device.name?.hasPrefix("iPadOS") == true ? "iPad" : "Phone")
                         VStack(alignment: .leading, spacing: 2) {
                             Text(device.via == .local ? "This Mac" : device.name ?? device.shortId)
-                                .font(.body)
+                                .font(.scaled(.body))
                             Button {
                                 if !expandedDeviceIDs.insert(device.pub).inserted {
                                     expandedDeviceIDs.remove(device.pub)
@@ -42,14 +42,14 @@ struct DevicesView: View {
                             } label: {
                                 HStack(spacing: 4) {
                                     Image(systemName: expandedDeviceIDs.contains(device.pub) ? "chevron.down" : "chevron.right")
-                                        .font(.caption2)
+                                        .font(.scaled(.caption2))
                                         .accessibilityHidden(true)
                                     Text("Device ID: \(device.shortId)")
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
                             }
-                            .font(.caption)
+                            .font(.scaled(.caption))
                             .buttonStyle(.plain)
                             .accessibilityValue(expandedDeviceIDs.contains(device.pub) ? Text("Expanded") : Text("Collapsed"))
                             if expandedDeviceIDs.contains(device.pub) {
@@ -58,7 +58,7 @@ struct DevicesView: View {
                                     .textSelection(.enabled)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
-                            Text(subtitle(device)).font(.caption).foregroundStyle(.secondary)
+                            Text(subtitle(device)).font(.scaled(.caption)).foregroundStyle(.secondary)
                         }
                         Spacer()
                         Circle()
@@ -163,19 +163,19 @@ struct PairingSheet: View {
                     .font(.system(size: 56))
                     .foregroundStyle(YorozuPalette.sage)
                     .accessibilityHidden(true)
-                Text("Device paired").font(.headline)
+                Text("Device paired").font(.scaled(.headline))
                 Text("It can reach this Mac now. Whether an agent answers depends on what is set up here.")
-                    .font(.callout)
+                    .font(.scaled(.callout))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             } else {
-                if !embedded { Text("Pair a device").font(.headline) }
+                if !embedded { Text("Pair a device").font(.scaled(.headline)) }
                 if progress.baseline == nil {
                     VStack(spacing: 8) {
                         if preparationFailed {
-                            Text("Couldn’t load paired devices").font(.headline)
+                            Text("Couldn’t load paired devices").font(.scaled(.headline))
                             Text("Check the connection in General settings, then try again.")
-                                .font(.callout).foregroundStyle(.secondary)
+                                .font(.scaled(.callout)).foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
                             Button("Try again") { attempt += 1 }
                         } else {
@@ -189,16 +189,16 @@ struct PairingSheet: View {
                         .resizable()
                         .frame(width: 220, height: 220)
                         .accessibilityLabel("Pairing QR code")
-                    Text("Scan with Yorozu on your iPhone or iPad.").font(.caption).foregroundStyle(.secondary)
+                    Text("Scan with Yorozu on your iPhone or iPad.").font(.scaled(.caption)).foregroundStyle(.secondary)
                 } else {
                     if sidecar.state == "stopped" || sidecar.state == "closed"
                         || sidecar.state.hasPrefix("restarting") || sidecar.state.hasPrefix("failed") {
                         VStack(spacing: 8) {
                             Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
-                                .font(.largeTitle)
-                            Text("Pairing is temporarily unavailable").font(.headline)
+                                .font(.scaled(.largeTitle))
+                            Text("Pairing is temporarily unavailable").font(.scaled(.headline))
                             Text("Check the connection in General settings. When Yorozu reconnects, request a new code.")
-                                .font(.callout)
+                                .font(.scaled(.callout))
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
                         }
@@ -207,7 +207,7 @@ struct PairingSheet: View {
                         ProgressView("Preparing a pairing code…").frame(height: 220)
                     } else {
                         Text("Use the pairing code below to connect your device.")
-                            .font(.callout)
+                            .font(.scaled(.callout))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -235,7 +235,7 @@ struct PairingSheet: View {
                     // Codes are not revoked by minting another: the runtime and the relay keep
                     // recent ones until they expire, so "keep it private" is the whole advice.
                     Text("Or paste it into Connect to another Mac on a Mac, or Enter code manually on an iPhone or iPad. Codes work once and expire; keep this one private.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.scaled(.caption)).foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
                 if showsActions {

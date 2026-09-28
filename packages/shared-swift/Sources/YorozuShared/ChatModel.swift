@@ -22,6 +22,9 @@ public final class ChatModel {
     private var synced: [ThreadSummary] = []
     /// Threads started on this device that the runtime has not heard of yet.
     private var draftThreads: [ThreadSummary] = []
+    /// The model and effort last chosen, by agent: a new thread starts on them rather than on
+    /// Auto. The runtime ignores a model it no longer offers, so a stale one falls back safely.
+    private var lastRun: [String: RunChoice] = [:]
     /// The newest unsent draft.
     public var draft: ThreadSummary? { draftThreads.first }
 
@@ -367,7 +370,8 @@ public final class ChatModel {
 
     private func saveDraftState() throws {
         try cache?.save(draftState: .init(drafts: drafts, preparedSend: preparedSend,
-                                          threads: draftThreads, openThread: openThread))
+                                          threads: draftThreads, openThread: openThread,
+                                          lastRun: lastRun))
     }
 
     /// Staged files change rarely, but must survive immediate termination too.
@@ -471,6 +475,7 @@ public final class ChatModel {
         }
         outbox = Outbox.pruned(pending)
         let draftState = cache.draftState()
+        lastRun = draftState?.lastRun ?? [:]
         var composerPrepared: [String: String] = [:]
         restoringComposer = true
         let composer = cache.composer()
@@ -1486,7 +1491,7 @@ public final class ChatModel {
     @discardableResult
     public func newDraft(agent: ThreadAgent = .yorozu, cwd: String? = nil) -> ThreadSummary {
         for id in draftThreads.map(\.id) { discardDraft(id) }
-        let thread = ThreadSummary(
+        var thread = ThreadSummary(
             id: UUID().uuidString,
             title: "",
             archived: false,
@@ -1494,6 +1499,9 @@ public final class ChatModel {
             agent: agent == .yorozu ? nil : agent,
             cwd: agent == .yorozu ? nil : cwd
         )
+        let last = lastRun[agent.rawValue]
+        thread.model = last?.model
+        thread.effort = last?.effort
         draftThreads.insert(thread, at: 0)
         saveDraftsNow()
         return thread
@@ -1566,6 +1574,7 @@ public final class ChatModel {
     public func setModel(_ thread: ThreadSummary, _ model: String?) {
         // An effort the new model does not offer goes with the switch; one it does is kept.
         let effort = thread.effort.flatMap { efforts(for: thread, on: model).contains($0) ? $0 : nil }
+        lastRun[(thread.agent ?? .yorozu).rawValue] = RunChoice(model: model, effort: effort)
         if let index = draftThreads.firstIndex(where: { $0.id == thread.id }) {
             draftThreads[index].model = model
             draftThreads[index].effort = effort
@@ -1573,6 +1582,7 @@ public final class ChatModel {
             return
         }
         set(thread.id) { $0.model = model; $0.effort = effort }
+        saveDraftsNow()
         emit(.threadSetModel(ThreadSetModelData(model: model)), in: thread.id)
     }
 
@@ -1589,12 +1599,14 @@ public final class ChatModel {
     /// Sets how much reasoning this thread requests, or returns it to the provider default.
     /// Drafts keep the choice locally until their first message creates them on the runtime.
     public func setEffort(_ thread: ThreadSummary, _ effort: ReasoningEffort?) {
+        lastRun[(thread.agent ?? .yorozu).rawValue] = RunChoice(model: thread.model, effort: effort)
         if let index = draftThreads.firstIndex(where: { $0.id == thread.id }) {
             draftThreads[index].effort = effort
             saveDraftsNow()
             return
         }
         set(thread.id) { $0.effort = effort }
+        saveDraftsNow()
         emit(.threadSetEffort(ThreadSetEffortData(effort: effort)), in: thread.id)
     }
 

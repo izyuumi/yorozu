@@ -116,7 +116,7 @@ struct GeneralView: View {
             }
             Section {
                 Text(ProviderMarkAttribution.notice)
-                    .font(.caption)
+                    .font(.scaled(.caption))
                     .foregroundStyle(.secondary)
             }
         }
@@ -129,7 +129,7 @@ struct GeneralView: View {
                 .safeAreaInset(edge: .bottom) {
                     HStack {
                         Text("Click a thread to open it in the chat window.")
-                            .font(.caption)
+                            .font(.scaled(.caption))
                             .foregroundStyle(.secondary)
                         Spacer()
                         Button("Done") { showingArchive = false }

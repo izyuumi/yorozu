@@ -348,14 +348,14 @@ final class UpdateCheckResult {
 }
 
 struct CheckForUpdatesButton: View {
-    @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         if let controller = Updates.controller {
             Button("Check for Updates…") {
                 if HostWindowMode.active {
                     SettingsPaneRouter.shared.selection = "general"
-                    openSettings()
+                    openWindow(id: YorozuMacApp.settingsWindow)
                     Updates.checkResult.message = "Checking for updates…"
                     controller.updater.checkForUpdatesInBackground()
                 } else {

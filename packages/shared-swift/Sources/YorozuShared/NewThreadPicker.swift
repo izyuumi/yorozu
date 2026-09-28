@@ -156,11 +156,11 @@ public struct NewThreadPicker: View {
                     if let host = selectedHost {
                         if case .updateRequired = host.model.compatibility {
                             Label("Update required — see Settings", systemImage: "exclamationmark.circle")
-                                .font(.caption)
+                                .font(.scaled(.caption))
                                 .foregroundStyle(.secondary)
                         } else if !host.model.canDeliver {
                             Label("Mac offline — messages will queue", systemImage: "wifi.slash")
-                                .font(.caption)
+                                .font(.scaled(.caption))
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -203,10 +203,10 @@ public struct NewThreadPicker: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(label(agent))
-                    .font(.headline)
+                    .font(.scaled(.headline))
                     .foregroundStyle(YorozuPalette.ink)
                 Text(ThreadAgent.allCases.contains(agent) ? Self.summary(agent) : descriptor.description ?? "")
-                    .font(.subheadline)
+                    .font(.scaled(.subheadline))
                     // Not `.secondary`: inside a Button label it picks up the vermilion tint.
                     .foregroundStyle(YorozuPalette.ink.opacity(0.62))
                     .fixedSize(horizontal: false, vertical: true)
@@ -323,7 +323,7 @@ public struct NewThreadPicker: View {
                         // Monospaced so a path reads as a path, and wrapping so a long one is
                         // shown whole rather than losing its middle to an ellipsis.
                         Text(folder.path)
-                            .font(.caption.monospaced())
+                            .font(.scaled(.caption).monospaced())
                             .foregroundStyle(YorozuPalette.ink.opacity(0.62))
                             .lineLimit(nil)
                             .fixedSize(horizontal: false, vertical: true)

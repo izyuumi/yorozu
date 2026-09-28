@@ -65,6 +65,7 @@ public struct ChatView: View {
     @State private var attachmentTooLarge = false
     @State private var attachmentLoading = false
     @State private var attachmentFailure: String?
+    @State private var dropTargeted = false
     @State private var searchRequestRevision = UUID()
     @State private var pendingExternalSearch = false
     @State private var externalSearchEventID: String?
@@ -213,7 +214,7 @@ public struct ChatView: View {
             if thread.interruptedTurnId != nil {
                 VStack(alignment: .leading) {
                     Label("Couldn't resume automatically", systemImage: "pause.circle")
-                    Text(thread.canResume == false ? "Original request is unavailable. Dismiss, then send it again." : "Three recovery attempts failed. Retry when ready.").font(.callout)
+                    Text(thread.canResume == false ? "Original request is unavailable. Dismiss, then send it again." : "Three recovery attempts failed. Retry when ready.").font(.scaled(.callout))
                     HStack {
                         if thread.canResume != false {
                             Button("Retry") { model.recover(thread, action: .continue) }
@@ -248,7 +249,7 @@ public struct ChatView: View {
                 VStack(spacing: 8) {
                     if thread.recoveryState == "recovering" {
                         Label("Recovering…", systemImage: "arrow.clockwise")
-                            .font(.callout)
+                            .font(.scaled(.callout))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(.thinMaterial, in: Capsule())
@@ -271,6 +272,11 @@ public struct ChatView: View {
             composer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Files and images dragged anywhere onto the conversation, from Finder, Files, Photos or
+        // another app in Split View, go where the + menu and Paste put them.
+        .dropDestination(for: DroppedFile.self) { files, _ in
+            dropFiles(files)
+        } isTargeted: { dropTargeted = $0 }
         .background(YorozuPalette.canvas.ignoresSafeArea())
         .yorozuTint()
         .onChange(of: scenePhase) { _, phase in
@@ -356,7 +362,7 @@ public struct ChatView: View {
                             AgentMarkView(presentation.agent, size: 20)
                             VStack(alignment: .leading, spacing: 0) {
                                 Text(thread.displayTitle)
-                                    .font(.subheadline.weight(.semibold))
+                                    .font(.scaled(.subheadline).weight(.semibold))
                                     .lineLimit(1)
                                 HStack(spacing: 4) {
                                     Circle()
@@ -366,7 +372,7 @@ public struct ChatView: View {
                                     Text(presentation.agentLabel)
                                         .lineLimit(1)
                                 }
-                                .font(.caption2)
+                                .font(.scaled(.caption2))
                                 .foregroundStyle(.secondary)
                             }
                         }
@@ -865,7 +871,7 @@ public struct ChatView: View {
             WorkRowView(work: work).id(work.id)
         case .unreadable(let event):
             Label(String(localized: "Update Yorozu to see this event"), systemImage: "arrow.up.circle")
-                .font(.subheadline)
+                .font(.scaled(.subheadline))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
@@ -965,7 +971,7 @@ public struct ChatView: View {
         } icon: {
             Image(systemName: "folder")
         }
-        .font(.caption)
+        .font(.scaled(.caption))
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
@@ -1043,7 +1049,7 @@ public struct ChatView: View {
             if let attachmentFailure {
                 HStack(alignment: .top, spacing: 8) {
                     Label(attachmentFailure, systemImage: "exclamationmark.circle")
-                        .font(.caption)
+                        .font(.scaled(.caption))
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Button {
@@ -1062,7 +1068,7 @@ public struct ChatView: View {
             }
             if attachmentLoading {
                 Label("Loading attachments…", systemImage: "paperclip")
-                    .font(.caption)
+                    .font(.scaled(.caption))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 12)
                     .padding(.top, 8)
@@ -1102,7 +1108,7 @@ public struct ChatView: View {
                 // must never reduce the space available for the message itself.
                 TextField(presentation.composerPlaceholder, text: draft, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .font(.body)
+                    .font(.scaled(.body))
                     .lineLimit(1...6)
                     .padding(.horizontal, 12)
                     .padding(.top, 12)
@@ -1134,8 +1140,8 @@ public struct ChatView: View {
         .overlay {
             RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous)
                 .strokeBorder(
-                    generating ? YorozuPalette.vermilion.opacity(0.72) : YorozuPalette.rule.opacity(0.82),
-                    lineWidth: generating ? 1.5 : 0.8
+                    generating || dropTargeted ? YorozuPalette.vermilion.opacity(0.72) : YorozuPalette.rule.opacity(0.82),
+                    lineWidth: generating || dropTargeted ? 1.5 : 0.8
                 )
             .allowsHitTesting(false)
             .accessibilityHidden(true)
@@ -1172,6 +1178,19 @@ public struct ChatView: View {
             onTooLarge: { attachmentTooLarge = true },
             onFailure: reportAttachmentFailure
         )
+    }
+
+    private func dropFiles(_ files: [DroppedFile]) -> Bool {
+        guard !generating, !attachmentLoading else { return false }
+        attachmentFailure = nil
+        stageAttachments(
+            files.map(\.pick),
+            remaining: MessageAttachment.maxCount - attachments.wrappedValue.count,
+            onPick: addAttachments,
+            onTooLarge: { attachmentTooLarge = true },
+            onFailure: reportAttachmentFailure
+        )
+        return true
     }
 
     private func reportAttachmentFailure(_ message: String) {
@@ -1246,8 +1265,8 @@ public struct ChatView: View {
 
     private var runSettingsChip: some View {
         HStack(spacing: 4) {
-            Text(composerChipLabel).font(.subheadline).lineLimit(1)
-            Image(systemName: "chevron.down").font(.caption2)
+            Text(composerChipLabel).font(.scaled(.subheadline)).lineLimit(1)
+            Image(systemName: "chevron.down").font(.scaled(.caption2))
         }
         // A caption, not an action: the send button is the one thing here in the tint.
         .foregroundStyle(.secondary)
@@ -1274,7 +1293,7 @@ public struct ChatView: View {
     /// impossible from the app.
     private var stopPendingLabel: some View {
         Text("Stop requested · waiting for host")
-            .font(.caption)
+            .font(.scaled(.caption))
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .accessibilityLabel("Stop requested, waiting for host")
@@ -1285,7 +1304,7 @@ public struct ChatView: View {
             model.interrupt(in: thread.id)
         } label: {
             Image(systemName: "stop.fill")
-                .font(.footnote.weight(.bold))
+                .font(.scaled(.footnote).weight(.bold))
                 .foregroundStyle(.background)
                 .frame(width: sendCircle, height: sendCircle)
                 .background(Color.primary, in: Circle())
@@ -1305,7 +1324,7 @@ public struct ChatView: View {
             send()
         } label: {
             Image(systemName: "arrow.up")
-                .font(.body.weight(.bold))
+                .font(.scaled(.body).weight(.bold))
                 .foregroundStyle(canSend ? Color.white : Color.secondary)
                 .frame(width: sendCircle, height: sendCircle)
                 .background(canSend ? YorozuPalette.vermilion : Color.clear, in: Circle())
@@ -1958,7 +1977,7 @@ private struct SearchHitBar: View {
     var body: some View {
         HStack(spacing: 4) {
             Text(total == 0 ? "No matches" : "\(index + 1) of \(total)")
-                .font(.footnote.monospacedDigit())
+                .font(.scaled(.footnote).monospacedDigit())
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
             arrow("chevron.up", "Previous match", -1)
@@ -1973,7 +1992,7 @@ private struct SearchHitBar: View {
     private func arrow(_ symbol: String, _ label: String, _ direction: Int) -> some View {
         Button { step(direction) } label: {
             Image(systemName: symbol)
-                .font(.footnote.weight(.semibold))
+                .font(.scaled(.footnote).weight(.semibold))
                 .frame(width: controlTarget, height: controlTarget)
         }
         .buttonStyle(.plain)
@@ -1996,7 +2015,7 @@ private struct ChatActivityRow: View {
             } else {
                 ProgressView().controlSize(.small).tint(YorozuPalette.vermilion)
             }
-            Text(activity.label).font(.caption).foregroundStyle(.secondary)
+            Text(activity.label).font(.scaled(.caption)).foregroundStyle(.secondary)
             Spacer(minLength: 0)
         }
         .accessibilityElement(children: .combine)
@@ -2011,7 +2030,7 @@ private struct ScrollToBottomPill: View {
     var body: some View {
         Button(action: action) {
             Label("Jump to latest", systemImage: "arrow.down")
-                .font(.footnote.weight(.medium))
+                .font(.scaled(.footnote).weight(.medium))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
         }
@@ -2032,11 +2051,11 @@ private struct EmptyThreadView: View {
             VStack(spacing: LayoutMetrics.stack) {
                 AgentMarkView(presentation.agent, size: 42)
                 Text(presentation.emptyTitle)
-                    .font(.title3.weight(.semibold))
+                    .font(.scaled(.title3).weight(.semibold))
                     .fontDesign(.serif)
                     .foregroundStyle(YorozuPalette.ink)
                 Text(presentation.emptyMessage)
-                    .font(.callout)
+                    .font(.scaled(.callout))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 360)
@@ -2077,7 +2096,7 @@ private struct Banner: View {
 
     var body: some View {
         Label(text, systemImage: systemImage)
-            .font(.footnote)
+            .font(.scaled(.footnote))
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(8)
             .background(YorozuPalette.stone.opacity(0.6))

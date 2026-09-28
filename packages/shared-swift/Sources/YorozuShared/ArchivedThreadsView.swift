@@ -58,7 +58,7 @@ public struct ArchivedThreadsView: View {
             } footer: {
                 if !shown.isEmpty {
                     Text("Restored threads return to the thread list.")
-                        .font(.footnote)
+                        .font(.scaled(.footnote))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -74,7 +74,7 @@ public struct ArchivedThreadsView: View {
             // A sheet on the Mac has no toolbar for a search field or a title to sit in.
             .safeAreaInset(edge: .top) {
                 VStack(alignment: .leading) {
-                    Text("Archived threads").font(.headline)
+                    Text("Archived threads").font(.scaled(.headline))
                     TextField("Search archived threads", text: $query)
                         .textFieldStyle(.roundedBorder)
                 }

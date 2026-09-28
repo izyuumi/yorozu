@@ -85,7 +85,7 @@ public struct SpeakingChip: View {
                 Text("Speaking")
                 Image(systemName: "stop.fill")
             }
-            .font(.caption.weight(.medium))
+            .font(.scaled(.caption).weight(.medium))
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .frame(minHeight: 28)

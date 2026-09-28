@@ -102,7 +102,7 @@ public struct MessageBubble: View {
             }
             if let attachmentTransferLabels {
                 ForEach(Array(attachmentTransferLabels.enumerated()), id: \.offset) { _, label in
-                    Text(label).font(.caption2).foregroundStyle(.secondary)
+                    Text(label).font(.scaled(.caption2)).foregroundStyle(.secondary)
                         .accessibilityLabel(label)
                 }
             }
@@ -110,7 +110,7 @@ public struct MessageBubble: View {
                 HStack(spacing: 6) {
                     AgentMarkView(agent, size: 13)
                     Text(agentLabel)
-                        .font(.caption2.weight(.semibold))
+                        .font(.scaled(.caption2).weight(.semibold))
                         .tracking(0.8)
                 }
                 .foregroundStyle(YorozuPalette.ink.opacity(0.62))
@@ -124,7 +124,7 @@ public struct MessageBubble: View {
             }
             if data.interrupted == true {
                 Text("Stopped")
-                    .font(.caption2)
+                    .font(.scaled(.caption2))
                     .foregroundStyle(YorozuPalette.ink.opacity(0.62))
             }
             // Only once the reply has finished arriving: previewing a URL that is still being
@@ -184,7 +184,7 @@ public struct MessageBubble: View {
     private var messageActions: some View {
         Menu { actions } label: {
             Image(systemName: "ellipsis.circle")
-                .font(.body)
+                .font(.scaled(.body))
                 .frame(minWidth: controlTarget, minHeight: controlTarget)
                 .contentShape(.rect)
         }
@@ -218,7 +218,7 @@ public struct MessageBubble: View {
             Image(systemName: status.symbol)
                 .foregroundStyle(status == .failed || status == .rejected ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
         }
-        .font(.caption)
+        .font(.scaled(.caption))
         .foregroundStyle(status == .failed || status == .rejected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
         .padding(.horizontal, 4)
 
@@ -375,7 +375,7 @@ private struct AttachmentsView: View {
                     if hidden > 0 {
                         ZStack {
                             Color.black.opacity(0.45)
-                            Text("+\(hidden)").font(.title2.bold()).foregroundStyle(.white)
+                            Text("+\(hidden)").font(.scaled(.title2).bold()).foregroundStyle(.white)
                         }
                     }
                 }
@@ -393,12 +393,12 @@ private struct AttachmentsView: View {
         Label {
             VStack(alignment: .leading, spacing: 1) {
                 Text(attachment.name).lineLimit(1).truncationMode(.middle)
-                Text(attachment.size).font(.caption).foregroundStyle(.secondary)
+                Text(attachment.size).font(.scaled(.caption)).foregroundStyle(.secondary)
             }
         } icon: {
             Image(systemName: "doc").foregroundStyle(.secondary)
         }
-        .font(.subheadline)
+        .font(.scaled(.subheadline))
         .padding(10)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .accessibilityLabel("Attached file, \(attachment.name), \(attachment.size)")

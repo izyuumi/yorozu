@@ -31,15 +31,15 @@ public struct QuestionCardView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
-            if let agentLabel { Text(agentLabel).font(.subheadline).foregroundStyle(.secondary) }
+            if let agentLabel { Text(agentLabel).font(.scaled(.subheadline)).foregroundStyle(.secondary) }
             Label(card.question, systemImage: "questionmark.bubble")
-                .font(.headline)
+                .font(.scaled(.headline))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             if answered {
                 Label(chosen.map { "Answered: \($0)" } ?? String(localized: "Answered"), systemImage: "checkmark.circle.fill")
-                    .font(.caption)
+                    .font(.scaled(.caption))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -80,7 +80,7 @@ public struct QuestionCardView: View {
                     .frame(minWidth: controlTarget, minHeight: controlTarget)
                     .contentShape(Rectangle())
             }
-                .font(.title3)
+                .font(.scaled(.title3))
                 .buttonStyle(.plain)
                 .disabled(trimmed.isEmpty)
                 .accessibilityLabel("Send answer")
