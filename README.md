@@ -88,10 +88,16 @@ xcodebuild build -workspace apps/ios/Yorozu.xcworkspace -scheme YorozuIOS \
 pnpm --filter @yorozu/relay build && node apps/relay/dist/index.js    # PORT, default 8787
 ```
 
+**Website** — Astro pages in `apps/web/src`, static files and routing rules in `apps/web/public`:
+
+```sh
+pnpm --filter @yorozu/web dev                             # http://localhost:4321
+```
+
 ### Tests
 
 ```sh
-pnpm -r test                                              # runtime, shared, relay
+pnpm -r test                                              # runtime, shared, relay, website (after pnpm -r build)
 env -u SDKROOT swift test --package-path packages/shared-swift
 env -u SDKROOT swift test --package-path apps/mac
 scripts/check-mac-multi-host.sh                           # isolated client/session lifecycle
@@ -108,8 +114,9 @@ Set `SIMULATOR_RUNTIME` to an installed runtime ID (for example,
 `com.apple.CoreSimulator.SimRuntime.iOS-26-4`) to test a specific iOS release.
 
 CI (`.github/workflows/ci.yml`) runs the Node, Swift, and iOS jobs on macOS, plus workflow
-validation, ShellCheck, isolated release-publication tests, and a relay container build and
-WebSocket check on Linux. Successful CI on `main` or `release/*` can produce a matching Mac
+validation, ShellCheck, isolated release-publication tests, a relay container build and
+WebSocket check, and the website build and tests on Linux. Pushes to `main` that change `apps/web`
+deploy the website (`.github/workflows/deploy-web.yml`). Successful CI on `main` or `release/*` can produce a matching Mac
 prerelease and TestFlight candidate. Release Please prepares version/changelog PRs; stable
 publication explicitly promotes a tested candidate. All commits must be signed Conventional
 Commits. See [the release workflow](docs/RELEASE_WORKFLOW.md) for the runbook and

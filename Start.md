@@ -28,8 +28,8 @@ Rules that apply throughout:
 - Never read, print, or ask for provider credentials, API keys, the OpenClaw device token, or
   the contents of `~/Library/Application Support/Yorozu`. You do not need them.
 - Pairing codes are secrets while they are valid. Don't echo them into logs or summaries.
-- Speak plainly. If they are not technical, skip the terminal. The iPhone source-build route
-  is for developers; without an internal testing invitation, offer Mac-only setup for now.
+- Speak plainly. If they are not technical, skip the terminal. The iPhone app installs from the
+  public TestFlight beta; the source-build route is for developers (see section 5).
 
 ## 1. Learn their situation
 
