@@ -256,8 +256,8 @@ final class ConnectionTests: XCTestCase {
             .waitForExistence(timeout: 20))
         XCTAssertFalse(result.exists, "Host-only match appeared in downloaded search")
         try await host.post("heal")
-        XCTAssertTrue(result.waitForExistence(timeout: 70), "Host-only match was not added to search results")
-        XCTAssertTrue(app.staticTexts["All host histories searched"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["All host histories searched"].waitForExistence(timeout: 70))
+        XCTAssertTrue(result.waitForExistence(timeout: 10), "Host-only match was not added to search results")
         result.tap()
         XCTAssertTrue(app.textViews["host-only marker 6e72"].waitForExistence(timeout: 30),
                       "Selecting a host-only result did not load its matching message")
