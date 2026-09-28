@@ -162,6 +162,8 @@ public struct ChatView: View {
     }
 
     private var generating: Bool { model.generating.contains(thread.id) }
+    /// A thread just started has nothing to read, so it opens ready to be typed into.
+    private var startsFocused: Bool { model.startedThread == thread.id && events.isEmpty }
     private var shownToast: ConnectionState? { aggregateToast ?? model.connectionToast.visible }
     private var shownToastID: UUID? { aggregateToastID ?? model.connectionToast.notice?.id }
     private var toastAnnouncementKey: String? {
@@ -462,7 +464,7 @@ public struct ChatView: View {
         // What the Mac's Edit, Thread and Chat menus act on. The same four things the toolbar
         // and the composer offer, published where a menu built by the scene can reach them.
         #if os(macOS)
-            .onAppear { if focusComposerOnAppear { composerFocused = true } }
+            .onAppear { if focusComposerOnAppear || startsFocused { composerFocused = true } }
             .focusedSceneValue(
                 \.chatCommands,
                 ChatCommands(
@@ -1085,7 +1087,8 @@ public struct ChatView: View {
                     text: draft,
                     placeholder: presentation.composerPlaceholder,
                     onSubmit: send,
-                    onPasteImage: generating ? nil : { pasteImages() }
+                    onPasteImage: generating ? nil : { pasteImages() },
+                    focusThread: startsFocused ? thread.id : nil
                 )
                 .padding(.horizontal, 12)
                 .padding(.top, 12)

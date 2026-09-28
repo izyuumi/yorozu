@@ -12,6 +12,9 @@
         /// Called when Paste finds an image; nil while images cannot be attached, so Paste goes
         /// back to being text-only.
         let onPasteImage: (() -> Void)?
+        /// The thread to take the keyboard for, once each: a thread just started. Nil leaves
+        /// focus wherever it is.
+        var focusThread: String?
 
         private static let maxLines: CGFloat = 6
 
@@ -48,6 +51,10 @@
             view.placeholderLabel.isHidden = !text.isEmpty
             view.onSubmit = onSubmit
             view.onPasteImage = onPasteImage
+            if focusThread != view.focusThread {
+                view.focusThread = focusThread
+                if focusThread != nil { view.focus() }
+            }
         }
 
         func sizeThatFits(_ proposal: ProposedViewSize, uiView: PastingTextView, context: Context) -> CGSize? {
@@ -75,6 +82,20 @@
         let placeholderLabel = UILabel()
         var onSubmit: () -> Void = {}
         var onPasteImage: (() -> Void)?
+        var focusThread: String?
+        private var focusPending = false
+
+        /// A view not yet in a window cannot be first responder, so the request waits for one.
+        func focus() {
+            if window == nil { focusPending = true } else { becomeFirstResponder() }
+        }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard window != nil, focusPending else { return }
+            focusPending = false
+            becomeFirstResponder()
+        }
 
         override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
             // `hasImages` only asks; it does not read, so showing the menu raises no banner.
