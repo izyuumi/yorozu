@@ -128,7 +128,7 @@ the candidate SHA's `version.txt` and `.release-please-manifest.json` must both 
 
 Each candidate has one DMG (`Yorozu.dmg`), the appcast, and `candidate.json` with source SHA,
 both build numbers, artifact hashes, and exact App Store Connect build ID. Main candidates use
-the release tag `v<version>-beta` and title `Yorozu v<version>-beta`; the build number remains in
+the release tag and title `v<version>-beta`; the build number remains in
 the app and manifest. Before replacing a main beta, the workflow checks version/build ordering
 and source ancestry. It removes the previous beta release and tag, publishes the new candidate
 under the same tag, then removes older main beta releases. Release-branch candidates keep numbered

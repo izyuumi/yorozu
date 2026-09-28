@@ -260,10 +260,10 @@ def publish_candidate(gh, manifest_path, ios_path, directory):
     check_main_progress(gh, data)
     write_json(directory / "candidate.json", data)
     paths = [directory / name for name in ("candidate.json", asset, "appcast.xml")]
-    title = f"Yorozu {data['tag']}"
+    title = data["tag"] if data["source_branch"] == "main" else f"Yorozu {data['tag']}"
     current = gh.release(data["tag"]) if data["source_branch"] == "main" else None
     if current is not None:
-        require(current["isPrerelease"] and current["name"] == title,
+        require(current["isPrerelease"] and current["name"] in (title, f"Yorozu {title}"),
                 "existing beta tag belongs to another release")
         if current["isDraft"]:
             gh.delete(data["tag"])
@@ -272,6 +272,8 @@ def publish_candidate(gh, manifest_path, ios_path, directory):
                 previous = json.loads(gh.download(data["tag"], "candidate.json", old).read_text())
             if previous != data:
                 gh.delete(data["tag"])
+            elif current["name"] != title:
+                gh.call("release", "edit", data["tag"], "--repo", gh.repo, "--title", title)
     immutable_assets(gh, data["tag"], data["source_sha"], paths, prerelease=True, notes=data["notes"], title=title)
     if data["source_branch"] == "main":
         remove_old_main_betas(gh, data["tag"])
@@ -283,7 +285,7 @@ def remove_old_main_betas(gh, current_tag):
     for release in (release for page in pages for release in page):
         tag = release["tag_name"]
         if (tag != current_tag and not release["draft"] and release["prerelease"]
-                and ((BETA.fullmatch(tag) and release.get("name") == f"Yorozu {tag}")
+                and ((BETA.fullmatch(tag) and release.get("name") in (tag, f"Yorozu {tag}"))
                      or (CANDIDATE.fullmatch(tag) and release.get("name") == f"Yorozu Beta {tag}"))):
             gh.delete(tag)
 
@@ -313,7 +315,7 @@ def check_main_progress(gh, data):
     pages = gh.api("releases?per_page=100", "--paginate", "--slurp")
     prior = [release for page in pages for release in page
              if not release["draft"] and release["prerelease"]
-             and ((BETA.fullmatch(release["tag_name"]) and release.get("name") == f"Yorozu {release['tag_name']}")
+             and ((BETA.fullmatch(release["tag_name"]) and release.get("name") in (release["tag_name"], f"Yorozu {release['tag_name']}"))
                   or (CANDIDATE.fullmatch(release["tag_name"]) and release.get("name") == f"Yorozu Beta {release['tag_name']}"))]
     if not prior:
         return
