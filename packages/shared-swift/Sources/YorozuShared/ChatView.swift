@@ -65,6 +65,7 @@ public struct ChatView: View {
     @State private var attachmentTooLarge = false
     @State private var attachmentLoading = false
     @State private var attachmentFailure: String?
+    @State private var dropTargeted = false
     @State private var searchRequestRevision = UUID()
     @State private var pendingExternalSearch = false
     @State private var externalSearchEventID: String?
@@ -271,6 +272,11 @@ public struct ChatView: View {
             composer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Files and images dragged anywhere onto the conversation, from Finder, Files, Photos or
+        // another app in Split View, go where the + menu and Paste put them.
+        .dropDestination(for: DroppedFile.self) { files, _ in
+            dropFiles(files)
+        } isTargeted: { dropTargeted = $0 }
         .background(YorozuPalette.canvas.ignoresSafeArea())
         .yorozuTint()
         .onChange(of: scenePhase) { _, phase in
@@ -1134,8 +1140,8 @@ public struct ChatView: View {
         .overlay {
             RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous)
                 .strokeBorder(
-                    generating ? YorozuPalette.vermilion.opacity(0.72) : YorozuPalette.rule.opacity(0.82),
-                    lineWidth: generating ? 1.5 : 0.8
+                    generating || dropTargeted ? YorozuPalette.vermilion.opacity(0.72) : YorozuPalette.rule.opacity(0.82),
+                    lineWidth: generating || dropTargeted ? 1.5 : 0.8
                 )
             .allowsHitTesting(false)
             .accessibilityHidden(true)
@@ -1172,6 +1178,19 @@ public struct ChatView: View {
             onTooLarge: { attachmentTooLarge = true },
             onFailure: reportAttachmentFailure
         )
+    }
+
+    private func dropFiles(_ files: [DroppedFile]) -> Bool {
+        guard !generating, !attachmentLoading else { return false }
+        attachmentFailure = nil
+        stageAttachments(
+            files.map(\.pick),
+            remaining: MessageAttachment.maxCount - attachments.wrappedValue.count,
+            onPick: addAttachments,
+            onTooLarge: { attachmentTooLarge = true },
+            onFailure: reportAttachmentFailure
+        )
+        return true
     }
 
     private func reportAttachmentFailure(_ message: String) {
