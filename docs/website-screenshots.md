@@ -2,7 +2,8 @@
 
 Use real native app captures with isolated demo state. Never use personal chats,
 files, accounts, desktop icons, or notifications. Preserve the site's availability
-wording when refreshing images.
+wording when refreshing images. Website images live in `apps/web/public/assets/`; the
+pages that reference them are in `apps/web/src/pages/`.
 
 ## iPhone 18 Pro
 
@@ -95,4 +96,4 @@ including the iPhone chat and approval captures. Reuse the existing showcase
 harnesses. Optimize WebP files, retain image dimensions and descriptive alt text,
 then inspect desktop/mobile and light/dark. Run `pnpm --filter @yorozu/web build && pnpm --filter @yorozu/web test`.
 The local Codex automation checks every six hours, skips unchanged releases, and
-publishes only after checks pass. Release v0.4.0 is its initial baseline.
+publishes only after checks pass. Merging to `main` deploys the site automatically. Release v0.4.0 is its initial baseline.
