@@ -30,7 +30,7 @@ async function latestBeta() {
     const releases = await githubJSON(`https://api.github.com/repos/${repository}/releases?per_page=100&page=${page}`);
     if (!Array.isArray(releases)) throw new Error('Invalid releases response');
     candidates.push(...releases.filter(release => release.draft === false && release.prerelease === true
-      && ((betaTag.test(release.tag_name) && release.name === `Yorozu ${release.tag_name}`)
+      && ((betaTag.test(release.tag_name) && [release.tag_name, `Yorozu ${release.tag_name}`].includes(release.name))
         || (candidateTag.test(release.tag_name) && release.name === `Yorozu Beta ${release.tag_name}`))));
     if (releases.length < 100) break;
     if (page === 20) throw new Error('Release discovery limit reached');

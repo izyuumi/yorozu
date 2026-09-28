@@ -58,7 +58,7 @@ test('build breaks equal-version ties without relying on release ordering or tim
 
 test('versioned beta tag serves uppercase installer before legacy candidate', async () => {
   const beta = 'v0.5.0-beta';
-  const current = { ...release(beta), name: `Yorozu ${beta}`,
+  const current = { ...release(beta), name: beta,
     assets: ['candidate.json', 'appcast.xml', 'Yorozu.dmg'].map(asset => ({
       name: asset, state: 'uploaded', browser_download_url: `${download}${beta}/${asset}`,
     })) };

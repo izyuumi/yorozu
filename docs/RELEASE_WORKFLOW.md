@@ -196,10 +196,8 @@ the feed and archive-signature format.
   version and has an eligible build. It does not reinstall or downgrade the app.
 - A new main beta replaces assets at its versioned beta tag. Clients with a cached older appcast
   may need to retry after its cache expires. Stable releases and release-branch candidates remain available.
-- Pin the previously shipped `0.4.0 (293)` download redirect to `v0.4.0` before first promotion,
-  preserving the legacy cached appcast during migration. It resolves to the same signed bytes
-  under `v0.4.0/yorozu.dmg`; the duplicate versioned asset is no longer needed.
-- The website's `/mac` route prefers `Yorozu.dmg` and supports the shipped `v0.4.0/yorozu.dmg`.
+- The `0.4.0 (293)` download redirect points to `v0.4.0/Yorozu.dmg`; its appcast uses that URL.
+- The website's `/mac` route prefers `Yorozu.dmg` and supports older lowercase assets.
   Deploy the website Worker with `apps/relay/node_modules/.bin/wrangler deploy
   --config apps/web/wrangler.jsonc` from the repository root after updating it.
 - Model lists come live from OpenClaw's `models.list`, Claude SDK's `supportedModels()`, and
