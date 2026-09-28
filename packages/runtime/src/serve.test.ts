@@ -36,8 +36,8 @@ import { openaiCompat } from "./provider.js";
 import { ensureStateDir, loadChannelSeqs, loadDevices, loadKeys, parseFrameBody, serve as startSidecar, typedAnswer, type ServeOptions, type Sidecar } from "./serve.js";
 import type { NativeAgentRunner, NativeTurn } from "./native.js";
 import * as schedulerModule from "./scheduler.js";
-import { OpenClawRunner, type OpenClawTurn } from "./openclaw.js";
 import { localSocketPath } from "./local.js";
+import { channelSocketPath, type HostFrame, type PluginFrame } from "./channel.js";
 import { SYNC_PAGE_BYTES, setNativeTurn, setThreadSession, appendThreadEvent, createThread, eventsAfter, listThreads, readThreadEvents } from "./threads.js";
 import { readTranscripts, transcriptDir } from "./transcripts.js";
 
@@ -605,7 +605,6 @@ let sendRaw: (event: YorozuEvent) => void = () => {};
 /** A paired phone plus the session key, so a test can talk sealed events both ways. */
 async function pairedPhone(responses: (() => Response)[], openclaw = false, extra: Partial<ServeOptions> = {},
   negotiate = false) {
-  if (openclaw && !extra.openclawRunner) vi.spyOn(OpenClawRunner.prototype, "listSkills").mockResolvedValue([]);
   relay = await startRelay(0);
   const dir = extra.stateDir ?? mkdtempSync(join(tmpdir(), "yorozu-approval-serve-"));
   states = [];
@@ -1028,33 +1027,6 @@ test("startup stops a journaled orphan before native recovery can run", async ()
   } finally { if (orphan.exitCode === null && orphan.signalCode === null) orphan.kill("SIGKILL"); }
 });
 
-test("unreadable agent state blocks updates and a failed postponement can be retried", async () => {
-  const { dir } = await pairedPhone([], true);
-  const mac = await macClient(dir);
-  const status = async () => {
-    const requestId = mac.send({ kind: "update_control", data: { action: "queue", updateId: "u3", version: "1.0" } });
-    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "update_status" && event.data.requestId === requestId)).toBe(true));
-    return mac.events.find((event) => event.kind === "update_status" && event.data.requestId === requestId)!;
-  };
-  try {
-    writeFileSync(join(dir, "openclaw-pending.json"), "broken");
-    expect(await status()).toMatchObject({ data: { phase: "unknown" } });
-    writeFileSync(join(dir, "openclaw-pending.json"), "[]");
-    expect(await status()).toMatchObject({ data: { phase: "countdown" } });
-    const postponeFile = join(dir, "update-postponed-until.json");
-    mkdirSync(postponeFile);
-    const command: YorozuEvent = { id: "postpone-retry", threadId: "", ts: Date.now(), agentId: "phone",
-      kind: "update_control", data: { action: "postpone" } };
-    sendRaw(command);
-    await vi.waitFor(() => expect(states.some((state) => state.startsWith("frame-error"))).toBe(true));
-    expect(await status()).toMatchObject({ data: { phase: "countdown" } });
-    rmSync(postponeFile, { recursive: true });
-    sendRaw(command);
-    await vi.waitFor(() => expect(existsSync(postponeFile)).toBe(true));
-    expect(await status()).toMatchObject({ data: { phase: "postponed" } });
-  } finally { mac.close(); }
-});
-
 test("native recovery awaiting Continue or Dismiss blocks a queued update", async () => {
   const dir = mkdtempSync(join(tmpdir(), "yorozu-update-recovery-"));
   createThread("Work", dir, "native-recovery", { agent: "codex", cwd: proj });
@@ -1074,67 +1046,7 @@ test("native recovery awaiting Continue or Dismiss blocks a queued update", asyn
 const approvalFile = (dir: string): { yolo?: boolean; yoloUntil?: number } =>
   JSON.parse(readFileSync(join(dir, "approval.json"), "utf8"));
 
-test("OpenClaw activity reaches Mac and encrypted phone live, then replays during a running tool", async () => {
-  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
-  let turn!: OpenClawTurn;
-  let finish!: (reply: string) => void;
-  vi.spyOn(OpenClawRunner.prototype, "run").mockImplementation(async (value) => {
-    turn = value;
-    return new Promise<string>((resolve) => { finish = resolve; });
-  });
-  const { dir, send, eventsUntil } = await pairedPhone([], true);
-  const mac = await macClient(dir);
-  try {
-    send({ kind: "thread_create", data: {} });
-    send({ kind: "message", data: { role: "user", text: "inspect" } });
-    await vi.waitFor(() => expect(turn).toBeDefined());
-    const startup: YorozuEvent = { id: "startup", threadId: "t1", ts: Date.now(), agentId: "main", kind: "thought", data: { text: "Starting OpenClaw…", transient: true } };
-    turn.onEvent?.(startup);
-    expect((await eventsUntil((event) => event.id === startup.id)).at(-1)).toEqual(startup);
-    expect(readThreadEvents("t1", dir)).not.toContainEqual(startup);
-    expect(readTranscripts(new Date(0), transcriptDir(dir))).not.toContainEqual(startup);
-    const activity: YorozuEvent = { id: "live-call", threadId: "t1", ts: Date.now(), agentId: "main", kind: "tool_call", data: { callId: "call-1", name: "read", args: {} } };
-    turn.onEvent?.(activity);
-    expect((await eventsUntil((event) => event.id === activity.id)).at(-1)).toEqual(activity);
-    await vi.waitFor(() => expect(mac.events).toContainEqual(activity));
-    expect(readThreadEvents("t1", dir)).toContainEqual(activity);
-    // A reconnecting phone's normal sync sees the in-flight call before a final answer exists.
-    send({ kind: "sync_request", data: { lastSeen: {} } });
-    const replay = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
-    expect(JSON.stringify(replay)).toContain("live-call");
-    const result: YorozuEvent = { ...activity, id: "live-result", kind: "tool_result", data: { callId: "call-1", ok: true, output: "contents" } };
-    turn.onEvent?.(result);
-    expect((await eventsUntil((event) => event.id === result.id)).at(-1)).toEqual(result);
-    finish("Done");
-    await eventsUntil((event) => event.kind === "message" && event.data.done === true);
-    // Titled while the turn ran, from the message: no titler here, so its first words.
-    expect(listThreads(dir).find((thread) => thread.id === "t1")?.title).toBe("inspect");
-    expect(readThreadEvents("t1", dir).filter((event) => event.kind.startsWith("tool_")).map((event) => event.id)).toEqual(["live-call", "live-result"]);
-  } finally {
-    mac.close();
-  }
-});
-
-test("OpenClaw execution failure reaches the phone as a thread needing attention", async () => {
-  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
-  vi.spyOn(OpenClawRunner.prototype, "run").mockImplementation(async (turn) => {
-    turn.onFailure?.();
-    return "OpenClaw turn failed: denied";
-  });
-  const { send, eventsUntil } = await pairedPhone([], true);
-  send({ kind: "thread_create", data: {} });
-  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
-  send({ kind: "message", data: { role: "user", text: "Deploy" } });
-  const final = (await eventsUntil((event) => event.kind === "message" && event.data.done === true)).at(-1)!;
-  expect(final).toMatchObject({ data: { failed: true, text: "OpenClaw turn failed: denied" } });
-  await eventsUntil((event) => event.kind === "thread_list" &&
-    event.data.threads.find((thread) => thread.id === "t1")?.needsAttention === true);
-});
-
 test("a thread is answered by the agent it was created for, and an unknown agent is refused", async () => {
-  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
-  const run = vi.spyOn(OpenClawRunner.prototype, "run").mockResolvedValue("from openclaw");
-  const archive = vi.spyOn(OpenClawRunner.prototype, "setArchived").mockResolvedValue(undefined);
   const dir = mkdtempSync(join(tmpdir(), "yorozu-removed-agent-"));
   createThread("Old coding thread", dir, "cc", { agent: "claude-code", cwd: proj });
   const { send, eventsUntil } = await pairedPhone([], true, { stateDir: dir, nativeRunners: { codex: { run: vi.fn() } } });
@@ -1154,7 +1066,6 @@ test("a thread is answered by the agent it was created for, and an unknown agent
   const missingThread = (await eventsUntil((event) => event.kind === "admission_status" &&
     event.data.eventId === "bad-first-message")).at(-1)!;
   expect(missingThread).toMatchObject({ data: { status: "rejected", reason: "thread-not-created" } });
-  expect(run).not.toHaveBeenCalled();
   expect(readThreadEvents("bad", dir)).toEqual([]);
   expect(listThreads(dir).map((thread) => thread.id)).toEqual(["cc"]);
   expect(states).toContain('thread-create-error unregistered agent "hermes"');
@@ -1186,11 +1097,10 @@ test("a thread is answered by the agent it was created for, and an unknown agent
   const ccMessageId = send({ kind: "message", data: { role: "user", text: "fix the tests" } }, "cc");
   const reply = (await eventsUntil((event) => event.kind === "message" && event.data.done === true)).at(-1)!;
   expect(reply).toMatchObject({ threadId: "cc", data: { role: "agent", text: expect.stringMatching(/claude-code.*no longer registered/i) } });
-  expect(run).not.toHaveBeenCalled();
   expect(readThreadEvents("cc", dir).map((event) => event.kind)).toEqual(["message", "message"]);
 
   // Stop, archive, model and effort all go to the thread's own agent too: none of them is
-  // OpenClaw's business here, and archiving does not wait on a Gateway that never saw the thread.
+  // OpenClaw's business here.
   send({ kind: "interrupt", data: { targetEventId: ccMessageId } }, "cc");
   await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === ccMessageId);
   send({ kind: "thread_set_model", data: { model: "claude/claude-opus-5" } }, "cc");
@@ -1202,14 +1112,12 @@ test("a thread is answered by the agent it was created for, and an unknown agent
   // A provider spec is not a native SDK model; unavailable agents publish no effort choices.
   expect(archived.data.threads.find((thread) => thread.id === "cc")?.model).toBeUndefined();
   expect(archived.data.threads.find((thread) => thread.id === "cc")?.effort).toBeUndefined();
-  expect(archive).not.toHaveBeenCalled();
+  expect(existsSync(join(dir, "channel-outbox.json"))).toBe(false);
 
-  // While the plain thread still goes where it always went.
+  // While the plain thread still goes to OpenClaw's channel.
   send({ kind: "message", data: { role: "user", text: "hello" } }, "t1");
-  await eventsUntil((event) => event.kind === "message" && event.data.done === true && event.threadId === "t1");
-  expect(run).toHaveBeenCalledTimes(1);
-  send({ kind: "thread_archive", data: { archived: true } }, "t1");
-  await vi.waitFor(() => expect(archive).toHaveBeenCalledWith("t1", true));
+  await vi.waitFor(() => expect(JSON.parse(readFileSync(join(dir, "channel-outbox.json"), "utf8")))
+    .toMatchObject([{ threadId: "t1", text: "hello" }]));
 });
 
 test("thread creation gets no receipt when storage fails, then accepts the same ID on retry", async () => {
@@ -1378,8 +1286,6 @@ test("a registered runner needs its own valid identity", () => {
 });
 
 test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stops its own native session, never OpenClaw's", async (agent) => {
-  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
-  const openclawRun = vi.spyOn(OpenClawRunner.prototype, "run").mockResolvedValue("from openclaw");
   const turns: NativeTurn[] = [];
   let release!: () => void;
   const runner: NativeAgentRunner = {
@@ -1471,7 +1377,6 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
   const replayedCut = replayed.data.events.find((event) => event.kind === "tool_result") as YorozuEvent & { kind: "tool_result" };
   expect(replayedCut.data.truncated).toBe(true);
   expect(replayedCut.data.output).toHaveLength(4096);
-  expect(openclawRun).not.toHaveBeenCalled();
   // The session id is the Mac's alone.
   expect(JSON.stringify(first)).not.toContain(JSON.stringify("s-1"));
   void release;
@@ -1634,116 +1539,6 @@ test("steered messages follow the turns they interrupt in live and saved history
   ]);
   expect(eventsAfter("steered", second, dir).some((event) => event.kind === "message" &&
     event.data.text === "reply to first")).toBe(true);
-});
-
-test.each([
-  { outcome: "stopped" as const, text: "partial", interrupted: true, failed: false },
-  { outcome: "completed" as const, text: "finished", interrupted: false, failed: false },
-  { outcome: "completed" as const, text: "OpenClaw turn failed: boom", interrupted: false, failed: true },
-])("OpenClaw Stop $outcome (failed: $failed) persists the right final and keeps next prompt context", async ({ outcome, text, interrupted, failed }) => {
-  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
-  const turns: OpenClawTurn[] = [];
-  vi.spyOn(OpenClawRunner.prototype, "run").mockImplementation(async (turn) => {
-    turns.push(turn);
-    if (turns.length > 1) return "next answer";
-    turn.onUpdate?.("partial");
-    await new Promise<void>((resolve) => turn.signal?.addEventListener("abort", () => resolve(), { once: true }));
-    return "";
-  });
-  const releaseStop = Promise.withResolvers<{ status: "stopped" | "completed"; text?: string; failed?: boolean }>();
-  const stopRun = vi.spyOn(OpenClawRunner.prototype, "stopRun").mockImplementation(() => releaseStop.promise);
-  if (interrupted) stopRun.mockResolvedValueOnce(undefined);
-  const { dir, send, eventsUntil } = await pairedPhone([], true);
-  send({ kind: "thread_create", data: {} });
-  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
-  const target = send({ kind: "message", data: { role: "user", text: "work" } });
-  await eventsUntil((event) => event.kind === "message" && event.data.role === "agent" && event.data.text === "partial");
-  send({ kind: "interrupt", data: { targetEventId: target } });
-  await eventsUntil((event) => event.kind === "stop_status" && event.data.status === "requested");
-  const queued = send({ kind: "message", data: { role: "user", text: "next" } });
-  await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === queued);
-  const queuedEcho = (await eventsUntil((event) => event.kind === "message" && event.id === queued)).at(-1)!;
-  expect(readThreadEvents("t1", dir).some((event) => event.id === queued)).toBe(false);
-  if (interrupted) {
-    await vi.waitFor(() => expect(stopRun).toHaveBeenCalledTimes(2), { timeout: 3_000 });
-    expect(turns).toHaveLength(1);
-  }
-  releaseStop.resolve({ status: outcome, ...(outcome === "completed" ? { text, ...(failed ? { failed: true } : {}) } : {}) });
-  await eventsUntil((event) => event.kind === "stop_status" && event.data.status === outcome);
-  expect(readThreadEvents("t1", dir).find((event) => event.id === `openclaw:${target}:final`))
-    .toMatchObject({ data: { text, done: true, ...(interrupted ? { interrupted: true } : {}), ...(failed ? { failed: true } : {}) } });
-  await eventsUntil((event) => event.kind === "message" && event.data.role === "agent" && event.data.text === "next answer");
-  expect(turns[1]?.promptOverride?.includes("Previous reply was stopped or has a pending Stop request") ?? false)
-    .toBe(interrupted);
-  const history = readThreadEvents("t1", dir);
-  expect(history.findIndex((event) => event.id === `openclaw:${target}:final`))
-    .toBeLessThan(history.findIndex((event) => event.id === queued));
-  const final = history.find((event) => event.id === `openclaw:${target}:final`)!;
-  expect(history.find((event) => event.id === queued)).toMatchObject({
-    ts: expect.any(Number), clientTs: queuedEcho.ts,
-  });
-  expect(history.find((event) => event.id === queued)!.ts).toBeGreaterThanOrEqual(final.ts);
-  const queuedStored = history.find((event) => event.id === queued)!;
-  const nextFinal = history.find((event) => event.kind === "message" && event.data.role === "agent" &&
-    event.data.text === "next answer")!;
-  expect(queuedStored.ts).toBeGreaterThanOrEqual(final.ts);
-  expect(nextFinal.ts).toBeGreaterThanOrEqual(queuedStored.ts);
-  sendRaw(queuedEcho);
-  await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === queued);
-  expect(readThreadEvents("t1", dir).filter((event) => event.id === queued)).toHaveLength(1);
-});
-
-test("client archive and restore reach OpenClaw in order before the canonical list changes", async () => {
-  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
-  let finishArchive!: () => void;
-  const archive = vi.spyOn(OpenClawRunner.prototype, "setArchived").mockImplementationOnce(
-    () => new Promise<void>((resolve) => { finishArchive = resolve; }),
-  ).mockResolvedValue(undefined);
-  const { dir, send, eventsUntil } = await pairedPhone([], true);
-  send({ kind: "thread_create", data: {} });
-  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
-  const mac = await macClient(dir);
-  const macArchive = (archived: boolean) => mac.sendRawEvent({
-    id: randomUUID(), threadId: "t1", ts: Date.now(), agentId: "mac", kind: "thread_archive", data: { archived },
-  });
-  try {
-    send({ kind: "thread_archive", data: { archived: true } });
-    await vi.waitFor(() => expect(archive).toHaveBeenCalledWith("t1", true));
-    expect(listThreads(dir).find((thread) => thread.id === "t1")?.archived).toBe(false);
-    macArchive(false);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(archive).toHaveBeenCalledTimes(1);
-    finishArchive();
-    const first = await threadsAfter(eventsUntil);
-    expect(first.find((thread) => thread.id === "t1")?.archived).toBe(true);
-    const second = await threadsAfter(eventsUntil);
-    expect(second.find((thread) => thread.id === "t1")?.archived).toBe(false);
-    expect(archive.mock.calls).toEqual([["t1", true], ["t1", false]]);
-    expect(listThreads(dir).find((thread) => thread.id === "t1")?.archived).toBe(false);
-    await vi.waitFor(() => expect(mac.events.filter((event) => event.kind === "thread_list").slice(-2)).toMatchObject([
-      { data: { threads: [{ id: "t1", archived: true }] } },
-      { data: { threads: [{ id: "t1", archived: false }] } },
-    ]));
-
-    // A Gateway refusal must not lie to other clients or poison the next ordered request.
-    archive.mockRejectedValueOnce(new Error("Session is still active; retry the archive."));
-    macArchive(true);
-    await vi.waitFor(() => expect(mac.events).toContainEqual(expect.objectContaining({
-      kind: "thought", data: { text: "Could not archive this thread. Please retry." },
-    })));
-    expect((await threadsAfter(eventsUntil)).find((thread) => thread.id === "t1")?.archived).toBe(false);
-    send({ kind: "thread_archive", data: {} });
-    expect((await threadsAfter(eventsUntil)).find((thread) => thread.id === "t1")?.archived).toBe(true);
-    expect(listThreads(dir).find((thread) => thread.id === "t1")?.archived).toBe(true);
-
-    // A newly connected Mac receives the persisted result, not this client's optimistic state.
-    const again = await macClient(dir);
-    try {
-      await vi.waitFor(() => expect(again.events[0]).toMatchObject({
-        kind: "thread_list", data: { threads: [{ id: "t1", archived: true }] },
-      }));
-    } finally { again.close(); }
-  } finally { mac.close(); }
 });
 
 test("always runs the action and is permanent: the next one needs no second card", async () => {
@@ -2228,29 +2023,6 @@ test("a replayed command applies once, and every copy is receipted", async () =>
   expect(listRules(dir)).toEqual([]);
 });
 
-test("failed OpenClaw admission sends no receipt and accepts the same ID on retry", async () => {
-  vi.spyOn(OpenClawRunner.prototype, "run").mockResolvedValue("done");
-  const { dir } = await pairedPhone([], true);
-  createThread("Admission", dir, "admission");
-  const mac = await macClient(dir);
-  const event: YorozuEvent = {
-    id: "admission-retry", threadId: "admission", ts: Date.now(), agentId: "mac",
-    kind: "message", data: { role: "user", text: "run once" },
-  };
-  const blocked = join(dir, "openclaw-pending.json.tmp");
-  try {
-    mkdirSync(blocked);
-    mac.sendRawEvent(event);
-    await vi.waitFor(() => expect(states.some((state) => state.startsWith("local-event-error"))).toBe(true));
-    expect(mac.events.some((item) => item.kind === "receipt" && item.data.eventId === event.id)).toBe(false);
-
-    rmSync(blocked, { recursive: true });
-    mac.sendRawEvent(event);
-    await vi.waitFor(() => expect(mac.events.some((item) => item.kind === "receipt" && item.data.eventId === event.id)).toBe(true));
-    expect(readThreadEvents(event.threadId, dir).filter((item) => item.id === event.id)).toHaveLength(1);
-  } finally { mac.close(); }
-});
-
 test("a delayed sealed message expires before host admission", async () => {
   const { dir, eventsUntil } = await pairedPhone([() => sse("must not run")]);
   createThread("Delayed", dir, "t1");
@@ -2266,7 +2038,6 @@ test("a delayed sealed message expires before host admission", async () => {
 });
 
 test("a conflicting retry cannot reuse a receipted user message ID", async () => {
-  vi.spyOn(OpenClawRunner.prototype, "run").mockResolvedValue("done");
   const { dir } = await pairedPhone([], true);
   createThread("Identity", dir, "identity");
   const mac = await macClient(dir);
@@ -2298,7 +2069,6 @@ test("a completed message ID remains bound to its thread across host restart", a
   createThread("Other", dir, "other");
   appendThreadEvent({ id: "completed-id", threadId: "original", ts: Date.now(), agentId: "phone",
     kind: "message", data: { role: "user", text: "original" } }, dir);
-  vi.spyOn(OpenClawRunner.prototype, "run").mockResolvedValue("done");
   await pairedPhone([], true, { stateDir: dir });
   const mac = await macClient(dir);
   try {
@@ -3378,28 +3148,6 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   expect(wire).not.toContain("thread-one");
   expect(wire).not.toContain("echo");
 
-  // Crash after the final reached durable history but before its pending ledger was acked.
-  // Recovery republishes that row for sync without waking the phone a second time.
-  const replyId = readThreadEvents("thread-one", stateDir).find((item) =>
-    item.kind === "message" && item.data.role === "agent" && item.data.text === "the secret reply")?.id;
-  expect(replyId).toBeTruthy();
-  const mintsBeforeRestart = mints;
-  await sidecar.close();
-  const runner = new OpenClawRunner({ stateDir });
-  vi.spyOn(runner, "listModels").mockResolvedValue([]);
-  runner.admitUserTurn({ threadId: "thread-one", text: "the secret question", userEventId: sent.id,
-    completionId: replyId }, () => {});
-  const ledgerPath = join(stateDir, "openclaw-pending.json");
-  const ledger = JSON.parse(readFileSync(ledgerPath, "utf8")) as { state: string }[];
-  ledger[0]!.state = "active";
-  writeFileSync(ledgerPath, JSON.stringify(ledger));
-  sidecar = serve({ relayUrl: `ws://127.0.0.1:${port}`, stateDir, openclawRunner: runner,
-    log: () => {} });
-  await vi.waitFor(() => expect(registrations).toBe(2));
-  await vi.waitFor(() => expect(mints).toBeGreaterThan(mintsBeforeRestart));
-  await vi.waitFor(() => expect(runner.pendingTurns()).toHaveLength(0));
-  expect(seen.filter((msg) => msg.eventRef === notify.eventRef)).toHaveLength(1);
-
   // `close()` waits on the open sockets, and this test attached phones to them as well.
   phone.ws.close();
   second.phone.ws.close();
@@ -4067,7 +3815,6 @@ test("repeated Stop requests each receive the confirmed outcome", async () => {
 
 
 test.each([true, false])("legacy setup runs only with an injected provider (OpenClaw=%s)", async (openclaw) => {
-  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
   const scheduler = vi.spyOn(schedulerModule, "startScheduler");
   const { dir } = await pairedPhone([], openclaw);
   if (!openclaw) await vi.waitFor(() => expect(scheduler).toHaveBeenCalledTimes(1));
@@ -4076,7 +3823,6 @@ test.each([true, false])("legacy setup runs only with an injected provider (Open
 });
 
 test.each(["claude-code", "codex"] as const)("a %s thread with no folder to run in is refused a turn, and the agent is never started", async (agent) => {
-  vi.spyOn(OpenClawRunner.prototype, "listModels").mockResolvedValue([]);
   const run = vi.fn(async (_turn: NativeTurn) => ({ text: "ran" }));
   // A record from before folders were required: on disk, with an agent and no `cwd`.
   const dir = mkdtempSync(join(tmpdir(), "yorozu-homeless-"));
@@ -4272,12 +4018,63 @@ test("a seventeenth phone is refused, the list never grows past the cap, and the
 });
 
 test("agent_status is answered to the asker with every agent the runtime has", async () => {
-  vi.spyOn(OpenClawRunner.prototype, "reachable").mockResolvedValue();
   const { send, eventsUntil } = await pairedPhone([], true);
   send({ kind: "agent_status", data: {} }, "");
   const [answer] = (await eventsUntil((event) => event.kind === "agent_status")).slice(-1);
   if (answer?.kind !== "agent_status") throw new Error("no agent_status answer");
-  expect(answer.data.openclaw).toEqual({ ok: true });
+  expect(answer.data).not.toHaveProperty("openclaw");
   expect(answer.data.claude).toHaveProperty("ok");
   expect(answer.data.codex).toHaveProperty("ok");
+});
+
+/** OpenClaw's `yorozu` channel plugin on `channel.sock`: raw frames, everything it hears. */
+async function channelPlugin(dir: string) {
+  const socket = createConnection(channelSocketPath(dir));
+  const frames: HostFrame[] = [];
+  let buffer = "";
+  socket.setEncoding("utf8");
+  socket.on("data", (chunk: string) => {
+    buffer += chunk;
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) if (line) frames.push(JSON.parse(line));
+  });
+  await new Promise<void>((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
+  return { frames, send: (frame: PluginFrame) => socket.write(`${JSON.stringify(frame)}\n`), close: () => socket.destroy() };
+}
+
+test("OpenClaw delivers into threads, and user messages wait for the plugin's ack", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-channel-"));
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir });
+  await vi.waitFor(() => expect(existsSync(channelSocketPath(dir))).toBe(true));
+  const plugin = await channelPlugin(dir);
+  const mac = await macClient(dir);
+
+  // Proactive: a thread OpenClaw names is created, logged and published.
+  plugin.send({ type: "deliver", id: "cron-1", threadId: "reports", text: "Nikkei closed up", title: "Reports" });
+  await vi.waitFor(() => expect(plugin.frames).toContainEqual({ type: "ack", id: "cron-1" }));
+  plugin.send({ type: "deliver", id: "cron-1", threadId: "reports", text: "Nikkei closed up" });
+  await vi.waitFor(() => expect(plugin.frames.filter((frame) => frame.type === "ack")).toHaveLength(2));
+  expect(readThreadEvents("reports", dir).filter((event) => event.id === "cron-1")).toMatchObject([
+    { kind: "message", data: { role: "agent", text: "Nikkei closed up", done: true } }]);
+  expect(listThreads(dir).find((thread) => thread.id === "reports")?.title).toBe("Reports");
+  await vi.waitFor(() => expect(mac.events.some((event) => event.id === "cron-1")).toBe(true));
+
+  // A native thread is not the channel's to write into.
+  createThread(undefined, dir, "code", { agent: "codex", cwd: proj });
+  plugin.send({ type: "deliver", id: "x", threadId: "code", text: "no" });
+  await vi.waitFor(() => expect(plugin.frames).toContainEqual({ type: "error", id: "x", reason: "not-a-channel-thread" }));
+
+  // Outbound: a user message goes to the plugin, not the Gateway runner, and survives a reconnect until acked.
+  mac.send({ kind: "message", data: { role: "user", text: "thanks" }, threadId: "reports" } as never);
+  const inbound = () => plugin.frames.find((frame) => frame.type === "inbound");
+  await vi.waitFor(() => expect(inbound()).toMatchObject({ message: { threadId: "reports", text: "thanks" } }));
+  plugin.close();
+  const again = await channelPlugin(dir);
+  await vi.waitFor(() => expect(again.frames).toContainEqual(inbound()));
+  if (inbound()?.type === "inbound") again.send({ type: "ack", id: (inbound() as { message: { id: string } }).message.id });
+  await vi.waitFor(() => expect(JSON.parse(readFileSync(join(dir, "channel-outbox.json"), "utf8"))).toEqual([]));
+  again.close();
+  mac.close();
 });

@@ -85,6 +85,7 @@ import type { AssignMode } from "./assign.js";
 import type { TurnContext } from "./index.js";
 import type { createLegacyRunner } from "./legacy.js";
 import { localSocketPath, startLocalChannel, type Send } from "./local.js";
+import { startChannelHost } from "./channel.js";
 import type { Provider } from "./provider.js";
 import { autoTitle, onDeviceTitler, type Titler } from "./title.js";
 // Mirrors PING in apps/relay/src/protocol.ts; the shipped runtime must not depend on the relay package.
@@ -123,8 +124,7 @@ import { NativeCards } from "./native-cards.js";
 import { claudeCodeRunner, type NativeAgentRunner } from "./native.js";
 import { isProjectFolder, listProjects } from "./projects.js";
 import { questionDesk, QUESTION_TIMEOUT_MS } from "./tools/cards.js";
-import { OpenClawRunner, type StoredPendingTurn } from "./openclaw.js";
-import { appendTranscript, readTranscripts, transcriptDir } from "./transcripts.js";
+import { appendTranscript, transcriptDir } from "./transcripts.js";
 
 const DEFAULT_STATE_DIR = join(homedir(), "Library", "Application Support", "Yorozu");
 const RECONNECT_MS = 2_000;
@@ -429,8 +429,6 @@ export interface ServeOptions {
    * something a test can wait for rather than something only a real half-open socket reaches.
    */
   heartbeat?: { pingMs: number; pongMs: number };
-  /** Test seam for Gateway restart/recovery integration. */
-  openclawRunner?: OpenClawRunner;
   /**
    * The native coding agents, by thread agent kind. Defaults to Claude Code through the Agent
    * SDK; a kind with no runner answers that it is not available. Test seam for a fake SDK.
@@ -522,13 +520,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const keys = loadKeys(dir);
   const provider = options.provider;
   const titler = options.titler ?? onDeviceTitler;
-  const openclaw = provider ? undefined : options.openclawRunner ?? new OpenClawRunner({ stateDir: dir });
   /**
-   * Whether this thread's turns, stops and archives go through the OpenClaw bridge. Only a
-   * `yorozu` thread does; a native agent's thread is its own session and never Gateway's,
-   * whichever backend the rest of the runtime is on.
+   * Whether this thread talks to OpenClaw through its `yorozu` channel plugin on `channel.sock`.
+   * Only a `yorozu` thread does, and only without a caller-supplied provider.
    */
-  const viaOpenClaw = (threadId: string): boolean => openclaw !== undefined && threadAgent(threadId, dir) === "yorozu";
+  const viaChannel = (threadId: string): boolean => !provider && threadAgent(threadId, dir) === "yorozu";
   const nativeRunners = options.nativeRunners ?? { "claude-code": claudeCodeRunner(undefined, trackAgentProcess),
     codex: codexNativeRunner((handlers) => connectCodex(handlers, trackAgentProcess)) };
   const builtInAgents: Record<string, AgentDescriptor> = {
@@ -1064,21 +1060,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
       broadcast(threadList());
   }
 
-  /** Final event owns recovery marker: persist once, then acknowledge, then publish. */
-  function finalizeOpenClaw(event: YorozuEvent): void {
-    const admission = openclaw!.pendingTurns(true).find((turn) => turn.completionId === event.id);
-    const history = readThreadEvents(event.threadId, dir);
-    const stored = history.find((known) => known.id === event.id);
-    const timed = stored ?? { ...event, ts: Math.max(event.ts, (history.at(-1)?.ts ?? 0) + 1) };
-    const final = timed.kind === "message" && admission
-      ? { ...timed, data: { ...timed.data, runId: admission.runId } } : timed;
-    if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === event.id)) appendTranscript(final, transcripts);
-    if (!stored) appendThreadEvent(final, dir);
-    openclaw!.acknowledge(event.threadId, event.id);
-    // Replayed durable finals still reach connected clients, but are not a second wake-up.
-    broadcast(final, !stored);
-  }
-
   const nativeCards = new NativeCards(emit);
 
   /** Cards on screen somewhere, waiting to be answered, by action ID. */
@@ -1205,11 +1186,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   const threadList = (minTs = 0): YorozuEvent => {
     const { yolo } = loadSettings(dir);
-    const openclawTurns = new Map(openclaw?.pendingTurns().filter((turn) => turn.state === "active")
-      .map((turn) => [turn.threadId, turn]) ?? []);
     return control({ kind: "thread_list", data: { threads: threadSummaries(dir, minTs).map((thread) => {
-      const openclawTurn = !thread.agent || thread.agent === "yorozu" ? openclawTurns.get(thread.id) : undefined;
-      const interruptedTurnId = openclawTurn?.paused ? openclawTurn.completionId : thread.interruptedTurnId;
+      const interruptedTurnId = thread.interruptedTurnId;
       const stopping = interruptedTurnId && [...stoppedTurns.values()].some((stop) =>
         stop.threadId === thread.id && stop.status === "requested" &&
         completionIdFor(thread.id, stop.targetEventId) === interruptedTurnId);
@@ -1217,8 +1195,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
         ...thread,
         ...(thread.agent && thread.agent !== "yorozu" ? { bypass: yolo } : {}),
         ...(runningEventIds.has(thread.id) ? { activeEventId: runningEventIds.get(thread.id) } : {}),
-        ...(openclawTurn?.paused ? { interruptedTurnId: openclawTurn.completionId, canResume: true } :
-          openclawTurn?.recoveryAttempts || openclawTurn?.recoveryPrompt ? { recoveryState: "recovering" as const } : {}),
         ...(stopping ? { interruptedTurnId: undefined, canResume: undefined, recoveryState: undefined } : {}),
       };
     }) } });
@@ -1245,7 +1221,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const refresh = Promise.all(agentDescriptors.map(async ({ id }) => {
       try {
         const skills = await Promise.resolve().then(() =>
-          id === "yorozu" ? openclaw?.listSkills?.() ?? [] : nativeRunners[id]?.skills?.() ?? []);
+          id === "yorozu" ? [] : nativeRunners[id]?.skills?.() ?? []);
         return { id, skills: skills as (SkillOption & { path?: string })[] };
       } catch {
         return { id, skills: [] as (SkillOption & { path?: string })[] };
@@ -1281,7 +1257,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     return refresh;
   };
   const modelsFor = (agent: ThreadAgent): ModelOption[] =>
-    agent === "yorozu" ? (provider ? legacy?.models() ?? [] : openclawModels) : agentModels[agent] ?? [];
+    agent === "yorozu" ? legacy?.models() ?? [] : agentModels[agent] ?? [];
   /** The efforts a thread may ask for: its model's, or the first model's while it is on Default. */
   const effortsFor = (agent: ThreadAgent, model: string | undefined): ReasoningEffort[] =>
     (modelsFor(agent).find((m) => m.id === model) ?? modelsFor(agent)[0])?.efforts ?? [];
@@ -1304,17 +1280,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * the picker is one tap from the agent choice, and asking then would draw an empty list first.
    */
   const projectList = (): YorozuEvent => control({ kind: "project_list", data: { projects: listProjects(undefined, dir) } });
-
-  let openclawModels: ModelOption[] = [];
-  /** Asked again on every `thread_list`, so a provider added to OpenClaw shows up without a relaunch. */
-  const refreshModels = (): void => {
-    void openclaw?.listModels().then((models) => {
-      if (JSON.stringify(models) === JSON.stringify(openclawModels)) return;
-      openclawModels = models;
-      broadcast(modelList());
-    }).catch((error: unknown) => state(`model-list-error ${String(error)}`));
-  };
-  refreshModels();
 
   /**
    * Every device this Mac answers, the local socket's clients included: the Mac app is one more
@@ -1453,7 +1418,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   };
 
   const completionIdFor = (threadId: string, userEventId: string): string =>
-    `${threadAgent(threadId, dir) === "yorozu" ? openclaw ? "openclaw" : "legacy" : "native"}:${userEventId}:final`;
+    `${threadAgent(threadId, dir) === "yorozu" ? "legacy" : "native"}:${userEventId}:final`;
 
   const nativeRecoveryPrompt = (threadId: string, original: string): string => {
     const recent = readThreadEvents(threadId, dir).filter((event) =>
@@ -1679,45 +1644,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
       return;
     }
 
-    if (openclaw) {
-      const turn = new AbortController();
-      let failed = false;
-      if (!running.has(threadId)) running.set(threadId, turn);
-      if (userEventId) runningEventIds.set(threadId, userEventId);
-      broadcastActiveThreadList();
-      try {
-        const prompt = withStoppedContext(threadId, text, userEventId);
-        const reply = await openclaw.run({
-          threadId,
-          text,
-          ...(prompt !== text ? { promptOverride: prompt } : {}),
-          model: threadModel(threadId, dir),
-          effort: threadEffort(threadId, dir),
-          attachments,
-          signal: turn.signal,
-          completionId: id,
-          userEventId,
-          onUpdate: (reply) => { if (!turn.signal.aborted) broadcast(message(reply)); },
-          onEvent: emit,
-          onRecoveryState: () => broadcast(threadList()),
-          onFailure: () => { failed = true; },
-        });
-        if (turn.signal.aborted) return;
-        if (reply === undefined) return;
-        const final = message(reply, true, failed);
-        finalizeOpenClaw(final);
-      } finally {
-        if (running.get(threadId) === turn) running.delete(threadId);
-        if (runningEventIds.get(threadId) === userEventId) runningEventIds.delete(threadId);
-        broadcastActiveThreadList();
-        const settlement = turn.signal.aborted && userEventId ? stopSettlements.get(userEventId) : undefined;
-        if (settlement) {
-          await settlement.promise;
-          stopSettlements.delete(userEventId!);
-        }
-      }
-      return;
-    }
     if (!provider) throw new Error("no execution backend");
 
     const turn = new AbortController();
@@ -1747,39 +1673,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
     userEventId?: string,
     acceptedEvent?: YorozuEvent,
   ): Promise<void> {
-    if (userEventId && stoppedTurns.has(userEventId)) {
-      openclaw?.discardPending(userEventId);
-      return Promise.resolve();
-    }
+    if (userEventId && stoppedTurns.has(userEventId)) return Promise.resolve();
     if (updateGate.status.phase === "installing") return Promise.reject(new Error("Mac is installing an update"));
     updateGate.activity();
-    let deferredEvent: YorozuEvent & { kind: "message" } | undefined;
-    if (viaOpenClaw(threadId)) {
-      userEventId ??= randomUUID();
-      const event: YorozuEvent & { kind: "message" } = acceptedEvent?.kind === "message" ? acceptedEvent
-        : { id: userEventId, threadId, ts: Date.now(), agentId: MAIN_AGENT,
-        kind: "message" as const, data: { role: "user" as const, text, ...(attachments.length ? { attachments } : {}) } };
-      const deferLog = [...stoppedTurns.values()].some((stop) => stop.threadId === threadId && stop.status === "requested");
-      const stored = openclaw!.admitUserTurn({ threadId, text, model: threadModel(threadId, dir),
-        effort: threadEffort(threadId, dir), attachments, userEventId, identity: userMessageIdentity(event),
-        eventTs: event.ts, admissionDeadline: event.data.admissionDeadline,
-        completionId: `openclaw:` + userEventId + `:final` }, (admission) => {
-        const logged = admission ? { ...event, data: { ...event.data,
-          runId: admission.runId, completionId: admission.completionId } } : event;
-        if (deferLog) deferredEvent = logged;
-        else {
-          if (!readTranscripts(new Date(0), transcripts).some((known) => known.id === event.id)) appendTranscript(logged, transcripts);
-          if (!readThreadEvents(threadId, dir).some((known) => known.id === event.id)) appendThreadEvent(logged, dir);
-        }
-      }, () => readThreadEvents(threadId, dir).some((known) => known.id === event.id));
-      if (!stored) return Promise.resolve();
-      text = stored.input.text;
-      attachments = stored.input.attachments;
-      recorded = true;
-    }
     const admitted = userEventId ? admittedTurns.get(userEventId) : undefined;
     if (admitted) return admitted;
-    if (userEventId && !viaOpenClaw(threadId) && threadAgent(threadId, dir) !== "yorozu" &&
+    if (userEventId && threadAgent(threadId, dir) !== "yorozu" &&
         !queuedNative.some((entry) => entry.eventId === userEventId)) {
       queuedNative.push({ threadId, eventId: userEventId });
       try { saveNativeQueue(); }
@@ -1792,11 +1691,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
         await new Promise<void>((resolve) => drainWaiters.add(resolve));
       }
       if (stopped) return;
-      if (userEventId && stoppedTurns.has(userEventId)) {
-        openclaw?.discardPending(userEventId);
-        return;
-      }
-      const logged = deferredEvent ?? (queuedBehindTurn ? acceptedEvent : undefined);
+      if (userEventId && stoppedTurns.has(userEventId)) return;
+      const logged = queuedBehindTurn ? acceptedEvent : undefined;
       if (logged) {
         // A steered message was admitted while an earlier turn ran. Append its corrected
         // position after that turn, leaving the original log entry for replay cursors.
@@ -1853,10 +1749,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * the local socket. `reply` answers that one device; the thread admin cases answer all of
    * them, so a second device sees the same list.
    */
-  const archiveUpdates = new Map<string, Promise<void>>();
-  const stopAttempts = new Set<string>();
-  const stopSettlements = new Map<string, ReturnType<typeof Promise.withResolvers<void>>>();
-  const stopRetries = new Map<string, ReturnType<typeof setTimeout>>();
 
   const stopStatus = (record: StopRecord, requestId: string): YorozuEvent => ({
     ...control({ kind: "stop_status", data: { targetEventId: record.targetEventId, requestId, status: record.status } }),
@@ -1870,8 +1762,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (readThreadEvents(record.threadId, dir).some((event) => event.id === id && event.kind === "message" && event.data.done)) return;
     const final: YorozuEvent = { id, threadId: record.threadId, ts: Date.now(), agentId: MAIN_AGENT,
       kind: "message", data: { role: "agent", text, done: true, interrupted: true } };
-    if (record.runId && record.sessionKey) finalizeOpenClaw(final);
-    else emit(final);
+    emit(final);
   };
   function completeStop(record: StopRecord): void {
     if (record.status !== "requested") return;
@@ -1890,89 +1781,24 @@ export function serve(options: ServeOptions = {}): Sidecar {
   };
 
   const finishStop = (record: StopRecord): void => {
-    if (record.status !== "requested" || stopAttempts.has(record.targetEventId)) return;
+    if (record.status !== "requested") return;
     const target = record.targetEventId;
-    if (!record.runId || !record.sessionKey) {
-      const active = abortTarget(record.threadId, target);
-      if (!active) {
-        const nativeTurn = listThreads(dir).find((thread) => thread.id === record.threadId)?.nativeTurn;
-        if (nativeTurn?.id === completionIdFor(record.threadId, target) && nativeTurn.state === "interrupted") {
-          // The old SDK process is gone, but its last external effect is unknowable here.
-          // Stop recovery without claiming confirmed cessation.
-          rememberStop({ ...record, status: "unconfirmed" });
-          setNativeTurn(record.threadId, undefined, dir);
-          broadcast(threadList());
-          broadcastStop(stoppedTurns.get(target)!);
-          return;
-        }
-        openclaw?.discardPending(target);
-        persistStoppedReply(record);
-        rememberStop({ ...record, status: "stopped" });
+    if (!abortTarget(record.threadId, target)) {
+      const nativeTurn = listThreads(dir).find((thread) => thread.id === record.threadId)?.nativeTurn;
+      if (nativeTurn?.id === completionIdFor(record.threadId, target) && nativeTurn.state === "interrupted") {
+        // The old SDK process is gone, but its last external effect is unknowable here.
+        // Stop recovery without claiming confirmed cessation.
+        rememberStop({ ...record, status: "unconfirmed" });
+        setNativeTurn(record.threadId, undefined, dir);
+        broadcast(threadList());
         broadcastStop(stoppedTurns.get(target)!);
+        return;
       }
-      return;
-    }
-    stopAttempts.add(target);
-    // Hold the thread's FIFO queue until Gateway confirms this exact run has ended.
-    const settlement = stopSettlements.get(target) ?? Promise.withResolvers<void>();
-    stopSettlements.set(target, settlement);
-    abortTarget(record.threadId, target);
-    void openclaw!.stopRun(record.sessionKey, record.runId).then((outcome) => {
-      if (!outcome) return;
-      if (outcome.status === "completed") {
-        finalizeOpenClaw({ id: completionIdFor(record.threadId, target), threadId: record.threadId,
-          ts: Date.now(), agentId: MAIN_AGENT, kind: "message",
-          data: { role: "agent", text: outcome.text ?? "", done: true, ...(outcome.failed ? { failed: true } : {}) } });
-      } else {
-        if (outcome.status === "stopped") persistStoppedReply(record, outcome.text ?? record.partialText ?? "");
-        openclaw!.discardPending(target);
-      }
-      rememberStop({ ...record, status: outcome.status });
+      persistStoppedReply(record);
+      rememberStop({ ...record, status: "stopped" });
       broadcastStop(stoppedTurns.get(target)!);
-      settlement.resolve();
-      if (!admittedTurns.has(target)) stopSettlements.delete(target);
-    }).catch((error: unknown) => state(`stop-error ${String(error)}`)).finally(() => {
-      stopAttempts.delete(target);
-      if (!stopped && stoppedTurns.get(target)?.status === "requested" && !stopRetries.has(target)) {
-        const retry = setTimeout(() => {
-          stopRetries.delete(target);
-          const current = stoppedTurns.get(target);
-          if (current?.status === "requested") finishStop(current);
-        }, 1_000);
-        retry.unref();
-        stopRetries.set(target, retry);
-      }
-    });
-  };
-
-  function updateArchive(event: YorozuEvent & { kind: "thread_archive" }, reply: Send): void {
-    const threadId = event.threadId;
-    const archived = event.data.archived ?? true;
-    if (!viaOpenClaw(threadId)) {
-      archiveThread(threadId, dir, archived);
-      return broadcast(threadList());
     }
-    // A restore may arrive while Gateway is still draining an archive. Preserve client order
-    // and publish only committed state, so the two backends cannot finish in opposite states.
-    const previous = archiveUpdates.get(threadId) ?? Promise.resolve();
-    const update = previous.then(async () => {
-      if (!listThreads(dir).some((thread) => thread.id === threadId)) return;
-      try {
-        await openclaw!.setArchived(threadId, archived);
-        archiveThread(threadId, dir, archived);
-      } catch (error) {
-        state(`archive-error ${String(error)}`);
-        reply({
-          id: randomUUID(), threadId, ts: Date.now(), agentId: MAIN_AGENT,
-          kind: "thought", data: { text: `Could not ${archived ? "archive" : "restore"} this thread. Please retry.` },
-        });
-      }
-      broadcast(threadList());
-    }).finally(() => {
-      if (archiveUpdates.get(threadId) === update) archiveUpdates.delete(threadId);
-    });
-    archiveUpdates.set(threadId, update);
-  }
+  };
 
   /**
    * Ids of the last commands taken from devices. The relay replays a buffered frame to every
@@ -2287,10 +2113,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       const history = readThreadEvents(event.threadId, dir);
       const user = history.find((stored) => stored.id === target && stored.kind === "message" && stored.data.role === "user");
-      const ledger = openclaw?.pendingTurns(true).find((turn) => turn.threadId === event.threadId && turn.userEventId === target);
       const final = history.some((stored) => stored.id === completionIdFor(event.threadId, target) &&
         stored.kind === "message" && stored.data.done === true && stored.data.interrupted !== true);
-      if (!existing && !user && !ledger) {
+      if (!existing && !user) {
         const withdrawn: StopRecord = { targetEventId: target, threadId: event.threadId,
           status: "withdrawn", requestIds: [event.id] };
         rememberStop(withdrawn);
@@ -2304,9 +2129,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         status: "completed", requestIds } : existing ? { ...existing, requestIds } : { targetEventId: target, threadId: event.threadId,
         status: "requested", requestIds,
         ...(runningEventIds.get(event.threadId) === target && live?.kind === "message" && live.data.role === "agent"
-          ? { partialText: live.data.text } : {}),
-        ...(ledger && (ledger.state === "active" || runningEventIds.get(event.threadId) === target)
-          ? { sessionKey: ledger.sessionKey, runId: ledger.runId } : {}) };
+          ? { partialText: live.data.text } : {}) };
       rememberStop(record);
       reply(control({ kind: "receipt", data: { eventId: event.id } }));
       if (record.status === "requested") {
@@ -2322,23 +2145,20 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const history = readThreadEvents(event.threadId, dir);
       const user = history.find((stored): stored is YorozuEvent & { kind: "message" } =>
         stored.kind === "message" && stored.data.role === "user" && stored.id === id);
-      const ledger = openclaw?.pendingTurns(true).find((turn) =>
-        turn.threadId === event.threadId && turn.userEventId === id);
       const expired = expiredAdmissions.get(id);
       const withdrawal = stoppedTurns.get(id);
-      const recordedCompletionId = ledger?.completionId ?? user?.data.completionId;
-      const oldOpenClawCompletionId = user && viaOpenClaw(event.threadId) ? `openclaw:${id}:final` : undefined;
+      const recordedCompletionId = user?.data.completionId;
+      const oldOpenClawCompletionId = user && viaChannel(event.threadId) ? `openclaw:${id}:final` : undefined;
       const candidate = recordedCompletionId ?? oldOpenClawCompletionId;
       const final = candidate ? history.find((stored): stored is YorozuEvent & { kind: "message" } =>
         stored.id === candidate && stored.kind === "message" && stored.data.role === "agent" && stored.data.done === true) : undefined;
       const completionId = recordedCompletionId ?? (final ? oldOpenClawCompletionId : undefined);
-      const status = !user && !ledger ? withdrawal?.threadId === event.threadId && withdrawal.status === "withdrawn"
+      const status = !user ? withdrawal?.threadId === event.threadId && withdrawal.status === "withdrawn"
         ? "withdrawn" : expired?.threadId === event.threadId ? "expired" : "unknown" : final ? "completed"
         : activeTurnIds.has(id) ? "running"
-        : admittedTurns.has(id) || ledger?.state === "queued" ? "queued"
-        : ledger ? "accepted" : "indeterminate";
-      const runId = ledger?.runId ?? (final?.kind === "message" ? final.data.runId : undefined)
-        ?? (!viaOpenClaw(event.threadId) ? user?.data.runId : undefined);
+        : admittedTurns.has(id) ? "queued" : "indeterminate";
+      const runId = (final?.kind === "message" ? final.data.runId : undefined)
+        ?? (!viaChannel(event.threadId) ? user?.data.runId : undefined);
       reply(control({ kind: "receipt", data: { eventId: event.id } }));
       reply(control({ kind: "admission_status", data: {
         eventId: id, status, requestId: event.id,
@@ -2400,15 +2220,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (data.action !== "cancel") {
           let active: number | null;
           try {
-            // A broken Gateway recovery ledger is unknown, even though live OpenClaw runs
-            // survive the sidecar and do not hold this update gate.
-            openclaw?.pendingTurns(true);
             const interrupted = updateGate.draining ? [] : listThreads(dir)
               .filter((thread) => thread.nativeTurn?.state === "interrupted").map((thread) => thread.id);
             active = new Set([
-              ...[...running.keys(), ...(!updateGate.draining ? turnQueues.keys() : [])]
-                .filter((id) => !viaOpenClaw(id)),
-              ...archiveUpdates.keys(), ...interrupted,
+              ...running.keys(), ...(!updateGate.draining ? turnQueues.keys() : []), ...interrupted,
             ]).size;
           } catch { active = null; }
           updateGate.poll(active, Date.now());
@@ -2458,13 +2273,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const knownMessage = event.kind === "message"
       ? readThreadEvents(event.threadId, dir).find((known) => known.id === event.id)
       : undefined;
-    const knownLedger = identity && !knownMessage ? openclaw?.pendingTurns(true).find((turn) =>
-      turn.userEventId === event.id) : undefined;
-    if (knownLedger && (knownLedger.threadId !== event.threadId ||
-        (knownLedger.input.identity !== undefined && knownLedger.input.identity !== identity))) {
-      rejectUserMessage("conflicting-message-id");
-      return state("rejected-conflicting-message-id");
-    }
     if (event.kind === "message" && knownMessage && (knownMessage.kind !== "message" ||
       knownMessage.data.role !== event.data.role || knownMessage.data.text !== event.data.text ||
       (knownMessage.clientTs ?? knownMessage.ts) !== event.ts || knownMessage.data.admissionDeadline !== event.data.admissionDeadline ||
@@ -2476,7 +2284,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       rejectUserMessage("conflicting-message-id");
       return state("rejected-conflicting-message-id");
     }
-    if (event.kind === "message" && event.data.role === "user" && !knownMessage && !knownLedger) {
+    if (event.kind === "message" && event.data.role === "user" && !knownMessage) {
       const rejected = (status: "expired" | "rejected" | "withdrawn", reason: string): void =>
         reply(control({ kind: "admission_status", data: { eventId: event.id, status, reason } }));
       const withdrawal = stoppedTurns.get(event.id);
@@ -2572,13 +2380,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const oldest = event.kind === "message" && event.data.role === "user"
       ? [...pending.values()].find((card) => card.threadId === event.threadId) : undefined;
     const typed = oldest && event.kind === "message" ? typedAnswer(event.data.text, oldest.card) : undefined;
-    // A user message bound for OpenClaw crosses one admission boundary below: ledger first,
-    // logs second. Every other message — a native agent's thread included — is logged here.
-    const admitted = event.kind === "message" && event.data.role === "user" && !typed && viaOpenClaw(event.threadId);
-    if (duplicateMessage && !admitted) {
+    if (duplicateMessage) {
       if (event.kind === "message" && event.data.role === "user" &&
           knownMessage?.kind === "message" && knownMessage.data.completionId === completionIdFor(event.threadId, event.id) &&
-          threadAgent(event.threadId, dir) !== "yorozu" && !viaOpenClaw(event.threadId) &&
+          threadAgent(event.threadId, dir) !== "yorozu" &&
           !queuedNative.some((entry) => entry.eventId === event.id) && !admittedTurns.has(event.id) &&
           !stoppedTurns.has(event.id) &&
           listThreads(dir).find((thread) => thread.id === event.threadId)?.nativeTurn?.userEventId !== event.id &&
@@ -2588,27 +2393,29 @@ export function serve(options: ServeOptions = {}): Sidecar {
         // that admission before it receives the missing receipt.
         void enqueueTurn(event.threadId, event.data.text, true, event.data.attachments ?? [], event.id);
       }
+      // Logged but maybe never queued, if the host died in between. The plugin dedupes by id.
+      if (event.kind === "message" && event.data.role === "user" && !typed &&
+          viaChannel(event.threadId)) {
+        channel.forward({ id: event.id, threadId: event.threadId, ts: event.ts, text: event.data.text,
+          ...(event.data.attachments?.length ? { attachments: event.data.attachments } : {}) });
+      }
       receipt();
       return state("duplicate-message");
     }
     if (event.kind === "thread_create" || event.kind === "message" || event.kind === "thread_recover") updateGate.activity();
     let admittedTurn: Promise<void> | undefined;
-    if (admitted && event.kind === "message" && event.data.role === "user") {
-      // The OpenClaw ledger owns this turn before a receipt can remove the client's copy.
+    // A channel message has no completion of its own: OpenClaw answers when it answers.
+    const turnless = typed || viaChannel(event.threadId);
+    const logged = event.kind === "message" && event.data.role === "user"
+      ? { ...event, data: { ...event.data,
+        runId: turnless ? undefined : completionIdFor(event.threadId, event.id),
+        completionId: turnless ? undefined : completionIdFor(event.threadId, event.id) } } : event;
+    appendTranscript(logged, transcripts);
+    appendThreadEvent(logged, dir);
+    if (event.kind === "message" && event.data.role === "user" && !typed &&
+        threadAgent(event.threadId, dir) !== "yorozu") {
       admittedTurn = enqueueTurn(event.threadId, event.data.text, true,
         event.data.attachments ?? [], event.id, event);
-    } else {
-      const logged = event.kind === "message" && event.data.role === "user"
-        ? { ...event, data: { ...event.data,
-          runId: typed ? undefined : completionIdFor(event.threadId, event.id),
-          completionId: typed ? undefined : completionIdFor(event.threadId, event.id) } } : event;
-      appendTranscript(logged, transcripts);
-      appendThreadEvent(logged, dir);
-      if (event.kind === "message" && event.data.role === "user" && !typed &&
-          threadAgent(event.threadId, dir) !== "yorozu") {
-        admittedTurn = enqueueTurn(event.threadId, event.data.text, true,
-          event.data.attachments ?? [], event.id, event);
-      }
     }
     // Failed admission never poisons the in-memory dedup window.
     alreadySeen(event.id);
@@ -2667,7 +2474,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
         renameThread(event.threadId, event.data.title, dir);
         return broadcast(threadList());
       case "thread_archive":
-        return updateArchive(event, reply);
+        archiveThread(event.threadId, dir, event.data.archived ?? true);
+        return broadcast(threadList());
       case "thread_pin":
         pinThread(event.threadId, event.data.pinned, dir);
         return broadcast(threadList());
@@ -2681,21 +2489,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return;
       case "thread_list":
         reply(threadList());
-        refreshModels();
         return reply(projectList());
       case "project_list":
         return reply(projectList());
       case "thread_recover": {
         const thread = listThreads(dir).find((t) => t.id === event.threadId);
-        const openclawTurn = thread && !thread.agent ? openclaw?.pendingTurns().find((turn) =>
-          turn.threadId === event.threadId && turn.completionId === event.data.turnId && turn.paused) : undefined;
-        if (openclawTurn) {
-          if ([...stoppedTurns.values()].some((stop) => stop.threadId === event.threadId &&
-            completionIdFor(event.threadId, stop.targetEventId) === event.data.turnId)) return;
-          if (event.data.action === "continue") openclaw?.retryRecovery(event.threadId, event.data.turnId);
-          else if (event.data.action === "dismiss") openclaw?.dismissRecovery(event.threadId, event.data.turnId);
-          return;
-        }
         if (thread?.nativeTurn?.state !== "interrupted" || thread.nativeTurn.id !== event.data.turnId) return;
         if ([...stoppedTurns.values()].some((stop) => stop.threadId === event.threadId &&
           completionIdFor(event.threadId, stop.targetEventId) === event.data.turnId)) return;
@@ -2743,7 +2541,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       case "device_remove":
         return forgetDevice(event.data.pub);
       case "agent_status":
-        return void agentStatus({ ...(openclaw ? { openclaw: () => openclaw.reachable() } : {}) })
+        return void agentStatus()
           .then((data) => reply(control({ kind: "agent_status", data })));
       case "sync_request": {
         if (event.data.threadId !== undefined && (typeof event.data.threadId !== "string" || !event.data.threadId)) return;
@@ -2779,6 +2577,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // turn. Only this thread's: a "yes" typed into another chat is a message there, not an
     // answer to whatever happens to be the oldest card anywhere.
     if (typed && oldest) return oldest.settle(typed);
+    if (viaChannel(event.threadId)) {
+      channel.forward({ id: event.id, threadId: event.threadId, ts: event.ts, text: event.data.text,
+        ...(event.data.attachments?.length ? { attachments: event.data.attachments } : {}) });
+      return broadcast(event);
+    }
     const queued = admittedTurn ?? enqueueTurn(event.threadId, event.data.text, true,
       event.data.attachments ?? [], event.id, event);
     // Admission is durable now. Echoing by id is harmless and converges all clients.
@@ -2794,6 +2597,21 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
     });
   }
+
+  /** OpenClaw's `yorozu` channel plugin. Its messages land like any agent reply: logged, synced, pushed. */
+  const channel = startChannelHost({
+    dir,
+    onError: (message) => state(`channel-${message}`),
+    deliver: ({ id, threadId, text, title }) => {
+      const thread = listThreads(dir).find((known) => known.id === threadId);
+      if (thread && (thread.agent ?? "yorozu") !== "yorozu") throw new Error("not-a-channel-thread");
+      if (!thread) createThread(title, dir, threadId);
+      if (readThreadEvents(threadId, dir).some((known) => known.id === id)) return;
+      emit({ id, threadId, ts: Date.now(), agentId: MAIN_AGENT, kind: "message",
+        data: { role: "agent", text, done: true } });
+      if (!thread) broadcast(threadList());
+    },
+  });
 
   /**
    * The relay-free path in: the Mac app's own chat UI connects here instead of pairing. Its
@@ -3359,91 +3177,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   connect();
 
-  // App replacement kills this process, not OpenClaw's run. Recovery owns queue head until
-  // its deterministic final is durable; later persisted user messages are then replayed FIFO.
-  const resumeOpenClaw = async (stored: StoredPendingTurn): Promise<void> => {
-    const { threadId, completionId } = stored;
-    liveReplies.delete(threadId);
-    const stop = stored.userEventId ? stoppedTurns.get(stored.userEventId) : undefined;
-    if (stop) {
-      if (stop.status === "requested") {
-        finishStop(stop);
-        await stopSettlements.get(stop.targetEventId)?.promise;
-      }
-      else if (stored.userEventId) openclaw!.discardPending(stored.userEventId);
-      return;
-    }
-    const known = readThreadEvents(threadId, dir);
-    const durableFinal = known.find((event) => event.id === completionId);
-    if (durableFinal) {
-      finalizeOpenClaw(durableFinal);
-      return;
-    }
-    const turn = new AbortController();
-    running.set(threadId, turn);
-    if (stored.userEventId) runningEventIds.set(threadId, stored.userEventId);
-    broadcastActiveThreadList();
-    const message = (text: string, done = false, failed = false): YorozuEvent => ({
-      id: completionId, threadId, ts: Date.now(), agentId: MAIN_AGENT, kind: "message",
-      data: { role: "agent", text, ...(done ? { done: true } : {}), ...(failed ? { failed: true } : {}) },
-    });
-    try {
-      while (!turn.signal.aborted) {
-        try {
-          let failed = false;
-          const reply = await openclaw!.resume({
-            threadId,
-            signal: turn.signal,
-            seenEventIds: readThreadEvents(threadId, dir).map((event) => event.id),
-            onUpdate: (text) => broadcast(message(text)),
-            onEvent: emit,
-            onRecoveryState: () => broadcast(threadList()),
-            onFailure: () => { failed = true; },
-          });
-          if (turn.signal.aborted || reply === undefined) return;
-          finalizeOpenClaw(message(reply, true, failed));
-          return;
-        } catch (error) {
-          state(`openclaw-resume-error ${String(error)}`);
-          await new Promise((resolve) => setTimeout(resolve, 250));
-        }
-      }
-    } finally {
-      if (running.get(threadId) === turn) running.delete(threadId);
-      if (runningEventIds.get(threadId) === stored.userEventId) runningEventIds.delete(threadId);
-      broadcastActiveThreadList();
-    }
-  };
-
   for (const stop of stoppedTurns.values()) if (stop.status === "requested") finishStop(stop);
 
   for (const thread of listThreads(dir)) {
     if (thread.nativeTurn?.state === "interrupted") resumeNativeTurn(thread.id);
-  }
-
-  for (const stored of openclaw?.pendingTurns() ?? []) {
-    if (stored.state !== "queued") {
-      const recovery = resumeOpenClaw(stored);
-      if (stored.userEventId) activeTurnIds.add(stored.userEventId);
-      turnQueues.set(stored.threadId, recovery);
-      if (stored.userEventId) admittedTurns.set(stored.userEventId, recovery);
-      void recovery.finally(() => {
-        if (stored.userEventId) activeTurnIds.delete(stored.userEventId);
-        if (turnQueues.get(stored.threadId) === recovery) turnQueues.delete(stored.threadId);
-        if (stored.userEventId && admittedTurns.get(stored.userEventId) === recovery) admittedTurns.delete(stored.userEventId);
-      }).catch(() => {});
-    } else {
-      const logged = readThreadEvents(stored.threadId, dir).find((event): event is YorozuEvent & { kind: "message" } =>
-        event.kind === "message" && event.data.role === "user" && event.id === stored.userEventId);
-      const accepted = logged ?? (stored.userEventId && stored.input.eventTs !== undefined ? {
-        id: stored.userEventId, threadId: stored.threadId, ts: stored.input.eventTs,
-        agentId: MAIN_AGENT, kind: "message" as const,
-        data: { role: "user" as const, text: stored.input.text,
-          ...(stored.input.admissionDeadline !== undefined ? { admissionDeadline: stored.input.admissionDeadline } : {}),
-          ...(stored.input.attachments.length ? { attachments: stored.input.attachments } : {}) },
-      } : undefined);
-      void enqueueTurn(stored.threadId, stored.input.text, true, stored.input.attachments, stored.userEventId, accepted);
-    }
   }
 
   for (const entry of [...queuedNative]) {
@@ -3481,8 +3218,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
     close: async () => {
       stopped = true;
       wakeDrainWaiters();
-      for (const retry of stopRetries.values()) clearTimeout(retry);
-      stopRetries.clear();
       clearTraces();
       partials.clear();
       largePartialAt.clear();
@@ -3494,6 +3229,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       for (const turn of running.values()) turn.abort();
       if (retry) clearTimeout(retry);
       await local.close();
+      await channel.close();
       await legacyReady?.catch(() => undefined);
       await legacy?.close();
       return new Promise<void>((done) => {
