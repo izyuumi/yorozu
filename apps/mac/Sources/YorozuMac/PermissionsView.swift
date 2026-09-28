@@ -146,7 +146,24 @@ struct PermissionsView: View {
                         Text(section.detail)
                             .font(.scaled(.caption))
                             .foregroundStyle(.secondary)
+                        // Setup is where someone decides without having used a thread yet.
+                        if scope == .onboarding, section.id == PermissionSection.control.id {
+                            Text("Threads you start with Claude Code or Codex can click, type and see your screen. Only grant this if you’ll use them for that.")
+                                .font(.scaled(.caption))
+                                .foregroundStyle(.secondary)
+                        }
                     }
+                }
+            }
+            if scope == .onboarding {
+                Section {
+                    HStack(spacing: 4) {
+                        Text("Files and Full Disk Access are in")
+                        Button("Settings › Permissions") { SettingsPaneRouter.shared.open("permissions") }
+                            .buttonStyle(.link)
+                    }
+                    .font(.scaled(.caption))
+                    .foregroundStyle(.secondary)
                 }
             }
             if scope == .all {
