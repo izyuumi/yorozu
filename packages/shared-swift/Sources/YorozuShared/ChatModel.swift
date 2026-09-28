@@ -200,6 +200,9 @@ public final class ChatModel {
     public private(set) var devices: [DeviceInfo] = []
     /// Includes empty replies, so pairing can await a confirmed list before showing its code.
     public private(set) var deviceListRevision = 0
+    /// Whether each agent would answer here. Nil while ``requestAgentStatus()`` waits for the
+    /// runtime, so a check that finds nothing new still reads as a check; only the host Mac asks.
+    public private(set) var agentStatus: AgentStatusData?
     /// Every model a thread can be put on, as the Mac has it configured. Arrives with the
     /// thread list; empty until then, which is a picker that offers only Default.
     public private(set) var models: [ModelOption] = []
@@ -1871,6 +1874,12 @@ public final class ChatModel {
             "\(platform) \(version.majorVersion).\(version.minorVersion)\(patch)")), in: "")
     }
 
+    /// Asks the runtime which agents would answer, forgetting the last answer until this one lands.
+    public func requestAgentStatus() {
+        agentStatus = nil
+        emit(.agentStatus(AgentStatusData()), in: "")
+    }
+
     /// Forgets a paired device, here and at the relay. Answered with a new list.
     public func removeDevice(_ pub: String) {
         emit(.deviceRemove(DeviceRemoveData(pub: pub)), in: "")
@@ -2072,6 +2081,8 @@ public final class ChatModel {
                 devices = data.devices
                 deviceListRevision += 1
                 onDevices?()
+            case .agentStatus(let data):
+                agentStatus = data
             // The stored rules, in answer to `rule_list` and after any change to them. Also
             // not a thread's event: rules are global, which is the whole point of them.
             case .ruleList(let data):

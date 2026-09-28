@@ -62,6 +62,7 @@ import {
 import WebSocket from "ws";
 import { UpdateGate } from "./update-gate.js";
 import { AttachmentUploads } from "./attachment-upload.js";
+import { agentStatus } from "./agent-status.js";
 import { MAIN_AGENT } from "./agents.js";
 import {
   cardFor,
@@ -2740,6 +2741,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       case "device_remove":
         return forgetDevice(event.data.pub);
+      case "agent_status":
+        return void agentStatus({ ...(openclaw ? { openclaw: () => openclaw.reachable() } : {}) })
+          .then((data) => reply(control({ kind: "agent_status", data })));
       case "sync_request": {
         if (event.data.threadId !== undefined && (typeof event.data.threadId !== "string" || !event.data.threadId)) return;
         if (event.data.focusThreadId !== undefined &&

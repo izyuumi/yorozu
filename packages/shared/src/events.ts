@@ -688,6 +688,28 @@ export interface DeviceRemoveData {
   pub: string;
 }
 
+/** Why an agent cannot answer yet: what the user has to do next, not how it was found out. */
+export type AgentUnreadyReason = "not-found" | "not-logged-in" | "unreachable";
+
+export interface AgentReadiness {
+  ok: boolean;
+  /** Absent when `ok`, and when the check failed in a way none of the reasons describe. */
+  reason?: AgentUnreadyReason;
+  /** The check's own words, for a failure no reason covers. Never a credential. */
+  detail?: string;
+}
+
+/**
+ * Whether each agent this Mac can run would answer right now, as the runtime sees it — its
+ * `PATH` and logins are the ones a thread uses. Asked with no fields; answered to the asker
+ * with every agent the runtime has. `openclaw` is absent on a runtime without the Gateway.
+ */
+export interface AgentStatusData {
+  claude?: AgentReadiness;
+  codex?: AgentReadiness;
+  openclaw?: AgentReadiness;
+}
+
 /** Kind tag paired with its payload. Discriminates on `kind`. */
 export type EventPayload =
   | { kind: "message"; data: MessageData }
@@ -732,6 +754,7 @@ export type EventPayload =
   | { kind: "attachment_download_chunk"; data: AttachmentDownloadChunkData }
   | { kind: "device_list"; data: DeviceListData }
   | { kind: "device_remove"; data: DeviceRemoveData }
+  | { kind: "agent_status"; data: AgentStatusData }
   | { kind: "receipt"; data: ReceiptData }
   | { kind: "update_status"; data: UpdateStatusData }
   | { kind: "update_control"; data: UpdateControlData };

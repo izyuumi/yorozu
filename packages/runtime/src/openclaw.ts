@@ -172,6 +172,11 @@ export class OpenClawRunner {
       .map((model) => model.option);
   }
 
+  /** Settles once the Gateway has said hello, the connection every thread would use. */
+  async reachable(): Promise<void> {
+    await this.connect();
+  }
+
   async setArchived(threadId: string, archived: boolean): Promise<void> {
     const client = await this.connect();
     const key = `agent:main:yorozu:${threadId}`.toLowerCase();
