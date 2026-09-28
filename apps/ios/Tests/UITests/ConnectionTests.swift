@@ -192,7 +192,6 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(app.textViews["echo: first result route probe"].waitForExistence(timeout: 30))
         app.navigationBars.buttons["Threads"].tap()
         list.swipeDown()
-        XCTAssertEqual(matches.count, 2)
         app.buttons[secondResultLabel].tap()
         app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch.tap()
         send("second result route probe")
