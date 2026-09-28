@@ -115,6 +115,9 @@ final class ConnectionTests: XCTestCase {
         let secondPair = try await rig2.pairing()
         let secondID = try XCTUnwrap(URLComponents(string: secondPair)?.queryItems?
             .first(where: { $0.name == "key" })?.value)
+        let key = secondID.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        let decoded = try XCTUnwrap(Data(base64Encoded: key + String(repeating: "=", count: (4 - key.count % 4) % 4)))
+        let secondFingerprint = decoded.prefix(8).map { String(format: "%02x", $0) }.joined(separator: " ")
         addTeardownBlock { [weak self] in
             guard let self else { return }
             self.app.terminate()
@@ -182,6 +185,34 @@ final class ConnectionTests: XCTestCase {
         list.swipeDown()
         XCTAssertEqual(search.value as? String, "8f4a", "Back navigation lost the search query")
         XCTAssertEqual(matches.count, 2, "Back navigation lost the search results")
+
+        // The same marker appears on both Macs, so seeing it after navigation alone cannot
+        // prove that each row opened its own host. Reply through each result and check the
+        // two independent sidecars, rather than trusting a shared-looking conversation title.
+        let secondResult = matches.matching(NSPredicate(format: "label CONTAINS %@", secondFingerprint)).firstMatch
+        XCTAssertTrue(secondResult.exists, "Second host's search row has no matching identity")
+        let secondResultLabel = secondResult.label
+        let firstResult = matches.matching(NSPredicate(format: "label != %@", secondResultLabel)).firstMatch
+        XCTAssertTrue(firstResult.exists)
+        firstResult.tap()
+        app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch.tap()
+        send("first result route probe")
+        XCTAssertTrue(app.textViews["echo: first result route probe"].waitForExistence(timeout: 30))
+        app.navigationBars.buttons["Threads"].tap()
+        list.swipeDown()
+        let returnedSecondResult = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", secondFingerprint)).firstMatch
+        XCTAssertTrue(returnedSecondResult.waitForExistence(timeout: 10),
+                      "Back navigation lost the second host's result")
+        returnedSecondResult.tap()
+        app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch.tap()
+        send("second result route probe")
+        XCTAssertTrue(app.textViews["echo: second result route probe"].waitForExistence(timeout: 30))
+
+        let firstHost = try await rig.messages().filter { $0.role == "user" && $0.text.contains("result route probe") }
+        let secondHost = try await rig2.messages().filter { $0.role == "user" && $0.text.contains("result route probe") }
+        XCTAssertEqual(firstHost.map(\.text), ["first result route probe"], "First row opened the wrong host")
+        XCTAssertEqual(secondHost.map(\.text), ["second result route probe"], "Second row opened the wrong host")
     }
 
     /// Pre-pairing host history is absent from routine sync. Local search cannot see it;
