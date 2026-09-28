@@ -82,6 +82,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case attachmentDownloadChunk = "attachment_download_chunk"
         case deviceList = "device_list"
         case deviceRemove = "device_remove"
+        case agentStatus = "agent_status"
         case receipt
         case updateStatus = "update_status"
         case updateControl = "update_control"
@@ -131,6 +132,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case attachmentDownloadChunk(AttachmentDownloadChunkData)
         case deviceList(DeviceListData)
         case deviceRemove(DeviceRemoveData)
+        case agentStatus(AgentStatusData)
         case receipt(ReceiptData)
         case updateStatus(UpdateStatusData)
         case updateControl(UpdateControlData)
@@ -180,6 +182,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .attachmentDownloadChunk: .attachmentDownloadChunk
             case .deviceList: .deviceList
             case .deviceRemove: .deviceRemove
+            case .agentStatus: .agentStatus
             case .receipt: .receipt
             case .updateStatus: .updateStatus
             case .updateControl: .updateControl
@@ -264,6 +267,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .attachmentDownloadChunk: payload = .attachmentDownloadChunk(try c.decode(AttachmentDownloadChunkData.self, forKey: .data))
             case .deviceList: payload = .deviceList(try c.decode(DeviceListData.self, forKey: .data))
             case .deviceRemove: payload = .deviceRemove(try c.decode(DeviceRemoveData.self, forKey: .data))
+            case .agentStatus: payload = .agentStatus(try c.decode(AgentStatusData.self, forKey: .data))
             case .receipt: payload = .receipt(try c.decode(ReceiptData.self, forKey: .data))
             case .updateStatus: payload = .updateStatus(try c.decode(UpdateStatusData.self, forKey: .data))
             case .updateControl: payload = .updateControl(try c.decode(UpdateControlData.self, forKey: .data))
@@ -331,6 +335,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .attachmentDownloadChunk(let d): try c.encode(d, forKey: .data)
         case .deviceList(let d): try c.encode(d, forKey: .data)
         case .deviceRemove(let d): try c.encode(d, forKey: .data)
+        case .agentStatus(let d): try c.encode(d, forKey: .data)
         case .receipt(let d): try c.encode(d, forKey: .data)
         case .updateStatus(let data): try c.encode(data, forKey: .data)
         case .updateControl(let data): try c.encode(data, forKey: .data)
@@ -1531,6 +1536,39 @@ public struct DeviceListData: Codable, Equatable, Sendable {
 public struct DeviceRemoveData: Codable, Equatable, Sendable {
     public var pub: String
     public init(pub: String) { self.pub = pub }
+}
+
+/// Whether one agent would answer a thread right now, as the runtime sees it.
+public struct AgentReadiness: Codable, Equatable, Sendable {
+    /// What the user has to do next, not how the runtime found out.
+    public enum Reason: String, Codable, Sendable {
+        case notFound = "not-found"
+        case notLoggedIn = "not-logged-in"
+        case unreachable
+    }
+    public var ok: Bool
+    /// Absent when `ok`, and for a failure none of the reasons describe.
+    public var reason: Reason?
+    /// The check's own words, for a failure no reason covers. Never a credential.
+    public var detail: String?
+    public init(ok: Bool, reason: Reason? = nil, detail: String? = nil) {
+        self.ok = ok
+        self.reason = reason
+        self.detail = detail
+    }
+}
+
+/// Asked with no fields; answered with every agent the runtime has. `openclaw` is absent on a
+/// runtime without the Gateway.
+public struct AgentStatusData: Codable, Equatable, Sendable {
+    public var claude: AgentReadiness?
+    public var codex: AgentReadiness?
+    public var openclaw: AgentReadiness?
+    public init(claude: AgentReadiness? = nil, codex: AgentReadiness? = nil, openclaw: AgentReadiness? = nil) {
+        self.claude = claude
+        self.codex = codex
+        self.openclaw = openclaw
+    }
 }
 
 /// Arbitrary JSON, for tool arguments the schema cannot know ahead of time.

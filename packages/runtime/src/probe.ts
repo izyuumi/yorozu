@@ -1,6 +1,6 @@
 /**
- * The auth state behind the Mac app's Providers list, as one JSON line. Run as
- * `node dist/serve.js probe`. Never prints secrets: only whether each provider is usable, and
+ * Every configured provider's auth state, as one JSON line, for inspecting a runtime by hand:
+ * `node dist/serve.js probe`. The Mac app asks through `agent_status` instead. Never prints secrets: only whether each provider is usable, and
  * why not when it is not. See docs/spec-v1.html section 2.
  *
  * It is also the migration: a runtime with no `providers.json` yet gets one seeded from these

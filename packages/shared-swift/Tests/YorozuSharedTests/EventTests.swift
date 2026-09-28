@@ -208,6 +208,9 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
                 DeviceInfo(pub: "local-1", via: .local, lastSeen: 1_757_640_000_001, online: true),
             ]))
         case .deviceRemove: .deviceRemove(DeviceRemoveData(pub: "k1"))
+        case .agentStatus: .agentStatus(AgentStatusData(
+            claude: AgentReadiness(ok: true), codex: AgentReadiness(ok: false, reason: .notLoggedIn),
+            openclaw: AgentReadiness(ok: false, detail: "spawn EACCES")))
         case .receipt: .receipt(ReceiptData(eventId: "e0"))
         case .updateStatus: .updateStatus(UpdateStatusData(phase: .countdown, updateId: "u1", version: "1.0", deadline: 12345))
         case .updateControl: .updateControl(UpdateControlData(action: .queue, updateId: "u1", version: "1.0"))
@@ -352,6 +355,17 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     guard case .deviceList(let data) = decoded.payload else { return #expect(Bool(false)) }
     #expect(data.devices.first?.signingPub == nil)
     #expect(data.devices.first?.shortId == "local-1")
+}
+
+/// What the runtime writes for a Mac with no Gateway: the reason is the user's next step, and
+/// an agent the runtime does not have is absent rather than unready.
+@Test func agentStatusDecodesWhatTheRuntimeWrites() throws {
+    let wire = #"{"id":"e1","threadId":"","ts":1,"agentId":"main","kind":"agent_status","data":{"claude":{"ok":false,"reason":"not-found"},"codex":{"ok":true}}}"#
+    let decoded = try JSONDecoder().decode(YorozuEvent.self, from: Data(wire.utf8))
+    guard case .agentStatus(let data) = decoded.payload else { return #expect(Bool(false)) }
+    #expect(data.claude == AgentReadiness(ok: false, reason: .notFound))
+    #expect(data.codex == AgentReadiness(ok: true))
+    #expect(data.openclaw == nil)
 }
 
 
