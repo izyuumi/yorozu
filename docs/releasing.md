@@ -219,11 +219,13 @@ relay's capacity, which every user of `relay.yumi.to` draws on. Heavy daily use 
 by a relay of your own.
 
 The three routes are not equal. A Worker you deploy yourself behaves like the hosted relay,
-and sends push notifications once it has its own Apple auth key. The Docker and LaunchAgent
-relays run `src/index.ts`: they hold no Apple key, so phones are never woken and see new
-messages when the app is opened, and they keep join tokens and the offline buffer in memory,
-so a restart drops both. Set the same URL on the host and on every paired device, then pair
-again.
+except for push notifications: Apple accepts a push only from the team that owns the app, so
+they reach an iOS app you built and signed yourself, with that team's auth key and
+`APNS_TOPIC` set to its bundle ID, and never the App Store or TestFlight build. The Docker and
+LaunchAgent relays run `src/index.ts`: they hold no Apple key at all, so phones are never
+woken and see new messages when the app is opened, and they keep join tokens and the offline
+buffer in memory, so a restart drops both. Set the URL on the host, then pair every device
+again: a device has no relay setting of its own and takes the URL from the pairing code.
 
 On Cloudflare, edit the `routes` block in `apps/relay/wrangler.toml` to your own hostname and
 deploy:
