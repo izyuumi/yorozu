@@ -2578,6 +2578,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // answer to whatever happens to be the oldest card anywhere.
     if (typed && oldest) return oldest.settle(typed);
     if (viaChannel(event.threadId)) {
+      title(event.threadId, event.data.text);
       channel.forward({ id: event.id, threadId: event.threadId, ts: event.ts, text: event.data.text,
         ...(event.data.attachments?.length ? { attachments: event.data.attachments } : {}) });
       return broadcast(event);
@@ -2602,10 +2603,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const channel = startChannelHost({
     dir,
     onError: (message) => state(`channel-${message}`),
-    deliver: ({ id, threadId, text, title }) => {
+    deliver: ({ id, threadId, text, title: named }) => {
       const thread = listThreads(dir).find((known) => known.id === threadId);
       if (thread && (thread.agent ?? "yorozu") !== "yorozu") throw new Error("not-a-channel-thread");
-      if (!thread) createThread(title, dir, threadId);
+      if (!thread) createThread(named, dir, threadId);
+      if (!thread && !named) title(threadId, text);
       if (readThreadEvents(threadId, dir).some((known) => known.id === id)) return;
       emit({ id, threadId, ts: Date.now(), agentId: MAIN_AGENT, kind: "message",
         data: { role: "agent", text, done: true } });
