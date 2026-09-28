@@ -349,6 +349,10 @@ public struct ChatView: View {
             // this; the phone has one from iOS 26, and a compact identity in its `.principal`
             // item before that.
             .navigationSubtitle(macModelCaption)
+            // The bar draws its own backdrop, always. Left to decide for itself it went clear
+            // over a transcript that reached it and opaque over a project row that did not,
+            // so the bar had an edge in one kind of thread and none in the other.
+            .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
         #endif
         #if os(iOS)
         .toolbar {
@@ -700,7 +704,12 @@ public struct ChatView: View {
             }
             // A thread opens on its newest message, like every other chat: the anchor does it
             // during layout, so there is no jump from the top to watch on the way in.
-            .defaultScrollAnchor(.bottom)
+            // A thread shorter than the window still starts under the title bar: aligned to
+            // the bottom it sat below a content inset, and the bar drew its backdrop over all
+            // of it. Each role is named so none depends on the order of the modifiers.
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(.bottom, for: .sizeChanges)
+            .defaultScrollAnchor(.top, for: .alignment)
             .scrollPosition($macScrollPosition, anchor: .top)
             .onPreferenceChange(ChatRowTopKey.self) { tops in
                 macReadingGeometry.rowTops = tops
