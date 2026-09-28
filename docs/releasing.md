@@ -213,8 +213,17 @@ from App Review. Review and processing times vary.
 
 The Mac and the phone only ever meet through a relay, so one has to be reachable from both.
 Settings → **General** carries the URL the sidecar dials; it defaults to `wss://relay.yumi.to`. The relay
-is blind either way, so the only reason to move is to keep the traffic on your own network —
-`ws://100.100.1.1:8787` being a Mac mini over Tailscale.
+is blind either way, so the reasons to move are to keep the traffic on your own network —
+`ws://100.100.1.1:8787` being a Mac mini over Tailscale — or to stop depending on the shared
+relay's capacity, which every user of `relay.yumi.to` draws on. Heavy daily use is better served
+by a relay of your own.
+
+The three routes are not equal. A Worker you deploy yourself behaves like the hosted relay,
+and sends push notifications once it has its own Apple auth key. The Docker and LaunchAgent
+relays run `src/index.ts`: they hold no Apple key, so phones are never woken and see new
+messages when the app is opened, and they keep join tokens and the offline buffer in memory,
+so a restart drops both. Set the same URL on the host and on every paired device, then pair
+again.
 
 On Cloudflare, edit the `routes` block in `apps/relay/wrangler.toml` to your own hostname and
 deploy:
