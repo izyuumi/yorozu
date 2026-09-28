@@ -117,7 +117,8 @@ export const claudeEffort = (effort?: ReasoningEffort): Options["effort"] =>
 
 function claudeModelLabel(model: ModelInfo): string {
   const family = model.displayName.match(/^[A-Za-z]+/)?.[0];
-  if (!family || !model.resolvedModel) return model.displayName;
+  // Newer SDKs already put the version in displayName ("Opus 5.5").
+  if (!family || !model.resolvedModel || /^[A-Za-z]+ \d/.test(model.displayName)) return model.displayName;
   const version = model.resolvedModel.match(new RegExp(`^claude-${family.toLowerCase()}-(\\d+)(?:-(\\d+))?`));
   return version ? model.displayName.replace(family, `${family} ${version[1]}${version[2] ? `.${version[2]}` : ""}`) : model.displayName;
 }
