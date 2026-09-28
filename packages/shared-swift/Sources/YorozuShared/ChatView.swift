@@ -272,10 +272,10 @@ public struct ChatView: View {
             composer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Images dragged anywhere onto the conversation, from Finder, Photos or another app in
-        // Split View, go where the + menu and Paste put them.
-        .dropDestination(for: PastedImage.self) { images, _ in
-            dropImages(images)
+        // Files and images dragged anywhere onto the conversation, from Finder, Files, Photos or
+        // another app in Split View, go where the + menu and Paste put them.
+        .dropDestination(for: DroppedFile.self) { files, _ in
+            dropFiles(files)
         } isTargeted: { dropTargeted = $0 }
         .background(YorozuPalette.canvas.ignoresSafeArea())
         .yorozuTint()
@@ -1180,17 +1180,11 @@ public struct ChatView: View {
         )
     }
 
-    private func dropImages(_ images: [PastedImage]) -> Bool {
+    private func dropFiles(_ files: [DroppedFile]) -> Bool {
         guard !generating, !attachmentLoading else { return false }
         attachmentFailure = nil
-        let picks = images.enumerated().map { index, image in
-            let attachment = pastedImageAttachment(bytes: image.bytes)
-            let ext = attachment.map { ($0.name as NSString).pathExtension } ?? "png"
-            // An unreadable image stays in the batch so staging names it rather than dropping it.
-            return (name: "dropped-\(index + 1).\(ext)", mime: attachment?.mime ?? "image/png", bytes: image.bytes)
-        }
         stageAttachments(
-            picks,
+            files.map(\.pick),
             remaining: MessageAttachment.maxCount - attachments.wrappedValue.count,
             onPick: addAttachments,
             onTooLarge: { attachmentTooLarge = true },

@@ -17,6 +17,23 @@ struct PastedImage: Transferable {
     }
 }
 
+/// Anything dragged onto a conversation: a file from Finder or Files, or a picture from Photos,
+/// which the system hands over as a file too. Read whole, as the file picker's are.
+struct DroppedFile: Transferable {
+    let name: String
+    let bytes: Data
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(importedContentType: .data) { received in
+            DroppedFile(name: received.file.lastPathComponent, bytes: try Data(contentsOf: received.file))
+        }
+    }
+
+    var pick: (name: String, mime: String, bytes: Data) {
+        let type = UTType(filenameExtension: (name as NSString).pathExtension)
+        return (name: name, mime: type?.preferredMIMEType ?? "application/octet-stream", bytes: bytes)
+    }
+}
+
 func pastedImageAttachment(bytes: Data) -> MessageAttachment? {
     guard
         let source = CGImageSourceCreateWithData(bytes as CFData, nil),
