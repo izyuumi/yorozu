@@ -115,10 +115,13 @@ let project = Project(
             ]),
             dependencies: [
                 .package(product: "YorozuShared"),
+                .package(product: "YorozuWatchLink"),
                 // Embedded in the app's PlugIns, which is how an extension ships at all.
                 .target(name: "YorozuShare"),
                 .target(name: "YorozuNotificationService"),
                 .target(name: "YorozuWidget"),
+                // Embedded in the app's Watch folder, and installed from there by the phone.
+                .target(name: "YorozuWatch"),
             ],
             settings: signing(["ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon"])
         ),
@@ -135,6 +138,30 @@ let project = Project(
             sources: ["Sources/YorozuWidget/**"],
             resources: ["Resources/Assets.xcassets", "Resources/Localizable.xcstrings"],
             settings: signing()
+        ),
+        .target(
+            name: "YorozuWatch",
+            destinations: [.appleWatch],
+            product: .app,
+            // Has to extend the phone app's id, or the pair is rejected at install.
+            bundleId: "to.yumi.yorozu.ios.watchkitapp",
+            deploymentTargets: .watchOS("11.0"),
+            infoPlist: .extendingDefault(with: version.merging([
+                "CFBundleDisplayName": "Yorozu",
+                "WKApplication": true,
+                // Not standalone: every request is answered by the phone, which holds the keys.
+                "WKCompanionAppBundleIdentifier": "to.yumi.yorozu.ios",
+                "WKRunsIndependentlyOfCompanionApp": false,
+                "ITSAppUsesNonExemptEncryption": false,
+            ]) { a, _ in a }),
+            sources: ["Sources/YorozuWatch/**"],
+            resources: [
+                "Resources/AppIcon.icon",
+                "Resources/YorozuWatch/Localizable.xcstrings",
+            ],
+            // Links `YorozuWatchLink` and nothing else: `YorozuShared` does not build for watchOS.
+            dependencies: [.package(product: "YorozuWatchLink")],
+            settings: signing(["ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon"])
         ),
         .target(
             name: "YorozuNotificationService",

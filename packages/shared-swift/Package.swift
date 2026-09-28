@@ -3,9 +3,15 @@ import PackageDescription
 
 let package = Package(
     name: "YorozuShared",
-    platforms: [.macOS(.v15), .iOS(.v18)],
-    products: [.library(name: "YorozuShared", targets: ["YorozuShared"])],
+    // watchOS is for `YorozuWatchLink` alone: `YorozuShared` is never built for the watch.
+    platforms: [.macOS(.v15), .iOS(.v18), .watchOS(.v11)],
+    products: [
+        .library(name: "YorozuShared", targets: ["YorozuShared"]),
+        .library(name: "YorozuWatchLink", targets: ["YorozuWatchLink"]),
+    ],
     targets: [
+        .target(name: "YorozuWatchLink"),
+        .testTarget(name: "YorozuWatchLinkTests", dependencies: ["YorozuWatchLink"]),
         .target(
             name: "YorozuShared",
             resources: [.process("Resources")]
