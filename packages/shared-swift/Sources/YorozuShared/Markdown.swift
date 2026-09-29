@@ -27,7 +27,7 @@ public enum MarkdownBlock: Equatable, Sendable {
 
 /// Splits a reply into blocks. Never fails and never drops text: anything it does not
 /// recognise comes back as a paragraph, which is exactly how plain prose arrives.
-public func markdownBlocks(_ text: String) -> [MarkdownBlock] {
+public func markdownBlocks(_ text: String, streaming: Bool = false) -> [MarkdownBlock] {
     var blocks: [MarkdownBlock] = []
     var paragraph: [String] = []
     let lines = text.components(separatedBy: .newlines)
@@ -138,7 +138,68 @@ public func markdownBlocks(_ text: String) -> [MarkdownBlock] {
         index += 1
     }
     flushParagraph()
-    return blocks
+    return streaming ? blocks.map { block in
+        switch block {
+        case .paragraph(let text): .paragraph(repairEmphasis(text))
+        case .heading(let level, let text): .heading(level: level, text: repairEmphasis(text))
+        case .list(let ordered, let items): .list(ordered: ordered, items: items.map(repairEmphasis))
+        case .table(let header, let rows):
+            .table(header: header.map(repairEmphasis), rows: rows.map { $0.map(repairEmphasis) })
+        case .code, .rule: block
+        }
+    } : blocks
+}
+
+/// Close only inline spans while a reply is partial. Fences and lists already survive an
+/// unfinished final line in the block parser; completed replies keep their original text.
+private func repairEmphasis(_ text: String) -> String {
+    let characters = Array(text)
+    var open: [String] = []
+    var codeTicks = 0
+    var index = 0
+    while index < characters.count {
+        let character = characters[index]
+        if character == "\\" {
+            index += min(2, characters.count - index)
+            continue
+        }
+        if character == "`" {
+            let start = index
+            while index < characters.count, characters[index] == "`" { index += 1 }
+            let count = index - start
+            if codeTicks == 0 { codeTicks = count }
+            else if codeTicks == count { codeTicks = 0 }
+            continue
+        }
+        guard codeTicks == 0, character == "*" || character == "_" else {
+            index += 1
+            continue
+        }
+        let start = index
+        while index < characters.count, characters[index] == character { index += 1 }
+        let count = index - start
+        guard count <= 3 else { continue }
+        let before = start > 0 ? characters[start - 1] : nil
+        let after = index < characters.count ? characters[index] : nil
+        if character == "_", let before, let after,
+           (before.isLetter || before.isNumber), (after.isLetter || after.isNumber) { continue }
+        let canClose = before.map { !$0.isWhitespace } ?? false
+        let canOpen = after.map { !$0.isWhitespace } ?? false
+        let marker = String(repeating: String(character), count: count)
+        if count == 3 {
+            if canClose, open.suffix(2) == [String(repeating: String(character), count: 2), String(character)] {
+                open.removeLast(2)
+            } else if canOpen {
+                open.append(String(repeating: String(character), count: 2))
+                open.append(String(character))
+            }
+        } else if canClose, open.last == marker {
+            open.removeLast()
+        } else if canOpen {
+            open.append(marker)
+        }
+    }
+    return text + open.reversed().joined()
 }
 
 /// ``` or ~~~, and whichever it is has to be the one that closes it.

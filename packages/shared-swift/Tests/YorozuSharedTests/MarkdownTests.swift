@@ -40,6 +40,23 @@ import Testing
     // A reply mid-stream has not closed its fence yet, and must still draw as code.
     #expect(markdownBlocks("```js\nconst a =") == [.code(language: "js", text: "const a =")])
     #expect(markdownBlocks("~~~\ntilde\n~~~") == [.code(language: nil, text: "tilde")])
+    #expect(markdownBlocks("```swift\nlet value =", streaming: true) == [.code(language: "swift", text: "let value =")])
+}
+
+@Test func streamingMarkdownClosesEmphasisWithoutChangingCodeOrFinishedReplies() {
+    let blocks = markdownBlocks("**bold and *italic", streaming: true)
+    #expect(blocks == [.paragraph("**bold and *italic***")])
+    if case .paragraph(let repaired) = blocks[0] {
+        let rendered = AttributedString.chatInline(repaired)
+        #expect(String(rendered.characters) == "bold and italic")
+        #expect(rendered.runs.contains { $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true })
+        #expect(rendered.runs.contains { $0.inlinePresentationIntent?.contains(.emphasized) == true })
+    }
+    #expect(markdownBlocks("`**literal` and **half", streaming: true)
+        == [.paragraph("`**literal` and **half**")])
+    #expect(markdownBlocks("\\*literal and *half", streaming: true)
+        == [.paragraph("\\*literal and *half*")])
+    #expect(markdownBlocks("**half") == [.paragraph("**half")])
 }
 
 @Test func listsGroupTheirOwnKindAndPickUpContinuations() {
@@ -62,6 +79,8 @@ import Testing
     // A bare hyphen is a rule; `2024-01-01` is prose.
     #expect(markdownBlocks("---") == [.rule])
     #expect(markdownBlocks("2024-01-01") == [.paragraph("2024-01-01")])
+    #expect(markdownBlocks("- first\n- **second", streaming: true)
+        == [.list(ordered: false, items: ["first", "**second**"])])
 }
 
 @Test func aPipeTableNeedsItsSeparatorRowToBeOne() {

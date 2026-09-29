@@ -710,7 +710,6 @@ public struct ChatView: View {
             // the bottom it sat below a content inset, and the bar drew its backdrop over all
             // of it. Each role is named so none depends on the order of the modifiers.
             .defaultScrollAnchor(.bottom, for: .initialOffset)
-            .defaultScrollAnchor(.bottom, for: .sizeChanges)
             .defaultScrollAnchor(.top, for: .alignment)
             .scrollPosition($macScrollPosition, anchor: .top)
             .onPreferenceChange(ChatRowTopKey.self) { tops in
@@ -1756,8 +1755,12 @@ public struct ChatView: View {
             }
 
             private func isAtBottom(_ scrollView: UIScrollView) -> Bool {
-                scrollView.contentOffset.y + scrollView.adjustedContentInset.top
-                    + scrollView.bounds.height >= scrollView.contentSize.height - 40
+                !showsJumpToLatest(
+                    contentHeight: scrollView.contentSize.height,
+                    visibleBottom: scrollView.contentOffset.y + scrollView.bounds.height
+                        - scrollView.adjustedContentInset.bottom,
+                    viewportHeight: scrollView.bounds.height
+                )
             }
 
             private func reportBottom(_ scrollView: UIScrollView) {
@@ -2046,7 +2049,7 @@ private struct ScrollToBottomPill: View {
 
     var body: some View {
         Button(action: action) {
-            Label("Jump to latest", systemImage: "arrow.down")
+            Label("Scroll to bottom", systemImage: "arrow.down")
                 .font(.scaled(.footnote).weight(.medium))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
@@ -2054,7 +2057,7 @@ private struct ScrollToBottomPill: View {
         .buttonStyle(.plain)
         .pillBackground()
         .hoverHighlight()
-        .accessibilityLabel("Jump to latest message")
+        .accessibilityLabel("Scroll to bottom")
     }
 }
 

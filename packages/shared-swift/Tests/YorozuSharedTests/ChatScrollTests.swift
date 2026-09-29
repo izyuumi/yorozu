@@ -45,6 +45,15 @@ import Testing
     #expect(!showsJumpToLatest(contentHeight: 2_000, visibleBottom: 1_960, viewportHeight: 500))
     #expect(showsJumpToLatest(contentHeight: 2_001, visibleBottom: 1_960, viewportHeight: 500))
     #expect(!showsJumpToLatest(contentHeight: 2_000, visibleBottom: 500, viewportHeight: 0))
+
+    var intent = NewestScrollIntent()
+    intent.observe(atBottom: false, phase: .tracking)
+    intent.observe(atBottom: false, phase: .idle)
+    #expect(!intent.shouldPinLatest(during: .idle))
+    #expect(showsJumpToLatest(contentHeight: 2_000, visibleBottom: 1_900, viewportHeight: 500))
+    intent.observe(atBottom: true, phase: .idle)
+    #expect(intent.shouldPinLatest(during: .idle))
+    #expect(!showsJumpToLatest(contentHeight: 2_000, visibleBottom: 1_980, viewportHeight: 500))
 }
 
 @Test func notificationResumeStartsAtFirstUnreadRowOrLatest() {
