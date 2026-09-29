@@ -262,6 +262,24 @@ private struct RenameAlert: ViewModifier {
 }
 
 extension View {
+    /// A card on a phone; on a Mac the sidebar draws the row, so only a little air is added.
+    @ViewBuilder fileprivate func threadRowChrome(selected: Bool) -> some View {
+        #if os(macOS)
+            padding(.vertical, LayoutMetrics.tight)
+        #else
+            padding(.horizontal, LayoutMetrics.stack)
+                .padding(.vertical, 10)
+                .background(
+                    selected ? Color.clear : YorozuPalette.paper,
+                    in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous)
+                        .strokeBorder(selected ? Color.clear : YorozuPalette.rule.opacity(0.64), lineWidth: 0.75)
+                }
+        #endif
+    }
+
     fileprivate func renameAlert(
         _ thread: Binding<ThreadSummary?>,
         onRename: @escaping (ThreadSummary, String) -> Void
@@ -458,16 +476,7 @@ struct ThreadRow: View {
             .help(status == .idle ? "" : status.label)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, LayoutMetrics.stack)
-        .padding(.vertical, 10)
-        .background(
-            selected ? Color.clear : YorozuPalette.paper,
-            in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous)
-                .strokeBorder(selected ? Color.clear : YorozuPalette.rule.opacity(0.64), lineWidth: 0.75)
-        }
+        .threadRowChrome(selected: selected)
         // VoiceOver hears the agent and repo once, up front, rather than as a glyph mid-row.
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilitySummary)
@@ -1477,10 +1486,8 @@ public struct ThreadSidebar: View {
                 }
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(YorozuPalette.canvas)
-        .contentMargins(.vertical, LayoutMetrics.inner)
+        // The Mac's own sidebar: its material, row height, selection and section headers.
+        .listStyle(.sidebar)
         .animation(.default, value: threads)
         .scrollPosition(id: $visibleRowID, anchor: .top)
         .onScrollPhaseChange { _, phase in
@@ -1578,10 +1585,6 @@ public struct ThreadSidebar: View {
                 prepareSearchNavigation(thread.id)
                 selection = thread.id
             }
-            // The plain Mac list already supplies 8 points around its row content.
-            .listRowInsets(EdgeInsets(top: 3, leading: 4, bottom: 3, trailing: 4))
-            .listRowSeparator(.hidden)
-            .listRowBackground(Color.clear)
             .contentShape(.rect)
             .contextMenu { menu(thread) }
         }
