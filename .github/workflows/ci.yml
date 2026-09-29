@@ -188,5 +188,21 @@ jobs:
             -scheme YorozuIOS \
             -skipPackagePluginValidation \
             -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath .build/ci-ios \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO SWIFT_EMIT_LOC_STRINGS=YES
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26
+      - name: Verify compiled UI keys have English and Japanese coverage
+        run: |
+          extracted=.build/ci-ios/Build/Intermediates.noindex
+          shared="$extracted/YorozuShared.build/Debug-iphonesimulator/YorozuShared-t.build/Objects-normal/arm64"
+          node scripts/check-localizations.mjs apps/ios/Resources/Localizable.xcstrings "$shared"
+          node scripts/check-localizations.mjs apps/mac/Resources/Localizable.xcstrings "$shared"
+          for target in YorozuIOS YorozuShare YorozuWidget YorozuNotificationService; do
+            node scripts/check-localizations.mjs apps/ios/Resources/Localizable.xcstrings \
+              "$extracted/Yorozu.build/Debug-iphonesimulator/$target.build/Objects-normal/arm64"
+          done
+          node scripts/check-localizations.mjs apps/ios/Resources/YorozuWatch/Localizable.xcstrings \
+            "$extracted/Yorozu.build/Debug-watchsimulator/YorozuWatch.build/Objects-normal/arm64"
