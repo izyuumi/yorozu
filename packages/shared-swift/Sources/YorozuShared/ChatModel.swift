@@ -447,18 +447,7 @@ public final class ChatModel {
     @ObservationIgnored private var composerWrite: Task<Void, Never>?
     @ObservationIgnored private var restoringComposer = false
     @ObservationIgnored private var preparedSend: [String: String] = [:]
-    @ObservationIgnored private var readingPositions: [String: ThreadCache.ReadingPosition] = [:]
     @ObservationIgnored private var pendingSaveFailure: String?
-
-    public func readingPosition(in threadID: String) -> ThreadCache.ReadingPosition? {
-        readingPositions[threadID]
-    }
-
-    public func rememberReadingPosition(_ position: ThreadCache.ReadingPosition?, in threadID: String) {
-        guard readingPositions[threadID] != position else { return }
-        readingPositions[threadID] = position
-        saveComposerSoon()
-    }
 
     private func saveComposerSoon() {
         guard cache != nil else { return }
@@ -496,7 +485,6 @@ public final class ChatModel {
         try cache?.save(composer: .init(drafts: drafts, attachments: attachments, threads: draftThreads,
                                        knownThreads: synced, openThread: openThread,
                                        stashes: stashes.isEmpty ? nil : stashes,
-                                       readingPositions: readingPositions.isEmpty ? nil : readingPositions,
                                        preparedSend: preparedSend.isEmpty ? nil : preparedSend))
     }
     /// Replay progress follows the runtime's log order, independently of live events and
@@ -597,7 +585,6 @@ public final class ChatModel {
             stashes = composer.stashes ?? [:]
             draftThreads = draftState?.threads ?? composer.threads
             openThread = draftState == nil ? composer.openThread : draftState?.openThread
-            readingPositions = composer.readingPositions ?? [:]
             for thread in composer.knownThreads ?? [] where !synced.contains(where: { $0.id == thread.id }) {
                 synced.append(thread)
             }
