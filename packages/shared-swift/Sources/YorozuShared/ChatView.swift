@@ -906,6 +906,9 @@ public struct ChatView: View {
                     status: outboxStatus,
                     rejectionReason: rejectionReason,
                     attachmentTransferLabels: model.attachmentTransferLabels(of: event.id),
+                    onEditFromHere: data.role == .user && model.supportsRewind(in: thread.id)
+                        ? { model.editFromHere(event) } : nil,
+                    editFromHereEnabled: model.canEditFromHere(event),
                     onRetry: data.role == .user && (!needsNewChat || onCreate != nil) &&
                         (outboxStatus == nil || outboxStatus == .rejected || outboxStatus == .withdrawn)
                         ? { if needsNewChat {
@@ -1234,6 +1237,7 @@ public struct ChatView: View {
                     placeholder: composerPlaceholder,
                     onSubmit: send,
                     onQuestionOption: questionOption,
+                    onPromptHistory: { model.recallPrompt(in: thread.id, older: $0) },
                     onPasteImage: generating ? nil : { pasteImages() },
                     focusThread: startsFocused ? thread.id : nil
                 )
@@ -1242,6 +1246,7 @@ public struct ChatView: View {
 
                 HStack(alignment: .center, spacing: 4) {
                     attachButton
+                    stashMenu
                     if !model.models(for: thread).isEmpty { runSettingsButton }
                     Spacer(minLength: 4)
                     if model.stopPending(in: thread.id) {
@@ -1271,6 +1276,7 @@ public struct ChatView: View {
 
                 HStack(alignment: .center, spacing: 4) {
                     attachButton
+                    stashMenu
                     if !model.models(for: thread).isEmpty {
                         runSettingsButton.frame(maxWidth: 280, alignment: .leading)
                     }
@@ -1299,6 +1305,28 @@ public struct ChatView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .compactQuietComposerLayout()
+    }
+
+    private var stashMenu: some View {
+        Menu {
+            Button("Stash draft", systemImage: "tray.and.arrow.down") {
+                model.stashDraft(in: thread.id)
+            }
+            .disabled(draft.wrappedValue.isEmpty && attachments.wrappedValue.isEmpty || attachmentLoading)
+            ForEach((model.stashes[thread.id] ?? []).reversed()) { stash in
+                Button {
+                    model.restoreStash(stash.id, in: thread.id)
+                } label: {
+                    Text(stash.text.isEmpty ? (stash.attachments.first?.name ?? "Draft") : stash.text)
+                        .lineLimit(1)
+                }
+                .disabled(!draft.wrappedValue.isEmpty || !attachments.wrappedValue.isEmpty || attachmentLoading)
+            }
+        } label: {
+            Image(systemName: "tray")
+        }
+        .accessibilityLabel("Draft stash")
+        .help("Stash draft or restore a saved draft")
     }
 
     private var attachButton: some View {
@@ -1508,7 +1536,8 @@ public struct ChatView: View {
                 onSend: sendFromKey,
                 onPaste: onPaste,
                 onPickerKey: onPickerKey,
-                onQuestionOption: questionOption
+                onQuestionOption: questionOption,
+                onPromptHistory: { model.recallPrompt(in: thread.id, older: $0) }
             )
         }
 
