@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { CAPABILITIES } from "../capabilities.js";
 import { createInboundDispatcher } from "../dispatch.js";
+import { createAttachmentSaver } from "../media.js";
 import { createRuns } from "../runs.js";
 import { connectYorozu } from "../socket.js";
 
@@ -29,6 +31,7 @@ function fakeHost(path) {
     /** Run-boundary and hello frames only, as `type:messageId:status`. */
     boundaries: () => frames.filter((f) => f.type !== "ack").map((f) => [f.type, f.messageId, f.status].filter(Boolean).join(":")),
     write: (frame) => client.write(`${JSON.stringify(frame)}\n`),
+    writeRaw: (text) => client.write(text),
     drop: () => client?.destroy(),
     close: () => new Promise((done) => { client?.destroy(); server.close(() => done()); }),
   };
@@ -43,17 +46,28 @@ const until = async (check) => {
  * Wires socket + runs + dispatcher like channel.js, over a fake OpenClaw SDK.
  * `turn(plan, { message, delivered })` plays the OpenClaw run; the default replies once.
  */
-async function setup({ turn, route } = {}) {
+async function setup({ turn, route, failSave } = {}) {
   const path = join(mkdtempSync(join(tmpdir(), "yorozu-runs-")), "channel.sock");
   const host = fakeHost(path);
   const routed = [];
+  const mediaDir = mkdtempSync(join(tmpdir(), "yorozu-media-"));
+  const contexts = [];
   const sdk = {
+    attachments: createAttachmentSaver({
+      saveMedia: async (buffer, contentType, subdir, maxBytes, name) => {
+        if (failSave?.(name)) throw new Error("disk full");
+        const path = join(mediaDir, `${readdirSync(mediaDir).length}-${name}`);
+        writeFileSync(path, buffer);
+        return { path, contentType };
+      },
+      toMediaFacts: (media) => media,
+    }),
     resolveRoute: ({ peer }) => {
       routed.push(peer.id);
       if (route) return route(peer);
       return { route: { agentId: "ops", sessionKey: `agent:ops:yorozu:direct:${peer.id}` }, buildEnvelope: ({ body }) => body };
     },
-    buildContext: (ctx) => ctx,
+    buildContext: (ctx) => (contexts.push(ctx), ctx),
     createReplyPipeline: () => ({ onModelSelected() {} }),
     dispatchTurn: async (plan) => {
       const message = { id: plan.ctxPayload.messageId, threadId: plan.ctxPayload.conversation.id };
@@ -68,7 +82,7 @@ async function setup({ turn, route } = {}) {
   const link = connectYorozu({
     path,
     retryMs: 20,
-    capabilities: ["run-boundary-v1"],
+    capabilities: CAPABILITIES,
     onOpen: () => runs.replay(),
     onAbort: (id) => runs.abort(id),
     onInbound: (message) =>
@@ -76,15 +90,15 @@ async function setup({ turn, route } = {}) {
         dispatch({ cfg: {}, accountId: "default", message, deliver: async (p) => void delivered.push([message.id, p.text]) }, signal, begin)),
   });
   await until(() => link.connected);
-  return { host, link, delivered, routed, close: async () => { link.close(); await host.close(); } };
+  return { host, link, delivered, routed, contexts, mediaDir, close: async () => { link.close(); await host.close(); } };
 }
 
 const inbound = (id, threadId = "t1") => ({ type: "inbound", message: { id, threadId, ts: 1, text: "hi" } });
 
-test("hello is the first frame and announces only run-boundary-v1", async () => {
+test("hello is the first frame and announces run-boundary-v1 and media-v1", async () => {
   const { host, close } = await setup();
   await until(() => host.frames.length >= 1);
-  assert.deepEqual(host.frames[0], { type: "hello", capabilities: ["run-boundary-v1"] });
+  assert.deepEqual(host.frames[0], { type: "hello", capabilities: ["run-boundary-v1", "media-v1"] });
   await close();
 });
 
@@ -194,7 +208,7 @@ test("failures report failed; a refusal before the run starts sends no boundary 
   const refused = await setup({ route: () => { throw new Error("no binding"); } });
   refused.host.write(inbound("nobind"));
   await new Promise((r) => setTimeout(r, 50));
-  assert.deepEqual(refused.host.frames, [{ type: "hello", capabilities: ["run-boundary-v1"] }]);
+  assert.deepEqual(refused.host.frames, [{ type: "hello", capabilities: CAPABILITIES }]);
   await refused.close();
 });
 
@@ -218,5 +232,66 @@ test("reconnect re-announces an unfinished run after hello; a run that ended off
   await until(() => link.connected);
   await until(() => host.boundaries().length === 7);
   assert.deepEqual(host.boundaries().slice(4), ["hello", "run_started:long", "run_finished:long:completed"]);
+  await close();
+});
+
+const b64 = (text) => Buffer.from(text).toString("base64");
+const photo = (name, text) => ({ name, mime: "image/jpeg", data: b64(text) });
+const withFiles = (id, text, attachments) => ({ type: "inbound", message: { id, threadId: "t1", ts: 1, text, attachments } });
+
+test("attachments reach OpenClaw as ordered media facts, with an empty body when there is no text", async () => {
+  const { host, contexts, mediaDir, close } = await setup();
+  host.write(withFiles("m1", "", [photo("a.jpg", "first"), photo("b.jpg", "second")]));
+  host.write(withFiles("m2", "what is this", [photo("c.jpg", "third")]));
+  await until(() => host.frames.filter((f) => f.type === "ack").length === 2);
+  const [only, captioned] = contexts;
+  assert.equal(only.message.bodyForAgent, "");
+  assert.equal(only.message.rawBody, "");
+  assert.deepEqual(only.media.map((m) => [m.fileName, m.contentType, readFileSync(m.path, "utf8")]),
+    [["a.jpg", "image/jpeg", "first"], ["b.jpg", "image/jpeg", "second"]]);
+  assert.equal(captioned.message.bodyForAgent, "what is this");
+  assert.deepEqual(captioned.media.map((m) => readFileSync(m.path, "utf8")), ["third"]);
+  assert.equal(readdirSync(mediaDir).length, 3);
+  for (const ctx of contexts) for (const legacy of ["MediaPath", "MediaPaths", "MediaType"]) assert.ok(!(legacy in ctx));
+  await close();
+});
+
+test("a message without attachments carries no media", async () => {
+  const { host, contexts, close } = await setup();
+  host.write(inbound("plain"));
+  await until(() => host.frames.some((f) => f.type === "ack"));
+  assert.ok(!("media" in contexts[0]));
+  await close();
+});
+
+test("a failed save leaves the message unacked; the resend saves each file once and dispatches once", async () => {
+  let failing = (name) => name === "b.jpg";
+  const { host, contexts, mediaDir, close } = await setup({ failSave: (name) => failing(name) });
+  const message = withFiles("m1", "", [photo("a.jpg", "one"), photo("b.jpg", "two")]);
+  host.write(message);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepEqual(host.frames.filter((f) => f.type !== "hello"), []);
+  assert.equal(contexts.length, 0);
+  failing = () => false;
+  host.write(message); // the host resends what it has no ack for
+  await until(() => host.frames.some((f) => f.type === "ack" && f.id === "m1"));
+  assert.equal(readdirSync(mediaDir).length, 2);
+  host.write(message); // and again after the ack was lost
+  await until(() => host.frames.filter((f) => f.type === "ack").length === 2);
+  assert.equal(readdirSync(mediaDir).length, 2);
+  assert.equal(contexts.length, 1);
+  await close();
+});
+
+test("an attachment split across many socket reads is reassembled", async () => {
+  const { host, contexts, close } = await setup();
+  const big = "x".repeat(5 * 1024 * 1024);
+  const line = `${JSON.stringify(withFiles("big", "", [photo("big.jpg", big)]))}\n`;
+  for (let i = 0; i < line.length; i += 64 * 1024) {
+    host.writeRaw(line.slice(i, i + 64 * 1024));
+    await new Promise((r) => setImmediate(r));
+  }
+  await until(() => host.frames.some((f) => f.type === "ack" && f.id === "big"));
+  assert.equal(readFileSync(contexts[0].media[0].path, "utf8"), big);
   await close();
 });
