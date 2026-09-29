@@ -185,7 +185,9 @@ public final class ChatModel {
 
     func rows(in threadId: String, queued queue: [YorozuEvent]? = nil) -> [ChatRow] {
         let queue = queue ?? queuedMessages(in: threadId)
+        let summary = synced.first { $0.id == threadId }
         return timeline(threadId).rows(generating: generating.contains(threadId),
+            activeEventId: summary?.turnState == nil ? nil : summary?.activeEventId,
             excluding: withdrawnMessageIds(in: threadId).union(queue.map(\.id))) + queue.map(ChatRow.message)
     }
 

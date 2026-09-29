@@ -4,18 +4,18 @@ import Testing
 @testable import YorozuShared
 
 /// One event in the thread, terse enough that a whole delegation reads as a few lines.
-/// `ts` is left at zero throughout: the grouping goes by arrival order, which is the order of
-/// the array, and pinning every timestamp to 0 keeps a test from implying otherwise.
+/// Grouping goes by arrival order; timestamps only determine the elapsed-time labels.
 private func event(
     _ payload: YorozuEvent.Payload,
     id: String,
     agent: String = "main",
-    parent: String? = nil
+    parent: String? = nil,
+    at: Int = 0
 ) -> YorozuEvent {
     YorozuEvent(
         id: id,
         threadId: "home",
-        ts: 0,
+        ts: at,
         agentId: agent,
         parentAgentId: parent,
         payload: payload
@@ -445,7 +445,7 @@ private func toolResult(_ id: String, ok: Bool = true, output: String = "", at t
     #expect(work.entries.map(\.id) == ["tools-c1", "t1", "tools-c2"])
     #expect(work.steps == 2)
     #expect(work.failed == 1)
-    #expect(work.duration == .milliseconds(2_500))
+    #expect(work.duration == .milliseconds(3_500))
     // The reply ended the turn, so the work is settled even if the caller says the thread
     // is still generating: nothing after a reply is live.
     #expect(!work.running)
@@ -564,4 +564,124 @@ private func toolResult(_ id: String, ok: Bool = true, output: String = "", at t
         events: events
     )
     #expect(markdown.contains("**Rule suggested** — purchase at Kurasu"))
+}
+
+
+@Test func reasoningOpensWhileStreamingAndSettlesAtTheNextActivity() throws {
+    let prompt = event(ask("inspect"), id: "ask", at: 1_000)
+    let thought = event(.thought(ThoughtData(text: "Checking the code")), id: "thought", at: 2_000)
+    let live = chatRows(from: [prompt, thought], generating: true, activeEventId: "ask")
+    guard case .work(let work) = live[1], case .thought(let reasoning) = work.entries[0] else {
+        Issue.record("expected reasoning in the work row")
+        return
+    }
+    #expect(reasoning.running)
+    #expect(reasoning.label == "Thinking…")
+    #expect(reasoning.text == "Checking the code")
+    #expect(work.label(at: Date(timeIntervalSince1970: 10)) == "Working for 9s")
+    #expect(work.label(at: Date(timeIntervalSince1970: 11)) == "Working for 10s")
+
+    let rows = chatRows(from: [prompt, thought, toolCall("read", "Read", at: 7_000)], generating: true, activeEventId: "ask")
+    guard case .work(let next) = rows[1], case .thought(let settled) = next.entries[0] else {
+        Issue.record("expected settled reasoning")
+        return
+    }
+    #expect(next.running)
+    #expect(!settled.running)
+    #expect(settled.label == "Thought for 5 s")
+    #expect(settled.id == reasoning.id)
+}
+
+@Test func finishedWorkIncludesTheReplyTimeAndStaysLiveUntilTheHostSettles() throws {
+    let events = [
+        event(ask("inspect"), id: "ask", at: 1_000),
+        event(.thought(ThoughtData(text: "Checking")), id: "thought", at: 2_000),
+        event(reply("Done", done: true), id: "reply", at: 193_000),
+    ]
+    guard case .work(let live) = chatRows(from: events, generating: true, activeEventId: "ask")[1],
+          case .work(let done) = chatRows(from: events)[1],
+          case .thought(let thought) = done.entries[0] else {
+        Issue.record("expected work before the reply")
+        return
+    }
+    #expect(live.running)
+    #expect(live.label(at: Date(timeIntervalSince1970: 194)) == "Working for 3m 13s")
+    #expect(!done.running)
+    #expect(done.label() == "Worked for 3m 12s")
+    #expect(!thought.running)
+    #expect(thought.label == "Thought for 191 s")
+    #expect(chatRows(from: events).map(\.id) == ["ask", "work-thought", "reply"])
+}
+
+@Test(arguments: [StopStatusData.Status.stopped, .completed, .requested, .withdrawn, .unknown, .unconfirmed])
+func turnFoldUsesTheTargetedStopOutcome(_ status: StopStatusData.Status) throws {
+    let events = [
+        event(ask("inspect"), id: "ask", at: 1_000),
+        event(.thought(ThoughtData(text: "Checking")), id: "thought", at: 2_000),
+        event(reply("Partial", done: true), id: "reply", at: 41_000),
+        event(ask("next"), id: "next", at: 42_000),
+        toolCall("read", "Read", at: 43_000),
+        // A delayed status belongs to the old turn, never the one now running.
+        event(.stopStatus(StopStatusData(targetEventId: "ask", requestId: "stop", status: status)), id: "status", at: 200_000),
+    ]
+    let rows = chatRows(from: events, generating: true, activeEventId: "next")
+    let works = rows.compactMap { row -> TurnWork? in
+        if case .work(let work) = row { return work }
+        return nil
+    }
+    #expect(works.count == 2)
+    let first = try #require(works.first)
+    let last = try #require(works.last)
+    let expected = status == .stopped ? "You stopped after 40s" :
+        status == .unconfirmed ? "Stop unconfirmed after 40s" : "Worked for 40s"
+    #expect(first.label() == expected)
+    #expect(!first.running)
+    #expect(last.running)
+    #expect(last.stopStatus == nil)
+    #expect(last.label(at: Date(timeIntervalSince1970: 45)) == "Working for 3s")
+}
+
+@Test func stoppingReasoningWithoutAReplyFreezesItsDuration() throws {
+    let events = [
+        event(ask("inspect"), id: "ask", at: 1_000),
+        event(.thought(ThoughtData(text: "Checking")), id: "thought", at: 2_000),
+        event(.stopStatus(StopStatusData(targetEventId: "ask", requestId: "stop", status: .stopped)), id: "status", at: 41_000),
+    ]
+    guard case .work(let stopped) = chatRows(from: events, generating: true, activeEventId: "ask")[1],
+          case .thought(let thought) = stopped.entries[0] else {
+        Issue.record("expected stopped reasoning")
+        return
+    }
+    #expect(!stopped.running)
+    #expect(stopped.label(at: Date(timeIntervalSince1970: 500)) == "You stopped after 40s")
+    #expect(!thought.running)
+    #expect(thought.label == "Thought for 39 s")
+}
+
+@Test func anAdmittedTurnHasATimerBeforeAnyAgentOutput() throws {
+    let prompt = event(ask("inspect"), id: "ask", at: 1_000)
+    guard case .work(let work) = chatRows(from: [prompt], generating: true, activeEventId: "ask").last else {
+        Issue.record("expected a live work timer")
+        return
+    }
+    #expect(work.running)
+    #expect(work.label(at: Date(timeIntervalSince1970: 4)) == "Working for 3s")
+    #expect(work.label(at: Date(timeIntervalSince1970: 0)) == "Working for 0s")
+    #expect(chatRows(from: [prompt]).map(\.id) == ["ask"])
+}
+
+@Test func stoppingBeforeAnyActivityStillLeavesAStoppedFold() {
+    let events = [
+        event(ask("inspect"), id: "ask", at: 1_000),
+        event(reply("", done: true), id: "reply", at: 41_000),
+        event(.stopStatus(StopStatusData(targetEventId: "ask", requestId: "stop", status: .stopped)), id: "status", at: 50_000),
+    ]
+    let rows = chatRows(from: events)
+    #expect(rows.map(\.id) == ["ask", "work-ask", "reply"])
+    guard case .work(let work) = rows[1] else {
+        Issue.record("expected a stopped fold even with no trace")
+        return
+    }
+    #expect(work.label() == "You stopped after 40s")
+    #expect(!work.running)
 }

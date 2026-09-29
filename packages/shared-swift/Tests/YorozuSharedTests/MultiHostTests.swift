@@ -278,6 +278,21 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
     let secondAfter = await multiHostSent(secondTransport, atLeast: secondBefore.count + 1)
     #expect(secondAfter.last?.payload.kind == .threadRead)
     #expect(secondAfter.last?.threadId == thread.id)
+
+    let firstBeforeUnread = await firstTransport.sent
+    let secondRef = HostThreadID(hostID: second.id, threadID: thread.id)
+    let secondOwner = try #require(hosts.model(for: secondRef))
+    secondOwner.markUnread(try #require(hosts.thread(for: secondRef)).thread)
+    #expect(second.model.threads.first?.isUnread == true)
+    #expect(first.model.threads.first?.isUnread == false)
+    #expect(hosts.unreadCount == 1)
+    let unread = await multiHostSent(secondTransport, atLeast: secondAfter.count + 1)
+    #expect(unread.last?.threadId == thread.id)
+    #expect(unread.last?.payload == .threadRead(ThreadReadData(at: 1, reset: true)))
+    #expect(await firstTransport.sent == firstBeforeUnread)
+
+    secondOwner.markRead(thread.id)
+    #expect(hosts.unreadCount == 0)
     #expect(hosts.model(for: HostThreadID(hostID: "missing", threadID: "same")) == nil)
 }
 

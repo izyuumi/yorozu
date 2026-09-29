@@ -2834,6 +2834,12 @@ test("two phones pair at once and see the same threads, events and deltas", asyn
     title: "Food",
     lastReadAt: 5_000_000_000_000,
   });
+
+  // Mark as unread explicitly resets the mark, including on the other device.
+  first.send(groceries, { kind: "thread_read", data: { at: 1, reset: true } });
+  const unread = await nextGroceries();
+  expect(unread?.lastReadAt).toBe(1);
+  expect(unread?.lastAgentAt).toBeGreaterThan(1);
 });
 
 test("a burst of durable events reaches both phones without exhausting the relay", async () => {

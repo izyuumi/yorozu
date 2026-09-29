@@ -152,6 +152,17 @@ public struct ChatView: View {
 
     private var rows: [ChatRow] { model.rows(in: thread.id) }
 
+    /// Pending decisions take precedence over progress, on both timeline implementations.
+    private var activity: ChatActivity? {
+        chatActivity(
+            in: rows,
+            generating: generating,
+            streamingId: streamingId,
+            answeredApprovals: model.answered,
+            answeredQuestions: model.answeredQuestions
+        )
+    }
+
     private var generating: Bool { model.generating.contains(thread.id) }
     /// A thread just started has nothing to read, so it opens ready to be typed into.
     private var startsFocused: Bool { model.startedThread == thread.id && events.isEmpty }
