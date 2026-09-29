@@ -8,6 +8,46 @@ final class ShowcaseFlowTests: XCTestCase {
         continueAfterFailure = false
     }
 
+    /// User long press copies the entire component; assistant long press keeps native range selection.
+    @MainActor
+    func testUserLongPressCopiesWholeMessageAndAssistantKeepsTextSelection() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-yorozuShowcase", "chat"]
+        app.launch()
+        let text = "Perfect. Remind me before the next one."
+        let user = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", text)).firstMatch
+        XCTAssertTrue(user.waitForExistence(timeout: 30))
+        let actions = XCTAttachment(screenshot: app.screenshot())
+        actions.name = "Icon-only message actions"
+        actions.lifetime = .keepAlways
+        add(actions)
+        user.press(forDuration: 1)
+        let copy = app.descendants(matching: .any)["Copy"].firstMatch
+        XCTAssertTrue(copy.waitForExistence(timeout: 5))
+        copy.tap()
+        let composer = app.textViews["Message"]
+        composer.tap()
+        composer.press(forDuration: 1)
+        let paste = app.descendants(matching: .any)["Paste"].firstMatch
+        XCTAssertTrue(paste.waitForExistence(timeout: 5))
+        paste.tap()
+        let pasted = expectation(for: NSPredicate(format: "value == %@", text), evaluatedWith: composer)
+        wait(for: [pasted], timeout: 10)
+        app.swipeDown()
+        let assistant = app.textViews.matching(NSPredicate(format: "label BEGINSWITH 'Yes — the'")).firstMatch
+        let timeline = app.collectionViews.element(boundBy: app.collectionViews.count - 1)
+        for _ in 0..<4 where !assistant.isHittable { timeline.swipeDown() }
+        XCTAssertTrue(assistant.isHittable)
+        assistant.press(forDuration: 1)
+        XCTAssertTrue(app.descendants(matching: .any)["Look Up"].firstMatch.waitForExistence(timeout: 5),
+                      "Assistant lost native word selection")
+        XCTAssertFalse(app.buttons["Remove from this device"].exists, "Assistant opened whole-message menu")
+        let selection = XCTAttachment(screenshot: app.screenshot())
+        selection.name = "Assistant native word selection"
+        selection.lifetime = .keepAlways
+        add(selection)
+    }
+
     @MainActor
     func testOpenClawDraftPickerShowsAvailabilityAndKeepsSelectedChoice() {
         let app = XCUIApplication()

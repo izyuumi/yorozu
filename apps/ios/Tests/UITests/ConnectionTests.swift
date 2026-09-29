@@ -129,7 +129,7 @@ final class ConnectionTests: XCTestCase {
             send(latest)
             XCTAssertTrue(app.textViews["echo: \(latest)"].waitForExistence(timeout: 30))
         }
-        let match = app.textViews["search marker 74c9"]
+        let match = app.staticTexts["search marker 74c9"]
         XCTAssertFalse(match.exists, "Search fixture must put the older match outside the visible timeline")
         app.navigationBars.buttons["Threads"].tap()
 
@@ -231,7 +231,7 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(matches.firstMatch.frame.minY, anchor, accuracy: 2,
                        "Host results moved the visible search row")
         matches.firstMatch.tap()
-        XCTAssertTrue(app.textViews[marker].waitForExistence(timeout: 10),
+        XCTAssertTrue(app.staticTexts[marker].waitForExistence(timeout: 10),
                       "Search result did not open its matching message")
         let close = app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch
         close.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
@@ -314,7 +314,7 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["All host histories searched"].waitForExistence(timeout: 70))
         XCTAssertTrue(result.waitForExistence(timeout: 10), "Host-only match was not added to search results")
         result.tap()
-        XCTAssertTrue(app.textViews["host-only marker 6e72"].waitForExistence(timeout: 30),
+        XCTAssertTrue(app.staticTexts["host-only marker 6e72"].waitForExistence(timeout: 30),
                       "Selecting a host-only result did not load its matching message")
     }
 
@@ -387,7 +387,7 @@ final class ConnectionTests: XCTestCase {
                       "The second reply answered the preceding turn")
         // UIKit exposes only visible transcript cells at large Dynamic Type sizes.
         let transcript = app.collectionViews.firstMatch
-        for _ in 0..<4 where !app.textViews["dead link one"].exists { transcript.swipeDown() }
+        for _ in 0..<4 where !app.staticTexts["dead link one"].exists { transcript.swipeDown() }
         XCTAssertEqual(bubbles("dead link one"), 1)
         var sawSecondMessage = false
         var sawFirstReply = false
@@ -432,7 +432,7 @@ final class ConnectionTests: XCTestCase {
         // while typing can interrupt pairing first, leaving an honestly queued message.
         try await rig.post("drop-host-after-phone-frame")
         app.buttons["Send"].tap()
-        XCTAssertTrue(app.textViews["lost receipt"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["lost receipt"].waitForExistence(timeout: 10))
         let confirming = app.staticTexts["Sending…"]
         XCTAssertTrue(confirming.waitForExistence(timeout: 10))
         XCTAssertFalse(confirming.waitForNonExistence(timeout: 5), "Delivery claimed without a receipt")
@@ -554,7 +554,7 @@ final class ConnectionTests: XCTestCase {
     /// carries it as a value, so only the labelled one is counted.
     @MainActor
     private func bubbles(_ text: String) -> Int {
-        app.textViews.matching(NSPredicate(format: "label == %@", text)).count
+        app.staticTexts.matching(NSPredicate(format: "label == %@", text)).count
     }
 
     @MainActor
@@ -567,7 +567,7 @@ final class ConnectionTests: XCTestCase {
         composer.tap()
         composer.typeText(text)
         app.buttons["Send"].tap()
-        XCTAssertTrue(app.textViews[text].waitForExistence(timeout: 10), "\(text) not in the chat")
+        XCTAssertTrue(app.staticTexts[text].waitForExistence(timeout: 10), "\(text) not in the chat")
     }
 }
 
