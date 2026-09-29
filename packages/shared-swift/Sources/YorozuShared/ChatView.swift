@@ -98,6 +98,8 @@ public struct ChatView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var search = ""
+    @State private var editingApprovalRule: ApprovalRule?
+    @State private var editingApprovalId = ""
     /// Which hit the arrows are on. Reset whenever the term changes.
     @State private var hit = 0
     #if os(iOS)
@@ -271,6 +273,7 @@ public struct ChatView: View {
             // Over the transcript rather than above the composer: opening it must not move
             // the messages, and they stay readable around it.
             .overlay(alignment: .bottom) { skillPicker }
+            composerCards
             composer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -928,7 +931,7 @@ public struct ChatView: View {
                 .notificationHighlight(highlightedNotificationRow == event.id)
             }
         case .approval(let event):
-            if case .approvalCard(let card) = event.payload {
+            if case .approvalCard(let card) = event.payload, !pendingComposerCards.contains(event) {
                 ApprovalCardView(
                     card: card,
                     agentLabel: card.nativeAgent.map(model.agentLabel),
@@ -953,7 +956,7 @@ public struct ChatView: View {
                 .id(event.id)
             }
         case .question(let event):
-            if case .questionCard(let card) = event.payload {
+            if case .questionCard(let card) = event.payload, !pendingComposerCards.contains(event) {
                 QuestionCardView(
                     card: card,
                     agentLabel: card.nativeAgent.map(model.agentLabel),
@@ -1057,6 +1060,116 @@ public struct ChatView: View {
         }
     }
 
+    private var pendingComposerCards: [YorozuEvent] { model.pendingComposerCards(in: thread.id) }
+    private var hasPendingApproval: Bool {
+        guard let event = pendingComposerCards.first else { return false }
+        if case .approvalCard = event.payload { return true }
+        return false
+    }
+    private var hasPendingQuestion: Bool {
+        guard let event = pendingComposerCards.first else { return false }
+        if case .questionCard = event.payload { return true }
+        return false
+    }
+    private var composerPlaceholder: String {
+        model.composerPlaceholder(in: thread.id, default: presentation.composerPlaceholder)
+    }
+
+    @ViewBuilder private var composerCards: some View {
+        let cards = pendingComposerCards
+        if let event = cards.first {
+            VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
+                HStack {
+                    if case .approvalCard = event.payload {
+                        Label("Approval needed", systemImage: "hand.raised")
+                    } else {
+                        Label("Question", systemImage: "questionmark.bubble")
+                    }
+                    Spacer()
+                    if cards.count > 1 { Text("1/\(cards.count)").foregroundStyle(.secondary) }
+                }
+                .font(.scaled(.subheadline).weight(.semibold))
+                switch event.payload {
+                case .approvalCard(let card):
+                    Text(card.actionClass.replacingOccurrences(of: "-", with: " ").capitalized)
+                        .font(.scaled(.headline))
+                    if !card.target.isEmpty { Text(card.target).font(.scaled(.callout)).textSelection(.enabled) }
+                    if let amount = card.amount {
+                        Text(ApprovalAmountFormatter.string(amount: amount, currency: card.currency))
+                            .font(.scaled(.headline).monospacedDigit())
+                    }
+                    ForEach(card.scope?.rows ?? [], id: \.label) { row in
+                        LabeledContent(row.label, value: row.value)
+                    }
+                    if let summary = card.scope?.contentSummary {
+                        Text(summary).font(.scaled(.callout)).textSelection(.enabled)
+                    }
+                    if let items = card.items, !items.isEmpty {
+                        Text(items.map(\.label).joined(separator: ", ")).font(.scaled(.callout))
+                    }
+                    if let consequence = card.scope?.consequence {
+                        Text(consequence).font(.scaled(.callout)).foregroundStyle(.secondary)
+                    }
+                    if card.mustConfirm == true {
+                        Text("Fresh approval required for this action")
+                            .font(.scaled(.caption)).foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Button("Approve") { model.answer(card.actionId, in: thread.id, .yes) }
+                            .buttonStyle(.borderedProminent)
+                        Button("Decline") { model.answer(card.actionId, in: thread.id, .no) }
+                            .buttonStyle(.bordered)
+                        if card.nativeAgent == nil {
+                            Menu("More") {
+                                Button("Allow for this task") { model.answer(card.actionId, in: thread.id, .task) }
+                                Button("Discuss first") { model.answer(card.actionId, in: thread.id, .discuss) }
+                                if card.mustConfirm != true, let rule = card.suggestedRule {
+                                    Button("Always allow…") {
+                                        editingApprovalId = card.actionId
+                                        editingApprovalRule = rule
+                                    }
+                                }
+                            }
+                        }
+                    }
+                case .questionCard(let card):
+                    Text(card.question).font(.scaled(.headline))
+                    ForEach(Array(card.options.enumerated()), id: \.offset) { index, option in
+                        Button {
+                            model.answerQuestion(card.questionId, in: thread.id, option)
+                        } label: {
+                            Text(index < 9 ? "\(index + 1). \(option)" : option)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                default: EmptyView()
+                }
+            }
+            .padding(LayoutMetrics.cardPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(YorozuPalette.paper, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius))
+            .padding(.horizontal, 12)
+            .sheet(item: $editingApprovalRule) { rule in
+                RuleEditorView(rule: rule, title: "Always allow") { edited in
+                    model.answer(editingApprovalId, in: thread.id, .always, rule: edited)
+                    editingApprovalRule = nil
+                } onCancel: {
+                    editingApprovalRule = nil
+                }
+            }
+        }
+    }
+
+    private func questionOption(_ number: Int) -> Bool {
+        guard draft.wrappedValue.isEmpty,
+              let event = pendingComposerCards.first,
+              case .questionCard(let card) = event.payload,
+              (1...9).contains(number), card.options.indices.contains(number - 1) else { return false }
+        model.answerQuestionOption(number, in: thread.id)
+        return true
+    }
+
     private var composer: some View {
         // One surface, like Messages: the attach button, the field, the staged file and the
         // send control all live inside the same rounded container, so the eye reads one thing
@@ -1099,8 +1212,9 @@ public struct ChatView: View {
             #if os(iOS)
                 ComposerTextView(
                     text: draft,
-                    placeholder: presentation.composerPlaceholder,
+                    placeholder: composerPlaceholder,
                     onSubmit: send,
+                    onQuestionOption: questionOption,
                     onPasteImage: generating ? nil : { pasteImages() },
                     focusThread: startsFocused ? thread.id : nil
                 )
@@ -1123,7 +1237,7 @@ public struct ChatView: View {
             #else
                 // Give writing its own row: model names and a running turn's Stop control
                 // must never reduce the space available for the message itself.
-                TextField(presentation.composerPlaceholder, text: draft, axis: .vertical)
+                TextField(composerPlaceholder, text: draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.scaled(.body))
                     .lineLimit(1...6)
@@ -1134,7 +1248,7 @@ public struct ChatView: View {
                     .onSubmit { draft.wrappedValue += "\n" }
                     .focused($composerFocused)
                     .background(composerKeyMonitor)
-                    .accessibilityLabel(presentation.composerPlaceholder)
+                    .accessibilityLabel(composerPlaceholder)
 
                 HStack(alignment: .center, spacing: 4) {
                     attachButton
@@ -1357,9 +1471,9 @@ public struct ChatView: View {
     }
 
     private var canSend: Bool {
-        !attachmentLoading && (
+        !attachmentLoading && !hasPendingApproval && (
             !draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || !attachments.wrappedValue.isEmpty
+                || (!hasPendingQuestion && !attachments.wrappedValue.isEmpty)
         )
     }
 
@@ -1374,7 +1488,8 @@ public struct ChatView: View {
                 sendModifiers: sendWithCommandReturn ? .command : [],
                 onSend: sendFromKey,
                 onPaste: onPaste,
-                onPickerKey: onPickerKey
+                onPickerKey: onPickerKey,
+                onQuestionOption: questionOption
             )
         }
 
