@@ -2246,18 +2246,36 @@ func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(
 @Test func approvalSettingsAreRequestedAndUpdatedAcrossTheWire() async throws {
     let transport = FakeTransport()
     let model = await connected(transport)
+    let otherTransport = FakeTransport()
+    let otherModel = await connected(otherTransport)
     let before = await sent(by: transport, atLeast: pairingSends).count
+    let otherBefore = await sent(by: otherTransport, atLeast: pairingSends).count
+    let until = 1_800_000_000_000
 
     model.requestApprovalSettings()
     var events = await sent(by: transport, atLeast: before + 1)
     #expect(events.last?.payload == .approvalSettings(ApprovalSettingsData()))
-    await transport.yield(.event(event("s1", .approvalSettings(ApprovalSettingsData(yolo: true)))))
-    #expect(await eventually { model.yoloMode })
+    await transport.yield(.event(event("s1", .approvalSettings(ApprovalSettingsData(yolo: true, yoloUntil: until)))))
+    #expect(await eventually { model.yoloMode && model.yoloUntil == until })
+    #expect(!otherModel.yoloMode)
 
     model.setYoloMode(false)
     events = await sent(by: transport, atLeast: before + 2)
     #expect(events.last?.payload == .approvalSettings(ApprovalSettingsData(yolo: false)))
     #expect(model.yoloMode == false)
+    await transport.yield(.event(event("s2", .approvalSettings(ApprovalSettingsData(yolo: false)))))
+    #expect(await eventually { model.yoloUntil == nil })
+
+    // Returning to Settings requests the host's current value, including changes elsewhere.
+    model.requestApprovalSettings()
+    events = await sent(by: transport, atLeast: before + 3)
+    #expect(events.last?.payload == .approvalSettings(ApprovalSettingsData()))
+    await transport.yield(.event(event("s3", .approvalSettings(ApprovalSettingsData(yolo: true, yoloUntil: until + 1000)))))
+    #expect(await eventually { model.yoloMode && model.yoloUntil == until + 1000 })
+    await transport.yield(.event(event("s4", .approvalSettings(ApprovalSettingsData(yolo: false)))))
+    #expect(await eventually { !model.yoloMode && model.yoloUntil == nil })
+    #expect(!otherModel.yoloMode && otherModel.yoloUntil == nil)
+    #expect(await otherTransport.sent.count == otherBefore)
 }
 
 @MainActor
