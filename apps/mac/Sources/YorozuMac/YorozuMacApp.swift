@@ -33,6 +33,31 @@ final class Sidecar: ObservableObject {
 
     var isPaired: Bool { state == "paired" }
 
+    /// Keep protocol state stable; localize only its presentation.
+    var displayStatus: String { Self.statusLabel(state) }
+
+    static func statusLabel(_ state: String) -> String {
+        switch state {
+        case "starting": return String(localized: "Starting…")
+        case "connecting": return String(localized: "Connecting…")
+        case "connected", "local-connected": return String(localized: "Connected")
+        case "paired": return String(localized: "Paired")
+        case "registered": return String(localized: "Waiting for a device")
+        case "disconnected", "closed": return String(localized: "Disconnected")
+        case "stopped": return String(localized: "Stopped")
+        case "openclaw": return "OpenClaw"
+        case "revoked": return String(localized: "Pairing revoked")
+        default:
+            if state.hasPrefix("restarting in "), state.hasSuffix("s"), let seconds = Int(state.dropFirst("restarting in ".count).dropLast()) {
+                return String(localized: "Restarting in \(seconds) seconds")
+            }
+            if state == "failed: no runtime found" { return String(localized: "Background service not found") }
+            if state.hasPrefix("failed: ") { return String(localized: "Service failed: \(String(state.dropFirst("failed: ".count)))") }
+            // Diagnostic details come from the runtime and stay available verbatim.
+            return String(localized: "Service status: \(state)")
+        }
+    }
+
     func start() {
         generation += 1
         stopping = false
@@ -383,10 +408,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 if explicitQuitRequested && !MacChatSession.shared.model.generating.isEmpty {
                     let alert = NSAlert()
-                    alert.messageText = "Tasks are still running"
-                    alert.informativeText = "Quitting Yorozu stops this Mac's active tasks and disconnects paired devices."
-                    alert.addButton(withTitle: "Keep Yorozu Running")
-                    alert.addButton(withTitle: "Quit Yorozu")
+                    alert.messageText = String(localized: "Tasks are still running")
+                    alert.informativeText = String(localized: "Quitting Yorozu stops this Mac's active tasks and disconnects paired devices.")
+                    alert.addButton(withTitle: String(localized: "Keep Yorozu Running"))
+                    alert.addButton(withTitle: String(localized: "Quit Yorozu"))
                     if alert.runModal() == .alertFirstButtonReturn {
                         explicitQuitRequested = false
                         return .terminateCancel
@@ -395,9 +420,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if Updates.pending.status.phase != .none && !Updates.installing && !HostWindowMode.active {
                 let alert = NSAlert()
-                alert.messageText = "Update is waiting"
-                alert.informativeText = "Yorozu will restart after this Mac’s agents finish, any postponement expires, and the 10-second countdown completes."
-                alert.addButton(withTitle: "Keep Yorozu Running")
+                alert.messageText = String(localized: "Update is waiting")
+                alert.informativeText = String(localized: "Yorozu will restart after this Mac’s agents finish, any postponement expires, and the 10-second countdown completes.")
+                alert.addButton(withTitle: String(localized: "Keep Yorozu Running"))
                 alert.runModal()
                 explicitQuitRequested = false
                 return .terminateCancel
@@ -619,10 +644,10 @@ struct YorozuMacApp: App {
             Divider()
             // Not a control: the sidecar's own word for where the relay stands, which is the
             // one thing worth knowing without opening anything.
-            Text(session.role == .host ? sidecar.state : "client").disabled(true)
+            Text(session.role == .host ? sidecar.displayStatus : String(localized: "Client")).disabled(true)
             Divider()
             Button(HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost)
-                ? "Quit Yorozu…" : "Quit Yorozu") {
+                ? String(localized: "Quit Yorozu…") : String(localized: "Quit Yorozu")) {
                 // SwiftUI owns NSApp.delegate; use the adaptor instance for this action.
                 delegate.requestQuit()
             }
@@ -635,7 +660,7 @@ struct YorozuMacApp: App {
                         HostAttentionIndicator()
                     }
                 }
-                .accessibilityLabel((session.role == .client ? session.hosts.sessions.contains { $0.model.canDeliver } : session.model.state == .paired) ? "Yorozu, connected" : "Yorozu, not connected")
+                .accessibilityLabel((session.role == .client ? session.hosts.sessions.contains { $0.model.canDeliver } : session.model.state == .paired) ? String(localized: "Yorozu, connected") : String(localized: "Yorozu, not connected"))
                 .task {
                     // The setup window's way into the chat: it is an NSWindow outside this
                     // scene graph, and this is the `openWindow` that works.

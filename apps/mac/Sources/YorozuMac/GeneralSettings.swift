@@ -24,7 +24,7 @@ struct GeneralView: View {
                 }
                 .pickerStyle(.segmented)
                 if session.role == .client {
-                    Text(session.hosts.hasMultipleHosts ? "Manage paired Macs in Hosts." : "Manage pairing in Connection.")
+                    Text(session.hosts.hasMultipleHosts ? String(localized: "Manage paired Macs in Hosts.") : String(localized: "Manage pairing in Connection."))
                         .foregroundStyle(.secondary)
                 } else if session.role == .host {
                     Toggle(isOn: $backgroundOnlyHost) {
@@ -52,10 +52,10 @@ struct GeneralView: View {
                 Text("Chat")
             } footer: {
                 VStack(alignment: .leading) {
-                    Text(sendWithCommandReturn ? "Enter starts a new line." : "Shift-Enter starts a new line.")
+                    Text(sendWithCommandReturn ? String(localized: "Enter starts a new line.") : String(localized: "Shift-Enter starts a new line."))
                     Text(sendWithCommandReturn
-                        ? "⌥ ⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now."
-                        : "⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now.")
+                        ? String(localized: "⌥ ⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now.")
+                        : String(localized: "⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now."))
                 }
                 .leadingFooter()
             }
@@ -110,9 +110,7 @@ struct GeneralView: View {
                 } footer: {
                     Group {
                         Text(
-                            "Keep Yorozu running checks every minute and opens Yorozu again if it has died; "
-                                + "quitting from the menu is still a quit. Never sleep keeps this Mac awake so "
-                                + "the agent can answer your phone while you are away."
+                            "Keep Yorozu running checks every minute and opens Yorozu again if it has died; quitting from the menu is still a quit. Never sleep keeps this Mac awake so the agent can answer your phone while you are away."
                         )
                     }
                     .leadingFooter()
@@ -211,7 +209,7 @@ struct UpdatesSettingsSection: View {
         let info = Bundle.main.infoDictionary
         let version = info?["YorozuVersionLabel"] as? String
             ?? info?["CFBundleShortVersionString"] as? String
-            ?? "Development"
+            ?? String(localized: "Development")
         guard let build = info?["YorozuVersionBuild"] as? String else { return version }
         return "\(version) (\(build))"
     }

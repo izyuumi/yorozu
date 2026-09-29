@@ -179,7 +179,7 @@ private struct ClientChatWindowView: View {
                         .id(selection)
                 } else {
                     ContentUnavailableView("No thread", systemImage: "bubble.left.and.bubble.right",
-                        description: Text(hosts.sessions.isEmpty ? "Add a host in Settings to start chatting." : "Choose a thread or start a new one."))
+                        description: Text(hosts.sessions.isEmpty ? String(localized: "Add a host in Settings to start chatting.") : String(localized: "Choose a thread or start a new one.")))
                 }
             }
             .id(selection?.hostID)
@@ -223,8 +223,8 @@ private struct ClientChatWindowView: View {
 
     private var connectionLabel: String {
         guard !hosts.hasMultipleHosts else { return hosts.connectionSummary }
-        guard let host = hosts.sessions.first else { return "Not connected" }
-        if case .updateRequired = host.model.compatibility { return "Update required" }
+        guard let host = hosts.sessions.first else { return String(localized: "Not connected") }
+        if case .updateRequired = host.model.compatibility { return String(localized: "Update required") }
         return ClientConnectionStatus(host.model, failure: session.hostFailures[host.id] ?? host.model.failure).label
     }
 
@@ -333,7 +333,7 @@ private struct LocalChatWindowView: View {
                     .id(thread.id)
                 } else {
                     ContentUnavailableView("No thread", systemImage: "bubble.left.and.bubble.right",
-                        description: Text("Choose a thread or start a new one."))
+                        description: Text(String(localized: "Choose a thread or start a new one.")))
                 }
             }
             // The canvas and update banner belong to the chat; the sidebar keeps its own material.
@@ -382,8 +382,8 @@ private struct LocalChatWindowView: View {
 
     /// A sidecar restart shorter than the grace keeps saying Connected.
     private var connectionLabel: String {
-        if model.link.state == .connected { return "Connected" }
-        return model.state == .closed ? "Offline" : "Connecting"
+        if model.link.state == .connected { return String(localized: "Connected") }
+        return model.state == .closed ? String(localized: "Offline") : String(localized: "Connecting")
     }
 }
 

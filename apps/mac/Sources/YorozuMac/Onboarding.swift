@@ -186,9 +186,11 @@ struct OnboardingView: View {
                         if devicesAskedAt.map({ session.model.deviceListRevision == $0 }) ?? true {
                             Text("Checking…")
                         } else {
-                            Text(pairedDeviceCount == 0
-                                ? "No devices paired yet"
-                                : "^[\(pairedDeviceCount) device](inflect: true) paired")
+                            if pairedDeviceCount == 0 {
+                                Text("No devices paired yet")
+                            } else {
+                                Text("^[\(pairedDeviceCount) device](inflect: true) paired")
+                            }
                         }
                         Text("Pair more any time from Settings › Devices").font(.scaled(.caption)).foregroundStyle(.secondary)
                     }
@@ -491,7 +493,7 @@ enum OnboardingWindow {
             contentRect: NSRect(x: 0, y: 0, width: 560, height: 600),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false
         )
-        panel.title = "Yorozu Setup"
+        panel.title = String(localized: "Yorozu Setup")
         panel.contentMinSize = NSSize(width: 560, height: 600)
         panel.isReleasedWhenClosed = false
         panel.center()

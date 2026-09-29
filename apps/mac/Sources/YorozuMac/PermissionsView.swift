@@ -15,7 +15,7 @@ struct PermissionBadge: View {
             Label("Asking macOS…", systemImage: "hourglass")
                 .foregroundStyle(.secondary)
         } else {
-            Label(granted ? "Granted" : "Waiting…", systemImage: granted ? "checkmark.circle.fill" : "circle.dotted")
+            Label(granted ? String(localized: "Granted") : String(localized: "Waiting…"), systemImage: granted ? "checkmark.circle.fill" : "circle.dotted")
                 .foregroundStyle(granted ? YorozuPalette.sage : Color.secondary)
         }
     }

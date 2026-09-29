@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import YorozuMac
@@ -16,4 +17,13 @@ import Testing
 ])
 func pairingAvailabilityFollowsTheSidecarState(state: String, expected: PairingAvailability) {
     #expect(PairingAvailability(sidecarState: state) == expected)
+}
+
+/// Protocol diagnostics remain copyable in any language, including states from a newer host.
+@MainActor @Test func localizedServiceStatusPreservesDiagnosticDetails() {
+    #expect(Sidecar.statusLabel("restarting in 4s") == String(localized: "Restarting in \(4) seconds"))
+    for state in ["restarting in 4x", "future-state: 接続待ち"] {
+        #expect(Sidecar.statusLabel(state).contains(state))
+    }
+    #expect(Sidecar.statusLabel("failed: ファイルを開けませんでした").contains("ファイルを開けませんでした"))
 }
