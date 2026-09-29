@@ -50,6 +50,8 @@ public struct MessageBubble: View {
     private let status: OutboxStatus?
     private let rejectionReason: String?
     private let attachmentTransferLabels: [String]?
+    private let onEditFromHere: (() -> Void)?
+    private let editFromHereEnabled: Bool
     private let onRetry: (() -> Void)?
     private let onWithdraw: (() -> Void)?
     private let onDelete: (() -> Void)?
@@ -60,6 +62,7 @@ public struct MessageBubble: View {
     @AppStorage(ReplyFont.key) private var replyFont = ReplyFont.serif
     @State private var hovering = false
     @State private var copied = false
+    @State private var confirmingEdit = false
 
     public init(
         id: String = "",
@@ -70,6 +73,8 @@ public struct MessageBubble: View {
         status: OutboxStatus? = nil,
         rejectionReason: String? = nil,
         attachmentTransferLabels: [String]? = nil,
+        onEditFromHere: (() -> Void)? = nil,
+        editFromHereEnabled: Bool = false,
         onRetry: (() -> Void)? = nil,
         onWithdraw: (() -> Void)? = nil,
         onDelete: (() -> Void)? = nil,
@@ -87,6 +92,8 @@ public struct MessageBubble: View {
         self.status = status
         self.rejectionReason = rejectionReason
         self.attachmentTransferLabels = attachmentTransferLabels
+        self.onEditFromHere = onEditFromHere
+        self.editFromHereEnabled = editFromHereEnabled
         self.onRetry = onRetry
         self.onWithdraw = onWithdraw
         self.onDelete = onDelete
@@ -144,7 +151,7 @@ public struct MessageBubble: View {
             if let status {
                 caption(status)
             }
-            if !data.text.isEmpty || onRetry != nil || onDelete != nil || timestamp != nil {
+            if !data.text.isEmpty || onEditFromHere != nil || onRetry != nil || onDelete != nil || timestamp != nil {
                 HStack(spacing: LayoutMetrics.inner) {
                     if isUser { Spacer(minLength: 0) }
                     #if os(macOS)
@@ -160,6 +167,13 @@ public struct MessageBubble: View {
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: speaking)
+        .confirmationDialog("Edit from here?", isPresented: $confirmingEdit, titleVisibility: .visible) {
+            Button("Edit from here", role: .destructive) { onEditFromHere?() }
+                .disabled(!editFromHereEnabled)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This message and everything after it will be hidden on all devices. Your prompt and attachments will return to the composer. Files will not be reverted.")
+        }
         .task(id: copied) {
             guard copied else { return }
             try? await Task.sleep(for: .seconds(2))
@@ -187,6 +201,10 @@ public struct MessageBubble: View {
                 }
             }
         }
+        if onEditFromHere != nil {
+            Button("Edit from here", systemImage: "pencil") { confirmingEdit = true }
+                .disabled(!editFromHereEnabled)
+        }
         if let onRetry {
             Button(rejectionReason?.hasPrefix("thread-create-rejected:") == true || rejectionReason == "thread-not-created"
                 ? String(localized: "Use in new chat") : String(localized: "Retry"),
@@ -211,6 +229,14 @@ public struct MessageBubble: View {
                         .contentShape(.rect)
                 }
                 .accessibilityLabel(copied ? "Copied message" : "Copy message")
+            }
+            if isUser, onEditFromHere != nil {
+                Button { confirmingEdit = true } label: {
+                    Label("Edit from here", systemImage: "pencil")
+                        .frame(minHeight: controlTarget)
+                        .contentShape(.rect)
+                }
+                .disabled(!editFromHereEnabled)
             }
             if !isUser, !streaming, let onRetry {
                 Button(action: onRetry) {
