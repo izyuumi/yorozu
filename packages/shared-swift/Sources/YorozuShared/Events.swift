@@ -1120,8 +1120,16 @@ public struct ThreadRenameData: Codable, Equatable, Sendable {
     public init(title: String) { self.title = title }
 }
 
+public enum ThreadTurnState: String, Codable, Equatable, Sendable {
+    case idle, starting, running, stopping
+    case stoppedUnconfirmed = "stopped-unconfirmed"
+}
+
 public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
+    /// Host-owned ID of the active or next admitted user operation in this thread.
     public var activeEventId: String?
+    public var turnState: ThreadTurnState?
+    public var queuedTurnCount: Int?
     public var canResume: Bool?
     public var interruptedTurnId: String?
     public var recoveryState: String?
@@ -1178,9 +1186,13 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         bypass: Bool? = nil,
         interruptedTurnId: String? = nil,
         recoveryState: String? = nil,
-        activeEventId: String? = nil
+        activeEventId: String? = nil,
+        turnState: ThreadTurnState? = nil,
+        queuedTurnCount: Int? = nil
     ) {
         self.activeEventId = activeEventId
+        self.turnState = turnState
+        self.queuedTurnCount = queuedTurnCount
         self.id = id
         self.title = title
         self.archived = archived
@@ -1222,6 +1234,8 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         interruptedTurnId = try c.decodeIfPresent(String.self, forKey: .interruptedTurnId)
         recoveryState = try c.decodeIfPresent(String.self, forKey: .recoveryState)
         activeEventId = try c.decodeIfPresent(String.self, forKey: .activeEventId)
+        turnState = try c.decodeIfPresent(ThreadTurnState.self, forKey: .turnState)
+        queuedTurnCount = try c.decodeIfPresent(Int.self, forKey: .queuedTurnCount)
         lastReadAt = try c.decodeIfPresent(Double.self, forKey: .lastReadAt)
         lastAgentAt = try c.decodeIfPresent(Double.self, forKey: .lastAgentAt)
         awaitingApproval = try c.decodeIfPresent(Bool.self, forKey: .awaitingApproval)

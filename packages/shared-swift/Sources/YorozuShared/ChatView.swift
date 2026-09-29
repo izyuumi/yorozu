@@ -475,7 +475,7 @@ public struct ChatView: View {
                     find: { searching = true },
                     exportTitle: thread.displayTitle,
                     exportMarkdown: { threadMarkdown(thread: thread, events: events) },
-                    stop: generating && model.activeEventId(in: thread.id) != nil && !model.stopPending(in: thread.id)
+                    stop: model.canStop(in: thread.id)
                         ? { model.interrupt(in: thread.id) } : nil,
                     models: model.models(for: thread),
                     model: thread.model,
@@ -1108,7 +1108,7 @@ public struct ChatView: View {
                     Spacer(minLength: 4)
                     if model.stopPending(in: thread.id) {
                         stopPendingLabel
-                    } else if generating && model.activeEventId(in: thread.id) != nil {
+                    } else if model.canStop(in: thread.id) {
                         stopButton
                     }
                     sendButton
@@ -1139,7 +1139,7 @@ public struct ChatView: View {
                     Spacer(minLength: 4)
                     if model.stopPending(in: thread.id) {
                         stopPendingLabel
-                    } else if generating && model.activeEventId(in: thread.id) != nil {
+                    } else if model.canStop(in: thread.id) {
                         stopButton
                     }
                     sendButton

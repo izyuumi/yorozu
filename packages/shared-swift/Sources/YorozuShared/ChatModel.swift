@@ -843,7 +843,7 @@ public final class ChatModel {
         }
         // A queued message has started no turn: the composer stays a composer until the message
         // is actually on its way.
-        if !queue { generating.insert(threadId) }
+        if !queue && !hostOwnsTurnState { generating.insert(threadId) }
         upsert(event)
         armOutboxRetry()
         return true
@@ -1389,6 +1389,15 @@ public final class ChatModel {
 
     public func activeEventId(in threadId: String) -> String? {
         synced.first(where: { $0.id == threadId })?.activeEventId
+    }
+
+    public func canStop(in threadId: String) -> Bool {
+        generating.contains(threadId) && activeEventId(in: threadId) != nil && !stopPending(in: threadId)
+    }
+
+    private var hostOwnsTurnState: Bool {
+        if case .compatible(_, let capabilities) = compatibility { return capabilities.contains("turn-state-v1") }
+        return false
     }
 
     public func stopPending(in threadId: String) -> Bool {
@@ -1997,6 +2006,9 @@ public final class ChatModel {
                     merged.lastReadAt = pending
                     return merged
                 }
+                if hostOwnsTurnState {
+                    generating = Set(data.threads.filter { $0.turnState.map { $0 != .idle } == true }.map(\.id))
+                }
                 listed = true
                 persist(threads: synced)
                 requestOpenHistory()
@@ -2585,7 +2597,7 @@ public final class ChatModel {
             Self.eventLogger.warning("Unreadable event kind \(kind, privacy: .public) thread \(event.threadId, privacy: .public)")
         }
         // The agent's last message ends the turn, whether it streamed or arrived whole.
-        if case .message(let data) = event.payload, data.role == .agent, data.done == true,
+        if !hostOwnsTurnState, case .message(let data) = event.payload, data.role == .agent, data.done == true,
             event.parentAgentId == nil
         {
             generating.remove(event.threadId)
