@@ -150,18 +150,7 @@ public struct ChatView: View {
 
     private var events: [YorozuEvent] { model.timeline(thread.id).events }
 
-    private var rows: [ChatRow] { model.timeline(thread.id).rows(generating: generating) }
-
-    /// Pending decisions take precedence over progress, on both timeline implementations.
-    private var activity: ChatActivity? {
-        chatActivity(
-            in: rows,
-            generating: generating,
-            streamingId: streamingId,
-            answeredApprovals: model.answered,
-            answeredQuestions: model.answeredQuestions
-        )
-    }
+    private var rows: [ChatRow] { model.rows(in: thread.id) }
 
     private var generating: Bool { model.generating.contains(thread.id) }
     /// A thread just started has nothing to read, so it opens ready to be typed into.
@@ -200,6 +189,9 @@ public struct ChatView: View {
     }
 
     public var body: some View {
+        let queue = model.queuedMessages(in: thread.id)
+        let queuedStatuses = model.queuedMessageStatuses(in: thread.id, queued: queue)
+        let rows = model.rows(in: thread.id, queued: queue)
         VStack(spacing: 0) {
             if showsUpdateStatus {
                 UpdateStatusView(status: model.updateStatus,
@@ -243,7 +235,8 @@ public struct ChatView: View {
                 } else {
                     // Every link in a message is text the model wrote. Only the web and mail
                     // open from here; a pairing code is asked about first, the rest is dropped.
-                    messages.environment(\.openURL, linkAction)
+                    messages(rows: rows, queuedStatuses: queuedStatuses, firstQueuedId: queue.first?.id)
+                        .environment(\.openURL, linkAction)
                 }
             }
             // The Mac being away is a toast over the transcript, not a strip above it: the link
@@ -568,18 +561,23 @@ public struct ChatView: View {
         return spec
     }
 
-    @ViewBuilder private var messages: some View {
+    @ViewBuilder private func messages(rows: [ChatRow], queuedStatuses: [String: String],
+                                       firstQueuedId: String?) -> some View {
+        let activity = chatActivity(in: rows, generating: generating, streamingId: streamingId,
+            answeredApprovals: model.answered, answeredQuestions: model.answeredQuestions)
         #if os(iOS)
-            nativeMessages
+            nativeMessages(rows: rows, activity: activity, queuedStatuses: queuedStatuses)
         #else
             // The split-view detail is reused across selections. Recreate the scroll container
             // so its default bottom anchor belongs to this thread, not the previous one.
-            swiftUIMessages.id(thread.id)
+            swiftUIMessages(rows: rows, activity: activity, queuedStatuses: queuedStatuses,
+                firstQueuedId: firstQueuedId).id(thread.id)
         #endif
     }
 
     #if os(iOS)
-        private var nativeMessages: some View {
+        private func nativeMessages(rows: [ChatRow], activity: ChatActivity?,
+                                    queuedStatuses: [String: String]) -> some View {
             let notificationRequest = resumeRequest.flatMap { id -> TimelineRequest? in
                 guard id != supersededNotificationResume else { return nil }
                 // A cold notification can resolve its thread before that thread's refreshed
@@ -612,6 +610,7 @@ public struct ChatView: View {
                 presentation: TimelinePresentation(
                     search: search,
                     outbox: model.outbox,
+                    queuedStatuses: queuedStatuses,
                     answered: model.answered,
                     approvalOutcomes: model.approvalOutcomes,
                     answeredQuestions: model.answeredQuestions,
@@ -625,7 +624,7 @@ public struct ChatView: View {
                 onNotificationTarget: { highlightNotificationRow($0) },
                 content: { row in
                     AnyView(
-                        rowView(row)
+                        rowView(row, queuedStatuses: queuedStatuses)
                             .environment(\.searchHighlight, search)
                             .environment(\.openURL, linkAction)
                     )
@@ -679,7 +678,8 @@ public struct ChatView: View {
     #endif
 
     #if os(macOS)
-    private var swiftUIMessages: some View {
+    private func swiftUIMessages(rows: [ChatRow], activity: ChatActivity?,
+                                 queuedStatuses: [String: String], firstQueuedId: String?) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
@@ -687,7 +687,10 @@ public struct ChatView: View {
                     // specialist did is behind it; the main agent's own tool use is shown
                     // here, grouped, where it happened.
                     ForEach(rows) { row in
-                        rowView(row)
+                        if row.id == firstQueuedId, let activity {
+                            ChatActivityRow(activity: activity, agent: presentation.agent)
+                        }
+                        rowView(row, queuedStatuses: queuedStatuses)
                             .background {
                                 GeometryReader { geometry in
                                     Color.clear.preference(
@@ -697,7 +700,9 @@ public struct ChatView: View {
                                 }
                             }
                     }
-                    if let activity { ChatActivityRow(activity: activity, agent: presentation.agent) }
+                    if firstQueuedId == nil, let activity {
+                        ChatActivityRow(activity: activity, agent: presentation.agent)
+                    }
                     Color.clear.frame(height: 1).id(Self.bottomAnchor)
                 }
                 .coordinateSpace(name: "chat-content")
@@ -878,7 +883,7 @@ public struct ChatView: View {
     #endif
     #endif
 
-    @ViewBuilder private func rowView(_ row: ChatRow) -> some View {
+    @ViewBuilder private func rowView(_ row: ChatRow, queuedStatuses: [String: String]) -> some View {
         switch row {
         case .work(let work):
             WorkRowView(work: work).id(work.id)
@@ -893,6 +898,7 @@ public struct ChatView: View {
         case .message(let event):
             if case .message(let data) = event.payload {
                 let outboxStatus = model.outboxStatus(of: event.id)
+                let queuedStatus = queuedStatuses[event.id]
                 let messageActions = model.messageActions(for: event)
                 let rejectionReason = model.outboxRejectionReason(of: event.id)
                 let needsNewChat = rejectionReason?.hasPrefix("thread-create-rejected:") == true ||
@@ -904,6 +910,7 @@ public struct ChatView: View {
                     copyAvailable: messageActions.copy,
                     timestamp: data.role == .agent && data.done == true ? event.ts : nil,
                     status: outboxStatus,
+                    queuedStatus: queuedStatus,
                     rejectionReason: rejectionReason,
                     attachmentTransferLabels: model.attachmentTransferLabels(of: event.id),
                     onEditFromHere: data.role == .user && model.supportsRewind(in: thread.id)
@@ -1238,7 +1245,7 @@ public struct ChatView: View {
                     onSubmit: send,
                     onQuestionOption: questionOption,
                     onPromptHistory: { model.recallPrompt(in: thread.id, older: $0) },
-                    onPasteImage: generating ? nil : { pasteImages() },
+                    onPasteImage: { pasteImages() },
                     focusThread: startsFocused ? thread.id : nil
                 )
                 .padding(.horizontal, 12)
@@ -1340,7 +1347,6 @@ public struct ChatView: View {
             }
         )
         .id(thread.id)
-        .disabled(generating)
     }
 
     private func pasteImages() {
@@ -1359,7 +1365,7 @@ public struct ChatView: View {
     }
 
     private func dropFiles(_ files: [DroppedFile]) -> Bool {
-        guard !generating, !attachmentLoading else { return false }
+        guard !attachmentLoading else { return false }
         attachmentFailure = nil
         stageAttachments(
             files.map(\.pick),
@@ -1528,7 +1534,7 @@ public struct ChatView: View {
         /// Enter with the chosen modifiers sends; every other Enter reaches the field, and the
         /// field's `onSubmit` makes it the newline it was meant to be.
         private var composerKeyMonitor: some View {
-            let onPaste: (() -> Void)? = generating ? nil : { pasteImages() }
+            let onPaste: (() -> Void)? = { pasteImages() }
             let onPickerKey: ((SkillPickerKey) -> Void)? = skillChoices.isEmpty ? nil : { skillKey($0) }
             return ComposerKeyMonitor(
                 isActive: composerFocused,
@@ -1613,6 +1619,7 @@ public struct ChatView: View {
     private struct TimelinePresentation: Equatable {
         let search: String
         let outbox: [OutboxItem]
+        let queuedStatuses: [String: String]
         let answered: Set<String>
         let approvalOutcomes: [String: ApprovalStatusData.Status]
         let answeredQuestions: Set<String>
@@ -1757,7 +1764,10 @@ public struct ChatView: View {
             func update(_ collectionView: UICollectionView) {
                 rowsById = Dictionary(parent.rows.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
                 var entries = parent.rows.map { Entry.row($0.id) }
-                if let activity = parent.activity { entries.append(.activity(activity)) }
+                if let activity = parent.activity {
+                    let next = parent.rows.firstIndex { parent.presentation.queuedStatuses[$0.id] != nil } ?? entries.endIndex
+                    entries.insert(.activity(activity), at: next)
+                }
 
                 var changed = parent.rows.compactMap { previousRows[$0.id] == $0 ? nil : Entry.row($0.id) }
                 if previousPresentation != parent.presentation { changed = entries }

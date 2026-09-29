@@ -457,6 +457,8 @@ export interface ThreadSummary {
   turnState?: "idle" | "starting" | "running" | "stopping" | "stopped-unconfirmed";
   /** Admitted turns waiting behind the active turn. Present with `turnState`. */
   queuedTurnCount?: number;
+  /** Queue order, when the host supports queued timeline rows. */
+  queuedEventIds?: string[];
   canRewind?: boolean;
   interruptedTurnId?: string;
   canResume?: boolean;
