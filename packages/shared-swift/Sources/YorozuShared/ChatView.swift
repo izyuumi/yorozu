@@ -926,6 +926,26 @@ public struct ChatView: View {
                 .onDisappear { model.stopAttachmentDownloads(event) }
                 .notificationHighlight(highlightedNotificationRow == event.id)
             }
+        case .changes(let event):
+            if case .turnChanges(let data) = event.payload {
+                VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
+                    Text("^[\(data.files.count) changed file](inflect: true)")
+                        .font(.scaled(.subheadline).weight(.semibold))
+                    ForEach(data.files, id: \.path) { file in
+                        HStack {
+                            Text(file.path).lineLimit(1).truncationMode(.middle)
+                            Spacer(minLength: LayoutMetrics.inner)
+                            Text("+\(file.added) −\(file.removed)")
+                                .monospacedDigit()
+                        }
+                        .font(.scaled(.caption))
+                    }
+                }
+                .yorozuPaperCard(padding: LayoutMetrics.inner)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
+                .id(event.id)
+            }
         case .approval(let event):
             if case .approvalCard(let card) = event.payload {
                 ApprovalCardView(
