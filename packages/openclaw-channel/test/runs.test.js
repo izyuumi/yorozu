@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { CAPABILITIES } from "../capabilities.js";
 import { createInboundDispatcher } from "../dispatch.js";
+import { createProgress } from "../progress.js";
 import { createAttachmentSaver } from "../media.js";
 import { createRuns } from "../runs.js";
 import { connectYorozu } from "../socket.js";
@@ -90,15 +91,17 @@ async function setup({ turn, route, failSave } = {}) {
         dispatch({ cfg: {}, accountId: "default", message, deliver: async (p) => void delivered.push([message.id, p.text]) }, signal, begin)),
   });
   await until(() => link.connected);
-  return { host, link, delivered, routed, contexts, mediaDir, close: async () => { link.close(); await host.close(); } };
+  const progress = createProgress({ runFor: (key) => runs.runFor(key), send: (frame) => link.send(frame) });
+  return { host, link, delivered, routed, contexts, mediaDir, progress, close: async () => { link.close(); await host.close(); } };
 }
 
 const inbound = (id, threadId = "t1") => ({ type: "inbound", message: { id, threadId, ts: 1, text: "hi" } });
 
-test("hello is the first frame and announces run-boundary-v1 and media-v1", async () => {
+test("hello is the first frame and lists the capabilities", async () => {
   const { host, close } = await setup();
   await until(() => host.frames.length >= 1);
-  assert.deepEqual(host.frames[0], { type: "hello", capabilities: ["run-boundary-v1", "media-v1"] });
+  assert.deepEqual(host.frames[0], { type: "hello", capabilities: CAPABILITIES });
+  assert.deepEqual(CAPABILITIES, ["run-boundary-v1", "progress-v1", "media-v1"]);
   await close();
 });
 
@@ -233,6 +236,46 @@ test("reconnect re-announces an unfinished run after hello; a run that ended off
   await until(() => host.boundaries().length === 7);
   assert.deepEqual(host.boundaries().slice(4), ["hello", "run_started:long", "run_finished:long:completed"]);
   await close();
+});
+
+test("tool hooks for a yorozu run become progress frames; other channels and sessions produce none", async () => {
+  let finish;
+  const { host, progress, close } = await setup({ turn: () => new Promise((resolve) => { finish = () => resolve({ dispatched: true }); }) });
+  host.write(inbound("u1"));
+  await until(() => finish);
+  const session = "agent:ops:yorozu:direct:t1";
+  const requester = { channel: "yorozu" };
+  const tools = () => host.frames.filter((f) => f.type.startsWith("tool_"));
+
+  assert.equal(progress.before({ toolName: "exec", params: { cmd: "ls" }, toolCallId: "c1" }, { sessionKey: session, requester }), undefined);
+  progress.before({ toolName: "exec", params: {}, toolCallId: "other" }, { sessionKey: session, requester: { channel: "discord" } });
+  progress.before({ toolName: "exec", params: {}, toolCallId: "norequester" }, { sessionKey: session });
+  progress.before({ toolName: "exec", params: {}, toolCallId: "elsewhere" }, { sessionKey: "agent:ops:yorozu:direct:none", requester });
+  // after_tool_call carries no requester: it is matched to its start by toolCallId.
+  assert.equal(progress.after({ toolName: "exec", params: {}, toolCallId: "c1", result: { stdout: "a" } }), undefined);
+  progress.after({ toolName: "exec", params: {}, toolCallId: "other", result: "x" });
+  progress.before({ toolName: "read", params: { path: "/x" }, toolCallId: "c2" }, { sessionKey: session, requester });
+  progress.after({ toolName: "read", params: {}, toolCallId: "c2", error: "ENOENT" });
+  await until(() => tools().length === 4);
+  assert.deepEqual(tools(), [
+    { type: "tool_started", messageId: "u1", callId: "c1", name: "exec", args: { cmd: "ls" } },
+    { type: "tool_finished", messageId: "u1", callId: "c1", ok: true, output: '{"stdout":"a"}' },
+    { type: "tool_started", messageId: "u1", callId: "c2", name: "read", args: { path: "/x" } },
+    { type: "tool_finished", messageId: "u1", callId: "c2", ok: false, output: "ENOENT" },
+  ]);
+
+  finish();
+  await until(() => host.boundaries().includes("run_finished:u1:completed"));
+  progress.before({ toolName: "exec", params: {}, toolCallId: "late" }, { sessionKey: session, requester });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(tools().length, 4);
+  await close();
+});
+
+test("a failing progress hook never throws into the tool call", async () => {
+  const progress = createProgress({ runFor: () => "u1", send: () => { throw new Error("socket gone"); } });
+  assert.doesNotThrow(() => progress.before({ toolName: "exec", params: {}, toolCallId: "c" }, { sessionKey: "s", requester: { channel: "yorozu" } }));
+  assert.doesNotThrow(() => progress.after({ toolName: "exec", params: {}, toolCallId: "c", result: 1n }));
 });
 
 const b64 = (text) => Buffer.from(text).toString("base64");

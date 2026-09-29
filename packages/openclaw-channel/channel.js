@@ -17,6 +17,7 @@ import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-run
 import { createInboundDispatcher } from "./dispatch.js";
 import { CAPABILITIES } from "./capabilities.js";
 import { createAttachmentSaver } from "./media.js";
+import { createProgress } from "./progress.js";
 import { createRuns } from "./runs.js";
 import { connectYorozu } from "./socket.js";
 
@@ -48,6 +49,13 @@ export const normalizeYorozuTarget = (value)=> {
 };
 
 let link;
+let runs;
+
+/** OpenClaw's tool hooks, registered in index.js: they see whichever account is running. */
+export const progress = createProgress({
+  runFor: (sessionKey) => runs?.runFor(sessionKey),
+  send: (frame) => link?.send(frame) ?? false,
+});
 
 async function send(to, text) {
   const threadId = normalizeYorozuTarget(to);
@@ -104,16 +112,17 @@ export const yorozuPlugin = createChatChannelPlugin({
     gateway: {
       startAccount: async (ctx) => {
         ctx.setStatus({ accountId: ctx.accountId, running: true, connected: false });
-        const runs = createRuns((frame) => current.send(frame));
+        const accountRuns = createRuns((frame) => current.send(frame));
+        runs = accountRuns;
         const current = connectYorozu({
           path: ctx.account.socketPath,
           capabilities: CAPABILITIES,
-          onOpen: () => runs.replay(),
-          onAbort: (messageId) => runs.abort(messageId),
+          onOpen: () => accountRuns.replay(),
+          onAbort: (messageId) => accountRuns.abort(messageId),
           onStatus: (connected) => ctx.setStatus({ accountId: ctx.accountId, running: true, connected }),
           onError: (message) => ctx.log?.warn?.(`yorozu: ${message}`),
           onInbound: (message) =>
-            runs.run(message, (signal, begin) =>
+            accountRuns.run(message, (signal, begin) =>
               dispatchInbound({
                 cfg: ctx.cfg,
                 accountId: ctx.accountId,
@@ -132,6 +141,7 @@ export const yorozuPlugin = createChatChannelPlugin({
         });
         current.close();
         if (link === current) link = undefined;
+        if (runs === accountRuns) runs = undefined;
         ctx.setStatus({ accountId: ctx.accountId, running: false, connected: false });
       },
     },

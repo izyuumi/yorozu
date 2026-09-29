@@ -693,7 +693,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const stopTimers = new Map<string, ReturnType<typeof setTimeout>>();
   type TurnState = "idle" | "starting" | "running" | "stopping" | "stopped-unconfirmed";
   const turnStates = new Map<string, { state: TurnState; activeEventId?: string; queued: string[] }>();
-  const channelRuns = new Map<string, { threadId: string; status?: RunStatus }>();
+  const channelRuns = new Map<string, { threadId: string; status?: RunStatus; replied?: boolean;
+    calls?: Set<string>; results?: Set<string> }>();
   const pendingChanges = new Map<string, Promise<void>>();
   const workingThreadIds = (): string[] =>
     [...turnStates].filter(([, turn]) => turn.state !== "idle").map(([id]) => id);
@@ -1419,8 +1420,20 @@ export function serve(options: ServeOptions = {}): Sidecar {
   /** The efforts a thread may ask for: its model's, or the first model's while it is on Default. */
   const effortsFor = (agent: ThreadAgent, model: string | undefined): ReasoningEffort[] =>
     (modelsFor(agent).find((m) => m.id === model) ?? modelsFor(agent)[0])?.efforts ?? [];
+  /** What plugins can do, in the order clients name what is missing. */
+  const CHANNEL_CAPABILITIES = ["run-boundary-v1", "progress-v1", "model-select-v1", "media-v1"];
+  /**
+   * What the connected plugin announced, then `missing:<capability>` for each it did not, so a
+   * client can tell an outdated plugin (some `missing:`) from no plugin (empty).
+   */
+  const channelCapabilities = (): string[] => {
+    if (provider || !channel.connected) return [];
+    const { announced } = channel;
+    return [...CHANNEL_CAPABILITIES.filter((c) => announced.has(c)),
+      ...CHANNEL_CAPABILITIES.filter((c) => !announced.has(c)).map((c) => `missing:${c}`)];
+  };
   const modelList = (): YorozuEvent =>
-    control({ kind: "model_list", data: { models: modelsFor("yorozu"), agentModels, agents: agentDescriptors, skills: skillsByAgent, channelCapabilities: !provider && channel.modelSelection ? ["model-select-v1"] : [] } });
+    control({ kind: "model_list", data: { models: modelsFor("yorozu"), agentModels, agents: agentDescriptors, skills: skillsByAgent, channelCapabilities: channelCapabilities() } });
 
   void refreshSkills();
 
@@ -2540,6 +2553,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         rememberStop(withdrawn);
         turn.queued.splice(queuedIndex, 1);
         removeNativeQueue(target);
+        if (viaChannel(event.threadId)) channel.abort(target);
         publishTurnState(event.threadId);
         reply(control({ kind: "receipt", data: { eventId: event.id } }));
         reply(stopStatus(withdrawn, event.id));
@@ -2562,6 +2576,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
               status: "withdrawn", requestIds: [event.id] };
             rememberStop(withdrawn);
             removeNativeQueue(queued);
+            if (viaChannel(event.threadId)) channel.abort(queued);
             emit(stopStatus(withdrawn, event.id));
           };
           const inFlight = steering.get(queued);
@@ -3071,6 +3086,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
     });
   }
 
+  /** The run progress may write into: started, not finished, and its thread's active turn. */
+  const activeChannelRun = (messageId: string) => {
+    const run = channelRuns.get(messageId);
+    const turn = run && turnStates.get(run.threadId);
+    return run && !run.status && viaChannel(run.threadId) && turn && turn.activeEventId === messageId &&
+      turn.state !== "starting" && turn.state !== "idle" ? run : undefined;
+  };
+
   /** OpenClaw's `yorozu` channel plugin. Its messages land like any agent reply: logged, synced, pushed. */
   const channel = startChannelHost({
     dir,
@@ -3089,6 +3112,21 @@ export function serve(options: ServeOptions = {}): Sidecar {
     forwarded: ({ id, threadId }) => {
       if (!channelRuns.has(id)) channelRuns.set(id, { threadId });
     },
+    handedOff: ({ id, threadId }) => {
+      const run = channelRuns.get(id);
+      const turn = turnStates.get(threadId);
+      if (!run || run.status || stoppedTurns.has(id) || !viaChannel(threadId) ||
+          turn?.activeEventId === id || turn?.queued.includes(id)) return;
+      admitTurn(threadId, id);
+    },
+    runBoundaryLost: () => {
+      // OpenClaw is gone before it started these: they are queued again, to be handed off on reconnect.
+      for (const [threadId, turn] of turnStates) {
+        if (turn.state !== "starting" || !viaChannel(threadId)) continue;
+        turnStates.set(threadId, { state: "idle", queued: [] });
+        publishTurnState(threadId);
+      }
+    },
     runStarted: (messageId) => {
       const run = channelRuns.get(messageId);
       if (!run || run.status || !viaChannel(run.threadId)) return;
@@ -3098,9 +3136,28 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return;
       }
       const turn = turnStates.get(run.threadId);
+      if (turn?.state === "starting" && turn.activeEventId === messageId) return startTurnState(run.threadId, messageId);
       if (turn && turn.state !== "idle") return;
       admitTurn(run.threadId, messageId);
       startTurnState(run.threadId, messageId);
+    },
+    toolStarted: (messageId, callId, name, args) => {
+      const run = activeChannelRun(messageId);
+      if (!run) return;
+      run.calls ??= new Set();
+      if (run.calls.has(callId)) return;
+      run.calls.add(callId);
+      emit({ id: `openclaw:${run.threadId}:call:${callId}`, threadId: run.threadId, ts: Date.now(), agentId: MAIN_AGENT,
+        kind: "tool_call", data: { callId, name, args } });
+    },
+    toolFinished: (messageId, callId, ok, output) => {
+      const run = activeChannelRun(messageId);
+      if (!run?.calls?.has(callId)) return;
+      run.results ??= new Set();
+      if (run.results.has(callId)) return;
+      run.results.add(callId);
+      emit(stashToolResult({ id: `openclaw:${run.threadId}:result:${callId}`, threadId: run.threadId, ts: Date.now(),
+        agentId: MAIN_AGENT, kind: "tool_result", data: { callId, ok, output } }, dir));
     },
     runFinished: (messageId, status) => {
       const run = channelRuns.get(messageId);
@@ -3108,6 +3165,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
       run.status = status;
       const stop = stoppedTurns.get(messageId);
       if (stop) completeStop(stop, status === "aborted" ? "stopped" : "completed");
+      // A failed run with nothing said leaves the message unanswered: say so, as a native agent does.
+      else if (status === "failed" && !run.replied) {
+        emit({ id: `openclaw:${messageId}:failed`, threadId: run.threadId, ts: Date.now(), agentId: MAIN_AGENT,
+          kind: "message", data: { role: "agent", text: "OpenClaw could not answer. Check the OpenClaw Gateway log.",
+            done: true, failed: true } });
+      }
       finishTurnState(run.threadId, messageId);
     },
     deliver: ({ id, threadId, text, title: named }) => {
@@ -3116,6 +3179,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (!thread) createThread(named, dir, threadId);
       if (!thread && !named) title(threadId, text);
       if (readThreadEvents(threadId, dir).some((known) => known.id === id)) return;
+      const active = channelRuns.get(turnStates.get(threadId)?.activeEventId ?? "");
+      if (active) active.replied = true;
       emit({ id, threadId, ts: Date.now(), agentId: MAIN_AGENT, kind: "message",
         data: { role: "agent", text, done: true } });
       if (!thread) broadcast(threadList());
