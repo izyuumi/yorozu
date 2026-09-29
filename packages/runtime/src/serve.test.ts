@@ -1797,6 +1797,63 @@ test("turn state spans queued turns and ignores a stop for an earlier turn", asy
     thread.id === "turn-state" && thread.turnState === "idle"));
 });
 
+test.each(["phone", "mac"])("Stop from %s drains only its thread queue and reports every withdrawal", async (device) => {
+  const otherDone = Promise.withResolvers<void>();
+  const run = vi.fn<NativeAgentRunner["run"]>(async (turn) => {
+    if (turn.text === "active") await new Promise<void>((resolve) => turn.signal.addEventListener("abort", () => resolve(), { once: true }));
+    if (turn.text === "other active") await otherDone.promise;
+    return { text: `reply to ${turn.text}` };
+  });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } }, true);
+  const mac = await macClient(dir);
+  try {
+    for (const threadId of ["stop-queue", "other-queue"]) {
+      send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, threadId);
+      await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === threadId));
+    }
+    const active = send({ kind: "message", data: { role: "user", text: "active" } }, "stop-queue");
+    send({ kind: "message", data: { role: "user", text: "other active" } }, "other-queue");
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    const queued = ["first queued", "second queued"].map((text) =>
+      send({ kind: "message", data: { role: "user", text } }, "stop-queue"));
+    send({ kind: "message", data: { role: "user", text: "other queued" } }, "other-queue");
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+      thread.id === "other-queue" && thread.queuedTurnCount === 1));
+    send({ kind: "stop_status", data: { targetEventId: queued[0]!, requestId: "forged", status: "withdrawn" } }, "stop-queue");
+    send({ kind: "thread_list", data: { threads: [] } });
+    await eventsUntil((event) => event.kind === "thread_list");
+    expect(readThreadEvents("stop-queue", dir).some((event) => event.kind === "stop_status")).toBe(false);
+    if (device === "phone") send({ kind: "interrupt", data: { targetEventId: active } }, "stop-queue");
+    else mac.sendRawEvent({ id: "mac-stop", threadId: "stop-queue", ts: Date.now(), agentId: "mac",
+      kind: "interrupt", data: { targetEventId: active } });
+    const result = await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+      thread.id === "stop-queue" && thread.turnState === "idle"));
+    const withdrawn = (events: YorozuEvent[]) => events.flatMap((event) =>
+      event.kind === "stop_status" && event.data.status === "withdrawn" ? [event.data.targetEventId] : []);
+    expect(withdrawn(result)).toEqual(queued);
+    await vi.waitFor(() => expect(withdrawn(mac.events)).toEqual(queued));
+    expect(withdrawn(readThreadEvents("stop-queue", dir))).toEqual(queued);
+    expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8")))
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ threadId: "stop-queue" })]));
+    otherDone.resolve();
+    await eventsUntil((event) => event.kind === "message" && event.threadId === "other-queue" && event.data.text === "reply to other queued");
+    expect(run.mock.calls.map(([turn]) => turn.text)).toEqual(["active", "other active", "other queued"]);
+    expect(readThreadEvents("stop-queue", dir).filter((event) => event.kind === "message" && event.data.role === "agent")).toHaveLength(1);
+    await sidecar.close();
+    await relay.close();
+    const restarted = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+    for (const eventId of queued) {
+      restarted.send({ kind: "admission_query", data: { eventId } }, "stop-queue");
+      expect((await restarted.eventsUntil((event) => event.kind === "admission_status" && event.data.eventId === eventId)).at(-1))
+        .toMatchObject({ data: { status: "withdrawn" } });
+    }
+    expect(run).toHaveBeenCalledTimes(3);
+  } finally {
+    otherDone.resolve();
+    mac.close();
+  }
+});
+
 test("withdrawing a queued turn leaves no reply and survives restart", async () => {
   const firstDone = Promise.withResolvers<void>();
   const run = vi.fn<NativeAgentRunner["run"]>(async (turn) => {

@@ -294,6 +294,8 @@ public final class ChatModel {
             failure = "Could not save draft: \(error.localizedDescription)"
         }
     }
+    private var restoredWithdrawals: Set<String> = []
+    private var liveWithdrawals: Set<String> = []
     /// Threads with a turn in flight, so the composer offers Stop rather than Send.
     ///
     /// Set when this device sends, cleared by the agent message flagged `done` or confirmed
@@ -497,7 +499,8 @@ public final class ChatModel {
                                        knownThreads: synced, openThread: openThread,
                                        stashes: stashes.isEmpty ? nil : stashes,
                                        readingPositions: readingPositions.isEmpty ? nil : readingPositions,
-                                       preparedSend: preparedSend.isEmpty ? nil : preparedSend))
+                                       preparedSend: preparedSend.isEmpty ? nil : preparedSend,
+                                       restoredWithdrawals: restoredWithdrawals.isEmpty ? nil : restoredWithdrawals))
     }
     /// Replay progress follows the runtime's log order, independently of live events and
     /// the timeline's timestamp order. Advancing from either can skip unseen sync pages.
@@ -595,6 +598,7 @@ public final class ChatModel {
             drafts = draftState?.drafts ?? composer.drafts
             attachments = composer.attachments
             stashes = composer.stashes ?? [:]
+            restoredWithdrawals = composer.restoredWithdrawals ?? []
             draftThreads = draftState?.threads ?? composer.threads
             openThread = draftState == nil ? composer.openThread : draftState?.openThread
             readingPositions = composer.readingPositions ?? [:]
@@ -1382,7 +1386,11 @@ public final class ChatModel {
             return
         }
         downloadBytes.removeValue(forKey: key)
+        let deferred = message.attachments[chunk.index]
         message.attachments[chunk.index].data = partial.base64EncodedString()
+        if let staged = attachments[threadId] {
+            attachments[threadId] = staged.map { $0 == deferred ? message.attachments[chunk.index] : $0 }
+        }
         var completed = event
         completed.payload = .message(message)
         upsert(completed)
@@ -1694,6 +1702,33 @@ public final class ChatModel {
         }
         saveOutbox()
         flush()
+    }
+
+    private func restoreWithdrawals(in threadId: String) {
+        let history = timeline(threadId).events
+        for event in history {
+            guard case .stopStatus(let status) = event.payload, status.status == .withdrawn,
+                  !restoredWithdrawals.contains(status.targetEventId) else { continue }
+            let ownIndex = outbox.firstIndex(where: { $0.id == status.targetEventId && $0.event.threadId == threadId })
+            let ownMessage = ownIndex.map { outbox[$0].event }
+            guard liveWithdrawals.contains(status.targetEventId) || ownMessage != nil else { continue }
+            if let ownIndex, outbox[ownIndex].admissionStatus != .withdrawn {
+                outbox[ownIndex].admissionStatus = .withdrawn
+                saveOutbox()
+            }
+            guard !history.contains(where: { known in
+                      guard known.ts > event.ts, case .message(let message) = known.payload else { return false }
+                      return message.role == .user
+                  }) else { continue }
+            let original = ownMessage ?? history.first(where: { $0.id == status.targetEventId })
+            guard let original, case .message(let message) = original.payload, message.role == .user else { continue }
+            restoredWithdrawals.insert(status.targetEventId)
+            liveWithdrawals.remove(status.targetEventId)
+            let draft = drafts[threadId] ?? ""
+            drafts[threadId] = [draft, message.text].filter { !$0.isEmpty }.joined(separator: "\n\n")
+            attachments[threadId, default: []].append(contentsOf: message.attachments)
+            if message.attachments.contains(where: \.isDeferred) { requestAttachmentDownloads(original) }
+        }
     }
 
     /// Forgets one event on this device only: it stays in the runtime's thread log, and a
@@ -2227,13 +2262,14 @@ public final class ChatModel {
                     if data.threadId == nil { syncLastSeen[event.threadId] = event.syncCursor ?? event.id }
                     else { historyCursors[event.threadId] = event.syncCursor ?? event.id }
                 }
+                let syncedThreads = Set(data.events.map(\.threadId))
+                    .union((data.current ?? []).map(\.threadId))
+                    .union(data.threadId.map { [$0] } ?? [])
+                for threadId in syncedThreads { restoreWithdrawals(in: threadId) }
                 if let id = data.threadId {
                     historyInFlight.remove(id)
                     if data.more != true { historyLoaded.insert(id) }
                 }
-                let syncedThreads = Set(data.events.map(\.threadId))
-                    .union((data.current ?? []).map(\.threadId))
-                    .union(data.threadId.map { [$0] } ?? [])
                 persistEvents(in: syncedThreads)
                 if data.more != true { for id in syncedThreads { restoreRewoundPrompt(in: id) } }
                 if let workingThreadIds = data.workingThreadIds {
@@ -2359,6 +2395,12 @@ public final class ChatModel {
         // are flushed before it.
         flushStreamEvents()
         upsert(event)
+        if case .stopStatus(let status) = event.payload, status.status == .withdrawn {
+            liveWithdrawals.insert(status.targetEventId)
+            restoreWithdrawals(in: event.threadId)
+        } else if case .message(let message) = event.payload, message.role == .user {
+            restoreWithdrawals(in: event.threadId)
+        }
     }
 
     private func flushStreamEvents() {
