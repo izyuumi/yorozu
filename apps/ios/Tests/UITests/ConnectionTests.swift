@@ -65,8 +65,7 @@ final class ConnectionTests: XCTestCase {
         let rig2 = Rig(control: control)
         try await rig2.post("heal")
         let secondPair = try await rig2.pairing()
-        let url = try XCTUnwrap(URLComponents(string: secondPair))
-        let secondID = try XCTUnwrap(url.queryItems?.first(where: { $0.name == "key" })?.value)
+        let secondID = try pairingKey(secondPair)
         addTeardownBlock { [weak self] in
             guard let self else { return }
             self.app.terminate()
@@ -93,7 +92,7 @@ final class ConnectionTests: XCTestCase {
         let second = switches.element(boundBy: 1)
         XCTAssertEqual(first.value as? String, "0")
         XCTAssertEqual(second.value as? String, "0")
-        first.tap()
+        flip(first)
         let expiry = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Until '")).firstMatch
         for _ in 0..<6 where !expiry.isHittable { app.collectionViews.firstMatch.swipeUp() }
         XCTAssertTrue(expiry.waitForExistence(timeout: 10), "Host did not confirm the approval expiry")
@@ -102,7 +101,7 @@ final class ConnectionTests: XCTestCase {
         advanced.tap()
         XCTAssertEqual(first.value as? String, "1", "Returning lost this host's approval setting")
         XCTAssertEqual(second.value as? String, "0", "Changing one host affected another")
-        first.tap()
+        flip(first)
         XCTAssertTrue(expiry.waitForNonExistence(timeout: 10))
         app.navigationBars["Advanced"].buttons["Settings"].tap()
         app.buttons["Done"].tap()
@@ -165,8 +164,7 @@ final class ConnectionTests: XCTestCase {
         try await rig2.post("heal")
         let marker = "mixed search marker 8f4a"
         let secondPair = try await rig2.pairing()
-        let secondID = try XCTUnwrap(URLComponents(string: secondPair)?.queryItems?
-            .first(where: { $0.name == "key" })?.value)
+        let secondID = try pairingKey(secondPair)
         let key = secondID.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
         let decoded = try XCTUnwrap(Data(base64Encoded: key + String(repeating: "=", count: (4 - key.count % 4) % 4)))
         let secondFingerprint = decoded.prefix(8).map { String(format: "%02x", $0) }.joined(separator: " ")
@@ -278,8 +276,7 @@ final class ConnectionTests: XCTestCase {
         try await host.post("heal")
         try await host.post("seed-search")
         let pairing = try await host.pairing()
-        let hostID = try XCTUnwrap(URLComponents(string: pairing)?.queryItems?
-            .first(where: { $0.name == "key" })?.value)
+        let hostID = try pairingKey(pairing)
         addTeardownBlock { [weak self] in
             guard let self else { return }
             self.app.terminate()
@@ -364,10 +361,11 @@ final class ConnectionTests: XCTestCase {
         try await rig.post("blackhole")
         send("dead link one")
         send("dead link two")
-        // "Confirming" if the sends beat the idle ping to the dead link, "Queued" if they did
-        // not: either is honest, and neither may claim delivery.
-        let confirming = app.staticTexts.matching(
-            NSPredicate(format: "label IN %@", ["Confirming delivery…", "Queued"])).firstMatch
+        // Unconfirmed messages sit as queue rows: "Sending…" for the one in flight, "Next" or
+        // "Sends when the turn ends" behind it, "Confirming"/"Queued" if the outbox says so
+        // instead. Any is honest, and none may claim delivery.
+        let confirming = app.staticTexts.matching(NSPredicate(
+            format: "label IN %@", ["Sending…", "Next", "Sends when the turn ends", "Confirming delivery…", "Queued"])).firstMatch
         XCTAssertTrue(confirming.waitForExistence(timeout: 10), "The messages claim delivery")
         XCTAssertTrue(app.descendants(matching: .any)["Connection: Reconnecting"].firstMatch
             .waitForExistence(timeout: 25), "A send did not probe the dead link before the idle heartbeat")
@@ -408,7 +406,7 @@ final class ConnectionTests: XCTestCase {
                        ["echo: dead link one", "echo: dead link two"])
     }
 
-    /// A message whose receipt never arrives stays "Confirming" rather than claiming delivery.
+    /// A message whose receipt never arrives stays "Sending…" rather than claiming delivery.
     /// The app is killed right there and the Mac finishes without it; relaunched, the app shows
     /// that one answer and settles the message, and nothing ran twice.
     @MainActor
@@ -425,7 +423,7 @@ final class ConnectionTests: XCTestCase {
         try await rig.post("drop-host-after-phone-frame")
         app.buttons["Send"].tap()
         XCTAssertTrue(app.textViews["lost receipt"].waitForExistence(timeout: 10))
-        let confirming = app.descendants(matching: .any)["Confirming delivery…"].firstMatch
+        let confirming = app.staticTexts["Sending…"]
         XCTAssertTrue(confirming.waitForExistence(timeout: 10))
         XCTAssertFalse(confirming.waitForNonExistence(timeout: 5), "Delivery claimed without a receipt")
         let started = Date.now + 30
@@ -485,6 +483,22 @@ final class ConnectionTests: XCTestCase {
     }
 
     // MARK: - Steps
+
+    /// A row's switch is at its trailing edge; a tap on the middle of the row, where the label is,
+    /// leaves the switch as it was.
+    @MainActor
+    private func flip(_ toggle: XCUIElement) {
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+    }
+
+    /// The host key in a pairing string. The Mac hands out the web link, whose fields sit in the
+    /// fragment; the `yorozu://` form keeps them in the query.
+    private func pairingKey(_ pairing: String) throws -> String {
+        let link = try XCTUnwrap(URLComponents(string: pairing))
+        var fields = URLComponents()
+        fields.percentEncodedQuery = link.percentEncodedFragment ?? link.percentEncodedQuery
+        return try XCTUnwrap(fields.queryItems?.first(where: { $0.name == "key" })?.value)
+    }
 
     @MainActor
     private func launchPaired() async throws {
