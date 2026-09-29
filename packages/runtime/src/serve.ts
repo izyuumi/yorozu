@@ -48,6 +48,7 @@ import {
   type AgentDescriptor,
   type ApprovalCardData,
   type ChannelKeys,
+  type ChannelModelOption,
   type DeviceInfo,
   type EventPayload,
   type Keypair,
@@ -352,6 +353,7 @@ function userMessageIdentity(event: YorozuEvent & { kind: "message" }): string {
   return createHash("sha256").update(JSON.stringify([
     event.threadId, event.clientTs ?? event.ts, event.data.role, event.data.text, event.data.admissionDeadline ?? null,
     (event.data.attachments ?? []).map(({ name, mime, data }) => [name, mime, data]),
+    ...(event.data.channelModel !== undefined ? [event.data.channelModel.model ?? null] : []),
   ])).digest("hex");
 }
 
@@ -1385,7 +1387,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const effortsFor = (agent: ThreadAgent, model: string | undefined): ReasoningEffort[] =>
     (modelsFor(agent).find((m) => m.id === model) ?? modelsFor(agent)[0])?.efforts ?? [];
   const modelList = (): YorozuEvent =>
-    control({ kind: "model_list", data: { models: modelsFor("yorozu"), agentModels, agents: agentDescriptors, skills: skillsByAgent } });
+    control({ kind: "model_list", data: { models: modelsFor("yorozu"), agentModels, agents: agentDescriptors, skills: skillsByAgent, channelCapabilities: !provider && channel.modelSelection ? ["model-select-v1"] : [] } });
 
   void refreshSkills();
 
@@ -2222,6 +2224,33 @@ export function serve(options: ServeOptions = {}): Sidecar {
       });
       return;
     }
+    if (event.kind === "thread_models") return;
+    if (event.kind === "thread_models_request" || event.kind === "thread_set_model" && viaChannel(event.threadId)) {
+      const compatibility = from ? devices.get(from)?.compatibility : undefined;
+      if (from && (compatibility?.state !== "compatible" || !compatibility.capabilities.includes("model-select-v1"))) return;
+      if (typeof event.threadId !== "string" || !event.threadId || event.threadId.length > 128 || !viaChannel(event.threadId)) return;
+      if (!event.data || typeof event.data !== "object") return;
+      const result = (data: { models?: ChannelModelOption[]; error?: string }): void => {
+        reply({ id: randomUUID(), threadId: event.threadId, ts: Date.now(), agentId: MAIN_AGENT,
+          kind: "thread_models", data: { requestId: event.id, ...data } });
+        reply(control({ kind: "receipt", data: { eventId: event.id } }));
+      };
+      if (event.kind === "thread_models_request") {
+        void channel.refreshModels(event.threadId).then((models) => result({ models }),
+          (error: Error) => result({ error: error.message }));
+      } else {
+        const model = event.data.model ?? null;
+        if (model !== null && (typeof model !== "string" || !model || model.length > 512)) return;
+        if (!listThreads(dir).some((thread) => thread.id === event.threadId)) return;
+        void channel.selectModel(event.threadId, model).then(() => result({}),
+          (error: Error) => result({ error: error.message }));
+      }
+      return;
+    }
+    if (event.kind === "message" && event.data.channelModel !== undefined &&
+        (!event.data.channelModel || typeof event.data.channelModel !== "object" ||
+          Array.isArray(event.data.channelModel) || event.data.channelModel.model != null &&
+          (typeof event.data.channelModel.model !== "string" || !event.data.channelModel.model || event.data.channelModel.model.length > 512))) return;
     if (event.kind === "stop_status") return;
     if (event.kind === "thread_rewound") return;
     if (event.kind === "thread_rewind") {
@@ -2342,7 +2371,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
             } }));
           } else if (result.attachments) {
             handleEvent({ ...event, kind: "message", data: { role: "user", text: event.data.text,
-              attachments: result.attachments, admissionDeadline: event.data.admissionDeadline, delivery: event.data.delivery } },
+              attachments: result.attachments, admissionDeadline: event.data.admissionDeadline, delivery: event.data.delivery,
+              ...(event.data.channelModel !== undefined ? { channelModel: event.data.channelModel } : {}) } },
               reply, pairedAt, from, localDevice);
           }
         }).catch((error) => state(`attachment-commit-error ${String(error)}`))
@@ -2668,6 +2698,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
       : undefined;
     if (event.kind === "message" && knownMessage && (knownMessage.kind !== "message" ||
       knownMessage.data.role !== event.data.role || knownMessage.data.text !== event.data.text ||
+      (knownMessage.data.channelModel?.model ?? null) !== (event.data.channelModel?.model ?? null) ||
+      (knownMessage.data.channelModel !== undefined) !== (event.data.channelModel !== undefined) ||
       (knownMessage.clientTs ?? knownMessage.ts) !== event.ts || knownMessage.data.admissionDeadline !== event.data.admissionDeadline ||
       (knownMessage.data.attachments ?? []).length !== (event.data.attachments ?? []).length ||
       (knownMessage.data.attachments ?? []).some((attachment, index) => {
@@ -2764,6 +2796,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     if (seenCommands.has(event.id)) {
       if (event.kind === "message" && !knownMessage) return state("missing-previous-message");
+      if (event.kind === "message" && event.data.role === "user" && viaChannel(event.threadId)) channel.retry(event.threadId);
       receipt();
       return state("duplicate-command");
     }
@@ -2794,6 +2827,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (event.kind === "message" && event.data.role === "user" && !typed &&
           viaChannel(event.threadId)) {
         channel.forward({ id: event.id, threadId: event.threadId, ts: event.ts, text: event.data.text,
+          ...(event.data.channelModel !== undefined ? { channelModel: event.data.channelModel } : {}),
           ...(event.data.attachments?.length ? { attachments: event.data.attachments } : {}) });
       }
       receipt();
@@ -2978,6 +3012,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (viaChannel(event.threadId)) {
       title(event.threadId, event.data.text);
       channel.forward({ id: event.id, threadId: event.threadId, ts: event.ts, text: event.data.text,
+        ...(event.data.channelModel !== undefined ? { channelModel: event.data.channelModel } : {}),
         ...(event.data.attachments?.length ? { attachments: event.data.attachments } : {}) });
       return broadcast(logged);
     }
@@ -3001,6 +3036,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const channel = startChannelHost({
     dir,
     onError: (message) => state(`channel-${message}`),
+    onCapabilities: () => { if (!stopped) broadcast(modelList()); },
+    onModel: (threadId, model) => {
+      if (setThreadModel(threadId, model, dir)) broadcast(threadList());
+    },
+    onDeliveryError: (message, error) => {
+      if (!stopped) broadcast({ id: randomUUID(), threadId: message.threadId, ts: Date.now(), agentId: MAIN_AGENT,
+        kind: "thread_models", data: { requestId: message.id, error: `Message queued: ${error}. Will retry when OpenClaw reconnects.` } });
+    },
     forwarded: ({ id, threadId }) => {
       if (!channelRuns.has(id)) channelRuns.set(id, { threadId });
     },
@@ -3230,6 +3273,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const boxesFor = (device: string, event: YorozuEvent): FrameBody[] => {
       const known = devices.get(device);
       if (!known || ((!relayReady || ws.readyState !== WebSocket.OPEN) && !directFor(known))) return [];
+      if (event.kind === "thread_models" && (known.compatibility?.state !== "compatible" ||
+          !known.compatibility.capabilities.includes("model-select-v1"))) return [];
       const supportsApprovalStatus = known.compatibility?.state === "compatible" &&
         known.compatibility.capabilities.includes("offline-approval-v1");
       if (!supportsApprovalStatus && event.kind === "approval_status") return [];

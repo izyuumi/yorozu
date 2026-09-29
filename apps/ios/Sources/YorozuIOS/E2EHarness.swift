@@ -99,6 +99,8 @@ final class E2EHarness {
             model.onThreads = { [weak model] in model?.previewThreads() }
         case "pairing", "pairing-manual", "pairing-error":
             break
+        case "channel-model":
+            model.newDraft()
         case "model":
             // Re-seeded whenever the runtime sends a list, for the same reason as `share`: the
             // Mac behind a screenshot has no threads, and its empty `thread_list` would

@@ -507,6 +507,7 @@ control, so every inbound message is the owner's.
 
 | Frame | Direction | Meaning |
 | --- | --- | --- |
+| `hello` | plugin → host | Optional `{ capabilities: [...] }` announcing `run-boundary-v1` and/or `model-select-v1`. No hello means legacy chat without run state, Stop or model controls. |
 | `inbound` | host → plugin | A user message typed in a `yorozu` thread. Kept in `channel-outbox.json` until acked, resent on every connect. |
 | `deliver` | plugin → host | An OpenClaw reply for a thread. Logged, synced and pushed like any agent message; an unknown thread id opens a new thread. |
 | `ack` / `error` | both | Receipt by id. Delivery is at least once in both directions and both sides dedupe by id. |
@@ -515,7 +516,8 @@ The plugin acks an `inbound` only once OpenClaw has dispatched it. A message Ope
 for example no routing binding while several agents are configured — stays in the outbox and is
 resent when the plugin next connects. Without run-boundary support, a channel message has no
 turn in Yorozu and offers no Stop. Delivered replies keep their existing behavior. There are no
-progress rows or trace pages, or model or skill picker.
+progress rows or trace pages, and no skill picker. A model picker is offered only while a
+connected plugin announces `model-select-v1`.
 
 #### Channel run boundaries (`run-boundary-v1`)
 
@@ -548,6 +550,46 @@ outcome. On reconnect, reannounce an unfinished run with `run_started` after hel
 or unconfirmed Stop causes the host to resend its abort. Run boundaries are not acked by this
 protocol. Pending Stop intent survives host restart; ordinary acknowledged runs have no host
 recovery journal.
+
+#### Channel model selection (`model-select-v1`)
+
+Model controls use these newline-delimited JSON frames (all requests have a unique `requestId`):
+
+| Frame | Direction | Fields |
+| --- | --- | --- |
+| `model_catalog_request` | host → plugin | `requestId`, `threadId` |
+| `model_selection_request` | host → plugin | `requestId`, `threadId` |
+| `model_select` | host → plugin | `requestId`, `threadId`, `model: string \| null` |
+| `model_catalog` | plugin → host | `requestId`, `models: [{ id, label, available, unavailableReason? }]` |
+| `model_selection` | plugin → host | `requestId`, `model: string \| null` |
+| `model_select_result` | plugin → host | `requestId`, `ok`, `model?: string \| null`, `error?` |
+
+The plugin resolves `threadId` through OpenClaw routing and bindings, including a draft's future
+route without dispatching a user message. It supplies permitted models in catalog order, with
+availability reasons; forbidden models are omitted. Model IDs are opaque. `null` clears the
+session override (Default); neither agent nor global defaults change. No credentials cross this
+protocol. Requests expire after 10 seconds; disconnect rejects outstanding requests. Responses
+must come from the connection that received the request.
+
+The host advertises live plugin support in `model_list.channelCapabilities`; the client wire
+extension is `model-select-v1`. Opening a picker sends `thread_models_request`; the host requests
+both catalog and current selection, returning `thread_models { requestId, models?, error? }` and
+broadcasting confirmed selection through `thread_list.model`. Thus `/model` changes elsewhere
+appear on refresh. Existing-thread `thread_set_model` changes commit only after `ok`; controls
+serialize per thread and do not interrupt active turns. Unavailable or absent catalog IDs cannot
+be selected. Native agent controls retain their existing behavior.
+
+A draft's first `message` (or `attachment_commit`) carries `channelModel: { model?: string }`;
+an empty object means Default, while absence keeps legacy behavior. This choice persists with
+the channel outbox. The host validates the catalog, sends `model_select`, and requires `ok`
+before forwarding `inbound`. Failure reports a `thread_models` error and retains the message;
+later messages in that thread cannot pass it. Reconnect or duplicate submission retries under
+the same message ID. Confirmation is saved before dispatch, so reconnect does not reapply an
+older pin. `channel-model-delivery.json` retains preparation and acknowledgment by message ID
+after the outbox entry is removed, preventing a later draft replay from resetting that pin.
+Existing at-least-once delivery still requires plugin deduplication by inbound ID,
+including after dispatch-before-ack crashes, so a retry never creates a second OpenClaw turn.
+Ship compatible plugin support before announcing the capability to enable these controls.
 
 Setup, once per host (README → Install, step 5):
 

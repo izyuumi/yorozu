@@ -25,6 +25,7 @@ public final class ChatModel {
     /// The model and effort last chosen, by agent: a new thread starts on them rather than on
     /// Auto. The runtime ignores a model it no longer offers, so a stale one falls back safely.
     private var lastRun: [String: RunChoice] = [:]
+    private var draftChannelModels: [String: ChannelModelChoice] = [:]
     /// The newest unsent draft.
     public var draft: ThreadSummary? { draftThreads.first }
     /// The thread this run of the app last started, whose composer opens focused. Not saved:
@@ -369,6 +370,12 @@ public final class ChatModel {
     public private(set) var agentStatus: AgentStatusData?
     /// Every model a thread can be put on, as the Mac has it configured. Arrives with the
     /// thread list; empty until then, which is a picker that offers only Default.
+    public private(set) var channelModelSelection = false
+    public private(set) var channelModels: [String: [ChannelModelOption]] = [:]
+    public private(set) var channelModelErrors: [String: String] = [:]
+    public private(set) var channelModelsLoading: Set<String> = []
+    public private(set) var channelModelPending: Set<String> = []
+    private var channelModelRequests: [String: String] = [:]
     public private(set) var models: [ModelOption] = []
     public private(set) var agentModels: [String: [ModelOption]] = [:]
     public private(set) var agents: [AgentDescriptor]?
@@ -398,6 +405,24 @@ public final class ChatModel {
                 ? AgentDescriptor(id: id, label: id.label, needsFolder: id.needsFolder)
                 : descriptor
         }
+    }
+
+    public func offersChannelModels(for thread: ThreadSummary) -> Bool {
+        (thread.agent ?? .yorozu) == .yorozu && channelModelSelection
+    }
+
+    public func refreshChannelModels(in thread: ThreadSummary) {
+        guard offersChannelModels(for: thread) else { return }
+        guard canDeliver else {
+            channelModelErrors[thread.id] = "Connect to the host to refresh OpenClaw models."
+            return
+        }
+        guard !channelModelPending.contains(thread.id) else { return }
+        channelModelErrors[thread.id] = nil
+        channelModelsLoading.insert(thread.id)
+        let request = event(.threadModelsRequest(ThreadModelsRequestData()), in: thread.id)
+        channelModelRequests[thread.id] = request.id
+        emit(request)
     }
 
     public func models(for thread: ThreadSummary) -> [ModelOption] {
@@ -537,7 +562,7 @@ public final class ChatModel {
     private func saveDraftState() throws {
         try cache?.save(draftState: .init(drafts: drafts, preparedSend: preparedSend,
                                           threads: draftThreads, openThread: openThread,
-                                          lastRun: lastRun))
+                                          lastRun: lastRun, channelModels: draftChannelModels.filter { isDraft($0.key) }))
     }
 
     /// Staged files change rarely, but must survive immediate termination too.
@@ -643,6 +668,7 @@ public final class ChatModel {
         outbox = Outbox.pruned(pending)
         let draftState = cache.draftState()
         lastRun = draftState?.lastRun ?? [:]
+        draftChannelModels = draftState?.channelModels ?? [:]
         var composerPrepared: [String: String] = [:]
         restoringComposer = true
         let composer = cache.composer()
@@ -955,6 +981,7 @@ public final class ChatModel {
         // has never heard of.
         let queue = !canDeliver
         var commands: [YorozuEvent] = []
+        var channelChoice: ChannelModelChoice?
         if let draft = draftThreads.first(where: { $0.id == threadId }) {
             // A draft becomes real with its first message. The id is ours, so the message below
             // lands in the thread this `thread_create` is about to mint on the other end.
@@ -964,7 +991,9 @@ public final class ChatModel {
             // A model chosen in a chat that had not been sent in yet is held on the draft,
             // because there was no thread to set it on. This is that moment, and it goes
             // before the message so the first turn already runs on it.
-            if let model = draft.model {
+            if (draft.agent ?? .yorozu) == .yorozu && (channelModelSelection || draftChannelModels[draft.id] != nil) {
+                channelChoice = ChannelModelChoice(model: draft.model)
+            } else if let model = draft.model {
                 commands.append(event(.threadSetModel(ThreadSetModelData(model: model)), in: threadId))
             }
             if let effort = draft.effort {
@@ -979,7 +1008,8 @@ public final class ChatModel {
             agentId: device,
             payload: .message(MessageData(role: .user, text: text, attachments: attachments,
                 admissionDeadline: createdAt + 30 * 60_000,
-                delivery: alternateDelivery ? (followUpBehavior == .queue ? .steer : .queue) : followUpBehavior))
+                delivery: alternateDelivery ? (followUpBehavior == .queue ? .steer : .queue) : followUpBehavior,
+                channelModel: channelChoice))
         )
         // Persist creation and its first message in one encrypted write. A failed write leaves
         // the composer and draft thread intact, with no phantom bubble or unsaved outbox item.
@@ -1329,7 +1359,8 @@ public final class ChatModel {
         }
         let commit = YorozuEvent(id: item.id, threadId: item.event.threadId, ts: item.event.ts,
             agentId: item.event.agentId, payload: .attachmentCommit(AttachmentCommitData(
-                text: message.text, attachments: descriptors, admissionDeadline: deadline, delivery: message.delivery)))
+                text: message.text, attachments: descriptors, admissionDeadline: deadline, delivery: message.delivery,
+                channelModel: message.channelModel)))
         inFlightUpload[item.id] = (item.id, -1)
         try await transport.send(commit)
     }
@@ -1851,9 +1882,10 @@ public final class ChatModel {
             agent: agent == .yorozu ? nil : agent,
             cwd: agent == .yorozu ? nil : cwd
         )
-        let last = lastRun[agent.rawValue]
+        let last = agent == .yorozu && channelModelSelection ? nil : lastRun[agent.rawValue]
         thread.model = last?.model
         thread.effort = last?.effort
+        if agent == .yorozu && channelModelSelection { draftChannelModels[thread.id] = ChannelModelChoice(model: nil) }
         draftThreads.insert(thread, at: 0)
         startedThread = thread.id
         saveDraftsNow()
@@ -1972,6 +2004,22 @@ public final class ChatModel {
     /// yet keeps the choice on the draft — there is no thread on the Mac to set it on until the
     /// first message, which carries it along (see ``send(_:in:attachment:)``).
     public func setModel(_ thread: ThreadSummary, _ model: String?) {
+        if offersChannelModels(for: thread) {
+            guard !channelModelsLoading.contains(thread.id), !channelModelPending.contains(thread.id),
+                  model == nil || channelModels[thread.id]?.contains(where: { $0.id == model && $0.available }) == true else { return }
+            channelModelErrors[thread.id] = nil
+            if let index = draftThreads.firstIndex(where: { $0.id == thread.id }) {
+                draftThreads[index].model = model
+                draftChannelModels[thread.id] = ChannelModelChoice(model: model)
+                saveDraftsNow()
+            } else {
+                channelModelPending.insert(thread.id)
+                let request = event(.threadSetModel(ThreadSetModelData(model: model)), in: thread.id)
+                channelModelRequests[thread.id] = request.id
+                emit(request)
+            }
+            return
+        }
         // An effort the new model does not offer goes with the switch; one it does is kept.
         let effort = thread.effort.flatMap { efforts(for: thread, on: model).contains($0) ? $0 : nil }
         lastRun[(thread.agent ?? .yorozu).rawValue] = RunChoice(model: model, effort: effort)
@@ -2348,6 +2396,15 @@ public final class ChatModel {
         try? await Task.sleep(for: .milliseconds(700))
     }
 
+    private func channelModelsDisconnected() {
+        for threadId in channelModelsLoading.union(channelModelPending) {
+            channelModelErrors[threadId] = "Disconnected while updating OpenClaw models. Reopen the picker to refresh."
+        }
+        channelModelsLoading = []
+        channelModelPending = []
+        channelModelRequests = [:]
+    }
+
     private func apply(_ update: TransportUpdate) {
         guard !stopped else { return }
         switch update {
@@ -2360,6 +2417,7 @@ public final class ChatModel {
         case .state(let state):
             self.state = state
             if state != .paired {
+                channelModelsDisconnected()
                 inFlightUpload.removeAll()
                 downloadInFlight.removeAll()
                 downloadRetries.values.forEach { $0.cancel() }
@@ -2390,6 +2448,7 @@ public final class ChatModel {
                 requestHostSearch()
             }
         case .ownerOnline(let online):
+            if !online { channelModelsDisconnected() }
             let wasOnline = ownerOnline
             ownerOnline = online
             if !online && updateStatus.phase != .none && updateStatus.phase != .installing {
@@ -2505,7 +2564,26 @@ public final class ChatModel {
             case .threadSearchRequest:
                 break
             // What the model picker offers, sent with every thread list. Not a thread's event.
+            case .threadModels(let data):
+                if let error = data.error {
+                    channelModelErrors[event.threadId] = error
+                    failure = error
+                }
+                if channelModelRequests[event.threadId] == data.requestId {
+                    channelModelsLoading.remove(event.threadId)
+                    channelModelPending.remove(event.threadId)
+                    if let models = data.models { channelModels[event.threadId] = models }
+                    channelModelRequests[event.threadId] = nil
+                }
+            case .threadModelsRequest:
+                break
             case .modelList(let data):
+                channelModelSelection = data.channelCapabilities?.contains("model-select-v1") == true
+                if !channelModelSelection {
+                    channelModels = [:]
+                    channelModelsLoading = []
+                    channelModelPending = []
+                }
                 models = data.models
                 agentModels = data.agentModels?.filter { ThreadAgent(rawValue: $0.key) != nil } ?? [:]
                 agents = data.agents.map(Self.acceptedAgents)

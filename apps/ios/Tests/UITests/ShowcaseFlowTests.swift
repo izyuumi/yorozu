@@ -8,6 +8,36 @@ final class ShowcaseFlowTests: XCTestCase {
         continueAfterFailure = false
     }
 
+    @MainActor
+    func testOpenClawDraftPickerShowsAvailabilityAndKeepsSelectedChoice() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-yorozuShowcase", "channel-model", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        let picker = app.buttons["channelModelMenu"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 30))
+        XCTAssertEqual(picker.label, "Model")
+        XCTAssertEqual(picker.value as? String, "Default")
+        picker.tap()
+        let unavailable = app.buttons["Offline model — Provider offline"]
+        XCTAssertTrue(unavailable.waitForExistence(timeout: 10))
+        XCTAssertFalse(unavailable.isEnabled)
+        let fast = app.buttons["Fast model"]
+        XCTAssertTrue(fast.isEnabled)
+        fast.tap()
+        XCTAssertTrue(fast.isSelected)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["Done"].tap()
+        XCTAssertEqual(picker.value as? String, "openclaw/fast")
+        picker.tap()
+        let defaultModel = app.buttons["Default"]
+        XCTAssertTrue(defaultModel.waitForExistence(timeout: 10))
+        defaultModel.tap()
+        XCTAssertTrue(defaultModel.isSelected)
+        XCTAssertFalse(app.staticTexts["How much effort?"].exists)
+    }
+
     /// Answering takes the choices away at once and says the answer is on its way; nothing
     /// is left to tap twice.
     @MainActor

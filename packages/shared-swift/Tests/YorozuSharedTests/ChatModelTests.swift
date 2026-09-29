@@ -3003,6 +3003,111 @@ func deferredAttachmentDownloadsAfterVisibleHistoryArrives(legacyCache: Bool) as
 }
 
 @MainActor
+@Test func openClawPickerRequiresCapabilityAndCommitsOnlyHostConfirmedChoices() async throws {
+    let transport = FakeTransport(autoReceipt: true)
+    let otherTransport = FakeTransport()
+    let model = await connected(transport)
+    let other = await connected(otherTransport)
+    defer { model.close(); other.close() }
+    let thread = ThreadSummary(id: "home", title: "OpenClaw", archived: false, lastActivity: 1)
+    #expect(!model.offersChannelModels(for: thread))
+    await transport.yield(.event(event("capability", .modelList(ModelListData(models: [], channelCapabilities: ["model-select-v1"])))))
+    await transport.yield(.event(event("threads", .threadList(ThreadListData(threads: [thread])))))
+    #expect(await eventually { model.offersChannelModels(for: thread) && model.threads == [thread] })
+    let native = ThreadSummary(id: "code", title: "Code", archived: false, lastActivity: 1, agent: .codex)
+    #expect(!model.offersChannelModels(for: native))
+    model.refreshChannelModels(in: thread)
+    let refresh = try #require(await sent(by: transport, payload: .threadModelsRequest(ThreadModelsRequestData()), in: thread.id))
+    let catalog = [ChannelModelOption(id: "p/allowed", label: "Allowed", available: true),
+                   ChannelModelOption(id: "p/offline", label: "Offline", available: false, unavailableReason: "No provider")]
+    await transport.yield(.event(event("catalog", .threadModels(ThreadModelsData(requestId: refresh.id, models: catalog)))))
+    #expect(await eventually { model.channelModels[thread.id] == catalog })
+    model.setModel(thread, "p/offline")
+    #expect(!model.channelModelPending.contains(thread.id))
+    model.setModel(thread, "forbidden")
+    #expect(!model.channelModelPending.contains(thread.id))
+    model.setModel(thread, "p/allowed")
+    #expect(model.threads.first?.model == nil)
+    let pick = try #require(await sent(by: transport, payload: .threadSetModel(ThreadSetModelData(model: "p/allowed")), in: thread.id))
+    await transport.yield(.event(event("rejected", .threadModels(ThreadModelsData(requestId: pick.id, error: "Gateway refused")))))
+    #expect(await eventually { model.channelModelErrors[thread.id] == "Gateway refused" && !model.channelModelPending.contains(thread.id) })
+    #expect(model.threads.first?.model == nil)
+    var confirmed = thread
+    confirmed.model = "p/allowed"
+    let synced = event("confirmed", .threadList(ThreadListData(threads: [confirmed])))
+    await transport.yield(.event(synced))
+    await otherTransport.yield(.event(synced))
+    #expect(await eventually { model.threads.first?.model == "p/allowed" && other.threads.first?.model == "p/allowed" })
+    model.setModel(confirmed, nil)
+    #expect(model.threads.first?.model == "p/allowed")
+    let clear = try #require(await sent(by: transport, payload: .threadSetModel(ThreadSetModelData(model: nil)), in: thread.id))
+    await transport.yield(.event(event("cleared", .threadModels(ThreadModelsData(requestId: clear.id)))))
+    let defaults = event("default", .threadList(ThreadListData(threads: [thread])))
+    await transport.yield(.event(defaults))
+    await otherTransport.yield(.event(defaults))
+    #expect(await eventually { model.threads.first?.model == nil && other.threads.first?.model == nil })
+    model.refreshChannelModels(in: thread)
+    #expect(await eventually { await transport.sent.filter { $0.payload.kind == .threadModelsRequest }.count == 2 })
+    await transport.yield(.event(event("old-plugin", .modelList(ModelListData(models: [])))))
+    #expect(await eventually { !model.offersChannelModels(for: thread) })
+}
+
+@MainActor
+@Test func openClawDraftChoiceTravelsWithFirstMessageAndSurvivesDisconnect() async throws {
+    let cache = ThreadCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString),
+                            key: SymmetricKey(size: .bits256))
+    var transport = FakeTransport(autoReceipt: true)
+    var model = ChatModel(transport: transport, cache: cache)
+    await transport.yield(.state(.paired))
+    await transport.yield(.ownerOnline(true))
+    model.start()
+    #expect(await eventually { model.canDeliver })
+    defer { model.close() }
+    await transport.yield(.event(event("capability", .modelList(ModelListData(models: [], channelCapabilities: ["model-select-v1"])))))
+    #expect(await eventually { model.channelModelSelection })
+    let draft = model.newDraft()
+    #expect(model.offersChannelModels(for: draft))
+    #expect(draft.model == nil)
+    model.refreshChannelModels(in: draft)
+    let refresh = try #require(await sent(by: transport, payload: .threadModelsRequest(ThreadModelsRequestData()), in: draft.id))
+    await transport.yield(.event(event("catalog", .threadModels(ThreadModelsData(requestId: refresh.id,
+        models: [ChannelModelOption(id: "p/model", label: "Model", available: true)])), thread: draft.id)))
+    #expect(await eventually { model.channelModels[draft.id]?.count == 1 })
+    model.setModel(draft, "p/model")
+    #expect(model.draft?.model == "p/model")
+    #expect(await transport.sent.filter { $0.payload.kind == .threadSetModel }.isEmpty)
+    await model.flushCache()
+    await model.shutdown()
+    transport = FakeTransport(autoReceipt: true)
+    model = ChatModel(transport: transport, cache: cache)
+    #expect(model.draft?.model == "p/model")
+    await transport.yield(.state(.paired))
+    await transport.yield(.ownerOnline(true))
+    model.start()
+    #expect(await eventually { model.canDeliver })
+    await transport.yield(.event(event("disconnected", .modelList(ModelListData(models: [], channelCapabilities: [])))))
+    #expect(await eventually { !model.channelModelSelection })
+    model.send("first", in: draft.id, attachment: MessageAttachment(name: "note.txt", mime: "text/plain", data: Data("note".utf8).base64EncodedString()))
+    #expect(await eventually { await transport.sent.contains { $0.threadId == draft.id && $0.payload.kind == .message } })
+    let first = try #require(await transport.sent.first { $0.threadId == draft.id && $0.payload.kind == .message })
+    guard case .message(let message) = first.payload else { Issue.record("Missing message"); return }
+    #expect(message.channelModel == ChannelModelChoice(model: "p/model"))
+    #expect(message.attachments.first?.name == "note.txt")
+    #expect(await transport.sent.filter { $0.payload.kind == .threadSetModel }.isEmpty)
+    await transport.yield(.event(event("reconnected", .modelList(ModelListData(models: [], channelCapabilities: ["model-select-v1"])))))
+    #expect(await eventually { model.channelModelSelection })
+    let next = model.newDraft()
+    #expect(next.model == nil)
+    model.send("default", in: next.id)
+    #expect(await eventually { await transport.sent.contains { $0.threadId == next.id && $0.payload.kind == .message } })
+    let defaultMessage = try #require(await transport.sent.first { $0.threadId == next.id && $0.payload.kind == .message })
+    guard case .message(let data) = defaultMessage.payload else { Issue.record("Missing message"); return }
+    #expect(data.channelModel == ChannelModelChoice(model: nil))
+    let wire = try JSONEncoder().encode(defaultMessage)
+    #expect(try JSONDecoder().decode(YorozuEvent.self, from: wire) == defaultMessage)
+}
+
+@MainActor
 @Test func followUpSettingAndAlternateSendChooseDelivery() throws {
     let key = ChatModel.followUpBehaviorKey
     let saved = UserDefaults.standard.object(forKey: key)

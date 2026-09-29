@@ -17,7 +17,14 @@ actor HarnessTransport: ChatTransport {
         continuation.yield(.ownerOnline(true))
         return stream
     }
-    func send(_ event: YorozuEvent) {}
+    func send(_ event: YorozuEvent) {
+        guard CommandLine.arguments.contains("--channel-model"), case .threadModelsRequest = event.payload else { return }
+        continuation?.yield(.event(YorozuEvent(id: "catalog", threadId: event.threadId, ts: event.ts, agentId: "main",
+            payload: .threadModels(ThreadModelsData(requestId: event.id, models: [
+                ChannelModelOption(id: "openclaw/fast", label: "Fast model", available: true),
+                ChannelModelOption(id: "openclaw/offline", label: "Offline model", available: false, unavailableReason: "Provider offline"),
+            ])))))
+    }
     func close() { continuation?.finish() }
     func deliver(_ event: YorozuEvent) { continuation?.yield(.event(event)) }
 }
@@ -42,10 +49,41 @@ actor HarnessTransport: ChatTransport {
         print("REVIEW_DIAGNOSTIC \(name) \(bitmap.pixelsWide)x\(bitmap.pixelsHigh)")
     }
 
-    @MainActor static func main() async throws {
+    @MainActor static func main() {
+        Task { @MainActor in
+            do { try await run(); exit(0) }
+            catch { print(error); exit(1) }
+        }
+        NSApplication.shared.run()
+    }
+
+    @MainActor static func run() async throws {
         NSApplication.shared.setActivationPolicy(.prohibited)
         let output = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "/tmp/yorozu-ui")
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        if CommandLine.arguments.contains("--channel-model") {
+            NSApplication.shared.setActivationPolicy(.regular)
+            let transport = HarnessTransport()
+            let model = ChatModel(transport: transport)
+            model.start()
+            while !model.ownerOnline { await Task.yield() }
+            await transport.deliver(YorozuEvent(id: "capability", threadId: "", ts: 0, agentId: "main",
+                payload: .modelList(ModelListData(models: [], channelCapabilities: ["model-select-v1"]))))
+            while !model.channelModelSelection { await Task.yield() }
+            model.newDraft()
+            let host = NSHostingView(rootView: ChannelDraftScene(model: model))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 720),
+                styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+            window.title = "OpenClaw model picker"
+            window.contentView = host
+            window.center()
+            window.makeKeyAndOrderFront(nil)
+            NSApplication.shared.activate()
+            try await Task.sleep(for: .seconds(300))
+            window.orderOut(nil)
+            model.close()
+            return
+        }
         if CommandLine.arguments.contains("--turn-folding") {
             let now = Int(Date().timeIntervalSince1970 * 1000)
             let prompt = YorozuEvent(id: "ask", threadId: "fold", ts: now - 40_000, agentId: "phone",
@@ -286,5 +324,14 @@ actor HarnessTransport: ChatTransport {
         print(report)
         try report.write(to: output.appendingPathComponent("timing.txt"), atomically: true, encoding: .utf8)
         model.close()
+    }
+}
+
+private struct ChannelDraftScene: View {
+    let model: ChatModel
+    var body: some View {
+        if let thread = model.draft {
+            NavigationStack { ChatView(model: model, thread: thread) }
+        }
     }
 }

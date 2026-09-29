@@ -4778,6 +4778,160 @@ test("the direct path takes paired devices only, carries the same sealed boxes, 
   direct.ws.close();
 });
 
+const channelModels = [
+  { id: "provider/allowed", label: "Allowed", available: true },
+  { id: "provider/offline", label: "Offline", available: false, unavailableReason: "Provider offline" },
+];
+
+async function modelRequest<T extends "model_catalog_request" | "model_selection_request" | "model_select">(
+  plugin: Awaited<ReturnType<typeof channelPlugin>>, type: T, threadId: string,
+) {
+  await vi.waitFor(() => expect(plugin.frames.some((f) => f.type === type && "threadId" in f && f.threadId === threadId)).toBe(true));
+  const index = plugin.frames.findIndex((f) => f.type === type && "threadId" in f && f.threadId === threadId);
+  return plugin.frames.splice(index, 1)[0] as Extract<HostFrame, { requestId: string }> & { type: T };
+}
+
+async function answerCatalog(plugin: Awaited<ReturnType<typeof channelPlugin>>, threadId: string) {
+  const request = await modelRequest(plugin, "model_catalog_request", threadId);
+  plugin.send({ type: "model_catalog", requestId: request.requestId, models: channelModels });
+}
+
+test("OpenClaw draft model confirmation precedes delivery; rejection queues, restart retries, duplicate keeps one turn", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-channel-model-"));
+  const options = { relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir };
+  sidecar = serve(options);
+  let plugin = await channelPlugin(dir);
+  let mac = await macClient(dir);
+  createThread(undefined, dir, "draft-model");
+  plugin.send({ type: "hello", capabilities: ["model-select-v1"] });
+  await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "model_list" && e.data.channelCapabilities?.includes("model-select-v1"))).toBe(true));
+  const message: YorozuEvent = { id: "first-model", threadId: "draft-model", ts: Date.now(), agentId: "mac",
+    kind: "message", data: { role: "user", text: "first", channelModel: { model: "provider/allowed" } } };
+  mac.sendRawEvent(message);
+  await answerCatalog(plugin, message.threadId);
+  let select = await modelRequest(plugin, "model_select", message.threadId);
+  expect(select).toMatchObject({ model: "provider/allowed" });
+  expect(plugin.frames.filter((f) => f.type === "inbound")).toEqual([]);
+  plugin.send({ type: "model_select_result", requestId: select.requestId, ok: false, error: "Gateway refused" });
+  await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "thread_models" && e.data.error?.includes("Gateway refused"))).toBe(true));
+  expect(JSON.parse(readFileSync(join(dir, "channel-outbox.json"), "utf8"))).toMatchObject([{ id: message.id, channelModel: { model: "provider/allowed" } }]);
+  expect(listThreads(dir).find((t) => t.id === message.threadId)?.model).toBeUndefined();
+  // A second message cannot pass the blocked first message.
+  mac.sendRawEvent({ ...message, id: "second-model", data: { role: "user", text: "second" } });
+  await answerCatalog(plugin, message.threadId);
+  select = await modelRequest(plugin, "model_select", message.threadId);
+  expect(plugin.frames.filter((f) => f.type === "inbound")).toEqual([]);
+  plugin.close();
+  mac.close();
+  await sidecar.close();
+  sidecar = serve(options);
+  plugin = await channelPlugin(dir);
+  mac = await macClient(dir);
+  plugin.send({ type: "hello", capabilities: ["model-select-v1"] });
+  await answerCatalog(plugin, message.threadId);
+  select = await modelRequest(plugin, "model_select", message.threadId);
+  expect(plugin.frames.filter((f) => f.type === "inbound")).toEqual([]);
+  plugin.send({ type: "model_select_result", requestId: select.requestId, ok: true, model: "provider/allowed" });
+  await vi.waitFor(() => expect(plugin.frames.filter((f) => f.type === "inbound")).toHaveLength(2));
+  expect(plugin.frames.filter((f) => f.type === "inbound").map((f) => f.message.id)).toEqual([message.id, "second-model"]);
+  // Dispatch-before-ack reconnect repeats stable IDs, without reapplying the draft pin.
+  const delivered = plugin.frames.filter((f) => f.type === "inbound");
+  plugin.close(); mac.close();
+  await sidecar.close();
+  sidecar = serve(options);
+  plugin = await channelPlugin(dir);
+  mac = await macClient(dir);
+  plugin.send({ type: "hello", capabilities: ["model-select-v1"] });
+  await vi.waitFor(() => expect(plugin.frames).toEqual(delivered));
+  plugin.send({ type: "ack", id: message.id });
+  plugin.send({ type: "ack", id: "second-model" });
+  await vi.waitFor(() => expect(JSON.parse(readFileSync(join(dir, "channel-outbox.json"), "utf8"))).toEqual([]));
+  mac.sendRawEvent(message);
+  mac.sendRawEvent(message);
+  await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "receipt" && e.data.eventId === message.id)).toBe(true));
+  expect(plugin.frames.filter((f) => f.type === "inbound" && f.message.id === message.id)).toHaveLength(1);
+  expect(readThreadEvents(message.threadId, dir).filter((e) => e.id === message.id)).toHaveLength(1);
+  expect(listThreads(dir).find((t) => t.id === message.threadId)?.model).toBe("provider/allowed");
+  plugin.close(); mac.close();
+  await sidecar.close();
+  sidecar = serve(options);
+  plugin = await channelPlugin(dir);
+  mac = await macClient(dir);
+  plugin.send({ type: "hello", capabilities: ["model-select-v1"] });
+  mac.sendRawEvent(message);
+  await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "receipt" && e.data.eventId === message.id)).toBe(true));
+  expect(plugin.frames).toEqual([]);
+  expect(JSON.parse(readFileSync(join(dir, "channel-outbox.json"), "utf8"))).toEqual([]);
+  plugin.close(); mac.close();
+});
+
+test("OpenClaw picker refreshes exact thread, preserves catalog order, commits confirmed choices across clients, and Default clears", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-channel-picker-"));
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir });
+  const plugin = await channelPlugin(dir);
+  const mac = await macClient(dir);
+  const other = await macClient(dir);
+  createThread(undefined, dir, "one"); createThread(undefined, dir, "two");
+  plugin.send({ type: "hello", capabilities: ["model-select-v1"] });
+  mac.send({ kind: "thread_models_request", threadId: "one", data: {} } as never);
+  await answerCatalog(plugin, "one");
+  const selection = await modelRequest(plugin, "model_selection_request", "one");
+  plugin.send({ type: "model_selection", requestId: selection.requestId, model: "provider/external" });
+  await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "thread_models" && e.data.models?.length === 2)).toBe(true));
+  expect(mac.events.find((e) => e.kind === "thread_models")?.data).toMatchObject({ models: channelModels });
+  await vi.waitFor(() => expect(other.events.some((e) => e.kind === "thread_list" && e.data.threads.some((t) => t.id === "one" && t.model === "provider/external"))).toBe(true));
+  for (const model of ["provider/offline", "forbidden"]) {
+    const id = mac.send({ kind: "thread_set_model", threadId: "one", data: { model } } as never);
+    await answerCatalog(plugin, "one");
+    await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "thread_models" && e.data.requestId === id && e.data.error)).toBe(true));
+    expect(plugin.frames.some((f) => f.type === "model_select")).toBe(false);
+  }
+  mac.send({ kind: "thread_set_model", threadId: "one", data: { model: "provider/allowed" } } as never);
+  await answerCatalog(plugin, "one");
+  const pick = await modelRequest(plugin, "model_select", "one");
+  expect(listThreads(dir).find((t) => t.id === "one")?.model).toBe("provider/external");
+  plugin.send({ type: "model_select_result", requestId: pick.requestId, ok: false, error: "no" });
+  await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "thread_models" && e.data.error === "no")).toBe(true));
+  expect(listThreads(dir).find((t) => t.id === "one")?.model).toBe("provider/external");
+  mac.send({ kind: "thread_set_model", threadId: "one", data: { model: null } } as never);
+  const clear = await modelRequest(plugin, "model_select", "one");
+  expect(clear).toMatchObject({ model: null });
+  plugin.send({ type: "model_select_result", requestId: clear.requestId, ok: true, model: null });
+  await vi.waitFor(() => expect(listThreads(dir).find((t) => t.id === "one")?.model).toBeUndefined());
+  expect(listThreads(dir).find((t) => t.id === "two")?.model).toBeUndefined();
+  // A draft can resolve its future route without creating a thread or dispatching a message.
+  mac.send({ kind: "thread_models_request", threadId: "unsent", data: {} } as never);
+  await answerCatalog(plugin, "unsent");
+  const draftSelection = await modelRequest(plugin, "model_selection_request", "unsent");
+  plugin.send({ type: "model_selection", requestId: draftSelection.requestId, model: null });
+  expect(listThreads(dir).some((t) => t.id === "unsent")).toBe(false);
+  expect(plugin.frames.some((f) => f.type === "inbound")).toBe(false);
+  plugin.close(); mac.close(); other.close();
+});
+
+test("old OpenClaw plugins keep chat without model capability; pending model requests time out", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-channel-old-"));
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir });
+  const plugin = await channelPlugin(dir);
+  const mac = await macClient(dir);
+  await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "model_list")).toBe(true));
+  expect(mac.events.find((e) => e.kind === "model_list")?.data).toMatchObject({ channelCapabilities: [] });
+  createThread(undefined, dir, "old");
+  mac.send({ kind: "message", threadId: "old", data: { role: "user", text: "works" } } as never);
+  await vi.waitFor(() => expect(plugin.frames.some((f) => f.type === "inbound")).toBe(true));
+  const unavailable = mac.send({ kind: "thread_models_request", threadId: "old", data: {} } as never);
+  await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "thread_models" && e.data.requestId === unavailable && e.data.error)).toBe(true));
+  expect(plugin.frames.some((f) => "requestId" in f)).toBe(false);
+  plugin.send({ type: "hello", capabilities: ["model-select-v1"] });
+  const timeout = mac.send({ kind: "thread_models_request", threadId: "old", data: {} } as never);
+  await modelRequest(plugin, "model_catalog_request", "old");
+  await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "thread_models" && e.data.requestId === timeout && e.data.error?.includes("timed out"))).toBe(true), { timeout: 12_000 });
+  plugin.close(); mac.close();
+}, 15_000);
+
 test.each(["steer", "unsupported", "declined", "failed"])("follow-up delivery uses %s and reports the effective queue", async (mode) => {
   const ready = Promise.withResolvers<void>();
   const finish = Promise.withResolvers<void>();

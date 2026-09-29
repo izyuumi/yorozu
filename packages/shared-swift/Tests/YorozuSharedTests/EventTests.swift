@@ -173,6 +173,8 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         case .threadRewound: .threadRewound(ThreadRewoundData(requestId: "request", eventId: "user", hiddenEventIds: ["user", "reply"]))
         case .threadRecover: .threadRecover(ThreadRecoverData(turnId: "turn", action: .continue))
         case .threadSetEffort: .threadSetEffort(ThreadSetEffortData(effort: .high))
+        case .threadModelsRequest: .threadModelsRequest(ThreadModelsRequestData())
+        case .threadModels: .threadModels(ThreadModelsData(requestId: "pick", models: [ChannelModelOption(id: "provider/model", label: "Model", available: false, unavailableReason: "Offline")]))
         case .modelList:
             .modelList(ModelListData(models: [
                 ModelOption(id: "claude/claude-opus-5", label: "claude-opus-5", providerLabel: "Claude"),

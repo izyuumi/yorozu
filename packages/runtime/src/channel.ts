@@ -11,13 +11,15 @@
  */
 import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { MessageAttachment } from "@yorozu/shared";
+import { randomUUID } from "node:crypto";
+import type { ChannelModelChoice, ChannelModelOption, MessageAttachment } from "@yorozu/shared";
 import { startLocalChannel, type Send } from "./local.js";
 
 export const channelSocketPath = (dir: string): string => join(dir, "channel.sock");
 const outboxFile = (dir: string): string => join(dir, "channel-outbox.json");
 
 export interface ChannelInbound {
+  channelModel?: ChannelModelChoice;
   id: string;
   threadId: string;
   ts: number;
@@ -34,6 +36,8 @@ export interface ChannelDeliver {
 }
 
 export type HostFrame =
+  | { type: "model_catalog_request" | "model_selection_request"; requestId: string; threadId: string }
+  | { type: "model_select"; requestId: string; threadId: string; model: string | null }
   | { type: "inbound"; message: ChannelInbound }
   | { type: "abort"; messageId: string }
   | { type: "ack"; id: string }
@@ -42,9 +46,12 @@ export type HostFrame =
 export type RunStatus = "completed" | "failed" | "aborted";
 export type PluginFrame = ({ type: "deliver" } & ChannelDeliver)
   | { type: "ack"; id: string }
-  | { type: "hello"; capabilities: string[] }
+  | { type: "hello"; capabilities?: string[] }
   | { type: "run_started"; messageId: string }
-  | { type: "run_finished"; messageId: string; status: RunStatus };
+  | { type: "run_finished"; messageId: string; status: RunStatus }
+  | { type: "model_catalog"; requestId: string; models: ChannelModelOption[] }
+  | { type: "model_selection"; requestId: string; model: string | null }
+  | { type: "model_select_result"; requestId: string; ok: boolean; model?: string | null; error?: string };
 
 export interface ChannelHostOptions {
   dir: string;
@@ -54,11 +61,18 @@ export interface ChannelHostOptions {
   runStarted(messageId: string): void;
   runFinished(messageId: string, status: RunStatus): void;
   onError?(message: string): void;
+  onCapabilities?(): void;
+  onModel?(threadId: string, model: string | null): void;
+  onDeliveryError?(message: ChannelInbound, error: string): void;
 }
 
 export interface ChannelHost {
   /** Whether a plugin is connected right now. Messages are queued either way. */
   readonly connected: boolean;
+  readonly modelSelection: boolean;
+  refreshModels(threadId: string): Promise<ChannelModelOption[]>;
+  selectModel(threadId: string, model: string | null): Promise<void>;
+  retry(threadId: string): void;
   /** Queues a user message for OpenClaw. Durable before it returns. */
   forward(message: ChannelInbound): void;
   abort(messageId: string): void;
@@ -67,6 +81,7 @@ export interface ChannelHost {
 
 const MAX_ID = 128;
 const MAX_TEXT = 256 * 1024;
+const validModel = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 512;
 const validId = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= MAX_ID;
 
@@ -79,9 +94,8 @@ function loadOutbox(dir: string): ChannelInbound[] {
   }
 }
 
-function saveOutbox(dir: string, outbox: ChannelInbound[]): void {
-  const file = outboxFile(dir);
-  writeFileSync(`${file}.tmp`, JSON.stringify(outbox), { mode: 0o600, flush: true });
+function saveJson(file: string, value: unknown): void {
+  writeFileSync(`${file}.tmp`, JSON.stringify(value), { mode: 0o600, flush: true });
   try {
     renameSync(`${file}.tmp`, file);
   } catch (error) {
@@ -93,26 +107,147 @@ function saveOutbox(dir: string, outbox: ChannelInbound[]): void {
 export function startChannelHost(options: ChannelHostOptions): ChannelHost {
   const { dir } = options;
   let outbox = loadOutbox(dir);
+  // Keep model preparation after ack: replaying an old draft must not restore its old pin.
+  const deliveryFile = join(dir, "channel-model-delivery.json");
+  let modelDelivery: Record<string, "prepared" | "delivered"> = {};
+  try { modelDelivery = JSON.parse(readFileSync(deliveryFile, "utf8")); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  if (outbox.some((message) => modelDelivery[message.id] === "delivered")) {
+    outbox = outbox.filter((message) => modelDelivery[message.id] !== "delivered");
+    saveJson(outboxFile(dir), outbox);
+  }
+  const markDelivery = (id: string, status: "prepared" | "delivered"): void => {
+    const updated = { ...modelDelivery, [id]: status };
+    saveJson(deliveryFile, updated);
+    modelDelivery = updated;
+  };
   const plugins = new Map<string, Send<HostFrame>>();
   const runBoundaryPlugins = new Set<string>();
+  const capable = new Set<string>();
+  const sent = new Map<string, Set<string>>();
+  type Response = Extract<PluginFrame, { requestId: string }>;
+  const pending = new Map<string, { device: string; type: Response["type"];
+    resolve: (frame: Response) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
+  const operations = new Map<string, Promise<unknown>>();
+  const draining = new Set<string>();
+  const drainAgain = new Set<string>();
+  const reason = (error: unknown): string => error instanceof Error ? error.message : String(error);
+  const serial = <T>(threadId: string, work: () => Promise<T>): Promise<T> => {
+    const next = (operations.get(threadId) ?? Promise.resolve()).catch(() => {}).then(work);
+    operations.set(threadId, next);
+    void next.finally(() => { if (operations.get(threadId) === next) operations.delete(threadId); }).catch(() => {});
+    return next;
+  };
+  const request = (device: string, frame: HostFrame & { requestId: string }, type: Response["type"]): Promise<Response> =>
+    new Promise((resolve, reject) => {
+      const send = plugins.get(device);
+      if (!send || !capable.has(device)) return reject(new Error("OpenClaw model selection unavailable"));
+      const timer = setTimeout(() => {
+        pending.delete(frame.requestId);
+        reject(new Error("OpenClaw model request timed out"));
+      }, 10_000);
+      pending.set(frame.requestId, { device, type, resolve, reject, timer });
+      send(frame);
+    });
+  const deviceForModels = (): string => {
+    const device = capable.values().next().value;
+    if (!device) throw new Error("OpenClaw model selection unavailable");
+    return device;
+  };
+  const catalog = async (device: string, threadId: string): Promise<ChannelModelOption[]> => {
+    const frame = await request(device, { type: "model_catalog_request", requestId: randomUUID(), threadId }, "model_catalog");
+    if (frame.type !== "model_catalog" || !Array.isArray(frame.models) || frame.models.length > 10_000 ||
+        !frame.models.every((m) => m && validModel(m.id) && typeof m.label === "string" &&
+          m.label.length > 0 && m.label.length <= 512 && typeof m.available === "boolean" &&
+          (m.unavailableReason === undefined || typeof m.unavailableReason === "string" && m.unavailableReason.length <= 2048)) ||
+        new Set(frame.models.map((m) => m.id)).size !== frame.models.length) throw new Error("Invalid OpenClaw model catalog");
+    return frame.models.map(({ id, label, available, unavailableReason }) => ({ id, label, available,
+      ...(unavailableReason !== undefined ? { unavailableReason } : {}) }));
+  };
+  const select = async (device: string, threadId: string, model: string | null): Promise<void> => {
+    if (model !== null) {
+      const option = (await catalog(device, threadId)).find((m) => m.id === model);
+      if (!option?.available) throw new Error(option?.unavailableReason ?? "OpenClaw model is unavailable or not permitted");
+    }
+    const frame = await request(device, { type: "model_select", requestId: randomUUID(), threadId, model }, "model_select_result");
+    if (frame.type !== "model_select_result" || frame.ok !== true) {
+      throw new Error(frame.type === "model_select_result" && typeof frame.error === "string"
+        ? frame.error.slice(0, 2048) : "OpenClaw model selection failed");
+    }
+    if (frame.model !== undefined && frame.model !== null && !validModel(frame.model)) throw new Error("Invalid OpenClaw model selection");
+    options.onModel?.(threadId, frame.model === undefined ? model : frame.model);
+  };
+  const drain = (threadId: string): void => {
+    if (draining.has(threadId)) { drainAgain.add(threadId); return; }
+    draining.add(threadId);
+    void serial(threadId, async () => {
+      for (const message of outbox.filter((m) => m.threadId === threadId)) {
+        if (modelDelivery[message.id] === "delivered") continue;
+        if (message.channelModel !== undefined) {
+          try {
+            if (modelDelivery[message.id] !== "prepared") {
+              await select(deviceForModels(), threadId, message.channelModel.model ?? null);
+              markDelivery(message.id, "prepared");
+            }
+            // Persist confirmation before dispatch. Reconnect must not restore an old override.
+            const updated = outbox.map((m) => {
+              if (m.id !== message.id) return m;
+              const { channelModel: _, ...ready } = m;
+              return ready;
+            });
+            saveJson(outboxFile(dir), updated);
+            outbox = updated;
+          } catch (error) {
+            options.onDeliveryError?.(message, reason(error));
+            break;
+          }
+        }
+        const { channelModel: _, ...ready } = message;
+        if (plugins.size) options.forwarded(ready);
+        for (const [device, send] of plugins) {
+          if (sent.get(device)?.has(message.id)) continue;
+          sent.get(device)?.add(message.id);
+          send({ type: "inbound", message: ready });
+        }
+      }
+    }).catch((error) => options.onError?.(reason(error))).finally(() => {
+      draining.delete(threadId);
+      if (drainAgain.delete(threadId)) drain(threadId);
+    });
+  };
 
   const socket = startLocalChannel<PluginFrame, HostFrame>({
     path: channelSocketPath(dir),
     onOpen: (device, send) => {
       plugins.set(device, send);
-      for (const message of outbox) {
-        options.forwarded(message);
-        send({ type: "inbound", message });
-      }
+      sent.set(device, new Set());
+      for (const threadId of new Set(outbox.map((m) => m.threadId))) drain(threadId);
     },
-    onClose: (device) => { plugins.delete(device); runBoundaryPlugins.delete(device); },
+    onClose: (device) => {
+      plugins.delete(device);
+      sent.delete(device);
+      capable.delete(device);
+      runBoundaryPlugins.delete(device);
+      for (const [id, entry] of pending) {
+        if (entry.device !== device) continue;
+        clearTimeout(entry.timer);
+        pending.delete(id);
+        entry.reject(new Error("OpenClaw disconnected"));
+      }
+      options.onCapabilities?.();
+    },
     onError: options.onError,
     onEvent: (device, frame) => {
       const send = plugins.get(device);
       if (!send || !frame || typeof frame !== "object") return;
       if (frame.type === "hello") {
-        if (Array.isArray(frame.capabilities) && frame.capabilities.every((value) => typeof value === "string") &&
-            frame.capabilities.includes("run-boundary-v1")) runBoundaryPlugins.add(device);
+        if (!Array.isArray(frame.capabilities) || !frame.capabilities.every((c) => typeof c === "string")) return;
+        if (frame.capabilities.includes("run-boundary-v1")) runBoundaryPlugins.add(device);
+        else runBoundaryPlugins.delete(device);
+        if (frame.capabilities.includes("model-select-v1")) capable.add(device);
+        else capable.delete(device);
+        options.onCapabilities?.();
+        for (const threadId of new Set(outbox.map((m) => m.threadId))) drain(threadId);
         return;
       }
       if (frame.type === "run_started" || frame.type === "run_finished") {
@@ -121,10 +256,19 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
         else if (["completed", "failed", "aborted"].includes(frame.status)) options.runFinished(frame.messageId, frame.status);
         return;
       }
+      if ("requestId" in frame) {
+        const entry = pending.get(frame.requestId);
+        if (!entry || entry.device !== device || entry.type !== frame.type) return;
+        clearTimeout(entry.timer);
+        pending.delete(frame.requestId);
+        entry.resolve(frame);
+        return;
+      }
       if (frame.type === "ack") {
-        if (!validId(frame.id) || !outbox.some((message) => message.id === frame.id)) return;
+        if (!validId(frame.id) || !sent.get(device)?.has(frame.id) || !outbox.some((message) => message.id === frame.id)) return;
+        if (modelDelivery[frame.id] === "prepared") markDelivery(frame.id, "delivered");
         outbox = outbox.filter((message) => message.id !== frame.id);
-        saveOutbox(dir, outbox);
+        saveJson(outboxFile(dir), outbox);
         return;
       }
       if (frame.type !== "deliver") return;
@@ -148,16 +292,35 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
     get connected() {
       return plugins.size > 0;
     },
+    get modelSelection() { return capable.size > 0; },
+    refreshModels: (threadId) => serial(threadId, async () => {
+      const device = deviceForModels();
+      const models = await catalog(device, threadId);
+      const frame = await request(device, { type: "model_selection_request", requestId: randomUUID(), threadId }, "model_selection");
+      if (frame.type !== "model_selection" || frame.model !== null && !validModel(frame.model)) throw new Error("Invalid OpenClaw model selection");
+      options.onModel?.(threadId, frame.model);
+      return models;
+    }),
+    selectModel: (threadId, model) => serial(threadId, () => select(deviceForModels(), threadId, model)),
+    retry: drain,
     forward(message) {
-      if (outbox.some((queued) => queued.id === message.id)) return;
+      if (modelDelivery[message.id] === "delivered") return;
+      if (outbox.some((queued) => queued.id === message.id)) { drain(message.threadId); return; }
+      if ([...sent.values()].some((ids) => ids.has(message.id))) return;
       outbox = [...outbox, message];
-      saveOutbox(dir, outbox);
-      options.forwarded(message);
-      for (const send of plugins.values()) send({ type: "inbound", message });
+      saveJson(outboxFile(dir), outbox);
+      drain(message.threadId);
     },
     abort(messageId) {
       for (const device of runBoundaryPlugins) plugins.get(device)?.({ type: "abort", messageId });
     },
-    close: () => socket.close(),
+    close: async () => {
+      for (const entry of pending.values()) {
+        clearTimeout(entry.timer);
+        entry.reject(new Error("OpenClaw disconnected"));
+      }
+      pending.clear();
+      await socket.close();
+    },
   };
 }
