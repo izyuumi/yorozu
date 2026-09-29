@@ -903,6 +903,9 @@ public struct ChatView: View {
                     status: outboxStatus,
                     rejectionReason: rejectionReason,
                     attachmentTransferLabels: model.attachmentTransferLabels(of: event.id),
+                    onEditFromHere: data.role == .user && model.supportsRewind(in: thread.id)
+                        ? { model.editFromHere(event) } : nil,
+                    editFromHereEnabled: model.canEditFromHere(event),
                     onRetry: data.role == .user && (!needsNewChat || onCreate != nil) &&
                         (outboxStatus == nil || outboxStatus == .rejected || outboxStatus == .withdrawn)
                         ? { if needsNewChat {

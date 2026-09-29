@@ -2157,3 +2157,126 @@ func deferredAttachmentDownloadsAfterVisibleHistoryArrives(legacyCache: Bool) as
     #expect(item.status == .queued)
     #expect(await transport.sent.allSatisfy { $0.payload.kind != .message && $0.payload.kind != .attachmentChunk })
 }
+
+@MainActor
+@Test func editFromHereWaitsForHostAndRestoresAcrossDevicesAndReplay() async throws {
+    let cache = ThreadCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString),
+                            key: SymmetricKey(size: .bits256))
+    defer { try? FileManager.default.removeItem(at: cache.directory) }
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    model.start()
+    let otherTransport = FakeTransport()
+    let other = await connected(otherTransport)
+    let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "aGk=")
+    let retained = event("retained", .message(MessageData(role: .user, text: "keep")))
+    let prompt = event("edit", .message(MessageData(role: .user, text: "original", attachments: [file])))
+    let reply = event("reply", .message(MessageData(role: .agent, text: "hidden", done: true)))
+    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1,
+                               turnState: .idle, canRewind: true)
+    for link in [transport, otherTransport] {
+        await link.yield(.state(.paired))
+        await link.yield(.ownerOnline(true))
+        await link.yield(.compatibility(.compatible(version: 1, capabilities: ["thread-rewind-v1", "turn-state-v1"])))
+        await link.yield(.event(event("threads", .threadList(ThreadListData(threads: [thread])))))
+        await link.yield(.event(event("history", .syncDelta(SyncDeltaData(events: [retained, prompt, reply])))))
+    }
+    #expect(await eventually { model.canEditFromHere(prompt) && other.canEditFromHere(prompt) })
+    model.editFromHere(prompt)
+    let request = try #require(await sent(by: transport, payload: .threadRewind(ThreadRewindData(eventId: "edit")), in: "home"))
+    #expect(model.events["home"]?.map(\.id) == ["retained", "edit", "reply"])
+    #expect(model.drafts["home"] == nil)
+    #expect(!model.canEditFromHere(prompt))
+    let marker = event("rewind", .threadRewound(ThreadRewoundData(requestId: request.id,
+        eventId: "edit", hiddenEventIds: ["edit", "reply"])))
+    for link in [transport, otherTransport] { await link.yield(.event(marker)) }
+    #expect(await eventually { model.drafts["home"] == "original" && other.drafts["home"] == "original" })
+    for client in [model, other] {
+        #expect(client.events["home"]?.map(\.id) == ["retained"])
+        #expect(client.attachments["home"] == [file])
+    }
+    await transport.yield(.event(event("late-changes", .turnChanges(TurnChangesData(
+        turnEventId: "edit", files: [.init(path: "old.txt", added: 1, removed: 0)])))))
+    model.drafts["home"] = "edited draft"
+    await transport.yield(.event(event("replay", .syncDelta(SyncDeltaData(events: [retained, prompt, reply, marker])))))
+    #expect(await eventually { model.syncRevision >= 2 })
+    #expect(model.events["home"]?.map(\.id) == ["retained"])
+    #expect(model.drafts["home"] == "edited draft")
+    await model.flushCache()
+    model.close()
+    other.close()
+    let restored = ChatModel(transport: FakeTransport(), cache: cache)
+    #expect(restored.events["home"]?.map(\.id) == ["retained"])
+    #expect(restored.drafts["home"] == "edited draft")
+    #expect(restored.attachments["home"] == [file])
+    restored.close()
+}
+
+@MainActor
+@Test func editFromHereRequiresCapabilityAndIdleHostAndHandlesRejection() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    let prompt = event("edit", .message(MessageData(role: .user, text: "original")))
+    await transport.yield(.event(prompt))
+    #expect(await eventually { model.events["home"]?.contains(prompt) == true })
+    #expect(!model.canEditFromHere(prompt))
+    model.editFromHere(prompt)
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["thread-rewind-v1", "turn-state-v1"])))
+    var thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1,
+                               activeEventId: "running", turnState: .running, canRewind: true)
+    await transport.yield(.event(event("running", .threadList(ThreadListData(threads: [thread])))))
+    #expect(await eventually { model.generating.contains("home") })
+    #expect(!model.canEditFromHere(prompt))
+    model.editFromHere(prompt)
+    #expect(await transport.sent.allSatisfy { $0.payload.kind != .threadRewind })
+    thread.turnState = .idle
+    thread.activeEventId = nil
+    await transport.yield(.event(event("idle", .threadList(ThreadListData(threads: [thread])))))
+    #expect(await eventually { model.canEditFromHere(prompt) })
+    model.editFromHere(prompt)
+    let request = try #require(await sent(by: transport, payload: .threadRewind(ThreadRewindData(eventId: "edit")), in: "home"))
+    await transport.yield(.event(event("rejected", .threadRewound(ThreadRewoundData(
+        requestId: request.id, eventId: "edit", reason: "Wait for this thread to finish working.")))))
+    #expect(await eventually { model.failure == "Wait for this thread to finish working." })
+    #expect(model.events["home"] == [prompt])
+    #expect(model.drafts["home"] == nil)
+    #expect(model.canEditFromHere(prompt))
+}
+
+@MainActor
+@Test func rewindBeforeHistoryDownloadsOriginalAttachmentsIntoComposer() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["thread-rewind-v1", "attachment-chunks-v1"])))
+    let bytes = Data("hello".utf8)
+    let hash = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+    let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "", sizeBytes: bytes.count, sha256: hash)
+    let prompt = event("edit", .message(MessageData(role: .user, text: "original", attachments: [file])))
+    let marker = event("rewind", .threadRewound(ThreadRewoundData(requestId: "remote", eventId: "edit", hiddenEventIds: ["edit"])))
+    await transport.yield(.event(marker))
+    await transport.yield(.event(event("history", .syncDelta(SyncDeltaData(events: [prompt, marker])))))
+    #expect(await sent(by: transport, payload: .attachmentDownloadRequest(AttachmentDownloadRequestData(
+        messageId: "edit", index: 0, offset: 0)), in: "home") != nil)
+    await transport.yield(.event(event("bytes", .attachmentDownloadChunk(AttachmentDownloadChunkData(
+        messageId: "edit", index: 0, offset: 0, totalBytes: bytes.count, data: bytes.base64EncodedString(), sha256: hash)))))
+    #expect(await eventually { model.drafts["home"] == "original" })
+    #expect(model.events["home"] == [])
+    #expect(model.attachments["home"]?.first?.bytes == bytes)
+}
+
+@MainActor
+@Test func syncedRewindThatTheConversationMovedPastLeavesTheComposerAlone() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["thread-rewind-v1"])))
+    let prompt = event("edit", .message(MessageData(role: .user, text: "original")))
+    let marker = event("rewind", .threadRewound(ThreadRewoundData(requestId: "remote", eventId: "edit", hiddenEventIds: ["edit"])))
+    var resent = event("resent", .message(MessageData(role: .user, text: "edited")))
+    resent.ts = marker.ts + 1
+    await transport.yield(.event(event("history", .syncDelta(SyncDeltaData(events: [prompt, marker, resent])))))
+    #expect(await eventually { model.events["home"]?.map(\.id) == ["resent"] })
+    #expect((model.drafts["home"] ?? "").isEmpty)
+}

@@ -12,7 +12,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { stateDir } from "./memory.js";
 import type { Message, Provider } from "./provider.js";
-import { HISTORY_LIMIT, threadFile, threadMessages } from "./threads.js";
+import { HISTORY_LIMIT, latestRewindId, threadFile, threadMessages } from "./threads.js";
 
 /** Roughly 600 tokens. The prompt asks for words, which is the unit a model can actually count. */
 const SUMMARY_WORDS = 400;
@@ -50,6 +50,9 @@ export function readSummary(threadId: string, dir = stateDir()): ThreadSummaryFi
   } catch {
     return { through: 0, text: "" };
   }
+  const rewind = /^<!-- yorozu:rewind (.+) -->\n/u.exec(raw);
+  if (rewind?.[1] !== latestRewindId(threadId, dir)) return { through: 0, text: "" };
+  if (rewind) raw = raw.slice(rewind[0].length);
   const marker = MARKER.exec(raw);
   if (!marker) return { through: 0, text: "" };
   return { through: Number(marker[1]), text: raw.slice(marker[0].length).trim() };
@@ -101,9 +104,10 @@ export async function updateSummary(
   summary = summary.trim();
   if (!summary) return false;
 
+  const rewindId = latestRewindId(threadId, dir);
   writeFileSync(
     summaryFile(threadId, dir),
-    `<!-- yorozu:through ${evictedCount} -->\n${summary}\n`,
+    (rewindId ? `<!-- yorozu:rewind ${rewindId} -->\n` : "") + `<!-- yorozu:through ${evictedCount} -->\n${summary}\n`,
   );
   return true;
 }

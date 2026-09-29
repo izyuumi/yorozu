@@ -67,6 +67,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadRead = "thread_read"
         case threadSetModel = "thread_set_model"
         case threadSetEffort = "thread_set_effort"
+        case threadRewind = "thread_rewind"
+        case threadRewound = "thread_rewound"
         case threadRecover = "thread_recover"
         case modelList = "model_list"
         case projectList = "project_list"
@@ -118,6 +120,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadRead(ThreadReadData)
         case threadSetModel(ThreadSetModelData)
         case threadSetEffort(ThreadSetEffortData)
+        case threadRewind(ThreadRewindData)
+        case threadRewound(ThreadRewoundData)
         case threadRecover(ThreadRecoverData)
         case modelList(ModelListData)
         case projectList(ProjectListData)
@@ -169,6 +173,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadRead: .threadRead
             case .threadSetModel: .threadSetModel
             case .threadSetEffort: .threadSetEffort
+            case .threadRewind: .threadRewind
+            case .threadRewound: .threadRewound
             case .threadRecover: .threadRecover
             case .modelList: .modelList
             case .projectList: .projectList
@@ -254,6 +260,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadPin: payload = .threadPin(try c.decode(ThreadPinData.self, forKey: .data))
             case .threadRead: payload = .threadRead(try c.decode(ThreadReadData.self, forKey: .data))
             case .threadSetModel: payload = .threadSetModel(try c.decode(ThreadSetModelData.self, forKey: .data))
+            case .threadRewind: payload = .threadRewind(try c.decode(ThreadRewindData.self, forKey: .data))
+            case .threadRewound: payload = .threadRewound(try c.decode(ThreadRewoundData.self, forKey: .data))
             case .threadRecover: payload = .threadRecover(try c.decode(ThreadRecoverData.self, forKey: .data))
             case .threadSetEffort: payload = .threadSetEffort(try c.decode(ThreadSetEffortData.self, forKey: .data))
             case .modelList: payload = .modelList(try c.decode(ModelListData.self, forKey: .data))
@@ -323,6 +331,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadPin(let d): try c.encode(d, forKey: .data)
         case .threadRead(let d): try c.encode(d, forKey: .data)
         case .threadSetModel(let d): try c.encode(d, forKey: .data)
+        case .threadRewind(let d): try c.encode(d, forKey: .data)
+        case .threadRewound(let d): try c.encode(d, forKey: .data)
         case .threadRecover(let d): try c.encode(d, forKey: .data)
         case .threadSetEffort(let d): try c.encode(d, forKey: .data)
         case .modelList(let d): try c.encode(d, forKey: .data)
@@ -1159,6 +1169,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     /// Host-owned ID of the active or next admitted user operation in this thread.
     public var activeEventId: String?
     public var turnState: ThreadTurnState?
+    public var canRewind: Bool?
     public var queuedTurnCount: Int?
     public var canResume: Bool?
     public var interruptedTurnId: String?
@@ -1218,11 +1229,13 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         recoveryState: String? = nil,
         activeEventId: String? = nil,
         turnState: ThreadTurnState? = nil,
-        queuedTurnCount: Int? = nil
+        queuedTurnCount: Int? = nil,
+        canRewind: Bool? = nil
     ) {
         self.activeEventId = activeEventId
         self.turnState = turnState
         self.queuedTurnCount = queuedTurnCount
+        self.canRewind = canRewind
         self.id = id
         self.title = title
         self.archived = archived
@@ -1266,6 +1279,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         activeEventId = try c.decodeIfPresent(String.self, forKey: .activeEventId)
         turnState = try c.decodeIfPresent(ThreadTurnState.self, forKey: .turnState)
         queuedTurnCount = try c.decodeIfPresent(Int.self, forKey: .queuedTurnCount)
+        canRewind = try c.decodeIfPresent(Bool.self, forKey: .canRewind)
         lastReadAt = try c.decodeIfPresent(Double.self, forKey: .lastReadAt)
         lastAgentAt = try c.decodeIfPresent(Double.self, forKey: .lastAgentAt)
         awaitingApproval = try c.decodeIfPresent(Bool.self, forKey: .awaitingApproval)
@@ -1779,4 +1793,22 @@ public struct ThreadRecoverData: Codable, Equatable, Sendable {
     public var turnId: String
     public var action: Action
     public init(turnId: String, action: Action) { self.turnId = turnId; self.action = action }
+}
+
+public struct ThreadRewindData: Codable, Equatable, Sendable {
+    public var eventId: String
+    public init(eventId: String) { self.eventId = eventId }
+}
+
+public struct ThreadRewoundData: Codable, Equatable, Sendable {
+    public var requestId: String
+    public var eventId: String
+    public var hiddenEventIds: [String]?
+    public var reason: String?
+    public init(requestId: String, eventId: String, hiddenEventIds: [String]? = nil, reason: String? = nil) {
+        self.requestId = requestId
+        self.eventId = eventId
+        self.hiddenEventIds = hiddenEventIds
+        self.reason = reason
+    }
 }
