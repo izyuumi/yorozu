@@ -507,16 +507,51 @@ control, so every inbound message is the owner's.
 
 | Frame | Direction | Meaning |
 | --- | --- | --- |
-| `hello` | plugin → host | Optional `{ capabilities: ["model-select-v1"] }`. No hello means legacy chat without model controls. |
+| `hello` | plugin → host | Optional `{ capabilities: [...] }` announcing `run-boundary-v1` and/or `model-select-v1`. No hello means legacy chat without run state, Stop or model controls. |
 | `inbound` | host → plugin | A user message typed in a `yorozu` thread. Kept in `channel-outbox.json` until acked, resent on every connect. |
 | `deliver` | plugin → host | An OpenClaw reply for a thread. Logged, synced and pushed like any agent message; an unknown thread id opens a new thread. |
 | `ack` / `error` | both | Receipt by id. Delivery is at least once in both directions and both sides dedupe by id. |
 
 The plugin acks an `inbound` only once OpenClaw has dispatched it. A message OpenClaw refuses —
 for example no routing binding while several agents are configured — stays in the outbox and is
-resent when the plugin next connects. A channel message has no turn in Yorozu: nothing for Stop
-to interrupt, no progress rows or trace pages, and no skill picker. OpenClaw answers when it
-answers. A model picker is offered only while a connected plugin announces `model-select-v1`.
+resent when the plugin next connects. Without run-boundary support, a channel message has no
+turn in Yorozu and offers no Stop. Delivered replies keep their existing behavior. There are no
+progress rows or trace pages, and no skill picker. A model picker is offered only while a
+connected plugin announces `model-select-v1`.
+
+#### Channel run boundaries (`run-boundary-v1`)
+
+On each connection, a supporting plugin sends
+`{"type":"hello","capabilities":["run-boundary-v1"]}` before any run frames. This optional
+hello has no response; older plugins need not send it. The host still sends pending `inbound`
+frames immediately on connection. `ack` retires an inbound from the durable outbox; it does
+not finish a run. The additional frames are:
+
+| Frame | Direction | Meaning |
+| --- | --- | --- |
+| `{"type":"run_started","messageId":"…"}` | plugin → host | Begin the run for a forwarded `inbound.message.id`. |
+| `{"type":"run_finished","messageId":"…","status":"completed"}` | plugin → host | End that run. `status` must be `completed`, `failed`, or `aborted`, even when no reply was delivered. |
+| `{"type":"abort","messageId":"…"}` | host → plugin | Request cancellation of exactly this run; report its actual outcome with `run_finished`. |
+
+`messageId` is a nonempty string of at most 128 characters, distinct from the ids of delivered
+agent messages. The plugin serializes runs within each thread: finish one before starting the
+next. The host marks a known run working on `run_started`; any number of `deliver` frames may
+follow without clearing it. Only `run_finished` for the active message ends working. Unknown,
+finished, and nonactive message ids cannot close or replace the active run. Run frames without
+the capability and invalid frames are ignored. Proactive deliveries still create threads, but
+have no user-message run to stop.
+
+Stop journals its exact target, marks the thread `stopping`, and sends `abort` only to supporting
+connections. Within a 3-second grace, `aborted` reports `stopped`; `completed` or `failed` reports
+`completed` because the run ended without confirmed cancellation. No boundary reports
+`unconfirmed` and leaves `stopped-unconfirmed` until a matching finish arrives. Delivered replies
+remain intact; Stop does not invent an agent reply. Duplicate Stop requests reuse the journaled
+outcome. On reconnect, reannounce an unfinished run with `run_started` after hello; a pending
+or unconfirmed Stop causes the host to resend its abort. Run boundaries are not acked by this
+protocol. Pending Stop intent survives host restart; ordinary acknowledged runs have no host
+recovery journal.
+
+#### Channel model selection (`model-select-v1`)
 
 Model controls use these newline-delimited JSON frames (all requests have a unique `requestId`):
 
@@ -643,8 +678,8 @@ Backend context after Stop:
 | Codex app server | `turn/interrupt` ends the turn and `thread/resume` keeps the thread ID. The protocol exposes streamed deltas, but does not promise that incomplete assistant text enters the next model context; unverified. |
 
 Yorozu therefore supplies the stopped partial (up to its last 4,000 characters) and a reminder
-to verify prior actions with the next prompt to both native backends. `yorozu` threads have no
-Yorozu turn to stop; see [the channel socket](#host-the-channel-socket). The user's saved message
+to verify prior actions with the next prompt to both native backends. `yorozu` threads delegate
+Stop to capable plugins; see [the channel socket](#host-the-channel-socket). The user's saved message
 stays unchanged. A Stop before text supplies a short note. A same-thread prompt can be admitted
 while Stop is pending, but its thread-log entry and execution wait for the exact Stop outcome
 so the interrupted reply stays ahead of it.

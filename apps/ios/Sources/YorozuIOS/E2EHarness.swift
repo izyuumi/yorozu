@@ -76,8 +76,8 @@ final class E2EHarness {
         case "chat":
             let seed = { [weak model] in
                 model?.previewThreads()
+                for thread in model?.threads.prefix(2) ?? [] { model?.previewChat(in: thread.id) }
                 guard let thread = model?.threads.first?.id else { return }
-                model?.previewChat(in: thread)
                 model?.previewModels(in: thread)
             }
             seed()

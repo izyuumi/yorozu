@@ -4494,7 +4494,7 @@ test("agent_status is answered to the asker with every agent the runtime has", a
 });
 
 /** OpenClaw's `yorozu` channel plugin on `channel.sock`: raw frames, everything it hears. */
-async function channelPlugin(dir: string) {
+async function channelPlugin(dir: string, runBoundary = false) {
   const socket = createConnection(channelSocketPath(dir));
   const frames: HostFrame[] = [];
   let buffer = "";
@@ -4506,8 +4506,154 @@ async function channelPlugin(dir: string) {
     for (const line of lines) if (line) frames.push(JSON.parse(line));
   });
   await new Promise<void>((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
+  if (runBoundary) socket.write(`${JSON.stringify({ type: "hello", capabilities: ["run-boundary-v1"] })}\n`);
   return { frames, send: (frame: PluginFrame) => socket.write(`${JSON.stringify(frame)}\n`), close: () => socket.destroy() };
 }
+
+async function channelRun() {
+  const host = await pairedPhone([], true, {}, true);
+  const plugin = await channelPlugin(host.dir, true);
+  host.send({ kind: "thread_create", data: {} });
+  await host.eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
+  const target = host.send({ kind: "message", data: { role: "user", text: "work" } });
+  await vi.waitFor(() => expect(plugin.frames).toContainEqual(expect.objectContaining({
+    type: "inbound", message: expect.objectContaining({ id: target }),
+  })));
+  plugin.send({ type: "ack", id: target });
+  plugin.send({ type: "run_started", messageId: target });
+  await host.eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === "t1" && thread.activeEventId === target && thread.turnState === "running"));
+  return { ...host, plugin, target };
+}
+
+test("channel run boundaries keep working across replies and ignore stale message ids", async () => {
+  const { dir, send, eventsUntil, plugin, target } = await channelRun();
+  try {
+    for (const id of ["reply-1", "reply-2"]) {
+      plugin.send({ type: "deliver", id, threadId: "t1", text: id });
+      await eventsUntil((event) => event.id === id);
+      send({ kind: "sync_request", data: { lastSeen: {} } });
+      expect((await eventsUntil((event) => event.kind === "sync_delta")).at(-1))
+        .toMatchObject({ data: { workingThreadIds: ["t1"] } });
+    }
+    const mac = await macClient(dir);
+    await vi.waitFor(() => expect(mac.events).toContainEqual(expect.objectContaining({
+      kind: "thread_list", data: expect.objectContaining({ threads: expect.arrayContaining([
+        expect.objectContaining({ id: "t1", activeEventId: target, turnState: "running" }),
+      ]) }),
+    })));
+    mac.close();
+    plugin.send({ type: "run_finished", messageId: target, status: "completed" });
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+      thread.id === "t1" && thread.turnState === "idle" && !thread.activeEventId));
+    const next = send({ kind: "message", data: { role: "user", text: "next" } });
+    await vi.waitFor(() => expect(plugin.frames).toContainEqual(expect.objectContaining({
+      type: "inbound", message: expect.objectContaining({ id: next }),
+    })));
+    plugin.send({ type: "run_started", messageId: next });
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+      thread.activeEventId === next && thread.turnState === "running"));
+    for (const messageId of [target, "unknown"]) {
+      plugin.send({ type: "run_started", messageId });
+      plugin.send({ type: "run_finished", messageId, status: "failed" });
+    }
+    // An acked delivery is a barrier for the preceding plugin frames.
+    plugin.send({ type: "deliver", id: "barrier", threadId: "t1", text: "still working" });
+    await eventsUntil((event) => event.id === "barrier");
+    send({ kind: "interrupt", data: { targetEventId: target } });
+    await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === target && event.data.status === "completed");
+    send({ kind: "thread_list", data: { threads: [] } });
+    expect((await eventsUntil((event) => event.kind === "thread_list")).at(-1)).toMatchObject({ data: {
+      threads: [expect.objectContaining({ activeEventId: next, turnState: "running" })],
+    } });
+    expect(plugin.frames.filter((frame) => frame.type === "abort")).toEqual([]);
+    plugin.send({ type: "run_finished", messageId: next, status: "completed" });
+  } finally { plugin.close(); }
+});
+
+test.each(["completed", "failed"] as const)("channel run with no reply ends on run_finished %s", async (status) => {
+  const { dir, send, eventsUntil, plugin, target } = await channelRun();
+  try {
+    plugin.send({ type: "run_finished", messageId: target, status });
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+      thread.id === "t1" && thread.turnState === "idle" && !thread.activeEventId));
+    send({ kind: "sync_request", data: { lastSeen: {} } });
+    expect((await eventsUntil((event) => event.kind === "sync_delta")).at(-1))
+      .toMatchObject({ data: { workingThreadIds: [] } });
+    expect(readThreadEvents("t1", dir).filter((event) => event.kind === "message" && event.data.role === "agent")).toEqual([]);
+  } finally { plugin.close(); }
+});
+
+test.each(["aborted", "completed", "failed"] as const)("channel Stop sends abort and journals run_finished %s", async (status) => {
+  const { dir, send, eventsUntil, plugin, target } = await channelRun();
+  try {
+    plugin.send({ type: "deliver", id: "partial", threadId: "t1", text: "work so far" });
+    await eventsUntil((event) => event.id === "partial");
+    send({ kind: "interrupt", data: { targetEventId: target } });
+    await eventsUntil((event) => event.kind === "stop_status" && event.data.status === "requested");
+    await vi.waitFor(() => expect(plugin.frames).toContainEqual({ type: "abort", messageId: target }));
+    const second = send({ kind: "interrupt", data: { targetEventId: target } });
+    await eventsUntil((event) => event.kind === "stop_status" && event.data.requestId === second && event.data.status === "requested");
+    plugin.send({ type: "run_started", messageId: target });
+    plugin.send({ type: "run_finished", messageId: "unknown", status: "aborted" });
+    plugin.send({ type: "run_finished", messageId: target, status });
+    const expected = status === "aborted" ? "stopped" : "completed";
+    await eventsUntil((event) => event.kind === "stop_status" && event.data.requestId === second && event.data.status === expected);
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.turnState === "idle"));
+    const retry = send({ kind: "interrupt", data: { targetEventId: target } });
+    await eventsUntil((event) => event.kind === "stop_status" && event.data.requestId === retry && event.data.status === expected);
+    const journal = readFileSync(join(dir, "stopped-turns.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(journal.at(-1)).toMatchObject({ targetEventId: target, status: expected, requestIds: expect.arrayContaining([second, retry]) });
+    expect(readThreadEvents("t1", dir).filter((event) => event.kind === "message" && event.data.role === "agent"))
+      .toEqual([expect.objectContaining({ id: "partial", data: { role: "agent", text: "work so far", done: true } })]);
+  } finally { plugin.close(); }
+});
+
+test("channel Stop without a boundary reports unconfirmed after the grace, then accepts a late finish", async () => {
+  const { dir, send, eventsUntil, plugin, target } = await channelRun();
+  try {
+    const start = Date.now();
+    send({ kind: "interrupt", data: { targetEventId: target } });
+    await vi.waitFor(() => expect(plugin.frames).toContainEqual({ type: "abort", messageId: target }));
+    const outcome = await eventsUntil((event) => event.kind === "stop_status" && event.data.status === "unconfirmed");
+    expect(Date.now() - start).toBeGreaterThanOrEqual(2_900);
+    expect(Date.now() - start).toBeLessThan(4_000);
+    expect(outcome).toContainEqual(expect.objectContaining({ kind: "thread_list", data: expect.objectContaining({
+      threads: [expect.objectContaining({ activeEventId: target, turnState: "stopped-unconfirmed" })],
+    }) }));
+    expect(readThreadEvents("t1", dir).filter((event) => event.kind === "message" && event.data.role === "agent")).toEqual([]);
+    plugin.send({ type: "run_finished", messageId: target, status: "aborted" });
+    await eventsUntil((event) => event.kind === "stop_status" && event.data.status === "stopped");
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.turnState === "idle"));
+  } finally { plugin.close(); }
+}, 10_000);
+
+test("channel Stop survives host restart and resends abort when the plugin reannounces the run", async () => {
+  const { dir, send, eventsUntil, plugin, target } = await channelRun();
+  send({ kind: "interrupt", data: { targetEventId: target } });
+  await eventsUntil((event) => event.kind === "stop_status" && event.data.status === "requested");
+  plugin.close();
+  await sidecar.close();
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, log: () => {} });
+  const again = await channelPlugin(dir, true);
+  const mac = await macClient(dir);
+  try {
+    await vi.waitFor(() => expect(mac.events).toContainEqual(expect.objectContaining({ kind: "thread_list",
+      data: { threads: [expect.objectContaining({ activeEventId: target, turnState: "stopping" })] },
+    })));
+    again.send({ type: "run_started", messageId: target });
+    await vi.waitFor(() => expect(again.frames).toContainEqual({ type: "abort", messageId: target }));
+    again.send({ type: "run_finished", messageId: target, status: "aborted" });
+    await vi.waitFor(() => expect(mac.events).toContainEqual(expect.objectContaining({ kind: "stop_status",
+      data: expect.objectContaining({ targetEventId: target, status: "stopped" }),
+    })));
+    const retry = mac.send({ kind: "interrupt", threadId: "t1", data: { targetEventId: target } } as never);
+    await vi.waitFor(() => expect(mac.events).toContainEqual(expect.objectContaining({ kind: "stop_status",
+      data: { targetEventId: target, requestId: retry, status: "stopped" },
+    })));
+    expect(again.frames.filter((frame) => frame.type === "abort")).toHaveLength(1);
+  } finally { again.close(); mac.close(); }
+});
 
 test("OpenClaw delivers into threads, and user messages wait for the plugin's ack", async () => {
   relay = await startRelay(0);
@@ -4536,6 +4682,27 @@ test("OpenClaw delivers into threads, and user messages wait for the plugin's ac
   mac.send({ kind: "message", data: { role: "user", text: "thanks" }, threadId: "reports" } as never);
   const inbound = () => plugin.frames.find((frame) => frame.type === "inbound");
   await vi.waitFor(() => expect(inbound()).toMatchObject({ message: { threadId: "reports", text: "thanks" } }));
+  const target = (inbound() as Extract<HostFrame, { type: "inbound" }>).message.id;
+  // Without hello, even run frames cannot advertise working or make Stop available.
+  plugin.send({ type: "run_started", messageId: target });
+  plugin.send({ type: "run_finished", messageId: target, status: "completed" });
+  plugin.send({ type: "deliver", id: "legacy-reply", threadId: "reports", text: "welcome" });
+  await vi.waitFor(() => expect(plugin.frames).toContainEqual({ type: "ack", id: "legacy-reply" }));
+  const beforeList = mac.events.length;
+  mac.send({ kind: "thread_list", data: { threads: [] } });
+  await vi.waitFor(() => expect(mac.events.slice(beforeList)).toContainEqual(expect.objectContaining({
+    kind: "thread_list", data: expect.objectContaining({ threads: expect.arrayContaining([
+      expect.objectContaining({ id: "reports", turnState: "idle" }),
+    ]) }),
+  })));
+  const summary = mac.events.slice(beforeList).find((event) => event.kind === "thread_list");
+  expect(summary?.kind === "thread_list" && summary.data.threads.find((thread) => thread.id === "reports"))
+    .not.toHaveProperty("activeEventId");
+  const stop = mac.send({ kind: "interrupt", threadId: "reports", data: { targetEventId: target } } as never);
+  await vi.waitFor(() => expect(mac.events).toContainEqual(expect.objectContaining({
+    kind: "stop_status", data: { targetEventId: target, requestId: stop, status: "unknown" },
+  })));
+  expect(plugin.frames.filter((frame) => frame.type === "abort")).toEqual([]);
   plugin.close();
   const again = await channelPlugin(dir);
   await vi.waitFor(() => expect(again.frames).toContainEqual(inbound()));

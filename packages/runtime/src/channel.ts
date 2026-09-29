@@ -39,11 +39,16 @@ export type HostFrame =
   | { type: "model_catalog_request" | "model_selection_request"; requestId: string; threadId: string }
   | { type: "model_select"; requestId: string; threadId: string; model: string | null }
   | { type: "inbound"; message: ChannelInbound }
+  | { type: "abort"; messageId: string }
   | { type: "ack"; id: string }
   | { type: "error"; id: string; reason: string };
 
-export type PluginFrame = ({ type: "deliver" } & ChannelDeliver) | { type: "ack"; id: string }
+export type RunStatus = "completed" | "failed" | "aborted";
+export type PluginFrame = ({ type: "deliver" } & ChannelDeliver)
+  | { type: "ack"; id: string }
   | { type: "hello"; capabilities?: string[] }
+  | { type: "run_started"; messageId: string }
+  | { type: "run_finished"; messageId: string; status: RunStatus }
   | { type: "model_catalog"; requestId: string; models: ChannelModelOption[] }
   | { type: "model_selection"; requestId: string; model: string | null }
   | { type: "model_select_result"; requestId: string; ok: boolean; model?: string | null; error?: string };
@@ -52,6 +57,9 @@ export interface ChannelHostOptions {
   dir: string;
   /** Makes the message durable in its thread. Throws when it could not. */
   deliver(message: ChannelDeliver): void;
+  forwarded(message: ChannelInbound): void;
+  runStarted(messageId: string): void;
+  runFinished(messageId: string, status: RunStatus): void;
   onError?(message: string): void;
   onCapabilities?(): void;
   onModel?(threadId: string, model: string | null): void;
@@ -67,6 +75,7 @@ export interface ChannelHost {
   retry(threadId: string): void;
   /** Queues a user message for OpenClaw. Durable before it returns. */
   forward(message: ChannelInbound): void;
+  abort(messageId: string): void;
   close(): Promise<void>;
 }
 
@@ -113,6 +122,7 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
     modelDelivery = updated;
   };
   const plugins = new Map<string, Send<HostFrame>>();
+  const runBoundaryPlugins = new Set<string>();
   const capable = new Set<string>();
   const sent = new Map<string, Set<string>>();
   type Response = Extract<PluginFrame, { requestId: string }>;
@@ -193,6 +203,7 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
           }
         }
         const { channelModel: _, ...ready } = message;
+        if (plugins.size) options.forwarded(ready);
         for (const [device, send] of plugins) {
           if (sent.get(device)?.has(message.id)) continue;
           sent.get(device)?.add(message.id);
@@ -216,6 +227,7 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
       plugins.delete(device);
       sent.delete(device);
       capable.delete(device);
+      runBoundaryPlugins.delete(device);
       for (const [id, entry] of pending) {
         if (entry.device !== device) continue;
         clearTimeout(entry.timer);
@@ -230,10 +242,18 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
       if (!send || !frame || typeof frame !== "object") return;
       if (frame.type === "hello") {
         if (!Array.isArray(frame.capabilities) || !frame.capabilities.every((c) => typeof c === "string")) return;
+        if (frame.capabilities.includes("run-boundary-v1")) runBoundaryPlugins.add(device);
+        else runBoundaryPlugins.delete(device);
         if (frame.capabilities.includes("model-select-v1")) capable.add(device);
         else capable.delete(device);
         options.onCapabilities?.();
         for (const threadId of new Set(outbox.map((m) => m.threadId))) drain(threadId);
+        return;
+      }
+      if (frame.type === "run_started" || frame.type === "run_finished") {
+        if (!runBoundaryPlugins.has(device) || !validId(frame.messageId)) return;
+        if (frame.type === "run_started") options.runStarted(frame.messageId);
+        else if (["completed", "failed", "aborted"].includes(frame.status)) options.runFinished(frame.messageId, frame.status);
         return;
       }
       if ("requestId" in frame) {
@@ -290,6 +310,9 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
       outbox = [...outbox, message];
       saveJson(outboxFile(dir), outbox);
       drain(message.threadId);
+    },
+    abort(messageId) {
+      for (const device of runBoundaryPlugins) plugins.get(device)?.({ type: "abort", messageId });
     },
     close: async () => {
       for (const entry of pending.values()) {

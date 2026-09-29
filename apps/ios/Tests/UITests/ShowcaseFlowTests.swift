@@ -117,18 +117,20 @@ final class ShowcaseFlowTests: XCTestCase {
     /// A real drag, rather than only the scroll intent model, must reveal the return control.
     @MainActor
     func testReadingOlderContentCanReturnToLatest() {
+        if UIDevice.current.userInterfaceIdiom == .pad { XCUIDevice.shared.orientation = .landscapeLeft }
+        defer { XCUIDevice.shared.orientation = .portrait }
         let app = XCUIApplication()
         app.launchArguments = ["-yorozuShowcase", "chat"]
         app.launch()
         XCTAssertTrue(app.navigationBars["Weeknight dinners"].waitForExistence(timeout: 30))
 
-        let timeline = app.collectionViews.firstMatch
+        let timeline = app.collectionViews.element(boundBy: app.collectionViews.count - 1)
         XCTAssertTrue(timeline.waitForExistence(timeout: 10))
         let newest = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label == %@", "Perfect. Remind me before the next one.")).firstMatch
         XCTAssertTrue(newest.waitForExistence(timeout: 10))
         XCTAssertTrue(newest.frame.intersects(timeline.frame), "Conversation did not start at latest")
-        let latest = app.buttons["Jump to latest message"]
+        let latest = app.buttons["Scroll to bottom"]
         XCTAssertFalse(latest.exists, "Return control appeared while already at latest")
         timeline.swipeDown()
         XCTAssertTrue(latest.waitForExistence(timeout: 10), "Reading upward did not reveal Latest")
@@ -145,5 +147,20 @@ final class ShowcaseFlowTests: XCTestCase {
         returned.name = "Returned to latest"
         returned.lifetime = .keepAlways
         add(returned)
+
+        // Leaving while reading history must not make the next ordinary open restore it.
+        for title in ["Invoices", "Weeknight dinners", "Invoices", "Weeknight dinners"] {
+            timeline.swipeDown()
+            XCTAssertTrue(latest.waitForExistence(timeout: 10))
+            let back = app.navigationBars.buttons["Threads"]
+            if back.exists { back.tap() }
+            let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title + ".")).firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 10))
+            row.tap()
+            XCTAssertTrue(timeline.waitForExistence(timeout: 10))
+            XCTAssertTrue(newest.waitForExistence(timeout: 10))
+            XCTAssertTrue(newest.frame.intersects(timeline.frame), "Reopening restored stale history")
+            XCTAssertFalse(latest.exists, "Reopening did not settle at latest")
+        }
     }
 }
