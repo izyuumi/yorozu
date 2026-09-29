@@ -133,6 +133,64 @@ public final class ChatModel {
         return timeline
     }
 
+    /// Host queue order comes first; messages still awaiting admission follow in outbox order.
+    public func queuedMessages(in threadId: String) -> [YorozuEvent] {
+        let summary = synced.first { $0.id == threadId }
+        var ids = summary?.queuedEventIds ?? []
+        if summary?.turnState == .starting, let active = summary?.activeEventId {
+            ids.insert(active, at: 0)
+        }
+        ids += outbox.filter { $0.event.threadId == threadId &&
+            [.queued, .confirming, .unconfirmed, .checking].contains($0.status)
+        }.map(\.id)
+        guard !ids.isEmpty else { return [] }
+        let history = timeline(threadId).events
+        let byId = Dictionary(history.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        var seen: Set<String> = []
+        let withdrawn = withdrawnMessageIds(in: threadId)
+        let failed = Set(outbox.filter { $0.event.threadId == threadId && $0.status == .failed }.map(\.id))
+        return ids.compactMap { id in
+            guard seen.insert(id).inserted, !withdrawn.contains(id), !failed.contains(id),
+                  let event = byId[id], event.clientTs == nil,
+                  case .message(let message) = event.payload, message.role == .user,
+                  summary?.activeEventId != id || summary?.turnState == .starting else { return nil }
+            return event
+        }
+    }
+
+    func queuedMessageStatuses(in threadId: String, queued: [YorozuEvent]) -> [String: String] {
+        guard !queued.isEmpty else { return [:] }
+        let active = synced.first(where: { $0.id == threadId })?.activeEventId
+        let sending = Set(outbox.filter { $0.event.threadId == threadId && $0.attemptedAt != nil }.map(\.id))
+        let withdrawing = Set(outbox.compactMap { item -> String? in
+            guard item.event.threadId == threadId,
+                  case .interrupt(let data) = item.event.payload else { return nil }
+            return data.targetEventId
+        })
+        return Dictionary(uniqueKeysWithValues: queued.enumerated().map { index, event in
+            let status: String
+            if withdrawing.contains(event.id) { status = String(localized: "Withdrawal pending") }
+            else if active == event.id || sending.contains(event.id) { status = String(localized: "Sending…") }
+            else { status = index == 0 ? String(localized: "Next") : String(localized: "Sends when the turn ends") }
+            return (event.id, status)
+        })
+    }
+
+    private func withdrawnMessageIds(in threadId: String) -> Set<String> {
+        Set(timeline(threadId).events.compactMap { event in
+            guard case .stopStatus(let status) = event.payload, status.status == .withdrawn else { return nil }
+            return status.targetEventId
+        }).union(outbox.filter { $0.event.threadId == threadId && $0.admissionStatus == .withdrawn }.map(\.id))
+    }
+
+    func rows(in threadId: String, queued queue: [YorozuEvent]? = nil) -> [ChatRow] {
+        let queue = queue ?? queuedMessages(in: threadId)
+        let summary = synced.first { $0.id == threadId }
+        return timeline(threadId).rows(generating: generating.contains(threadId),
+            activeEventId: summary?.turnState == nil ? nil : summary?.activeEventId,
+            excluding: withdrawnMessageIds(in: threadId).union(queue.map(\.id))) + queue.map(ChatRow.message)
+    }
+
     /// Inline actions follow the settled message, not the thread's current working state.
     func messageActions(for event: YorozuEvent) -> (copy: Bool, retry: MessageData?) {
         guard case .message(let data) = event.payload else { return (false, nil) }
@@ -449,18 +507,7 @@ public final class ChatModel {
     @ObservationIgnored private var composerWrite: Task<Void, Never>?
     @ObservationIgnored private var restoringComposer = false
     @ObservationIgnored private var preparedSend: [String: String] = [:]
-    @ObservationIgnored private var readingPositions: [String: ThreadCache.ReadingPosition] = [:]
     @ObservationIgnored private var pendingSaveFailure: String?
-
-    public func readingPosition(in threadID: String) -> ThreadCache.ReadingPosition? {
-        readingPositions[threadID]
-    }
-
-    public func rememberReadingPosition(_ position: ThreadCache.ReadingPosition?, in threadID: String) {
-        guard readingPositions[threadID] != position else { return }
-        readingPositions[threadID] = position
-        saveComposerSoon()
-    }
 
     private func saveComposerSoon() {
         guard cache != nil else { return }
@@ -498,7 +545,6 @@ public final class ChatModel {
         try cache?.save(composer: .init(drafts: drafts, attachments: attachments, threads: draftThreads,
                                        knownThreads: synced, openThread: openThread,
                                        stashes: stashes.isEmpty ? nil : stashes,
-                                       readingPositions: readingPositions.isEmpty ? nil : readingPositions,
                                        preparedSend: preparedSend.isEmpty ? nil : preparedSend,
                                        restoredWithdrawals: restoredWithdrawals.isEmpty ? nil : restoredWithdrawals))
     }
@@ -601,7 +647,6 @@ public final class ChatModel {
             restoredWithdrawals = composer.restoredWithdrawals ?? []
             draftThreads = draftState?.threads ?? composer.threads
             openThread = draftState == nil ? composer.openThread : draftState?.openThread
-            readingPositions = composer.readingPositions ?? [:]
             for thread in composer.knownThreads ?? [] where !synced.contains(where: { $0.id == thread.id }) {
                 synced.append(thread)
             }
@@ -1133,7 +1178,7 @@ public final class ChatModel {
                 let now = Date()
                 guard let item = self.pendingHeads(at: now, blocking: blockedThreads).first(where: {
                     !sent.contains($0.id) && $0.event.payload.kind != .interrupt &&
-                        $0.event.payload.kind != .approvalAnswer && ($0.nextAttemptAt ?? .distantPast) <= now
+                        $0.event.payload.kind != .approvalAnswer && $0.event.payload.kind != .questionAnswer && ($0.nextAttemptAt ?? .distantPast) <= now
                 }), let index = self.outbox.firstIndex(where: { $0.id == item.id }) else { break }
                 if case .message(let message) = item.event.payload, !message.attachments.isEmpty,
                    !self.supportsAttachmentChunks,
@@ -1187,7 +1232,8 @@ public final class ChatModel {
         guard priorityTask == nil, canDeliver else { return }
         let now = Date()
         guard let item = pendingHeads(at: now).first(where: {
-            ($0.event.payload.kind == .interrupt || $0.event.payload.kind == .approvalAnswer) &&
+            ($0.event.payload.kind == .interrupt || $0.event.payload.kind == .approvalAnswer ||
+                $0.event.payload.kind == .questionAnswer) &&
                 ($0.nextAttemptAt ?? .distantPast) <= now
         }), let index = outbox.firstIndex(where: { $0.id == item.id }) else { return }
         outbox[index].attemptedAt = outbox[index].attemptedAt ?? now
@@ -1248,7 +1294,7 @@ public final class ChatModel {
         }
         guard let index = outbox.firstIndex(where: { $0.id == item.id }),
               !stopPending(for: item.id), outbox[index].admissionStatus != .withdrawn,
-              outbox[index].admissionStatus != .rejected else { return }
+              !sendingHeld(in: item.event.threadId), outbox[index].admissionStatus != .rejected else { return }
         guard let cached = uploadCache, let descriptors = outbox[index].uploadDescriptors,
               let offsets = outbox[index].uploadOffsets,
               offsets.count == descriptors.count else { return }
@@ -1474,13 +1520,17 @@ public final class ChatModel {
     private func pendingHeads(at now: Date, blocking blockedThreads: Set<String> = []) -> [OutboxItem] {
         var threads = blockedThreads
         let prioritized = outbox.filter { $0.event.payload.kind == .interrupt } +
-            outbox.filter { $0.event.payload.kind == .approvalAnswer } +
-            outbox.filter { $0.event.payload.kind != .interrupt && $0.event.payload.kind != .approvalAnswer }
+            outbox.filter { $0.event.payload.kind == .approvalAnswer || $0.event.payload.kind == .questionAnswer } +
+            outbox.filter { $0.event.payload.kind != .interrupt && $0.event.payload.kind != .approvalAnswer &&
+                $0.event.payload.kind != .questionAnswer }
         return prioritized.filter { item in
             guard !item.isExpired(at: now), item.admissionStatus != .rejected,
                   item.admissionStatus != .withdrawn, item.replacementId == nil else { return false }
-            if item.event.payload.kind == .approvalAnswer { return !blockedThreads.contains(item.event.threadId) }
+            if item.event.payload.kind == .approvalAnswer || item.event.payload.kind == .questionAnswer {
+                return !blockedThreads.contains(item.event.threadId)
+            }
             guard threads.insert(item.event.threadId).inserted else { return false }
+            if item.event.payload.kind == .message && sendingHeld(in: item.event.threadId) { return false }
             return true
         }
     }
@@ -1676,6 +1726,9 @@ public final class ChatModel {
             return
         }
         outbox = pending
+        restoreWithdrawnMessage(pending[index].event)
+        saveComposerNow()
+        flush()
     }
 
     private func reconcileStop(_ status: StopStatusData) {
@@ -1722,13 +1775,20 @@ public final class ChatModel {
                   }) else { continue }
             let original = ownMessage ?? history.first(where: { $0.id == status.targetEventId })
             guard let original, case .message(let message) = original.payload, message.role == .user else { continue }
-            restoredWithdrawals.insert(status.targetEventId)
-            liveWithdrawals.remove(status.targetEventId)
-            let draft = drafts[threadId] ?? ""
-            drafts[threadId] = [draft, message.text].filter { !$0.isEmpty }.joined(separator: "\n\n")
-            attachments[threadId, default: []].append(contentsOf: message.attachments)
-            if message.attachments.contains(where: \.isDeferred) { requestAttachmentDownloads(original) }
+            restoreWithdrawnMessage(original)
         }
+    }
+
+    private func restoreWithdrawnMessage(_ original: YorozuEvent) {
+        guard !restoredWithdrawals.contains(original.id),
+              case .message(let message) = original.payload, message.role == .user else { return }
+        restoredWithdrawals.insert(original.id)
+        liveWithdrawals.remove(original.id)
+        let threadId = original.threadId
+        let draft = drafts[threadId] ?? ""
+        drafts[threadId] = [draft, message.text].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        attachments[threadId, default: []].append(contentsOf: message.attachments)
+        if message.attachments.contains(where: \.isDeferred) { requestAttachmentDownloads(original) }
     }
 
     /// Forgets one event on this device only: it stays in the runtime's thread log, and a
@@ -1983,8 +2043,23 @@ public final class ChatModel {
         }
     }
 
+    private func sendingHeld(in threadId: String) -> Bool {
+        !pendingComposerCards(in: threadId).isEmpty || timeline(threadId).events.contains { event in
+            switch event.payload {
+            case .approvalCard(let card): return approvalPending(card.actionId)
+            case .questionCard(let card):
+                return outbox.contains { item in
+                    guard item.event.threadId == threadId, case .questionAnswer(let answer) = item.event.payload else { return false }
+                    return answer.questionId == card.questionId
+                }
+            default: return false
+            }
+        }
+    }
+
     public func pendingComposerCards(in threadId: String) -> [YorozuEvent] {
-        guard generating.contains(threadId) else { return [] }
+        guard generating.contains(threadId) ||
+            synced.first(where: { $0.id == threadId })?.turnState.map({ $0 != .idle }) == true else { return [] }
         return timeline(threadId).events.filter { event in
             switch event.payload {
             case .approvalCard(let card):
@@ -2254,6 +2329,7 @@ public final class ChatModel {
                 persist(threads: synced)
                 requestOpenHistory()
                 onThreads?()
+                flush()
             case .syncDelta(let data):
                 for event in data.current ?? [] { upsert(event, persist: false) }
                 for event in data.events {
@@ -2286,6 +2362,7 @@ public final class ChatModel {
                     // `more` behind it would let it hang up mid-catch-up. See ``drain(timeout:)``.
                     deltas += 1
                 }
+                flush()
             case .threadSearchResult(let data):
                 guard data.requestId == searchRequestID, !searchQuery.isEmpty else { break }
                 if data.partial == true { searchIncomplete = true }
@@ -2400,6 +2477,10 @@ public final class ChatModel {
             restoreWithdrawals(in: event.threadId)
         } else if case .message(let message) = event.payload, message.role == .user {
             restoreWithdrawals(in: event.threadId)
+        }
+        switch event.payload {
+        case .approvalAnswer, .approvalStatus, .questionAnswer: flush()
+        default: break
         }
     }
 

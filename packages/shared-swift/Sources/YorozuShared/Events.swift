@@ -1171,6 +1171,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     public var turnState: ThreadTurnState?
     public var canRewind: Bool?
     public var queuedTurnCount: Int?
+    public var queuedEventIds: [String]?
     public var canResume: Bool?
     public var interruptedTurnId: String?
     public var recoveryState: String?
@@ -1230,11 +1231,13 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         activeEventId: String? = nil,
         turnState: ThreadTurnState? = nil,
         queuedTurnCount: Int? = nil,
+        queuedEventIds: [String]? = nil,
         canRewind: Bool? = nil
     ) {
         self.activeEventId = activeEventId
         self.turnState = turnState
         self.queuedTurnCount = queuedTurnCount
+        self.queuedEventIds = queuedEventIds
         self.canRewind = canRewind
         self.id = id
         self.title = title
@@ -1279,6 +1282,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         activeEventId = try c.decodeIfPresent(String.self, forKey: .activeEventId)
         turnState = try c.decodeIfPresent(ThreadTurnState.self, forKey: .turnState)
         queuedTurnCount = try c.decodeIfPresent(Int.self, forKey: .queuedTurnCount)
+        queuedEventIds = try c.decodeIfPresent([String].self, forKey: .queuedEventIds)
         canRewind = try c.decodeIfPresent(Bool.self, forKey: .canRewind)
         lastReadAt = try c.decodeIfPresent(Double.self, forKey: .lastReadAt)
         lastAgentAt = try c.decodeIfPresent(Double.self, forKey: .lastAgentAt)

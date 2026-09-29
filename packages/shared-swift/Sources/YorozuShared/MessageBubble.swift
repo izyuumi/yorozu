@@ -48,6 +48,7 @@ public struct MessageBubble: View {
     private let timestamp: Int?
     /// Set while the message is waiting in the outbox, which is what puts a caption under it.
     private let status: OutboxStatus?
+    private let queuedStatus: String?
     private let rejectionReason: String?
     private let attachmentTransferLabels: [String]?
     private let onEditFromHere: (() -> Void)?
@@ -59,7 +60,7 @@ public struct MessageBubble: View {
     private let onResend: (() -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage(ReplyFont.key) private var replyFont = ReplyFont.serif
+    @AppStorage(ReplyFont.key) private var replyFont = ReplyFont.sans
     @State private var hovering = false
     @State private var copied = false
     @State private var confirmingEdit = false
@@ -71,6 +72,7 @@ public struct MessageBubble: View {
         copyAvailable: Bool = true,
         timestamp: Int? = nil,
         status: OutboxStatus? = nil,
+        queuedStatus: String? = nil,
         rejectionReason: String? = nil,
         attachmentTransferLabels: [String]? = nil,
         onEditFromHere: (() -> Void)? = nil,
@@ -90,6 +92,7 @@ public struct MessageBubble: View {
         self.copyAvailable = copyAvailable
         self.timestamp = timestamp
         self.status = status
+        self.queuedStatus = queuedStatus
         self.rejectionReason = rejectionReason
         self.attachmentTransferLabels = attachmentTransferLabels
         self.onEditFromHere = onEditFromHere
@@ -148,7 +151,19 @@ public struct MessageBubble: View {
             if speaking {
                 SpeakingChip().transition(reduceMotion ? .identity : .scale(scale: 0.9).combined(with: .opacity))
             }
-            if let status {
+            if let queuedStatus {
+                HStack(spacing: LayoutMetrics.inner) {
+                    Text(queuedStatus)
+                    if let onWithdraw {
+                        Button("Remove", action: onWithdraw)
+                            .accessibilityHint("Returns text and attachments to the composer")
+                    }
+                }
+                .font(.scaled(.caption))
+                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
+            }
+            if let status, queuedStatus == nil || ![.queued, .confirming, .withdrawalPending].contains(status) {
                 caption(status)
             }
             if !data.text.isEmpty || onEditFromHere != nil || onRetry != nil || onDelete != nil || timestamp != nil {
@@ -211,7 +226,7 @@ public struct MessageBubble: View {
                 systemImage: "arrow.clockwise", action: onRetry)
         }
         if let onWithdraw {
-            Button("Cancel send", systemImage: "xmark.circle", action: onWithdraw)
+            Button(queuedStatus == nil ? "Cancel send" : "Remove", systemImage: "xmark.circle", action: onWithdraw)
         }
         if let onDelete {
             // Local only, which the menu says outright: the word "Delete" on its own

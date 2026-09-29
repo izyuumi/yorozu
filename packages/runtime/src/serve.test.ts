@@ -1768,7 +1768,7 @@ test("turn state spans queued turns and ignores a stop for an earlier turn", asy
     thread.id === "turn-state" && thread.turnState === "running" && thread.activeEventId === first));
   const second = send({ kind: "message", data: { role: "user", text: "second" } }, "turn-state");
   await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
-    thread.id === "turn-state" && thread.turnState === "running" && thread.activeEventId === first && thread.queuedTurnCount === 1));
+    thread.id === "turn-state" && thread.turnState === "running" && thread.activeEventId === first && thread.queuedTurnCount === 1 && thread.queuedEventIds?.[0] === second));
   send({ kind: "sync_request", data: { lastSeen: {} } }, "");
   const sync = await eventsUntil((event) => event.kind === "sync_delta");
   expect(sync.at(-1)).toMatchObject({ data: { workingThreadIds: ["turn-state"] } });
@@ -1791,7 +1791,7 @@ test("turn state spans queued turns and ignores a stop for an earlier turn", asy
     thread.id === "turn-state" && thread.turnState === "running" && thread.activeEventId === second));
   const summary = afterStaleStop.flatMap((event) => event.kind === "thread_list" ? event.data.threads : [])
     .find((thread) => thread.id === "turn-state");
-  expect(summary).toMatchObject({ turnState: "running", activeEventId: second, queuedTurnCount: 0 });
+  expect(summary).toMatchObject({ turnState: "running", activeEventId: second, queuedTurnCount: 0, queuedEventIds: [] });
   secondDone.resolve();
   await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
     thread.id === "turn-state" && thread.turnState === "idle"));
