@@ -1738,7 +1738,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     userEventId?: string,
     acceptedEvent?: YorozuEvent,
   ): Promise<void> {
-    userEventId ??= randomUUID();
+    const turnKey = userEventId ?? randomUUID();
     if (userEventId && stoppedTurns.has(userEventId)) return Promise.resolve();
     if (updateGate.status.phase === "installing") return Promise.reject(new Error("Mac is installing an update"));
     updateGate.activity();
@@ -1750,7 +1750,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       try { saveNativeQueue(); }
       catch (error) { queuedNative.pop(); throw error; }
     }
-    admitTurn(threadId, userEventId);
+    admitTurn(threadId, turnKey);
     const previous = turnQueues.get(threadId) ?? Promise.resolve();
     const queuedBehindTurn = turnQueues.has(threadId);
     const next = previous.catch(() => {}).then(async () => {
@@ -1759,7 +1759,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       if (stopped) return;
       if (userEventId && stoppedTurns.has(userEventId)) return;
-      startTurnState(threadId, userEventId!);
+      startTurnState(threadId, turnKey);
       const logged = queuedBehindTurn ? acceptedEvent : undefined;
       if (logged) {
         // A steered message was admitted while an earlier turn ran. Append its corrected
@@ -1779,7 +1779,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       try { await runTurn(threadId, text, recorded, attachments, userEventId); }
       finally {
         if (userEventId) activeTurnIds.delete(userEventId);
-        finishTurnState(threadId, userEventId!);
+        finishTurnState(threadId, turnKey);
       }
     });
     turnQueues.set(threadId, next);
