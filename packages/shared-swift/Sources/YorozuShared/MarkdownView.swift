@@ -13,7 +13,7 @@ public struct MarkdownText: View {
     #endif
 
     public init(_ markdown: String, cursor: Bool = false) {
-        self.blocks = markdownBlocks(markdown)
+        self.blocks = markdownBlocks(markdown, streaming: cursor)
         self.cursor = cursor
     }
 
@@ -34,8 +34,16 @@ public struct MarkdownText: View {
 
     private var stack: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { offset, _ in
-                view(at: offset)
+            // Stable offsets and equal views skip settled Markdown on each streaming delta;
+            // only the growing block and cursor handoff change.
+            ForEach(Array(blocks.enumerated()), id: \.offset) { offset, block in
+                MarkdownBlockView(
+                    block: block,
+                    cursor: cursor && offset == blocks.count - 1,
+                    highlight: highlight
+                )
+                .equatable()
+                .padding(.top, headingTopPadding(block, at: offset))
             }
         }
         // The phone's timeline hosts each row in a collection cell, which can propose less
@@ -44,10 +52,20 @@ public struct MarkdownText: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    @ViewBuilder private func view(at offset: Int) -> some View {
-        let last = offset == blocks.count - 1
-        switch blocks[offset] {
-        case .paragraph(let text) where cursor && last:
+    private func headingTopPadding(_ block: MarkdownBlock, at offset: Int) -> CGFloat {
+        if case .heading = block, offset > 0 { return 4 }
+        return 0
+    }
+}
+
+private struct MarkdownBlockView: View, Equatable {
+    let block: MarkdownBlock
+    let cursor: Bool
+    let highlight: String
+
+    @ViewBuilder var body: some View {
+        switch block {
+        case .paragraph(let text) where cursor:
             // The cursor sits inside the paragraph's own text so it follows the last word to
             // wherever the line wrapped, rather than sitting under it on a line of its own.
             (Text(AttributedString.chatInline(text, highlight: highlight)) + Text(" "))
@@ -57,7 +75,6 @@ public struct MarkdownText: View {
         case .heading(let level, let text):
             Text(AttributedString.chatInline(text, highlight: highlight))
                 .font(headingFont(level))
-                .padding(.top, offset == 0 ? 0 : 4)
                 .accessibilityAddTraits(.isHeader)
         case .code(let language, let text):
             CodeBlock(language: language, code: text)
