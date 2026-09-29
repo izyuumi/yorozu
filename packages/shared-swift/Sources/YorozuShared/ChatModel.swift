@@ -1401,9 +1401,7 @@ public final class ChatModel {
     }
 
     public func stopPending(in threadId: String) -> Bool {
-        outbox.contains { item in
-            item.event.threadId == threadId && item.event.payload.kind == .interrupt
-        }
+        activeEventId(in: threadId).map { stopPending(for: $0) } ?? false
     }
 
     public func canWithdraw(_ event: YorozuEvent) -> Bool {
@@ -1520,7 +1518,10 @@ public final class ChatModel {
         } else if status.status == .stopped || status.status == .completed {
             outbox.removeAll { $0.id == status.targetEventId }
         }
-        if status.status != .completed { generating.remove(threadId) }
+        if status.status != .completed &&
+            (status.status != .withdrawn || status.targetEventId == activeEventId(in: threadId)) {
+            generating.remove(threadId)
+        }
         saveOutbox()
         flush()
     }

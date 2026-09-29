@@ -1153,6 +1153,35 @@ private func summary(
 }
 
 @MainActor
+@Test func queuedWithdrawalKeepsRunningTurnsStopAvailable() async throws {
+    let transport = FakeTransport(autoReceipt: true)
+    let model = await connected(transport)
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1"])))
+    await transport.yield(.event(event("running", .threadList(ThreadListData(threads: [
+        ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1,
+            activeEventId: "active", turnState: .running, queuedTurnCount: 1)
+    ])))))
+    await transport.yield(.event(event("queued", .message(MessageData(role: .user, text: "later")))))
+    #expect(await eventually { model.canStop(in: "home") && model.events["home"]?.count == 1 })
+
+    model.withdraw("queued")
+    let withdrawal = try #require(await sent(by: transport, payload: .interrupt(InterruptData(targetEventId: "queued")), in: "home"))
+    #expect(!model.stopPending(in: "home"))
+    #expect(model.canStop(in: "home"))
+    #expect(model.generating.contains("home"))
+
+    await transport.yield(.event(event("withdrawn", .stopStatus(StopStatusData(
+        targetEventId: "queued", requestId: withdrawal.id, status: .withdrawn)))))
+    #expect(await eventually { model.events["home"]?.contains(where: { $0.id == "withdrawn" }) == true })
+    #expect(!model.stopPending(in: "home"))
+    #expect(model.canStop(in: "home"))
+    #expect(model.generating.contains("home"))
+
+    model.interrupt(in: "home")
+    #expect(await sent(by: transport, payload: .interrupt(InterruptData(targetEventId: "active")), in: "home") != nil)
+}
+
+@MainActor
 @Test func unconfirmedStopEndsPendingStateWithoutClaimingCessation() async throws {
     let transport = FakeTransport(autoReceipt: true)
     let model = await connected(transport)

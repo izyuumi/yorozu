@@ -84,11 +84,10 @@ private func reconnect(_ transport: QueueTransport) async {
         try await Task.sleep(for: .milliseconds(10))
     }
     #expect(await transport.sent.filter { $0.threadId == "home" }.first?.id == stop.id)
-    #expect(model.stopPending(in: "home"))
     #expect(await transport.messages.isEmpty)
     await transport.yield(.event(YorozuEvent(id: "stop-done", threadId: "", ts: ts, agentId: "main",
         payload: .stopStatus(StopStatusData(targetEventId: "running-old", requestId: stop.id, status: .stopped)))))
-    #expect(await settle { !model.stopPending(in: "home") && model.outbox.isEmpty })
+    #expect(await settle { model.outbox.isEmpty })
     #expect(await transport.sent.filter { $0.threadId == "home" }.map(\.id) == [stop.id, later.id])
 }
 
@@ -205,7 +204,7 @@ private func reconnect(_ transport: QueueTransport) async {
     model.withdraw(message.id)
     let stop = try #require(model.outbox.last?.event)
     #expect(stop.payload == .interrupt(InterruptData(targetEventId: message.id)))
-    #expect(await settle { model.stopPending(in: "home") })
+    #expect(!model.stopPending(in: "home"))
 }
 
 @MainActor

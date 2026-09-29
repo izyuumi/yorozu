@@ -2199,6 +2199,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
         reply(stopStatus(withdrawn, event.id));
         return;
       }
+      const turn = turnStates.get(event.threadId);
+      const queuedIndex = turn?.queued.indexOf(target) ?? -1;
+      if (!existing && user && turn && queuedIndex >= 0) {
+        const withdrawn: StopRecord = { targetEventId: target, threadId: event.threadId,
+          status: "withdrawn", requestIds: [event.id] };
+        rememberStop(withdrawn);
+        turn.queued.splice(queuedIndex, 1);
+        removeNativeQueue(target);
+        publishTurnState(event.threadId);
+        reply(control({ kind: "receipt", data: { eventId: event.id } }));
+        reply(stopStatus(withdrawn, event.id));
+        return;
+      }
       const requestIds = existing ? [...new Set([...existing.requestIds, event.id])] : [event.id];
       const live = liveReplies.get(event.threadId);
       const record: StopRecord = final ? { ...(existing ?? { targetEventId: target, threadId: event.threadId }),
@@ -2207,7 +2220,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
         ...(runningEventIds.get(event.threadId) === target && live?.kind === "message" && live.data.role === "agent"
           ? { partialText: live.data.text } : {}) };
       rememberStop(record);
-      const turn = turnStates.get(event.threadId);
       if (record.status === "requested" && turn?.activeEventId === target) {
         turn.state = "stopping";
         publishTurnState(event.threadId);
@@ -2242,8 +2254,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const final = candidate ? history.find((stored): stored is YorozuEvent & { kind: "message" } =>
         stored.id === candidate && stored.kind === "message" && stored.data.role === "agent" && stored.data.done === true) : undefined;
       const completionId = recordedCompletionId ?? (final ? oldOpenClawCompletionId : undefined);
-      const status = !user ? withdrawal?.threadId === event.threadId && withdrawal.status === "withdrawn"
-        ? "withdrawn" : expired?.threadId === event.threadId ? "expired" : "unknown" : final ? "completed"
+      const status = withdrawal?.threadId === event.threadId && withdrawal.status === "withdrawn"
+        ? "withdrawn" : !user ? expired?.threadId === event.threadId ? "expired" : "unknown" : final ? "completed"
         : activeTurnIds.has(id) ? "running"
         : admittedTurns.has(id) ? "queued" : "indeterminate";
       const runId = (final?.kind === "message" ? final.data.runId : undefined)
