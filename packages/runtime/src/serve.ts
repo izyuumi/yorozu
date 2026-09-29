@@ -1280,6 +1280,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           activeEventId: turnStates.get(thread.id)?.activeEventId,
           turnState: turnStates.get(thread.id)?.state ?? "idle",
           queuedTurnCount: turnStates.get(thread.id)?.queued.length ?? 0,
+          queuedEventIds: [...(turnStates.get(thread.id)?.queued ?? [])],
           canRewind: !viaChannel(thread.id),
         } : {}),
         ...(stopping ? { interruptedTurnId: undefined, canResume: undefined, recoveryState: undefined } : {}),
@@ -1865,7 +1866,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       if (stopped) return;
       if (userEventId && stoppedTurns.has(userEventId)) return;
-      startTurnState(threadId, turnKey);
       const logged = queuedBehindTurn ? acceptedEvent : undefined;
       if (logged) {
         // A steered message was admitted while an earlier turn ran. Append its corrected
@@ -1881,6 +1881,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           broadcast(ordered);
         }
       }
+      startTurnState(threadId, turnKey);
       if (userEventId) activeTurnIds.add(userEventId);
       try { await runTurn(threadId, text, recorded, attachments, userEventId); }
       finally {
@@ -2140,6 +2141,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const downloadFiles = new Map<string, { bytes: Buffer; sha256: string }>();
   let downloadCacheBytes = 0;
   function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0, from?: string, localDevice?: string): void {
+    if (event.kind === "stop_status") return;
     if (event.kind === "thread_rewound") return;
     if (event.kind === "thread_rewind") {
       const compatibility = from ? devices.get(from)?.compatibility : undefined;
@@ -2386,6 +2388,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
           ? { partialText: live.data.text } : {}) };
       rememberStop(record);
       if (record.status === "requested" && turn?.activeEventId === target) {
+        // Withdraw before aborting: the runner can settle and release its queue immediately.
+        for (const queued of turn.queued) {
+          const withdrawn: StopRecord = { targetEventId: queued, threadId: event.threadId,
+            status: "withdrawn", requestIds: [event.id] };
+          rememberStop(withdrawn);
+          removeNativeQueue(queued);
+          emit(stopStatus(withdrawn, event.id));
+        }
+        turn.queued = [];
         turn.state = "stopping";
         publishTurnState(event.threadId);
       } else if (record.status === "requested" && turn) {

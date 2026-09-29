@@ -46,6 +46,36 @@ actor HarnessTransport: ChatTransport {
         NSApplication.shared.setActivationPolicy(.prohibited)
         let output = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "/tmp/yorozu-ui")
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        if CommandLine.arguments.contains("--turn-folding") {
+            let now = Int(Date().timeIntervalSince1970 * 1000)
+            let prompt = YorozuEvent(id: "ask", threadId: "fold", ts: now - 40_000, agentId: "phone",
+                payload: .message(MessageData(role: .user, text: "Review the change")))
+            let thought = YorozuEvent(id: "thought", threadId: "fold", ts: now - 5_000, agentId: "main",
+                payload: .thought(ThoughtData(text: "Checking the implementation against the existing tests.")))
+            let reply = YorozuEvent(id: "reply", threadId: "fold", ts: now, agentId: "main",
+                payload: .message(MessageData(role: .agent, text: "Reviewed.", done: true)))
+            let stop = YorozuEvent(id: "stop", threadId: "fold", ts: now, agentId: "main",
+                payload: .stopStatus(StopStatusData(targetEventId: "ask", requestId: "request", status: .stopped)))
+            let examples = [
+                chatRows(from: [prompt, thought], generating: true, activeEventId: "ask"),
+                chatRows(from: [prompt, thought, reply]),
+                chatRows(from: [prompt, thought, reply, stop]),
+            ]
+            for width in [320.0, 900.0] {
+                for dark in [false, true] {
+                    let scene = VStack(alignment: .leading, spacing: 16) {
+                        ForEach(examples.indices, id: \.self) { index in
+                            ForEach(examples[index]) { row in
+                                if case .work(let work) = row { WorkRowView(work: work) }
+                            }
+                        }
+                    }.padding()
+                    try await render(scene, name: "turn-folding-\(Int(width))-\(dark ? "dark" : "light")",
+                        width: width, dark: dark, output: output)
+                }
+            }
+            return
+        }
         if CommandLine.arguments.contains("--round-two") {
             let option = "Choose the complete vegetarian dinner plan for the entire family, including substitutions, allergies, and shopping instructions. OPTION_END_MARKER"
             let question = QuestionCardData(questionId: "long-question", question: "Which complete dinner plan should we prepare for the family this weekend? QUESTION_END_MARKER", options: [option, "Keep the existing plan"], allowOther: true)

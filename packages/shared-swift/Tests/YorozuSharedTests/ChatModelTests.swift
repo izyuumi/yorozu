@@ -1449,7 +1449,8 @@ private func summary(
         ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1,
             activeEventId: "active", turnState: .running, queuedTurnCount: 1)
     ])))))
-    await transport.yield(.event(event("queued", .message(MessageData(role: .user, text: "later")))))
+    let attachment = MessageAttachment(name: "context.txt", mime: "text/plain", data: "YQ==")
+    await transport.yield(.event(event("queued", .message(MessageData(role: .user, text: "later", attachments: [attachment])))))
     #expect(await eventually { model.canStop(in: "home") && model.events["home"]?.count == 1 })
 
     model.withdraw("queued")
@@ -1465,8 +1466,139 @@ private func summary(
     #expect(model.canStop(in: "home"))
     #expect(model.generating.contains("home"))
 
+    #expect(model.drafts["home"] == "later")
+    #expect(model.attachments["home"] == [attachment])
+    #expect(model.rows(in: "home").isEmpty)
     model.interrupt(in: "home")
     #expect(await sent(by: transport, payload: .interrupt(InterruptData(targetEventId: "active")), in: "home") != nil)
+}
+
+@MainActor
+@Test(arguments: [false, true])
+func stopRestoresQueuedDraftOnEveryDevice(localMessages: Bool) async throws {
+    let cache = ThreadCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString), key: SymmetricKey(size: .bits256))
+    defer { try? FileManager.default.removeItem(at: cache.directory) }
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    let existing = MessageAttachment(name: "draft.txt", mime: "text/plain", data: "ZA==")
+    let first = MessageAttachment(name: "first.txt", mime: "text/plain", data: "YQ==")
+    let second = MessageAttachment(name: "second.txt", mime: "text/plain", data: "Yg==")
+    var messages: [YorozuEvent] = []
+    for (text, file) in [("first queued", first), ("second queued", second)] {
+        if localMessages {
+            model.send(text, in: "home", attachment: file)
+            messages.append(try #require(model.events["home"]?.last))
+        } else {
+            messages.append(event(text, .message(MessageData(role: .user, text: text, attachments: [file]))))
+        }
+    }
+    model.drafts["home"] = "existing draft"
+    model.attachments["home"] = [existing]
+    model.drafts["other"] = "other draft"
+    model.attachments["other"] = [existing]
+    model.start()
+    let withdrawnAt = messages.map(\.ts).max()! + 1
+    let withdrawals = messages.enumerated().map { index, message in
+        YorozuEvent(id: "withdraw-\(message.id)", threadId: "home", ts: withdrawnAt + index,
+            agentId: "main", payload: .stopStatus(StopStatusData(
+                targetEventId: message.id, requestId: "stop-on-another-device", status: .withdrawn)))
+    }
+    for message in messages { await transport.yield(.event(message)) }
+    if localMessages {
+        await transport.yield(.event(event("withdrawal-page", .syncDelta(SyncDeltaData(events: withdrawals)))))
+    } else {
+        for withdrawal in withdrawals { await transport.yield(.event(withdrawal)) }
+    }
+    #expect(await eventually { model.drafts["home"] == "existing draft\n\nfirst queued\n\nsecond queued" })
+    #expect(model.attachments["home"] == [existing, first, second])
+    #expect(model.drafts["other"] == "other draft")
+    #expect(model.attachments["other"] == [existing])
+    #expect(messages.allSatisfy { !model.canWithdraw($0) })
+    // A replay, including one after relaunch, must not restore the same text twice.
+    for withdrawal in withdrawals { await transport.yield(.event(withdrawal)) }
+    await transport.yield(.event(event("barrier", .thought(ThoughtData(text: "synced")))))
+    #expect(await eventually { model.events["home"]?.contains(where: { $0.id == "barrier" }) == true })
+    model.drafts["home"] = "edited restored draft"
+    await model.shutdown()
+    let replay = FakeTransport()
+    let restored = ChatModel(transport: replay, cache: cache)
+    restored.start()
+    await replay.yield(.event(event("sync", .syncDelta(SyncDeltaData(events: messages + withdrawals)))))
+    await replay.yield(.event(event("replayed", .thought(ThoughtData(text: "synced")))))
+    #expect(await eventually { restored.events["home"]?.contains(where: { $0.id == "replayed" }) == true })
+    #expect(restored.drafts["home"] == "edited restored draft")
+    #expect(restored.attachments["home"] == [existing, first, second])
+    await restored.shutdown()
+}
+
+@MainActor
+@Test(arguments: [false, true])
+func syncedWithdrawalDoesNotReviveOldDraft(ownOutboxWithLaterMessage: Bool) async throws {
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport)
+    let original: YorozuEvent
+    if ownOutboxWithLaterMessage {
+        model.send("queued", in: "home")
+        original = try #require(model.events["home"]?.first)
+    } else {
+        original = event("old-queued", .message(MessageData(role: .user, text: "queued")))
+    }
+    let withdrawn = YorozuEvent(id: "old-withdrawal", threadId: "home", ts: original.ts + 1,
+        agentId: "main", payload: .stopStatus(StopStatusData(
+            targetEventId: original.id, requestId: "stop", status: .withdrawn)))
+    let later = YorozuEvent(id: "later-user", threadId: "home", ts: withdrawn.ts + 1,
+        agentId: "main", payload: .message(MessageData(role: .user, text: "moved on")))
+    model.start()
+    await transport.yield(.event(event("history", .syncDelta(SyncDeltaData(
+        events: ownOutboxWithLaterMessage ? [original, withdrawn, later] : [original, withdrawn])))))
+    await transport.yield(.event(event("barrier", .thought(ThoughtData(text: "loaded")))))
+    #expect(await eventually { model.events["home"]?.contains(where: { $0.id == "barrier" }) == true })
+    #expect(model.drafts["home", default: ""] == "")
+    #expect(model.attachments["home", default: []].isEmpty)
+    if ownOutboxWithLaterMessage { #expect(model.outboxStatus(of: original.id) == .withdrawn) }
+    await model.shutdown()
+}
+
+@MainActor
+@Test func liveWithdrawalAfterLaterUserLeavesDraftAlone() async throws {
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport)
+    model.start()
+    let original = event("old-queued", .message(MessageData(role: .user, text: "queued")))
+    let later = YorozuEvent(id: "later-user", threadId: "home", ts: 3,
+        agentId: "main", payload: .message(MessageData(role: .user, text: "moved on")))
+    await transport.yield(.event(event("history", .syncDelta(SyncDeltaData(events: [original, later])))))
+    let withdrawn = YorozuEvent(id: "withdrawn", threadId: "home", ts: 2,
+        agentId: "main", payload: .stopStatus(StopStatusData(
+            targetEventId: original.id, requestId: "stop", status: .withdrawn)))
+    await transport.yield(.event(withdrawn))
+    #expect(await eventually { model.events["home"]?.contains(where: { $0.id == "withdrawn" }) == true })
+    #expect(model.drafts["home", default: ""] == "")
+    await model.shutdown()
+}
+
+@MainActor
+@Test func withdrawnAttachmentRestoresWhenHistoryArrivesAndDownloadsIntoComposer() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["attachment-chunks-v1"])))
+    let bytes = Data(repeating: 42, count: 1_024)
+    let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+    let attachment = MessageAttachment(name: "file.txt", mime: "text/plain", data: "", sizeBytes: bytes.count, sha256: digest)
+    await transport.yield(.event(event("withdraw-file", .stopStatus(StopStatusData(
+        targetEventId: "queued-file", requestId: "remote-stop", status: .withdrawn)))))
+    let original = event("queued-file", .message(MessageData(role: .user, text: "", attachments: [attachment])))
+    await transport.yield(.event(event("history", .syncDelta(SyncDeltaData(events: [original])))))
+    #expect(await eventually { model.attachments["home"] == [attachment] })
+    #expect(await sent(by: transport, payload: .attachmentDownloadRequest(AttachmentDownloadRequestData(
+        messageId: original.id, index: 0, offset: 0)), in: "home") != nil)
+    await transport.yield(.event(event("file-bytes", .attachmentDownloadChunk(AttachmentDownloadChunkData(
+        messageId: original.id, index: 0, offset: 0, totalBytes: bytes.count,
+        data: bytes.base64EncodedString(), sha256: digest)))))
+    #expect(await eventually { model.attachments["home"]?.first?.bytes == bytes })
+    #expect(model.attachments["home"]?.count == 1)
+    #expect(model.attachments["home"]?.first?.isDeferred == false)
 }
 
 @MainActor
@@ -2533,4 +2665,155 @@ func deferredAttachmentDownloadsAfterVisibleHistoryArrives(legacyCache: Bool) as
     await transport.yield(.event(event("history", .syncDelta(SyncDeltaData(events: [prompt, marker, resent])))))
     #expect(await eventually { model.events["home"]?.map(\.id) == ["resent"] })
     #expect((model.drafts["home"] ?? "").isEmpty)
+}
+
+@MainActor
+@Test func queuedRowsStayAtEndAcrossRelaunchAndMoveOnceOnDelivery() async throws {
+    let cache = ThreadCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString), key: SymmetricKey(size: .bits256))
+    defer { try? FileManager.default.removeItem(at: cache.directory) }
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    model.start()
+    let summary = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 10,
+        activeEventId: "active", turnState: .running, queuedTurnCount: 2, queuedEventIds: ["next", "later"])
+    let next = YorozuEvent(id: "next", threadId: "home", ts: 2, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "next")))
+    let later = YorozuEvent(id: "later", threadId: "home", ts: 3, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "later")))
+    let reply = YorozuEvent(id: "reply", threadId: "home", ts: 4, agentId: "main",
+        payload: .message(MessageData(role: .agent, text: "finished", done: true)))
+    await transport.yield(.event(event("list", .threadList(ThreadListData(threads: [summary])))))
+    await transport.yield(.event(event("sync", .syncDelta(SyncDeltaData(events: [next, later, reply])))))
+    #expect(await eventually { model.rows(in: "home").map(\.id) == ["reply", "next", "later"] })
+    let statuses = model.queuedMessageStatuses(in: "home", queued: model.queuedMessages(in: "home"))
+    #expect(statuses["next"] == "Next")
+    #expect(statuses["later"] == "Sends when the turn ends")
+    await model.flushCache()
+    await model.shutdown()
+
+    let replay = FakeTransport()
+    let restored = ChatModel(transport: replay, cache: cache)
+    #expect(restored.rows(in: "home").map(\.id) == ["reply", "next", "later"])
+    #expect(restored.queuedMessages(in: "home").map(\.id) == ["next", "later"])
+    restored.start()
+    var starting = summary
+    starting.activeEventId = "next"
+    starting.turnState = .starting
+    starting.queuedEventIds = ["later"]
+    starting.queuedTurnCount = 1
+    await replay.yield(.event(event("starting", .threadList(ThreadListData(threads: [starting])))))
+    #expect(await eventually {
+        restored.queuedMessageStatuses(in: "home", queued: restored.queuedMessages(in: "home"))["next"] == "Sending…"
+    })
+    var ordered = next
+    ordered.clientTs = next.ts
+    ordered.ts = 5
+    let output = YorozuEvent(id: "output", threadId: "home", ts: 6, agentId: "main",
+        payload: .message(MessageData(role: .agent, text: "next reply", done: true)))
+    await replay.yield(.event(ordered))
+    await replay.yield(.event(output))
+    #expect(await eventually { restored.rows(in: "home").map(\.id) == ["reply", "next", "output", "later"] })
+    // Old sync pages and a duplicated queue summary cannot move a delivered message again.
+    await replay.yield(.event(event("old-list", .threadList(ThreadListData(threads: [summary])))))
+    await replay.yield(.event(event("old-page", .syncDelta(SyncDeltaData(events: [next, ordered, next])))))
+    await replay.yield(.event(event("barrier", .receipt(ReceiptData(eventId: "unused")))))
+    #expect(await eventually { restored.threads.first?.activeEventId == "active" })
+    #expect(restored.rows(in: "home").map(\.id) == ["reply", "next", "output", "later"])
+    #expect(restored.queuedMessages(in: "home").map(\.id) == ["later"])
+    await restored.shutdown()
+}
+
+@MainActor
+@Test func removeUnsentQueueRestoresTextAndAttachmentsAcrossRelaunch() async throws {
+    let cache = ThreadCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString), key: SymmetricKey(size: .bits256))
+    defer { try? FileManager.default.removeItem(at: cache.directory) }
+    let model = ChatModel(transport: FakeTransport(), cache: cache)
+    let thread = model.newDraft()
+    let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "YQ==")
+    model.drafts[thread.id] = "queued prompt"
+    model.attachments[thread.id] = [file]
+    model.send(in: thread)
+    let queued = try #require(model.queuedMessages(in: thread.id).first)
+    model.drafts[thread.id] = "new draft"
+    model.withdraw(queued.id)
+    #expect(model.drafts[thread.id] == "new draft\n\nqueued prompt")
+    #expect(model.attachments[thread.id] == [file])
+    #expect(model.rows(in: thread.id).isEmpty)
+    #expect(model.events[thread.id]?.contains { if case .message(let data) = $0.payload { data.role == .agent } else { false } } == false)
+    await model.flushCache()
+    await model.shutdown()
+    let restored = ChatModel(transport: FakeTransport(), cache: cache)
+    restored.withdraw(queued.id)
+    #expect(restored.drafts[thread.id] == "new draft\n\nqueued prompt")
+    #expect(restored.attachments[thread.id] == [file])
+    #expect(restored.rows(in: thread.id).isEmpty)
+    await restored.shutdown()
+}
+
+@MainActor
+@Test func openCardsHoldQueuedMessagesUntilAnswersArriveThenSendInOrder() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1"])))
+    await transport.yield(.event(event("list", .threadList(ThreadListData(threads: [
+        ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1,
+            activeEventId: "active", turnState: .running)
+    ])))))
+    await transport.yield(.event(event("approval", .approvalCard(ApprovalCardData(
+        actionId: "approve", actionClass: "run-command", target: "echo hello")))))
+    await transport.yield(.event(event("question", .questionCard(QuestionCardData(
+        questionId: "question", question: "Which?", options: ["A"])))))
+    #expect(await eventually { model.pendingComposerCards(in: "home").count == 2 })
+    let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "YQ==")
+    model.send("first", in: "home", attachment: file)
+    model.send("second", in: "home")
+    let ids = model.queuedMessages(in: "home").map(\.id)
+    model.send("other thread", in: "other")
+    #expect(await eventually { await transport.sent.contains { $0.threadId == "other" && $0.payload.kind == .message } })
+    #expect(await transport.sent.filter { $0.threadId == "home" && $0.payload.kind == .message }.isEmpty)
+    #expect(await transport.sent.contains { $0.threadId == "other" && $0.payload.kind == .message })
+
+    model.answer("approve", in: "home", .yes)
+    let approval = try #require(await sent(by: transport, payload: .approvalAnswer(ApprovalAnswerData(actionId: "approve", answer: .yes)), in: "home"))
+    await transport.yield(.event(event("applied", .approvalStatus(ApprovalStatusData(
+        requestId: approval.id, actionId: "approve", status: .applied)))))
+    #expect(await eventually { !model.approvalPending("approve") })
+    #expect(await transport.sent.filter { $0.threadId == "home" && $0.payload.kind == .message }.isEmpty)
+    model.answerQuestion("question", in: "home", "A")
+    let answer = try #require(await sent(by: transport, payload: .questionAnswer(QuestionAnswerData(questionId: "question", answer: "A")), in: "home"))
+    #expect(await transport.sent.filter { $0.threadId == "home" && $0.payload.kind == .message }.isEmpty)
+    await transport.yield(.event(event("answer-receipt", .receipt(ReceiptData(eventId: answer.id)))))
+    #expect(await eventually { await transport.sent.contains { $0.id == ids[0] } })
+    #expect(model.queuedMessageStatuses(in: "home", queued: model.queuedMessages(in: "home"))[ids[0]] == "Sending…")
+    #expect(await transport.sent.filter { $0.threadId == "home" && $0.payload.kind == .message }.map(\.id) == [ids[0]])
+    await transport.yield(.event(event("first-receipt", .receipt(ReceiptData(eventId: ids[0])))))
+    #expect(await eventually { await transport.sent.contains { $0.id == ids[1] } })
+    let delivered = await transport.sent.filter { $0.threadId == "home" && $0.payload.kind == .message }
+    #expect(delivered.map(\.id) == ids)
+    if case .message(let data) = delivered[0].payload { #expect(data.attachments == [file]) }
+    else { Issue.record("Expected attached message") }
+}
+
+@MainActor
+@Test func failedOutboxMessageKeepsFailureCaptionAndTimelinePosition() throws {
+    let cache = ThreadCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString),
+        key: SymmetricKey(size: .bits256))
+    defer { try? FileManager.default.removeItem(at: cache.directory) }
+    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1,
+        activeEventId: "active", turnState: .running, queuedTurnCount: 1, queuedEventIds: ["failed"])
+    let now = Int(Date().timeIntervalSince1970 * 1000)
+    let message = YorozuEvent(id: "failed", threadId: thread.id, ts: now, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "try again",
+            admissionDeadline: now + 30 * 60_000)))
+    let reply = YorozuEvent(id: "reply", threadId: thread.id, ts: now + 1, agentId: "main",
+        payload: .message(MessageData(role: .agent, text: "done", done: true)))
+    cache.save(threads: [thread])
+    cache.save(events: [message, reply], threadId: thread.id)
+    try cache.savePending([OutboxItem(event: message, tries: Outbox.maxTries)])
+    let model = ChatModel(transport: FakeTransport(), cache: cache)
+
+    #expect(model.outboxStatus(of: message.id) == .failed)
+    #expect(model.queuedMessages(in: thread.id).isEmpty)
+    #expect(model.rows(in: thread.id).map(\.id) == [message.id, reply.id])
 }

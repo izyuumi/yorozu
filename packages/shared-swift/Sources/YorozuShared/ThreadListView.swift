@@ -349,7 +349,6 @@ struct ThreadRow: View {
     var preview: String? = nil
     var highlightQuery = ""
     var selected = false
-    var chevron = false
     var hostLabel: String? = nil
     var marksArchived = true
 
@@ -457,12 +456,6 @@ struct ThreadRow: View {
             .accessibilityLabel(status.label)
             .accessibilityHidden(status == .idle)
             .help(status == .idle ? "" : status.label)
-            if chevron {
-                Image(systemName: "chevron.right")
-                    .font(.scaled(.footnote).weight(.semibold))
-                    .foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, LayoutMetrics.stack)
@@ -1199,7 +1192,6 @@ public struct ThreadListView<Destination: View>: View {
                 preview: preview(thread),
                 highlightQuery: searchNeedle,
                 selected: splitLayout && path.last == thread.id,
-                chevron: !splitLayout,
                 hostLabel: hostLabel(thread.id)
             )
             Button {
@@ -1216,10 +1208,8 @@ public struct ThreadListView<Destination: View>: View {
                     Button("Restore", systemImage: "tray.and.arrow.up") { moveArchive(thread, false) }
                         .tint(.blue)
                 } else {
-                    if thread.isUnread {
-                        Button("Mark as read", systemImage: "envelope.open") { onRead(thread, true) }
-                            .tint(.blue)
-                    }
+                    readButton(thread)
+                        .tint(.blue)
                     Button(
                         thread.pinned ? String(localized: "Unpin") : String(localized: "Pin"),
                         systemImage: thread.pinned ? "pin.slash" : "pin"

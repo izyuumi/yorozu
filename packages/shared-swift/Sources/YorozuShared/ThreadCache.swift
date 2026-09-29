@@ -110,6 +110,7 @@ public struct ThreadCache: Sendable {
         var stashes: [String: [StashedDraft]]? = nil
         /// Prepared composer send. Outbox presence decides whether this draft was committed.
         var preparedSend: [String: String]? = nil
+        var restoredWithdrawals: Set<String>? = nil
     }
 
     public func composer() -> ComposerState? {
