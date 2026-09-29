@@ -63,7 +63,9 @@ rapid updates coalesce to one pending snapshot per 100 ms. The host keeps the fi
 timestamp and broadcasts previews without logging or push notifications. Tool events keep their
 own chronological records.
 
-After dispatch settles, authoritative SDK text payloads join in order with blank lines into
+SDK `tool`/`block` deliveries go out immediately: an interactive prompt can await its answer
+before dispatch ends. These auxiliary messages do not seal the live answer draft or end the turn.
+After dispatch settles, authoritative SDK `final` text payloads join in order with blank lines into
 one native answer when they fit the relay frame. Larger answers split into ordered messages at
 Unicode boundaries, preserving every character; subsequent IDs derive from the first. Each
 negotiated message is bounded to 256 KiB of JSON-encoded text so encryption/base64 overhead
@@ -73,14 +75,22 @@ on either side because the current relay has no whole-message chunk protocol. It
 `failed` / `interrupted` flags. Repeated identical text payloads are preserved. Final delivery
 retries with the same identity until acked; reconnect re-announces the run before retrying.
 The transcript logs each final part once. `run_finished` remains the turn-completion authority.
+The host persists the triggering message as `MessageData.replyTo`, so terminal replay after
+restart recognizes an already durable answer, including failed replies whose receipt was lost.
+Duplicate unfinished inbound messages remain unacked, keeping the host's durable outbox and run
+association across restart. Completed run boundaries remain replayable for the Gateway lifetime:
+a successful socket write alone does not prove the host received its terminal state.
 A successful suppressed reply clears the draft with an empty final; failures/cancellation keep
-unfinished text. Timers and callbacks seal at dispatch completion.
+accepted SDK final text when present, otherwise unfinished preview text. Successfully suppressed
+SDK blocks are never promoted from a draft. Timers and callbacks seal at dispatch completion.
 
 Preview callback contract inspected against installed OpenClaw `2026.9.6`. This extension still
 requires SDK `2026.9.1` or newer; optional callbacks/options are consumed by supported SDKs.
 Outbound media delivery remains outside this text-only adapter. Inbound attachments are unchanged.
 In-flight delivery retries survive socket reconnect within the Gateway process, not a Gateway
 process crash; acknowledged finals are durable in Yorozu's thread log.
+Transient draft timestamps/revisions survive device reconnect, but reset after host process
+restart. The same stable final ID seals the previous draft; phones recover durable finals by sync.
 
 ### Model selection
 

@@ -63,8 +63,8 @@ export type PluginFrame = ({ type: "deliver" } & ChannelDeliver)
 
 export interface ChannelHostOptions {
   dir: string;
-  /** Makes the message durable in its thread. Throws when it could not. */
-  deliver(message: ChannelDeliver): void;
+  /** Makes the message durable. Auxiliary SDK prompts do not finish a negotiated answer draft. */
+  deliver(message: ChannelDeliver, auxiliary?: boolean): void;
   /** Best-effort snapshot; durable delivery still goes through deliver. */
   preview?(message: ChannelDeliver & { messageId: string }): void;
   forwarded(message: ChannelInbound): void;
@@ -375,7 +375,9 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
       try {
         options.deliver({ id: frame.id, threadId: frame.threadId, text: frame.text,
           ...(frame.messageId !== undefined ? { messageId: frame.messageId, failed: frame.failed, interrupted: frame.interrupted } : {}),
-          ...(frame.title !== undefined ? { title: frame.title.slice(0, 200) } : {}) });
+          ...(frame.title !== undefined ? { title: frame.title.slice(0, 200) } : {}) },
+          frame.messageId === undefined && runBoundaryPlugins.has(device) &&
+            announcedBy.get(device)?.has("reply-stream-v1") === true);
       } catch (error) {
         // No ack: the plugin keeps it and retries.
         return send({ type: "error", id, reason: error instanceof Error ? error.message : String(error) });

@@ -90,6 +90,8 @@ export interface AttachmentDownloadChunkData {
 }
 
 export interface MessageData {
+  /** Triggering user message for a durable negotiated channel answer. */
+  replyTo?: string;
   /** Requested delivery on submission; effective delivery in the host echo. */
   delivery?: MessageDelivery;
   /** First channel message: confirm this session override before delivery. Empty means Default. */

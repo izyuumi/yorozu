@@ -35,6 +35,7 @@ export function connectYorozu(options) {
   const ackTimeoutMs = options.ackTimeoutMs ?? 10_000;
   const waiting = new Map();
   const seen = new Set();
+  const inflight = new Set();
   let socket;
   let connected = false;
   let streaming = false;
@@ -56,12 +57,19 @@ export function connectYorozu(options) {
     if (frame.type === "inbound") {
       const { message } = frame;
       if (seen.has(message.id)) return void write({ type: "ack", id: message.id });
-      seen.add(message.id);
+      // A reconnect can resend a run still waiting for its final delivery receipt.
+      // Acking that duplicate would erase the host's durable run association.
+      if (inflight.has(message.id)) return;
+      inflight.add(message.id);
       options.onInbound(message).then(
-        () => write({ type: "ack", id: message.id }),
+        () => {
+          inflight.delete(message.id);
+          seen.add(message.id);
+          write({ type: "ack", id: message.id });
+        },
         (error) => {
           // Not acked: the host resends it on the next connect.
-          seen.delete(message.id);
+          inflight.delete(message.id);
           options.onError?.(`inbound ${message.id} failed: ${String(error)}`);
         },
       );

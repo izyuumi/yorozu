@@ -112,7 +112,9 @@ export const createInboundDispatcher = (sdk) => async ({ cfg, accountId, message
       ctxPayload,
       record: { onRecordError: (error) => log?.error?.(`yorozu inbound record failed: ${String(error)}`) },
       delivery: {
-        deliver: preview ? async (payload) => {
+        deliver: preview ? async (payload, info) => {
+          // SDK tool prompts can await an answer: make them visible before the run ends.
+          if (info?.kind !== "final") return deliver(payload);
           if (typeof payload?.text === "string" && payload.text.trim()) finalParts.push(payload.text);
         } : deliver,
         onError: (error) => {

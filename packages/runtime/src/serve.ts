@@ -3110,7 +3110,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (!stopped) broadcast(control({ kind: "admission_status", data: { eventId: message.id, status: "rejected", reason } }));
     },
     forwarded: ({ id, threadId }) => {
-      if (!channelRuns.has(id)) channelRuns.set(id, { threadId });
+      if (!channelRuns.has(id)) channelRuns.set(id, { threadId,
+        replied: readThreadEvents(threadId, dir).some((event) => event.kind === "message" &&
+          event.data.role === "agent" && event.data.done === true && event.data.replyTo === id) });
     },
     handedOff: ({ id, threadId }) => {
       const run = channelRuns.get(id);
@@ -3165,7 +3167,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       run.status = status;
       const draft = run.replyDraft;
       if (draft && !readThreadEvents(run.threadId, dir).some((event) => event.id === draft.id)) {
-        emit({ ...draft, kind: "message", data: { role: "agent", text: status !== "completed" ? draft.data.text : "",
+        emit({ ...draft, kind: "message", data: { role: "agent", replyTo: messageId, text: status !== "completed" ? draft.data.text : "",
           done: true, streamRevision: (draft.data.streamRevision ?? 0) + 1, ...(status === "failed" ? { failed: true } : {}), ...(status === "aborted" ? { interrupted: true } : {}) } });
         run.replied = true;
       }
@@ -3176,7 +3178,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       else if (status === "failed" && !run.replied) {
         emit({ id: `openclaw:${messageId}:failed`, threadId: run.threadId, ts: Date.now(), agentId: MAIN_AGENT,
           kind: "message", data: { role: "agent", text: "OpenClaw could not answer. Check the OpenClaw Gateway log.",
-            done: true, failed: true } });
+            done: true, failed: true, replyTo: messageId } });
       }
       finishTurnState(run.threadId, messageId);
     },
@@ -3190,7 +3192,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       run.replyDraft = draft;
       broadcast(draft, false);
     },
-    deliver: ({ id, threadId, text, title: named, messageId, failed, interrupted }) => {
+    deliver: ({ id, threadId, text, title: named, messageId, failed, interrupted }, auxiliary) => {
       const thread = listThreads(dir).find((known) => known.id === threadId);
       if (thread && (thread.agent ?? "yorozu") !== "yorozu") throw new Error("not-a-channel-thread");
       if (readThreadEvents(threadId, dir).some((known) => known.id === id)) return;
@@ -3200,11 +3202,20 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (!thread) createThread(named, dir, threadId);
       if (!thread && !named) title(threadId, text);
       const ts = active?.replyDraft?.id === id ? active.replyDraft.ts : Date.now();
-      emit({ id, threadId, ts, agentId: MAIN_AGENT, kind: "message",
+      const event: YorozuEvent = { id, threadId, ts, agentId: MAIN_AGENT, kind: "message",
         data: { role: "agent", text, done: true,
-          ...(messageId ? { streamRevision: (active?.replyDraft?.data.streamRevision ?? 0) + 1 } : {}),
-          ...(failed ? { failed: true } : {}), ...(interrupted ? { interrupted: true } : {}) } });
-      if (active) { active.replied = true; active.replyDraft = undefined; }
+          ...(messageId ? { replyTo: messageId, streamRevision: (active?.replyDraft?.data.streamRevision ?? 0) + 1 } : {}),
+          ...(failed ? { failed: true } : {}), ...(interrupted ? { interrupted: true } : {}) } };
+      if (auxiliary && active && !active.status) {
+        // An SDK tool prompt is complete, but the answer and its live draft still run.
+        appendTranscript(event, transcripts);
+        appendThreadEvent(event, dir);
+        sendBroadcast(event, false);
+        notifyRelay(event);
+      } else {
+        emit(event);
+        if (active) { active.replied = true; active.replyDraft = undefined; }
+      }
       if (!thread) broadcast(threadList());
     },
   });
