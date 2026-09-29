@@ -3519,6 +3519,155 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
   await new Promise<void>((done) => fake.close(() => done()));
 });
 
+/**
+ * A paired phone behind a relay double that records every `notify`, and a local client that
+ * plays the Mac: native threads whose fake runner decides what each turn does.
+ */
+async function statusNotifyHarness(runner: NativeAgentRunner["run"]) {
+  const stateDir = mkdtempSync(join(tmpdir(), "yorozu-status-notify-"));
+  writeFileSync(join(stateDir, "devices.json"), JSON.stringify([
+    { pub: toBase64Url(generateKeypair().publicKey), signingPub: "phone", pairedAt: 1, lastSeen: 1 },
+  ]));
+  const classes: string[] = [];
+  const macSockets: import("ws").WebSocket[] = [];
+  const fake = new WebSocketServer({ port: 0 });
+  fake.on("connection", (ws) => {
+    macSockets.push(ws);
+    ws.send(JSON.stringify({ type: "nonce", nonce: "n" }));
+    ws.on("message", (data) => {
+      const msg = JSON.parse(data.toString()) as Record<string, unknown>;
+      if (msg.type === "register") ws.send(JSON.stringify({ type: "registered", roomId: "r", phones: 0 }));
+      if (msg.type === "notify") classes.push(String(msg.class));
+    });
+  });
+  sidecar = serve({
+    relayUrl: `ws://127.0.0.1:${(fake.address() as AddressInfo).port}`,
+    stateDir,
+    nativeRunners: { codex: { run: runner } },
+    log: () => {},
+  });
+  await vi.waitFor(() => expect(macSockets).toHaveLength(1));
+  const local = createConnection(localSocketPath(stateDir));
+  await new Promise<void>((resolve, reject) => { local.once("connect", resolve); local.once("error", reject); });
+  const events: YorozuEvent[] = [];
+  let buffer = "";
+  local.on("data", (chunk) => {
+    buffer += chunk.toString();
+    const lines = buffer.split("\n");
+    buffer = lines.pop()!;
+    for (const line of lines) if (line) events.push(JSON.parse(line) as YorozuEvent);
+  });
+  const send = (threadId: string, kind: string, data: unknown, id = randomUUID()): void => {
+    local.write(JSON.stringify({ id, threadId, ts: Date.now(), agentId: "mac", kind, data }) + "\n");
+  };
+  const thread = (id: string): void => send(id, "thread_create", { agent: "codex", cwd: proj });
+  const ask = (id: string, text: string): void => send(id, "message", { role: "user", text });
+  const finals = (id: string): number => readThreadEvents(id, stateDir)
+    .filter((event) => event.kind === "message" && event.data.role === "agent" && event.data.done).length;
+  const cards = (id: string) => events.filter((event) => event.threadId === id && event.kind === "approval_card");
+  const answer = (id: string, card: YorozuEvent): void => {
+    if (card.kind !== "approval_card") throw new Error("not a card");
+    send(id, "approval_answer", { actionId: card.data.actionId, answer: "yes" });
+  };
+  const close = async () => {
+    local.destroy();
+    await sidecar.close();
+    await new Promise<void>((done) => fake.close(() => done()));
+  };
+  return { stateDir, classes, macSockets, thread, ask, send, finals, cards, answer, close };
+}
+
+test("the phone is woken when a thread moves into needs-approval, not for each further card", async () => {
+  const run: NativeAgentRunner["run"] = async (turn) => {
+    // Two cards at once, so the second is raised while the thread already needs approval; then
+    // a third once both are answered.
+    await Promise.all([
+      turn.approve!("Bash", { command: "echo one" }, turn.signal),
+      turn.approve!("Bash", { command: "echo two" }, turn.signal),
+    ]);
+    await turn.approve!("Bash", { command: "echo three" }, turn.signal);
+    return { text: "finished", sessionId: "s" };
+  };
+  const t = await statusNotifyHarness(run);
+  try {
+    t.thread("work");
+    t.ask("work", "go");
+    await vi.waitFor(() => expect(t.cards("work")).toHaveLength(2));
+    t.answer("work", t.cards("work")[0]!);
+    t.answer("work", t.cards("work")[1]!);
+    await vi.waitFor(() => expect(t.cards("work")).toHaveLength(3));
+    t.answer("work", t.cards("work")[2]!);
+    await vi.waitFor(() => expect(t.finals("work")).toBe(1));
+    // The reply is the barrier: relay frames arrive in order, so everything before it has landed.
+    await vi.waitFor(() => expect(t.classes).toContain("reply"));
+    expect(t.classes).toEqual(["approval", "approval", "reply"]);
+  } finally {
+    await t.close();
+  }
+});
+
+test("done is pushed once per finished turn, never for a thread already read, and failed is pushed", async () => {
+  const run: NativeAgentRunner["run"] = async (turn) => {
+    if (turn.text === "fail") throw new Error("boom");
+    return { text: `re: ${turn.text}`, sessionId: "s" };
+  };
+  const t = await statusNotifyHarness(run);
+  try {
+    t.thread("chat");
+    t.ask("chat", "one");
+    await vi.waitFor(() => expect(t.finals("chat")).toBe(1));
+    await vi.waitFor(() => expect(t.classes).toEqual(["reply"]));
+    // The first reply is still unread when the next turn ends: each finished turn still counts.
+    t.ask("chat", "two");
+    await vi.waitFor(() => expect(t.finals("chat")).toBe(2));
+    await vi.waitFor(() => expect(t.classes).toEqual(["reply", "reply"]));
+
+    // Read on any device, up to beyond the next reply: it finishes as already read.
+    t.send("chat", "thread_read", { at: Date.now() + 60_000 });
+    await vi.waitFor(() => expect(listThreads(t.stateDir).find((x) => x.id === "chat")?.lastReadAt).toBeGreaterThan(Date.now()));
+    t.ask("chat", "three");
+    await vi.waitFor(() => expect(t.finals("chat")).toBe(3));
+    t.thread("bad");
+    t.ask("bad", "fail");
+    await vi.waitFor(() => expect(t.classes).toContain("failed"));
+    expect(t.classes).toEqual(["reply", "reply", "failed"]);
+    // Failing again with no change of state between is a new failed turn: the thread went
+    // back to working first, as the clients see it.
+    t.ask("bad", "fail");
+    await vi.waitFor(() => expect(t.finals("bad")).toBe(2));
+    t.ask("chat", "four");
+    await vi.waitFor(() => expect(t.finals("chat")).toBe(4));
+    await vi.waitFor(() => expect(t.classes).toEqual(["reply", "reply", "failed", "failed"]));
+  } finally {
+    await t.close();
+  }
+});
+
+test("an approval raised while the relay is down is still announced once it is back", async () => {
+  const gate = Promise.withResolvers<void>();
+  const run: NativeAgentRunner["run"] = async (turn) => {
+    await gate.promise;
+    await Promise.all([
+      turn.approve!("Bash", { command: "echo one" }, turn.signal),
+      turn.approve!("Bash", { command: "echo two" }, turn.signal),
+    ]);
+    return { text: "finished", sessionId: "s" };
+  };
+  const t = await statusNotifyHarness(run);
+  try {
+    t.thread("away");
+    t.ask("away", "go");
+    t.macSockets[0]!.close();
+    await vi.waitFor(() => expect(t.macSockets[0]!.readyState).toBe(t.macSockets[0]!.CLOSED));
+    gate.resolve();
+    await vi.waitFor(() => expect(t.cards("away")).toHaveLength(2));
+    await vi.waitFor(() => expect(t.macSockets).toHaveLength(2), { timeout: 10_000 });
+    await vi.waitFor(() => expect(t.classes).toEqual(["approval"]));
+  } finally {
+    await t.close();
+  }
+});
+
 test("a replayed frame is acked once handled, and a turn that ends offline is announced on reconnect", async () => {
   // A relay double that drops the Mac mid-turn: the Mac socket is closed while the model is
   // thinking, a phone frame sent meanwhile is held, and the next registration replays it
