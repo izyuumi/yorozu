@@ -457,6 +457,7 @@ export interface ThreadSummary {
   turnState?: "idle" | "starting" | "running" | "stopping" | "stopped-unconfirmed";
   /** Admitted turns waiting behind the active turn. Present with `turnState`. */
   queuedTurnCount?: number;
+  canRewind?: boolean;
   interruptedTurnId?: string;
   canResume?: boolean;
   recoveryState?: "recovering";
@@ -755,6 +756,8 @@ export type EventPayload =
   | { kind: "thread_read"; data: ThreadReadData }
   | { kind: "thread_set_model"; data: ThreadSetModelData }
   | { kind: "thread_set_effort"; data: ThreadSetEffortData }
+  | { kind: "thread_rewind"; data: { eventId: string } }
+  | { kind: "thread_rewound"; data: { requestId: string; eventId: string; hiddenEventIds?: string[]; reason?: string } }
   | { kind: "thread_recover"; data: { turnId: string; action: "continue" | "dismiss" } }
   | { kind: "model_list"; data: ModelListData }
   | { kind: "project_list"; data: ProjectListData }

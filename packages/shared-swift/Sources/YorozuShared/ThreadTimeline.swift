@@ -5,8 +5,23 @@ import Observation
 /// every open transcript, and repeated view reads must not regroup unchanged tool history.
 @MainActor @Observable
 final class ThreadTimeline {
-    var events: [YorozuEvent] = [] {
-        didSet { cachedRows = nil }
+    var storedEvents: [YorozuEvent] = [] {
+        didSet {
+            let hidden = Set(storedEvents.flatMap { event -> [String] in
+                if case .threadRewound(let data) = event.payload { return data.hiddenEventIds ?? [] }
+                return []
+            })
+            visibleEvents = storedEvents.filter { event in
+                if case .turnChanges(let data) = event.payload, hidden.contains(data.turnEventId) { return false }
+                return event.payload.kind != .threadRewound && !hidden.contains(event.id)
+            }
+            cachedRows = nil
+        }
+    }
+    private var visibleEvents: [YorozuEvent] = []
+    var events: [YorozuEvent] {
+        get { visibleEvents }
+        set { storedEvents = newValue }
     }
     @ObservationIgnored private var cachedRows: (generating: Bool, activeEventId: String?, rows: [ChatRow])?
 
