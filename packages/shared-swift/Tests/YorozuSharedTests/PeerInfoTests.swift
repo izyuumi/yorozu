@@ -7,7 +7,7 @@ import Testing
     #expect(local.compatibility(with: nil) == .legacy)
     #expect(local.compatibility(with: PeerInfoData(appVersion: "99.0-beta")) ==
         .compatible(version: 1, capabilities: ["peer-info", "host-name", "channel-sequence",
-            "admission-status-v1", "admission-expiry-v1", "exact-stop-v1", "turn-state-v1", "thread-rewind-v1", "offline-approval-v1", "thread-search-v1", "attachment-chunks-v1", "update-drain-v1", "open-agents-v1"]))
+            "admission-status-v1", "admission-expiry-v1", "exact-stop-v1", "turn-state-v1", "model-select-v1", "thread-rewind-v1", "offline-approval-v1", "thread-search-v1", "attachment-chunks-v1", "update-drain-v1", "open-agents-v1"]))
     if case .updateRequired = local.compatibility(with: PeerInfoData(appVersion: "1.0", protocolMin: 2, protocolMax: 3)) {} else {
         Issue.record("Disjoint protocols must require an update")
     }

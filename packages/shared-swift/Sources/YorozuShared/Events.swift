@@ -71,6 +71,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadRewound = "thread_rewound"
         case threadRecover = "thread_recover"
         case modelList = "model_list"
+        case threadModelsRequest = "thread_models_request"
+        case threadModels = "thread_models"
         case projectList = "project_list"
         case interrupt
         case stopStatus = "stop_status"
@@ -124,6 +126,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadRewound(ThreadRewoundData)
         case threadRecover(ThreadRecoverData)
         case modelList(ModelListData)
+        case threadModelsRequest(ThreadModelsRequestData)
+        case threadModels(ThreadModelsData)
         case projectList(ProjectListData)
         case interrupt(InterruptData)
         case stopStatus(StopStatusData)
@@ -177,6 +181,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadRewound: .threadRewound
             case .threadRecover: .threadRecover
             case .modelList: .modelList
+            case .threadModelsRequest: .threadModelsRequest
+            case .threadModels: .threadModels
             case .projectList: .projectList
             case .interrupt: .interrupt
             case .stopStatus: .stopStatus
@@ -264,6 +270,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadRewound: payload = .threadRewound(try c.decode(ThreadRewoundData.self, forKey: .data))
             case .threadRecover: payload = .threadRecover(try c.decode(ThreadRecoverData.self, forKey: .data))
             case .threadSetEffort: payload = .threadSetEffort(try c.decode(ThreadSetEffortData.self, forKey: .data))
+            case .threadModelsRequest: payload = .threadModelsRequest(try c.decode(ThreadModelsRequestData.self, forKey: .data))
+            case .threadModels: payload = .threadModels(try c.decode(ThreadModelsData.self, forKey: .data))
             case .modelList: payload = .modelList(try c.decode(ModelListData.self, forKey: .data))
             case .projectList: payload = .projectList(try c.decode(ProjectListData.self, forKey: .data))
             case .interrupt: payload = .interrupt(try c.decode(InterruptData.self, forKey: .data))
@@ -336,6 +344,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadRecover(let d): try c.encode(d, forKey: .data)
         case .threadSetEffort(let d): try c.encode(d, forKey: .data)
         case .modelList(let d): try c.encode(d, forKey: .data)
+        case .threadModelsRequest(let d): try c.encode(d, forKey: .data)
+        case .threadModels(let d): try c.encode(d, forKey: .data)
         case .projectList(let d): try c.encode(d, forKey: .data)
         case .interrupt(let d): try c.encode(d, forKey: .data)
         case .stopStatus(let d): try c.encode(d, forKey: .data)
@@ -411,12 +421,47 @@ public struct AttachmentProgressData: Codable, Equatable, Sendable {
     }
 }
 
+public struct ChannelModelChoice: Codable, Equatable, Sendable {
+    public var model: String?
+    public init(model: String?) { self.model = model }
+}
+
+public struct ChannelModelOption: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var label: String
+    public var available: Bool
+    public var unavailableReason: String?
+    public init(id: String, label: String, available: Bool, unavailableReason: String? = nil) {
+        self.id = id
+        self.label = label
+        self.available = available
+        self.unavailableReason = unavailableReason
+    }
+}
+
+public struct ThreadModelsRequestData: Codable, Equatable, Sendable {
+    public init() {}
+}
+
+public struct ThreadModelsData: Codable, Equatable, Sendable {
+    public var requestId: String
+    public var models: [ChannelModelOption]?
+    public var error: String?
+    public init(requestId: String, models: [ChannelModelOption]? = nil, error: String? = nil) {
+        self.requestId = requestId
+        self.models = models
+        self.error = error
+    }
+}
+
 public struct AttachmentCommitData: Codable, Equatable, Sendable {
+    public var channelModel: ChannelModelChoice?
     public var text: String
     public var attachments: [AttachmentDescriptor]
     public var admissionDeadline: Int
 
-    public init(text: String, attachments: [AttachmentDescriptor], admissionDeadline: Int) {
+    public init(text: String, attachments: [AttachmentDescriptor], admissionDeadline: Int, channelModel: ChannelModelChoice? = nil) {
+        self.channelModel = channelModel
         self.text = text
         self.attachments = attachments
         self.admissionDeadline = admissionDeadline
@@ -567,6 +612,7 @@ public struct TurnChangesData: Codable, Equatable, Sendable {
 }
 
 public struct MessageData: Codable, Equatable, Sendable {
+    public var channelModel: ChannelModelChoice?
     public enum Role: String, Codable, Sendable { case user, agent }
     public var role: Role
     public var text: String
@@ -596,8 +642,10 @@ public struct MessageData: Codable, Equatable, Sendable {
         attachments: [MessageAttachment] = [],
         admissionDeadline: Int? = nil,
         runId: String? = nil,
-        completionId: String? = nil
+        completionId: String? = nil,
+        channelModel: ChannelModelChoice? = nil
     ) {
+        self.channelModel = channelModel
         self.role = role
         self.text = text
         self.done = done
@@ -609,10 +657,11 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, done, failed, interrupted, attachments, admissionDeadline, runId, completionId }
+    private enum CodingKeys: String, CodingKey { case role, text, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, channelModel }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        channelModel = try c.decodeIfPresent(ChannelModelChoice.self, forKey: .channelModel)
         role = try c.decode(Role.self, forKey: .role)
         text = try c.decode(String.self, forKey: .text)
         done = try c.decodeIfPresent(Bool.self, forKey: .done)
@@ -626,6 +675,7 @@ public struct MessageData: Codable, Equatable, Sendable {
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(channelModel, forKey: .channelModel)
         try c.encode(role, forKey: .role)
         try c.encode(text, forKey: .text)
         try c.encodeIfPresent(done, forKey: .done)
@@ -1424,6 +1474,7 @@ public struct ModelOption: Codable, Equatable, Sendable, Identifiable {
 /// Every model the Mac is configured for. Pushed with the thread list rather than asked for,
 /// so a picker one tap from a thread has real names before it is opened.
 public struct ModelListData: Codable, Equatable, Sendable {
+    public var channelCapabilities: [String]?
     public var models: [ModelOption]
     public var agentModels: [String: [ModelOption]]?
     public var agents: [AgentDescriptor]?
@@ -1432,15 +1483,16 @@ public struct ModelListData: Codable, Equatable, Sendable {
     public var skills: [String: [SkillOption]]?
     public init(
         models: [ModelOption], agentModels: [String: [ModelOption]]? = nil,
-        agents: [AgentDescriptor]? = nil, skills: [String: [SkillOption]]? = nil
+        agents: [AgentDescriptor]? = nil, skills: [String: [SkillOption]]? = nil, channelCapabilities: [String]? = nil
     ) {
         self.models = models
+        self.channelCapabilities = channelCapabilities
         self.agentModels = agentModels
         self.agents = agents
         self.skills = skills
     }
 
-    private enum CodingKeys: String, CodingKey { case models, agentModels, agents, skills }
+    private enum CodingKeys: String, CodingKey { case models, agentModels, agents, skills, channelCapabilities }
     private struct OptionalAgent: Decodable {
         let value: AgentDescriptor?
         init(from decoder: Decoder) throws { value = try? AgentDescriptor(from: decoder) }
@@ -1448,6 +1500,7 @@ public struct ModelListData: Codable, Equatable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        channelCapabilities = try container.decodeIfPresent([String].self, forKey: .channelCapabilities)
         models = try container.decode([ModelOption].self, forKey: .models)
         agentModels = try container.decodeIfPresent([String: [ModelOption]].self, forKey: .agentModels)
         agents = (try? container.decode([OptionalAgent].self, forKey: .agents))?.compactMap(\.value)

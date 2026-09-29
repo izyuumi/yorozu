@@ -67,7 +67,12 @@ export interface AttachmentProgressData {
   nextOffset: number;
   reason?: string;
 }
+export interface ChannelModelChoice { model?: string | null }
+export interface ChannelModelOption { id: string; label: string; available: boolean; unavailableReason?: string }
+export interface ThreadModelsData { requestId: string; models?: ChannelModelOption[]; error?: string }
+
 export interface AttachmentCommitData {
+  channelModel?: ChannelModelChoice;
   text: string;
   attachments: AttachmentDescriptor[];
   admissionDeadline: number;
@@ -80,6 +85,8 @@ export interface AttachmentDownloadChunkData {
 }
 
 export interface MessageData {
+  /** First channel message: confirm this session override before delivery. Empty means Default. */
+  channelModel?: ChannelModelChoice;
   role: "user" | "agent";
   text: string;
   /**
@@ -600,6 +607,7 @@ export interface SkillOption {
  * the providers themselves, and their keys, never leave the Mac.
  */
 export interface ModelListData {
+  channelCapabilities?: string[];
   agents?: AgentDescriptor[];
   agentModels?: Record<ThreadAgent, ModelOption[]>;
   skills?: Partial<Record<ThreadAgent, SkillOption[]>>;
@@ -762,6 +770,8 @@ export type EventPayload =
   | { kind: "thread_rewound"; data: { requestId: string; eventId: string; hiddenEventIds?: string[]; reason?: string } }
   | { kind: "thread_recover"; data: { turnId: string; action: "continue" | "dismiss" } }
   | { kind: "model_list"; data: ModelListData }
+  | { kind: "thread_models_request"; data: Record<string, never> }
+  | { kind: "thread_models"; data: ThreadModelsData }
   | { kind: "project_list"; data: ProjectListData }
   | { kind: "interrupt"; data: InterruptData }
   | { kind: "stop_status"; data: StopStatusData }

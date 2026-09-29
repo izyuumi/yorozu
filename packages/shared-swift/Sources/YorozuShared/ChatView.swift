@@ -81,6 +81,8 @@ public struct ChatView: View {
         @FocusState private var composerFocused: Bool
         @AppStorage(ChatView.sendWithCommandReturnKey) private var sendWithCommandReturn = false
     #endif
+    @State private var channelModelPicker = false
+    @State private var channelPickerWidth: CGFloat?
     @State private var searching = false
     @State private var choosingAgent = false
     @State private var recoveryMessage: MessageData?
@@ -1092,6 +1094,9 @@ public struct ChatView: View {
                 }
                 .frame(maxHeight: transcript.size.height * SkillPicker.transcriptShare(dynamicTypeSize))
                 .compactQuietComposerLayout()
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+            channelPickerWidth = width
+        }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }
             .onChange(of: choices.count, initial: true) { _, count in
@@ -1265,7 +1270,8 @@ public struct ChatView: View {
                 HStack(alignment: .center, spacing: 4) {
                     attachButton
                     stashMenu
-                    if !model.models(for: thread).isEmpty { runSettingsButton }
+                    if model.offersChannelModels(for: thread) { channelModelButton }
+                    else if !model.models(for: thread).isEmpty { runSettingsButton }
                     Spacer(minLength: 4)
                     if model.stopPending(in: thread.id) {
                         stopPendingLabel
@@ -1295,7 +1301,8 @@ public struct ChatView: View {
                 HStack(alignment: .center, spacing: 4) {
                     attachButton
                     stashMenu
-                    if !model.models(for: thread).isEmpty {
+                    if model.offersChannelModels(for: thread) { channelModelButton }
+                    else if !model.models(for: thread).isEmpty {
                         runSettingsButton.frame(maxWidth: 280, alignment: .leading)
                     }
                     Spacer(minLength: 4)
@@ -1323,6 +1330,65 @@ public struct ChatView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .compactQuietComposerLayout()
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+            channelPickerWidth = width
+        }
+    }
+
+    private var channelModelButton: some View {
+        Button {
+            model.refreshChannelModels(in: thread)
+            channelModelPicker = true
+        } label: {
+            HStack {
+                Text(thread.model.flatMap { selected in
+                    model.channelModels[thread.id]?.first(where: { $0.id == selected })?.label ?? selected
+                } ?? String(localized: "Default"))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+            }
+            .font(.scaled(.subheadline))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("channelModelMenu")
+        .accessibilityLabel("Model")
+        .accessibilityValue(thread.model ?? String(localized: "Default"))
+        .popover(isPresented: $channelModelPicker) {
+            VStack(alignment: .leading) {
+                HStack {
+                    Text("Model").font(.scaled(.headline)).accessibilityAddTraits(.isHeader)
+                    Spacer()
+                    Button("Done") { channelModelPicker = false }
+                }
+                if let error = model.channelModelErrors[thread.id] {
+                    Text(error).foregroundStyle(.red)
+                    Button("Retry") { model.refreshChannelModels(in: thread) }
+                }
+                if model.channelModelsLoading.contains(thread.id) || model.channelModelPending.contains(thread.id) {
+                    ProgressView("Updating models…")
+                }
+                ViewThatFits(in: .vertical) {
+                    channelModelChoices
+                    ScrollView { channelModelChoices }.scrollBounceBehavior(.basedOnSize)
+                }
+                .disabled(model.channelModelsLoading.contains(thread.id) || model.channelModelPending.contains(thread.id))
+            }
+            .padding()
+            .frame(idealWidth: channelPickerWidth)
+            .presentationCompactAdaptation(.sheet)
+            .presentationDetents([.medium, .large])
+        }
+    }
+
+    private var channelModelChoices: some View {
+        YorozuChoiceCard([
+            Choice(String(localized: "Default"), selected: thread.model == nil) { model.setModel(thread, nil) }
+        ] + (model.channelModels[thread.id] ?? []).map { option in
+            Choice(option.available ? option.label : "\(option.label) — \(option.unavailableReason ?? String(localized: "Unavailable"))",
+                   selected: thread.model == option.id, enabled: option.available) {
+                model.setModel(thread, option.id)
+            }
+        })
     }
 
     private var stashMenu: some View {

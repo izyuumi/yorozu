@@ -62,10 +62,22 @@ private actor ShowcaseTransport: ChatTransport {
             self.continuation = continuation
             continuation.yield(.ownerOnline(launchArgument("yorozuShowcase") != "queued"))
             continuation.yield(.state(.paired))
+            if launchArgument("yorozuShowcase") == "channel-model" {
+                continuation.yield(.event(YorozuEvent(id: "channel-capability", threadId: "", ts: 0, agentId: "main",
+                    payload: .modelList(ModelListData(models: [], channelCapabilities: ["model-select-v1"])))))
+            }
         }
     }
 
-    func send(_ event: YorozuEvent) async throws {}
+    func send(_ event: YorozuEvent) async throws {
+        if case .threadModelsRequest = event.payload {
+            continuation?.yield(.event(YorozuEvent(id: "catalog-\(event.id)", threadId: event.threadId,
+                ts: event.ts, agentId: "main", payload: .threadModels(ThreadModelsData(requestId: event.id, models: [
+                    ChannelModelOption(id: "openclaw/fast", label: "Fast model", available: true),
+                    ChannelModelOption(id: "openclaw/offline", label: "Offline model", available: false, unavailableReason: "Provider offline"),
+                ])))))
+        }
+    }
     func close() async {}
     func deliver(_ event: YorozuEvent) { continuation?.yield(.event(event)) }
 }

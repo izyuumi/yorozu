@@ -77,14 +77,16 @@ struct Choice: Identifiable {
     let label: String
     let accessibilityLabel: String
     let selected: Bool
+    let enabled: Bool
     let pick: () -> Void
     var id: String { label }
 
     init(_ label: String, accessibilityLabel: String? = nil,
-         selected: Bool, pick: @escaping () -> Void) {
+         selected: Bool, enabled: Bool = true, pick: @escaping () -> Void) {
         self.label = label
         self.accessibilityLabel = accessibilityLabel ?? label
         self.selected = selected
+        self.enabled = enabled
         self.pick = pick
     }
 }
@@ -134,6 +136,8 @@ struct YorozuChoiceCard: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .disabled(!choice.enabled)
+                .opacity(choice.enabled ? 1 : 0.6)
                 .accessibilityLabel(choice.accessibilityLabel)
                 .accessibilityAddTraits(choice.selected ? .isSelected : [])
             }
