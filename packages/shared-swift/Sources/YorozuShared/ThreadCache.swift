@@ -95,15 +95,23 @@ public struct ThreadCache: Sendable {
         try? savePending(outbox)
     }
 
+    public struct StashedDraft: Codable, Sendable, Identifiable {
+        public var id: String = UUID().uuidString
+        public var text: String
+        public var attachments: [MessageAttachment]
+    }
+
     public struct ComposerState: Codable, Sendable {
         var drafts: [String: String]
         var attachments: [String: [MessageAttachment]]
         var threads: [ThreadSummary]
         var knownThreads: [ThreadSummary]?
         var openThread: String?
+        var stashes: [String: [StashedDraft]]? = nil
         var readingPositions: [String: ReadingPosition]? = nil
         /// Prepared composer send. Outbox presence decides whether this draft was committed.
         var preparedSend: [String: String]? = nil
+        var restoredWithdrawals: Set<String>? = nil
     }
 
     /// Stable transcript row and its distance from the viewport's top edge.
@@ -123,6 +131,15 @@ public struct ThreadCache: Sendable {
         if let attachments = composer?.attachments {
             composer?.attachments = attachments.mapValues { $0.map { loaded($0, &used) } }
         }
+        if let stashes = composer?.stashes {
+            composer?.stashes = stashes.mapValues { drafts in
+                drafts.map { draft in
+                    var draft = draft
+                    draft.attachments = draft.attachments.map { loaded($0, &used) }
+                    return draft
+                }
+            }
+        }
         keep(used, for: "composer")
         return composer
     }
@@ -131,6 +148,13 @@ public struct ThreadCache: Sendable {
         var composer = composer
         var used: Set<String> = []
         composer.attachments = try composer.attachments.mapValues { try $0.map { try stored($0, &used) } }
+        composer.stashes = try composer.stashes?.mapValues { drafts in
+            try drafts.map { draft in
+                var draft = draft
+                draft.attachments = try draft.attachments.map { try stored($0, &used) }
+                return draft
+            }
+        }
         try writeRequired(composer, to: "composer")
         keep(used, for: "composer")
     }

@@ -25,8 +25,8 @@ public func threadMarkdown(
         case .work(let work):
             for entry in work.entries {
                 switch entry {
-                case .thought(let event):
-                    if case .thought(let data) = event.payload { lines += ["", "> \(data.text)"] }
+                case .thought(let thought):
+                    lines += ["", "> \(thought.text)"]
                 case .tools(let activities):
                     lines += ["", collapsed(title: toolsTitle(activities), body: activities.map(toolLine))]
                 case .delegation(let card):

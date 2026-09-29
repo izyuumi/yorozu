@@ -2,29 +2,33 @@ import SwiftUI
 
 /// The work the main agent did between one message and the next, as one row.
 ///
-/// Running, it is a single live line — a spinner and what is happening right now — that
-/// replaces itself as the work moves on. Finished, it collapses to "N steps · 2m" and opens on a
+/// Running, it shows elapsed time and what is happening right now. Finished, it collapses to "Worked for 2m" and opens on a
 /// tap to the whole trace: thoughts, tool runs and delegations in order. The reply prose sits
 /// below it on its own, which is what keeps a long turn from reading as a stack.
 public struct WorkRowView: View {
     private let work: TurnWork
     @State private var expanded: Bool
-    @AppStorage(ReplyFont.key) private var replyFont = ReplyFont.sans
 
     public init(work: TurnWork) {
         self.work = work
-        _expanded = State(initialValue: false)
+        _expanded = State(initialValue: work.running)
     }
 
-    @ViewBuilder public var body: some View {
-        if let liveProgress {
-            VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
-                ProgressCardView(card: liveProgress, activity: work.running ? work.activity : nil)
-                ForEach(failedTools) { ToolRowView(activity: $0, active: work.running) }
+    public var body: some View {
+        Group {
+            if let liveProgress {
+                VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
+                    WorkDurationLabel(work: work)
+                        .font(.scaled(.caption))
+                        .foregroundStyle(.secondary)
+                    ProgressCardView(card: liveProgress, activity: work.activity)
+                    ForEach(failedTools) { ToolRowView(activity: $0, active: work.running) }
+                }
+            } else {
+                activity
             }
-        } else {
-            activity
         }
+        .onChange(of: work.running) { _, running in expanded = running }
     }
 
     private var activity: some View {
@@ -42,14 +46,7 @@ public struct WorkRowView: View {
                 Divider().overlay(YorozuPalette.rule)
                 ForEach(work.entries) { entry in
                     switch entry {
-                    case .thought(let event):
-                        if case .thought(let data) = event.payload {
-                            Text(data.text)
-                                .font(.scaled(.callout))
-                                .fontDesign(replyFont.design)
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                        }
+                    case .thought(let thought): ReasoningView(thought: thought)
                     case .tools(let activities): ToolGroupView(activities: activities, active: work.running)
                     case .delegation(let card): DelegationCardView(card: card)
                     case .progress(let event):
@@ -66,10 +63,15 @@ public struct WorkRowView: View {
                         .font(.scaled(.caption2).weight(.semibold))
                         .tracking(0.8)
                         .foregroundStyle(work.running ? YorozuPalette.vermilion : YorozuPalette.sage)
-                    Text(summary)
+                    WorkDurationLabel(work: work)
                         .font(.scaled(.subheadline).weight(.medium))
                         .foregroundStyle(YorozuPalette.ink)
-                        .lineLimit(2)
+                    if work.running, let status = work.status {
+                        Text(status)
+                            .font(.scaled(.caption))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
                 }
                 Spacer(minLength: LayoutMetrics.inner)
                 if work.running { ProgressView().controlSize(.small).tint(YorozuPalette.vermilion) }
@@ -77,7 +79,6 @@ public struct WorkRowView: View {
             .frame(minHeight: controlTarget)
             .contentShape(.rect)
             .onTapGesture { withAnimation(.snappy) { expanded.toggle() } }
-            .accessibilityLabel(summary)
         }
         .buttonStyle(.plain)
         .yorozuPaperCard(padding: LayoutMetrics.stack)
@@ -96,24 +97,54 @@ public struct WorkRowView: View {
     /// A live structured progress report is already the best summary of the work. Showing the
     /// generic disclosure above it repeats the same status and nests paper cards three deep.
     private var liveProgress: ProgressCardData? {
-        work.entries.reversed().compactMap { entry -> ProgressCardData? in
+        guard work.running else { return nil }
+        return work.entries.reversed().compactMap { entry -> ProgressCardData? in
             guard case .progress(let event) = entry,
                   case .progressCard(let card) = event.payload,
                   card.running else { return nil }
             return card
         }.first
     }
+}
 
-    /// Live: what is happening now. Settled: how much happened and how long it took — or, for
-    /// work that ran no tools, the last thing it said it was doing.
-    private var summary: String {
-        if work.running { return work.status ?? String(localized: "Working…") }
-        if work.steps == 0, let status = work.status { return status }
-        var parts = [work.steps == 1 ? String(localized: "1 step") : String(localized: "\(work.steps) steps")]
-        if work.duration >= .seconds(1) {
-            parts.append(work.duration.formatted(.units(allowed: [.minutes, .seconds], width: .narrow)))
+/// Only this text ticks; event grouping and the transcript never observe a clock.
+private struct WorkDurationLabel: View {
+    let work: TurnWork
+
+    var body: some View {
+        if work.running {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(work.label(at: context.date)).monospacedDigit()
+            }
+        } else {
+            Text(work.label())
         }
-        if work.failed > 0 { parts.append(String(localized: "\(work.failed) failed")) }
-        return parts.joined(separator: " · ")
+    }
+}
+
+struct ReasoningView: View {
+    let thought: ReasoningActivity
+    @State private var expanded: Bool
+    @AppStorage(ReplyFont.key) private var replyFont = ReplyFont.sans
+
+    init(thought: ReasoningActivity) {
+        self.thought = thought
+        _expanded = State(initialValue: thought.running)
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            Text(thought.text)
+                .font(.scaled(.callout))
+                .fontDesign(replyFont.design)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Text(thought.label)
+                .font(.scaled(.caption))
+                .foregroundStyle(.secondary)
+        }
+        .onChange(of: thought.running) { _, running in expanded = running }
     }
 }
