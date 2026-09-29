@@ -626,15 +626,18 @@ public struct ToolResultData: Codable, Equatable, Sendable {
     public var callId: String
     public var ok: Bool
     public var output: String
+    /// A refusal, distinct from a tool failure. Older peers omit this.
+    public var denied: Bool?
     /// True when ``output`` is only the head of what the tool printed. The rest is on the Mac,
     /// one ``ToolResultRequestData`` away. Nil means this is all there was.
     public var chunkOffset: Int?
     public var nextOffset: Int?
     public var truncated: Bool?
-    public init(callId: String, ok: Bool, output: String, truncated: Bool? = nil, chunkOffset: Int? = nil, nextOffset: Int? = nil) {
+    public init(callId: String, ok: Bool, output: String, denied: Bool? = nil, truncated: Bool? = nil, chunkOffset: Int? = nil, nextOffset: Int? = nil) {
         self.callId = callId
         self.ok = ok
         self.output = output
+        self.denied = denied
         self.truncated = truncated
         self.chunkOffset = chunkOffset
         self.nextOffset = nextOffset

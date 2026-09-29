@@ -188,7 +188,8 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
               } else {
                 const output = typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : JSON.stringify(item.result ?? item.changes ?? item.contentItems ?? item);
                 turn.onActivity?.(`result:${id}`, { kind: "tool_result", data: { callId: id,
-                  ok: !["failed", "declined"].includes(string(item.status)) && item.success !== false && !item.error, output } });
+                  ok: !["failed", "declined"].includes(string(item.status)) && item.success !== false && !item.error,
+                  output, ...(item.status === "declined" ? { denied: true } : {}) } });
               }
             }
             if (complete) turn.onToolBoundary?.();

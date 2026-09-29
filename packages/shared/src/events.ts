@@ -152,6 +152,8 @@ export interface ToolResultData {
   callId: string;
   ok: boolean;
   output: string;
+  /** A refusal, distinct from a tool failure. Older peers omit this. */
+  denied?: boolean;
   /**
    * Set when `output` is only the head of what the tool printed. The whole of it stays on the
    * Mac; `tool_result_request` fetches it. Absent means this is all there was.
