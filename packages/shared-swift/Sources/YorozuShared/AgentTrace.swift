@@ -69,7 +69,8 @@ public func mainTrace(from events: [YorozuEvent]) -> [YorozuEvent] {
     events.filter { event in
         guard event.parentAgentId == nil else { return false }
         switch event.payload {
-        case .thought, .toolCall, .toolResult: return true
+        case .thought, .toolCall, .toolResult, .approvalCard, .approvalAnswer,
+             .approvalStatus, .questionCard, .questionAnswer: return true
         default: return false
         }
     }
@@ -160,7 +161,7 @@ public struct TurnWork: Identifiable, Equatable, Sendable {
             case .thought(let event):
                 if case .thought(let data) = event.payload, !data.text.isEmpty { return data.text }
             case .tools(let activities):
-                if let live = activities.last(where: { $0.running }) ?? activities.last { return live.name }
+                if let live = activities.last(where: { $0.running }) ?? activities.last { return live.currentAction }
             case .delegation(let card):
                 return card.agentId
             }
@@ -173,6 +174,7 @@ public struct TurnWork: Identifiable, Equatable, Sendable {
 /// or a card waiting to be answered. What a specialist did lives behind the work row.
 public enum ChatRow: Identifiable, Equatable, Sendable {
     case message(YorozuEvent)
+    case changes(YorozuEvent)
     case work(TurnWork)
     case approval(YorozuEvent)
     case unreadable(YorozuEvent)
@@ -183,6 +185,7 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
     public var id: String {
         switch self {
         case .message(let event): event.id
+        case .changes(let event): event.id
         case .work(let work): work.id
         case .approval(let event): event.id
         case .unreadable(let event): event.id
@@ -240,11 +243,16 @@ public func chatRows(from events: [YorozuEvent], generating: Bool = false) -> [C
     let byStart = Dictionary(cards.map { ($0.startEventId, $0) }, uniquingKeysWith: { first, _ in first })
 
     let activities = Dictionary(
-        toolActivities(from: mainTrace(from: events)).map { ($0.callId, $0) },
+        toolActivities(from: events.filter { $0.parentAgentId == nil }).map { ($0.callId, $0) },
         uniquingKeysWith: { first, _ in first }
     )
+    let changes = Dictionary(events.compactMap { event -> (String, YorozuEvent)? in
+        guard case .turnChanges(let data) = event.payload else { return nil }
+        return (data.turnEventId, event)
+    }, uniquingKeysWith: { _, latest in latest })
 
     var rows: [ChatRow] = []
+    var turnEventId: String?
     var transientStatus: YorozuEvent?
     /// The work row being filled: everything the main agent does between one message and the
     /// next lands in it, so a long turn reads as one line rather than a stack.
@@ -308,9 +316,13 @@ public func chatRows(from events: [YorozuEvent], generating: Bool = false) -> [C
             rows.append(.unreadable(event))
         case .thought where event.parentAgentId == nil:
             add(.thought(event), at: event)
-        case .message where event.parentAgentId == nil:
+        case .message(let data) where event.parentAgentId == nil:
             closeWork()
             rows.append(.message(event))
+            if data.role == .user { turnEventId = event.id }
+            if data.role == .agent, data.done == true, let turnEventId, let change = changes[turnEventId] {
+                rows.append(.changes(change))
+            }
         // Cards that need a person are never folded away, wherever they were raised: one put
         // up inside a delegation still has to reach the thread, because the agent is parked
         // on it and nothing happens until it is answered. The work row closes on them, so the
@@ -388,6 +400,11 @@ extension JSONValue {
 /// One tool call and the result that answered it, which is what a trace row draws. A call
 /// still in flight has no result yet — that, not a flag, is what "running" means here.
 public struct ToolActivity: Identifiable, Equatable, Sendable {
+    public enum Status: String, Sendable {
+        case pending = "Pending", running = "Running", awaitingApproval = "Awaiting approval"
+        case completed = "Completed", failed = "Failed", denied = "Denied"
+    }
+
     public var callId: String
     public var name: String
     public var args: [String: JSONValue]
@@ -398,9 +415,44 @@ public struct ToolActivity: Identifiable, Equatable, Sendable {
     public var ok: Bool
     /// Whether ``output`` is only the head of the result, the rest being on the Mac.
     public var truncated: Bool
+    public var approvalId: String?
+    public var awaitingApproval = false
+    public var denied = false
 
     public var id: String { callId }
     public var running: Bool { finishedAt == nil }
+
+    public func status(active: Bool = true) -> Status {
+        if denied { return .denied }
+        if finishedAt != nil { return ok ? .completed : .failed }
+        if awaitingApproval { return .awaitingApproval }
+        return active ? .running : .pending
+    }
+
+    public enum ActionKind: Sendable { case read, edit, command, search, delegation, other }
+
+    public var actionKind: ActionKind {
+        switch name {
+        case "Read", "fs_read", "read_file": return .read
+        case "Write", "Edit", "MultiEdit", "NotebookEdit", "fs_write", "fileChange": return .edit
+        case "Bash", "shell", "commandExecution": return .command
+        case "Glob", "Grep", "WebSearch", "WebFetch", "web_search", "webSearch": return .search
+        case "Task", "Agent", "delegate", "collabAgentToolCall": return .delegation
+        default: return .other
+        }
+    }
+
+    public var currentAction: String {
+        let path = args["file_path"]?.compact ?? args["path"]?.compact ?? name
+        switch actionKind {
+        case .read: return "Reading \(path)"
+        case .edit: return "Changing \(path)"
+        case .command: return "Running \(args["command"]?.compact ?? args["cmd"]?.compact ?? name)"
+        case .search: return "Searching \(args["pattern"]?.compact ?? args["query"]?.compact ?? name)"
+        case .delegation: return "Delegating \(name)"
+        case .other: return "Using \(name)"
+        }
+    }
 
     public init(
         callId: String,
@@ -485,12 +537,61 @@ public func toolActivities(from events: [YorozuEvent]) -> [ToolActivity] {
             activities[at].finishedAt = event.ts
             activities[at].output = data.output
             activities[at].ok = data.ok
+            activities[at].denied = activities[at].denied || data.denied == true
             activities[at].truncated = data.truncated == true
+            activities[at].awaitingApproval = false
+        case .approvalCard(let card):
+            if let at = activities.indices.reversed().first(where: {
+                activities[$0].running &&
+                (activities[$0].name == card.actionClass || activities[$0].name == "request_permission") &&
+                activities[$0].approvalId == nil
+            }) {
+                activities[at].approvalId = card.actionId
+                activities[at].awaitingApproval = true
+            }
+        case .approvalAnswer(let answer):
+            if let at = activities.firstIndex(where: { $0.approvalId == answer.actionId }) {
+                activities[at].awaitingApproval = answer.answer == .discuss
+                if answer.answer == .discuss { activities[at].approvalId = nil }
+                activities[at].denied = answer.answer == .no
+            }
+        case .approvalStatus(let status):
+            if status.status != .rejected,
+               let at = activities.firstIndex(where: { $0.approvalId == status.actionId }) {
+                activities[at].awaitingApproval = false
+            }
+        case .questionCard(let card):
+            if let at = activities.indices.reversed().first(where: {
+                activities[$0].running && ["ask_user", "AskUserQuestion"].contains(activities[$0].name)
+            }) {
+                activities[at].approvalId = card.questionId
+                activities[at].awaitingApproval = true
+            }
+        case .questionAnswer(let answer):
+            if let at = activities.firstIndex(where: { $0.approvalId == answer.questionId }) {
+                activities[at].awaitingApproval = false
+            }
         default:
             continue
         }
     }
     return activities
+}
+
+public func toolSummary(_ activities: [ToolActivity]) -> String {
+    let kinds: [ToolActivity.ActionKind] = [.read, .command, .edit, .search, .delegation, .other]
+    return kinds.compactMap { kind -> String? in
+        let count = activities.filter { $0.actionKind == kind }.count
+        guard count > 0 else { return nil }
+        switch kind {
+        case .read: return "Read \(count) \(count == 1 ? "file" : "files")"
+        case .command: return "ran \(count) \(count == 1 ? "command" : "commands")"
+        case .edit: return "changed \(count) \(count == 1 ? "file" : "files")"
+        case .search: return "searched \(count) \(count == 1 ? "time" : "times")"
+        case .delegation: return "delegated \(count) \(count == 1 ? "task" : "tasks")"
+        case .other: return "used \(count) \(count == 1 ? "tool" : "tools")"
+        }
+    }.joined(separator: ", ")
 }
 
 /// One row of a trace page: a run of tool calls, collapsed into a single group, or one of the
@@ -528,6 +629,9 @@ public func traceEntries(from events: [YorozuEvent]) -> [TraceEntry] {
             if let activity = activities[data.callId] { open.append(activity) }
         case .toolResult:
             // Already folded into the call it answered; it never breaks a run on its own.
+            continue
+        case .approvalCard, .approvalAnswer, .approvalStatus, .questionCard, .questionAnswer:
+            // Only a call's status here; the card itself is drawn in the thread.
             continue
         default:
             close()

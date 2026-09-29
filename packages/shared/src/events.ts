@@ -102,6 +102,11 @@ export interface MessageData {
   completionId?: string;
 }
 
+export interface TurnChangesData {
+  turnEventId: string;
+  files: { path: string; added: number; removed: number }[];
+}
+
 /** A paired device asks the host to reconcile one user message, by its original ID. */
 export interface AdmissionQueryData { eventId: string }
 
@@ -152,6 +157,8 @@ export interface ToolResultData {
   callId: string;
   ok: boolean;
   output: string;
+  /** A refusal, distinct from a tool failure. Older peers omit this. */
+  denied?: boolean;
   /**
    * Set when `output` is only the head of what the tool printed. The whole of it stays on the
    * Mac; `tool_result_request` fetches it. Absent means this is all there was.
@@ -722,6 +729,7 @@ export interface AgentStatusData {
 /** Kind tag paired with its payload. Discriminates on `kind`. */
 export type EventPayload =
   | { kind: "message"; data: MessageData }
+  | { kind: "turn_changes"; data: TurnChangesData }
   | { kind: "admission_query"; data: AdmissionQueryData }
   | { kind: "admission_status"; data: AdmissionStatusData }
   | { kind: "thought"; data: ThoughtData }

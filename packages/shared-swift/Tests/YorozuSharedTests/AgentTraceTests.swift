@@ -58,6 +58,7 @@ private let result = YorozuEvent.Payload.toolResult(
     // An older runtime's result, with no flag at all, is whole.
     let legacy = try JSONDecoder().decode(ToolResultData.self, from: Data(#"{"callId":"c","ok":true,"output":"o"}"#.utf8))
     #expect(legacy.truncated == nil)
+    #expect(legacy.denied == nil)
 }
 
 @Test func aDelegationBecomesOneCardThatClosesOnItsLastMessage() {
@@ -228,6 +229,52 @@ private func toolResult(_ id: String, ok: Bool = true, output: String = "", at t
     #expect(activities[1].duration == nil)
     #expect(activities[0].argsSummary == "cmd=ls")
     #expect(activities[1].argsDetail == "path: /tmp/x")
+}
+
+@Test func toolStatusesFollowResultsAndCards() {
+    let call = toolCall("c1", "Bash", args: ["command": .string("git status")])
+    let card = event(.approvalCard(ApprovalCardData(actionId: "a1", actionClass: "Bash", target: "git status")), id: "a1")
+    let answered = event(.approvalAnswer(ApprovalAnswerData(actionId: "a1", answer: .no)), id: "answer")
+    let failed = toolResult("c1", ok: false, output: "denied")
+
+    #expect(toolActivities(from: [call])[0].status() == .running)
+    #expect(toolActivities(from: [call])[0].status(active: false) == .pending)
+    #expect(toolActivities(from: [call, card])[0].status() == .awaitingApproval)
+    let discussed = event(.approvalAnswer(ApprovalAnswerData(actionId: "a1", answer: .discuss)), id: "discuss")
+    let newCard = event(.approvalCard(ApprovalCardData(actionId: "a2", actionClass: "Bash", target: "git status")), id: "a2")
+    #expect(toolActivities(from: [call, card, discussed, newCard])[0].status() == .awaitingApproval)
+    #expect(toolActivities(from: [call, card, answered, failed])[0].status() == .denied)
+    #expect(toolActivities(from: [call, failed])[0].status() == .failed)
+    let declined = event(.toolResult(ToolResultData(callId: "c1", ok: false, output: "declined", denied: true)), id: "declined")
+    #expect(toolActivities(from: [call, declined])[0].status() == .denied)
+    #expect(toolActivities(from: [call, toolResult("c1")])[0].status() == .completed)
+    #expect(toolActivities(from: [call])[0].currentAction == "Running git status")
+
+    let question = event(.questionCard(QuestionCardData(questionId: "q1", question: "Which?", options: [])), id: "q1")
+    let ask = toolCall("ask", "ask_user")
+    #expect(toolActivities(from: [ask, question])[0].status() == .awaitingApproval)
+    let reply = event(.questionAnswer(QuestionAnswerData(questionId: "q1", answer: "A")), id: "reply")
+    #expect(toolActivities(from: [ask, question, reply])[0].status() == .running)
+}
+
+@Test func consecutiveCallsSummariseByActionKind() {
+    let events = [
+        toolCall("r1", "Read"), toolResult("r1"),
+        toolCall("r2", "fs_read"), toolResult("r2"),
+        toolCall("r3", "read_file"), toolResult("r3"),
+        toolCall("c1", "Bash"),
+        // A card answered mid-run is part of the call's status, not a break in the run.
+        event(.approvalCard(ApprovalCardData(actionId: "a1", actionClass: "Bash", target: "ls")), id: "a1"),
+        event(.approvalAnswer(ApprovalAnswerData(actionId: "a1", answer: .yes)), id: "answer"),
+        toolResult("c1"),
+        toolCall("c2", "shell"), toolResult("c2"),
+        toolCall("e1", "Edit"), toolResult("e1"),
+    ]
+    guard case .tools(let activities) = traceEntries(from: events).first else {
+        return #expect(Bool(false), "expected grouped calls")
+    }
+    #expect(toolSummary(activities) == "Read 3 files, ran 2 commands, changed 1 file")
+    #expect(activities.count == 6)
 }
 
 /// The two stamps come off the same machine, but a clock that stepped back between them is
@@ -440,7 +487,7 @@ private func toolResult(_ id: String, ok: Bool = true, output: String = "", at t
     guard case .work(let work) = rows[1] else { return #expect(Bool(false), "expected work") }
     #expect(work.running)
     // The newest thing is the status: the running tool, not the thought before it.
-    #expect(work.status == "shell")
+    #expect(work.status == "Running ls")
 
     // A progress card's title is written to be read, so it wins while it is the newest.
     let withProgress = partial + [event(
@@ -452,7 +499,7 @@ private func toolResult(_ id: String, ok: Bool = true, output: String = "", at t
     }
     #expect(progressing.status == "Sorting the files · 40%")
     // The card's steps only move when reported, so the live line under it is what ran last.
-    #expect(progressing.activity == "shell")
+    #expect(progressing.activity == "Running ls")
 
     // Not generating: the same events are a settled row, however unfinished they look.
     guard case .work(let settled) = chatRows(from: partial)[1] else { return #expect(Bool(false), "expected work") }

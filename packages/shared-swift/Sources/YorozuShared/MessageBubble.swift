@@ -57,8 +57,6 @@ public struct MessageBubble: View {
     private let onResend: (() -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// Set by the thread's search field; every hit inside this bubble is drawn highlighted.
-    @Environment(\.searchHighlight) private var highlight
     @AppStorage(ReplyFont.key) private var replyFont = ReplyFont.serif
     @State private var hovering = false
     @State private var copied = false
@@ -349,15 +347,7 @@ public struct MessageBubble: View {
     }
 
     @ViewBuilder private var text: some View {
-        let body = data.text
-        if streaming {
-            // Reparsing and laying out the whole accumulated Markdown on every delta exceeds a
-            // frame budget on long answers. The finished event renders the same text below.
-            Text(AttributedString(body).highlighting(highlight))
-                .textSelection(.enabled)
-        } else {
-            MarkdownText(body).textSelection(.enabled)
-        }
+        MarkdownText(data.text, cursor: streaming).textSelection(.enabled)
     }
 }
 

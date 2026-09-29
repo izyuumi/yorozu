@@ -9,21 +9,25 @@ import SwiftUI
 /// there is nothing to collapse, and "1 step" is a worse row than the step itself.
 public struct ToolGroupView: View {
     private let activities: [ToolActivity]
+    private let active: Bool
     @State private var expanded: Bool
 
-    public init(activities: [ToolActivity], expanded: Bool = false) {
+    public init(activities: [ToolActivity], expanded: Bool = false, active: Bool = true) {
         self.activities = activities
+        self.active = active
         _expanded = State(initialValue: expanded)
     }
 
     /// A group is still working while any of its calls is.
-    private var running: Bool { activities.contains { $0.running } }
+    private var running: Bool { activities.contains { $0.status(active: active) == .running } }
+    private var pending: Bool { activities.contains { $0.status(active: active) == .pending } }
+    private var awaitingApproval: Bool { activities.contains { $0.status(active: active) == .awaitingApproval } }
 
-    private var failed: Int { activities.filter { !$0.running && !$0.ok }.count }
+    private var failed: [ToolActivity] { activities.filter { [.failed, .denied].contains($0.status(active: active)) } }
 
     public var body: some View {
         if activities.count == 1, let only = activities.first {
-            ToolRowView(activity: only)
+            ToolRowView(activity: only, active: active)
         } else if !activities.isEmpty {
             VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
                 Button {
@@ -36,7 +40,8 @@ public struct ToolGroupView: View {
                         if running {
                             ProgressView().controlSize(.small)
                         } else {
-                            Image(systemName: failed > 0 ? "exclamationmark.triangle" : "checkmark.circle")
+                            Image(systemName: !failed.isEmpty ? "exclamationmark.triangle" :
+                                  awaitingApproval ? "hand.raised" : pending ? "circle.dotted" : "checkmark.circle")
                                 .font(.scaled(.caption))
                                 .foregroundStyle(.secondary)
                         }
@@ -54,20 +59,23 @@ public struct ToolGroupView: View {
 
                 if expanded {
                     VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
-                        ForEach(activities) { ToolRowView(activity: $0) }
+                        ForEach(activities) { ToolRowView(activity: $0, active: active) }
                     }
                     .padding(.leading, LayoutMetrics.gutter)
                     .transition(.opacity.combined(with: .move(edge: .top)))
+                } else {
+                    ForEach(failed) { ToolRowView(activity: $0, active: active) }
                 }
             }
         }
     }
 
-    /// "4 steps", and how it went once it is over: the two things worth knowing while collapsed.
+    /// One action count per kind, and how the run went.
     private var summary: String {
-        let steps = "\(activities.count) steps"
-        if running { return "\(steps) · working…" }
-        return failed > 0 ? "\(steps) · \(failed) failed" : steps
+        let actions = toolSummary(activities)
+        if running { return "\(actions) · working…" }
+        if awaitingApproval { return "\(actions) · awaiting approval" }
+        return !failed.isEmpty ? "\(actions) · \(failed.count) failed" : actions
     }
 }
 
@@ -80,6 +88,7 @@ extension EnvironmentValues {
 /// One tool call: the compact line, and what it did behind it.
 public struct ToolRowView: View {
     private let activity: ToolActivity
+    private let active: Bool
     @State private var expanded: Bool
     /// Long output is cut until asked for, so one `cat` of a large file does not become the
     /// whole trace. The cap is on lines rather than characters: it is what the eye counts.
@@ -93,8 +102,9 @@ public struct ToolRowView: View {
     @Environment(\.fetchToolResult) private var fetchToolResult
     @State private var fetching = false
 
-    public init(activity: ToolActivity, expanded: Bool = false) {
+    public init(activity: ToolActivity, expanded: Bool = false, active: Bool = true) {
         self.activity = activity
+        self.active = active
         _expanded = State(initialValue: expanded)
     }
 
@@ -150,14 +160,13 @@ public struct ToolRowView: View {
     }
 
     @ViewBuilder private var status: some View {
-        if activity.running {
-            ProgressView().controlSize(.small)
-        } else {
-            Image(systemName: activity.ok ? "checkmark.circle" : "exclamationmark.triangle")
-                .font(.scaled(.caption))
-                .foregroundStyle(activity.ok ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
-                .accessibilityLabel(activity.ok ? String(localized: "Done") : String(localized: "Failed"))
-        }
+        let state = activity.status(active: active)
+        Text(state.rawValue)
+            .font(.scaled(.caption2).weight(.semibold))
+            .foregroundStyle(state == .failed || state == .denied ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+            .padding(.horizontal, LayoutMetrics.tight)
+            .padding(.vertical, 2)
+            .background(.quaternary, in: Capsule())
     }
 
     @ViewBuilder private var details: some View {

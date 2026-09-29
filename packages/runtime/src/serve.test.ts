@@ -1299,6 +1299,9 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
           turn.onActivity?.("u1:thinking", { kind: "thought", data: { text: "reading the failing test" } });
           turn.onActivity?.("call:toolu_1", { kind: "tool_call", data: { callId: "toolu_1", name: "Bash", args: { command: "cat big.log" } } });
           turn.onActivity?.("result:toolu_1", { kind: "tool_result", data: { callId: "toolu_1", ok: true, output: "L".repeat(5000) } });
+        } else {
+          turn.onActivity?.("call:denied", { kind: "tool_call", data: { callId: "denied", name: "Bash", args: { command: "rm file" } } });
+          turn.onActivity?.("result:denied", { kind: "tool_result", data: { callId: "denied", ok: false, output: "declined", denied: true } });
         }
         return { text: `reply ${turns.length}`, sessionId: "s-1" };
       }
@@ -1343,7 +1346,9 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
 
   // Second prompt resumes it, still in the same folder.
   send({ kind: "message", data: { role: "user", text: "and lint" } }, "cc");
-  await eventsUntil((event) => event.kind === "message" && event.data.done === true);
+  const second = await eventsUntil((event) => event.kind === "message" && event.data.done === true);
+  expect(second.find((event) => event.kind === "tool_result" && event.data.callId === "denied"))
+    .toMatchObject({ data: { ok: false, denied: true } });
   expect(turns[1]).toMatchObject({ cwd: proj, sessionId: "s-1" });
 
   // Stop ends the turn without erasing the partial reply, and keeps the session to resume.
@@ -1540,6 +1545,56 @@ test("steered messages follow the turns they interrupt in live and saved history
   ]);
   expect(eventsAfter("steered", second, dir).some((event) => event.kind === "message" &&
     event.data.text === "reply to first")).toBe(true);
+});
+
+test("native turns report changed files after replies and skip unchanged or non-git folders", async () => {
+  const gitFolder = mkdtempSync(join(projectsRoot, "changes-"));
+  const plainFolder = mkdtempSync(join(projectsRoot, "plain-"));
+  execFileSync("git", ["init", "-q", gitFolder]);
+  writeFileSync(join(gitFolder, "file.txt"), "alpha\nbeta\ngamma\n");
+  execFileSync("git", ["add", "file.txt"], { cwd: gitFolder });
+  execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+    "-c", "commit.gpgsign=false", "commit", "-qm", "initial"], { cwd: gitFolder });
+  writeFileSync(join(gitFolder, "staged.txt"), "pending\n");
+  execFileSync("git", ["add", "staged.txt"], { cwd: gitFolder });
+  const staged = execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: gitFolder, encoding: "utf8" });
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    if (turn.text === "edit") writeFileSync(join(gitFolder, "file.txt"), "alpha\nupdated\ngamma\nnew\n");
+    if (turn.text === "edit again") writeFileSync(join(gitFolder, "file.txt"), "alpha\nupdated\ngamma\nnew\nmore\n");
+    return { text: `reply to ${turn.text}` };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
+  try {
+    send({ kind: "thread_create", data: { agent: "codex", cwd: gitFolder } }, "git-thread");
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "git-thread"));
+    const edited = send({ kind: "message", data: { role: "user", text: "edit" } }, "git-thread");
+    const reply = (await eventsUntil((event) => event.kind === "message" && event.threadId === "git-thread" &&
+      event.data.role === "agent" && event.data.done === true)).at(-1)!;
+    expect(reply.data).toMatchObject({ text: "reply to edit" });
+    const changes = (await eventsUntil((event) => event.kind === "turn_changes" && event.threadId === "git-thread")).at(-1)!;
+    expect(changes).toMatchObject({ data: { turnEventId: edited, files: [{ path: "file.txt", added: 2, removed: 1 }] } });
+    expect(readThreadEvents("git-thread", dir)).toContainEqual(changes);
+    expect(execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: gitFolder, encoding: "utf8" })).toBe(staged);
+
+    const unchanged = send({ kind: "message", data: { role: "user", text: "same" } }, "git-thread");
+    await eventsUntil((event) => event.kind === "message" && event.threadId === "git-thread" &&
+      event.data.role === "agent" && event.data.text === "reply to same" && event.data.done === true);
+    const next = send({ kind: "message", data: { role: "user", text: "edit again" } }, "git-thread");
+    const later = await eventsUntil((event) => event.kind === "turn_changes" && event.data.turnEventId === next);
+    expect(later.filter((event) => event.kind === "turn_changes" && event.data.turnEventId === unchanged)).toEqual([]);
+    send({ kind: "thread_create", data: { agent: "codex", cwd: plainFolder } }, "plain-thread");
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "plain-thread"));
+    const plain = send({ kind: "message", data: { role: "user", text: "plain" } }, "plain-thread");
+    await eventsUntil((event) => event.kind === "message" && event.threadId === "plain-thread" &&
+      event.data.role === "agent" && event.data.text === "reply to plain" && event.data.done === true);
+    expect(readThreadEvents("git-thread", dir).filter((event) => event.kind === "turn_changes" &&
+      event.data.turnEventId === unchanged)).toEqual([]);
+    expect(readThreadEvents("plain-thread", dir).filter((event) => event.kind === "turn_changes" &&
+      event.data.turnEventId === plain)).toEqual([]);
+  } finally {
+    rmSync(gitFolder, { recursive: true, force: true });
+    rmSync(plainFolder, { recursive: true, force: true });
+  }
 });
 
 test("turn state spans queued turns and ignores a stop for an earlier turn", async () => {

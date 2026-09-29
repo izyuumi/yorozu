@@ -1437,6 +1437,30 @@ func finalStreamedReplyFollowsToolHistory(finalTimestamp: Int) async throws {
 }
 
 @MainActor
+@Test func changedFilesAttachToTheirTurnReply() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    let files = TurnChangesData(turnEventId: "first", files: [
+        .init(path: "file.txt", added: 2, removed: 1)
+    ])
+    for item in [
+        event("first", .message(MessageData(role: .user, text: "edit"))),
+        event("reply-first", .message(MessageData(role: .agent, text: "done", done: true))),
+        event("second", .message(MessageData(role: .user, text: "next"))),
+        event("reply-second", .message(MessageData(role: .agent, text: "done", done: true))),
+        event("changes", .turnChanges(files)),
+    ] { await transport.yield(.event(item)) }
+    #expect(await eventually { model.events["home"]?.count == 5 })
+    let rows = model.timeline("home").rows(generating: false)
+    #expect(rows.map(\.id) == ["first", "reply-first", "changes", "second", "reply-second"])
+    guard case .changes(let change) = rows[2], case .turnChanges(let data) = change.payload else {
+        Issue.record("missing changed-files card")
+        return
+    }
+    #expect(data == files)
+}
+
+@MainActor
 @Test func cachedFinalReplyReturnsBelowEarlierToolHistory() {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }

@@ -52,6 +52,17 @@ public struct DelegationCardView: View {
     }
 
     public var body: some View {
+        VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
+            disclosure
+            if !expanded {
+                ForEach(toolActivities(from: card.events).filter { [.failed, .denied].contains($0.status()) }) {
+                    ToolRowView(activity: $0)
+                }
+            }
+        }
+    }
+
+    private var disclosure: some View {
         DisclosureGroup(isExpanded: $expanded) {
             LazyVStack(alignment: .leading, spacing: LayoutMetrics.inner) {
                 ForEach(traceEntries(from: card.events)) { entry in
