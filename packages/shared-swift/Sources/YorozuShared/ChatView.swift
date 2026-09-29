@@ -1117,7 +1117,7 @@ public struct ChatView: View {
                 .font(.scaled(.subheadline).weight(.semibold))
                 switch event.payload {
                 case .approvalCard(let card):
-                    Text(card.actionClass.replacingOccurrences(of: "-", with: " ").capitalized)
+                    Text(ApprovalCardView.verb(for: card.actionClass).sentence)
                         .font(.scaled(.headline))
                     if !card.target.isEmpty { Text(card.target).font(.scaled(.callout)).textSelection(.enabled) }
                     if let amount = card.amount {
@@ -1177,7 +1177,7 @@ public struct ChatView: View {
             .background(YorozuPalette.paper, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius))
             .padding(.horizontal, 12)
             .sheet(item: $editingApprovalRule) { rule in
-                RuleEditorView(rule: rule, title: "Always allow") { edited in
+                RuleEditorView(rule: rule, title: String(localized: "Always allow")) { edited in
                     model.answer(editingApprovalId, in: thread.id, .always, rule: edited)
                     editingApprovalRule = nil
                 } onCancel: {

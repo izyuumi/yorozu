@@ -80,8 +80,8 @@ public struct ApprovalCardView: View {
                 }
                 if card.nativeAgent != nil {
                     HStack {
-                        choice(.yes, "Allow", prominent: true)
-                        choice(.no, "Don't allow", prominent: false)
+                        choice(.yes, String(localized: "Allow"), prominent: true)
+                        choice(.no, String(localized: "Don't allow"), prominent: false)
                     }
                 } else {
                     choices
@@ -109,7 +109,7 @@ public struct ApprovalCardView: View {
         .accessibilityLabel("\(agentLabel ?? card.nativeAgent?.label ?? "Yorozu") approval needed: \(verb.sentence)")
         // The rule the "Always allow" button is really about. Nothing is saved until Save.
         .sheet(item: $editingRule) { rule in
-            RuleEditorView(rule: rule, title: "Always allow") { edited in
+            RuleEditorView(rule: rule, title: String(localized: "Always allow")) { edited in
                 editingRule = nil
                 answer(.always, edited)
             } onCancel: {
@@ -293,15 +293,15 @@ public struct ApprovalCardView: View {
     private var choices: some View {
         VStack(spacing: LayoutMetrics.inner) {
             #if os(macOS)
-                choice(.yes, "Allow once", prominent: true)
+                choice(.yes, String(localized: "Allow once"), prominent: true)
                 HStack(spacing: LayoutMetrics.inner) {
-                    choice(.task, "Allow for this task", prominent: false)
-                    choice(.no, "Don't allow", prominent: false)
+                    choice(.task, String(localized: "Allow for this task"), prominent: false)
+                    choice(.no, String(localized: "Don't allow"), prominent: false)
                 }
             #else
                 HStack(spacing: LayoutMetrics.inner) {
-                    choice(.yes, "Allow once", prominent: true)
-                    choice(.task, "For this task", prominent: false)
+                    choice(.yes, String(localized: "Allow once"), prominent: true)
+                    choice(.task, String(localized: "For this task"), prominent: false)
                 }
             #endif
             // A grant that ends with the turn, so it is offered wherever a card is — but it
@@ -319,7 +319,7 @@ public struct ApprovalCardView: View {
             }
             #if !os(macOS)
                 HStack(spacing: LayoutMetrics.inner) {
-                    choice(.no, "Don't allow", prominent: false)
+                    choice(.no, String(localized: "Don't allow"), prominent: false)
                     Button { answer(.discuss, nil) } label: {
                         Text("Discuss first")
                             .font(.scaled(.subheadline))

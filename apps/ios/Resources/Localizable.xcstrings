@@ -13139,6 +13139,76 @@
           }
         }
       }
+    },
+    "A replay-protected channel is required. Update Yorozu on the host Mac.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再送攻撃から保護された通信が必要です。ホストのMacでYorozuを更新してください。"
+          }
+        }
+      }
+    },
+    "Answered: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回答済み：%@"
+          }
+        }
+      }
+    },
+    "For this task": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このタスクで許可"
+          }
+        }
+      }
+    },
+    "Invalid peer information. Update Yorozu on this device and its host Mac.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続先の情報が無効です。このデバイスとホストのMacでYorozuを更新してください。"
+          }
+        }
+      }
+    },
+    "This host no longer advertises required protocol support. Update Yorozu on the host Mac.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このホストは必要な通信プロトコルに対応していません。ホストのMacでYorozuを更新してください。"
+          }
+        }
+      }
+    },
+    "host handshake timed out": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストとの接続確認がタイムアウトしました"
+          }
+        }
+      }
+    },
+    "relay connection timed out": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リレーへの接続がタイムアウトしました"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

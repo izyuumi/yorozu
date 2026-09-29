@@ -391,7 +391,7 @@ public struct RuleProposalCardView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Rule suggestion: \(proposal.rule.summary)")
         .sheet(item: $editing) { rule in
-            RuleEditorView(rule: rule, title: "New rule") { edited in
+            RuleEditorView(rule: rule, title: String(localized: "New rule")) { edited in
                 editing = nil
                 onSave(edited)
             } onCancel: {

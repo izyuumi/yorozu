@@ -367,7 +367,7 @@ public actor RelayClient: ChatTransport {
             let socket = session.webSocketTask(with: direct ?? dial)
             self.socket = socket
             socket.resume()
-            armPhaseDeadline("relay connection timed out", on: socket)
+            armPhaseDeadline(String(localized: "relay connection timed out"), on: socket)
             await receiveLoop(socket, generation: generation)
             guard generation == loopGeneration, self.socket === socket else { return }
             phaseDeadline?.cancel()
@@ -512,7 +512,7 @@ public actor RelayClient: ChatTransport {
             attempt = 0
             phaseDeadline?.cancel()
             phaseDeadline = nil
-            if message.ownerOnline == true, let socket { armPhaseDeadline("host handshake timed out", on: socket) }
+            if message.ownerOnline == true, let socket { armPhaseDeadline(String(localized: "host handshake timed out"), on: socket) }
             // The relay remembers this device now, so the one-time token is done with.
             if !paired {
                 paired = true
@@ -536,7 +536,7 @@ public actor RelayClient: ChatTransport {
             if message.online == true {
                 updates?.yield(.ownerOnline(true))
                 if !ready, phaseDeadline == nil, let socket {
-                    armPhaseDeadline("host handshake timed out", on: socket)
+                    armPhaseDeadline(String(localized: "host handshake timed out"), on: socket)
                     let generation = loopGeneration
                     Task { if generation == loopGeneration { await sayHello() } }
                 }
@@ -708,7 +708,7 @@ public actor RelayClient: ChatTransport {
                 let result = localPeer.compatibility(with: peer)
                 if case .updateRequired(let reason) = result { failCompatibility(reason); return }
                 guard channelFormat == .current else {
-                    failCompatibility("A replay-protected channel is required. Update Yorozu on the host Mac.")
+                    failCompatibility(String(localized: "A replay-protected channel is required. Update Yorozu on the host Mac."))
                     return
                 }
                 compatibility = result
@@ -724,7 +724,7 @@ public actor RelayClient: ChatTransport {
                 return
             } else if peerInfoRequestID != nil || counter.peerInfoRequired == true ||
                         localPeer.requiredCapabilities.contains("admission-expiry-v1") {
-                failCompatibility("This host no longer advertises required protocol support. Update Yorozu on the host Mac.")
+                failCompatibility(String(localized: "This host no longer advertises required protocol support. Update Yorozu on the host Mac."))
                 return
             }
             if !ready {
@@ -741,7 +741,7 @@ public actor RelayClient: ChatTransport {
 
     private func requestPeerInfo() {
         guard channelFormat == .current else {
-            failCompatibility("A replay-protected channel is required. Update Yorozu on the host Mac.")
+            failCompatibility(String(localized: "A replay-protected channel is required. Update Yorozu on the host Mac."))
             return
         }
         ready = false
@@ -786,7 +786,7 @@ public actor RelayClient: ChatTransport {
             counter.peerInfoRequired = true
             guard (try? counterStore.save(counter)) != nil else { return }
         }
-        failCompatibility("Invalid peer information. Update Yorozu on this device and its host Mac.")
+        failCompatibility(String(localized: "Invalid peer information. Update Yorozu on this device and its host Mac."))
     }
 
     /// The relay verifies the signature over the base64url `payload` string itself.

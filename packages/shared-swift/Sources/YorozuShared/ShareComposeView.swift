@@ -314,7 +314,7 @@
         private func size(of attachment: MessageAttachment) -> String {
             (attachment.bytes?.count).map {
                 ByteCountFormatStyle(style: .file).format(Int64($0))
-            } ?? "Picture"
+            } ?? String(localized: "Picture")
         }
     }
 
