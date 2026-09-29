@@ -173,6 +173,7 @@ public struct TurnWork: Identifiable, Equatable, Sendable {
 /// or a card waiting to be answered. What a specialist did lives behind the work row.
 public enum ChatRow: Identifiable, Equatable, Sendable {
     case message(YorozuEvent)
+    case changes(YorozuEvent)
     case work(TurnWork)
     case approval(YorozuEvent)
     case unreadable(YorozuEvent)
@@ -183,6 +184,7 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
     public var id: String {
         switch self {
         case .message(let event): event.id
+        case .changes(let event): event.id
         case .work(let work): work.id
         case .approval(let event): event.id
         case .unreadable(let event): event.id
@@ -243,8 +245,13 @@ public func chatRows(from events: [YorozuEvent], generating: Bool = false) -> [C
         toolActivities(from: mainTrace(from: events)).map { ($0.callId, $0) },
         uniquingKeysWith: { first, _ in first }
     )
+    let changes = Dictionary(events.compactMap { event -> (String, YorozuEvent)? in
+        guard case .turnChanges(let data) = event.payload else { return nil }
+        return (data.turnEventId, event)
+    }, uniquingKeysWith: { _, latest in latest })
 
     var rows: [ChatRow] = []
+    var turnEventId: String?
     var transientStatus: YorozuEvent?
     /// The work row being filled: everything the main agent does between one message and the
     /// next lands in it, so a long turn reads as one line rather than a stack.
@@ -308,9 +315,13 @@ public func chatRows(from events: [YorozuEvent], generating: Bool = false) -> [C
             rows.append(.unreadable(event))
         case .thought where event.parentAgentId == nil:
             add(.thought(event), at: event)
-        case .message where event.parentAgentId == nil:
+        case .message(let data) where event.parentAgentId == nil:
             closeWork()
             rows.append(.message(event))
+            if data.role == .user { turnEventId = event.id }
+            if data.role == .agent, data.done == true, let turnEventId, let change = changes[turnEventId] {
+                rows.append(.changes(change))
+            }
         // Cards that need a person are never folded away, wherever they were raised: one put
         // up inside a delegation still has to reach the thread, because the agent is parked
         // on it and nothing happens until it is answered. The work row closes on them, so the

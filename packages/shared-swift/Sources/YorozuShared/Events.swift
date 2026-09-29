@@ -42,6 +42,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         /// Local classification only; unknown wire kinds keep their original string in Payload.
         case unknown = "__unknown"
         case message, thought
+        case turnChanges = "turn_changes"
         case admissionQuery = "admission_query"
         case admissionStatus = "admission_status"
         case toolCall = "tool_call"
@@ -91,6 +92,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
     public enum Payload: Equatable, Sendable {
         case unknown(kind: String, data: JSONValue)
         case message(MessageData)
+        case turnChanges(TurnChangesData)
         case admissionQuery(AdmissionQueryData)
         case admissionStatus(AdmissionStatusData)
         case thought(ThoughtData)
@@ -141,6 +143,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             switch self {
             case .unknown: .unknown
             case .message: .message
+            case .turnChanges: .turnChanges
             case .admissionQuery: .admissionQuery
             case .admissionStatus: .admissionStatus
             case .thought: .thought
@@ -193,7 +196,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         public var isUnreadableConversation: Bool {
             guard case .unknown(let rawKind, _) = self, let kind = Kind(rawValue: rawKind) else { return false }
             switch kind {
-            case .message, .thought, .toolCall, .toolResult, .approvalCard, .approvalAnswer,
+            case .message, .turnChanges, .thought, .toolCall, .toolResult, .approvalCard, .approvalAnswer,
                  .approvalStatus, .ruleProposal, .questionCard, .questionAnswer, .progressCard,
                  .stopStatus:
                 return true
@@ -226,6 +229,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             switch kind {
             case .unknown: payload = .unknown(kind: rawKind, data: rawData)
             case .message: payload = .message(try c.decode(MessageData.self, forKey: .data))
+            case .turnChanges: payload = .turnChanges(try c.decode(TurnChangesData.self, forKey: .data))
             case .admissionQuery: payload = .admissionQuery(try c.decode(AdmissionQueryData.self, forKey: .data))
             case .admissionStatus: payload = .admissionStatus(try c.decode(AdmissionStatusData.self, forKey: .data))
             case .thought: payload = .thought(try c.decode(ThoughtData.self, forKey: .data))
@@ -294,6 +298,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         switch payload {
         case .unknown(_, let data): try c.encode(data, forKey: .data)
         case .message(let d): try c.encode(d, forKey: .data)
+        case .turnChanges(let d): try c.encode(d, forKey: .data)
         case .admissionQuery(let d): try c.encode(d, forKey: .data)
         case .admissionStatus(let d): try c.encode(d, forKey: .data)
         case .thought(let d): try c.encode(d, forKey: .data)
@@ -526,6 +531,28 @@ public struct AdmissionStatusData: Codable, Equatable, Sendable {
         self.completionId = completionId
         self.reason = reason
         self.requestId = requestId
+    }
+}
+
+public struct TurnChangesData: Codable, Equatable, Sendable {
+    public struct File: Codable, Equatable, Sendable {
+        public var path: String
+        public var added: Int
+        public var removed: Int
+
+        public init(path: String, added: Int, removed: Int) {
+            self.path = path
+            self.added = added
+            self.removed = removed
+        }
+    }
+
+    public var turnEventId: String
+    public var files: [File]
+
+    public init(turnEventId: String, files: [File]) {
+        self.turnEventId = turnEventId
+        self.files = files
     }
 }
 

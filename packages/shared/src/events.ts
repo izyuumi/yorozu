@@ -102,6 +102,11 @@ export interface MessageData {
   completionId?: string;
 }
 
+export interface TurnChangesData {
+  turnEventId: string;
+  files: { path: string; added: number; removed: number }[];
+}
+
 /** A paired device asks the host to reconcile one user message, by its original ID. */
 export interface AdmissionQueryData { eventId: string }
 
@@ -722,6 +727,7 @@ export interface AgentStatusData {
 /** Kind tag paired with its payload. Discriminates on `kind`. */
 export type EventPayload =
   | { kind: "message"; data: MessageData }
+  | { kind: "turn_changes"; data: TurnChangesData }
   | { kind: "admission_query"; data: AdmissionQueryData }
   | { kind: "admission_status"; data: AdmissionStatusData }
   | { kind: "thought"; data: ThoughtData }
