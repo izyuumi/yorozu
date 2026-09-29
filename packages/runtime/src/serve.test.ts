@@ -1591,6 +1591,50 @@ test("turn state spans queued turns and ignores a stop for an earlier turn", asy
     thread.id === "turn-state" && thread.turnState === "idle"));
 });
 
+test("withdrawing a queued turn leaves no reply and survives restart", async () => {
+  const firstDone = Promise.withResolvers<void>();
+  const run = vi.fn<NativeAgentRunner["run"]>(async (turn) => {
+    await firstDone.promise;
+    return { text: `reply to ${turn.text}` };
+  });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } }, true);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "withdraw-queued");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "withdraw-queued"));
+  const first = send({ kind: "message", data: { role: "user", text: "first" } }, "withdraw-queued");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === "withdraw-queued" && thread.turnState === "running" && thread.activeEventId === first));
+  const queued = send({ kind: "message", data: { role: "user", text: "queued" } }, "withdraw-queued");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === "withdraw-queued" && thread.queuedTurnCount === 1));
+
+  send({ kind: "interrupt", data: { targetEventId: queued } }, "withdraw-queued");
+  const withdrawal = await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === queued);
+  expect(withdrawal.at(-1)).toMatchObject({ data: { status: "withdrawn" } });
+  expect(withdrawal.some((event) => event.kind === "message" && event.data.role === "agent" &&
+    event.id === `native:${queued}:final`)).toBe(false);
+  expect(readThreadEvents("withdraw-queued", dir).some((event) => event.id === `native:${queued}:final`)).toBe(false);
+  expect(readTranscripts(new Date(0), transcriptDir(dir)).some((event) => event.id === `native:${queued}:final`)).toBe(false);
+  expect(run).toHaveBeenCalledTimes(1);
+  send({ kind: "thread_list", data: { threads: [] } }, "");
+  const active = (await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === "withdraw-queued" && thread.activeEventId === first))).at(-1);
+  expect(active).toMatchObject({ data: { threads: [expect.objectContaining({
+    id: "withdraw-queued", turnState: "running", queuedTurnCount: 0,
+  })] } });
+  firstDone.resolve();
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === "withdraw-queued" && thread.turnState === "idle"));
+  expect(run).toHaveBeenCalledTimes(1);
+  await sidecar.close();
+  await relay.close();
+  const restarted = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+  restarted.send({ kind: "admission_query", data: { eventId: queued } }, "withdraw-queued");
+  const status = (await restarted.eventsUntil((event) => event.kind === "admission_status" && event.data.eventId === queued)).at(-1);
+  expect(status).toMatchObject({ data: { status: "withdrawn" } });
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(readThreadEvents("withdraw-queued", dir).some((event) => event.id === `native:${queued}:final`)).toBe(false);
+});
+
 test("always runs the action and is permanent: the next one needs no second card", async () => {
   // Harmless, and its output is proof the gate let the tool run rather than refusing it.
   const cmd = "echo yorozu-always-ok";
