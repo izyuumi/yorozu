@@ -40,6 +40,8 @@ export interface NativeTurn {
    */
   onActivity?: (id: string, payload: EventPayload) => void;
   onSession?: (sessionId: string) => void;
+  /** Let the host close a session if its abort does not settle the turn. */
+  onTerminate?: (terminate: () => void) => void;
   approve?: (tool: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<boolean>;
   ask?: (question: string, options: string[], signal: AbortSignal) => Promise<string | undefined>;
   beforeTool?: (signal: AbortSignal) => Promise<boolean>;
@@ -98,6 +100,8 @@ export interface NativeTurnResult {
   text: string;
   /** The SDK reported a terminal failure rather than a completed answer. */
   failed?: boolean;
+  /** The agent reported a successful turn, even if Stop was requested meanwhile. */
+  completed?: true;
   /** The session to resume next time. Kept even for an aborted turn: the session survives it. */
   sessionId?: string;
 }
@@ -238,14 +242,15 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
           },
         },
       });
+      turn.onTerminate?.(() => session.close());
 
       let text = "";
       let streamed = "";
       let failed = false;
+      let completed = false;
       let sessionId = turn.sessionId;
       try {
         for await (const message of session as AsyncIterable<SDKMessage>) {
-          if (turn.signal.aborted) break;
           if ("session_id" in message && message.session_id && message.session_id !== sessionId) {
             sessionId = message.session_id;
             turn.onSession?.(sessionId);
@@ -287,7 +292,7 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
               });
             }
           } else if (message.type === "result") {
-            if (message.subtype === "success") text = message.result || text;
+            if (message.subtype === "success") { text = message.result || text; completed = true; }
             else if (!turn.signal.aborted) {
               failed = true;
               text = text || `Claude Code stopped: ${message.subtype.replace(/^error_/, "").replace(/_/g, " ")}.`;
@@ -301,7 +306,8 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
         turn.signal.removeEventListener("abort", onAbort);
         session.close();
       }
-      return { text: turn.signal.aborted ? streamed || text : text, ...(failed ? { failed: true } : {}), ...(sessionId ? { sessionId } : {}) };
+      return { text: completed || !turn.signal.aborted ? text : streamed || text,
+        ...(failed ? { failed: true } : {}), ...(completed ? { completed: true } : {}), ...(sessionId ? { sessionId } : {}) };
     },
   };
 }

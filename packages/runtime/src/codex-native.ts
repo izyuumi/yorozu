@@ -150,6 +150,7 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
       let turnId: string | undefined;
       let text = "";
       let lastStreamed = "";
+      let completed = false;
       const streamed = new Map<string, string>();
       const cancel = new AbortController();
       const signal = AbortSignal.any([turn.signal, cancel.signal]);
@@ -164,13 +165,13 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
         notify(method, params) {
           if (params.threadId && params.threadId !== sessionId) return;
           if (method === "turn/started") turnId = string(object(params.turn).id);
-          if (method === "item/agentMessage/delta" && !turn.signal.aborted) {
+          if (method === "item/agentMessage/delta") {
             const id = string(params.itemId);
             const next = (streamed.get(id) ?? "") + string(params.delta);
             streamed.set(id, next);
             lastStreamed = next;
             turn.onUpdate?.(next);
-          } else if ((method === "item/started" || method === "item/completed") && !turn.signal.aborted) {
+          } else if (method === "item/started" || method === "item/completed") {
             const item = object(params.item);
             const id = `${turnId ?? "turn"}:${string(item.id)}`;
             const type = string(item.type);
@@ -196,10 +197,11 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
           } else if (method === "turn/completed") {
             const done = object(params.turn);
             if (done.status === "failed") reject(new Error(string(object(done.error).message) || "Codex turn failed"));
-            else resolve();
+            else { completed = done.status === "completed"; resolve(); }
           }
         },
       });
+      turn.onTerminate?.(() => client.close());
       let abortTimer: ReturnType<typeof setTimeout> | undefined;
       const abort = (): void => {
         if (sessionId && turnId) {
@@ -238,7 +240,8 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
         clearTimeout(abortTimer);
         client.close();
       }
-      return { text: turn.signal.aborted ? lastStreamed || text : text, ...(sessionId ? { sessionId } : {}) };
+      return { text: completed || !turn.signal.aborted ? text : lastStreamed || text,
+        ...(completed ? { completed: true } : {}), ...(sessionId ? { sessionId } : {}) };
     },
   };
 }
