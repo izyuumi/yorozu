@@ -346,6 +346,8 @@ public struct MessageBubble: View {
         case "conflicting-message-id": String(localized: "Not sent · message changed after sending")
         case "invalid-admission-deadline": String(localized: "Not sent · invalid message deadline")
         case "thread-not-created": String(localized: "Not sent · chat does not exist. Use in new chat to keep attachments.")
+        case "attachments-unsupported":
+            String(localized: "Not sent · OpenClaw can't receive attachments. Update the Yorozu plugin.")
         case "conflicting-thread-create": String(localized: "Not sent · chat creation changed")
         default: String(localized: "Not sent · rejected by host")
         }

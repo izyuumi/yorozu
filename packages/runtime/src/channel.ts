@@ -64,12 +64,16 @@ export interface ChannelHostOptions {
   onCapabilities?(): void;
   onModel?(threadId: string, model: string | null): void;
   onDeliveryError?(message: ChannelInbound, error: string): void;
+  /** A queued message that will never be sent, e.g. attachments for a plugin without `media-v1`. */
+  onRejected?(message: ChannelInbound, reason: string): void;
 }
 
 export interface ChannelHost {
   /** Whether a plugin is connected right now. Messages are queued either way. */
   readonly connected: boolean;
   readonly modelSelection: boolean;
+  /** Whether attachments can go out: `unknown` while no plugin is connected or one has not said hello yet. */
+  readonly attachments: "supported" | "unsupported" | "unknown";
   refreshModels(threadId: string): Promise<ChannelModelOption[]>;
   selectModel(threadId: string, model: string | null): Promise<void>;
   retry(threadId: string): void;
@@ -81,6 +85,8 @@ export interface ChannelHost {
 
 const MAX_ID = 128;
 const MAX_TEXT = 256 * 1024;
+/** How long a connected plugin may take to say hello before it counts as one that never will. */
+const HELLO_GRACE_MS = 1000;
 const validModel = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 512;
 const validId = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= MAX_ID;
@@ -124,6 +130,8 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
   const plugins = new Map<string, Send<HostFrame>>();
   const runBoundaryPlugins = new Set<string>();
   const capable = new Set<string>();
+  const mediaPlugins = new Set<string>();
+  const undecided = new Map<string, NodeJS.Timeout>();
   const sent = new Map<string, Set<string>>();
   type Response = Extract<PluginFrame, { requestId: string }>;
   const pending = new Map<string, { device: string; type: Response["type"];
@@ -177,6 +185,13 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
     if (frame.model !== undefined && frame.model !== null && !validModel(frame.model)) throw new Error("Invalid OpenClaw model selection");
     options.onModel?.(threadId, frame.model === undefined ? model : frame.model);
   };
+  const decided = (device: string): void => {
+    const timer = undecided.get(device);
+    if (!timer) return;
+    clearTimeout(timer);
+    undecided.delete(device);
+  };
+  const drainAll = (): void => { for (const threadId of new Set(outbox.map((m) => m.threadId))) drain(threadId); };
   const drain = (threadId: string): void => {
     if (draining.has(threadId)) { drainAgain.add(threadId); return; }
     draining.add(threadId);
@@ -203,8 +218,18 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
           }
         }
         const { channelModel: _, ...ready } = message;
+        const media = Boolean(ready.attachments?.length);
+        if (media && mediaPlugins.size === 0) {
+          // Keep order: nothing behind it goes out until we know whether it can.
+          if (plugins.size === 0 || undecided.size > 0) break;
+          outbox = outbox.filter((m) => m.id !== message.id);
+          saveJson(outboxFile(dir), outbox);
+          options.onRejected?.(ready, "attachments-unsupported");
+          continue;
+        }
         if (plugins.size) options.forwarded(ready);
         for (const [device, send] of plugins) {
+          if (media && !mediaPlugins.has(device)) continue;
           if (sent.get(device)?.has(message.id)) continue;
           sent.get(device)?.add(message.id);
           send({ type: "inbound", message: ready });
@@ -221,12 +246,16 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
     onOpen: (device, send) => {
       plugins.set(device, send);
       sent.set(device, new Set());
-      for (const threadId of new Set(outbox.map((m) => m.threadId))) drain(threadId);
+      // A plugin with attachments waiting announces `media-v1` right away; one that never says hello is old.
+      undecided.set(device, setTimeout(() => { undecided.delete(device); drainAll(); }, HELLO_GRACE_MS).unref());
+      drainAll();
     },
     onClose: (device) => {
       plugins.delete(device);
       sent.delete(device);
       capable.delete(device);
+      mediaPlugins.delete(device);
+      decided(device);
       runBoundaryPlugins.delete(device);
       for (const [id, entry] of pending) {
         if (entry.device !== device) continue;
@@ -246,8 +275,11 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
         else runBoundaryPlugins.delete(device);
         if (frame.capabilities.includes("model-select-v1")) capable.add(device);
         else capable.delete(device);
+        if (frame.capabilities.includes("media-v1")) mediaPlugins.add(device);
+        else mediaPlugins.delete(device);
+        decided(device);
         options.onCapabilities?.();
-        for (const threadId of new Set(outbox.map((m) => m.threadId))) drain(threadId);
+        drainAll();
         return;
       }
       if (frame.type === "run_started" || frame.type === "run_finished") {
@@ -293,6 +325,9 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
       return plugins.size > 0;
     },
     get modelSelection() { return capable.size > 0; },
+    get attachments() {
+      return mediaPlugins.size > 0 ? "supported" : plugins.size === 0 || undecided.size > 0 ? "unknown" : "unsupported";
+    },
     refreshModels: (threadId) => serial(threadId, async () => {
       const device = deviceForModels();
       const models = await catalog(device, threadId);
@@ -320,6 +355,8 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
         entry.reject(new Error("OpenClaw disconnected"));
       }
       pending.clear();
+      for (const timer of undecided.values()) clearTimeout(timer);
+      undecided.clear();
       await socket.close();
     },
   };

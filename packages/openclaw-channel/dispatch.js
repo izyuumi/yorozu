@@ -2,7 +2,7 @@
 // dispatchInboundDirectDm (which cannot pass reply options). `sdk` is injected so tests can fake it.
 
 /**
- * @param {{ resolveRoute: Function, buildContext: Function, createReplyPipeline: Function, dispatchTurn: Function }} sdk
+ * @param {{ resolveRoute: Function, buildContext: Function, createReplyPipeline: Function, dispatchTurn: Function, attachments: { save: Function, release: Function } }} sdk
  * @returns {(params: { cfg: object, accountId: string, message: object, deliver: Function, log?: object }, signal: AbortSignal, begin: () => void) => Promise<"completed" | "failed" | undefined>}
  */
 export const createInboundDispatcher = (sdk) => async ({ cfg, accountId, message, deliver, log }, signal, begin) => {
@@ -10,6 +10,8 @@ export const createInboundDispatcher = (sdk) => async ({ cfg, accountId, message
   // Refused here (e.g. no binding with several agents): throws before `begin`, so it is resent.
   const { route, buildEnvelope } = sdk.resolveRoute({ cfg, channel: "yorozu", accountId, peer });
   const label = `Yorozu ${message.threadId}`;
+  // A failed save throws before `begin`: the message stays unacked and is resent.
+  const media = await sdk.attachments.save(message);
   const ctxPayload = await sdk.buildContext({
     channel: "yorozu",
     accountId: route.accountId ?? accountId,
@@ -27,6 +29,7 @@ export const createInboundDispatcher = (sdk) => async ({ cfg, accountId, message
       rawBody: message.text,
       commandBody: message.text,
     },
+    ...(media.length ? { media } : {}),
     access: { commands: { authorized: true } },
     channelIngress: "unsupported",
     extra: { NativeDirectUserId: peer.id, OriginatingChannel: "yorozu" },
@@ -35,6 +38,7 @@ export const createInboundDispatcher = (sdk) => async ({ cfg, accountId, message
     cfg, agentId: route.agentId, channel: "yorozu", accountId: route.accountId ?? accountId,
   });
   let outcome; // undefined until OpenClaw reports one
+  sdk.attachments.release(message);
   begin();
   const result = await sdk.dispatchTurn({
     cfg,

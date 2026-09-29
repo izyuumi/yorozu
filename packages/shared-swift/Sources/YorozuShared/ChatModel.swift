@@ -1502,7 +1502,17 @@ public final class ChatModel {
     }
 
     private func reconcile(_ status: AdmissionStatusData) {
-        guard let index = outbox.firstIndex(where: { $0.id == status.eventId }) else { return }
+        guard let index = outbox.firstIndex(where: { $0.id == status.eventId }) else {
+            // The host took this message and only later found it cannot go out (a plugin without
+            // attachment support connected). Its outbox entry is gone, so the timeline's copy becomes one.
+            if status.status == .rejected, status.reason == "attachments-unsupported",
+               let sent = timelines.values.lazy.flatMap(\.events).first(where: { $0.id == status.eventId }),
+               case .message(let data) = sent.payload, data.role == .user {
+                outbox.append(OutboxItem(event: sent, admissionStatus: .rejected, rejectionReason: status.reason))
+                saveOutbox()
+            }
+            return
+        }
         if case .threadCreate = outbox[index].event.payload {
             guard status.status == .rejected else { return }
             let threadId = outbox[index].event.threadId
