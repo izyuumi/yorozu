@@ -2964,6 +2964,29 @@ func deferredAttachmentDownloadsAfterVisibleHistoryArrives(legacyCache: Bool) as
 }
 
 @MainActor
+@Test(arguments: [
+    (MessageData(role: .agent, text: "", done: true), false),
+    (MessageData(role: .agent, text: "", done: true, failed: true), true),
+    (MessageData(role: .agent, text: "", done: true, interrupted: true), true),
+    (MessageData(role: .agent, text: "", done: true,
+        attachments: [MessageAttachment(name: "notes.txt", mime: "text/plain", data: "YQ==")]), true),
+    (MessageData(role: .agent, text: "Final reply", done: true), true),
+    (MessageData(role: .agent, text: "", done: false), true),
+    (MessageData(role: .user, text: "", done: true), true),
+])
+func silentSuccessfulReplyClearsItsPreviewWithoutABlankBubble(final: MessageData, visible: Bool) async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    let initial = final.done == true ? MessageData(role: .agent, text: "Preview") : final
+    await transport.yield(.event(event("reply", .message(initial))))
+    #expect(await eventually { model.rows(in: "home").map(\.id) == ["reply"] })
+    await transport.yield(.event(event("reply", .message(final))))
+    #expect(await eventually { model.events["home"]?.first?.payload == .message(final) })
+    #expect(model.rows(in: "home").contains { $0.id == "reply" } == visible)
+}
+
+@MainActor
 @Test func removeUnsentQueueRestoresTextAndAttachmentsAcrossRelaunch() async throws {
     let cache = ThreadCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString), key: SymmetricKey(size: .bits256))
     defer { try? FileManager.default.removeItem(at: cache.directory) }

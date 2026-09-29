@@ -190,6 +190,13 @@ public final class ChatModel {
         var rows = timeline(threadId).rows(generating: generating.contains(threadId),
             activeEventId: summary?.turnState == nil ? nil : summary?.activeEventId,
             excluding: withdrawnMessageIds(in: threadId).union(queue.map(\.id)))
+        // A successful silent final clears its streamed preview without leaving an empty
+        // action row. Failed, stopped, attachment-only and unfinished replies stay visible.
+        rows.removeAll { row in
+            guard case .message(let event) = row, case .message(let data) = event.payload else { return false }
+            return data.role == .agent && data.done == true && data.text.isEmpty &&
+                data.attachments.isEmpty && data.failed != true && data.interrupted != true
+        }
         // Pending requests remain outside the active turn, but its progress still belongs
         // below the latest visible message. Inserting here preserves event ownership.
         let queuePosition = rows.firstIndex { row in
