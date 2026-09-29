@@ -345,14 +345,17 @@ private struct HostAdvancedSection: View {
     /// Off, or on with its expiry. Pairing is the grant, so the switch applies at once.
     @ViewBuilder private var approvalsFooter: some View {
         if host.model.yoloMode {
-            Label {
-                Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
-            } icon: {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
-            }
-            if let until = host.model.yoloUntil {
-                Text("Until \(Date(timeIntervalSince1970: Double(until) / 1000).formatted(date: .omitted, time: .shortened))")
-                    .foregroundStyle(.secondary)
+            // One view: a footer given two lays out only the first.
+            VStack(alignment: .leading) {
+                Label {
+                    Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                }
+                if let until = host.model.yoloUntil {
+                    Text("Until \(Date(timeIntervalSince1970: Double(until) / 1000).formatted(date: .omitted, time: .shortened))")
+                        .foregroundStyle(.secondary)
+                }
             }
         } else {
             Text("Uses each agent’s approval settings.")

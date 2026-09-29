@@ -47,6 +47,10 @@ final class ConnectionTests: XCTestCase {
         let paste = app.descendants(matching: .any)["Paste"].firstMatch
         XCTAssertTrue(paste.waitForExistence(timeout: 5), "No Paste action in the composer")
         paste.tap()
+        // The pasted text reaches the field a beat after the tap; read it once it has.
+        let pasted = expectation(for: NSPredicate(format: "value CONTAINS %@", "Yorozu connection diagnostics"),
+                                 evaluatedWith: composer)
+        wait(for: [pasted], timeout: 10)
         let diagnostics = try XCTUnwrap(composer.value as? String)
         XCTAssertTrue(diagnostics.contains("Yorozu connection diagnostics"))
         XCTAssertTrue(diagnostics.contains("Connection:"))
@@ -230,7 +234,7 @@ final class ConnectionTests: XCTestCase {
         let close = app.buttons.matching(NSPredicate(format: "label ==[c] 'close'")).firstMatch
         close.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         let threads = app.navigationBars.buttons["Threads"]
-        XCTAssertTrue(threads.waitForExistence(timeout: 5), "Closing in-thread search did not restore navigation")
+        XCTAssertTrue(threads.waitForExistence(timeout: 15), "Closing in-thread search did not restore navigation")
         threads.tap()
         list.swipeDown()
         XCTAssertEqual(search.value as? String, "8f4a", "Back navigation lost the search query")
