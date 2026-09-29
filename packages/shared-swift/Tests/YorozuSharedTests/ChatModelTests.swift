@@ -3105,7 +3105,9 @@ func deferredAttachmentDownloadsAfterVisibleHistoryArrives(legacyCache: Bool) as
     #expect(data.channelModel == ChannelModelChoice(model: nil))
     let wire = try JSONEncoder().encode(defaultMessage)
     #expect(try JSONDecoder().decode(YorozuEvent.self, from: wire) == defaultMessage)
+}
 
+@MainActor
 @Test func followUpSettingAndAlternateSendChooseDelivery() throws {
     let key = ChatModel.followUpBehaviorKey
     let saved = UserDefaults.standard.object(forKey: key)
