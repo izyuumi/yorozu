@@ -8,14 +8,14 @@ final class ThreadTimeline {
     var events: [YorozuEvent] = [] {
         didSet { cachedRows = nil }
     }
-    @ObservationIgnored private var cachedRows: (generating: Bool, rows: [ChatRow])?
+    @ObservationIgnored private var cachedRows: (generating: Bool, activeEventId: String?, rows: [ChatRow])?
 
-    func rows(generating: Bool) -> [ChatRow] {
+    func rows(generating: Bool, activeEventId: String? = nil) -> [ChatRow] {
         // Read the observable input even on a cache hit, so SwiftUI tracks this thread.
         let source = events
-        if let cachedRows, cachedRows.generating == generating { return cachedRows.rows }
-        let rows = chatRows(from: source, generating: generating)
-        cachedRows = (generating, rows)
+        if let cachedRows, cachedRows.generating == generating, cachedRows.activeEventId == activeEventId { return cachedRows.rows }
+        let rows = chatRows(from: source, generating: generating, activeEventId: activeEventId)
+        cachedRows = (generating, activeEventId, rows)
         return rows
     }
 }

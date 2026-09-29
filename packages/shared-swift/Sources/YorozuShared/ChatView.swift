@@ -150,7 +150,10 @@ public struct ChatView: View {
 
     private var events: [YorozuEvent] { model.timeline(thread.id).events }
 
-    private var rows: [ChatRow] { model.timeline(thread.id).rows(generating: generating) }
+    private var rows: [ChatRow] {
+        model.timeline(thread.id).rows(
+            generating: generating, activeEventId: thread.turnState == nil ? nil : model.activeEventId(in: thread.id))
+    }
 
     /// Pending decisions take precedence over progress, on both timeline implementations.
     private var activity: ChatActivity? {
