@@ -630,6 +630,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
   /** One controller per running turn, so an `interrupt` cancels every tree at once. */
   const running = new Map<string, AbortController>();
   const runningEventIds = new Map<string, string>();
+  type TurnState = "idle" | "starting" | "running" | "stopping" | "stopped-unconfirmed";
+  const turnStates = new Map<string, { state: TurnState; activeEventId?: string; queued: string[] }>();
+  const workingThreadIds = (): string[] =>
+    [...turnStates].filter(([, turn]) => turn.state !== "idle").map(([id]) => id);
   const turnQueues = new Map<string, Promise<void>>();
   const nativeQueueFile = join(dir, "native-turn-queue.json");
   type NativeQueueEntry = { threadId: string; eventId: string };
@@ -1205,7 +1209,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     ...payload,
   });
 
-  const threadList = (minTs = 0): YorozuEvent => {
+  const threadList = (minTs = 0, includeTurnState = true): YorozuEvent => {
     const { yolo } = loadSettings(dir);
     return control({ kind: "thread_list", data: { threads: threadSummaries(dir, minTs).map((thread) => {
       const interruptedTurnId = thread.interruptedTurnId;
@@ -1216,6 +1220,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
         ...thread,
         ...(thread.agent && thread.agent !== "yorozu" ? { bypass: yolo } : {}),
         ...(runningEventIds.has(thread.id) ? { activeEventId: runningEventIds.get(thread.id) } : {}),
+        ...(includeTurnState ? {
+          activeEventId: turnStates.get(thread.id)?.activeEventId,
+          turnState: turnStates.get(thread.id)?.state ?? "idle",
+          queuedTurnCount: turnStates.get(thread.id)?.queued.length ?? 0,
+        } : {}),
         ...(stopping ? { interruptedTurnId: undefined, canResume: undefined, recoveryState: undefined } : {}),
       };
     }) } });
@@ -1223,7 +1232,38 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const broadcastActiveThreadList = (): void => {
     for (const id of liveReplies.keys()) if (!running.has(id)) liveReplies.delete(id);
     if (locals.size || [...devices.values()].some((device) => device.compatibility?.state === "compatible" &&
-        device.compatibility.capabilities.includes("exact-stop-v1"))) broadcast(threadList());
+        (device.compatibility.capabilities.includes("exact-stop-v1") ||
+          device.compatibility.capabilities.includes("turn-state-v1")))) broadcast(threadList());
+  };
+
+  const publishTurnState = (threadId: string): void => {
+    if (turnStates.has(threadId)) broadcastActiveThreadList();
+  };
+
+  const admitTurn = (threadId: string, eventId: string): void => {
+    const turn = turnStates.get(threadId) ?? { state: "idle" as TurnState, queued: [] as string[] };
+    if (turn.state === "idle" || !turn.activeEventId) {
+      turn.state = "starting";
+      turn.activeEventId = eventId;
+    } else turn.queued.push(eventId);
+    turnStates.set(threadId, turn);
+    publishTurnState(threadId);
+  };
+
+  const startTurnState = (threadId: string, eventId: string): void => {
+    const turn = turnStates.get(threadId) ?? { state: "starting" as TurnState, activeEventId: eventId, queued: [] as string[] };
+    if (turn.activeEventId === eventId) turn.state = "running";
+    turnStates.set(threadId, turn);
+    publishTurnState(threadId);
+  };
+
+  const finishTurnState = (threadId: string, eventId: string): void => {
+    const turn = turnStates.get(threadId);
+    if (!turn || turn.activeEventId !== eventId) return;
+    const next = turn.queued.shift();
+    turn.activeEventId = next;
+    turn.state = next ? "starting" : "idle";
+    publishTurnState(threadId);
   };
 
   /**
@@ -1425,7 +1465,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     return [...deferredCards, control({
       kind: "sync_delta",
-      data: { events, ...(current.length ? { current } : {}), workingThreadIds: [...running.keys()],
+      data: { events, ...(current.length ? { current } : {}),
+        workingThreadIds: workingThreadIds(),
         ...(threadId ? { threadId } : {}), ...(more ? { more: true } : {}) },
     })];
   };
@@ -1697,6 +1738,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     userEventId?: string,
     acceptedEvent?: YorozuEvent,
   ): Promise<void> {
+    userEventId ??= randomUUID();
     if (userEventId && stoppedTurns.has(userEventId)) return Promise.resolve();
     if (updateGate.status.phase === "installing") return Promise.reject(new Error("Mac is installing an update"));
     updateGate.activity();
@@ -1708,6 +1750,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       try { saveNativeQueue(); }
       catch (error) { queuedNative.pop(); throw error; }
     }
+    admitTurn(threadId, userEventId);
     const previous = turnQueues.get(threadId) ?? Promise.resolve();
     const queuedBehindTurn = turnQueues.has(threadId);
     const next = previous.catch(() => {}).then(async () => {
@@ -1716,6 +1759,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       if (stopped) return;
       if (userEventId && stoppedTurns.has(userEventId)) return;
+      startTurnState(threadId, userEventId!);
       const logged = queuedBehindTurn ? acceptedEvent : undefined;
       if (logged) {
         // A steered message was admitted while an earlier turn ran. Append its corrected
@@ -1733,7 +1777,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       if (userEventId) activeTurnIds.add(userEventId);
       try { await runTurn(threadId, text, recorded, attachments, userEventId); }
-      finally { if (userEventId) activeTurnIds.delete(userEventId); }
+      finally {
+        if (userEventId) activeTurnIds.delete(userEventId);
+        finishTurnState(threadId, userEventId!);
+      }
     });
     turnQueues.set(threadId, next);
     if (userEventId) admittedTurns.set(userEventId, next);
@@ -1813,6 +1860,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
         // The old SDK process is gone, but its last external effect is unknowable here.
         // Stop recovery without claiming confirmed cessation.
         rememberStop({ ...record, status: "unconfirmed" });
+        const turn = turnStates.get(record.threadId);
+        if (turn?.activeEventId === target) {
+          turn.state = "stopped-unconfirmed";
+          publishTurnState(record.threadId);
+        }
         setNativeTurn(record.threadId, undefined, dir);
         broadcast(threadList());
         broadcastStop(stoppedTurns.get(target)!);
@@ -2155,9 +2207,22 @@ export function serve(options: ServeOptions = {}): Sidecar {
         ...(runningEventIds.get(event.threadId) === target && live?.kind === "message" && live.data.role === "agent"
           ? { partialText: live.data.text } : {}) };
       rememberStop(record);
+      const turn = turnStates.get(event.threadId);
+      if (record.status === "requested" && turn?.activeEventId === target) {
+        turn.state = "stopping";
+        publishTurnState(event.threadId);
+      } else if (record.status === "requested" && turn) {
+        const queuedIndex = turn.queued.indexOf(target);
+        if (queuedIndex >= 0) {
+          turn.queued.splice(queuedIndex, 1);
+          publishTurnState(event.threadId);
+        }
+      }
       reply(control({ kind: "receipt", data: { eventId: event.id } }));
       if (record.status === "requested") {
         finishStop(record);
+        if (turn?.activeEventId === target && runningEventIds.get(event.threadId) !== target &&
+            stoppedTurns.get(target)?.status !== "requested") finishTurnState(event.threadId, target);
         if (stoppedTurns.get(target)?.status !== "requested") return;
       }
       reply(stopStatus(stoppedTurns.get(target)!, event.id));
@@ -2840,7 +2905,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const cutoff = known.record.pairedAt ?? 0;
       if (event.threadId && event.ts < cutoff) return [];
       if (event.kind === "thread_list") {
-        const list = threadList(cutoff);
+        const supportsTurnState = known.compatibility?.state === "compatible" &&
+          known.compatibility.capabilities.includes("turn-state-v1");
+        const list = threadList(cutoff, supportsTurnState);
         if (list.kind !== "thread_list") return [];
         const name = known.compatibility?.state === "compatible" && known.compatibility.capabilities.includes("host-name") ? computerName() : undefined;
         event = { ...list, id: event.id, ts: event.ts, data: {
@@ -2852,6 +2919,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
           // Only inside a replay-protected box: the relay never learns the tailnet name.
           ...(directConfig && known.format === "current" ? { directUrl: directConfig.url } : {}),
         } };
+      }
+      if (event.kind === "sync_delta") {
+        const supportsTurnState = known.compatibility?.state === "compatible" &&
+          known.compatibility.capabilities.includes("turn-state-v1");
+        event = { ...event, data: { ...event.data,
+          workingThreadIds: supportsTurnState
+            ? workingThreadIds()
+            : [...running.keys()] } };
       }
       event = forAgentCapability(event, known.compatibility?.state === "compatible" &&
         known.compatibility.capabilities.includes("open-agents-v1"));

@@ -444,8 +444,12 @@ export interface ThreadRenameData {
 }
 
 export interface ThreadSummary {
-  /** Host-owned ID of the user operation currently executing in this thread. */
+  /** Host-owned ID of the active or next admitted user operation in this thread. */
   activeEventId?: string;
+  /** Present when the peer negotiated `turn-state-v1`; host-owned lifecycle for this thread. */
+  turnState?: "idle" | "starting" | "running" | "stopping" | "stopped-unconfirmed";
+  /** Admitted turns waiting behind the active turn. Present with `turnState`. */
+  queuedTurnCount?: number;
   interruptedTurnId?: string;
   canResume?: boolean;
   recoveryState?: "recovering";

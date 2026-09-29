@@ -1104,6 +1104,30 @@ private func summary(
 }
 
 @MainActor
+@Test func negotiatedHostTurnStateControlsWorkingAndStopAcrossEarlierReply() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1"])))
+    model.send("first", in: "home")
+    await transport.yield(.event(event("turn-running", .threadList(ThreadListData(threads: [
+        ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1,
+            activeEventId: "second-turn", turnState: .running, queuedTurnCount: 0)
+    ])))))
+    #expect(await eventually { model.generating.contains("home") && model.canStop(in: "home") })
+
+    await transport.yield(.event(event("earlier-final", .message(MessageData(
+        role: .agent, text: "first reply", done: true
+    )))))
+    #expect(await eventually { model.generating.contains("home") && model.canStop(in: "home") })
+
+    await transport.yield(.event(event("turn-idle", .threadList(ThreadListData(threads: [
+        ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 2,
+            turnState: .idle, queuedTurnCount: 0)
+    ])))))
+    #expect(await eventually { !model.generating.contains("home") && !model.canStop(in: "home") })
+}
+
+@MainActor
 @Test func stopWaitsForHostCessationEvenAfterReceipt() async throws {
     let transport = FakeTransport(autoReceipt: true)
     let model = await connected(transport)

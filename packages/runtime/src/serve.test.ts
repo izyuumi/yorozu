@@ -1542,6 +1542,55 @@ test("steered messages follow the turns they interrupt in live and saved history
     event.data.text === "reply to first")).toBe(true);
 });
 
+test("turn state spans queued turns and ignores a stop for an earlier turn", async () => {
+  const firstDone = Promise.withResolvers<void>();
+  const secondDone = Promise.withResolvers<void>();
+  const turns: NativeTurn[] = [];
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    turns.push(turn);
+    if (turn.text === "first") await firstDone.promise;
+    else await secondDone.promise;
+    return { text: `reply to ${turn.text}` };
+  } };
+  const { send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } }, true);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "turn-state");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "turn-state"));
+  const first = send({ kind: "message", data: { role: "user", text: "first" } }, "turn-state");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === "turn-state" && thread.turnState === "starting" && thread.activeEventId === first));
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === "turn-state" && thread.turnState === "running" && thread.activeEventId === first));
+  const second = send({ kind: "message", data: { role: "user", text: "second" } }, "turn-state");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === "turn-state" && thread.turnState === "running" && thread.activeEventId === first && thread.queuedTurnCount === 1));
+  send({ kind: "sync_request", data: { lastSeen: {} } }, "");
+  const sync = await eventsUntil((event) => event.kind === "sync_delta");
+  expect(sync.at(-1)).toMatchObject({ data: { workingThreadIds: ["turn-state"] } });
+
+  firstDone.resolve();
+  const duringSecond = await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === "turn-state" && thread.turnState === "running" && thread.activeEventId === second));
+  const earlierFinal = duringSecond.findIndex((event) => event.kind === "message" && event.id === `native:${first}:final`);
+  const secondWorking = duringSecond.findIndex((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === "turn-state" && thread.turnState === "running" && thread.activeEventId === second));
+  expect(earlierFinal).toBeGreaterThanOrEqual(0);
+  expect(secondWorking).toBeGreaterThan(earlierFinal);
+  expect(duringSecond.slice(earlierFinal).filter((event) => event.kind === "thread_list")
+    .every((event) => event.kind !== "thread_list" || event.data.threads.find((thread) => thread.id === "turn-state")?.turnState !== "idle")).toBe(true);
+  send({ kind: "interrupt", data: { targetEventId: first } }, "turn-state");
+  await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === first && event.data.status === "completed");
+  expect(turns[1]?.signal.aborted).toBe(false);
+  send({ kind: "thread_list", data: { threads: [] } }, "");
+  const afterStaleStop = await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === "turn-state" && thread.turnState === "running" && thread.activeEventId === second));
+  const summary = afterStaleStop.flatMap((event) => event.kind === "thread_list" ? event.data.threads : [])
+    .find((thread) => thread.id === "turn-state");
+  expect(summary).toMatchObject({ turnState: "running", activeEventId: second, queuedTurnCount: 0 });
+  secondDone.resolve();
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === "turn-state" && thread.turnState === "idle"));
+});
+
 test("always runs the action and is permanent: the next one needs no second card", async () => {
   // Harmless, and its output is proof the gate let the tool run rather than refusing it.
   const cmd = "echo yorozu-always-ok";
