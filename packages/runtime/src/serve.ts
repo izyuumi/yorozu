@@ -87,7 +87,7 @@ import type { AssignMode } from "./assign.js";
 import type { TurnContext } from "./index.js";
 import type { createLegacyRunner } from "./legacy.js";
 import { localSocketPath, startLocalChannel, type Send } from "./local.js";
-import { startChannelHost } from "./channel.js";
+import { startChannelHost, type RunStatus } from "./channel.js";
 import { startDirect, type Direct } from "./direct.js";
 import type { Provider } from "./provider.js";
 import { autoTitle, onDeviceTitler, type Titler } from "./title.js";
@@ -690,6 +690,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const stopTimers = new Map<string, ReturnType<typeof setTimeout>>();
   type TurnState = "idle" | "starting" | "running" | "stopping" | "stopped-unconfirmed";
   const turnStates = new Map<string, { state: TurnState; activeEventId?: string; queued: string[] }>();
+  const channelRuns = new Map<string, { threadId: string; status?: RunStatus }>();
   const pendingChanges = new Map<string, Promise<void>>();
   const workingThreadIds = (): string[] =>
     [...turnStates].filter(([, turn]) => turn.state !== "idle").map(([id]) => id);
@@ -1989,7 +1990,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (record.status !== "requested" && record.status !== "unconfirmed") return;
     clearTimeout(stopTimers.get(record.targetEventId));
     stopTimers.delete(record.targetEventId);
-    if (status === "stopped") persistStoppedReply(record);
+    if (status === "stopped" && !viaChannel(record.threadId)) persistStoppedReply(record);
     const finished = { ...record, status };
     rememberStop(finished);
     broadcastStop(finished);
@@ -2007,6 +2008,26 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const finishStop = (record: StopRecord): void => {
     if (record.status !== "requested") return;
     const target = record.targetEventId;
+    if (viaChannel(record.threadId)) {
+      if (stopTimers.has(target)) return;
+      channel.abort(target);
+      const timer = setTimeout(() => {
+        stopTimers.delete(target);
+        const current = stoppedTurns.get(target);
+        if (current?.status !== "requested") return;
+        const uncertain = { ...current, status: "unconfirmed" as const };
+        rememberStop(uncertain);
+        const turn = turnStates.get(record.threadId);
+        if (turn?.activeEventId === target) {
+          turn.state = "stopped-unconfirmed";
+          publishTurnState(record.threadId);
+        }
+        broadcastStop(uncertain);
+      }, 3_000);
+      timer.unref?.();
+      stopTimers.set(target, timer);
+      return;
+    }
     if (abortTarget(record.threadId, target)) {
       if (!stopTimers.has(target)) {
         const timer = setTimeout(() => {
@@ -2421,8 +2442,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       const history = readThreadEvents(event.threadId, dir);
       const user = history.find((stored) => stored.id === target && stored.kind === "message" && stored.data.role === "user");
-      const final = history.some((stored) => stored.id === completionIdFor(event.threadId, target) &&
-        stored.kind === "message" && stored.data.done === true && stored.data.interrupted !== true);
+      const channelRun = channelRuns.get(target);
+      if (viaChannel(event.threadId) && !existing &&
+          (!channelRun || channelRun.threadId !== event.threadId ||
+            (!channelRun.status && turnStates.get(event.threadId)?.activeEventId !== target))) {
+        reply(control({ kind: "receipt", data: { eventId: event.id } }));
+        reply({ ...control({ kind: "stop_status", data: { targetEventId: target, requestId: event.id, status: "unknown" } }),
+          threadId: event.threadId });
+        return;
+      }
+      const final = viaChannel(event.threadId) ? !!channelRun?.status && channelRun.status !== "aborted"
+        : history.some((stored) => stored.id === completionIdFor(event.threadId, target) &&
+          stored.kind === "message" && stored.data.done === true && stored.data.interrupted !== true);
       if (!existing && !user) {
         const withdrawn: StopRecord = { targetEventId: target, threadId: event.threadId,
           status: "withdrawn", requestIds: [event.id] };
@@ -2455,7 +2486,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const live = liveReplies.get(event.threadId);
       const record: StopRecord = final ? { ...(existing ?? { targetEventId: target, threadId: event.threadId }),
         status: "completed", requestIds } : existing ? { ...existing, requestIds } : { targetEventId: target, threadId: event.threadId,
-        status: "requested", requestIds,
+        status: channelRun?.status === "aborted" ? "stopped" : "requested", requestIds,
         ...(runningEventIds.get(event.threadId) === target && live?.kind === "message" && live.data.role === "agent"
           ? { partialText: live.data.text } : {}) };
       rememberStop(record);
@@ -2970,6 +3001,30 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const channel = startChannelHost({
     dir,
     onError: (message) => state(`channel-${message}`),
+    forwarded: ({ id, threadId }) => {
+      if (!channelRuns.has(id)) channelRuns.set(id, { threadId });
+    },
+    runStarted: (messageId) => {
+      const run = channelRuns.get(messageId);
+      if (!run || run.status || !viaChannel(run.threadId)) return;
+      const stop = stoppedTurns.get(messageId);
+      if (stop) {
+        if (stop.status === "requested" || stop.status === "unconfirmed") channel.abort(messageId);
+        return;
+      }
+      const turn = turnStates.get(run.threadId);
+      if (turn && turn.state !== "idle") return;
+      admitTurn(run.threadId, messageId);
+      startTurnState(run.threadId, messageId);
+    },
+    runFinished: (messageId, status) => {
+      const run = channelRuns.get(messageId);
+      if (!run || run.status || turnStates.get(run.threadId)?.activeEventId !== messageId) return;
+      run.status = status;
+      const stop = stoppedTurns.get(messageId);
+      if (stop) completeStop(stop, status === "aborted" ? "stopped" : "completed");
+      finishTurnState(run.threadId, messageId);
+    },
     deliver: ({ id, threadId, text, title: named }) => {
       const thread = listThreads(dir).find((known) => known.id === threadId);
       if (thread && (thread.agent ?? "yorozu") !== "yorozu") throw new Error("not-a-channel-thread");
@@ -3580,7 +3635,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   connect();
 
-  for (const stop of stoppedTurns.values()) if (stop.status === "requested") finishStop(stop);
+  for (const stop of stoppedTurns.values()) {
+    if (viaChannel(stop.threadId) && (stop.status === "requested" || stop.status === "unconfirmed")) {
+      channelRuns.set(stop.targetEventId, { threadId: stop.threadId });
+      turnStates.set(stop.threadId, { state: stop.status === "requested" ? "stopping" : "stopped-unconfirmed",
+        activeEventId: stop.targetEventId, queued: [] });
+    }
+    if (stop.status === "requested") finishStop(stop);
+  }
 
   for (const thread of listThreads(dir)) {
     if (thread.nativeTurn?.state === "interrupted") resumeNativeTurn(thread.id);

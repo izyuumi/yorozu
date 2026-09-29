@@ -500,6 +500,13 @@ public final class ChatModel {
     public var onRules: (() -> Void)?
     /// Called for every event kept in a thread, after it has been applied.
     public var onEvent: ((YorozuEvent) -> Void)?
+    /// Live status changes only; the first thread list establishes a quiet baseline.
+    public var onThreadNotification: ((String, ThreadStatus, ThreadNotificationPresentation) -> Void)?
+    private var notificationStatuses: [String: ThreadStatus] = [:]
+
+    public enum ThreadNotificationPresentation: Sendable {
+        case toast, system
+    }
 
     private let transport: any ChatTransport
     private var cache: ThreadCache?
@@ -507,18 +514,7 @@ public final class ChatModel {
     @ObservationIgnored private var composerWrite: Task<Void, Never>?
     @ObservationIgnored private var restoringComposer = false
     @ObservationIgnored private var preparedSend: [String: String] = [:]
-    @ObservationIgnored private var readingPositions: [String: ThreadCache.ReadingPosition] = [:]
     @ObservationIgnored private var pendingSaveFailure: String?
-
-    public func readingPosition(in threadID: String) -> ThreadCache.ReadingPosition? {
-        readingPositions[threadID]
-    }
-
-    public func rememberReadingPosition(_ position: ThreadCache.ReadingPosition?, in threadID: String) {
-        guard readingPositions[threadID] != position else { return }
-        readingPositions[threadID] = position
-        saveComposerSoon()
-    }
 
     private func saveComposerSoon() {
         guard cache != nil else { return }
@@ -556,7 +552,6 @@ public final class ChatModel {
         try cache?.save(composer: .init(drafts: drafts, attachments: attachments, threads: draftThreads,
                                        knownThreads: synced, openThread: openThread,
                                        stashes: stashes.isEmpty ? nil : stashes,
-                                       readingPositions: readingPositions.isEmpty ? nil : readingPositions,
                                        preparedSend: preparedSend.isEmpty ? nil : preparedSend,
                                        restoredWithdrawals: restoredWithdrawals.isEmpty ? nil : restoredWithdrawals))
     }
@@ -659,7 +654,6 @@ public final class ChatModel {
             restoredWithdrawals = composer.restoredWithdrawals ?? []
             draftThreads = draftState?.threads ?? composer.threads
             openThread = draftState == nil ? composer.openThread : draftState?.openThread
-            readingPositions = composer.readingPositions ?? [:]
             for thread in composer.knownThreads ?? [] where !synced.contains(where: { $0.id == thread.id }) {
                 synced.append(thread)
             }
@@ -1866,6 +1860,52 @@ public final class ChatModel {
         return thread
     }
 
+    /// Reconfigure only an unsent draft. A host change copies its composer durably before
+    /// removing the old copy; no transport command is emitted until the first send.
+    @discardableResult
+    public func configureDraft(_ threadId: String, agent: ThreadAgent, cwd: String?, on destination: ChatModel? = nil) -> Bool {
+        let target = destination ?? self
+        guard let index = draftThreads.firstIndex(where: { $0.id == threadId }),
+              let descriptor = target.descriptor(for: agent),
+              !descriptor.needsFolder || target.projects.contains(where: { $0.path == cwd }),
+              target === self || !target.threads.contains(where: { $0.id == threadId }) else { return false }
+        if case .updateRequired = target.compatibility { return false }
+        let original = draftThreads[index]
+        var thread = original
+        thread.agent = agent == .yorozu ? nil : agent
+        thread.cwd = descriptor.needsFolder ? cwd : nil
+        if target !== self || (original.agent ?? .yorozu) != agent {
+            thread.model = target.lastRun[agent.rawValue]?.model
+            thread.effort = target.lastRun[agent.rawValue]?.effort
+        }
+        if target === self {
+            draftThreads[index] = thread
+        } else {
+            target.draftThreads.insert(thread, at: 0)
+            target.drafts[threadId] = drafts[threadId]
+            target.attachments[threadId] = attachments[threadId]
+            target.stashes[threadId] = stashes[threadId]
+        }
+        do {
+            try target.saveComposer()
+            try target.saveDraftState()
+        } catch {
+            if target === self { draftThreads[index] = original }
+            else { target.removeDraft(threadId) }
+            target.saveComposerNow()
+            target.saveDraftsNow()
+            failure = "Could not save draft: \(error.localizedDescription)"
+            return false
+        }
+        if target !== self {
+            removeDraft(threadId)
+            saveComposerNow()
+            saveDraftsNow()
+            target.startedThread = threadId
+        }
+        return true
+    }
+
     /// Leaving a draft discards it only when its composer is empty.
     public func discardDraft(_ threadId: String) {
         guard (drafts[threadId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -1977,10 +2017,32 @@ public final class ChatModel {
         change(&synced[index])
     }
 
-    /// Threads with something in them nobody has read yet, on any device. What the app icon's
-    /// badge counts, and drawn from the runtime's two timestamps rather than from anything this
-    /// device happened to witness — see ``ThreadSummary/isUnread``.
+    /// Threads with something in them nobody has read yet, on any device, drawn from the
+    /// runtime's two timestamps rather than anything this device happened to witness — see
+    /// ``ThreadSummary/isUnread``.
     public var unreadCount: Int { threads.filter(\.isUnread).count }
+
+    public var waitingCount: Int {
+        threads.filter {
+            let status = ThreadStatus($0, working: generating.contains($0.id))
+            return status == .needsApproval || status == .needsInput
+        }.count
+    }
+
+    private func notifyStatusChanges() {
+        let previous = notificationStatuses
+        notificationStatuses = Dictionary(synced.map {
+            ($0.id, ThreadStatus($0, working: generating.contains($0.id)))
+        }, uniquingKeysWith: { _, latest in latest })
+        guard listed else { return }
+        for thread in synced {
+            guard let status = notificationStatuses[thread.id],
+                  status != (previous[thread.id] ?? .idle),
+                  [.needsApproval, .needsInput, .failed, .doneUnread].contains(status),
+                  !isReading(thread.id) else { continue }
+            onThreadNotification?(thread.id, status, foreground ? .toast : .system)
+        }
+    }
 
     /// Whether `threadId` is genuinely being read here, right now: it is the thread on screen
     /// *and* the app is in the foreground. Both halves matter, and nothing is ever reported
@@ -2369,6 +2431,7 @@ public final class ChatModel {
                 if hostOwnsTurnState {
                     generating = Set(data.threads.filter { $0.turnState.map { $0 != .idle } == true }.map(\.id))
                 }
+                notifyStatusChanges()
                 listed = true
                 persist(threads: synced)
                 requestOpenHistory()

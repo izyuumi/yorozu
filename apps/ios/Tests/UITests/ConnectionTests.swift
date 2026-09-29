@@ -29,15 +29,15 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(app.textViews["echo: \(secret)"].waitForExistence(timeout: 30))
         app.navigationBars.buttons["Threads"].tap()
         app.buttons["Settings"].tap()
-        let host = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Your Mac")).firstMatch
-        XCTAssertTrue(host.waitForExistence(timeout: 10), "No host in Settings")
-        host.tap()
+        let advanced = app.buttons["Advanced"]
+        XCTAssertTrue(advanced.waitForExistence(timeout: 10), "No Advanced entry in Settings")
+        advanced.tap()
         let copy = app.buttons["Copy diagnostics"]
         for _ in 0..<6 where !copy.isHittable { app.collectionViews.firstMatch.swipeUp() }
         XCTAssertTrue(copy.isHittable, "Copy diagnostics is unreachable")
         UIPasteboard.general.string = "clipboard sentinel"
         copy.tap()
-        app.navigationBars["Connection"].buttons["Settings"].tap()
+        app.navigationBars["Advanced"].buttons["Settings"].tap()
         app.buttons["Done"].tap()
         let thread = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", secret)).firstMatch
         XCTAssertTrue(thread.waitForExistence(timeout: 10))
@@ -54,6 +54,58 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(diagnostics.contains("Pending sends:"))
         XCTAssertFalse(diagnostics.contains(secret))
         XCTAssertFalse(diagnostics.contains("127.0.0.1"), "Diagnostics included the relay URL")
+    }
+
+    /// Each host keeps its own approval setting when Advanced is reopened.
+    @MainActor
+    func testAdvancedApprovalSettingsStayWithTheirHost() async throws {
+        guard let control = ProcessInfo.processInfo.environment["YOROZU_RIG2"].flatMap(URL.init(string:)) else {
+            throw XCTSkip("run through apps/ios/e2e/ui-tests.sh")
+        }
+        let rig2 = Rig(control: control)
+        try await rig2.post("heal")
+        let secondPair = try await rig2.pairing()
+        let url = try XCTUnwrap(URLComponents(string: secondPair))
+        let secondID = try XCTUnwrap(url.queryItems?.first(where: { $0.name == "key" })?.value)
+        addTeardownBlock { [weak self] in
+            guard let self else { return }
+            self.app.terminate()
+            self.app.launchArguments = ["-yorozuRemoveHost", secondID]
+            self.app.launch()
+            try self.waitConnected()
+            self.app.terminate()
+        }
+        app.launchArguments = ["-yorozuPair", try await rig.pairing(), "-yorozuPairSecond", secondPair]
+        app.launch()
+        let settings = app.buttons["Settings"]
+        let connected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "2 of 2 hosts connected"), object: settings)
+        XCTAssertEqual(XCTWaiter.wait(for: [connected], timeout: 45), .completed)
+        settings.tap()
+        let advanced = app.buttons["Advanced"]
+        for _ in 0..<6 where !advanced.isHittable { app.collectionViews.firstMatch.swipeUp() }
+        XCTAssertTrue(advanced.isHittable)
+        advanced.tap()
+        let switches = app.switches.matching(identifier: "Skip approvals for all agents")
+        XCTAssertTrue(switches.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertEqual(switches.count, 2)
+        let first = switches.element(boundBy: 0)
+        let second = switches.element(boundBy: 1)
+        XCTAssertEqual(first.value as? String, "0")
+        XCTAssertEqual(second.value as? String, "0")
+        first.tap()
+        let expiry = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Until '")).firstMatch
+        for _ in 0..<6 where !expiry.isHittable { app.collectionViews.firstMatch.swipeUp() }
+        XCTAssertTrue(expiry.waitForExistence(timeout: 10), "Host did not confirm the approval expiry")
+        XCTAssertTrue(app.staticTexts["Every tool request runs without asking, including purchases, messages, commands, and deletes."].exists)
+        app.navigationBars["Advanced"].buttons["Settings"].tap()
+        advanced.tap()
+        XCTAssertEqual(first.value as? String, "1", "Returning lost this host's approval setting")
+        XCTAssertEqual(second.value as? String, "0", "Changing one host affected another")
+        first.tap()
+        XCTAssertTrue(expiry.waitForNonExistence(timeout: 10))
+        app.navigationBars["Advanced"].buttons["Settings"].tap()
+        app.buttons["Done"].tap()
     }
 
     /// Search downloaded history while the host is unreachable; an older match stays
@@ -461,9 +513,7 @@ final class ConnectionTests: XCTestCase {
     @MainActor
     private func openNewChat() throws {
         app.buttons["New thread"].firstMatch.tap()
-        let yorozu = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Yorozu'")).firstMatch
-        XCTAssertTrue(yorozu.waitForExistence(timeout: 10), "No Yorozu choice in New thread")
-        yorozu.tap()
+        XCTAssertTrue(app.buttons["Choose agent"].waitForExistence(timeout: 10), "No agent selector in the draft")
         XCTAssertTrue(composer.waitForExistence(timeout: 10), "No composer in the new chat")
     }
 

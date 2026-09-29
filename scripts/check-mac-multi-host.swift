@@ -15,8 +15,8 @@ enum OnboardingWindow { static let completedKey = "unused-multi-host-check-onboa
 @MainActor enum PairingConsent { static func ask(_ pairing: MacChatSession.PendingPairing) -> Bool { false } }
 @MainActor final class LocalNotifications {
     static let shared = LocalNotifications()
-    func threadsChanged(_ model: ChatModel) {}
-    func received(_ event: YorozuEvent, from model: ChatModel) {}
+    func statusChanged(_ threadID: String, to status: ThreadStatus,
+                       presentation: ChatModel.ThreadNotificationPresentation, from model: ChatModel) {}
 }
 @MainActor struct Updates {
     static let pending = Updates()

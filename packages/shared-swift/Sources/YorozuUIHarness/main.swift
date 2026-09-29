@@ -100,7 +100,7 @@ actor HarnessTransport: ChatTransport {
             emptyModel.start()
             while !emptyModel.ownerOnline { await Task.yield() }
             for agent in [ThreadAgent.codex, .claudeCode, .yorozu] {
-                let thread = ThreadSummary(id: "empty-\(agent.rawValue)", title: "", archived: false, lastActivity: 0, agent: agent, cwd: agent == .yorozu ? nil : "/Users/example/Projects/資料 and a project with a long directory name")
+                let thread = emptyModel.newDraft(agent: agent, cwd: agent == .yorozu ? nil : "/Users/example/Projects/資料 and a project with a long directory name")
                 for width in [280.0, 640.0] {
                     for dark in [false, true] {
                         try await render(ChatView(model: emptyModel, thread: thread), name: "empty-\(agent.rawValue)-\(Int(width))-\(dark ? "dark" : "light")", width: width, height: 420, dark: dark, output: output)

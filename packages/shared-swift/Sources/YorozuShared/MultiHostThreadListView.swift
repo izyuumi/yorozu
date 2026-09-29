@@ -86,7 +86,6 @@ public struct MultiHostThreadListView<Destination: View>: View {
     private let onSettings: (() -> Void)?
     private let updateStatuses: [UpdateStatusItem]
     private let destination: (HostSession, ThreadSummary) -> Destination
-    @State private var choosingHost = false
 
     public init(
         session: MultiHostModel,
@@ -109,7 +108,7 @@ public struct MultiHostThreadListView<Destination: View>: View {
             workingThreads: adapter.workingThreads,
             hostLabel: adapter.hostLabel,
             agentLabel: adapter.agentLabel,
-            onNewThread: { choosingHost = true },
+            onNewThread: { if let id = session.newDraft() { path = [id] } },
             connection: session.connectionState,
             connectionStatus: session.statusConnectionState,
             connectionSince: session.hasMultipleHosts ? nil : session.sessions.first?.model.interruptedSince,
@@ -155,10 +154,6 @@ public struct MultiHostThreadListView<Destination: View>: View {
                     .id(item.id)
             }
         }
-        .sheet(isPresented: $choosingHost) {
-            NewThreadPicker(session: session) { path = [$0] }
-                .presentationDetents([.medium, .large])
-        }
     }
 }
 
@@ -183,7 +178,6 @@ public struct MultiHostThreadSidebar: View {
     private let session: MultiHostModel
     @Binding private var selection: HostThreadID?
     private let onSearchSelect: ((HostThreadID?, ThreadSearchRequest?) -> Void)?
-    @State private var choosingHost = false
 
     public init(
         session: MultiHostModel,
@@ -202,7 +196,7 @@ public struct MultiHostThreadSidebar: View {
             workingThreads: adapter.workingThreads,
             hostLabel: adapter.hostLabel,
             agentLabel: adapter.agentLabel,
-            onNewThread: { choosingHost = true },
+            onNewThread: { if let id = session.newDraft() { selection = id } },
             selection: Binding(get: { selection?.listID }, set: { id in
                 selection = id.flatMap { adapter.resolve($0)?.id }
                 if let selection { session.lastUsedHostID = selection.hostID }
@@ -230,9 +224,6 @@ public struct MultiHostThreadSidebar: View {
                 onSearchSelect?(mapped?.0, mapped?.1)
             }
         )
-        .sheet(isPresented: $choosingHost) {
-            NewThreadPicker(session: session) { selection = $0 }
-        }
     }
 }
 

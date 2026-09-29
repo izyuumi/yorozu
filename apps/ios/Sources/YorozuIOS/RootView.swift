@@ -128,6 +128,7 @@ final class Session {
 
     var allModels: [ChatModel] { isDemo || hosts.sessions.isEmpty ? model.map { [$0] } ?? [] : hosts.sessions.map(\.model) }
     var unreadCount: Int { isDemo ? model?.unreadCount ?? 0 : hosts.unreadCount }
+    var waitingCount: Int { isDemo ? model?.waitingCount ?? 0 : hosts.waitingCount }
     var pairingFailure: String? { failure ?? pairingHostID.flatMap { hosts.session(for: $0)?.model.failure } }
     var showingHosts: Bool {
         !hosts.sessions.isEmpty && (hosts.sessions.count > 1 || !isPairing || hosts.sessions.contains {
@@ -349,7 +350,7 @@ final class Session {
             UserDefaults.standard.set(hosts.lastUsedHostID, forKey: "last-used-host")
         }
         await clearNotifications(for: hostID, keys: keys)
-        try? await UNUserNotificationCenter.current().setBadgeCount(hosts.unreadCount)
+        try? await UNUserNotificationCenter.current().setBadgeCount(hosts.waitingCount)
         #if DEBUG
         print("YOROZU-E2E-REMOVED [\(hostID)] remaining=\(hosts.sessions.count)")
         #endif
@@ -578,7 +579,6 @@ struct RootView: View {
     /// it before this view was ever built, so the first frame is already the chat.
     @State private var path: [String] = Session.shared.openPath
     @State private var hostPath: [HostThreadID] = Session.shared.hostPath
-    @State private var choosingThreadHost = false
     @State private var settings = launchArgument("yorozuShowcase") == "settings"
     /// Screenshot only: `-yorozuShowcase share` draws the share extension's composer here,
     /// because a simulator cannot be made to open a real share sheet.
@@ -672,10 +672,10 @@ struct RootView: View {
             .onChange(of: session.hosts.sessions.map { $0.model.compatibility }) { _, _ in
                 session.finishIncompatiblePairing()
             }
-            // The badge counts threads, not messages: it is the same number the list's dots add
-            // up to. Zero clears it rather than drawing a nought.
-            .onChange(of: session.unreadCount, initial: true) { _, count in
+            .onChange(of: session.waitingCount, initial: true) { _, count in
                 Task { try? await UNUserNotificationCenter.current().setBadgeCount(count) }
+            }
+            .onChange(of: session.unreadCount, initial: true) { _, _ in
                 // Read state is the runtime's, so this fires when any device reads a thread —
                 // and a notification for a thread nobody is behind on is stale on every device.
                 pruneDeliveredNotifications()
@@ -867,16 +867,15 @@ struct RootView: View {
                      aggregateToastID: session.hosts.connectionToastNotice?.notice.id,
                      aggregateToastAnnouncementRevision: session.hosts.connectionToastNotice?.notice.announcementRevision,
                      aggregateToastLabel: session.hosts.connectionToastLabel,
-                     onNewThread: session.hosts.hasMultipleHosts ? { choosingThreadHost = true } : nil,
+                     hosts: session.hosts,
+                     hostID: host.id,
+                     onDraftMove: { hostPath = [$0] },
+                     onNewThread: { if let id = session.hosts.newDraft() { hostPath = [id] } },
                      onCreate: { agent, cwd in
                          guard let draft = session.hosts.newDraft(on: host.id, agent: agent, cwd: cwd) else { return nil }
                          hostPath = [draft]
                          return draft.threadID
                      })
-        }
-        .sheet(isPresented: $choosingThreadHost) {
-            NewThreadPicker(session: session.hosts) { hostPath = [$0] }
-                .presentationDetents([.medium, .large])
         }
         .onChange(of: session.hostPath) { _, opened in hostPath = opened }
         .onChange(of: session.hosts.sessions.map(\.id)) { _, ids in hostPath.removeAll { !ids.contains($0.hostID) } }
