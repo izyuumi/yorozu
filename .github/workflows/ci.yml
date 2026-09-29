@@ -75,6 +75,8 @@ jobs:
           node-version: 26
       - name: Verify App Store candidate checks without credentials
         run: node --test scripts/asc-candidate.test.mjs
+      - name: Verify English and Japanese catalogs
+        run: node scripts/check-localizations.mjs
 
   relay-image:
     needs: changes
@@ -160,12 +162,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.ios == 'true'
     runs-on: macos-latest
-    # Compile only. The UI tests (scheme YorozuUITests) took twenty minutes of
-    # simulator boot and install on the hosted VM for two minutes of tests, and one starved VM
-    # in ten failed it; it runs locally, on a booted simulator with the hardware keyboard off:
-    #   env -u SDKROOT xcodebuild test -workspace apps/ios/Yorozu.xcworkspace \
-    #     -scheme YorozuUITests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
-    #     CODE_SIGNING_ALLOWED=NO
+    # PR CI compiles the app; the canonical Release requires the separate iOS UI-test
+    # workflow before either candidate is built or uploaded.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
