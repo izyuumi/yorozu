@@ -183,13 +183,13 @@ private struct ClientChatWindowView: View {
                 }
             }
             .id(selection?.hostID)
+            .background(YorozuPalette.canvas)
+            .safeAreaInset(edge: .top) {
+                UpdateStatusView(status: Updates.pending.status, postpone: { Updates.pending.postpone() },
+                                 installNow: { Updates.pending.installNow() })
+            }
         }
         .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
-        .background(YorozuPalette.canvas)
-        .safeAreaInset(edge: .top) {
-            UpdateStatusView(status: Updates.pending.status, postpone: { Updates.pending.postpone() },
-                             installNow: { Updates.pending.installNow() })
-        }
         .yorozuTint()
         .onChange(of: selection, initial: true) { old, new in
             if let old, old != new {
@@ -336,17 +336,18 @@ private struct LocalChatWindowView: View {
                         description: Text("Choose a thread or start a new one."))
                 }
             }
+            // The canvas and update banner belong to the chat; the sidebar keeps its own material.
+            .background(YorozuPalette.canvas)
+            .safeAreaInset(edge: .top) {
+                if session.role != .host {
+                    UpdateStatusView(status: Updates.pending.status, postpone: { Updates.pending.postpone() },
+                                     installNow: { Updates.pending.installNow() })
+                }
+            }
         }
         // A floor rather than a fixed size: the window is resizable now, and the chat has to
         // stay legible at the narrowest a window is worth having.
         .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
-        .background(YorozuPalette.canvas)
-        .safeAreaInset(edge: .top) {
-            if session.role != .host {
-                UpdateStatusView(status: Updates.pending.status, postpone: { Updates.pending.postpone() },
-                                 installNow: { Updates.pending.installNow() })
-            }
-        }
         .yorozuTint()
         // Selecting something else discards empty drafts, keeps input, and
         // tells the model which thread is being read — a reply landing in the open thread is
