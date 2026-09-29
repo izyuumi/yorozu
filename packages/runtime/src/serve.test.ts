@@ -1299,6 +1299,9 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
           turn.onActivity?.("u1:thinking", { kind: "thought", data: { text: "reading the failing test" } });
           turn.onActivity?.("call:toolu_1", { kind: "tool_call", data: { callId: "toolu_1", name: "Bash", args: { command: "cat big.log" } } });
           turn.onActivity?.("result:toolu_1", { kind: "tool_result", data: { callId: "toolu_1", ok: true, output: "L".repeat(5000) } });
+        } else {
+          turn.onActivity?.("call:denied", { kind: "tool_call", data: { callId: "denied", name: "Bash", args: { command: "rm file" } } });
+          turn.onActivity?.("result:denied", { kind: "tool_result", data: { callId: "denied", ok: false, output: "declined", denied: true } });
         }
         return { text: `reply ${turns.length}`, sessionId: "s-1" };
       }
@@ -1343,7 +1346,9 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
 
   // Second prompt resumes it, still in the same folder.
   send({ kind: "message", data: { role: "user", text: "and lint" } }, "cc");
-  await eventsUntil((event) => event.kind === "message" && event.data.done === true);
+  const second = await eventsUntil((event) => event.kind === "message" && event.data.done === true);
+  expect(second.find((event) => event.kind === "tool_result" && event.data.callId === "denied"))
+    .toMatchObject({ data: { ok: false, denied: true } });
   expect(turns[1]).toMatchObject({ cwd: proj, sessionId: "s-1" });
 
   // Stop ends the turn without erasing the partial reply, and keeps the session to resume.

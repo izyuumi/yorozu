@@ -18,13 +18,25 @@ public struct WorkRowView: View {
 
     @ViewBuilder public var body: some View {
         if let liveProgress {
-            ProgressCardView(card: liveProgress, activity: work.running ? work.activity : nil)
+            VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
+                ProgressCardView(card: liveProgress, activity: work.running ? work.activity : nil)
+                ForEach(failedTools) { ToolRowView(activity: $0, active: work.running) }
+            }
         } else {
             activity
         }
     }
 
     private var activity: some View {
+        VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
+            disclosure
+            if !expanded {
+                ForEach(failedTools) { ToolRowView(activity: $0, active: work.running) }
+            }
+        }
+    }
+
+    private var disclosure: some View {
         DisclosureGroup(isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
                 Divider().overlay(YorozuPalette.rule)
@@ -38,7 +50,7 @@ public struct WorkRowView: View {
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                         }
-                    case .tools(let activities): ToolGroupView(activities: activities)
+                    case .tools(let activities): ToolGroupView(activities: activities, active: work.running)
                     case .delegation(let card): DelegationCardView(card: card)
                     case .progress(let event):
                         if case .progressCard(let card) = event.payload { ProgressCardView(card: card) }
@@ -69,6 +81,16 @@ public struct WorkRowView: View {
         }
         .buttonStyle(.plain)
         .yorozuPaperCard(padding: LayoutMetrics.stack)
+    }
+
+    private var failedTools: [ToolActivity] {
+        work.entries.flatMap { entry -> [ToolActivity] in
+            switch entry {
+            case .tools(let activities): return activities
+            case .delegation(let card): return toolActivities(from: card.events)
+            default: return []
+            }
+        }.filter { [.failed, .denied].contains($0.status(active: work.running)) }
     }
 
     /// A live structured progress report is already the best summary of the work. Showing the
