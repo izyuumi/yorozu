@@ -749,6 +749,63 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
 }
 
 @MainActor
+@Test(arguments: [false, true])
+func orderedStreamReplacementsCanShrinkWithoutReorderingOrRevivingFinals(restartedHost: Bool) async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    func snapshot(_ revision: Int, _ text: String, done: Bool = false, timestamp: Int = 1) throws -> YorozuEvent {
+        let bytes = try JSONSerialization.data(withJSONObject: [
+            "id": "reply", "threadId": "home", "ts": timestamp, "agentId": "main", "kind": "message",
+            "data": ["role": "agent", "text": text, "done": done,
+                     "attachments": [], "streamRevision": revision],
+        ])
+        return try JSONDecoder().decode(YorozuEvent.self, from: bytes)
+    }
+    func flush(_ id: String) {
+        var barrier = event(id, .thought(ThoughtData(text: "Working")))
+        barrier.ts = 2
+        model.applyEvent(barrier)
+    }
+    model.applyEvent(try snapshot(1, "**日本語の長い下書き**"))
+    flush("first-barrier")
+    model.applyEvent(try snapshot(3, "**短い**"))
+    model.applyEvent(try snapshot(2, "**遅れて届いた長い下書き**"))
+    flush("replacement-barrier")
+    guard case .message(let replacement) = model.events["home"]?.first?.payload else {
+        Issue.record("Missing streamed reply")
+        return
+    }
+    #expect(replacement.text == "**短い**")
+    #expect(replacement.done == false)
+    #expect(model.events["home"]?.first?.ts == 1)
+
+    let finalTimestamp = restartedHost ? 3 : 1
+    if restartedHost {
+        // Transient drafts are not journaled. A restarted host begins a new version epoch.
+        model.applyEvent(try snapshot(1, "**再開**", timestamp: finalTimestamp))
+        flush("restart-barrier")
+        guard case .message(let resumed) = model.events["home"]?.first(where: { $0.id == "reply" })?.payload else {
+            Issue.record("Missing resumed reply")
+            return
+        }
+        #expect(resumed.text == "**再開**")
+    }
+    model.applyEvent(try snapshot(restartedHost ? 2 : 4, "完了", done: true, timestamp: finalTimestamp))
+    model.applyEvent(try snapshot(5, "Late partial", timestamp: finalTimestamp))
+    model.applyEvent(try snapshot(3, "Stale final", done: true))
+    flush("final-barrier")
+    let finalEvent = model.events["home"]?.first(where: { $0.id == "reply" })
+    guard case .message(let final) = finalEvent?.payload else {
+        Issue.record("Missing final reply")
+        return
+    }
+    #expect(final.text == "完了")
+    #expect(final.done == true)
+    #expect(finalEvent?.ts == finalTimestamp)
+}
+
+@MainActor
 @Test func anEventAfterStreamedTextKeepsItsWireOrder() async throws {
     let transport = FakeTransport()
     let model = await connected(transport)
@@ -2928,6 +2985,62 @@ func deferredAttachmentDownloadsAfterVisibleHistoryArrives(legacyCache: Bool) as
     #expect(restored.rows(in: "home").map(\.id) == ["reply", "next", "output", "later"])
     #expect(restored.queuedMessages(in: "home").map(\.id) == ["later"])
     await restored.shutdown()
+}
+
+@MainActor
+@Test func queuedMessagesKeepLiveProgressBelowTheLatestMessage() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1"])))
+    var summary = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 4,
+        activeEventId: "active", turnState: .running, queuedTurnCount: 1, queuedEventIds: ["next"])
+    let payloads: [(String, YorozuEvent.Payload)] = [
+        ("active", .message(MessageData(role: .user, text: "Check this"))),
+        ("tool", .toolCall(ToolCallData(callId: "call", name: "Read", args: [:]))),
+        ("reply", .message(MessageData(role: .agent, text: "Checking", done: true))),
+        ("next", .message(MessageData(role: .user, text: "Then check that"))),
+    ]
+    let history = payloads.enumerated().map { index, item in
+        YorozuEvent(id: item.0, threadId: "home", ts: index + 1, agentId: "main", payload: item.1)
+    }
+    await transport.yield(.event(event("list", .threadList(ThreadListData(threads: [summary])))))
+    await transport.yield(.event(event("sync", .syncDelta(SyncDeltaData(events: history)))))
+    #expect(await eventually { model.events["home"]?.count == history.count })
+    #expect(await eventually { model.generating.contains("home") })
+    let rows = model.rows(in: "home")
+    #expect(rows.map(\.id) == ["active", "reply", "next", "work-tool"])
+    #expect(chatActivity(in: rows, generating: true, streamingId: nil,
+        answeredApprovals: [], answeredQuestions: []) == nil)
+
+    summary.activeEventId = nil
+    summary.turnState = .idle
+    await transport.yield(.event(event("idle", .threadList(ThreadListData(threads: [summary])))))
+    #expect(await eventually { !model.generating.contains("home") })
+    #expect(model.rows(in: "home").map(\.id) == ["active", "work-tool", "reply", "next"])
+}
+
+@MainActor
+@Test(arguments: [
+    (MessageData(role: .agent, text: "", done: true), false),
+    (MessageData(role: .agent, text: "", done: true, failed: true), true),
+    (MessageData(role: .agent, text: "", done: true, interrupted: true), true),
+    (MessageData(role: .agent, text: "", done: true,
+        attachments: [MessageAttachment(name: "notes.txt", mime: "text/plain", data: "YQ==")]), true),
+    (MessageData(role: .agent, text: "Final reply", done: true), true),
+    (MessageData(role: .agent, text: "", done: false), true),
+    (MessageData(role: .user, text: "", done: true), true),
+])
+func silentSuccessfulReplyClearsItsPreviewWithoutABlankBubble(final: MessageData, visible: Bool) async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    let initial = final.done == true ? MessageData(role: .agent, text: "Preview") : final
+    await transport.yield(.event(event("reply", .message(initial))))
+    #expect(await eventually { model.rows(in: "home").map(\.id) == ["reply"] })
+    await transport.yield(.event(event("reply", .message(final))))
+    #expect(await eventually { model.events["home"]?.first?.payload == .message(final) })
+    #expect(model.rows(in: "home").contains { $0.id == "reply" } == visible)
 }
 
 @MainActor

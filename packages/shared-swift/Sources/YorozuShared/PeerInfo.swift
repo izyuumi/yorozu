@@ -62,14 +62,14 @@ public struct PeerInfoData: Codable, Equatable, Sendable {
 
     public func compatibility(with peer: PeerInfoData?) -> PeerCompatibility {
         guard let peer else { return .legacy }
-        guard isValid, peer.isValid else { return .updateRequired("Invalid peer information. Update Yorozu on this device and its host Mac.") }
+        guard isValid, peer.isValid else { return .updateRequired(String(localized: "Invalid peer information. Update Yorozu on this device and its host Mac.")) }
         let version = min(protocolMax, peer.protocolMax)
         guard version >= max(protocolMin, peer.protocolMin) else {
-            return .updateRequired("Update Yorozu on this device and its host Mac: protocol versions do not overlap.")
+            return .updateRequired(String(localized: "Update Yorozu on this device and its host Mac: protocol versions do not overlap."))
         }
         guard Set(requiredCapabilities).isSubset(of: Set(peer.capabilities)),
             Set(peer.requiredCapabilities).isSubset(of: Set(capabilities)) else {
-            return .updateRequired("Update Yorozu on this device and its host Mac: a required security or protocol capability is unavailable.")
+            return .updateRequired(String(localized: "Update Yorozu on this device and its host Mac: a required security or protocol capability is unavailable."))
         }
         return .compatible(version: version, capabilities: capabilities.filter { peer.capabilities.contains($0) })
     }

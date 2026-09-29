@@ -633,6 +633,8 @@ public struct MessageData: Codable, Equatable, Sendable {
     public enum Role: String, Codable, Sendable { case user, agent }
     public var role: Role
     public var text: String
+    /// Host-ordered snapshot version, independent of the message's placement timestamp.
+    public var streamRevision: Int?
     /// Set on the last message of a turn — a delegated agent's, so the phone's inline card for
     /// that delegation stops spinning, and the main agent's, so the composer stops offering
     /// Stop. A flag rather than a kind of its own: the final message already ends the turn.
@@ -653,6 +655,7 @@ public struct MessageData: Codable, Equatable, Sendable {
     public init(
         role: Role,
         text: String,
+        streamRevision: Int? = nil,
         done: Bool? = nil,
         failed: Bool? = nil,
         interrupted: Bool? = nil,
@@ -667,6 +670,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.channelModel = channelModel
         self.role = role
         self.text = text
+        self.streamRevision = streamRevision
         self.done = done
         self.failed = failed
         self.interrupted = interrupted
@@ -676,7 +680,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel }
+    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -684,6 +688,10 @@ public struct MessageData: Codable, Equatable, Sendable {
         channelModel = try c.decodeIfPresent(ChannelModelChoice.self, forKey: .channelModel)
         role = try c.decode(Role.self, forKey: .role)
         text = try c.decode(String.self, forKey: .text)
+        streamRevision = try c.decodeIfPresent(Int.self, forKey: .streamRevision)
+        if let streamRevision, !(0...9_007_199_254_740_991).contains(streamRevision) {
+            throw DecodingError.dataCorruptedError(forKey: .streamRevision, in: c, debugDescription: "Invalid stream revision")
+        }
         done = try c.decodeIfPresent(Bool.self, forKey: .done)
         failed = try c.decodeIfPresent(Bool.self, forKey: .failed)
         interrupted = try c.decodeIfPresent(Bool.self, forKey: .interrupted)
@@ -699,6 +707,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         try c.encodeIfPresent(channelModel, forKey: .channelModel)
         try c.encode(role, forKey: .role)
         try c.encode(text, forKey: .text)
+        try c.encodeIfPresent(streamRevision, forKey: .streamRevision)
         try c.encodeIfPresent(done, forKey: .done)
         try c.encodeIfPresent(failed, forKey: .failed)
         try c.encodeIfPresent(interrupted, forKey: .interrupted)
@@ -799,11 +808,11 @@ public struct ApprovalScope: Codable, Equatable, Sendable {
     /// The fields worth drawing, in the order the card draws them, skipping the empty ones.
     public var rows: [(label: String, value: String)] {
         [
-            ("To", recipient),
-            ("Merchant", merchant),
-            ("Account", account),
-            ("Category", category),
-            ("Quantity", quantity.map { $0 == $0.rounded() ? String(Int($0)) : String($0) }),
+            (String(localized: "To"), recipient),
+            (String(localized: "Merchant"), merchant),
+            (String(localized: "Account"), account),
+            (String(localized: "Category"), category),
+            (String(localized: "Quantity"), quantity.map { $0.formatted(.number.precision(.significantDigits(1...17))) }),
         ].compactMap { label, value in
             guard let value, !value.isEmpty else { return nil }
             return (label, value)
@@ -1222,7 +1231,18 @@ public enum ReasoningEffort: String, Codable, Equatable, Sendable, CaseIterable,
     case minimal, low, medium, high, xhigh, max, ultra, persistent
 
     public var id: Self { self }
-    public var label: String { rawValue.capitalized }
+    public var label: String {
+        switch self {
+        case .minimal: String(localized: "Minimal")
+        case .low: String(localized: "Low")
+        case .medium: String(localized: "Medium")
+        case .high: String(localized: "High")
+        case .xhigh: String(localized: "Extra high")
+        case .max: String(localized: "Max")
+        case .ultra: String(localized: "Ultra")
+        case .persistent: String(localized: "Persistent")
+        }
+    }
 }
 
 /// Renames `threadId` from the base fields. A title the user chose: auto-titling leaves it alone.
@@ -1363,7 +1383,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     }
 
     /// What a list draws: an untitled thread is one the runtime has not named yet.
-    public var displayTitle: String { title.isEmpty ? "New chat" : title }
+    public var displayTitle: String { title.isEmpty ? String(localized: "New chat") : title }
 
     /// The last path component of ``cwd``: the repo a coding agent's row is subtitled with.
     public var repoName: String? {
@@ -1776,7 +1796,7 @@ public struct QrPayload: Codable, Equatable, Sendable {
     }
 
     public func encoded() throws -> String {
-        guard v == 1 else { throw YorozuCrypto.CryptoError.malformed("not a Yorozu v1 pairing string") }
+        guard v == 1 else { throw YorozuCrypto.CryptoError.malformed(String(localized: "not a Yorozu v1 pairing string")) }
         var components = URLComponents()
         components.scheme = "yorozu"
         components.host = "pair"
@@ -1788,7 +1808,7 @@ public struct QrPayload: Codable, Equatable, Sendable {
         ] + (roomId.map { [URLQueryItem(name: "room", value: $0)] } ?? [])
             + (secret.map { [URLQueryItem(name: "secret", value: $0)] } ?? [])
         guard let string = components.string else {
-            throw YorozuCrypto.CryptoError.malformed("not a Yorozu v1 pairing string")
+            throw YorozuCrypto.CryptoError.malformed(String(localized: "not a Yorozu v1 pairing string"))
         }
         return string
     }
@@ -1834,7 +1854,7 @@ public struct QrPayload: Codable, Equatable, Sendable {
     /// form the Mac shows for copying and encodes in the QR.
     private static func decodePairingString(_ text: String) throws -> QrPayload {
         func malformed() -> Error {
-            YorozuCrypto.CryptoError.malformed("not a Yorozu v1 pairing string")
+            YorozuCrypto.CryptoError.malformed(String(localized: "not a Yorozu v1 pairing string"))
         }
         /// Base64url, unpadded, is the only thing the keys and the token are ever spelled in.
         /// The same check `decodePairingString` makes in TypeScript, so neither side accepts a

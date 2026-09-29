@@ -73,9 +73,9 @@ public struct ToolGroupView: View {
     /// One action count per kind, and how the run went.
     private var summary: String {
         let actions = toolSummary(activities)
-        if running { return "\(actions) · working…" }
-        if awaitingApproval { return "\(actions) · awaiting approval" }
-        return !failed.isEmpty ? "\(actions) · \(failed.count) failed" : actions
+        if running { return String(localized: "\(actions) · working…") }
+        if awaitingApproval { return String(localized: "\(actions) · awaiting approval") }
+        return !failed.isEmpty ? String(localized: "\(actions) · \(failed.count) failed") : actions
     }
 }
 
@@ -161,7 +161,7 @@ public struct ToolRowView: View {
 
     @ViewBuilder private var status: some View {
         let state = activity.status(active: active)
-        Text(state.rawValue)
+        Text(state.label)
             .font(.scaled(.caption2).weight(.semibold))
             .foregroundStyle(state == .failed || state == .denied ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
             .padding(.horizontal, LayoutMetrics.tight)
@@ -208,7 +208,7 @@ public struct ToolRowView: View {
                         } label: {
                             HStack(spacing: LayoutMetrics.tight) {
                                 if fetching { ProgressView().controlSize(.mini) }
-                                Text(fetching ? "Fetching the rest…" : "Output was cut · Show full output")
+                                Text(fetching ? String(localized: "Fetching the rest…") : String(localized: "Output was cut · Show full output"))
                             }
                         }
                         .font(.scaled(.caption))

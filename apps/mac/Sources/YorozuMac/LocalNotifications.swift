@@ -41,9 +41,11 @@ struct MacAttentionItem: Identifiable {
                     return true
                 }
                 for (index, event) in approvals.enumerated() {
-                    let suffix = approvals.count > 1 ? " \(index + 1) of \(approvals.count)" : ""
+                    let label = approvals.count > 1
+                        ? String(localized: "\(thread.displayTitle) · Approval \(index + 1) of \(approvals.count)")
+                        : String(localized: "\(thread.displayTitle) · Approval")
                     items.append(Self(id: "approval:\(thread.id):\(event.id)", threadID: thread.id, eventID: event.id,
-                        kind: .approval, label: "\(thread.displayTitle) · Approval\(suffix)"))
+                        kind: .approval, label: label))
                 }
             }
             if thread.awaitingQuestion == true {
@@ -53,14 +55,16 @@ struct MacAttentionItem: Identifiable {
                     return true
                 }
                 for (index, event) in questions.enumerated() {
-                    let suffix = questions.count > 1 ? " \(index + 1) of \(questions.count)" : ""
+                    let label = questions.count > 1
+                        ? String(localized: "\(thread.displayTitle) · Question \(index + 1) of \(questions.count)")
+                        : String(localized: "\(thread.displayTitle) · Question")
                     items.append(Self(id: "question:\(thread.id):\(event.id)", threadID: thread.id, eventID: event.id,
-                        kind: .question, label: "\(thread.displayTitle) · Question\(suffix)"))
+                        kind: .question, label: label))
                 }
             }
             if thread.needsAttention == true || thread.interruptedTurnId != nil {
                 items.append(Self(id: "failure:\(thread.id)", threadID: thread.id, eventID: nil, kind: .failure,
-                    label: "\(thread.displayTitle) · Needs attention"))
+                    label: String(localized: "\(thread.displayTitle) · Needs attention")))
             }
             return items
         }
@@ -99,19 +103,19 @@ final class LocalNotifications: NSObject, UNUserNotificationCenterDelegate {
         switch status {
         case .doneUnread:
             kind = .answer
-            body = "New answer"
+            body = String(localized: "New answer")
             preference = MacNotificationPreference.answers
         case .needsApproval:
             kind = .approval
-            body = "Your approval is needed."
+            body = String(localized: "Your approval is needed.")
             preference = MacNotificationPreference.requests
         case .needsInput:
             kind = .question
-            body = "Your answer is needed."
+            body = String(localized: "Your answer is needed.")
             preference = MacNotificationPreference.requests
         case .failed:
             kind = .failure
-            body = "This task needs attention."
+            body = String(localized: "This task needs attention.")
             preference = MacNotificationPreference.failures
         case .working, .idle: return
         }
@@ -293,14 +297,14 @@ struct MacNotificationsView: View {
     }
 
     private var authorizationLabel: String {
-        if let authorizationError { return "macOS could not enable notifications: \(authorizationError)" }
+        if let authorizationError { return String(localized: "macOS could not enable notifications: \(authorizationError)") }
         return switch authorization {
-        case .authorized, .provisional, .ephemeral: "Allowed by macOS"
-        case .denied: "Denied by macOS. Allow Yorozu in System Settings → Notifications."
+        case .authorized, .provisional, .ephemeral: String(localized: "Allowed by macOS")
+        case .denied: String(localized: "Denied by macOS. Allow Yorozu in System Settings → Notifications.")
         case .notDetermined: enabled
-            ? "Notifications are not active yet. Turn this setting off and on to retry."
-            : "macOS will ask when you enable notifications."
-        @unknown default: "Check macOS notification settings."
+            ? String(localized: "Notifications are not active yet. Turn this setting off and on to retry.")
+            : String(localized: "macOS will ask when you enable notifications.")
+        @unknown default: String(localized: "Check macOS notification settings.")
         }
     }
 

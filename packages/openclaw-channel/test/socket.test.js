@@ -62,7 +62,9 @@ test("delivers with ack, refuses on error, acks inbound once handled and dedupes
   const inbound = { type: "inbound", message: { id: "u1", threadId: "t1", ts: 1, text: "hi" } };
   host.write(inbound);
   host.write(inbound);
-  await until(() => host.frames.filter((f) => f.type === "ack").length === 2);
+  await until(() => host.frames.some((f) => f.type === "ack"));
+  host.write(inbound); // Completed replay, after the original handling/ack.
+  await until(() => host.frames.filter((f) => f.type === "ack").length >= 2);
   assert.deepEqual(handled, ["u1"]);
 
   host.drop();
@@ -102,4 +104,55 @@ test("says hello with its capabilities on every connection, before anything else
   assert.deepEqual(host.frames, []);
   link.close();
   await host.close();
+});
+
+test("negotiated final survives lost ack/reconnect under the preview identity; close releases pending sends", async () => {
+  const path = join(mkdtempSync(join(tmpdir(), "yorozu-link-")), "channel.sock");
+  const host = fakeHost(path);
+  const link = connectYorozu({ path, retryMs: 20, ackTimeoutMs: 50, capabilities: ["reply-stream-v1"], onInbound: async () => {} });
+  try {
+    await until(() => link.connected);
+    assert.equal(link.streaming, false); // An older host never announces preview support.
+    host.write({ type: "hello", capabilities: ["reply-stream-v1"] });
+    await until(() => link.streaming);
+    const final = link.deliver("t1", "**日本語**", { id: "draft", messageId: "u1", failed: false, interrupted: false });
+    await until(() => host.frames.some((frame) => frame.type === "deliver"));
+    host.drop(); // Host logged the final, but ack was lost.
+    await until(() => host.hellos.length === 2);
+    await until(() => host.frames.filter((frame) => frame.type === "deliver").length >= 2);
+    const deliveries = host.frames.filter((frame) => frame.type === "deliver");
+    assert.ok(deliveries.every((frame) => frame.id === "draft" && frame.text === "**日本語**" && frame.messageId === "u1"));
+    host.write({ type: "ack", id: "draft" });
+    assert.equal(await final, "draft");
+    const pending = link.deliver("t1", "last", { id: "last", messageId: "u2" });
+    link.close();
+    await assert.rejects(pending, /closed/);
+  } finally { link.close(); await host.close(); }
+});
+
+
+test("duplicate in-flight inbound stays unacked until its original handler finishes", async () => {
+  const path = join(mkdtempSync(join(tmpdir(), "yorozu-link-")), "channel.sock");
+  const host = fakeHost(path);
+  let finish;
+  let calls = 0;
+  const link = connectYorozu({ path, retryMs: 20, onInbound: () => {
+    calls++;
+    return new Promise((resolve) => { finish = resolve; });
+  } });
+  try {
+    await until(() => link.connected);
+    const inbound = { type: "inbound", message: { id: "pending", threadId: "t1", ts: 1, text: "work" } };
+    host.write(inbound);
+    await until(() => finish);
+    host.write(inbound);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(host.frames.filter((frame) => frame.type === "ack").length, 0);
+    assert.equal(calls, 1);
+    finish();
+    await until(() => host.frames.some((frame) => frame.type === "ack"));
+    host.write(inbound);
+    await until(() => host.frames.filter((frame) => frame.type === "ack").length === 2);
+    assert.equal(calls, 1);
+  } finally { finish?.(); link.close(); await host.close(); }
 });

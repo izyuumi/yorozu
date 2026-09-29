@@ -45,25 +45,31 @@ final class KeyboardChooserTests: XCTestCase {
         let field = composerField(in: app)
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: step))
         field.typeText("Keep my unsent draft")
-        let selector = app.buttons["Choose agent"]
+        let selector = app.buttons["session-agent-yorozu"]
         XCTAssertTrue(selector.waitForExistence(timeout: step))
-        expectValue(selector, "Yorozu")
+        expectValue(selector, "Selected")
         let draftShot = XCTAttachment(screenshot: app.screenshot())
         draftShot.name = "Immediate Yorozu draft with keyboard"
         draftShot.lifetime = .keepAlways
         add(draftShot)
-        selector.tap()
-        let agent = app.buttons["Claude Code, Anthropic’s coding agent, working in a project on your Mac."]
+        let agent = app.buttons["session-agent-claude-code"]
         XCTAssertTrue(agent.waitForExistence(timeout: step))
         agent.tap()
         let delivered = app.buttons["Reply received, Claude Code"]
         XCTAssertTrue(delivered.waitForExistence(timeout: 15), "Background reply hid or reset the picker")
         XCTAssertTrue(delivered.isHittable, "Picker must remain interactive after the reply")
+        app.buttons["Cancel"].tap()
+        expectValue(selector, "Selected")
+        expectValue(composerField(in: app), "Keep my unsent draft")
+        XCTAssertFalse(app.buttons["Choose project"].exists, "Cancel must keep the assistant draft unchanged")
+        agent.tap()
+        XCTAssertTrue(delivered.waitForExistence(timeout: step))
         delivered.tap()
         XCTAssertTrue(app.textViews["Message"].waitForExistence(timeout: step), "Folder choice must open the new draft")
         XCTAssertTrue(delivered.waitForNonExistence(timeout: 5), "Folder choice must dismiss the picker")
         expectValue(composerField(in: app), "Keep my unsent draft")
-        expectValue(app.buttons["Choose agent"], "Claude Code")
+        expectValue(agent, "Selected")
+        XCTAssertTrue(app.buttons["Choose project"].exists, "Coding agent must show its project choice")
         composerField(in: app).tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: step), "Composer must remain usable after choosing an agent")
     }

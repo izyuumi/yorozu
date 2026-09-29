@@ -1,3 +1,6 @@
+import { createInboundDispatcher } from "../../openclaw-channel/dispatch.js";
+import { createRuns } from "../../openclaw-channel/runs.js";
+import { connectYorozu } from "../../openclaw-channel/socket.js";
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -110,7 +113,9 @@ async function nextModernEnvelope(
   client: { next: () => Promise<{ payload: string }> }, channel: PhoneChannel,
 ) {
   for (;;) {
-    const body = frameBody((await client.next()).payload);
+    const frame = await client.next();
+    if (typeof frame.payload !== "string") continue; // Relay control frames on host reconnect.
+    const body = frameBody(frame.payload);
     try { return channel.envelope(body); }
     catch { /* Older-format box or another device's box. */ }
   }
@@ -4752,6 +4757,215 @@ test("a failed run with no reply records a failed agent message; a reply, or com
   } finally { plugin.close(); }
 });
 
+test.each([{ large: false, restarts: 0 }, { large: true, restarts: 0 }, { large: false, restarts: 2 }])(
+  "OpenClaw dispatcher streams Markdown through the real channel socket to the phone (large=$large, restarts=$restarts)", async ({ large, restarts }) => {
+  const host = await pairedPhone([], true, {}, true);
+  let replyOptions: { onPartialReply?: (payload: { text: string }) => unknown } | undefined;
+  let finish: (() => void) | undefined;
+  let connections = 0;
+  let inboundCalls = 0;
+  const sdkReplies = large ? ["日本語🙂".repeat(15000), "日本語🙂".repeat(15000)] : ["**日本語**\n\n完成"];
+  const expected = sdkReplies.join("\n\n");
+  const dispatch = createInboundDispatcher({
+    resolveRoute: ({ peer }: { peer: { id: string } }) => ({
+      route: { agentId: "ops", sessionKey: `session:${peer.id}` }, buildEnvelope: ({ body }: { body: string }) => body,
+    }),
+    attachments: { save: async () => [], release() {} },
+    buildContext: (context: unknown) => context,
+    createReplyPipeline: () => ({}),
+    dispatchTurn: async (plan: any) => {
+      replyOptions = plan.replyOptions;
+      await plan.replyOptions.onPartialReply({ text: "**日本語" });
+      await plan.delivery.deliver({ text: "Choose whether to continue." }, { kind: "tool" });
+      await new Promise<void>((resolve) => { finish = resolve; });
+      if (large) await plan.replyOptions.onPartialReply({ text: expected });
+      for (const text of sdkReplies) await plan.delivery.deliver({ text }, { kind: "final" });
+      plan.replyOptions.onAgentRunTerminalOutcome("completed");
+      return { dispatched: true };
+    },
+  });
+  const runs = createRuns((frame: PluginFrame) => link.send(frame));
+  const link = connectYorozu({ path: channelSocketPath(host.dir), retryMs: 20, ackTimeoutMs: 20,
+    capabilities: ["run-boundary-v1", "reply-stream-v1"], onStatus: (connected: boolean) => { if (connected) connections++; },
+    onOpen: () => runs.replay(), onAbort: (id: string) => runs.abort(id),
+    onInbound: (message: any) => {
+      inboundCalls++;
+      return runs.run(message, (signal: AbortSignal, begin: () => void) => dispatch({
+        cfg: {}, accountId: "default", message,
+        preview: (reply: object) => link.send({ type: "reply_preview", ...reply }),
+        deliver: (payload: { text: string }, reply: object) => link.deliver(message.threadId, payload.text, reply),
+      }, signal, begin));
+    },
+  });
+  try {
+    await vi.waitFor(() => expect(link.streaming).toBe(true));
+    host.send({ kind: "thread_create", data: {} });
+    await host.eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
+    const target = host.send({ kind: "message", data: { role: "user", text: "work" } });
+    await vi.waitFor(() => expect(replyOptions?.onPartialReply).toBeTypeOf("function"));
+    const preview = (await host.eventsUntil((event) => event.kind === "message" && event.data.role === "agent")).at(-1)!;
+    expect(preview).toMatchObject({ data: { role: "agent", text: "**日本語" } });
+    expect(preview.data).not.toHaveProperty("done");
+    expect(readThreadEvents("t1", host.dir).some((event) => event.id === preview.id)).toBe(false);
+    await vi.waitFor(() => expect(readThreadEvents("t1", host.dir).some((event) => event.kind === "message" &&
+      event.data.text === "Choose whether to continue.")).toBe(true));
+    await host.eventsUntil((event) => event.kind === "message" && event.data.text === "Choose whether to continue.");
+    host.send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "t1" } });
+    const duringPrompt = (await host.eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
+    expect(duringPrompt).toMatchObject({ data: { workingThreadIds: ["t1"], current: expect.arrayContaining([
+      expect.objectContaining({ id: preview.id, data: { role: "agent", text: "**日本語", streamRevision: 1 } }),
+    ]) } });
+    await replyOptions!.onPartialReply!({ text: "日本語改訂" });
+    const revised = (await host.eventsUntil((event) => event.id === preview.id && event.kind === "message" && event.data.text === "日本語改訂")).at(-1)!;
+    expect(revised).toMatchObject({ ts: preview.ts, data: { streamRevision: 2 } });
+    const replayed: YorozuEvent[] = [];
+    for (let restart = 0; restart < restarts; restart++) {
+      await sidecar.close();
+      if (restart === restarts - 1) {
+        // Finish while the host is down. The final waits for a durable receipt through retries.
+        finish!();
+        await vi.waitFor(() => expect(link.connected).toBe(false));
+      }
+      const previous = connections;
+      let registered = false;
+      sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: host.dir,
+        log: (line) => { if (line === "STATE registered") registered = true; } });
+      await vi.waitFor(() => expect(registered && connections > previous && link.streaming).toBe(true));
+      const requestId = host.send({ kind: "thread_list", data: { threads: [], peerInfo: localPeerInfo("test") } }, "");
+      replayed.push(...await host.eventsUntil((event) => event.kind === "thread_list" && event.data.peerInfoReplyTo === requestId));
+      if (restart < restarts - 1) {
+        // Socket retransmission and lifecycle replay have happened; unfinished work stays durable.
+        expect(JSON.parse(readFileSync(join(host.dir, "channel-outbox.json"), "utf8"))).toEqual([
+          expect.objectContaining({ id: target }),
+        ]);
+      }
+    }
+    if (restarts) {
+      // Phones renegotiate then replay history after reconnect; a final can precede that handshake.
+      host.send({ kind: "sync_request", data: { lastSeen: {} } });
+      const synced = await host.eventsUntil((event) => event.kind === "sync_delta");
+      replayed.push(...synced);
+      const delta = synced.at(-1)!;
+      if (delta.kind === "sync_delta") replayed.push(...delta.data.events);
+    }
+    expect(inboundCalls).toBe(1);
+    finish!();
+    const final = replayed.find((event) => event.id === preview.id && event.kind === "message" && event.data.done) ??
+      (await host.eventsUntil((event) => event.id === preview.id && event.kind === "message" && event.data.done)).at(-1)!;
+    expect(final).toMatchObject({ ...(restarts ? {} : { ts: preview.ts }),
+      data: { role: "agent", done: true, streamRevision: restarts ? 1 : 3 } });
+    host.send({ kind: "thread_list", data: { threads: [] } });
+    const afterFinal = await host.eventsUntil(turnIs(target, "idle"));
+    const received = [final, ...afterFinal.filter((event) => event.kind === "message" && event.data.role === "agent")];
+    expect(received.map((event) => event.kind === "message" ? event.data.text : "").join("")).toBe(expected);
+    const replies = readThreadEvents("t1", host.dir).filter((event) => event.id === preview.id || event.id.startsWith(`${preview.id}:`));
+    expect(replies.map((event) => event.kind === "message" ? event.data.text : "").join("")).toBe(expected);
+    expect(replies).toHaveLength(large ? 2 : 1);
+    expect(new Set(replies.map((event) => event.id)).size).toBe(replies.length);
+    for (const event of replies) if (event.kind === "message") expect(event.data.text.isWellFormed()).toBe(true);
+    expect(final).toMatchObject(replies[0]);
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(join(host.dir, "channel-outbox.json"), "utf8"))).toEqual([]));
+  } finally { finish?.(); link.close(); }
+});
+
+test("negotiated reply snapshots replace one message, preserve its position, and persist only final text", async () => {
+  const { dir, send, eventsUntil, plugin, target } = await channelRun(["run-boundary-v1", "reply-stream-v1"]);
+  try {
+    expect(plugin.frames).toContainEqual({ type: "hello", capabilities: ["reply-stream-v1"] });
+    const preview = { type: "reply_preview" as const, id: "draft", messageId: target, threadId: "t1", text: "日本語 **未確定の長いMarkdown" };
+    plugin.send(preview);
+    const first = (await eventsUntil((event) => event.id === preview.id)).at(-1)!;
+    expect(first).toMatchObject({ kind: "message", data: { role: "agent", text: preview.text, streamRevision: 1 } });
+    expect(first.data).not.toHaveProperty("done");
+    expect(readThreadEvents("t1", dir).some((event) => event.id === preview.id)).toBe(false);
+    // UTF-16 length is below the legacy limit, but encoded bytes exceed the negotiated frame bound.
+    plugin.send({ ...preview, text: "界".repeat(90000) });
+    plugin.send({ ...preview, text: "日" });
+    const next = (await eventsUntil((event) => event.id === preview.id)).at(-1)!;
+    expect(next.ts).toBe(first.ts);
+    expect(next).toMatchObject({ data: { text: "日", streamRevision: 2 } });
+    plugin.send({ type: "deliver", id: preview.id, messageId: target, threadId: "t1", text: "界".repeat(90000) });
+    await vi.waitFor(() => expect(plugin.frames).toContainEqual({ type: "error", id: preview.id, reason: "invalid-deliver" }));
+    expect(readThreadEvents("t1", dir).some((event) => event.id === preview.id)).toBe(false);
+    const final = { type: "deliver" as const, id: preview.id, messageId: target, threadId: "t1",
+      text: "日本語 **完了**\n\n|列|値|\n|--|--|\n|あ|い|" };
+    plugin.send(final);
+    const received = (await eventsUntil((event) => event.id === preview.id && event.kind === "message" && event.data.done)).at(-1)!;
+    expect(received.ts).toBe(first.ts);
+    expect(received).toMatchObject({ data: { role: "agent", text: final.text, done: true, streamRevision: 3 } });
+    plugin.send({ ...preview, text: "stale" });
+    plugin.send(final); // Lost ack resend: no duplicate persisted final.
+    send({ kind: "sync_request", data: { lastSeen: {} } });
+    const sync = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
+    expect(sync).toMatchObject({ data: { workingThreadIds: ["t1"] } });
+    expect(readThreadEvents("t1", dir).filter((event) => event.id === preview.id))
+      .toEqual([expect.objectContaining({ data: { role: "agent", text: final.text, done: true, streamRevision: 3, replyTo: target } })]);
+    plugin.send({ type: "run_finished", messageId: target, status: "completed" });
+    await eventsUntil(turnIs("", "idle"));
+  } finally { plugin.close(); }
+});
+
+test.each([false, true])("failed terminal replay after host restart preserves the authoritative answer (final replay=%s)", async (replayFinal) => {
+  const { dir, eventsUntil, plugin, target } = await channelHandedOff(["run-boundary-v1", "reply-stream-v1"]);
+  const final = { type: "deliver" as const, id: "durable-answer", threadId: "t1", messageId: target,
+    text: "Answer before connection failed.", failed: true };
+  plugin.send({ type: "run_started", messageId: target });
+  await eventsUntil(turnIs(target, "running"));
+  plugin.send(final);
+  await eventsUntil((event) => event.id === final.id);
+  // Host logged and acked the final, but lost the following terminal boundary and inbound ack.
+  plugin.close();
+  await sidecar.close();
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, log: () => {} });
+  const again = await channelPlugin(dir, ["run-boundary-v1", "reply-stream-v1"]);
+  const mac = await macClient(dir);
+  try {
+    await vi.waitFor(() => expect(again.frames).toContainEqual(expect.objectContaining({
+      type: "inbound", message: expect.objectContaining({ id: target }),
+    })));
+    again.send({ type: "run_started", messageId: target });
+    await vi.waitFor(() => expect(mac.events.findLast((event) => event.kind === "thread_list")).toMatchObject({ kind: "thread_list",
+      data: { threads: [expect.objectContaining({ activeEventId: target, turnState: "running" })] },
+    }));
+    if (replayFinal) again.send(final);
+    again.send({ type: "run_finished", messageId: target, status: "failed" });
+    await vi.waitFor(() => expect(mac.events.findLast((event) => event.kind === "thread_list")).toMatchObject({ kind: "thread_list",
+      data: { threads: [expect.objectContaining({ turnState: "idle" })] },
+    }));
+    expect(readThreadEvents("t1", dir).filter((event) => event.kind === "message" && event.data.role === "agent"))
+      .toEqual([expect.objectContaining({ id: final.id, data: expect.objectContaining({ text: final.text, failed: true, done: true }) })]);
+  } finally { again.close(); mac.close(); }
+});
+
+test.each(["completed", "failed", "aborted"] as const)("channel terminal %s seals a draft without promoting suppressed text", async (status) => {
+  const { dir, eventsUntil, plugin, target } = await channelRun(["run-boundary-v1", "reply-stream-v1"]);
+  try {
+    const preview = { type: "reply_preview" as const, id: "draft", messageId: target, threadId: "t1", text: "unfinished **日本語" };
+    plugin.send(preview);
+    const first = (await eventsUntil((event) => event.id === preview.id)).at(-1)!;
+    plugin.send({ type: "run_finished", messageId: target, status });
+    const terminal = (await eventsUntil((event) => event.id === preview.id && event.kind === "message" && event.data.done)).at(-1)!;
+    expect(terminal).toMatchObject({ ts: first.ts, data: { role: "agent", done: true, streamRevision: 2,
+      text: status === "completed" ? "" : preview.text } });
+    if (status === "failed") expect(terminal.data).toHaveProperty("failed", true);
+    if (status === "aborted") expect(terminal.data).toHaveProperty("interrupted", true);
+    await eventsUntil(turnIs(target, "idle"));
+    plugin.send({ ...preview, text: "late" });
+    plugin.send({ type: "deliver", id: "barrier", threadId: "t1", text: "b" });
+    await eventsUntil((event) => event.id === "barrier");
+    expect(readThreadEvents("t1", dir).filter((event) => event.id === preview.id)).toEqual([terminal]);
+  } finally { plugin.close(); }
+});
+
+test("reply previews from an unnegotiated plugin never reach the phone", async () => {
+  const { eventsUntil, plugin, target } = await channelRun();
+  try {
+    plugin.send({ type: "reply_preview", id: "unnegotiated", messageId: target, threadId: "t1", text: "hidden" });
+    plugin.send({ type: "deliver", id: "barrier", threadId: "t1", text: "b" });
+    expect((await eventsUntil((event) => event.id === "barrier")).some((event) => event.id === "unnegotiated")).toBe(false);
+  } finally { plugin.close(); }
+});
+
 test("progress frames become tool rows for the active run only, once per call", async () => {
   const { dir, eventsUntil, plugin, target } = await channelRun(["run-boundary-v1", "progress-v1"]);
   const tools = () => readThreadEvents("t1", dir).filter((event) => event.kind === "tool_call" || event.kind === "tool_result");
@@ -5105,7 +5319,8 @@ test("OpenClaw draft model confirmation precedes delivery; rejection queues, res
   plugin = await channelPlugin(dir);
   mac = await macClient(dir);
   plugin.send({ type: "hello", capabilities: ["model-select-v1"] });
-  await vi.waitFor(() => expect(plugin.frames).toEqual(delivered));
+  await vi.waitFor(() => expect(plugin.frames.filter((frame) => frame.type === "inbound")).toEqual(delivered));
+  expect(plugin.frames.some((frame) => frame.type === "model_select")).toBe(false);
   plugin.send({ type: "ack", id: message.id });
   plugin.send({ type: "ack", id: "second-model" });
   await vi.waitFor(() => expect(JSON.parse(readFileSync(join(dir, "channel-outbox.json"), "utf8"))).toEqual([]));
@@ -5123,7 +5338,7 @@ test("OpenClaw draft model confirmation precedes delivery; rejection queues, res
   plugin.send({ type: "hello", capabilities: ["model-select-v1"] });
   mac.sendRawEvent(message);
   await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "receipt" && e.data.eventId === message.id)).toBe(true));
-  expect(plugin.frames).toEqual([]);
+  expect(plugin.frames.filter((frame) => frame.type === "inbound" || frame.type === "model_select")).toEqual([]);
   expect(JSON.parse(readFileSync(join(dir, "channel-outbox.json"), "utf8"))).toEqual([]);
   plugin.close(); mac.close();
 });
@@ -5182,7 +5397,7 @@ test("old OpenClaw plugins keep chat without model capability; pending model req
   await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "model_list")).toBe(true));
   // Connected but silent: clients hear what it lacks, and no turn state is created.
   await vi.waitFor(() => expect(mac.events.findLast((e) => e.kind === "model_list")?.data).toMatchObject({
-    channelCapabilities: ["missing:run-boundary-v1", "missing:progress-v1", "missing:model-select-v1", "missing:media-v1"] }));
+    channelCapabilities: ["missing:run-boundary-v1", "missing:progress-v1", "missing:model-select-v1", "missing:media-v1", "missing:reply-stream-v1"] }));
   createThread(undefined, dir, "old");
   mac.send({ kind: "message", threadId: "old", data: { role: "user", text: "works" } } as never);
   await vi.waitFor(() => expect(plugin.frames.some((f) => f.type === "inbound")).toBe(true));

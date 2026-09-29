@@ -391,7 +391,7 @@ public struct RuleProposalCardView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Rule suggestion: \(proposal.rule.summary)")
         .sheet(item: $editing) { rule in
-            RuleEditorView(rule: rule, title: "New rule") { edited in
+            RuleEditorView(rule: rule, title: String(localized: "New rule")) { edited in
                 editing = nil
                 onSave(edited)
             } onCancel: {
@@ -470,7 +470,8 @@ public struct RuleRowView: View {
         guard count > 0, let last = rule.lastUsed else { return String(localized: "Never used") }
         let when = Date(timeIntervalSince1970: last / 1000)
             .formatted(date: .abbreviated, time: .shortened)
-        return "^[Used \(count) time](inflect: true) · last \(when)"
+        return count == 1 ? String(localized: "Used \(count) time · last \(when)")
+            : String(localized: "Used \(count) times · last \(when)")
     }
 }
 

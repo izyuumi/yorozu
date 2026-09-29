@@ -1,12 +1,13 @@
 // Run boundaries (run-boundary-v1): one run per forwarded inbound message, serialized per
 // thread. `emit(frame)` returns false when Yorozu is not connected; such frames are journaled
-// and replayed by `replay()` after the next hello, so the host never misses a boundary.
+// and replayed by `replay()` after the next hello. A successful socket write is not a
+// receipt: completed boundaries stay replayable for this Gateway's lifetime too.
 
 /** @param {(frame: object) => boolean} emit */
 export function createRuns(emit) {
   const tails = new Map(); // threadId -> tail of that thread's run queue
   const live = new Map(); // messageId -> AbortController, queued or running
-  const journal = new Map(); // messageId -> { status? }: runs the host may not have seen end
+  const journal = new Map(); // messageId -> { status? }: idempotent boundaries, like socket's completed-ID dedupe
   const bySession = new Map(); // sessionKey -> messageId of the run OpenClaw is executing there
 
   const started = (messageId) => {
@@ -14,8 +15,8 @@ export function createRuns(emit) {
     emit({ type: "run_started", messageId });
   };
   const finished = (messageId, status) => {
-    if (emit({ type: "run_finished", messageId, status })) journal.delete(messageId);
-    else journal.get(messageId).status = status;
+    journal.get(messageId).status = status;
+    emit({ type: "run_finished", messageId, status });
   };
 
   // The real outcome: an abort only counts if the run did not complete anyway.
@@ -71,7 +72,7 @@ export function createRuns(emit) {
     replay() {
       for (const [messageId, entry] of journal) {
         emit({ type: "run_started", messageId });
-        if (entry.status && emit({ type: "run_finished", messageId, status: entry.status })) journal.delete(messageId);
+        if (entry.status) emit({ type: "run_finished", messageId, status: entry.status });
       }
     },
   };

@@ -101,7 +101,7 @@ test("hello is the first frame and lists the capabilities", async () => {
   const { host, close } = await setup();
   await until(() => host.frames.length >= 1);
   assert.deepEqual(host.frames[0], { type: "hello", capabilities: CAPABILITIES });
-  assert.deepEqual(CAPABILITIES, ["run-boundary-v1", "progress-v1", "model-select-v1", "media-v1"]);
+  assert.deepEqual(CAPABILITIES, ["run-boundary-v1", "progress-v1", "model-select-v1", "media-v1", "reply-stream-v1"]);
   await close();
 });
 
@@ -215,27 +215,29 @@ test("failures report failed; a refusal before the run starts sends no boundary 
   await refused.close();
 });
 
-test("reconnect re-announces an unfinished run after hello; a run that ended offline is replayed", async () => {
+for (const offline of [true, false]) test(`reconnect re-announces run boundaries even when completion races socket close (offline=${offline})`, async () => {
   let release;
   const { host, link, close } = await setup({
     turn: (plan, { id }) => id === "long" ? new Promise((resolve) => { release = () => resolve({ dispatched: true }); }) : { dispatched: true },
   });
-  host.write(inbound("long"));
-  await until(() => host.boundaries().length === 2);
+  try {
+    host.write(inbound("long"));
+    await until(() => host.boundaries().length === 2);
 
-  host.drop();
-  await until(() => !link.connected);
-  await until(() => link.connected);
-  await until(() => host.boundaries().length === 4);
-  assert.deepEqual(host.boundaries().slice(2), ["hello", "run_started:long"]);
+    host.drop();
+    await until(() => !link.connected);
+    await until(() => link.connected);
+    await until(() => host.boundaries().length === 4);
+    assert.deepEqual(host.boundaries().slice(2), ["hello", "run_started:long"]);
 
-  host.drop();
-  await until(() => !link.connected);
-  release(); // ends while offline
-  await until(() => link.connected);
-  await until(() => host.boundaries().length === 7);
-  assert.deepEqual(host.boundaries().slice(4), ["hello", "run_started:long", "run_finished:long:completed"]);
-  await close();
+    host.drop();
+    if (offline) await until(() => !link.connected);
+    else assert.equal(link.connected, true); // Write can succeed before the disconnect is observed.
+    release();
+    await until(() => link.connected);
+    await until(() => host.boundaries().length === 7);
+    assert.deepEqual(host.boundaries().slice(4), ["hello", "run_started:long", "run_finished:long:completed"]);
+  } finally { await close(); }
 });
 
 test("tool hooks for a yorozu run become progress frames; other channels and sessions produce none", async () => {

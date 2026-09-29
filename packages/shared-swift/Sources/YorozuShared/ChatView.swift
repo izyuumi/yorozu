@@ -85,6 +85,8 @@ public struct ChatView: View {
     @State private var channelPickerWidth: CGFloat?
     @State private var searching = false
     @State private var choosingAgent = false
+    @State private var choosingProjectAgent: ThreadAgent?
+    @State private var choosingProjectHostID: HostID?
     @State private var recoveryMessage: MessageData?
     /// The draft the skill picker was closed over. An edit opens it again.
     @State private var dismissedSkillDraft: String?
@@ -205,29 +207,85 @@ public struct ChatView: View {
     }
 
     private var draftSelectors: some View {
-        VStack {
-            Button { choosingAgent = true } label: {
-                Label("Agent: \(presentation.agentLabel)", systemImage: "chevron.up.chevron.down")
-            }
-            .accessibilityLabel("Choose agent")
-            .accessibilityValue(presentation.agentLabel)
-            .accessibilityHint("Coding agents require a project folder")
-            if let hosts, let hostID, let host = hosts.session(for: hostID) {
-                Button { choosingAgent = true } label: {
-                    Label("Host: \(hosts.label(for: host))", systemImage: "desktopcomputer")
-                }
-                .accessibilityLabel("Choose host")
-                .accessibilityValue(hosts.label(for: host))
-                .disabled(!hosts.hasMultipleHosts)
-                if !host.model.canDeliver {
-                    Text("Mac offline — messages will queue")
-                        .font(.scaled(.caption))
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .buttonStyle(.bordered)
+        NewSessionSetup(
+            model: model, presentation: presentation, hosts: hosts, hostID: hostID,
+            chooseAgent: chooseDraftAgent,
+            chooseProject: { chooseProject(for: presentation.agent) },
+            chooseHost: moveDraft
+        )
         .disabled(attachmentLoading)
+    }
+
+    private func chooseDraftAgent(_ descriptor: AgentDescriptor) {
+        if descriptor.needsFolder {
+            chooseProject(for: descriptor.id)
+        } else {
+            model.configureDraft(thread.id, agent: descriptor.id, cwd: nil)
+        }
+    }
+
+    private func chooseProject(for agent: ThreadAgent) {
+        choosingProjectHostID = nil
+        choosingProjectAgent = agent
+        choosingAgent = true
+    }
+
+    private var projectPickerModel: ChatModel {
+        choosingProjectHostID.flatMap { hosts?.session(for: $0)?.model } ?? model
+    }
+
+    private func moveDraft(to destination: HostID) {
+        guard let hosts, let hostID, let target = hosts.session(for: destination)?.model else { return }
+        let current = target.descriptor(for: presentation.agent)
+        let keepsProject = current?.needsFolder == false || target.projects.contains { $0.path == thread.cwd }
+        // Project paths belong to their host. A different Mac starts with its assistant
+        // when the current coding agent's project is unavailable there.
+        guard let agent = current != nil && keepsProject ? current :
+            target.availableAgents.first(where: { !$0.needsFolder }) ?? current ?? target.availableAgents.first else { return }
+        if agent.needsFolder && !keepsProject {
+            choosingProjectHostID = destination
+            choosingProjectAgent = agent.id
+            choosingAgent = true
+            return
+        }
+        if let id = hosts.configureDraft(HostThreadID(hostID: hostID, threadID: thread.id),
+            on: destination, agent: agent.id, cwd: keepsProject ? thread.cwd : nil) {
+            onDraftMove?(id)
+        }
+    }
+
+    private var interruptionMessage: LocalizedStringKey {
+        thread.canResume == false
+            ? "Original request is unavailable. Dismiss, then send it again."
+            : "Three recovery attempts failed. Retry when ready."
+    }
+
+    private var interruptedTurnNotice: some View {
+        VStack(alignment: .leading) {
+            Label("Couldn't resume automatically", systemImage: "pause.circle")
+            Text(interruptionMessage).font(.scaled(.callout))
+            HStack {
+                if thread.canResume != false {
+                    Button("Retry") { model.recover(thread, action: .continue) }
+                        .buttonStyle(.borderedProminent)
+                }
+                Button("Dismiss") { model.recover(thread, action: .dismiss) }
+                    .buttonStyle(.bordered)
+            }
+            .disabled(!model.ownerOnline)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder private var emptyTranscript: some View {
+        if model.isDraft(thread.id) {
+            ScrollView { draftSelectors.padding(LayoutMetrics.gutter) }
+                .scrollDismissesKeyboard(.interactively)
+        } else {
+            EmptyThreadView(presentation: presentation)
+        }
     }
 
     public var body: some View {
@@ -253,37 +311,17 @@ public struct ChatView: View {
                 Banner(text: "Could not confirm whether this task stopped. Check the host before retrying.",
                     systemImage: "exclamationmark.triangle")
             }
-            if thread.interruptedTurnId != nil {
-                VStack(alignment: .leading) {
-                    Label("Couldn't resume automatically", systemImage: "pause.circle")
-                    Text(thread.canResume == false ? "Original request is unavailable. Dismiss, then send it again." : "Three recovery attempts failed. Retry when ready.").font(.scaled(.callout))
-                    HStack {
-                        if thread.canResume != false {
-                            Button("Retry") { model.recover(thread, action: .continue) }
-                                .buttonStyle(.borderedProminent)
-                        }
-                        Button("Dismiss") { model.recover(thread, action: .dismiss) }
-                            .buttonStyle(.bordered)
-                    }
-                    .disabled(!model.ownerOnline)
-                }
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityElement(children: .contain)
-            }
-            if let path = presentation.projectPath {
+            if thread.interruptedTurnId != nil { interruptedTurnNotice }
+            if !model.isDraft(thread.id), let path = presentation.projectPath {
                 projectContext(path)
             }
             Group {
                 if rows.isEmpty {
-                    EmptyThreadView(presentation: presentation) {
-                        if model.isDraft(thread.id) { draftSelectors }
-                    }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    emptyTranscript.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     // Every link in a message is text the model wrote. Only the web and mail
                     // open from here; a pairing code is asked about first, the rest is dropped.
-                    messages(rows: rows, queuedStatuses: queuedStatuses, firstQueuedId: queue.first?.id)
+                    messages(rows: rows, queuedStatuses: queuedStatuses)
                         .environment(\.openURL, linkAction)
                 }
             }
@@ -336,27 +374,28 @@ public struct ChatView: View {
         // A truncated tool result in this thread's trace asks the Mac for the rest through here.
         .environment(\.fetchToolResult) { model.requestToolResult($0, in: thread.id) }
         .sheet(isPresented: $choosingAgent) {
-            if model.isDraft(thread.id), let hosts, let hostID {
-                NewThreadPicker(session: hosts, draftID: HostThreadID(hostID: hostID, threadID: thread.id)) {
-                    onDraftMove?($0)
-                }
+            NewThreadPicker(projects: projectPickerModel.projects, agents: projectPickerModel.availableAgents, status: projectPickerModel.projectListStatus,
+                folderAgent: choosingProjectAgent,
+                onRefresh: { await projectPickerModel.refreshProjects() }, onStart: { agent, cwd in
+                    if let destination = choosingProjectHostID, let hosts, let hostID {
+                        if let id = hosts.configureDraft(HostThreadID(hostID: hostID, threadID: thread.id),
+                            on: destination, agent: agent, cwd: cwd) { onDraftMove?(id) }
+                    } else if model.isDraft(thread.id) {
+                        model.configureDraft(thread.id, agent: agent, cwd: cwd)
+                    } else if let recoveryMessage, let id = onCreate?(agent, cwd) {
+                        model.drafts[id] = recoveryMessage.text
+                        model.attachments[id] = recoveryMessage.attachments
+                    }
+                    recoveryMessage = nil
+                })
                 .presentationDetents([.medium, .large])
-            } else {
-                NewThreadPicker(projects: model.projects, agents: model.availableAgents, status: model.projectListStatus,
-                    onRefresh: { await model.refreshProjects() }, onStart: { agent, cwd in
-                        if model.isDraft(thread.id) {
-                            model.configureDraft(thread.id, agent: agent, cwd: cwd)
-                        } else if let recoveryMessage, let id = onCreate?(agent, cwd) {
-                            model.drafts[id] = recoveryMessage.text
-                            model.attachments[id] = recoveryMessage.attachments
-                        }
-                        recoveryMessage = nil
-                    })
-                    .presentationDetents([.medium, .large])
-            }
         }
         .onChange(of: choosingAgent) { _, shown in
-            if !shown { recoveryMessage = nil }
+            if !shown {
+                recoveryMessage = nil
+                choosingProjectAgent = nil
+                choosingProjectHostID = nil
+            }
         }
         #if os(iOS)
             // In the view tree, not a sheet: a presented sheet resigns the composer, and the
@@ -604,7 +643,7 @@ public struct ChatView: View {
     /// thread is still running on a concrete first model; hiding that identity made the shipped
     /// toolbar materially different from the design and forced a menu open to discover it.
     private var macModelCaption: String {
-        if presentation.needsFolder && thread.model == nil { return "Auto" }
+        if presentation.needsFolder && thread.model == nil { return String(localized: "Auto") }
         let spec = thread.model ?? model.models(for: thread).first?.id
         guard let spec, !spec.isEmpty else { return "" }
         if let option = model.models(for: thread).first(where: { $0.id == spec }) {
@@ -618,8 +657,7 @@ public struct ChatView: View {
         return spec
     }
 
-    @ViewBuilder private func messages(rows: [ChatRow], queuedStatuses: [String: String],
-                                       firstQueuedId: String?) -> some View {
+    @ViewBuilder private func messages(rows: [ChatRow], queuedStatuses: [String: String]) -> some View {
         let activity = chatActivity(in: rows, generating: generating, streamingId: streamingId,
             answeredApprovals: model.answered, answeredQuestions: model.answeredQuestions,
             waitingForOpenClaw: model.isWaitingForOpenClaw(in: thread.id))
@@ -628,8 +666,7 @@ public struct ChatView: View {
         #else
             // The split-view detail is reused across selections. Recreate the scroll container
             // so its default bottom anchor belongs to this thread, not the previous one.
-            swiftUIMessages(rows: rows, activity: activity, queuedStatuses: queuedStatuses,
-                firstQueuedId: firstQueuedId).id(thread.id)
+            swiftUIMessages(rows: rows, activity: activity, queuedStatuses: queuedStatuses).id(thread.id)
         #endif
     }
 
@@ -734,19 +771,16 @@ public struct ChatView: View {
 
     #if os(macOS)
     private func swiftUIMessages(rows: [ChatRow], activity: ChatActivity?,
-                                 queuedStatuses: [String: String], firstQueuedId: String?) -> some View {
+                                 queuedStatuses: [String: String]) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 12) {
                 // A delegation collapses to one card where it started and what the
                 // specialist did is behind it; the main agent's own tool use is shown
                 // here, grouped, where it happened.
                 ForEach(rows) { row in
-                    if row.id == firstQueuedId, let activity {
-                        ChatActivityRow(activity: activity, agent: presentation.agent)
-                    }
                     rowView(row, queuedStatuses: queuedStatuses)
                 }
-                if firstQueuedId == nil, let activity { ChatActivityRow(activity: activity, agent: presentation.agent) }
+                if let activity { ChatActivityRow(activity: activity, agent: presentation.agent) }
                 Color.clear.frame(height: 1)
             }
             .scrollTargetLayout()
@@ -1117,7 +1151,7 @@ public struct ChatView: View {
                 .font(.scaled(.subheadline).weight(.semibold))
                 switch event.payload {
                 case .approvalCard(let card):
-                    Text(card.actionClass.replacingOccurrences(of: "-", with: " ").capitalized)
+                    Text(ApprovalCardView.verb(for: card.actionClass).sentence)
                         .font(.scaled(.headline))
                     if !card.target.isEmpty { Text(card.target).font(.scaled(.callout)).textSelection(.enabled) }
                     if let amount = card.amount {
@@ -1177,7 +1211,7 @@ public struct ChatView: View {
             .background(YorozuPalette.paper, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius))
             .padding(.horizontal, 12)
             .sheet(item: $editingApprovalRule) { rule in
-                RuleEditorView(rule: rule, title: "Always allow") { edited in
+                RuleEditorView(rule: rule, title: String(localized: "Always allow")) { edited in
                     model.answer(editingApprovalId, in: thread.id, .always, rule: edited)
                     editingApprovalRule = nil
                 } onCancel: {
@@ -1383,7 +1417,7 @@ public struct ChatView: View {
                 Button {
                     model.restoreStash(stash.id, in: thread.id)
                 } label: {
-                    Text(stash.text.isEmpty ? (stash.attachments.first?.name ?? "Draft") : stash.text)
+                    Text(stash.text.isEmpty ? (stash.attachments.first?.name ?? String(localized: "Draft")) : stash.text)
                         .lineLimit(1)
                 }
                 .disabled(!draft.wrappedValue.isEmpty || !attachments.wrappedValue.isEmpty || attachmentLoading)
@@ -1464,7 +1498,7 @@ public struct ChatView: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("runSettingsMenu")
                 .accessibilityLabel("Model and effort")
-                .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? "Default effort")")
+                .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? String(localized: "Default effort"))")
         }
     #else
     private var runSettingsButton: some View {
@@ -1502,7 +1536,7 @@ public struct ChatView: View {
         .menuIndicator(.hidden)
         .accessibilityIdentifier("runSettingsMenu")
         .accessibilityLabel("Model and effort")
-        .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? "Default effort")")
+        .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? String(localized: "Default effort"))")
     }
     #endif
 
@@ -1519,7 +1553,7 @@ public struct ChatView: View {
     }
 
     private var composerModelLabel: String {
-        guard let spec = thread.model else { return "Auto" }
+        guard let spec = thread.model else { return String(localized: "Auto") }
         return model.models(for: thread).first(where: { $0.id == spec })?.label ?? spec
     }
 
@@ -1796,8 +1830,7 @@ public struct ChatView: View {
                 rowsById = Dictionary(parent.rows.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
                 var entries = parent.rows.map { Entry.row($0.id) }
                 if let activity = parent.activity {
-                    let next = parent.rows.firstIndex { parent.presentation.queuedStatuses[$0.id] != nil } ?? entries.endIndex
-                    entries.insert(.activity(activity), at: next)
+                    entries.append(.activity(activity))
                 }
 
                 var changed = parent.rows.compactMap { previousRows[$0.id] == $0 ? nil : Entry.row($0.id) }
@@ -2160,12 +2193,12 @@ private struct SearchHitBar: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(total == 0 ? "No matches" : "\(index + 1) of \(total)")
+            Text(total == 0 ? String(localized: "No matches") : String(localized: "\(index + 1) of \(total)"))
                 .font(.scaled(.footnote).monospacedDigit())
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
-            arrow("chevron.up", "Previous match", -1)
-            arrow("chevron.down", "Next match", 1)
+            arrow("chevron.up", String(localized: "Previous match"), -1)
+            arrow("chevron.down", String(localized: "Next match"), 1)
         }
         .padding(.leading, 16)
         .padding(.trailing, 4)
@@ -2227,9 +2260,8 @@ private struct ScrollToBottomPill: View {
 
 /// A thread nobody has said anything in yet. Compact Quiet leaves it genuinely quiet: the
 /// composer is already the action, so suggestion pills only repeat it and dominate the screen.
-private struct EmptyThreadView<Controls: View>: View {
+private struct EmptyThreadView: View {
     let presentation: ThreadPresentation
-    @ViewBuilder var controls: () -> Controls
 
     var body: some View {
         ScrollView {
@@ -2239,7 +2271,6 @@ private struct EmptyThreadView<Controls: View>: View {
                     .font(.scaled(.title3).weight(.semibold))
                     .fontDesign(.serif)
                     .foregroundStyle(YorozuPalette.ink)
-                controls()
                 Text(presentation.emptyMessage)
                     .font(.scaled(.callout))
                     .foregroundStyle(.secondary)

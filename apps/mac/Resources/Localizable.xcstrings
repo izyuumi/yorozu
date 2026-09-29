@@ -9181,6 +9181,5789 @@
         "ko": { "stringUnit": { "state": "translated", "value": "고정폭" } },
         "zh-Hans": { "stringUnit": { "state": "translated", "value": "等宽" } }
       }
+    },
+    "%@ approval needed: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@の承認が必要です：%2$@"
+          }
+        }
+      }
+    },
+    "%@ at %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$@での%1$@"
+          }
+        }
+      }
+    },
+    "%@ from %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$@からの%1$@"
+          }
+        }
+      }
+    },
+    "%@ in %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$@の%1$@"
+          }
+        }
+      }
+    },
+    "%@ isn’t reachable": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@に接続できません"
+          }
+        }
+      }
+    },
+    "%@ on %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$@に対する%1$@"
+          }
+        }
+      }
+    },
+    "%@ to %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$@への%1$@"
+          }
+        }
+      }
+    },
+    "%@ up to %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$@までの%1$@"
+          }
+        }
+      }
+    },
+    "%@ · Approval": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@・承認"
+          }
+        }
+      }
+    },
+    "%@ · Approval %lld of %lld": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@・承認 %lld／%lld"
+          }
+        }
+      }
+    },
+    "%@ · Needs attention": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@・確認が必要"
+          }
+        }
+      }
+    },
+    "%@ · Question": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@・質問"
+          }
+        }
+      }
+    },
+    "%@ · Question %lld of %lld": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@・質問 %lld／%lld"
+          }
+        }
+      }
+    },
+    "%@, %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@、%2$@"
+          }
+        }
+      }
+    },
+    "%@, step %lld of %lld": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@、ステップ %lld／%lld"
+          }
+        }
+      }
+    },
+    "%lld of %lld": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$lld件中%1$lld件"
+          }
+        }
+      }
+    },
+    "%lld of %lld hosts connected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$lld台中%1$lld台のホストに接続中"
+          }
+        }
+      }
+    },
+    "%lld skills": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld個のスキル"
+          }
+        }
+      }
+    },
+    "%lld update required": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld台の更新が必要です"
+          }
+        }
+      }
+    },
+    "%lld.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld."
+          }
+        }
+      }
+    },
+    "+%lld": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "+%lld"
+          }
+        }
+      }
+    },
+    "+%lld −%lld": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "+%lld −%lld"
+          }
+        }
+      }
+    },
+    "/%@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "/%@"
+          }
+        }
+      }
+    },
+    "1/%lld": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1/%lld"
+          }
+        }
+      }
+    },
+    "A thread picks its agent when you start it. Set up the ones you’ll use.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スレッドを開始するときにエージェントを選択します。使うエージェントを設定してください。"
+          }
+        }
+      }
+    },
+    "ACTIVITY": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アクティビティ"
+          }
+        }
+      }
+    },
+    "Actual Size": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実際のサイズ"
+          }
+        }
+      }
+    },
+    "Add Host": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストを追加"
+          }
+        }
+      }
+    },
+    "Add a host in Settings to start chatting.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "チャットを始めるには、設定でホストを追加してください。"
+          }
+        }
+      }
+    },
+    "Add a host to reach its chats from this Mac.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMacからチャットにアクセスするには、ホストを追加してください。"
+          }
+        }
+      }
+    },
+    "Add host": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストを追加"
+          }
+        }
+      }
+    },
+    "Add host?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストを追加しますか？"
+          }
+        }
+      }
+    },
+    "Agent": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エージェント"
+          }
+        }
+      }
+    },
+    "Agent: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エージェント：%@"
+          }
+        }
+      }
+    },
+    "Agents": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エージェント"
+          }
+        }
+      }
+    },
+    "All host histories searched": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべてのホストの履歴を検索済み"
+          }
+        }
+      }
+    },
+    "All optional. Grant only what you want; each row re-checks itself and stays in Settings.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべて任意です。必要な権限だけを許可してください。各項目は状態を再確認し、設定からいつでも変更できます。"
+          }
+        }
+      }
+    },
+    "Allow for this task": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このタスクで許可"
+          }
+        }
+      }
+    },
+    "Allowed by macOS": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOSで許可済み"
+          }
+        }
+      }
+    },
+    "Already connected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続済み"
+          }
+        }
+      }
+    },
+    "Already connected. Choose Repair connection to replace this host’s connection.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続済みです。このホストとの接続を置き換えるには「接続を修復」を選択してください。"
+          }
+        }
+      }
+    },
+    "Always allow %@…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@を常に許可…"
+          }
+        }
+      }
+    },
+    "Amount: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "金額：%@"
+          }
+        }
+      }
+    },
+    "Answer not applied": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回答は適用されませんでした"
+          }
+        }
+      }
+    },
+    "Answer pending · waiting for host": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回答を送信中 · ホストを待っています"
+          }
+        }
+      }
+    },
+    "Answers and completed tasks": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "返信と完了したタスク"
+          }
+        }
+      }
+    },
+    "Anthropic’s coding agent, working in a project on your Mac.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Macのプロジェクトで作業するAnthropicのコーディングエージェント。"
+          }
+        }
+      }
+    },
+    "Anthropic’s coding agent.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropicのコーディングエージェント。"
+          }
+        }
+      }
+    },
+    "Any %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "任意の%@"
+          }
+        }
+      }
+    },
+    "Approval answer could not be applied.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "承認の回答を適用できませんでした。"
+          }
+        }
+      }
+    },
+    "Approval needed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "承認が必要です"
+          }
+        }
+      }
+    },
+    "Approval · %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "承認 · %@"
+          }
+        }
+      }
+    },
+    "Approve": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "承認"
+          }
+        }
+      }
+    },
+    "Ask %@ to get started.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@への依頼を入力してください。"
+          }
+        }
+      }
+    },
+    "Ask for anything your Mac can do — files, mail, calendars, or the browser.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ファイル、メール、カレンダー、ブラウザなど、Macでできることを依頼してください。"
+          }
+        }
+      }
+    },
+    "Assistant chats": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アシスタントとのチャット"
+          }
+        }
+      }
+    },
+    "Attach photos or files": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真やファイルを添付"
+          }
+        }
+      }
+    },
+    "Attached file, %@, %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添付ファイル、%1$@、%2$@"
+          }
+        }
+      }
+    },
+    "Attached image, %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添付画像、%@"
+          }
+        }
+      }
+    },
+    "Attached image, %@, and %lld more": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添付画像、%1$@、ほか%2$lld個"
+          }
+        }
+      }
+    },
+    "Attachment download failed integrity check. Reopen message to retry.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添付ファイルの整合性を確認できませんでした。メッセージを開き直して再試行してください。"
+          }
+        }
+      }
+    },
+    "Attachment unavailable on host. Reopen message to retry.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストの添付ファイルを取得できません。メッセージを開き直して再試行してください。"
+          }
+        }
+      }
+    },
+    "Auto": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動"
+          }
+        }
+      }
+    },
+    "Awaiting approval": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "承認待ち"
+          }
+        }
+      }
+    },
+    "Back": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "戻る"
+          }
+        }
+      }
+    },
+    "Background service not found": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックグラウンドサービスが見つかりません"
+          }
+        }
+      }
+    },
+    "Background-only host": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックグラウンド専用ホスト"
+          }
+        }
+      }
+    },
+    "Beta builds include changes from main before a stable release. Turning beta off waits for a newer stable build.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ベータ版には、正式リリース前のmainの変更が含まれます。ベータ版をオフにすると、新しい正式版が出るまで待機します。"
+          }
+        }
+      }
+    },
+    "Cancel send": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "送信を取り消す"
+          }
+        }
+      }
+    },
+    "Cancelled": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "キャンセル済み"
+          }
+        }
+      }
+    },
+    "Changing %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@を変更中"
+          }
+        }
+      }
+    },
+    "Check macOS notification settings.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOSの通知設定を確認してください。"
+          }
+        }
+      }
+    },
+    "Checking agents…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エージェントを確認中…"
+          }
+        }
+      }
+    },
+    "Checking delivery…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配信を確認中…"
+          }
+        }
+      }
+    },
+    "Checking for updates…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新を確認中…"
+          }
+        }
+      }
+    },
+    "Checking…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "確認中…"
+          }
+        }
+      }
+    },
+    "Choose a project folder": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロジェクトフォルダを選択"
+          }
+        }
+      }
+    },
+    "Choose a project folder for this agent": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このエージェントのプロジェクトフォルダを選択"
+          }
+        }
+      }
+    },
+    "Choose a thread or start a new one.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スレッドを選択するか、新しいスレッドを開始してください。"
+          }
+        }
+      }
+    },
+    "Choose a thread, or start a new one.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "会話を選ぶか、新しい会話を始めてください。"
+          }
+        }
+      }
+    },
+    "Choose agent": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エージェントを選択"
+          }
+        }
+      }
+    },
+    "Choose an agent. Send a message to begin.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エージェントを選び、メッセージを送ると始まります。"
+          }
+        }
+      }
+    },
+    "Choose host": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストを選択"
+          }
+        }
+      }
+    },
+    "Choose project": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロジェクトを選択"
+          }
+        }
+      }
+    },
+    "Claude Code": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude Code"
+          }
+        }
+      }
+    },
+    "Claude and Claude Code are trademarks of Anthropic, PBC. OpenAI and Codex are trademarks of OpenAI. Their marks identify the selected agent only; Yorozu is independent and is not affiliated with or endorsed by either provider.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ClaudeとClaude CodeはAnthropic, PBCの商標です。OpenAIとCodexはOpenAIの商標です。これらのマークは選択されたエージェントを示すために使用しています。Yorozuは独立したアプリであり、いずれの提供元とも提携関係はなく、承認も受けていません。"
+          }
+        }
+      }
+    },
+    "Client": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クライアント"
+          }
+        }
+      }
+    },
+    "Close": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "閉じる"
+          }
+        }
+      }
+    },
+    "Close Yorozu Windows": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozuのウインドウを閉じる"
+          }
+        }
+      }
+    },
+    "Codex": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex"
+          }
+        }
+      }
+    },
+    "Coding agents": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コーディングエージェント"
+          }
+        }
+      }
+    },
+    "Coding agents require a project folder": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コーディングエージェントにはプロジェクトフォルダが必要です"
+          }
+        }
+      }
+    },
+    "Coding threads": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コーディング用スレッド"
+          }
+        }
+      }
+    },
+    "Compatibility": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "互換性"
+          }
+        }
+      }
+    },
+    "Compatible · protocol %lld": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "互換性あり・プロトコル %lld"
+          }
+        }
+      }
+    },
+    "Completed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完了"
+          }
+        }
+      }
+    },
+    "Connect to the host to refresh OpenClaw models.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenClawのモデルを更新するにはホストに接続してください。"
+          }
+        }
+      }
+    },
+    "Connected locally": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカル接続中"
+          }
+        }
+      }
+    },
+    "Connecting": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続中"
+          }
+        }
+      }
+    },
+    "Connecting to %@…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@に接続中…"
+          }
+        }
+      }
+    },
+    "Connection: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続：%@"
+          }
+        }
+      }
+    },
+    "Continue": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "続ける"
+          }
+        }
+      }
+    },
+    "Copied message": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メッセージをコピーしました"
+          }
+        }
+      }
+    },
+    "Copy %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@をコピー"
+          }
+        }
+      }
+    },
+    "Copy diagnostics": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "診断情報をコピー"
+          }
+        }
+      }
+    },
+    "Copy message": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メッセージをコピー"
+          }
+        }
+      }
+    },
+    "Could not open encrypted local cache: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暗号化されたローカルキャッシュを開けませんでした：%@"
+          }
+        }
+      }
+    },
+    "Could not queue or save draft: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "送信待ちまたは下書きとして保存できませんでした：%@"
+          }
+        }
+      }
+    },
+    "Could not read event: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "イベントを読み取れませんでした：%@"
+          }
+        }
+      }
+    },
+    "Could not save Stop request: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止リクエストを保存できませんでした：%@"
+          }
+        }
+      }
+    },
+    "Could not save approval answer: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "承認の回答を保存できませんでした：%@"
+          }
+        }
+      }
+    },
+    "Could not save draft: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下書きを保存できませんでした：%@"
+          }
+        }
+      }
+    },
+    "Could not save pending messages: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "送信待ちのメッセージを保存できませんでした：%@"
+          }
+        }
+      }
+    },
+    "Could not save pending-message migration: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "送信待ちのメッセージの移行を保存できませんでした：%@"
+          }
+        }
+      }
+    },
+    "Could not save withdrawal: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "送信の取り消しを保存できませんでした：%@"
+          }
+        }
+      }
+    },
+    "Couldn't resume automatically": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動で再開できませんでした"
+          }
+        }
+      }
+    },
+    "Couldn’t connect. Retry, or paste a new code from the host Mac.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続できませんでした。再試行するか、ホストMacの新しいコードを貼り付けてください。"
+          }
+        }
+      }
+    },
+    "Current": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在"
+          }
+        }
+      }
+    },
+    "Decline": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拒否"
+          }
+        }
+      }
+    },
+    "Default effort": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "標準の推論の強度"
+          }
+        }
+      }
+    },
+    "Delegating %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@に委任中"
+          }
+        }
+      }
+    },
+    "Denied": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拒否済み"
+          }
+        }
+      }
+    },
+    "Denied by macOS. Allow Yorozu in System Settings → Notifications.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOSで拒否されています。システム設定 → 通知でYorozuを許可してください。"
+          }
+        }
+      }
+    },
+    "Development": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開発版"
+          }
+        }
+      }
+    },
+    "Diagnostics copied": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "診断情報をコピーしました"
+          }
+        }
+      }
+    },
+    "Direct": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "直接接続"
+          }
+        }
+      }
+    },
+    "Direct connection over Tailscale": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tailscale経由で直接接続"
+          }
+        }
+      }
+    },
+    "Disconnected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未接続"
+          }
+        }
+      }
+    },
+    "Disconnected while updating OpenClaw models. Reopen the picker to refresh.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenClawのモデルを更新中に切断されました。選択画面を開き直して更新してください。"
+          }
+        }
+      }
+    },
+    "Dismiss": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "閉じる"
+          }
+        }
+      }
+    },
+    "Dismiss attachment error": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添付ファイルのエラーを閉じる"
+          }
+        }
+      }
+    },
+    "Done, unread": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完了、未読"
+          }
+        }
+      }
+    },
+    "Don’t have Yorozu on your iPhone? [Get it](https://yorozu.yumi.to/iphone)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iPhoneにYorozuがありませんか？[入手する](https://yorozu.yumi.to/iphone)"
+          }
+        }
+      }
+    },
+    "Downloaded conversations and available host history": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ダウンロード済みの会話と接続可能なホストの履歴"
+          }
+        }
+      }
+    },
+    "Downloaded conversations and cached host results": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ダウンロード済みの会話と保存済みのホスト検索結果"
+          }
+        }
+      }
+    },
+    "Downloaded conversations and cached host results · searching available hosts…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ダウンロード済みの会話と保存済みのホスト検索結果 · 接続可能なホストを検索中…"
+          }
+        }
+      }
+    },
+    "Downloaded conversations and partial host results": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ダウンロード済みの会話とホストの一部の検索結果"
+          }
+        }
+      }
+    },
+    "Downloaded conversations only": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ダウンロード済みの会話のみ"
+          }
+        }
+      }
+    },
+    "Downloaded conversations only · shorten search for host history": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ダウンロード済みの会話のみ · ホストの履歴を検索するには検索語を短くしてください"
+          }
+        }
+      }
+    },
+    "Downloaded conversations · searching available hosts…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ダウンロード済みの会話 · 接続可能なホストを検索中…"
+          }
+        }
+      }
+    },
+    "Downloaded conversations · searching host…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ダウンロード済みの会話 · ホストを検索中…"
+          }
+        }
+      }
+    },
+    "Downloaded conversations, cached and available host results": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ダウンロード済みの会話、保存済みと接続可能なホストの検索結果"
+          }
+        }
+      }
+    },
+    "Downloads updates in the background. Installs after this Mac’s agents finish and stay idle for 10 seconds.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新をバックグラウンドでダウンロードします。このMacのエージェントが終了し、10秒間待機状態になるとインストールします。"
+          }
+        }
+      }
+    },
+    "Draft": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下書き"
+          }
+        }
+      }
+    },
+    "Draft stash": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存した下書き"
+          }
+        }
+      }
+    },
+    "Edit from here": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ここから編集"
+          }
+        }
+      }
+    },
+    "Edit from here?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ここから編集しますか？"
+          }
+        }
+      }
+    },
+    "Enable notifications on this Mac": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMacで通知を有効にする"
+          }
+        }
+      }
+    },
+    "Enter": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter"
+          }
+        }
+      }
+    },
+    "Enter starts a new line.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enterで改行します。"
+          }
+        }
+      }
+    },
+    "Every tool request on this host runs without asking, including purchases, messages, commands, and deletes.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このホストでは、購入、メッセージ送信、コマンド実行、削除を含むすべてのツール操作を確認なしで実行します。"
+          }
+        }
+      }
+    },
+    "Everyday tasks, files, mail, and more.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "日々の用事、ファイル、メールなど。"
+          }
+        }
+      }
+    },
+    "Expired · Still send?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "期限切れ · 送信しますか？"
+          }
+        }
+      }
+    },
+    "Extra high": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "非常に高い"
+          }
+        }
+      }
+    },
+    "Failures needing attention": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "確認が必要なエラー"
+          }
+        }
+      }
+    },
+    "Fetches the rest of the output from the Mac": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Macから残りの出力を取得します"
+          }
+        }
+      }
+    },
+    "Fetching the rest…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "残りを取得中…"
+          }
+        }
+      }
+    },
+    "Files and Full Disk Access are in": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ファイルとフルディスクアクセスの設定場所："
+          }
+        }
+      }
+    },
+    "Finish Setup…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定を完了…"
+          }
+        }
+      }
+    },
+    "Finishing agent work before update": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新前にエージェントの作業を完了中"
+          }
+        }
+      }
+    },
+    "Follow-up messages": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "追加のメッセージ"
+          }
+        }
+      }
+    },
+    "Forward": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "進む"
+          }
+        }
+      }
+    },
+    "Fresh approval required for this action": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この操作には改めて承認が必要です"
+          }
+        }
+      }
+    },
+    "Gateway not running": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gatewayが起動していません"
+          }
+        }
+      }
+    },
+    "Granted": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "許可済み"
+          }
+        }
+      }
+    },
+    "High": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "高い"
+          }
+        }
+      }
+    },
+    "Host": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホスト"
+          }
+        }
+      }
+    },
+    "Host Mac": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストMac"
+          }
+        }
+      }
+    },
+    "Host could not save attachment. Retrying.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストに添付ファイルを保存できませんでした。再試行中です。"
+          }
+        }
+      }
+    },
+    "Host history searched": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストの履歴を検索済み"
+          }
+        }
+      }
+    },
+    "Host isn’t reachable": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストに接続できません"
+          }
+        }
+      }
+    },
+    "Host version": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストのバージョン"
+          }
+        }
+      }
+    },
+    "Host: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホスト：%@"
+          }
+        }
+      }
+    },
+    "Hosts": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホスト"
+          }
+        }
+      }
+    },
+    "How much effort?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "推論の強度は？"
+          }
+        }
+      }
+    },
+    "IN PROGRESS": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "進行中"
+          }
+        }
+      }
+    },
+    "Idle": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待機中"
+          }
+        }
+      }
+    },
+    "In Terminal, run": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ターミナルで実行："
+          }
+        }
+      }
+    },
+    "Install now": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今すぐインストール"
+          }
+        }
+      }
+    },
+    "Install update now": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新を今すぐインストール"
+          }
+        }
+      }
+    },
+    "It can reach this Mac now. Whether an agent answers depends on what is set up here.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMacに接続できるようになりました。エージェントが応答するには、このMacでの設定が必要です。"
+          }
+        }
+      }
+    },
+    "It hosts Yorozu. Your paired devices reach it through the relay.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMacがYorozuのホストです。ペアリング済みのデバイスはリレー経由で接続します。"
+          }
+        }
+      }
+    },
+    "Keep Yorozu Running": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozuの実行を続ける"
+          }
+        }
+      }
+    },
+    "Keep Yorozu running checks every minute and opens Yorozu again if it has died; quitting from the menu is still a quit. Never sleep keeps this Mac awake so the agent can answer your phone while you are away.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「Yorozuの実行を維持」は毎分状態を確認し、停止していれば再起動します。メニューから終了した場合は再起動しません。「スリープしない」はこのMacを起動状態に保ち、外出中もエージェントがスマートフォンに応答できるようにします。"
+          }
+        }
+      }
+    },
+    "Legacy host · chat supported": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旧バージョンのホスト・チャット利用可"
+          }
+        }
+      }
+    },
+    "Let Claude Code and Codex threads see and operate apps on this Mac.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude CodeとCodexのスレッドが、このMacのアプリを確認・操作できるようにします。"
+          }
+        }
+      }
+    },
+    "Let Claude Code and Codex threads work with documents, downloads, cloud drives, and app data.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude CodeとCodexのスレッドが、書類、ダウンロード、クラウドドライブ、アプリデータを扱えるようにします。"
+          }
+        }
+      }
+    },
+    "Link: %@, %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リンク：%1$@、%2$@"
+          }
+        }
+      }
+    },
+    "Listen to reply": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "返信を読み上げ"
+          }
+        }
+      }
+    },
+    "Low": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "低い"
+          }
+        }
+      }
+    },
+    "Mac": {
+      "extractionState": "stale",
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mac"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mac"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mac"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mac"
+          }
+        }
+      }
+    },
+    "Mac connection: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Macとの接続：%@"
+          }
+        }
+      }
+    },
+    "Mac key": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Macの鍵"
+          }
+        }
+      }
+    },
+    "Mac key: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Macの鍵：%@"
+          }
+        }
+      }
+    },
+    "Mac offline — messages will queue": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Macはオフラインです — メッセージは送信待ちになります"
+          }
+        }
+      }
+    },
+    "Make Text Bigger": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文字を大きくする"
+          }
+        }
+      }
+    },
+    "Make Text Smaller": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文字を小さくする"
+          }
+        }
+      }
+    },
+    "Manage paired Macs in Hosts.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「ホスト」でペアリング済みのMacを管理できます。"
+          }
+        }
+      }
+    },
+    "Manage pairing in Connection.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「接続」でペアリングを管理できます。"
+          }
+        }
+      }
+    },
+    "Max": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最大"
+          }
+        }
+      }
+    },
+    "Medium": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "中程度"
+          }
+        }
+      }
+    },
+    "Messages": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メッセージ"
+          }
+        }
+      }
+    },
+    "Messages are end-to-end encrypted. The relay passes them along but can’t read them. [Privacy](https://yorozu.yumi.to/privacy)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メッセージはエンドツーエンドで暗号化されます。リレーは転送するだけで、内容を読むことはできません。[プライバシー](https://yorozu.yumi.to/privacy)"
+          }
+        }
+      }
+    },
+    "Minimal": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最小"
+          }
+        }
+      }
+    },
+    "Model and effort": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルと推論の強度"
+          }
+        }
+      }
+    },
+    "Needs Attention": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "確認が必要"
+          }
+        }
+      }
+    },
+    "Needs approval": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "承認が必要です"
+          }
+        }
+      }
+    },
+    "Needs input": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "入力が必要です"
+          }
+        }
+      }
+    },
+    "New Chat": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しいチャット"
+          }
+        }
+      }
+    },
+    "New activity": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しいアクティビティ"
+          }
+        }
+      }
+    },
+    "New answer": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しい返信"
+          }
+        }
+      }
+    },
+    "New host pairing code": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しいホストのペアリングコード"
+          }
+        }
+      }
+    },
+    "Next": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次に送信"
+          }
+        }
+      }
+    },
+    "Next match": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次の一致"
+          }
+        }
+      }
+    },
+    "Nickname": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ニックネーム"
+          }
+        }
+      }
+    },
+    "No chat yet": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "チャットはまだありません"
+          }
+        }
+      }
+    },
+    "No devices paired yet": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ペアリング済みのデバイスはありません"
+          }
+        }
+      }
+    },
+    "No downloaded matches": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ダウンロード済みの会話に一致するものはありません"
+          }
+        }
+      }
+    },
+    "No longer needed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不要になりました"
+          }
+        }
+      }
+    },
+    "No matches": {
+      "extractionState": "stale",
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sin resultados"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一致なし"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "일치 항목 없음"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无匹配项"
+          }
+        }
+      }
+    },
+    "No project folders": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロジェクトフォルダがありません"
+          }
+        }
+      }
+    },
+    "No thread selected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "会話が選択されていません"
+          }
+        }
+      }
+    },
+    "Not available — this build is not an installed app bundle.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "利用できません。このビルドはインストール済みのアプリではありません。"
+          }
+        }
+      }
+    },
+    "Not connected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未接続"
+          }
+        }
+      }
+    },
+    "Not installed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未インストール"
+          }
+        }
+      }
+    },
+    "Not logged in": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未ログイン"
+          }
+        }
+      }
+    },
+    "Not registered.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未登録です。"
+          }
+        }
+      }
+    },
+    "Not selected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未選択"
+          }
+        }
+      }
+    },
+    "Not sent · OpenClaw can't receive attachments. Update the Yorozu plugin.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未送信 · OpenClawが添付ファイルを受信できません。Yorozuプラグインを更新してください。"
+          }
+        }
+      }
+    },
+    "Not sent · attachment changed during transfer": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未送信 · 転送中に添付ファイルが変更されました"
+          }
+        }
+      }
+    },
+    "Not sent · attachment could not be read": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未送信 · 添付ファイルを読み取れませんでした"
+          }
+        }
+      }
+    },
+    "Not sent · attachments too large": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未送信 · 添付ファイルが大きすぎます"
+          }
+        }
+      }
+    },
+    "Not sent · chat could not be created. Use in new chat to keep attachments.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未送信 · 会話を作成できませんでした。添付ファイルを保持するには「新しい会話で使用」を選んでください。"
+          }
+        }
+      }
+    },
+    "Not sent · chat creation changed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未送信 · 会話の作成内容が変更されました"
+          }
+        }
+      }
+    },
+    "Not sent · chat does not exist. Use in new chat to keep attachments.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未送信 · 会話が存在しません。添付ファイルを保持するには「新しい会話で使用」を選んでください。"
+          }
+        }
+      }
+    },
+    "Not sent · device clock is ahead": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未送信 · デバイスの時計が進んでいます"
+          }
+        }
+      }
+    },
+    "Not sent · host could not save attachment": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未送信 · ホストに添付ファイルを保存できませんでした"
+          }
+        }
+      }
+    },
+    "Not sent · invalid message deadline": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未送信 · メッセージの期限が無効です"
+          }
+        }
+      }
+    },
+    "Not sent · message changed after sending": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未送信 · 送信後にメッセージが変更されました"
+          }
+        }
+      }
+    },
+    "Not sent · rejected by host": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未送信 · ホストに拒否されました"
+          }
+        }
+      }
+    },
+    "Notifications": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notificaciones"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "알림"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知"
+          }
+        }
+      }
+    },
+    "Notifications are not active yet. Turn this setting off and on to retry.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知はまだ有効ではありません。この設定を一度オフにしてから再びオンにして、再試行してください。"
+          }
+        }
+      }
+    },
+    "Notify me about": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知する内容"
+          }
+        }
+      }
+    },
+    "On the host, open Yorozu › Settings › Devices › Pair Another Device, then paste its code here. A tapped yorozu:// link works too.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストでYorozu › 設定 › デバイス › 別のデバイスをペアリングを開き、コードをここに貼り付けてください。yorozu://リンクを開くこともできます。"
+          }
+        }
+      }
+    },
+    "On this Mac": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMac"
+          }
+        }
+      }
+    },
+    "Open General Settings": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一般設定を開く"
+          }
+        }
+      }
+    },
+    "Open System Settings…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "システム設定を開く…"
+          }
+        }
+      }
+    },
+    "Open Yorozu and start a thread": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozuを開いてスレッドを開始"
+          }
+        }
+      }
+    },
+    "Open thread": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スレッドを開く"
+          }
+        }
+      }
+    },
+    "OpenAI’s coding agent, working in a project on your Mac.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Macのプロジェクトで作業するOpenAIのコーディングエージェント。"
+          }
+        }
+      }
+    },
+    "OpenAI’s coding agent.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAIのコーディングエージェント。"
+          }
+        }
+      }
+    },
+    "OpenClaw": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenClaw"
+          }
+        }
+      }
+    },
+    "OpenClaw runs as its own process and asks macOS for its own permissions.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenClawは独立したプロセスで動作し、必要な権限をmacOSに個別に要求します。"
+          }
+        }
+      }
+    },
+    "Opens the picture full screen": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画像を全画面で開きます"
+          }
+        }
+      }
+    },
+    "Optional": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "任意"
+          }
+        }
+      }
+    },
+    "Or paste it into Connect to another Mac on a Mac, or Enter code manually on an iPhone or iPad. Codes work once and expire; keep this one private.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Macの「別のMacに接続」、またはiPhoneやiPadの「コードを手動入力」に貼り付けることもできます。コードは1回限りで有効期限があります。他人に共有しないでください。"
+          }
+        }
+      }
+    },
+    "Original request is unavailable. Dismiss, then send it again.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "元のリクエストを取得できません。閉じてから再送してください。"
+          }
+        }
+      }
+    },
+    "Other folders": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ほかのフォルダ"
+          }
+        }
+      }
+    },
+    "Other hosts stay connected.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "他のホストとの接続は維持されます。"
+          }
+        }
+      }
+    },
+    "Output was cut · Show full output": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "出力は省略されています · 全文を表示"
+          }
+        }
+      }
+    },
+    "Output was cut; the rest is on the Mac.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "出力は省略されています。残りはMacに保存されています。"
+          }
+        }
+      }
+    },
+    "Pair more any time from Settings › Devices": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定 › デバイスからいつでも追加できます"
+          }
+        }
+      }
+    },
+    "Paired phones on your tailnet skip the relay. The relay still pairs, notifies, and takes over when direct is unreachable.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tailnet上のペアリング済みスマートフォンはリレーを経由せずに接続します。ペアリングと通知には引き続きリレーを使い、直接接続できない場合もリレー経由に切り替わります。"
+          }
+        }
+      }
+    },
+    "Pairing and conversations stay saved while this host reconnects.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストの再接続中も、ペアリングと会話は保存されます。"
+          }
+        }
+      }
+    },
+    "Pairing revoked": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ペアリング解除済み"
+          }
+        }
+      }
+    },
+    "Pending": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待機中"
+          }
+        }
+      }
+    },
+    "Persistent": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "継続"
+          }
+        }
+      }
+    },
+    "Phone": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スマートフォン"
+          }
+        }
+      }
+    },
+    "Play a sound": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サウンドを再生"
+          }
+        }
+      }
+    },
+    "Postpone 1 hour": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1時間延期"
+          }
+        }
+      }
+    },
+    "Postpone update 1 hour": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新を1時間延期"
+          }
+        }
+      }
+    },
+    "Presentation": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "表示とサウンド"
+          }
+        }
+      }
+    },
+    "Previous match": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前の一致"
+          }
+        }
+      }
+    },
+    "Progress": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "進捗"
+          }
+        }
+      }
+    },
+    "Project": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロジェクト"
+          }
+        }
+      }
+    },
+    "Quantity": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "数量"
+          }
+        }
+      }
+    },
+    "Question": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "質問"
+          }
+        }
+      }
+    },
+    "Questions and approvals": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "質問と承認"
+          }
+        }
+      }
+    },
+    "Queue": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待機させる"
+          }
+        }
+      }
+    },
+    "Quick Chat": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クイックチャット"
+          }
+        }
+      }
+    },
+    "Quit Yorozu…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozuを終了…"
+          }
+        }
+      }
+    },
+    "Quitting Yorozu stops this Mac's active tasks and disconnects paired devices.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozuを終了すると、このMacで実行中のタスクが停止し、ペアリング済みのデバイスとの接続が切れます。"
+          }
+        }
+      }
+    },
+    "Re-check": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再確認"
+          }
+        }
+      }
+    },
+    "Read %lld file": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld個のファイルを読み取り"
+          }
+        }
+      }
+    },
+    "Read %lld files": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld個のファイルを読み取り"
+          }
+        }
+      }
+    },
+    "Reading %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@を読み取り中"
+          }
+        }
+      }
+    },
+    "Ready": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "準備完了"
+          }
+        }
+      }
+    },
+    "Receive beta updates": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ベータ版の更新を受け取る"
+          }
+        }
+      }
+    },
+    "Recent": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近使用した項目"
+          }
+        }
+      }
+    },
+    "Recent Chats": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近のチャット"
+          }
+        }
+      }
+    },
+    "Reconfirmed as new message": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しいメッセージとして再確認済み"
+          }
+        }
+      }
+    },
+    "Recovering…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "復旧中…"
+          }
+        }
+      }
+    },
+    "Registered with macOS.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOSに登録済みです。"
+          }
+        }
+      }
+    },
+    "Relay stopped answering": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リレーからの応答がなくなりました"
+          }
+        }
+      }
+    },
+    "Relay: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リレー：%@"
+          }
+        }
+      }
+    },
+    "Relay: %@\nMac key: %@\n\nRepair replaces this connection. Chats, drafts, and queued messages stay saved.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リレー：%@\nMacの鍵：%@\n\n修復すると、この接続を置き換えます。チャット、下書き、待機中のメッセージは保存されます。"
+          }
+        }
+      }
+    },
+    "Remove %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@を削除"
+          }
+        }
+      }
+    },
+    "Remove %@’s pairing keys, counters, cached chats, and queued messages from this Mac? Other hosts stay connected.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMacから%@のペアリング鍵、カウンター、キャッシュ済みチャット、待機中のメッセージを削除しますか？他のホストとの接続は維持されます。"
+          }
+        }
+      }
+    },
+    "Remove Host": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストを削除"
+          }
+        }
+      }
+    },
+    "Remove Host…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストを削除…"
+          }
+        }
+      }
+    },
+    "Remove host?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストを削除しますか？"
+          }
+        }
+      }
+    },
+    "Remove this device?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このデバイスを削除しますか？"
+          }
+        }
+      }
+    },
+    "Remove…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "削除…"
+          }
+        }
+      }
+    },
+    "Repair connection": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続を修復"
+          }
+        }
+      }
+    },
+    "Repair replaces this connection. Chats, drafts, and queued messages stay saved.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "修復すると、この接続を置き換えます。チャット、下書き、待機中のメッセージは保存されます。"
+          }
+        }
+      }
+    },
+    "Resolve approval to continue": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "続行するには承認に回答してください"
+          }
+        }
+      }
+    },
+    "Restarting in %lld seconds": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld秒後に再起動します"
+          }
+        }
+      }
+    },
+    "Restarting in %llds": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld秒後に再起動"
+          }
+        }
+      }
+    },
+    "Retry reply": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "返信を再試行"
+          }
+        }
+      }
+    },
+    "Returns text and attachments to the composer": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本文と添付ファイルを入力欄に戻します"
+          }
+        }
+      }
+    },
+    "Rule saved: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ルールを保存しました：%@"
+          }
+        }
+      }
+    },
+    "Rule suggestion: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ルールの提案：%@"
+          }
+        }
+      }
+    },
+    "Run Again…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "もう一度実行…"
+          }
+        }
+      }
+    },
+    "Run the agents here. Your iPhone, iPad and other Macs connect to this one.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMacでエージェントを実行します。iPhone、iPad、他のMacはこのMacに接続します。"
+          }
+        }
+      }
+    },
+    "Running": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行中"
+          }
+        }
+      }
+    },
+    "Running %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@を実行中"
+          }
+        }
+      }
+    },
+    "Runs as a menu bar–only app. Quick Chat and Settings open from the menu bar.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メニューバーのみで動作します。クイックチャットと設定はメニューバーから開きます。"
+          }
+        }
+      }
+    },
+    "Runs on the Mac, in a project folder you choose next.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次に選ぶプロジェクトフォルダで、Mac上で実行します。"
+          }
+        }
+      }
+    },
+    "Runtime not reachable: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ランタイムに接続できません：%@"
+          }
+        }
+      }
+    },
+    "Scan this code with Yorozu on an iPhone or iPad, or paste it into Yorozu on another Mac. You can also do this later from Settings › Devices.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iPhoneやiPadのYorozuでコードをスキャンするか、別のMacのYorozuに貼り付けてください。設定 › デバイスから後で行うこともできます。"
+          }
+        }
+      }
+    },
+    "Scroll to bottom": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一番下へ移動"
+          }
+        }
+      }
+    },
+    "Searching %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@を検索中"
+          }
+        }
+      }
+    },
+    "Selected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選択済み"
+          }
+        }
+      }
+    },
+    "Send message with": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メッセージの送信キー"
+          }
+        }
+      }
+    },
+    "Send now": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今すぐ送信"
+          }
+        }
+      }
+    },
+    "Sending attachment · awaiting host acceptance": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添付ファイルを送信中 · ホストの受信確認を待っています"
+          }
+        }
+      }
+    },
+    "Sending…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "送信中…"
+          }
+        }
+      }
+    },
+    "Sends a new message with the same content": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ内容で新しいメッセージを送信します"
+          }
+        }
+      }
+    },
+    "Sends when the turn ends": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在の応答が終わると送信します"
+          }
+        }
+      }
+    },
+    "Service failed: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サービスに失敗しました：%@"
+          }
+        }
+      }
+    },
+    "Service status: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サービスの状態：%@"
+          }
+        }
+      }
+    },
+    "Set up %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@を設定"
+          }
+        }
+      }
+    },
+    "Setting up…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定中…"
+          }
+        }
+      }
+    },
+    "Settings › Permissions": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定 › 権限"
+          }
+        }
+      }
+    },
+    "Setup wizard": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定ウィザード"
+          }
+        }
+      }
+    },
+    "Shift-Enter starts a new line.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shift-Enterで改行します。"
+          }
+        }
+      }
+    },
+    "Show all %lld lines": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全%lld行を表示"
+          }
+        }
+      }
+    },
+    "Show full output": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "出力の全文を表示"
+          }
+        }
+      }
+    },
+    "Show menu-bar attention indicator": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メニューバーに確認が必要な状態を表示"
+          }
+        }
+      }
+    },
+    "Show message previews": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メッセージのプレビューを表示"
+          }
+        }
+      }
+    },
+    "Skills": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スキル"
+          }
+        }
+      }
+    },
+    "Start a chat from the menu bar.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メニューバーからチャットを開始してください。"
+          }
+        }
+      }
+    },
+    "Start the conversation": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "会話を始める"
+          }
+        }
+      }
+    },
+    "Starting…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "起動中…"
+          }
+        }
+      }
+    },
+    "Stash draft": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下書きを保存"
+          }
+        }
+      }
+    },
+    "Stash draft or restore a saved draft": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下書きを保存、または保存した下書きを復元"
+          }
+        }
+      }
+    },
+    "Status": {
+      "extractionState": "stale",
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estado"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "状態"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "상태"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "状态"
+          }
+        }
+      }
+    },
+    "Steer running turn": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行中のターンに指示する"
+          }
+        }
+      }
+    },
+    "Step %lld, %@, %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ステップ%1$lld、%2$@、%3$@"
+          }
+        }
+      }
+    },
+    "Stop hosting and pair with another Mac?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストを停止し、別のMacとペアリングしますか？"
+          }
+        }
+      }
+    },
+    "Stop unconfirmed after %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@経過 · 停止を確認できません"
+          }
+        }
+      }
+    },
+    "Stopped": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止済み"
+          }
+        }
+      }
+    },
+    "Stopping": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止中"
+          }
+        }
+      }
+    },
+    "Stopping…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止中…"
+          }
+        }
+      }
+    },
+    "Tailscale is not running or not signed in. Once it is, run:": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tailscaleが起動していないか、ログインしていません。起動してログインした後、次のコマンドを実行してください："
+          }
+        }
+      }
+    },
+    "Tailscale refused: %@. Run:": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tailscaleに拒否されました：%@。次のコマンドを実行してください："
+          }
+        }
+      }
+    },
+    "Tasks are still running": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タスクが実行中です"
+          }
+        }
+      }
+    },
+    "The Mac that will receive this new thread": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この新しい会話を受信するMac"
+          }
+        }
+      }
+    },
+    "The Mac that will receive this session": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このセッションを受信するMac"
+          }
+        }
+      }
+    },
+    "The host Mac has to be online for the first handshake. This can take a few seconds.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最初の接続には、ホストMacがオンラインである必要があります。数秒かかる場合があります。"
+          }
+        }
+      }
+    },
+    "The tailscale command was not found. Install Tailscale's CLI, then run:": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tailscaleコマンドが見つかりません。TailscaleのCLIをインストールし、次のコマンドを実行してください："
+          }
+        }
+      }
+    },
+    "Then choose a project folder": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次にプロジェクトフォルダを選びます"
+          }
+        }
+      }
+    },
+    "These choices affect this Mac only. Paired devices keep their own notifications, and all tasks and questions remain available in Quick Chat.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この設定はこのMacのみに適用されます。ペアリング済みデバイスには各デバイスの通知設定が使われます。タスクや質問はクイックチャットで引き続き確認できます。"
+          }
+        }
+      }
+    },
+    "This Mac didn’t hear back from Yorozu’s background service in time.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMacでYorozuのバックグラウンドサービスからの応答がタイムアウトしました。"
+          }
+        }
+      }
+    },
+    "This Mac is set up": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMacの設定が完了しました"
+          }
+        }
+      }
+    },
+    "This Mac uses Yorozu through your host Mac. Agents run there.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMacはホストMacを通じてYorozuを使います。エージェントはホストMacで動作します。"
+          }
+        }
+      }
+    },
+    "This Mac will connect to the host from this code. Saved chats stay available.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMacを、このコードのホストに接続します。保存済みのチャットは引き続き利用できます。"
+          }
+        }
+      }
+    },
+    "This Mac will stop hosting Yorozu: the runtime shuts down and paired phones lose their connection to it. It becomes a client of the Mac this code came from.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMacでYorozuのホストを停止します。ランタイムが終了し、ペアリング済みスマートフォンとの接続が切れます。このMacは、コードを発行したMacのクライアントになります。"
+          }
+        }
+      }
+    },
+    "This host is no longer paired.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このホストとのペアリングは解除されています。"
+          }
+        }
+      }
+    },
+    "This host’s connection is already changing. Try again when it finishes.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このホストの接続は変更中です。完了してから再試行してください。"
+          }
+        }
+      }
+    },
+    "This message and everything after it will be hidden on all devices. Your prompt and attachments will return to the composer. Files will not be reverted.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このメッセージとそれ以降の内容は、すべてのデバイスで非表示になります。入力した本文と添付ファイルは入力欄に戻ります。ファイルの変更は元に戻りません。"
+          }
+        }
+      }
+    },
+    "This task needs attention.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このタスクを確認してください。"
+          }
+        }
+      }
+    },
+    "Thought for %lld s": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld秒間思考"
+          }
+        }
+      }
+    },
+    "Threads catch up when it is back. Yorozu keeps trying in the background.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストが戻るとスレッドが同期されます。Yorozuはバックグラウンドで再接続を続けます。"
+          }
+        }
+      }
+    },
+    "Threads you start with Claude Code or Codex can click, type and see your screen. Only grant this if you’ll use them for that.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude CodeやCodexで開始したスレッドは、画面の確認、クリック、文字入力が可能になります。これらの操作に使う場合だけ許可してください。"
+          }
+        }
+      }
+    },
+    "Three recovery attempts failed. Retry when ready.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "3回の復旧に失敗しました。準備ができたら再試行してください。"
+          }
+        }
+      }
+    },
+    "Timed out sending to host": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストへの送信がタイムアウトしました"
+          }
+        }
+      }
+    },
+    "To": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "宛先"
+          }
+        }
+      }
+    },
+    "Transferred · awaiting host acceptance": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "転送済み · ホストの受信確認を待っています"
+          }
+        }
+      }
+    },
+    "Transferring %lld%%": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "転送中 %lld%%"
+          }
+        }
+      }
+    },
+    "Try Again": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再試行"
+          }
+        }
+      }
+    },
+    "Turn on HTTPS certificates for your tailnet in the Tailscale admin console (DNS → HTTPS Certificates), then run:": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tailscaleの管理画面でtailnetのHTTPS証明書を有効にし（DNS → HTTPS Certificates）、次のコマンドを実行してください："
+          }
+        }
+      }
+    },
+    "Type a custom answer or pick an option": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回答を入力するか、選択肢を選んでください"
+          }
+        }
+      }
+    },
+    "Ultra": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最高"
+          }
+        }
+      }
+    },
+    "Unavailable": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "利用不可"
+          }
+        }
+      }
+    },
+    "Unpair…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ペアリングを解除…"
+          }
+        }
+      }
+    },
+    "Update %@ available": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新 %@ が利用可能です"
+          }
+        }
+      }
+    },
+    "Update %@ cannot replace installed version %@. Older or invalid release versions are not installed.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新 %@ はインストール済みのバージョン %@ を置き換えられません。古いバージョンや無効なリリースはインストールしません。"
+          }
+        }
+      }
+    },
+    "Update Yorozu to see this event": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このイベントを表示するにはYorozuを更新してください"
+          }
+        }
+      }
+    },
+    "Update failed: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新に失敗しました：%@"
+          }
+        }
+      }
+    },
+    "Update is waiting": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新を待機しています"
+          }
+        }
+      }
+    },
+    "Update needs attention": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新の確認が必要"
+          }
+        }
+      }
+    },
+    "Update postponed until %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@まで更新を延期"
+          }
+        }
+      }
+    },
+    "Update queued · %lld agents working": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新待ち · %lld個のエージェントが作業中"
+          }
+        }
+      }
+    },
+    "Update queued · 1 agent working": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新待ち · 1個のエージェントが作業中"
+          }
+        }
+      }
+    },
+    "Update required": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新が必要"
+          }
+        }
+      }
+    },
+    "Update required — see Settings": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新が必要です — 設定を確認してください"
+          }
+        }
+      }
+    },
+    "Update required: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新が必要です：%@"
+          }
+        }
+      }
+    },
+    "Update status": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新の状態"
+          }
+        }
+      }
+    },
+    "Update the host to send attachments larger than 384 KB. Your message is saved.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "384 KBを超える添付ファイルを送信するにはホストを更新してください。メッセージは保存されています。"
+          }
+        }
+      }
+    },
+    "Update waiting · checking agent status": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新待ち · エージェントの状態を確認中"
+          }
+        }
+      }
+    },
+    "Update waiting: could not save drafts. %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新待機中：下書きを保存できませんでした。%@"
+          }
+        }
+      }
+    },
+    "Updates": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新"
+          }
+        }
+      }
+    },
+    "Updates check quietly in the background.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックグラウンドで更新を確認します。"
+          }
+        }
+      }
+    },
+    "Updating models…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルを更新中…"
+          }
+        }
+      }
+    },
+    "Updating · waiting for Mac to restart": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新中 · Macの再起動を待っています"
+          }
+        }
+      }
+    },
+    "Use Yorozu here while a host Mac you already set up does the work. Needs only its pairing code.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定済みのホストMacで作業を実行し、このMacでYorozuを使います。ホストのペアリングコードだけで接続できます。"
+          }
+        }
+      }
+    },
+    "Use in new chat": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しい会話で使用"
+          }
+        }
+      }
+    },
+    "Use this agent for the draft": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このエージェントで下書きを作成"
+          }
+        }
+      }
+    },
+    "Use this agent for the session": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このセッションで使うエージェントを選択"
+          }
+        }
+      }
+    },
+    "Use this project folder for the draft": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このプロジェクトフォルダで下書きを作成"
+          }
+        }
+      }
+    },
+    "Used %lld times · last %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld回使用 · 最終使用：%2$@"
+          }
+        }
+      }
+    },
+    "Using %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@を使用中"
+          }
+        }
+      }
+    },
+    "Version": {
+      "extractionState": "stale",
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Versión"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バージョン"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "버전"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "版本"
+          }
+        }
+      }
+    },
+    "Wait for attachment download before sending.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添付ファイルのダウンロード完了後に送信してください。"
+          }
+        }
+      }
+    },
+    "Waiting": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待機中"
+          }
+        }
+      }
+    },
+    "Waiting for OpenClaw": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenClawを待っています"
+          }
+        }
+      }
+    },
+    "Waiting for a device": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "デバイスの接続待ち"
+          }
+        }
+      }
+    },
+    "Waiting for host update to transfer": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "転送するにはホストの更新を待ってください"
+          }
+        }
+      }
+    },
+    "Waiting for you to allow it in System Settings › General › Login Items.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "システム設定 › 一般 › ログイン項目で許可してください。"
+          }
+        }
+      }
+    },
+    "Waiting to transfer": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "転送待ち"
+          }
+        }
+      }
+    },
+    "Waiting…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待機中…"
+          }
+        }
+      }
+    },
+    "Where should %@ work?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@の作業場所は？"
+          }
+        }
+      }
+    },
+    "Which agent answers is set up on the host Mac.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "応答するエージェントはホストMacで設定します。"
+          }
+        }
+      }
+    },
+    "Which model?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルは？"
+          }
+        }
+      }
+    },
+    "Who should answer?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "誰に依頼しますか？"
+          }
+        }
+      }
+    },
+    "Withdrawal pending": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "送信の取り消しを確認中"
+          }
+        }
+      }
+    },
+    "Worked for %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@作業しました"
+          }
+        }
+      }
+    },
+    "Working": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "作業中"
+          }
+        }
+      }
+    },
+    "Working for %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@作業中"
+          }
+        }
+      }
+    },
+    "Yorozu Setup": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozuの設定"
+          }
+        }
+      }
+    },
+    "Yorozu will do this without asking, until you revoke the rule.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ルールを取り消すまで、Yorozuは確認せずにこの操作を行います。"
+          }
+        }
+      }
+    },
+    "Yorozu will remove pairing keys, counters, cached chats, and queued messages from this Mac.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMacからペアリング鍵、カウンター、キャッシュ済みチャット、待機中のメッセージを削除します。"
+          }
+        }
+      }
+    },
+    "Yorozu will restart after this Mac’s agents finish, any postponement expires, and the 10-second countdown completes.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMacのエージェントが終了し、延期期間と10秒のカウントダウンが完了すると、Yorozuが再起動します。"
+          }
+        }
+      }
+    },
+    "Yorozu, connected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozu、接続中"
+          }
+        }
+      }
+    },
+    "Yorozu, not connected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozu、未接続"
+          }
+        }
+      }
+    },
+    "Yorozu’s background service is restarting. A new code appears here when it’s back.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozuのバックグラウンドサービスを再起動しています。完了すると、ここに新しいコードが表示されます。"
+          }
+        }
+      }
+    },
+    "Yorozu’s background service stopped": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozuのバックグラウンドサービスが停止しました"
+          }
+        }
+      }
+    },
+    "You can change this later in Settings › General.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定 › 一般で後から変更できます。"
+          }
+        }
+      }
+    },
+    "You stopped after %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@経過後に停止しました"
+          }
+        }
+      }
+    },
+    "Your OpenClaw Yorozu plugin is out of date, so %@ are unavailable. Update the Yorozu plugin in OpenClaw.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenClawのYorozuプラグインが古いため、%@を利用できません。OpenClawでYorozuプラグインを更新してください。"
+          }
+        }
+      }
+    },
+    "Your answer is needed.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回答が必要です。"
+          }
+        }
+      }
+    },
+    "Your approval is needed.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "承認が必要です。"
+          }
+        }
+      }
+    },
+    "Your assistant on OpenClaw, with its own tools. Starts right away.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenClawで動くアシスタント。専用のツールを使い、すぐに始められます。"
+          }
+        }
+      }
+    },
+    "^[%lld approval](inflect: true) in the last month. Nothing is saved until you say so.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "先月%lld回承認しました。許可するまで保存されません。"
+          }
+        }
+      }
+    },
+    "^[%lld changed file](inflect: true)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld個の変更ファイル"
+          }
+        }
+      }
+    },
+    "^[%lld device](inflect: true) paired": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld台のデバイスをペアリング済み"
+          }
+        }
+      }
+    },
+    "^[%lld item](inflect: true) in this batch": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このバッチには%lld件あります"
+          }
+        }
+      }
+    },
+    "and %lld more": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ほか%lld件"
+          }
+        }
+      }
+    },
+    "attachments": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添付ファイル"
+          }
+        }
+      }
+    },
+    "changed %lld file": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld個のファイルを変更"
+          }
+        }
+      }
+    },
+    "changed %lld files": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld個のファイルを変更"
+          }
+        }
+      }
+    },
+    "delegated %lld task": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld個のタスクを委任"
+          }
+        }
+      }
+    },
+    "delegated %lld tasks": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld個のタスクを委任"
+          }
+        }
+      }
+    },
+    "iPad": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iPad"
+          }
+        }
+      }
+    },
+    "macOS could not enable notifications: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOSで通知を有効にできませんでした：%@"
+          }
+        }
+      }
+    },
+    "macOS will ask when you enable notifications.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知を有効にすると、macOSが許可を求めます。"
+          }
+        }
+      }
+    },
+    "model picker": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルの選択"
+          }
+        }
+      }
+    },
+    "offline": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オフライン"
+          }
+        }
+      }
+    },
+    "online": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オンライン"
+          }
+        }
+      }
+    },
+    "progress": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "進捗"
+          }
+        }
+      }
+    },
+    "ran %lld command": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld個のコマンドを実行"
+          }
+        }
+      }
+    },
+    "ran %lld commands": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld個のコマンドを実行"
+          }
+        }
+      }
+    },
+    "searched %lld time": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld回検索"
+          }
+        }
+      }
+    },
+    "searched %lld times": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld回検索"
+          }
+        }
+      }
+    },
+    "unknown": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不明"
+          }
+        }
+      }
+    },
+    "unreadable key": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "鍵を読み取れません"
+          }
+        }
+      }
+    },
+    "until %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@まで"
+          }
+        }
+      }
+    },
+    "used %lld tool": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld個のツールを使用"
+          }
+        }
+      }
+    },
+    "used %lld tools": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld個のツールを使用"
+          }
+        }
+      }
+    },
+    "working state and Stop": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "作業状態の表示と停止"
+          }
+        }
+      }
+    },
+    "· %lld of %lld": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "・%lld／%lld"
+          }
+        }
+      }
+    },
+    "⌘ Enter": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌘ Enter"
+          }
+        }
+      }
+    },
+    "⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌘ Enterで送信方法を切り替えます。⌘ Shift Enterで待機中の次のメッセージを今すぐ送信します。"
+          }
+        }
+      }
+    },
+    "⌥ ⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ ⌘ Enterで送信方法を切り替えます。⌘ Shift Enterで待機中の次のメッセージを今すぐ送信します。"
+          }
+        }
+      }
+    },
+    "Already connected. Choose Repair connection to pair this host again.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続済みです。このホストと再度ペアリングするには「接続を修復」を選んでください。"
+          }
+        }
+      }
+    },
+    "Chat is available. Update Yorozu on your Mac for newer features.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "チャットを利用できます。新しい機能を利用するにはMacのYorozuを更新してください。"
+          }
+        }
+      }
+    },
+    "Chat is available. Update this Mac to share its computer name and newer features.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "チャットを利用できます。コンピュータ名や新しい機能を利用するには、このMacを更新してください。"
+          }
+        }
+      }
+    },
+    "Compatible": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "互換性あり"
+          }
+        }
+      }
+    },
+    "Compatible legacy host": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "対応する旧バージョンのホスト"
+          }
+        }
+      }
+    },
+    "Computer name": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コンピュータ名"
+          }
+        }
+      }
+    },
+    "Connect another Mac.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "別のMacを接続します。"
+          }
+        }
+      }
+    },
+    "Could not migrate existing pairing. Restart Yorozu before adding a host.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "既存のペアリングを移行できませんでした。ホストを追加する前にYorozuを再起動してください。"
+          }
+        }
+      }
+    },
+    "Could not migrate pending shares. Restart Yorozu to retry.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "送信待ちの共有を移行できませんでした。Yorozuを再起動して再試行してください。"
+          }
+        }
+      }
+    },
+    "Could not save this host’s notification preview key.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このホストの通知プレビュー用キーを保存できませんでした。"
+          }
+        }
+      }
+    },
+    "Don't allow": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "許可しない"
+          }
+        }
+      }
+    },
+    "Don’t have the Mac app yet? Get it": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Macアプリをお持ちでない場合はこちら"
+          }
+        }
+      }
+    },
+    "Mac version": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Macのバージョン"
+          }
+        }
+      }
+    },
+    "Nickname is stored on this device. Clear it to use the Mac's computer name.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ニックネームはこのデバイスに保存されます。空欄にするとMacのコンピュータ名を表示します。"
+          }
+        }
+      }
+    },
+    "Open Yorozu from your Home Screen.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abre Yorozu desde la pantalla de inicio."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホーム画面からYorozuを開きます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "홈 화면에서 Yorozu를 엽니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从主屏幕打开 Yorozu。"
+          }
+        }
+      }
+    },
+    "Open Yorozu on your Mac": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MacでYorozuを開く"
+          }
+        }
+      }
+    },
+    "Paste the code shown in Yorozu on your host Mac.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストのMacでYorozuに表示されるコードを貼り付けてください。"
+          }
+        }
+      }
+    },
+    "Protocol": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロトコル"
+          }
+        }
+      }
+    },
+    "Provider marks": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供元のマーク"
+          }
+        }
+      }
+    },
+    "Remove %@?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@を削除しますか？"
+          }
+        }
+      }
+    },
+    "Remove connection": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続を削除"
+          }
+        }
+      }
+    },
+    "Remove connection?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続を削除しますか？"
+          }
+        }
+      }
+    },
+    "Remove host": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストを削除"
+          }
+        }
+      }
+    },
+    "Scan a code from a Mac you trust. Pairing codes are secret.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "信頼するMacのコードをスキャンしてください。ペアリングコードは他人に教えないでください。"
+          }
+        }
+      }
+    },
+    "Scan a new pairing code from this host Mac to repair its connection.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このホストのMacで新しいペアリングコードを作成し、スキャンして接続を修復してください。"
+          }
+        }
+      }
+    },
+    "Scan the code, or paste it here": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コードをスキャン、またはここに貼り付け"
+          }
+        }
+      }
+    },
+    "This host is being updated. Try again when it finishes.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このホストは更新中です。更新完了後に再試行してください。"
+          }
+        }
+      }
+    },
+    "This removes pairing keys, cached chats, queued sends, and notifications from this device. Scan a new pairing code to connect again.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ペアリングキー、保存済みの会話、送信待ちのメッセージ、通知をこのデバイスから削除します。再接続するには新しいペアリングコードをスキャンしてください。"
+          }
+        }
+      }
+    },
+    "This removes this host's keys, cached chats, queued sends, and notifications from this device. Scan a new pairing code to connect again.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このホストのキー、保存済みの会話、送信待ちのメッセージ、通知をこのデバイスから削除します。再接続するには新しいペアリングコードをスキャンしてください。"
+          }
+        }
+      }
+    },
+    "Uses each agent’s approval settings.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "各エージェントの承認設定を使用します。"
+          }
+        }
+      }
+    },
+    "Your Mac": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自分のMac"
+          }
+        }
+      }
+    },
+    "Add this Mac to Yorozu?\n\nRelay: %@\nMac key: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMacをYorozuに追加しますか？\n\nリレー：%1$@\nMacのキー：%2$@"
+          }
+        }
+      }
+    },
+    "This Mac is already paired. Repair replaces only its connection.\n\nRelay: %@\nMac key: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMacはペアリング済みです。修復すると接続だけが置き換わります。\n\nリレー：%1$@\nMacのキー：%2$@"
+          }
+        }
+      }
+    },
+    "Host compatibility has not been established": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストとの互換性を確認できていません"
+          }
+        }
+      }
+    },
+    "Host connection is closed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストとの接続が終了しています"
+          }
+        }
+      }
+    },
+    "Mac has not answered pairing": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Macからペアリングの応答がありません"
+          }
+        }
+      }
+    },
+    "Mac public key is not base64url": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Macの公開キーがbase64url形式ではありません"
+          }
+        }
+      }
+    },
+    "QR payload carries no room ID": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "QRコードにルームIDがありません"
+          }
+        }
+      }
+    },
+    "ciphertext too short": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暗号化データが短すぎます"
+          }
+        }
+      }
+    },
+    "envelope seq out of range": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通信データの連番が範囲外です"
+          }
+        }
+      }
+    },
+    "host nickname is too long": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストのニックネームが長すぎます"
+          }
+        }
+      }
+    },
+    "invalid Mac key": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Macのキーが無効です"
+          }
+        }
+      }
+    },
+    "legacy pairing conflicts with existing host": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旧バージョンのペアリングが既存のホストと競合しています"
+          }
+        }
+      }
+    },
+    "legacy thread cache key conflicts with host": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旧バージョンの会話キャッシュ用キーがホストと競合しています"
+          }
+        }
+      }
+    },
+    "legacy thread cache key is unavailable": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旧バージョンの会話キャッシュ用キーを取得できません"
+          }
+        }
+      }
+    },
+    "not a Yorozu v1 pairing string": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozu v1のペアリングコードではありません"
+          }
+        }
+      }
+    },
+    "not connected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続されていません"
+          }
+        }
+      }
+    },
+    "relay URL is not a websocket URL": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リレーのURLがWebSocket形式ではありません"
+          }
+        }
+      }
+    },
+    "remove the pairing to clear channel counters": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通信カウンターを消去するにはペアリングを削除してください"
+          }
+        }
+      }
+    },
+    "stored Mac public key is invalid": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存されたMacの公開キーが無効です"
+          }
+        }
+      }
+    },
+    "stored channel counter is unreadable": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存された通信カウンターを読み取れません"
+          }
+        }
+      }
+    },
+    "thread cache key is invalid": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "会話キャッシュ用キーが無効です"
+          }
+        }
+      }
+    },
+    "This is a demo, so no agent is connected. Pair Yorozu with the free Mac app at yorozu.yumi.to to talk to OpenClaw, Claude Code or Codex on your own Mac.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "これはデモのため、エージェントには接続されていません。yorozu.yumi.toの無料MacアプリでYorozuをペアリングすると、自分のMacのOpenClaw、Claude Code、Codexと会話できます。"
+          }
+        }
+      }
+    },
+    "A replay-protected channel is required. Update Yorozu on the host Mac.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再送攻撃から保護された通信が必要です。ホストのMacでYorozuを更新してください。"
+          }
+        }
+      }
+    },
+    "Answered: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回答済み：%@"
+          }
+        }
+      }
+    },
+    "For this task": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このタスクで許可"
+          }
+        }
+      }
+    },
+    "Invalid peer information. Update Yorozu on this device and its host Mac.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続先の情報が無効です。このデバイスとホストのMacでYorozuを更新してください。"
+          }
+        }
+      }
+    },
+    "This host no longer advertises required protocol support. Update Yorozu on the host Mac.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このホストは必要な通信プロトコルに対応していません。ホストのMacでYorozuを更新してください。"
+          }
+        }
+      }
+    },
+    "host handshake timed out": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストとの接続確認がタイムアウトしました"
+          }
+        }
+      }
+    },
+    "relay connection timed out": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リレーへの接続がタイムアウトしました"
+          }
+        }
+      }
+    },
+    "%lldd": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld日"
+          }
+        }
+      }
+    },
+    "%lldh": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld時間"
+          }
+        }
+      }
+    },
+    "%lldm": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld分"
+          }
+        }
+      }
+    },
+    "%lldmo": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lldか月"
+          }
+        }
+      }
+    },
+    "%llds": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld秒"
+          }
+        }
+      }
+    },
+    "%lldw": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld週間"
+          }
+        }
+      }
+    },
+    "1m %llds": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1分%lld秒"
+          }
+        }
+      }
+    },
+    "Update Yorozu on this device and its host Mac: a required security or protocol capability is unavailable.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このデバイスとホストのMacでYorozuを更新してください。必要なセキュリティまたは通信プロトコルの機能を利用できません。"
+          }
+        }
+      }
+    },
+    "Update Yorozu on this device and its host Mac: protocol versions do not overlap.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このデバイスとホストのMacでYorozuを更新してください。対応する通信プロトコルのバージョンが異なります。"
+          }
+        }
+      }
+    },
+    "%@ · %lld failed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · %2$lld件失敗"
+          }
+        }
+      }
+    },
+    "%@ · awaiting approval": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · 承認待ち"
+          }
+        }
+      }
+    },
+    "%@ · working…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · 作業中…"
+          }
+        }
+      }
+    },
+    "%lld of %lld steps done": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$lldステップ中%1$lldステップ完了"
+          }
+        }
+      }
+    },
+    "failed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "失敗"
+          }
+        }
+      }
+    },
+    "finished": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完了"
+          }
+        }
+      }
+    },
+    "Used %lld time · last %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld回使用 · 最終使用：%2$@"
+          }
+        }
+      }
+    },
+    "New chat": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "New chat" } },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しいチャット"
+          }
+        }
+      }
+    },
+    "Allow once": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今回だけ許可"
+          }
+        }
+      }
+    },
+    "Always allow": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "常に許可"
+          }
+        }
+      }
+    },
+    "Choose a host": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストを選択"
+          }
+        }
+      }
+    },
+    "Close model and effort": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルと推論の強度を閉じる"
+          }
+        }
+      }
+    },
+    "If Yorozu doesn’t open, open the app to finish sending. Shares wait for your Mac to reconnect.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozuが開かない場合は、アプリを開いて送信を完了してください。共有内容はMacの再接続を待ちます。"
+          }
+        }
+      }
+    },
+    "New rule": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しいルール"
+          }
+        }
+      }
+    },
+    "Nothing here Yorozu can carry, but a note on its own is a message.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozuで送れる内容がありません。メモだけでもメッセージとして送信できます。"
+          }
+        }
+      }
+    },
+    "Open Yorozu to connect a host before sharing.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "共有する前にYorozuを開いてホストを接続してください。"
+          }
+        }
+      }
+    },
+    "Paste": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "貼り付け"
+          }
+        }
+      }
+    },
+    "Picture": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画像"
+          }
+        }
+      }
+    },
+    "Settings › Devices › Pair Another Device": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定 › デバイス › 別のデバイスをペアリング"
+          }
+        }
+      }
+    },
+    "Take Photo": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真を撮る"
+          }
+        }
+      }
+    },
+    "That picture is over %lld MB. Send it from the app instead.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この画像は%lld MBを超えています。アプリから送信してください。"
+          }
+        }
+      }
+    },
+    "Until %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@まで"
+          }
+        }
+      }
+    },
+    "Version %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バージョン %@"
+          }
+        }
+      }
     }
   }
 }

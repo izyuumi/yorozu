@@ -463,7 +463,31 @@ public func chatRows(from events: [YorozuEvent], generating: Bool = false, activ
         }
         rows[index] = .work(current)
     }
-    return rows
+    // Live work follows this turn's latest reply. Once the host settles the turn, the
+    // original order puts its activity history back above the reply. Never move work
+    // across a later user request or an unreadable conversation boundary.
+    var rendered: [ChatRow] = []
+    var liveWork: [ChatRow] = []
+    for row in rows {
+        switch row {
+        case .work(let work) where work.running:
+            liveWork.append(row)
+            continue
+        case .message(let event):
+            if case .message(let data) = event.payload, data.role == .user {
+                rendered.append(contentsOf: liveWork)
+                liveWork.removeAll(keepingCapacity: true)
+            }
+        case .unreadable:
+            rendered.append(contentsOf: liveWork)
+            liveWork.removeAll(keepingCapacity: true)
+        default:
+            break
+        }
+        rendered.append(row)
+    }
+    rendered.append(contentsOf: liveWork)
+    return rendered
 }
 
 /// One short line for a trace row — `path=/tmp/x, depth=2` — clipped so a pasted file cannot
@@ -504,6 +528,17 @@ public struct ToolActivity: Identifiable, Equatable, Sendable {
     public enum Status: String, Sendable {
         case pending = "Pending", running = "Running", awaitingApproval = "Awaiting approval"
         case completed = "Completed", failed = "Failed", denied = "Denied"
+
+        public var label: String {
+            switch self {
+            case .pending: String(localized: "Pending")
+            case .running: String(localized: "Running")
+            case .awaitingApproval: String(localized: "Awaiting approval")
+            case .completed: String(localized: "Completed")
+            case .failed: String(localized: "Failed")
+            case .denied: String(localized: "Denied")
+            }
+        }
     }
 
     public var callId: String
@@ -546,12 +581,12 @@ public struct ToolActivity: Identifiable, Equatable, Sendable {
     public var currentAction: String {
         let path = args["file_path"]?.compact ?? args["path"]?.compact ?? name
         switch actionKind {
-        case .read: return "Reading \(path)"
-        case .edit: return "Changing \(path)"
-        case .command: return "Running \(args["command"]?.compact ?? args["cmd"]?.compact ?? name)"
-        case .search: return "Searching \(args["pattern"]?.compact ?? args["query"]?.compact ?? name)"
-        case .delegation: return "Delegating \(name)"
-        case .other: return "Using \(name)"
+        case .read: return String(localized: "Reading \(path)")
+        case .edit: return String(localized: "Changing \(path)")
+        case .command: return String(localized: "Running \(args["command"]?.compact ?? args["cmd"]?.compact ?? name)")
+        case .search: return String(localized: "Searching \(args["pattern"]?.compact ?? args["query"]?.compact ?? name)")
+        case .delegation: return String(localized: "Delegating \(name)")
+        case .other: return String(localized: "Using \(name)")
         }
     }
 
@@ -685,12 +720,12 @@ public func toolSummary(_ activities: [ToolActivity]) -> String {
         let count = activities.filter { $0.actionKind == kind }.count
         guard count > 0 else { return nil }
         switch kind {
-        case .read: return "Read \(count) \(count == 1 ? "file" : "files")"
-        case .command: return "ran \(count) \(count == 1 ? "command" : "commands")"
-        case .edit: return "changed \(count) \(count == 1 ? "file" : "files")"
-        case .search: return "searched \(count) \(count == 1 ? "time" : "times")"
-        case .delegation: return "delegated \(count) \(count == 1 ? "task" : "tasks")"
-        case .other: return "used \(count) \(count == 1 ? "tool" : "tools")"
+        case .read: return count == 1 ? String(localized: "Read \(count) file") : String(localized: "Read \(count) files")
+        case .command: return count == 1 ? String(localized: "ran \(count) command") : String(localized: "ran \(count) commands")
+        case .edit: return count == 1 ? String(localized: "changed \(count) file") : String(localized: "changed \(count) files")
+        case .search: return count == 1 ? String(localized: "searched \(count) time") : String(localized: "searched \(count) times")
+        case .delegation: return count == 1 ? String(localized: "delegated \(count) task") : String(localized: "delegated \(count) tasks")
+        case .other: return count == 1 ? String(localized: "used \(count) tool") : String(localized: "used \(count) tools")
         }
     }.joined(separator: ", ")
 }

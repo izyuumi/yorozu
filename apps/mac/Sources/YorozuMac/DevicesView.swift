@@ -31,9 +31,9 @@ struct DevicesView: View {
                         Image(systemName: isMac(device) ? "laptopcomputer" : device.name?.hasPrefix("iPadOS") == true ? "ipad" : "iphone")
                             .foregroundStyle(.secondary)
                             .frame(width: 20)
-                            .accessibilityLabel(isMac(device) ? "Mac" : device.name?.hasPrefix("iPadOS") == true ? "iPad" : "Phone")
+                            .accessibilityLabel(isMac(device) ? String(localized: "Mac") : device.name?.hasPrefix("iPadOS") == true ? String(localized: "iPad") : String(localized: "Phone"))
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(device.via == .local ? "This Mac" : device.name ?? device.shortId)
+                            Text(device.via == .local ? String(localized: "This Mac") : device.name ?? device.shortId)
                                 .font(.scaled(.body))
                             Button {
                                 if !expandedDeviceIDs.insert(device.pub).inserted {
@@ -64,7 +64,7 @@ struct DevicesView: View {
                         Circle()
                             .fill(device.online ? YorozuPalette.sage : Color.secondary.opacity(0.4))
                             .frame(width: 8, height: 8)
-                            .accessibilityLabel(device.online ? "online" : "offline")
+                            .accessibilityLabel(device.online ? String(localized: "online") : String(localized: "offline"))
                         if removable(device) {
                             Button("Remove…", role: .destructive) { confirmingRemoval = device }
                                 .accessibilityLabel("Remove device \(device.shortId)")
@@ -126,13 +126,13 @@ struct DevicesView: View {
     }
 
     private func subtitle(_ device: DeviceInfo) -> String {
-        if device.via == .local { return "Connected locally" }
+        if device.via == .local { return String(localized: "Connected locally") }
         let status: String
-        if device.online { status = "Online now" }
+        if device.online { status = String(localized: "Online now") }
         else if device.lastSeen > 0 {
             let seen = Date(timeIntervalSince1970: device.lastSeen / 1000)
-            status = "Last seen \(seen.formatted(.relative(presentation: .named)))"
-        } else { status = "Paired" }
+            status = String(localized: "Last seen \(seen.formatted(.relative(presentation: .named)))")
+        } else { status = String(localized: "Paired") }
         return device.name == nil ? status : "\(status) · \(device.shortId)"
     }
 }
@@ -223,7 +223,7 @@ struct PairingSheet: View {
                                     .font(.scaled(.callout))
                                     .multilineTextAlignment(.center)
                             }
-                            Text(sidecar.state)
+                            Text(sidecar.displayStatus)
                                 .font(.scaled(.caption)).foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
                         }

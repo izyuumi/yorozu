@@ -16,6 +16,7 @@ public struct NewThreadPicker: View {
     private let fallbackRefresh: (() async -> Void)?
     private let fallbackAgents: [AgentDescriptor]
     private let onStart: (ThreadAgent, String?) -> Void
+    private let folderAgent: ThreadAgent?
     private let session: MultiHostModel?
     private let draftID: HostThreadID?
     private let onHostStart: ((HostThreadID) -> Void)?
@@ -29,6 +30,7 @@ public struct NewThreadPicker: View {
         projects: [ProjectFolder],
         agents: [AgentDescriptor]? = nil,
         status: ProjectListStatus = .ready,
+        folderAgent: ThreadAgent? = nil,
         onRefresh: (() async -> Void)? = nil,
         onStart: @escaping (ThreadAgent, String?) -> Void
     ) {
@@ -37,6 +39,7 @@ public struct NewThreadPicker: View {
         self.fallbackStatus = status
         self.fallbackRefresh = onRefresh
         self.onStart = onStart
+        self.folderAgent = folderAgent
         self.session = nil
         self.draftID = nil
         self.onHostStart = nil
@@ -50,6 +53,7 @@ public struct NewThreadPicker: View {
         self.fallbackStatus = .ready
         self.fallbackRefresh = nil
         self.onStart = { _, _ in }
+        self.folderAgent = nil
         self.session = session
         self.draftID = draftID
         self.onHostStart = onStart
@@ -110,8 +114,10 @@ public struct NewThreadPicker: View {
 
     public var body: some View {
         NavigationStack(path: $path) {
-            runtimes
-                .navigationTitle("Choose agent")
+            Group {
+                if let folderAgent { folders(for: folderAgent) } else { runtimes }
+            }
+                .navigationTitle(folderAgent.map(label) ?? String(localized: "Choose agent"))
                 #if os(iOS)
                     .navigationBarTitleDisplayMode(.inline)
                 #endif
@@ -266,7 +272,7 @@ public struct NewThreadPicker: View {
             // A sheet on the Mac has no toolbar for the stack's own back button.
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Back") { path.removeLast() }
+                    if folderAgent == nil { Button("Back") { path.removeLast() } }
                 }
             }
         #endif

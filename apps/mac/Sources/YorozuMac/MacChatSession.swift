@@ -89,9 +89,9 @@ final class MacChatSession {
         case alreadyConnected, unknownHost, changingConnection
         var errorDescription: String? {
             switch self {
-            case .alreadyConnected: "Already connected. Choose Repair connection to replace this host’s connection."
-            case .unknownHost: "This host is no longer paired."
-            case .changingConnection: "This host’s connection is already changing. Try again when it finishes."
+            case .alreadyConnected: String(localized: "Already connected. Choose Repair connection to replace this host’s connection.")
+            case .unknownHost: String(localized: "This host is no longer paired.")
+            case .changingConnection: String(localized: "This host’s connection is already changing. Try again when it finishes.")
             }
         }
     }
@@ -254,7 +254,7 @@ final class MacChatSession {
         }
         do { local = try Self.localModel() }
         catch {
-            failure = "Could not open encrypted local cache: \(error.localizedDescription)"
+            failure = String(localized: "Could not open encrypted local cache: \(error.localizedDescription)")
             Log.write(failure!)
             local = Self.idleModel()
             return

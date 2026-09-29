@@ -37,7 +37,7 @@ private actor DemoTransport: ChatTransport {
                 agentId: "main",
                 payload: .message(MessageData(
                     role: .agent,
-                    text: "This is a demo, so no agent is connected. Pair Yorozu with the free Mac app at yorozu.yumi.to to talk to OpenClaw, Claude Code or Codex on your own Mac.",
+                    text: String(localized: "This is a demo, so no agent is connected. Pair Yorozu with the free Mac app at yorozu.yumi.to to talk to OpenClaw, Claude Code or Codex on your own Mac."),
                     done: true
                 ))
             )))
@@ -202,7 +202,7 @@ final class Session {
                 NotificationPreview.migrateLegacyKey(to: legacyHostID)
                 if let directory = ShareBox.directory(),
                    !ShareBox.migrateLegacy(to: ShareHost(id: legacyHostID, label: "Mac · \(String(legacyHostID.prefix(12)))"), in: directory) {
-                    throw YorozuCrypto.CryptoError.malformed("Could not migrate pending shares. Restart Yorozu to retry.")
+                    throw YorozuCrypto.CryptoError.malformed(String(localized: "Could not migrate pending shares. Restart Yorozu to retry."))
                 }
             }
             try PairingStore.migrateLegacy()
@@ -255,7 +255,7 @@ final class Session {
     func pair(with text: String) throws {
         guard !migrationFailed else { throw PairingFailure.migration }
         let payload = try QrPayload.decode(text)
-        guard let payloadHostID = payload.hostID else { throw YorozuCrypto.CryptoError.malformed("invalid Mac key") }
+        guard let payloadHostID = payload.hostID else { throw YorozuCrypto.CryptoError.malformed(String(localized: "invalid Mac key")) }
         guard !changingHosts.contains(payloadHostID) else { throw PairingFailure.busy }
         if let existing = PairingStore.loadAll().first(where: { $0.hostID == payloadHostID || $0.pairing.macPubkey == payload.macPubkey }) {
             pendingPairing = pending(code: text, payload: payload, existingHostID: existing.hostID)
@@ -933,18 +933,18 @@ struct PairingConfirmation: ViewModifier {
     var enabled = true
 
     func body(content: Content) -> some View {
-        content.alert(session.pendingPairing?.existingHostID == nil ? "Add host?" : "Already connected",
+        content.alert(session.pendingPairing?.existingHostID == nil ? String(localized: "Add host?") : String(localized: "Already connected"),
             isPresented: Binding(get: { enabled && session.pendingPairing != nil },
                                  set: { if !$0 && enabled { session.cancelPendingPairing() } }),
             presenting: session.pendingPairing) { pending in
-                Button(pending.existingHostID == nil ? "Add host" : "Repair connection") {
+                Button(pending.existingHostID == nil ? String(localized: "Add host") : String(localized: "Repair connection")) {
                     Task { await session.confirmPairing(pending) }
                 }
                 Button("Cancel", role: .cancel) { session.cancelPendingPairing() }
             } message: { pending in
                 Text(pending.existingHostID == nil
-                    ? "Add this Mac to Yorozu?\n\nRelay: \(pending.relayHost)\nMac key: \(pending.macKeyFingerprint)"
-                    : "This Mac is already paired. Repair replaces only its connection.\n\nRelay: \(pending.relayHost)\nMac key: \(pending.macKeyFingerprint)")
+                    ? String(localized: "Add this Mac to Yorozu?\n\nRelay: \(pending.relayHost)\nMac key: \(pending.macKeyFingerprint)")
+                    : String(localized: "This Mac is already paired. Repair replaces only its connection.\n\nRelay: \(pending.relayHost)\nMac key: \(pending.macKeyFingerprint)"))
             }
     }
 }

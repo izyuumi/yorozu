@@ -90,12 +90,16 @@ export interface AttachmentDownloadChunkData {
 }
 
 export interface MessageData {
+  /** Triggering user message for a durable negotiated channel answer. */
+  replyTo?: string;
   /** Requested delivery on submission; effective delivery in the host echo. */
   delivery?: MessageDelivery;
   /** First channel message: confirm this session override before delivery. Empty means Default. */
   channelModel?: ChannelModelChoice;
   role: "user" | "agent";
   text: string;
+  /** Host-ordered snapshot version: nonnegative safe integer, independent of placement timestamp. */
+  streamRevision?: number;
   /**
    * Set on the last message of a turn — a delegated agent's, so the phone's inline card for
    * that delegation stops spinning, and the main agent's, so the composer stops offering Stop.

@@ -34,8 +34,8 @@ extension Image {
 /// One message in a thread. The user's is drawn as they typed it — plain text, right-aligned,
 /// tinted — and the agent's is rendered Markdown, because that is what models reply in.
 ///
-/// A separate menu offers message actions on both platforms, without taking over native text
-/// selection. Every message is always shown in full.
+/// User bubbles copy as a whole through their context menu. Replies keep native text selection
+/// and offer actions separately. Every message is always shown in full.
 public struct MessageBubble: View {
     /// The event id, which is what says whether this is the bubble being read aloud.
     private let id: String
@@ -110,6 +110,14 @@ public struct MessageBubble: View {
 
     private var speaking: Bool { Speaker.shared.speakingId == id && !id.isEmpty }
 
+    private var copyLabel: String {
+        copied ? String(localized: "Copied message") : String(localized: "Copy message")
+    }
+
+    private var speechLabel: String {
+        speaking ? String(localized: "Stop reading aloud") : String(localized: "Listen to reply")
+    }
+
     /// The one link worth previewing, and only under a reply: what the user typed is their own
     /// text and is not decorated back at them.
     private var link: URL? { isUser ? nil : firstLink(in: data.text) }
@@ -178,10 +186,10 @@ public struct MessageBubble: View {
                     #else
                         inlineActions
                     #endif
-                    if !isUser { Spacer(minLength: 0) }
                     messageActions
+                    if !isUser { Spacer(minLength: 0) }
                 }
-                .frame(maxWidth: bubbleMaxWidth, alignment: .trailing)
+                .frame(maxWidth: bubbleMaxWidth, alignment: isUser ? .trailing : .leading)
             }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
@@ -200,12 +208,10 @@ public struct MessageBubble: View {
         }
         #if os(macOS)
             .onHover { hovering = $0 }
-            // Mac only: on the phone the long press belongs to text selection.
-            .contextMenu { actions }
         #endif
     }
 
-    /// The explicit menu and the Mac's contextual menu share the same available actions.
+    /// The explicit menu keeps secondary actions available without taking over selection.
     @ViewBuilder private var actions: some View {
         if copyAvailable, !data.text.isEmpty, !streaming {
             Button("Copy", systemImage: "doc.on.doc") { copy() }
@@ -213,11 +219,7 @@ public struct MessageBubble: View {
         if !isUser, !id.isEmpty, !data.text.isEmpty {
             // One utterance at a time, so this is a toggle rather than a second voice.
             Button(speaking ? String(localized: "Stop") : String(localized: "Listen"), systemImage: speaking ? "stop" : "speaker.wave.2") {
-                if speaking {
-                    Speaker.shared.stop()
-                } else {
-                    Speaker.shared.speak(data.text, id: id)
-                }
+                toggleSpeaking()
             }
         }
         if onEditFromHere != nil {
@@ -237,41 +239,55 @@ public struct MessageBubble: View {
             // would promise something this button cannot do.
             Button("Remove from this device", systemImage: "trash", role: .destructive, action: onDelete)
         }
+        if let timestamp, timestamp > 0 {
+            Text(Date(timeIntervalSince1970: Double(timestamp) / 1000)
+                .formatted(date: .omitted, time: .shortened))
+        }
     }
 
     @ViewBuilder private var inlineActions: some View {
         Group {
             if copyAvailable, !data.text.isEmpty, !streaming {
                 Button { copy() } label: {
-                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                        .frame(minHeight: controlTarget)
+                    Label(copied ? String(localized: "Copied") : String(localized: "Copy"),
+                          systemImage: copied ? "checkmark" : "doc.on.doc")
+                        .frame(minWidth: controlTarget, minHeight: controlTarget)
                         .contentShape(.rect)
                 }
-                .accessibilityLabel(copied ? "Copied message" : "Copy message")
+                .accessibilityLabel(copyLabel)
+                .help(copyLabel)
             }
             if isUser, onEditFromHere != nil {
                 Button { confirmingEdit = true } label: {
                     Label("Edit from here", systemImage: "pencil")
-                        .frame(minHeight: controlTarget)
+                        .frame(minWidth: controlTarget, minHeight: controlTarget)
                         .contentShape(.rect)
                 }
                 .disabled(!editFromHereEnabled)
+                .help("Edit from here")
             }
             if !isUser, !streaming, let onRetry {
                 Button(action: onRetry) {
                     Label("Retry", systemImage: "arrow.clockwise")
-                        .frame(minHeight: controlTarget)
+                        .frame(minWidth: controlTarget, minHeight: controlTarget)
                         .contentShape(.rect)
                 }
-                    .accessibilityLabel("Retry reply")
+                .accessibilityLabel("Retry reply")
+                .help("Retry reply")
             }
-            if !isUser, !streaming, let timestamp, timestamp > 0 {
-                Text(Date(timeIntervalSince1970: Double(timestamp) / 1000)
-                    .formatted(date: .omitted, time: .shortened))
+            if !isUser, !id.isEmpty, !data.text.isEmpty {
+                Button(action: toggleSpeaking) {
+                    Label(speaking ? String(localized: "Stop") : String(localized: "Listen"),
+                          systemImage: speaking ? "stop" : "speaker.wave.2")
+                        .frame(minWidth: controlTarget, minHeight: controlTarget)
+                        .contentShape(.rect)
+                }
+                .accessibilityLabel(speechLabel)
+                .help(speechLabel)
             }
         }
         .font(.scaled(.caption))
-        .labelStyle(.titleAndIcon)
+        .labelStyle(.iconOnly)
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
     }
@@ -281,9 +297,14 @@ public struct MessageBubble: View {
         copied = true
     }
 
+    private func toggleSpeaking() {
+        if speaking { Speaker.shared.stop() }
+        else { Speaker.shared.speak(data.text, id: id) }
+    }
+
     private var messageActions: some View {
         Menu { actions } label: {
-            Image(systemName: "ellipsis.circle")
+            Image(systemName: "ellipsis")
                 .font(.scaled(.body))
                 .frame(minWidth: controlTarget, minHeight: controlTarget)
                 .contentShape(.rect)
@@ -353,7 +374,19 @@ public struct MessageBubble: View {
         }
     }
 
-    private var bubble: some View {
+    @ViewBuilder private var bubble: some View {
+        if isUser {
+            bubbleContent.contextMenu {
+                if copyAvailable, !data.text.isEmpty, !streaming {
+                    Button("Copy", systemImage: "doc.on.doc") { copy() }
+                }
+            }
+        } else {
+            bubbleContent
+        }
+    }
+
+    private var bubbleContent: some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
             // Never shorter than the text: a hosted cell on the phone can propose less height
             // than a long reply needs, and `Text` answers that by cutting lines with "…".
@@ -394,7 +427,11 @@ public struct MessageBubble: View {
     }
 
     @ViewBuilder private var text: some View {
-        MarkdownText(data.text, cursor: streaming).textSelection(.enabled)
+        if isUser {
+            Text(verbatim: data.text).font(.scaled(.body))
+        } else {
+            MarkdownText(data.text, cursor: streaming).textSelection(.enabled)
+        }
     }
 }
 

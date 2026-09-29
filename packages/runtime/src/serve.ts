@@ -694,7 +694,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   type TurnState = "idle" | "starting" | "running" | "stopping" | "stopped-unconfirmed";
   const turnStates = new Map<string, { state: TurnState; activeEventId?: string; queued: string[] }>();
   const channelRuns = new Map<string, { threadId: string; status?: RunStatus; replied?: boolean;
-    calls?: Set<string>; results?: Set<string> }>();
+    calls?: Set<string>; results?: Set<string>; replyDraft?: Extract<YorozuEvent, { kind: "message" }> }>();
   const pendingChanges = new Map<string, Promise<void>>();
   const workingThreadIds = (): string[] =>
     [...turnStates].filter(([, turn]) => turn.state !== "idle").map(([id]) => id);
@@ -1328,7 +1328,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }) } });
   };
   const broadcastActiveThreadList = (): void => {
-    for (const id of liveReplies.keys()) if (!running.has(id)) liveReplies.delete(id);
+    for (const id of liveReplies.keys()) if (!running.has(id) && (turnStates.get(id)?.state ?? "idle") === "idle") liveReplies.delete(id);
     if (locals.size || [...devices.values()].some((device) => device.compatibility?.state === "compatible" &&
         (device.compatibility.capabilities.includes("exact-stop-v1") ||
           device.compatibility.capabilities.includes("turn-state-v1")))) broadcast(threadList());
@@ -1421,7 +1421,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const effortsFor = (agent: ThreadAgent, model: string | undefined): ReasoningEffort[] =>
     (modelsFor(agent).find((m) => m.id === model) ?? modelsFor(agent)[0])?.efforts ?? [];
   /** What plugins can do, in the order clients name what is missing. */
-  const CHANNEL_CAPABILITIES = ["run-boundary-v1", "progress-v1", "model-select-v1", "media-v1"];
+  const CHANNEL_CAPABILITIES = ["run-boundary-v1", "progress-v1", "model-select-v1", "media-v1", "reply-stream-v1"];
   /**
    * What the connected plugin announced, then `missing:<capability>` for each it did not, so a
    * client can tell an outdated plugin (some `missing:`) from no plugin (empty).
@@ -1520,7 +1520,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     let latest: YorozuEvent | undefined;
     if (focused && includeCurrent) {
       const history = visibleThreadEvents(focused.id, dir).filter((event) => event.ts >= pairedAt);
-      const live = running.has(focused.id) ? liveReplies.get(focused.id) : undefined;
+      const live = running.has(focused.id) || (turnStates.get(focused.id)?.state ?? "idle") !== "idle" ? liveReplies.get(focused.id) : undefined;
       const reply = live && live.ts >= pairedAt ? live : undefined;
       latest = reply ?? history.findLast((event) =>
         event.kind === "message" && event.data.role === "agent" && !event.parentAgentId);
@@ -3110,7 +3110,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (!stopped) broadcast(control({ kind: "admission_status", data: { eventId: message.id, status: "rejected", reason } }));
     },
     forwarded: ({ id, threadId }) => {
-      if (!channelRuns.has(id)) channelRuns.set(id, { threadId });
+      if (!channelRuns.has(id)) channelRuns.set(id, { threadId,
+        replied: readThreadEvents(threadId, dir).some((event) => event.kind === "message" &&
+          event.data.role === "agent" && event.data.done === true && event.data.replyTo === id) });
     },
     handedOff: ({ id, threadId }) => {
       const run = channelRuns.get(id);
@@ -3163,26 +3165,57 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const run = channelRuns.get(messageId);
       if (!run || run.status || turnStates.get(run.threadId)?.activeEventId !== messageId) return;
       run.status = status;
+      const draft = run.replyDraft;
+      if (draft && !readThreadEvents(run.threadId, dir).some((event) => event.id === draft.id)) {
+        emit({ ...draft, kind: "message", data: { role: "agent", replyTo: messageId, text: status !== "completed" ? draft.data.text : "",
+          done: true, streamRevision: (draft.data.streamRevision ?? 0) + 1, ...(status === "failed" ? { failed: true } : {}), ...(status === "aborted" ? { interrupted: true } : {}) } });
+        run.replied = true;
+      }
+      run.replyDraft = undefined;
       const stop = stoppedTurns.get(messageId);
       if (stop) completeStop(stop, status === "aborted" ? "stopped" : "completed");
       // A failed run with nothing said leaves the message unanswered: say so, as a native agent does.
       else if (status === "failed" && !run.replied) {
         emit({ id: `openclaw:${messageId}:failed`, threadId: run.threadId, ts: Date.now(), agentId: MAIN_AGENT,
           kind: "message", data: { role: "agent", text: "OpenClaw could not answer. Check the OpenClaw Gateway log.",
-            done: true, failed: true } });
+            done: true, failed: true, replyTo: messageId } });
       }
       finishTurnState(run.threadId, messageId);
     },
-    deliver: ({ id, threadId, text, title: named }) => {
+    preview: ({ id, messageId, threadId, text }) => {
+      const run = activeChannelRun(messageId);
+      if (!run || run.threadId !== threadId || run.replied || stoppedTurns.has(messageId) ||
+          run.replyDraft && run.replyDraft.id !== id) return;
+      const ts = run.replyDraft?.ts ?? Date.now();
+      const draft: YorozuEvent = { id, threadId, ts, agentId: MAIN_AGENT, kind: "message",
+        data: { role: "agent", text, streamRevision: (run.replyDraft?.data.streamRevision ?? 0) + 1 } };
+      run.replyDraft = draft;
+      broadcast(draft, false);
+    },
+    deliver: ({ id, threadId, text, title: named, messageId, failed, interrupted }, auxiliary) => {
       const thread = listThreads(dir).find((known) => known.id === threadId);
       if (thread && (thread.agent ?? "yorozu") !== "yorozu") throw new Error("not-a-channel-thread");
+      if (readThreadEvents(threadId, dir).some((known) => known.id === id)) return;
+      const active = messageId ? activeChannelRun(messageId) : channelRuns.get(turnStates.get(threadId)?.activeEventId ?? "");
+      if (messageId && (!active || active.threadId !== threadId)) throw new Error("not-an-active-channel-run");
+      if (messageId && active?.replyDraft && active.replyDraft.id !== id) throw new Error("reply-identity-mismatch");
       if (!thread) createThread(named, dir, threadId);
       if (!thread && !named) title(threadId, text);
-      if (readThreadEvents(threadId, dir).some((known) => known.id === id)) return;
-      const active = channelRuns.get(turnStates.get(threadId)?.activeEventId ?? "");
-      if (active) active.replied = true;
-      emit({ id, threadId, ts: Date.now(), agentId: MAIN_AGENT, kind: "message",
-        data: { role: "agent", text, done: true } });
+      const ts = active?.replyDraft?.id === id ? active.replyDraft.ts : Date.now();
+      const event: YorozuEvent = { id, threadId, ts, agentId: MAIN_AGENT, kind: "message",
+        data: { role: "agent", text, done: true,
+          ...(messageId ? { replyTo: messageId, streamRevision: (active?.replyDraft?.data.streamRevision ?? 0) + 1 } : {}),
+          ...(failed ? { failed: true } : {}), ...(interrupted ? { interrupted: true } : {}) } };
+      if (auxiliary && active && !active.status) {
+        // An SDK tool prompt is complete, but the answer and its live draft still run.
+        appendTranscript(event, transcripts);
+        appendThreadEvent(event, dir);
+        sendBroadcast(event, false);
+        notifyRelay(event);
+      } else {
+        emit(event);
+        if (active) { active.replied = true; active.replyDraft = undefined; }
+      }
       if (!thread) broadcast(threadList());
     },
   });

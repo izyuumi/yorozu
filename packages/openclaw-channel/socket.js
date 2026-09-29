@@ -35,8 +35,10 @@ export function connectYorozu(options) {
   const ackTimeoutMs = options.ackTimeoutMs ?? 10_000;
   const waiting = new Map();
   const seen = new Set();
+  const inflight = new Set();
   let socket;
   let connected = false;
+  let streaming = false;
   let closed = false;
   let timer;
 
@@ -48,15 +50,26 @@ export function connectYorozu(options) {
   };
 
   const handle = (frame) => {
+    if (frame.type === "hello") {
+      streaming = Array.isArray(frame.capabilities) && frame.capabilities.includes("reply-stream-v1");
+      return;
+    }
     if (frame.type === "inbound") {
       const { message } = frame;
       if (seen.has(message.id)) return void write({ type: "ack", id: message.id });
-      seen.add(message.id);
+      // A reconnect can resend a run still waiting for its final delivery receipt.
+      // Acking that duplicate would erase the host's durable run association.
+      if (inflight.has(message.id)) return;
+      inflight.add(message.id);
       options.onInbound(message).then(
-        () => write({ type: "ack", id: message.id }),
+        () => {
+          inflight.delete(message.id);
+          seen.add(message.id);
+          write({ type: "ack", id: message.id });
+        },
         (error) => {
           // Not acked: the host resends it on the next connect.
-          seen.delete(message.id);
+          inflight.delete(message.id);
           options.onError?.(`inbound ${message.id} failed: ${String(error)}`);
         },
       );
@@ -87,6 +100,7 @@ export function connectYorozu(options) {
       connected = true;
       write({ type: "hello", capabilities: options.capabilities ?? [] });
       options.onOpen?.();
+      for (const pending of waiting.values()) if (pending.replay) write(pending.frame);
       options.onStatus?.(true);
     });
     next.on("data", (chunk) => {
@@ -106,7 +120,9 @@ export function connectYorozu(options) {
     next.on("close", () => {
       if (connected) options.onStatus?.(false);
       connected = false;
+      streaming = false;
       for (const [id, pending] of waiting) {
+        if (pending.replay) continue;
         waiting.delete(id);
         pending.reject(new Error("yorozu disconnected"));
       }
@@ -119,20 +135,32 @@ export function connectYorozu(options) {
     get connected() {
       return connected;
     },
+    get streaming() { return streaming; },
     /** Resolves with the message id once Yorozu has logged it. */
-    deliver(threadId, text) {
-      if (!connected) return Promise.reject(new Error("yorozu is not running"));
-      const id = randomUUID();
+    deliver(threadId, text, reply) {
+      if (!connected && !reply?.messageId) return Promise.reject(new Error("yorozu is not running"));
+      if (closed) return Promise.reject(new Error("yorozu is closed"));
+      const { id = randomUUID(), ...fields } = reply ?? {};
+      const frame = { type: "deliver", id, threadId, text, ...fields };
+      const replay = Boolean(reply?.messageId);
       return new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          waiting.delete(id);
-          reject(new Error("yorozu did not ack"));
-        }, ackTimeoutMs);
+        let timeout;
+        const retry = () => {
+          if (replay) {
+            write(frame); // Same identity: a lost ack cannot duplicate the transcript.
+            timeout = setTimeout(retry, ackTimeoutMs);
+          } else {
+            waiting.delete(id);
+            reject(new Error("yorozu did not ack"));
+          }
+        };
+        timeout = setTimeout(retry, ackTimeoutMs);
         waiting.set(id, {
+          frame, replay,
           resolve: () => (clearTimeout(timeout), resolve(id)),
           reject: (error) => (clearTimeout(timeout), reject(error)),
         });
-        write({ type: "deliver", id, threadId, text });
+        write(frame);
       });
     },
     /** Sends a frame if connected; false means the caller must resend on the next `onOpen`. */
@@ -140,6 +168,8 @@ export function connectYorozu(options) {
     close() {
       closed = true;
       clearTimeout(timer);
+      for (const pending of waiting.values()) pending.reject(new Error("yorozu is closed"));
+      waiting.clear();
       socket?.destroy();
     },
   };

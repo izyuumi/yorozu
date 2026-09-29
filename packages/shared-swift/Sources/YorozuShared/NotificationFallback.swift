@@ -67,7 +67,7 @@ public enum NotificationFallback {
 
     /// Shown instead of whatever body the relay wrote when the preview box is missing or does
     /// not decrypt. Fixed text, so an unauthenticated push can put no words on the lock screen.
-    public static let body = "New activity"
+    public static var body: String { String(localized: "New activity") }
 
     /// The categories an approval push may carry, and the buttons each draws. Fixed vocabulary
     /// shared by the app, which registers them, and the extension, which sets them.

@@ -25,7 +25,7 @@ public struct ChannelEnvelope: Codable, Equatable, Sendable {
     public static func decode(_ data: Data) throws -> ChannelEnvelope {
         let envelope = try JSONDecoder().decode(ChannelEnvelope.self, from: data)
         guard (1...maxSeq).contains(envelope.seq) else {
-            throw YorozuCrypto.CryptoError.malformed("envelope seq out of range")
+            throw YorozuCrypto.CryptoError.malformed(String(localized: "envelope seq out of range"))
         }
         return envelope
     }
@@ -109,7 +109,7 @@ public struct ChannelCounterStore: ChannelCounterStorage {
         do {
             return try JSONDecoder().decode(ChannelCounter.self, from: data)
         } catch {
-            throw YorozuCrypto.CryptoError.malformed("stored channel counter is unreadable")
+            throw YorozuCrypto.CryptoError.malformed(String(localized: "stored channel counter is unreadable"))
         }
     }
 

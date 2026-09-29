@@ -230,25 +230,25 @@ public struct MultiHostThreadSidebar: View {
 extension MultiHostModel {
     public var searchScope: String {
         if sessions.contains(where: { $0.model.searchQuery.utf8.count > 128 }) {
-            return "Downloaded conversations only · shorten search for host history"
+            return String(localized: "Downloaded conversations only · shorten search for host history")
         }
         if sessions.contains(where: { $0.model.searchIncomplete }) {
-            return "Downloaded conversations and partial host results"
+            return String(localized: "Downloaded conversations and partial host results")
         }
         let available = sessions.filter { $0.model.canDeliver && $0.model.supportsHostSearch }
         let cached = sessions.contains { !$0.model.remoteSearch.isEmpty && !($0.model.canDeliver && $0.model.supportsHostSearch) }
         guard !available.isEmpty else {
-            return cached ? "Downloaded conversations and cached host results" : "Downloaded conversations only"
+            return cached ? String(localized: "Downloaded conversations and cached host results") : String(localized: "Downloaded conversations only")
         }
         if available.count == sessions.count && available.allSatisfy({ $0.model.searchComplete }) {
-            return "All host histories searched"
+            return String(localized: "All host histories searched")
         }
         if available.allSatisfy({ $0.model.searchComplete }) {
-            return cached ? "Downloaded conversations, cached and available host results"
-                : "Downloaded conversations and available host history"
+            return cached ? String(localized: "Downloaded conversations, cached and available host results")
+                : String(localized: "Downloaded conversations and available host history")
         }
-        return cached ? "Downloaded conversations and cached host results · searching available hosts…"
-            : "Downloaded conversations · searching available hosts…"
+        return cached ? String(localized: "Downloaded conversations and cached host results · searching available hosts…")
+            : String(localized: "Downloaded conversations · searching available hosts…")
     }
 
     /// Most recent distinct outage owns the one visible toast. Keep dismissed notices in the
@@ -266,8 +266,8 @@ extension MultiHostModel {
         guard hasMultipleHosts else { return shown.notice.state.label }
         return switch shown.notice.state {
         case .connected: nil
-        case .reconnecting: "Connecting to \(label(for: shown.host))…"
-        case .offline: "\(label(for: shown.host)) isn’t reachable"
+        case .reconnecting: String(localized: "Connecting to \(label(for: shown.host))…")
+        case .offline: String(localized: "\(label(for: shown.host)) isn’t reachable")
         }
     }
 

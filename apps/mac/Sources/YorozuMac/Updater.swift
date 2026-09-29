@@ -237,7 +237,7 @@ final class PendingUpdate {
         let version = status.version ?? ""
         let retryHandler = handler
         cancel()
-        failure = "Update waiting: could not save drafts. \(error.localizedDescription)"
+        failure = String(localized: "Update waiting: could not save drafts. \(error.localizedDescription)")
         Log.write(failure!)
         if let retryHandler { queue(version: version, handler: retryHandler) }
     }
@@ -271,7 +271,7 @@ private final class UpdaterDelegate: NSObject, SPUUpdaterDelegate, @preconcurren
     func standardUserDriverWillHandleShowingUpdate(_ handleShowingUpdate: Bool,
         forUpdate update: SUAppcastItem, state: SPUUserUpdateState) {
         if HostWindowMode.active {
-            Updates.checkResult.message = "Update \(update.displayVersionString) available"
+            Updates.checkResult.message = String(localized: "Update \(update.displayVersionString) available")
         }
     }
 
@@ -293,8 +293,7 @@ private final class UpdaterDelegate: NSObject, SPUUpdaterDelegate, @preconcurren
             throw NSError(
                 domain: "to.yumi.yorozu.updates", code: 1,
                 userInfo: [NSLocalizedDescriptionKey:
-                    "Update \(item.displayVersionString) cannot replace installed version \(installed ?? "unknown"). "
-                    + "Older or invalid release versions are not installed."])
+                    String(localized: "Update \(item.displayVersionString) cannot replace installed version \(installed ?? String(localized: "unknown")). Older or invalid release versions are not installed.")])
         }
     }
 
@@ -319,7 +318,7 @@ private final class UpdaterDelegate: NSObject, SPUUpdaterDelegate, @preconcurren
 
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         Updates.pending.recordFailure(nil)
-        Updates.checkResult.message = "Update \(item.displayVersionString) available"
+        Updates.checkResult.message = String(localized: "Update \(item.displayVersionString) available")
         Log.write("updates: found \(item.displayVersionString) (build \(item.versionString))")
     }
 
@@ -334,7 +333,7 @@ private final class UpdaterDelegate: NSObject, SPUUpdaterDelegate, @preconcurren
         let sparkError = error as NSError
         // Sparkle's SUErrors.h: no update (1001), cancelled (4007), authorize later (4008).
         if sparkError.domain != SUSparkleErrorDomain || ![1001, 4007, 4008].contains(sparkError.code) {
-            let message = "Update failed: \(error.localizedDescription)"
+            let message = String(localized: "Update failed: \(error.localizedDescription)")
             Updates.pending.recordFailure(message)
             Updates.checkResult.message = nil
         }
@@ -356,7 +355,7 @@ struct CheckForUpdatesButton: View {
                 if HostWindowMode.active {
                     SettingsPaneRouter.shared.selection = "general"
                     openWindow(id: YorozuMacApp.settingsWindow)
-                    Updates.checkResult.message = "Checking for updates…"
+                    Updates.checkResult.message = String(localized: "Checking for updates…")
                     controller.updater.checkForUpdatesInBackground()
                 } else {
                     controller.updater.checkForUpdates()

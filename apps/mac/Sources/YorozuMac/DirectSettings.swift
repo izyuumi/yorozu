@@ -48,18 +48,18 @@ final class DirectConnection: ObservableObject {
 
     private nonisolated static func publish() -> Result {
         guard let cli = cliPath else {
-            return Result(status: .manual(reason: "The tailscale command was not found. Install Tailscale's CLI, then run:",
+            return Result(status: .manual(reason: String(localized: "The tailscale command was not found. Install Tailscale's CLI, then run:"),
                 command: serveCommand), environment: nil)
         }
         guard let host = selfDNSName(cli) else {
-            return Result(status: .manual(reason: "Tailscale is not running or not signed in. Once it is, run:",
+            return Result(status: .manual(reason: String(localized: "Tailscale is not running or not signed in. Once it is, run:"),
                 command: serveCommand), environment: nil)
         }
         let (code, output) = run(cli, ["serve", "--bg", "--https=\(port)", "http://127.0.0.1:\(port)"])
         guard code == 0 else {
             let reason = output.localizedCaseInsensitiveContains("https") || output.localizedCaseInsensitiveContains("cert")
-                ? "Turn on HTTPS certificates for your tailnet in the Tailscale admin console (DNS → HTTPS Certificates), then run:"
-                : "Tailscale refused: \(output.prefix(200)). Run:"
+                ? String(localized: "Turn on HTTPS certificates for your tailnet in the Tailscale admin console (DNS → HTTPS Certificates), then run:")
+                : String(localized: "Tailscale refused: \(output.prefix(200)). Run:")
             return Result(status: .manual(reason: reason, command: serveCommand), environment: nil)
         }
         let url = "wss://\(host):\(port)"
@@ -121,7 +121,7 @@ struct DirectConnectionRow: View {
         case .off:
             EmptyView()
         case .working:
-            LabeledContent("Direct", value: "Setting up…")
+            LabeledContent("Direct", value: String(localized: "Setting up…"))
         case .on(let url):
             LabeledContent("Direct", value: url).textSelection(.enabled)
         case .manual(let reason, let command):

@@ -52,7 +52,7 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 if !session.isDemo {
-                    Section(session.hosts.hasMultipleHosts ? "Hosts" : "Connection") {
+                    Section(session.hosts.hasMultipleHosts ? String(localized: "Hosts") : String(localized: "Connection")) {
                         ForEach(session.hosts.sessions) { host in
                             NavigationLink {
                                 HostSettingsView(session: session, host: host) {
@@ -79,7 +79,7 @@ struct SettingsView: View {
                                 .accessibilityElement(children: .combine)
                             }
                         }
-                        Button("Add host", systemImage: "plus") {
+                        Button(String(localized: "Add host"), systemImage: "plus") {
                             repairHostID = nil
                             addingHost = true
                         }
@@ -164,7 +164,7 @@ struct SettingsView: View {
                         } catch { return session.pendingPairing == nil ? error.localizedDescription : nil }
                     }, onDemo: {}, externalError: session.pairingFailure,
                     connecting: session.isPairing && session.pairingFailure == nil, addingHost: true)
-                    .navigationTitle(repairHostID == nil ? "Add host" : "Repair connection")
+                    .navigationTitle(repairHostID == nil ? String(localized: "Add host") : String(localized: "Repair connection"))
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { addingHost = false } } }
                     .modifier(PairingConfirmation(session: session))
@@ -202,7 +202,7 @@ private struct HostSettingsView: View {
 
     var body: some View {
         List {
-            Section(session.hosts.hasMultipleHosts ? "Host" : "Connection") {
+            Section(session.hosts.hasMultipleHosts ? String(localized: "Host") : String(localized: "Connection")) {
                 if session.hosts.hasMultipleHosts {
                     TextField("Nickname", text: $nickname)
                         .autocorrectionDisabled()
@@ -231,10 +231,10 @@ private struct HostSettingsView: View {
             Section("Compatibility") {
                 switch host.model.compatibility {
                 case .legacy:
-                    Text(session.hosts.hasMultipleHosts ? "Compatible legacy host" : "Compatible")
+                    Text(session.hosts.hasMultipleHosts ? String(localized: "Compatible legacy host") : String(localized: "Compatible"))
                     Text(session.hosts.hasMultipleHosts
-                         ? "Chat is available. Update this Mac to share its computer name and newer features."
-                         : "Chat is available. Update Yorozu on your Mac for newer features.")
+                         ? String(localized: "Chat is available. Update this Mac to share its computer name and newer features.")
+                         : String(localized: "Chat is available. Update Yorozu on your Mac for newer features."))
                         .font(.footnote).foregroundStyle(.secondary)
                 case .compatible(let version, _):
                     LabeledContent("Protocol", value: String(version))
@@ -242,14 +242,14 @@ private struct HostSettingsView: View {
                     Label("Update required", systemImage: "arrow.down.circle")
                     Text(reason).font(.footnote).foregroundStyle(.secondary)
                 }
-                if let version = host.model.peerInfo?.appVersion { LabeledContent(session.hosts.hasMultipleHosts ? "Host version" : "Mac version", value: version) }
+                if let version = host.model.peerInfo?.appVersion { LabeledContent(session.hosts.hasMultipleHosts ? String(localized: "Host version") : String(localized: "Mac version"), value: version) }
             }
             .listRowBackground(YorozuPalette.paper)
             Section {
                 Button("Retry connection") { host.model.start(); host.model.reconnect() }
                     .disabled(host.model.canDeliver)
-                Button("Repair connection", action: onRepair)
-                Button(session.hosts.hasMultipleHosts ? "Remove host" : "Remove connection", role: .destructive) {
+                Button(String(localized: "Repair connection"), action: onRepair)
+                Button(session.hosts.hasMultipleHosts ? String(localized: "Remove host") : String(localized: "Remove connection"), role: .destructive) {
                     confirmingRemoval = true
                 }.disabled(removing)
             } footer: {
@@ -260,10 +260,10 @@ private struct HostSettingsView: View {
             .listRowBackground(YorozuPalette.paper)
         }
         .paperList()
-        .navigationTitle(session.hosts.hasMultipleHosts ? session.hosts.label(for: host) : "Connection")
+        .navigationTitle(session.hosts.hasMultipleHosts ? session.hosts.label(for: host) : String(localized: "Connection"))
         .onAppear { nickname = host.nickname ?? "" }
-        .alert(session.hosts.hasMultipleHosts ? "Remove \(session.hosts.label(for: host))?" : "Remove connection?", isPresented: $confirmingRemoval) {
-            Button(session.hosts.hasMultipleHosts ? "Remove host" : "Remove connection", role: .destructive) {
+        .alert(session.hosts.hasMultipleHosts ? String(localized: "Remove \(session.hosts.label(for: host))?") : String(localized: "Remove connection?"), isPresented: $confirmingRemoval) {
+            Button(session.hosts.hasMultipleHosts ? String(localized: "Remove host") : String(localized: "Remove connection"), role: .destructive) {
                 removing = true
                 Task {
                     await session.removeHost(host.id)
@@ -274,8 +274,8 @@ private struct HostSettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(session.hosts.hasMultipleHosts
-                 ? "This removes this host's keys, cached chats, queued sends, and notifications from this device. Scan a new pairing code to connect again."
-                 : "This removes pairing keys, cached chats, queued sends, and notifications from this device. Scan a new pairing code to connect again.")
+                 ? String(localized: "This removes this host's keys, cached chats, queued sends, and notifications from this device. Scan a new pairing code to connect again.")
+                 : String(localized: "This removes pairing keys, cached chats, queued sends, and notifications from this device. Scan a new pairing code to connect again."))
         }
         .yorozuTint()
     }
@@ -330,7 +330,7 @@ private struct HostAdvancedSection: View {
                 .accessibilityHint(label)
             Button("Copy diagnostics", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = ConnectionDiagnostics.snapshot(for: host.model)
-                AccessibilityNotification.Announcement("Diagnostics copied").post()
+                AccessibilityNotification.Announcement(String(localized: "Diagnostics copied")).post()
             }
         } header: {
             Text(label)

@@ -8,6 +8,8 @@ import YorozuShared
 
 @MainActor final class Sidecar {
     static let shared = Sidecar()
+    // RelayView compiles with HostsView; this client harness does not render sidecar status.
+    static func statusLabel(_ state: String) -> String { state }
     func start() { fatalError("The client harness must never start a sidecar") }
     func stop() {}
 }

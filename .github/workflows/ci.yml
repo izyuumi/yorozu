@@ -75,6 +75,8 @@ jobs:
           node-version: 26
       - name: Verify App Store candidate checks without credentials
         run: node --test scripts/asc-candidate.test.mjs
+      - name: Verify English and Japanese catalogs
+        run: node scripts/check-localizations.mjs
 
   relay-image:
     needs: changes
@@ -140,9 +142,10 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # The Swift wire tests run the phone client against the relay and sidecar built here.
-      - run: pnpm -r build
+      # Website build/tests belong to the Linux web job; no native suite consumes them.
+      - run: pnpm --filter '!@yorozu/web' -r build
       - if: needs.changes.outputs.ts == 'true'
-        run: pnpm -r test
+        run: pnpm --filter '!@yorozu/web' -r test
       # The hosted image's default Xcode can lag; this project needs the newest stable.
       - if: needs.changes.outputs.swift == 'true'
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
@@ -159,12 +162,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.ios == 'true'
     runs-on: macos-latest
-    # Compile only. The UI tests (scheme YorozuUITests) took twenty minutes of
-    # simulator boot and install on the hosted VM for two minutes of tests, and one starved VM
-    # in ten failed it; it runs locally, on a booted simulator with the hardware keyboard off:
-    #   env -u SDKROOT xcodebuild test -workspace apps/ios/Yorozu.xcworkspace \
-    #     -scheme YorozuUITests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
-    #     CODE_SIGNING_ALLOWED=NO
+    # PR CI compiles the app; the canonical Release requires the separate iOS UI-test
+    # workflow before either candidate is built or uploaded.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -189,5 +188,25 @@ jobs:
             -scheme YorozuIOS \
             -skipPackagePluginValidation \
             -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath .build/ci-ios \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO SWIFT_EMIT_LOC_STRINGS=YES
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26
+      - name: Verify compiled UI keys have English and Japanese coverage
+        run: |
+          extracted=.build/ci-ios/Build/Intermediates.noindex
+          shared="$extracted/YorozuShared.build/Debug-iphonesimulator/YorozuShared.build/Objects-normal/arm64"
+          # Xcode 27 adds a target suffix; Xcode 26 uses the package target's name.
+          if [ ! -d "$shared" ]; then
+            shared="$extracted/YorozuShared.build/Debug-iphonesimulator/YorozuShared-t.build/Objects-normal/arm64"
+          fi
+          node scripts/check-localizations.mjs apps/ios/Resources/Localizable.xcstrings "$shared"
+          node scripts/check-localizations.mjs apps/mac/Resources/Localizable.xcstrings "$shared"
+          for target in YorozuIOS YorozuShare YorozuWidget YorozuNotificationService; do
+            node scripts/check-localizations.mjs apps/ios/Resources/Localizable.xcstrings \
+              "$extracted/Yorozu.build/Debug-iphonesimulator/$target.build/Objects-normal/arm64"
+          done
+          node scripts/check-localizations.mjs apps/ios/Resources/YorozuWatch/Localizable.xcstrings \
+            "$extracted/Yorozu.build/Debug-watchsimulator/YorozuWatch.build/Objects-normal/arm64"

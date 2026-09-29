@@ -30,7 +30,7 @@ struct PairingFlowView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                         .accessibilityHidden(true)
                     Text("Yorozu").font(.largeTitle.weight(.semibold))
-                    Text(addingHost ? "Connect another Mac." : "Your Mac's agent, in your pocket.")
+                    Text(addingHost ? String(localized: "Connect another Mac.") : String(localized: "Your Mac's agent, in your pocket."))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

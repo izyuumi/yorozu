@@ -79,12 +79,12 @@ public final class ChatModel {
     }
 
     public var searchScope: String {
-        if searchQuery.utf8.count > 128 { return "Downloaded conversations only · shorten search for host history" }
-        if searchIncomplete { return "Downloaded conversations and partial host results" }
+        if searchQuery.utf8.count > 128 { return String(localized: "Downloaded conversations only · shorten search for host history") }
+        if searchIncomplete { return String(localized: "Downloaded conversations and partial host results") }
         guard canDeliver, supportsHostSearch else {
-            return remoteSearch.isEmpty ? "Downloaded conversations only" : "Downloaded conversations and cached host results"
+            return remoteSearch.isEmpty ? String(localized: "Downloaded conversations only") : String(localized: "Downloaded conversations and cached host results")
         }
-        return searchComplete ? "Host history searched" : "Downloaded conversations · searching host…"
+        return searchComplete ? String(localized: "Host history searched") : String(localized: "Downloaded conversations · searching host…")
     }
 
     /// Local list filtering is immediate. Host search follows after typing settles.
@@ -187,9 +187,24 @@ public final class ChatModel {
     func rows(in threadId: String, queued queue: [YorozuEvent]? = nil) -> [ChatRow] {
         let queue = queue ?? queuedMessages(in: threadId)
         let summary = synced.first { $0.id == threadId }
-        return timeline(threadId).rows(generating: generating.contains(threadId),
+        var rows = timeline(threadId).rows(generating: generating.contains(threadId),
             activeEventId: summary?.turnState == nil ? nil : summary?.activeEventId,
-            excluding: withdrawnMessageIds(in: threadId).union(queue.map(\.id))) + queue.map(ChatRow.message)
+            excluding: withdrawnMessageIds(in: threadId).union(queue.map(\.id)))
+        // A successful silent final clears its streamed preview without leaving an empty
+        // action row. Failed, stopped, attachment-only and unfinished replies stay visible.
+        rows.removeAll { row in
+            guard case .message(let event) = row, case .message(let data) = event.payload else { return false }
+            return data.role == .agent && data.done == true && data.text.isEmpty &&
+                data.attachments.isEmpty && data.failed != true && data.interrupted != true
+        }
+        // Pending requests remain outside the active turn, but its progress still belongs
+        // below the latest visible message. Inserting here preserves event ownership.
+        let queuePosition = rows.firstIndex { row in
+            if case .work(let work) = row { return work.running }
+            return false
+        } ?? rows.endIndex
+        rows.insert(contentsOf: queue.map(ChatRow.message), at: queuePosition)
+        return rows
     }
 
     /// Inline actions follow the settled message, not the thread's current working state.
@@ -323,7 +338,7 @@ public final class ChatModel {
             try saveComposer()
         } catch {
             stashes[threadId] = previous
-            failure = "Could not save draft: \(error.localizedDescription)"
+            failure = String(localized: "Could not save draft: \(error.localizedDescription)")
             return
         }
         drafts[threadId] = ""
@@ -331,7 +346,7 @@ public final class ChatModel {
         do {
             try saveComposer()
             try saveDraftState()
-        } catch { failure = "Could not save draft: \(error.localizedDescription)" }
+        } catch { failure = String(localized: "Could not save draft: \(error.localizedDescription)") }
     }
 
     public func restoreStash(_ id: String, in threadId: String) {
@@ -350,7 +365,7 @@ public final class ChatModel {
             try saveComposer()
         } catch {
             stashes[threadId] = previous
-            failure = "Could not save draft: \(error.localizedDescription)"
+            failure = String(localized: "Could not save draft: \(error.localizedDescription)")
         }
     }
     private var restoredWithdrawals: Set<String> = []
@@ -442,7 +457,7 @@ public final class ChatModel {
     public func refreshChannelModels(in thread: ThreadSummary) {
         guard offersChannelModels(for: thread) else { return }
         guard canDeliver else {
-            channelModelErrors[thread.id] = "Connect to the host to refresh OpenClaw models."
+            channelModelErrors[thread.id] = String(localized: "Connect to the host to refresh OpenClaw models.")
             return
         }
         guard !channelModelPending.contains(thread.id) else { return }
@@ -576,7 +591,7 @@ public final class ChatModel {
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled, let self else { return }
             do { try self.saveComposer() }
-            catch { self.failure = "Could not save draft: \(error.localizedDescription)" }
+            catch { self.failure = String(localized: "Could not save draft: \(error.localizedDescription)") }
         }
     }
 
@@ -584,7 +599,7 @@ public final class ChatModel {
     private func saveDraftsNow() {
         guard cache != nil, !restoringComposer else { return }
         do { try saveDraftState() }
-        catch { failure = "Could not save draft: \(error.localizedDescription)" }
+        catch { failure = String(localized: "Could not save draft: \(error.localizedDescription)") }
     }
 
     private func saveDraftState() throws {
@@ -598,7 +613,7 @@ public final class ChatModel {
         guard cache != nil, !restoringComposer else { return }
         composerWrite?.cancel()
         do { try saveComposer() }
-        catch { failure = "Could not save draft: \(error.localizedDescription)" }
+        catch { failure = String(localized: "Could not save draft: \(error.localizedDescription)") }
     }
 
     private func saveComposer() throws {
@@ -644,7 +659,7 @@ public final class ChatModel {
         await cacheWrite?.value
         composerWrite?.cancel()
         do { try saveComposer() }
-        catch { failure = "Could not save draft: \(error.localizedDescription)" }
+        catch { failure = String(localized: "Could not save draft: \(error.localizedDescription)") }
     }
     /// What this client tags the events it emits with.
     private let device: String
@@ -691,7 +706,7 @@ public final class ChatModel {
         }
         if pending != storedPending {
             do { try cache.savePending(pending) }
-            catch { failure = "Could not save pending-message migration: \(error.localizedDescription)" }
+            catch { failure = String(localized: "Could not save pending-message migration: \(error.localizedDescription)") }
         }
         outbox = Outbox.pruned(pending)
         let draftState = cache.draftState()
@@ -751,7 +766,7 @@ public final class ChatModel {
                 try saveComposer()
                 try saveDraftState()
             }
-            catch { failure = "Could not save draft: \(error.localizedDescription)" }
+            catch { failure = String(localized: "Could not save draft: \(error.localizedDescription)") }
         }
         restoringComposer = false
         for thread in synced {
@@ -805,7 +820,7 @@ public final class ChatModel {
         searchTask?.cancel()
         flushStreamEvents()
         do { try saveComposer() }
-        catch { failure = "Could not save draft: \(error.localizedDescription)" }
+        catch { failure = String(localized: "Could not save draft: \(error.localizedDescription)") }
         stopped = true
         foreground = false
         connectionTask?.cancel()
@@ -971,7 +986,7 @@ public final class ChatModel {
             guard answerQuestion(question.questionId, in: thread.id, text) else { return }
             drafts[thread.id] = ""
             do { try saveComposer() }
-            catch { failure = "Could not save draft: \(error.localizedDescription)" }
+            catch { failure = String(localized: "Could not save draft: \(error.localizedDescription)") }
             return
         }
         // Files on their own are a message: only an empty composer is nothing to send.
@@ -984,7 +999,7 @@ public final class ChatModel {
             try saveComposer()
             try saveDraftState()
         }
-        catch { failure = "Could not save draft: \(error.localizedDescription)" }
+        catch { failure = String(localized: "Could not save draft: \(error.localizedDescription)") }
         flush()
     }
 
@@ -1001,7 +1016,7 @@ public final class ChatModel {
                               fromComposer: Bool = false, alternateDelivery: Bool = false) -> Bool {
         guard !stopped else { return false }
         guard !attachments.contains(where: \.isDeferred) else {
-            failure = "Wait for attachment download before sending."
+            failure = String(localized: "Wait for attachment download before sending.")
             return false
         }
         // Decided once for the whole send: a thread created here and the message that creates it
@@ -1050,7 +1065,7 @@ public final class ChatModel {
             }
             catch {
                 preparedSend[threadId] = nil
-                failure = "Could not save draft: \(error.localizedDescription)"
+                failure = String(localized: "Could not save draft: \(error.localizedDescription)")
                 return false
             }
         }
@@ -1063,10 +1078,10 @@ public final class ChatModel {
                 if fromComposer { try saveDraftState() }
             }
             catch {
-                failure = "Could not queue or save draft: \(error.localizedDescription)"
+                failure = String(localized: "Could not queue or save draft: \(error.localizedDescription)")
                 return false
             }
-            pendingSaveFailure = "Could not save pending messages: \(cause)"
+            pendingSaveFailure = String(localized: "Could not save pending messages: \(cause)")
             failure = pendingSaveFailure
             return false
         }
@@ -1081,7 +1096,7 @@ public final class ChatModel {
                     try saveComposer()
                     try saveDraftState()
                 }
-                catch { failure = "Could not save draft: \(error.localizedDescription)" }
+                catch { failure = String(localized: "Could not save draft: \(error.localizedDescription)") }
             }
         }
         // A queued message has started no turn: the composer stays a composer until the message
@@ -1196,7 +1211,7 @@ public final class ChatModel {
         pending.append(OutboxItem(event: renewed))
         do { try cache?.savePending(pending) }
         catch {
-            failure = "Could not save pending messages: \(error.localizedDescription)"
+            failure = String(localized: "Could not save pending messages: \(error.localizedDescription)")
             return
         }
         outbox = pending
@@ -1256,7 +1271,7 @@ public final class ChatModel {
                 if case .message(let message) = item.event.payload, !message.attachments.isEmpty,
                    !self.supportsAttachmentChunks,
                    message.attachments.compactMap(\.bytes).reduce(0, { $0 + $1.count }) > 384 * 1024 {
-                    self.failure = "Update the host to send attachments larger than 384 KB. Your message is saved."
+                    self.failure = String(localized: "Update the host to send attachments larger than 384 KB. Your message is saved.")
                     sent.insert(item.id)
                     blockedThreads.insert(item.event.threadId)
                     continue
@@ -1406,7 +1421,7 @@ public final class ChatModel {
         if let reason = progress.reason {
             if reason == "attachment-storage-failed" || reason == "attachment-storage-full" ||
                 reason == "attachment-busy" {
-                failure = "Host could not save attachment. Retrying."
+                failure = String(localized: "Host could not save attachment. Retrying.")
             } else {
                 outbox[index].admissionStatus = .rejected
                 outbox[index].rejectionReason = reason
@@ -1474,7 +1489,7 @@ public final class ChatModel {
             downloadInFlight.remove(key)
             downloadRetries.removeValue(forKey: key)?.cancel()
             downloadBytes.removeValue(forKey: key)
-            failure = "Attachment unavailable on host. Reopen message to retry."
+            failure = String(localized: "Attachment unavailable on host. Reopen message to retry.")
             return
         }
         guard let event = timeline(threadId).storedEvents.first(where: { $0.id == chunk.messageId }),
@@ -1502,7 +1517,7 @@ public final class ChatModel {
         let digest = SHA256.hash(data: partial).map { String(format: "%02x", $0) }.joined()
         guard digest == chunk.sha256 else {
             downloadBytes.removeValue(forKey: key)
-            failure = "Attachment download failed integrity check. Reopen message to retry."
+            failure = String(localized: "Attachment download failed integrity check. Reopen message to retry.")
             return
         }
         downloadBytes.removeValue(forKey: key)
@@ -1589,7 +1604,7 @@ public final class ChatModel {
         guard !queries.isEmpty else { return }
         do { try cache?.savePending(pending) }
         catch {
-            failure = "Could not save pending messages: \(error.localizedDescription)"
+            failure = String(localized: "Could not save pending messages: \(error.localizedDescription)")
             return
         }
         outbox = pending
@@ -1653,7 +1668,7 @@ public final class ChatModel {
             try saveComposer()
             return true
         } catch {
-            failure = "Could not save pending messages: \(error.localizedDescription)"
+            failure = String(localized: "Could not save pending messages: \(error.localizedDescription)")
             return false
         }
     }
@@ -1778,7 +1793,7 @@ public final class ChatModel {
         let pending = outbox + [OutboxItem(event: event(.interrupt(InterruptData(targetEventId: targetEventId)), in: threadId))]
         do { try cache?.savePending(pending) }
         catch {
-            failure = "Could not save Stop request: \(error.localizedDescription)"
+            failure = String(localized: "Could not save Stop request: \(error.localizedDescription)")
             return
         }
         outbox = pending
@@ -1829,7 +1844,7 @@ public final class ChatModel {
         }
         do { try cache?.savePending(pending) }
         catch {
-            failure = "Could not save withdrawal: \(error.localizedDescription)"
+            failure = String(localized: "Could not save withdrawal: \(error.localizedDescription)")
             return
         }
         outbox = pending
@@ -1964,7 +1979,7 @@ public final class ChatModel {
             else { target.removeDraft(threadId) }
             target.saveComposerNow()
             target.saveDraftsNow()
-            failure = "Could not save draft: \(error.localizedDescription)"
+            failure = String(localized: "Could not save draft: \(error.localizedDescription)")
             return false
         }
         if target !== self {
@@ -2221,7 +2236,7 @@ public final class ChatModel {
         let pending = Outbox.pruned(outbox + [OutboxItem(event: request)])
         do { try cache?.savePending(pending) }
         catch {
-            failure = "Could not save approval answer: \(error.localizedDescription)"
+            failure = String(localized: "Could not save approval answer: \(error.localizedDescription)")
             return
         }
         outbox = pending
@@ -2286,7 +2301,7 @@ public final class ChatModel {
 
     private func reconcileApproval(_ status: ApprovalStatusData, event: YorozuEvent) {
         retireApproval(status)
-        if status.status == .rejected { failure = "Approval answer could not be applied." }
+        if status.status == .rejected { failure = String(localized: "Approval answer could not be applied.") }
         applyEvent(event)
     }
 
@@ -2436,7 +2451,7 @@ public final class ChatModel {
 
     private func channelModelsDisconnected() {
         for threadId in channelModelsLoading.union(channelModelPending) {
-            channelModelErrors[threadId] = "Disconnected while updating OpenClaw models. Reopen the picker to refresh."
+            channelModelErrors[threadId] = String(localized: "Disconnected while updating OpenClaw models. Reopen the picker to refresh.")
         }
         channelModelsLoading = []
         channelModelPending = []
@@ -2681,6 +2696,7 @@ public final class ChatModel {
     // hops stretching the fixture over multiple real display frames under parallel load.
     func applyEvent(_ event: YorozuEvent) {
         let key = "\(event.threadId)\u{0}\(event.id)"
+        if let pending = pendingStreamEvents[key], staleReplyUpdate(event, replacing: pending) { return }
         if case .message(let data) = event.payload, data.role == .agent, data.done != true {
             pendingStreamEvents[key] = event
             guard streamFrame == nil else { return }
@@ -3083,6 +3099,20 @@ public final class ChatModel {
         }
     }
 
+    private func staleReplyUpdate(_ candidate: YorozuEvent, replacing previous: YorozuEvent) -> Bool {
+        guard case .message(let next) = candidate.payload, next.role == .agent,
+              case .message(let old) = previous.payload, old.role == .agent else { return false }
+        if old.done == true && next.done != true { return true }
+        // Authoritative completion wins even when a restarted host reset its draft counter.
+        if old.done != true && next.done == true { return false }
+        // Draft timestamps stay fixed within a run; a restart begins a new revision epoch.
+        if previous.ts != candidate.ts { return previous.ts > candidate.ts }
+        if let revision = next.streamRevision {
+            return old.streamRevision.map { revision <= $0 } ?? false
+        }
+        return next.done != true && (old.streamRevision != nil || old.text.count > next.text.count)
+    }
+
     private func upsert(_ incoming: YorozuEvent, persist: Bool = true) {
         var event = incoming
         if case .threadRewound(let data) = event.payload {
@@ -3129,12 +3159,7 @@ public final class ChatModel {
             if thread[index].clientTs != nil && event.clientTs == nil,
                case .message(let old) = thread[index].payload, old.role == .user,
                case .message(let next) = event.payload, next.role == .user { return }
-            if case .message(let old) = thread[index].payload, old.role == .agent,
-               case .message(let next) = event.payload, next.role == .agent,
-               (old.done == true && next.done != true ||
-                old.done != true && next.done != true &&
-                    (thread[index].ts > event.ts || thread[index].ts == event.ts && old.text.count > next.text.count) ||
-                old.done == true && next.done == true && thread[index].ts > event.ts) { return }
+            if staleReplyUpdate(event, replacing: thread[index]) { return }
             guard thread[index] != event else { return }
             let timestampChanged = thread[index].ts != event.ts
             let orderingConfirmed = thread[index].clientTs == nil && event.clientTs != nil
