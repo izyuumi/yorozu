@@ -105,6 +105,8 @@ import {
   markThreadRead,
   pinThread,
   readThreadEvents,
+  visibleThreadEvents,
+  latestRewindId,
   searchThreadPage,
   renameThread,
   setThreadEffort,
@@ -1278,6 +1280,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           activeEventId: turnStates.get(thread.id)?.activeEventId,
           turnState: turnStates.get(thread.id)?.state ?? "idle",
           queuedTurnCount: turnStates.get(thread.id)?.queued.length ?? 0,
+          canRewind: !viaChannel(thread.id),
         } : {}),
         ...(stopping ? { interruptedTurnId: undefined, canResume: undefined, recoveryState: undefined } : {}),
       };
@@ -1463,7 +1466,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     };
     let latest: YorozuEvent | undefined;
     if (focused && includeCurrent) {
-      const history = readThreadEvents(focused.id, dir).filter((event) => event.ts >= pairedAt);
+      const history = visibleThreadEvents(focused.id, dir).filter((event) => event.ts >= pairedAt);
       const live = running.has(focused.id) ? liveReplies.get(focused.id) : undefined;
       const reply = live && live.ts >= pairedAt ? live : undefined;
       latest = reply ?? history.findLast((event) =>
@@ -1540,7 +1543,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     `${threadAgent(threadId, dir) === "yorozu" ? "legacy" : "native"}:${userEventId}:final`;
 
   const nativeRecoveryPrompt = (threadId: string, original: string): string => {
-    const recent = readThreadEvents(threadId, dir).filter((event) =>
+    const recent = visibleThreadEvents(threadId, dir).filter((event) =>
       event.kind === "message" || event.kind === "tool_call" || event.kind === "tool_result").slice(-20).map((event) => {
       if (event.kind === "message") return `${event.data.role}: ${event.data.text.slice(0, 2_000)}`;
       if (event.kind === "tool_call") return `tool call ${event.data.name}: ${JSON.stringify(event.data.args).slice(0, 2_000)}`;
@@ -1551,7 +1554,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   };
 
   const withStoppedContext = (threadId: string, original: string, userEventId?: string): string => {
-    const messages = readThreadEvents(threadId, dir).filter((event) => event.kind === "message");
+    const messages = visibleThreadEvents(threadId, dir).filter((event) => event.kind === "message");
     const index = userEventId ? messages.findIndex((event) => event.id === userEventId) : -1;
     const prior = index > 0 ? messages[index - 1] : index < 0 ? messages.at(-1) : undefined;
     if (prior?.kind !== "message") return original;
@@ -1700,8 +1703,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
             const files = attachmentFiles(threadId, userEventId ?? id, attachments, dir);
             const attached = files.map((file) =>
               `[attached: ${JSON.stringify(file.name)} (${JSON.stringify(file.mime)}) at ${file.path}]`).join("\n");
-            const prompt = recovering ? nativeRecoveryPrompt(threadId, text) : withStoppedContext(threadId,
+            let prompt = recovering ? nativeRecoveryPrompt(threadId, text) : withStoppedContext(threadId,
               skillPath ? text.slice(skillName!.length + 1).trimStart() : text, userEventId);
+            if (!currentHome.sessionId && latestRewindId(threadId, dir)) {
+              const history = visibleThreadEvents(threadId, dir);
+              const index = history.findIndex((event) => event.id === userEventId);
+              const retained = history.slice(0, index < 0 ? history.length : index).flatMap((event) => {
+                if (event.kind !== "message") return [];
+                const files = attachmentFiles(threadId, event.id, event.data.attachments ?? [], dir);
+                return [{ role: event.data.role, text: event.data.text, attachments: files }];
+              });
+              prompt = `Conversation before the rewind (files were not reverted):\n${JSON.stringify(retained)}\n\nNew user request:\n${prompt}`;
+            }
             const done = await runner.run({
               threadId,
               text: [prompt, attached].filter(Boolean).join("\n\n"),
@@ -1895,7 +1908,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const marker = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
     if (marker?.state !== "interrupted" || !marker.userEventId || nativeRecoveryStarted.has(threadId) ||
       stoppedTurns.has(marker.userEventId) || (!retry && (marker.recoveryAttempts ?? 0) >= 3)) return false;
-    const original = readThreadEvents(threadId, dir).find((event) => event.id === marker.userEventId &&
+    const original = visibleThreadEvents(threadId, dir).find((event) => event.id === marker.userEventId &&
       event.kind === "message" && event.data.role === "user");
     if (original?.kind !== "message") return false;
     if (retry) setNativeTurn(threadId, { ...marker, recoveryAttempts: 0 }, dir);
@@ -2127,6 +2140,38 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const downloadFiles = new Map<string, { bytes: Buffer; sha256: string }>();
   let downloadCacheBytes = 0;
   function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0, from?: string, localDevice?: string): void {
+    if (event.kind === "thread_rewound") return;
+    if (event.kind === "thread_rewind") {
+      const compatibility = from ? devices.get(from)?.compatibility : undefined;
+      if (from && (compatibility?.state !== "compatible" ||
+          !compatibility.capabilities.includes("thread-rewind-v1"))) return;
+      if (typeof event.threadId !== "string" || !event.threadId || event.threadId.length > 128 ||
+          !listThreads(dir).some((thread) => thread.id === event.threadId)) return;
+      if (typeof event.data.eventId !== "string" || !event.data.eventId || event.data.eventId.length > 128) return;
+      const stored = readThreadEvents(event.threadId, dir);
+      const previous = stored.find((known) =>
+        known.kind === "thread_rewound" && known.data.requestId === event.id);
+      if (previous) { reply(previous); return; }
+      const history = visibleThreadEvents(event.threadId, dir);
+      const index = history.findIndex((known) => known.id === event.data.eventId &&
+        known.kind === "message" && known.data.role === "user");
+      const reason = viaChannel(event.threadId) ? "This agent does not support Edit from here yet."
+        : running.has(event.threadId) || turnQueues.has(event.threadId) ||
+          (turnStates.get(event.threadId)?.state ?? "idle") !== "idle" ? "Wait for this thread to finish working."
+        : index < 0 ? "This message is no longer in the conversation." : undefined;
+      const result: YorozuEvent = { id: randomUUID(), threadId: event.threadId,
+        ts: stored.reduce((latest, known) => Math.max(latest, known.ts), Date.now()), agentId: MAIN_AGENT,
+        kind: "thread_rewound", data: { requestId: event.id, eventId: event.data.eventId,
+          ...(reason ? { reason } : { hiddenEventIds: history.slice(index).map((known) => known.id) }) } };
+      if (reason) { reply(result); return; }
+      appendThreadEvent(result, dir);
+      setNativeTurn(event.threadId, undefined, dir);
+      liveReplies.delete(event.threadId);
+      partials.delete(event.threadId);
+      broadcast(result);
+      broadcast(threadList());
+      return;
+    }
     if (event.kind === "attachment_progress" || event.kind === "attachment_download_chunk") return;
     if (event.kind === "attachment_download_request") {
       const compatibility = from ? devices.get(from)?.compatibility : undefined;
@@ -2602,6 +2647,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
       ? [...pending.values()].find((card) => card.threadId === event.threadId) : undefined;
     const typed = oldest && event.kind === "message" ? typedAnswer(event.data.text, oldest.card) : undefined;
     if (duplicateMessage) {
+      if (!visibleThreadEvents(event.threadId, dir).some((known) => known.id === event.id)) {
+        receipt();
+        return;
+      }
       if (event.kind === "message" && event.data.role === "user" &&
           knownMessage?.kind === "message" && knownMessage.data.completionId === completionIdFor(event.threadId, event.id) &&
           threadAgent(event.threadId, dir) !== "yorozu" &&
@@ -3445,7 +3494,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (stoppedTurns.has(entry.eventId)) { removeNativeQueue(entry.eventId); continue; }
     const marker = listThreads(dir).find((thread) => thread.id === entry.threadId)?.nativeTurn;
     if (marker?.state === "interrupted" && marker.userEventId === entry.eventId) continue;
-    const events = readThreadEvents(entry.threadId, dir);
+    const events = visibleThreadEvents(entry.threadId, dir);
     if (events.some((event) => event.id === completionIdFor(entry.threadId, entry.eventId) &&
         event.kind === "message" && event.data.done)) {
       removeNativeQueue(entry.eventId);
@@ -3455,6 +3504,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       event.kind === "message" && event.data.role === "user");
     if (original?.kind === "message") void enqueueTurn(entry.threadId, original.data.text, true,
       original.data.attachments ?? [], entry.eventId, original);
+    else removeNativeQueue(entry.eventId);
   }
 
   // Production never installs legacy agents or starts its scheduler. Initialization remains
