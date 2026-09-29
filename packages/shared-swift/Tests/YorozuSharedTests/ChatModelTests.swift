@@ -114,6 +114,113 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
 }
 
 @MainActor
+@Test func promptHistoryWalksThreadUserMessagesAndEditsEndBrowsing() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.event(event("first", .message(MessageData(role: .user, text: "first prompt")))))
+    await transport.yield(.event(event("reply", .message(MessageData(role: .agent, text: "reply", done: true)))))
+    await transport.yield(.event(event("other", .message(MessageData(role: .user, text: "other thread")), thread: "other")))
+    await transport.yield(.event(event("last", .message(MessageData(role: .user, text: "last prompt")))))
+    #expect(await eventually { model.events["home"]?.count == 3 && model.events["other"]?.count == 1 })
+
+    model.drafts["home"] = "unfinished"
+    #expect(!model.recallPrompt(in: "home", older: true))
+    #expect(!model.recallPrompt(in: "home", older: false))
+    #expect(model.drafts["home"] == "unfinished")
+    model.drafts["home"] = ""
+    #expect(!model.recallPrompt(in: "home", older: false))
+    #expect(model.recallPrompt(in: "home", older: true))
+    #expect(model.drafts["home"] == "last prompt")
+    #expect(model.recallPrompt(in: "home", older: true))
+    #expect(model.drafts["home"] == "first prompt")
+    #expect(!model.recallPrompt(in: "home", older: true))
+    #expect(model.recallPrompt(in: "home", older: false))
+    #expect(model.drafts["home"] == "last prompt")
+    #expect(model.recallPrompt(in: "home", older: false))
+    #expect(model.drafts["home"] == "")
+    #expect(!model.recallPrompt(in: "empty", older: true))
+
+    #expect(model.recallPrompt(in: "home", older: true))
+    model.drafts["other"] = "independent edit"
+    #expect(model.recallPrompt(in: "home", older: true))
+    model.drafts["home"] = "edited prompt"
+    #expect(!model.recallPrompt(in: "home", older: false))
+    #expect(!model.recallPrompt(in: "home", older: true))
+    #expect(model.drafts["home"] == "edited prompt")
+    model.drafts["home"] = ""
+    let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "aGk=")
+    model.attachments["home"] = [file]
+    #expect(!model.recallPrompt(in: "home", older: true))
+    model.attachments["home"] = []
+    #expect(model.recallPrompt(in: "home", older: true))
+    model.attachments["home"] = [file]
+    model.attachments["home"] = []
+    #expect(!model.recallPrompt(in: "home", older: false))
+    #expect(model.drafts["home"] == "last prompt")
+}
+
+@MainActor
+@Test func stashedDraftsSurviveRelaunchAndRestoreTextAndAttachments() throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    let key = SymmetricKey(size: .bits256)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    func launch() -> ChatModel {
+        ChatModel(transport: FakeTransport(), cache: ThreadCache(directory: directory, key: key))
+    }
+    let model = launch()
+    let thread = model.newDraft()
+    let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "aGk=")
+    model.drafts[thread.id] = "  unfinished\nthought  "
+    model.attachments[thread.id] = [file]
+    model.stashDraft(in: thread.id)
+    #expect(model.drafts[thread.id] == "")
+    #expect((model.attachments[thread.id] ?? []).isEmpty)
+    model.attachments[thread.id] = [file]
+    model.stashDraft(in: thread.id)
+    model.stashDraft(in: thread.id) // An empty composer adds nothing.
+    let other = model.newDraft()
+    model.drafts[other.id] = "another thread"
+    model.stashDraft(in: other.id)
+    model.discardDraft(thread.id)
+
+    let restored = launch() // No flush or close: stash is durable immediately.
+    #expect(restored.isDraft(thread.id))
+    let stashes = try #require(restored.stashes[thread.id])
+    #expect(stashes.count == 2)
+    #expect(restored.stashes[other.id]?.count == 1)
+    restored.drafts[thread.id] = "quick question"
+    restored.restoreStash(stashes[0].id, in: thread.id)
+    #expect(restored.drafts[thread.id] == "quick question")
+    #expect(restored.stashes[thread.id]?.count == 2)
+    restored.drafts[thread.id] = ""
+    restored.attachments[thread.id] = [file]
+    restored.restoreStash(stashes[0].id, in: thread.id)
+    #expect(restored.drafts[thread.id] == "")
+    restored.attachments[thread.id] = []
+    restored.restoreStash(stashes[0].id, in: other.id)
+    #expect(restored.stashes[thread.id]?.count == 2)
+    restored.restoreStash(stashes[0].id, in: thread.id)
+    #expect(restored.drafts[thread.id] == "  unfinished\nthought  ")
+    #expect(restored.attachments[thread.id] == [file])
+    #expect(restored.stashes[thread.id]?.count == 1)
+
+    let again = launch()
+    #expect(again.drafts[thread.id] == "  unfinished\nthought  ")
+    #expect(again.attachments[thread.id] == [file])
+    let remaining = try #require(again.stashes[thread.id]?.first)
+    #expect(remaining.attachments == [file])
+    again.drafts[thread.id] = ""
+    again.attachments[thread.id] = []
+    again.restoreStash(remaining.id, in: thread.id)
+    #expect(again.drafts[thread.id] == "")
+    #expect(again.attachments[thread.id] == [file])
+    #expect(again.stashes[thread.id]?.isEmpty == true)
+    again.archive(other)
+    #expect(launch().stashes[other.id] == nil)
+}
+
+@MainActor
 @Test func stagedComposerSurvivesImmediateRelaunchWithoutFlush() {
     let cache = ThreadCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString),
                             key: SymmetricKey(size: .bits256))
