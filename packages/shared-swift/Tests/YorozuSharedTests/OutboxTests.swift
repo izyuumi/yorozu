@@ -88,7 +88,12 @@ private func reconnect(_ transport: QueueTransport) async {
     await transport.yield(.event(YorozuEvent(id: "stop-done", threadId: "", ts: ts, agentId: "main",
         payload: .stopStatus(StopStatusData(targetEventId: "running-old", requestId: stop.id, status: .stopped)))))
     #expect(await settle { model.outbox.isEmpty })
-    #expect(await transport.sent.filter { $0.threadId == "home" }.map(\.id) == [stop.id, later.id])
+    // The unresolved stop is retried under its own ID on the outbox timer (about a second after
+    // the send), so a slow runner may see it twice. Order of first sends is what matters.
+    var seen: Set<String> = []
+    let order = await transport.sent.filter { $0.threadId == "home" }.map(\.id).filter { seen.insert($0).inserted }
+    #expect(order == [stop.id, later.id])
+    #expect(await transport.messages.count == 1)
 }
 
 @MainActor

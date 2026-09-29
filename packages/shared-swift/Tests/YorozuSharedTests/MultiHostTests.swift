@@ -231,11 +231,19 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
     #expect(hosts.add(second))
     await secondTransport.online()
     await secondTransport.yield(.compatibility(.compatible(version: 1, capabilities: ["thread-search-v1"])))
-    let sent = await multiHostSent(secondTransport, atLeast: multiHostPairingSends + 1)
-    #expect(sent.contains {
-        if case .threadSearchRequest(let data) = $0.payload { return data.query == "marker" }
-        return false
-    })
+    // Wait for the request itself: a frame count says nothing about which frames arrived.
+    func joinedQuery(_ events: [YorozuEvent]) -> Bool {
+        events.contains {
+            if case .threadSearchRequest(let data) = $0.payload { return data.query == "marker" }
+            return false
+        }
+    }
+    var sent = await secondTransport.sent
+    for _ in 0..<300 where !joinedQuery(sent) {
+        try await Task.sleep(for: .milliseconds(10))
+        sent = await secondTransport.sent
+    }
+    #expect(joinedQuery(sent), "sent: \(sent.map(\.payload.kind))")
 }
 
 @MainActor
@@ -612,4 +620,31 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
     #expect(restored.questionChoices["same-question"] == "Option A")
     #expect(restored.outbox.map(\.event.payload.kind) == [.approvalAnswer, .questionAnswer])
     #expect(other.answered.isEmpty && other.answeredQuestions.isEmpty && other.outbox.isEmpty)
+}
+
+/// The slow-runner order: the link is up and the typed query's request has already found the
+/// host without search support, and only then does the host announce it. The query still joins.
+@MainActor
+@Test func searchJoinsWhenSearchSupportIsAnnouncedLate() async throws {
+    let transport = MultiHostTransport()
+    let session = multiHostSession(multiHostID(0), transport: transport)
+    defer { session.model.close() }
+    await transport.online()
+    #expect(await multiHostEventually { session.model.canDeliver })
+    session.model.searchHost("late marker")
+    try await Task.sleep(for: .milliseconds(400))
+    func requests(_ events: [YorozuEvent]) -> Int {
+        events.filter {
+            if case .threadSearchRequest(let data) = $0.payload { return data.query == "late marker" }
+            return false
+        }.count
+    }
+    #expect(requests(await transport.sent) == 0)
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["thread-search-v1"])))
+    var sent = await transport.sent
+    for _ in 0..<300 where requests(sent) == 0 {
+        try await Task.sleep(for: .milliseconds(10))
+        sent = await transport.sent
+    }
+    #expect(requests(sent) == 1)
 }

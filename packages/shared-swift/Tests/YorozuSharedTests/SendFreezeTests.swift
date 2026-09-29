@@ -60,7 +60,10 @@ private actor SinkTransport: ChatTransport {
     #expect(await transport.committed)
     print("PERF send-4x5MB send() blocked=\(blocked) uploaded=\(uploaded)")
     #expect(blocked < .milliseconds(100))
-    #expect(uploaded < .seconds(5))
+    // The bug this guards rewrote all 27 MB for every acknowledged chunk, which takes far longer
+    // than this. A clean upload takes 1–3 s, but shared CI runners have taken up to 12 s, so a
+    // tighter bound measures the runner rather than the code.
+    #expect(uploaded < .seconds(20))
 }
 
 @Test func filesAreSealedOnceAndSweptWhenNothingNamesThem() throws {
