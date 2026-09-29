@@ -231,11 +231,19 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
     #expect(hosts.add(second))
     await secondTransport.online()
     await secondTransport.yield(.compatibility(.compatible(version: 1, capabilities: ["thread-search-v1"])))
-    let sent = await multiHostSent(secondTransport, atLeast: multiHostPairingSends + 1)
-    #expect(sent.contains {
-        if case .threadSearchRequest(let data) = $0.payload { return data.query == "marker" }
-        return false
-    })
+    // Wait for the request itself: a frame count says nothing about which frames arrived.
+    func joinedQuery(_ events: [YorozuEvent]) -> Bool {
+        events.contains {
+            if case .threadSearchRequest(let data) = $0.payload { return data.query == "marker" }
+            return false
+        }
+    }
+    var sent = await secondTransport.sent
+    for _ in 0..<300 where !joinedQuery(sent) {
+        try await Task.sleep(for: .milliseconds(10))
+        sent = await secondTransport.sent
+    }
+    #expect(joinedQuery(sent), "sent: \(sent.map(\.payload.kind))")
 }
 
 @MainActor
