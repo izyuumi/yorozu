@@ -131,6 +131,26 @@ public final class ChatModel {
         timelineRevision = timelines.count
         return timeline
     }
+
+    /// Inline actions follow the settled message, not the thread's current working state.
+    func messageActions(for event: YorozuEvent) -> (copy: Bool, retry: MessageData?) {
+        guard case .message(let data) = event.payload else { return (false, nil) }
+        if data.role == .user { return (!data.text.isEmpty, nil) }
+        guard data.done == true else { return (false, nil) }
+        let events = timeline(event.threadId).events
+        guard let index = events.firstIndex(where: { $0.id == event.id }) else { return (!data.text.isEmpty, nil) }
+        let latestReply = events.last { if $0.parentAgentId == nil, case .message(let message) = $0.payload {
+            message.role == .agent
+        } else { false } }
+        guard latestReply?.id == event.id else {
+            return (!data.text.isEmpty, nil)
+        }
+        let prompt = events[..<index].last { if case .message(let message) = $0.payload {
+            message.role == .user
+        } else { false } }
+        guard let prompt, case .message(let message) = prompt.payload else { return (!data.text.isEmpty, nil) }
+        return (!data.text.isEmpty, message)
+    }
     public private(set) var state: TransportState = .connecting { didSet { markInterruption() } }
     /// Starts pessimistic: the transport tells us the truth when it connects.
     public private(set) var ownerOnline = false { didSet { markInterruption() } }
