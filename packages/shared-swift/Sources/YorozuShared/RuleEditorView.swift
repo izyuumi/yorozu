@@ -470,7 +470,8 @@ public struct RuleRowView: View {
         guard count > 0, let last = rule.lastUsed else { return String(localized: "Never used") }
         let when = Date(timeIntervalSince1970: last / 1000)
             .formatted(date: .abbreviated, time: .shortened)
-        return String(localized: "Used \(count) times · last \(when)")
+        return count == 1 ? String(localized: "Used \(count) time · last \(when)")
+            : String(localized: "Used \(count) times · last \(when)")
     }
 }
 

@@ -14793,6 +14793,16 @@
           }
         }
       }
+    },
+    "Used %lld time · last %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld回使用 · 最終使用：%2$@"
+          }
+        }
+      }
     }
   }
 }
