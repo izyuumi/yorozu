@@ -113,7 +113,7 @@ public struct YorozuQuestion: View {
     }
 }
 
-/// The typeface the agent's replies and thoughts are set in. Serif unless the user chose
+/// The typeface the agent's replies and thoughts are set in. Sans unless the user chose
 /// otherwise in Settings; the app's own headings keep the serif voice either way.
 public enum ReplyFont: String, CaseIterable, Identifiable, Sendable {
     case serif, sans, rounded, monospaced
@@ -144,7 +144,7 @@ public enum ReplyFont: String, CaseIterable, Identifiable, Sendable {
 
 /// The Settings row for ``ReplyFont``, the same on both platforms.
 public struct ReplyFontPicker: View {
-    @AppStorage(ReplyFont.key) private var font = ReplyFont.serif
+    @AppStorage(ReplyFont.key) private var font = ReplyFont.sans
 
     public init() {}
 

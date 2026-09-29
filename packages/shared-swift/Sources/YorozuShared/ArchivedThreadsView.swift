@@ -87,7 +87,7 @@ public struct ArchivedThreadsView: View {
     @ViewBuilder private func row(_ thread: ThreadSummary, in archive: Archive) -> some View {
         let restore = Button("Restore", systemImage: "tray.and.arrow.up") { archive.restore(thread) }
         #if os(iOS)
-            Button { archive.open(thread) } label: { label(thread, in: archive, chevron: true) }
+            Button { archive.open(thread) } label: { label(thread, in: archive) }
                 .buttonStyle(.plain)
             .swipeActions(edge: .leading) { restore.tint(.blue) }
             .swipeActions(edge: .trailing) { restore.tint(.blue) }
@@ -109,8 +109,8 @@ public struct ArchivedThreadsView: View {
         #endif
     }
 
-    private func label(_ thread: ThreadSummary, in archive: Archive, chevron: Bool = false) -> ThreadRow {
-        ThreadRow(thread: thread, highlightQuery: query, chevron: chevron,
+    private func label(_ thread: ThreadSummary, in archive: Archive) -> ThreadRow {
+        ThreadRow(thread: thread, highlightQuery: query,
                   hostLabel: archive.hostLabel(thread.id), marksArchived: false)
     }
 
