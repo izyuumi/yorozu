@@ -506,7 +506,7 @@ control, so every inbound message is the owner's.
 
 | Frame | Direction | Meaning |
 | --- | --- | --- |
-| `hello` | plugin → host | Optional `{ capabilities: [...] }` announcing `run-boundary-v1`, `progress-v1`, `model-select-v1` and/or `media-v1`. No hello means legacy chat without run state, Stop or model controls. |
+| `hello` | plugin → host | Optional `{ capabilities: [...] }` announcing `run-boundary-v1`, `progress-v1`, `model-select-v1`, `media-v1`, and/or `reply-stream-v1`. No hello means legacy chat without run state, Stop or model controls. |
 | `inbound` | host → plugin | A user message typed in a `yorozu` thread: `{ id, threadId, ts, text, attachments? }`, where `attachments` is `[{ name, mime, data }]` with base64 `data` (at most 10, 20 MB decoded in total) and `text` may be empty when there is at least one. Kept in `channel-outbox.json` until acked, resent on every connect. |
 | `deliver` | plugin → host | An OpenClaw reply for a thread. Logged, synced and pushed like any agent message; an unknown thread id opens a new thread. |
 | `ack` / `error` | both | Receipt by id. Delivery is at least once in both directions and both sides dedupe by id. |
@@ -593,8 +593,28 @@ matches a finish to its start by `toolCallId` because the after hook has no requ
 
 The host reports the plugin in `model_list.channelCapabilities`: the capabilities it announced,
 then `missing:<capability>` for each known one it did not (`run-boundary-v1`, `progress-v1`,
-`model-select-v1`, `media-v1`). Empty means no plugin; any `missing:` entry means a connected
+`model-select-v1`, `media-v1`, `reply-stream-v1`). Empty means no plugin; any `missing:` entry means a connected
 but outdated plugin, which the clients name once per host session.
+
+#### Channel reply previews (`reply-stream-v1`)
+
+The host announces `reply-stream-v1` in its initial `hello`; old plugins ignore this frame.
+A plugin must also announce `reply-stream-v1` and `run-boundary-v1` before its
+`reply_preview { id, messageId, threadId, text }` frames are accepted. Previews update one
+transient Markdown message under a stable ID and timestamp, only for the active run. They
+are not acknowledged, logged, or pushed. Current snapshots are included when a device rejoins.
+
+The plugin uses the official OpenClaw preview callbacks, disables completed block streaming,
+and joins authoritative final text payloads in source order with blank lines into one native
+answer per run when it fits. Larger answers split into ordered Unicode-safe messages with
+stable derived IDs, preserving exact text; no new chunk protocol is assumed. Negotiated
+snapshots/final parts are bounded to 256 KiB of JSON-encoded text so sealed frames fit the
+relay's 1 MiB limit; oversized previews stop updating rather than truncating final text.
+Final `deliver` carries the same `id` and `messageId` and optional boolean
+`failed` / `interrupted` flags. It is logged once, acknowledged, and retried under the same ID
+on reconnect or a lost ack. `run_finished` controls the turn's terminal state. Empty successful
+finals clear intentionally suppressed drafts; error/cancellation retains unfinished text.
+Legacy peers continue ordinary individual text delivery.
 
 #### Channel model selection (`model-select-v1`)
 

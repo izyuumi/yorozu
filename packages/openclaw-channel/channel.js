@@ -141,9 +141,13 @@ export const yorozuPlugin = createChatChannelPlugin({
                 accountId: ctx.accountId,
                 message,
                 log: ctx.log,
-                deliver: async (payload) => {
+                ...(current.streaming ? { preview: (reply) => current.send({ type: "reply_preview", ...reply }) } : {}),
+                deliver: async (payload, reply) => {
                   const text = typeof payload?.text === "string" ? payload.text : "";
-                  if (text.trim()) await send(message.threadId, text);
+                  if (text.trim() || reply) {
+                    if (reply) await current.deliver(message.threadId, text, reply);
+                    else await send(message.threadId, text);
+                  }
                 },
               }, signal, begin)),
         });

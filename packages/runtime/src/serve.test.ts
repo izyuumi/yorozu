@@ -1,3 +1,6 @@
+import { createInboundDispatcher } from "../../openclaw-channel/dispatch.js";
+import { createRuns } from "../../openclaw-channel/runs.js";
+import { connectYorozu } from "../../openclaw-channel/socket.js";
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -4752,6 +4755,129 @@ test("a failed run with no reply records a failed agent message; a reply, or com
   } finally { plugin.close(); }
 });
 
+test.each([false, true])("OpenClaw dispatcher streams Markdown through the real channel socket to the phone (large=%s)", async (large) => {
+  const host = await pairedPhone([], true, {}, true);
+  let replyOptions: { onPartialReply?: (payload: { text: string }) => unknown } | undefined;
+  let finish: (() => void) | undefined;
+  const sdkReplies = large ? ["日本語🙂".repeat(15000), "日本語🙂".repeat(15000)] : ["**日本語**\n\n完成"];
+  const expected = sdkReplies.join("\n\n");
+  const dispatch = createInboundDispatcher({
+    resolveRoute: ({ peer }: { peer: { id: string } }) => ({
+      route: { agentId: "ops", sessionKey: `session:${peer.id}` }, buildEnvelope: ({ body }: { body: string }) => body,
+    }),
+    attachments: { save: async () => [], release() {} },
+    buildContext: (context: unknown) => context,
+    createReplyPipeline: () => ({}),
+    dispatchTurn: async (plan: any) => {
+      replyOptions = plan.replyOptions;
+      await plan.replyOptions.onPartialReply({ text: "**日本語" });
+      await new Promise<void>((resolve) => { finish = resolve; });
+      if (large) await plan.replyOptions.onPartialReply({ text: expected });
+      for (const text of sdkReplies) await plan.delivery.deliver({ text });
+      plan.replyOptions.onAgentRunTerminalOutcome("completed");
+      return { dispatched: true };
+    },
+  });
+  const runs = createRuns((frame: PluginFrame) => link.send(frame));
+  const link = connectYorozu({ path: channelSocketPath(host.dir), capabilities: ["run-boundary-v1", "reply-stream-v1"],
+    onOpen: () => runs.replay(), onAbort: (id: string) => runs.abort(id),
+    onInbound: (message: any) => runs.run(message, (signal: AbortSignal, begin: () => void) => dispatch({
+      cfg: {}, accountId: "default", message,
+      preview: (reply: object) => link.send({ type: "reply_preview", ...reply }),
+      deliver: (payload: { text: string }, reply: object) => link.deliver(message.threadId, payload.text, reply),
+    }, signal, begin)),
+  });
+  try {
+    await vi.waitFor(() => expect(link.streaming).toBe(true));
+    host.send({ kind: "thread_create", data: {} });
+    await host.eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
+    const target = host.send({ kind: "message", data: { role: "user", text: "work" } });
+    await vi.waitFor(() => expect(replyOptions?.onPartialReply).toBeTypeOf("function"));
+    const preview = (await host.eventsUntil((event) => event.kind === "message" && event.data.role === "agent")).at(-1)!;
+    expect(preview).toMatchObject({ data: { role: "agent", text: "**日本語" } });
+    expect(preview.data).not.toHaveProperty("done");
+    expect(readThreadEvents("t1", host.dir).some((event) => event.id === preview.id)).toBe(false);
+    finish!();
+    const final = (await host.eventsUntil((event) => event.id === preview.id && event.kind === "message" && event.data.done)).at(-1)!;
+    expect(final).toMatchObject({ ts: preview.ts, data: { role: "agent", done: true } });
+    const afterFinal = await host.eventsUntil(turnIs(target, "idle"));
+    const received = [final, ...afterFinal.filter((event) => event.kind === "message" && event.data.role === "agent")];
+    expect(received.map((event) => event.kind === "message" ? event.data.text : "").join("")).toBe(expected);
+    const replies = readThreadEvents("t1", host.dir).filter((event) => event.kind === "message" && event.data.role === "agent");
+    expect(replies.map((event) => event.kind === "message" ? event.data.text : "").join("")).toBe(expected);
+    expect(replies).toHaveLength(large ? 2 : 1);
+    expect(new Set(replies.map((event) => event.id)).size).toBe(replies.length);
+    for (const event of replies) if (event.kind === "message") expect(event.data.text.isWellFormed()).toBe(true);
+    expect(replies[0]).toEqual(final);
+  } finally { finish?.(); link.close(); }
+});
+
+test("negotiated reply snapshots replace one message, preserve its position, and persist only final text", async () => {
+  const { dir, send, eventsUntil, plugin, target } = await channelRun(["run-boundary-v1", "reply-stream-v1"]);
+  try {
+    expect(plugin.frames).toContainEqual({ type: "hello", capabilities: ["reply-stream-v1"] });
+    const preview = { type: "reply_preview" as const, id: "draft", messageId: target, threadId: "t1", text: "日本語 **" };
+    plugin.send(preview);
+    const first = (await eventsUntil((event) => event.id === preview.id)).at(-1)!;
+    expect(first).toMatchObject({ kind: "message", data: { role: "agent", text: preview.text } });
+    expect(first.data).not.toHaveProperty("done");
+    expect(readThreadEvents("t1", dir).some((event) => event.id === preview.id)).toBe(false);
+    // UTF-16 length is below the legacy limit, but encoded bytes exceed the negotiated frame bound.
+    plugin.send({ ...preview, text: "界".repeat(90000) });
+    plugin.send({ ...preview, text: "日本語 **途中**" });
+    const next = (await eventsUntil((event) => event.id === preview.id)).at(-1)!;
+    expect(next.ts).toBe(first.ts);
+    expect(next).toMatchObject({ data: { text: "日本語 **途中**" } });
+    plugin.send({ type: "deliver", id: preview.id, messageId: target, threadId: "t1", text: "界".repeat(90000) });
+    await vi.waitFor(() => expect(plugin.frames).toContainEqual({ type: "error", id: preview.id, reason: "invalid-deliver" }));
+    expect(readThreadEvents("t1", dir).some((event) => event.id === preview.id)).toBe(false);
+    const final = { type: "deliver" as const, id: preview.id, messageId: target, threadId: "t1",
+      text: "日本語 **完了**\n\n|列|値|\n|--|--|\n|あ|い|" };
+    plugin.send(final);
+    const received = (await eventsUntil((event) => event.id === preview.id && event.kind === "message" && event.data.done)).at(-1)!;
+    expect(received.ts).toBe(first.ts);
+    expect(received).toMatchObject({ data: { role: "agent", text: final.text, done: true } });
+    plugin.send({ ...preview, text: "stale" });
+    plugin.send(final); // Lost ack resend: no duplicate persisted final.
+    send({ kind: "sync_request", data: { lastSeen: {} } });
+    const sync = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
+    expect(sync).toMatchObject({ data: { workingThreadIds: ["t1"] } });
+    expect(readThreadEvents("t1", dir).filter((event) => event.id === preview.id))
+      .toEqual([expect.objectContaining({ data: { role: "agent", text: final.text, done: true } })]);
+    plugin.send({ type: "run_finished", messageId: target, status: "completed" });
+    await eventsUntil(turnIs("", "idle"));
+  } finally { plugin.close(); }
+});
+
+test.each(["completed", "failed", "aborted"] as const)("channel terminal %s seals a draft without promoting suppressed text", async (status) => {
+  const { dir, eventsUntil, plugin, target } = await channelRun(["run-boundary-v1", "reply-stream-v1"]);
+  try {
+    const preview = { type: "reply_preview" as const, id: "draft", messageId: target, threadId: "t1", text: "unfinished **日本語" };
+    plugin.send(preview);
+    const first = (await eventsUntil((event) => event.id === preview.id)).at(-1)!;
+    plugin.send({ type: "run_finished", messageId: target, status });
+    const terminal = (await eventsUntil((event) => event.id === preview.id && event.kind === "message" && event.data.done)).at(-1)!;
+    expect(terminal).toMatchObject({ ts: first.ts, data: { role: "agent", done: true,
+      text: status === "completed" ? "" : preview.text } });
+    if (status === "failed") expect(terminal.data).toHaveProperty("failed", true);
+    if (status === "aborted") expect(terminal.data).toHaveProperty("interrupted", true);
+    await eventsUntil(turnIs(target, "idle"));
+    plugin.send({ ...preview, text: "late" });
+    plugin.send({ type: "deliver", id: "barrier", threadId: "t1", text: "b" });
+    await eventsUntil((event) => event.id === "barrier");
+    expect(readThreadEvents("t1", dir).filter((event) => event.id === preview.id)).toEqual([terminal]);
+  } finally { plugin.close(); }
+});
+
+test("reply previews from an unnegotiated plugin never reach the phone", async () => {
+  const { eventsUntil, plugin, target } = await channelRun();
+  try {
+    plugin.send({ type: "reply_preview", id: "unnegotiated", messageId: target, threadId: "t1", text: "hidden" });
+    plugin.send({ type: "deliver", id: "barrier", threadId: "t1", text: "b" });
+    expect((await eventsUntil((event) => event.id === "barrier")).some((event) => event.id === "unnegotiated")).toBe(false);
+  } finally { plugin.close(); }
+});
+
 test("progress frames become tool rows for the active run only, once per call", async () => {
   const { dir, eventsUntil, plugin, target } = await channelRun(["run-boundary-v1", "progress-v1"]);
   const tools = () => readThreadEvents("t1", dir).filter((event) => event.kind === "tool_call" || event.kind === "tool_result");
@@ -5182,7 +5308,7 @@ test("old OpenClaw plugins keep chat without model capability; pending model req
   await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "model_list")).toBe(true));
   // Connected but silent: clients hear what it lacks, and no turn state is created.
   await vi.waitFor(() => expect(mac.events.findLast((e) => e.kind === "model_list")?.data).toMatchObject({
-    channelCapabilities: ["missing:run-boundary-v1", "missing:progress-v1", "missing:model-select-v1", "missing:media-v1"] }));
+    channelCapabilities: ["missing:run-boundary-v1", "missing:progress-v1", "missing:model-select-v1", "missing:media-v1", "missing:reply-stream-v1"] }));
   createThread(undefined, dir, "old");
   mac.send({ kind: "message", threadId: "old", data: { role: "user", text: "works" } } as never);
   await vi.waitFor(() => expect(plugin.frames.some((f) => f.type === "inbound")).toBe(true));

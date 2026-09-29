@@ -101,7 +101,7 @@ test("hello is the first frame and lists the capabilities", async () => {
   const { host, close } = await setup();
   await until(() => host.frames.length >= 1);
   assert.deepEqual(host.frames[0], { type: "hello", capabilities: CAPABILITIES });
-  assert.deepEqual(CAPABILITIES, ["run-boundary-v1", "progress-v1", "model-select-v1", "media-v1"]);
+  assert.deepEqual(CAPABILITIES, ["run-boundary-v1", "progress-v1", "model-select-v1", "media-v1", "reply-stream-v1"]);
   await close();
 });
 

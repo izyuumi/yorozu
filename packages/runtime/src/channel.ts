@@ -31,11 +31,16 @@ export interface ChannelDeliver {
   id: string;
   threadId: string;
   text: string;
+  /** Stable triggering run for negotiated reply streaming. */
+  messageId?: string;
+  interrupted?: boolean;
+  failed?: boolean;
   /** Title for a thread this message creates. Ignored when the thread exists. */
   title?: string;
 }
 
 export type HostFrame =
+  | { type: "hello"; capabilities: string[] }
   | { type: "model_catalog_request" | "model_selection_request"; requestId: string; threadId: string }
   | { type: "model_select"; requestId: string; threadId: string; model: string | null }
   | { type: "inbound"; message: ChannelInbound }
@@ -45,6 +50,7 @@ export type HostFrame =
 
 export type RunStatus = "completed" | "failed" | "aborted";
 export type PluginFrame = ({ type: "deliver" } & ChannelDeliver)
+  | ({ type: "reply_preview" } & ChannelDeliver & { messageId: string })
   | { type: "ack"; id: string }
   | { type: "hello"; capabilities?: string[] }
   | { type: "run_started"; messageId: string }
@@ -59,6 +65,8 @@ export interface ChannelHostOptions {
   dir: string;
   /** Makes the message durable in its thread. Throws when it could not. */
   deliver(message: ChannelDeliver): void;
+  /** Best-effort snapshot; durable delivery still goes through deliver. */
+  preview?(message: ChannelDeliver & { messageId: string }): void;
   forwarded(message: ChannelInbound): void;
   runStarted(messageId: string): void;
   runFinished(messageId: string, status: RunStatus): void;
@@ -258,6 +266,7 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
     path: channelSocketPath(dir),
     onOpen: (device, send) => {
       plugins.set(device, send);
+      send({ type: "hello", capabilities: ["reply-stream-v1"] });
       sent.set(device, new Set());
       // A plugin that says nothing within the grace is legacy: tell clients, and settle what waited on it.
       // A plugin with attachments waiting announces `media-v1` right away.
@@ -345,14 +354,27 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
         saveJson(outboxFile(dir), outbox);
         return;
       }
+      if (frame.type === "reply_preview") {
+        if (!runBoundaryPlugins.has(device) || !announcedBy.get(device)?.has("reply-stream-v1") ||
+            !validId(frame.id) || !validId(frame.messageId) || !validId(frame.threadId) ||
+            typeof frame.text !== "string" || Buffer.byteLength(JSON.stringify(frame.text)) > MAX_TEXT) return;
+        options.preview?.({ id: frame.id, messageId: frame.messageId, threadId: frame.threadId, text: frame.text });
+        return;
+      }
       if (frame.type !== "deliver") return;
       const id = typeof frame.id === "string" ? frame.id.slice(0, MAX_ID) : "";
       if (!validId(frame.id) || !validId(frame.threadId) || typeof frame.text !== "string" ||
-          frame.text.length > MAX_TEXT || (frame.title !== undefined && typeof frame.title !== "string")) {
+          frame.text.length > MAX_TEXT || (frame.title !== undefined && typeof frame.title !== "string") ||
+          (frame.messageId !== undefined && (!validId(frame.messageId) || !runBoundaryPlugins.has(device) ||
+            !announcedBy.get(device)?.has("reply-stream-v1") ||
+            Buffer.byteLength(JSON.stringify(frame.text)) > MAX_TEXT)) ||
+          (frame.failed !== undefined && typeof frame.failed !== "boolean") ||
+          (frame.interrupted !== undefined && typeof frame.interrupted !== "boolean")) {
         return send({ type: "error", id, reason: "invalid-deliver" });
       }
       try {
         options.deliver({ id: frame.id, threadId: frame.threadId, text: frame.text,
+          ...(frame.messageId !== undefined ? { messageId: frame.messageId, failed: frame.failed, interrupted: frame.interrupted } : {}),
           ...(frame.title !== undefined ? { title: frame.title.slice(0, 200) } : {}) });
       } catch (error) {
         // No ack: the plugin keeps it and retries.

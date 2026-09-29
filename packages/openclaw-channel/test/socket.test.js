@@ -103,3 +103,27 @@ test("says hello with its capabilities on every connection, before anything else
   link.close();
   await host.close();
 });
+
+test("negotiated final survives lost ack/reconnect under the preview identity; close releases pending sends", async () => {
+  const path = join(mkdtempSync(join(tmpdir(), "yorozu-link-")), "channel.sock");
+  const host = fakeHost(path);
+  const link = connectYorozu({ path, retryMs: 20, ackTimeoutMs: 50, capabilities: ["reply-stream-v1"], onInbound: async () => {} });
+  try {
+    await until(() => link.connected);
+    assert.equal(link.streaming, false); // An older host never announces preview support.
+    host.write({ type: "hello", capabilities: ["reply-stream-v1"] });
+    await until(() => link.streaming);
+    const final = link.deliver("t1", "**日本語**", { id: "draft", messageId: "u1", failed: false, interrupted: false });
+    await until(() => host.frames.some((frame) => frame.type === "deliver"));
+    host.drop(); // Host logged the final, but ack was lost.
+    await until(() => host.hellos.length === 2);
+    await until(() => host.frames.filter((frame) => frame.type === "deliver").length >= 2);
+    const deliveries = host.frames.filter((frame) => frame.type === "deliver");
+    assert.ok(deliveries.every((frame) => frame.id === "draft" && frame.text === "**日本語**" && frame.messageId === "u1"));
+    host.write({ type: "ack", id: "draft" });
+    assert.equal(await final, "draft");
+    const pending = link.deliver("t1", "last", { id: "last", messageId: "u2" });
+    link.close();
+    await assert.rejects(pending, /closed/);
+  } finally { link.close(); await host.close(); }
+});
