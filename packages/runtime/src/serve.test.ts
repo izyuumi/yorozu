@@ -5319,7 +5319,8 @@ test("OpenClaw draft model confirmation precedes delivery; rejection queues, res
   plugin = await channelPlugin(dir);
   mac = await macClient(dir);
   plugin.send({ type: "hello", capabilities: ["model-select-v1"] });
-  await vi.waitFor(() => expect(plugin.frames).toEqual(delivered));
+  await vi.waitFor(() => expect(plugin.frames.filter((frame) => frame.type === "inbound")).toEqual(delivered));
+  expect(plugin.frames.some((frame) => frame.type === "model_select")).toBe(false);
   plugin.send({ type: "ack", id: message.id });
   plugin.send({ type: "ack", id: "second-model" });
   await vi.waitFor(() => expect(JSON.parse(readFileSync(join(dir, "channel-outbox.json"), "utf8"))).toEqual([]));
@@ -5337,7 +5338,7 @@ test("OpenClaw draft model confirmation precedes delivery; rejection queues, res
   plugin.send({ type: "hello", capabilities: ["model-select-v1"] });
   mac.sendRawEvent(message);
   await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "receipt" && e.data.eventId === message.id)).toBe(true));
-  expect(plugin.frames).toEqual([]);
+  expect(plugin.frames.filter((frame) => frame.type === "inbound" || frame.type === "model_select")).toEqual([]);
   expect(JSON.parse(readFileSync(join(dir, "channel-outbox.json"), "utf8"))).toEqual([]);
   plugin.close(); mac.close();
 });
