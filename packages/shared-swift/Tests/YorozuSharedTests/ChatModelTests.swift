@@ -749,13 +749,14 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
 }
 
 @MainActor
-@Test func orderedStreamReplacementsCanShrinkWithoutReorderingOrRevivingFinals() async throws {
+@Test(arguments: [false, true])
+func orderedStreamReplacementsCanShrinkWithoutReorderingOrRevivingFinals(restartedHost: Bool) async throws {
     let transport = FakeTransport()
     let model = await connected(transport)
     defer { model.close() }
-    func snapshot(_ revision: Int, _ text: String, done: Bool = false) throws -> YorozuEvent {
+    func snapshot(_ revision: Int, _ text: String, done: Bool = false, timestamp: Int = 1) throws -> YorozuEvent {
         let bytes = try JSONSerialization.data(withJSONObject: [
-            "id": "reply", "threadId": "home", "ts": 1, "agentId": "main", "kind": "message",
+            "id": "reply", "threadId": "home", "ts": timestamp, "agentId": "main", "kind": "message",
             "data": ["role": "agent", "text": text, "done": done,
                      "attachments": [], "streamRevision": revision],
         ])
@@ -779,17 +780,29 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     #expect(replacement.done == false)
     #expect(model.events["home"]?.first?.ts == 1)
 
-    model.applyEvent(try snapshot(4, "完了", done: true))
-    model.applyEvent(try snapshot(5, "Late partial"))
+    let finalTimestamp = restartedHost ? 3 : 1
+    if restartedHost {
+        // Transient drafts are not journaled. A restarted host begins a new version epoch.
+        model.applyEvent(try snapshot(1, "**再開**", timestamp: finalTimestamp))
+        flush("restart-barrier")
+        guard case .message(let resumed) = model.events["home"]?.first(where: { $0.id == "reply" })?.payload else {
+            Issue.record("Missing resumed reply")
+            return
+        }
+        #expect(resumed.text == "**再開**")
+    }
+    model.applyEvent(try snapshot(restartedHost ? 2 : 4, "完了", done: true, timestamp: finalTimestamp))
+    model.applyEvent(try snapshot(5, "Late partial", timestamp: finalTimestamp))
     model.applyEvent(try snapshot(3, "Stale final", done: true))
     flush("final-barrier")
-    guard case .message(let final) = model.events["home"]?.first?.payload else {
+    let finalEvent = model.events["home"]?.first(where: { $0.id == "reply" })
+    guard case .message(let final) = finalEvent?.payload else {
         Issue.record("Missing final reply")
         return
     }
     #expect(final.text == "完了")
     #expect(final.done == true)
-    #expect(model.events["home"]?.first?.ts == 1)
+    #expect(finalEvent?.ts == finalTimestamp)
 }
 
 @MainActor

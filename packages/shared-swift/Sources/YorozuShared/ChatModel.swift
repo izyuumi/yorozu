@@ -2696,10 +2696,7 @@ public final class ChatModel {
     // hops stretching the fixture over multiple real display frames under parallel load.
     func applyEvent(_ event: YorozuEvent) {
         let key = "\(event.threadId)\u{0}\(event.id)"
-        // A delayed snapshot must not displace a newer revision in this display frame.
-        if case .message(let next) = event.payload, let revision = next.streamRevision,
-            let pending = pendingStreamEvents[key], case .message(let old) = pending.payload,
-            let pendingRevision = old.streamRevision, pendingRevision > revision { return }
+        if let pending = pendingStreamEvents[key], staleReplyUpdate(event, replacing: pending) { return }
         if case .message(let data) = event.payload, data.role == .agent, data.done != true {
             pendingStreamEvents[key] = event
             guard streamFrame == nil else { return }
@@ -3102,6 +3099,20 @@ public final class ChatModel {
         }
     }
 
+    private func staleReplyUpdate(_ candidate: YorozuEvent, replacing previous: YorozuEvent) -> Bool {
+        guard case .message(let next) = candidate.payload, next.role == .agent,
+              case .message(let old) = previous.payload, old.role == .agent else { return false }
+        if old.done == true && next.done != true { return true }
+        // Authoritative completion wins even when a restarted host reset its draft counter.
+        if old.done != true && next.done == true { return false }
+        // Draft timestamps stay fixed within a run; a restart begins a new revision epoch.
+        if previous.ts != candidate.ts { return previous.ts > candidate.ts }
+        if let revision = next.streamRevision {
+            return old.streamRevision.map { revision <= $0 } ?? false
+        }
+        return next.done != true && (old.streamRevision != nil || old.text.count > next.text.count)
+    }
+
     private func upsert(_ incoming: YorozuEvent, persist: Bool = true) {
         var event = incoming
         if case .threadRewound(let data) = event.payload {
@@ -3148,15 +3159,7 @@ public final class ChatModel {
             if thread[index].clientTs != nil && event.clientTs == nil,
                case .message(let old) = thread[index].payload, old.role == .user,
                case .message(let next) = event.payload, next.role == .user { return }
-            if case .message(let old) = thread[index].payload, old.role == .agent,
-               case .message(let next) = event.payload, next.role == .agent {
-                if old.done == true && next.done != true { return }
-                if let oldRevision = old.streamRevision, let nextRevision = next.streamRevision {
-                    if nextRevision <= oldRevision { return }
-                } else if old.done != true && next.done != true &&
-                    (thread[index].ts > event.ts || thread[index].ts == event.ts && old.text.count > next.text.count) ||
-                    old.done == true && next.done == true && thread[index].ts > event.ts { return }
-            }
+            if staleReplyUpdate(event, replacing: thread[index]) { return }
             guard thread[index] != event else { return }
             let timestampChanged = thread[index].ts != event.ts
             let orderingConfirmed = thread[index].clientTs == nil && event.clientTs != nil
