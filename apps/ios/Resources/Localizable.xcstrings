@@ -5706,6 +5706,22 @@
         "zh-Hans": { "stringUnit": { "state": "translated", "value": "等宽" } }
       }
     },
+    "Advanced": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Avanzado" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "詳細設定" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "고급" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "高级" } }
+      }
+    },
+    "Host controls are unavailable in demo mode.": {
+      "localizations": {
+        "es": { "stringUnit": { "state": "translated", "value": "Los controles del host no están disponibles en el modo de demostración." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "デモモードではホストの操作は利用できません。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "데모 모드에서는 호스트 설정을 사용할 수 없습니다." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "演示模式下无法使用主机控制。" } }
+      }
+    },
     "Chat": {
       "localizations": {
         "es": { "stringUnit": { "state": "translated", "value": "Chat" } },
