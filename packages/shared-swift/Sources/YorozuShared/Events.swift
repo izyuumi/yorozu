@@ -1383,7 +1383,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     }
 
     /// What a list draws: an untitled thread is one the runtime has not named yet.
-    public var displayTitle: String { title.isEmpty ? "New chat" : title }
+    public var displayTitle: String { title.isEmpty ? String(localized: "New chat") : title }
 
     /// The last path component of ``cwd``: the repo a coding agent's row is subtitled with.
     public var repoName: String? {
