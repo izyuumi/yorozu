@@ -197,7 +197,11 @@ jobs:
       - name: Verify compiled UI keys have English and Japanese coverage
         run: |
           extracted=.build/ci-ios/Build/Intermediates.noindex
-          shared="$extracted/YorozuShared.build/Debug-iphonesimulator/YorozuShared-t.build/Objects-normal/arm64"
+          shared="$extracted/YorozuShared.build/Debug-iphonesimulator/YorozuShared.build/Objects-normal/arm64"
+          # Xcode 27 adds a target suffix; Xcode 26 uses the package target's name.
+          if [ ! -d "$shared" ]; then
+            shared="$extracted/YorozuShared.build/Debug-iphonesimulator/YorozuShared-t.build/Objects-normal/arm64"
+          fi
           node scripts/check-localizations.mjs apps/ios/Resources/Localizable.xcstrings "$shared"
           node scripts/check-localizations.mjs apps/mac/Resources/Localizable.xcstrings "$shared"
           for target in YorozuIOS YorozuShare YorozuWidget YorozuNotificationService; do
