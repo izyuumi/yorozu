@@ -82,6 +82,7 @@ export interface ThreadRecord {
 /** Kinds that belong to a thread's history. Control traffic is not logged. */
 const LOGGED: ReadonlySet<EventKind> = new Set<EventKind>([
   "message",
+  "turn_changes",
   "thought",
   "tool_call",
   "tool_result",

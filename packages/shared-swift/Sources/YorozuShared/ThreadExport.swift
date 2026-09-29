@@ -61,6 +61,10 @@ public func threadMarkdown(
             if !data.text.isEmpty { lines.append(data.text) }
             if data.interrupted == true { lines += ["", "*Stopped*"] }
             else if data.text.isEmpty { lines.append("*(no text)*") }
+        case .changes(let event):
+            guard case .turnChanges(let data) = event.payload else { break }
+            lines += ["", data.files.count == 1 ? "1 changed file" : "\(data.files.count) changed files"]
+            lines += data.files.map { "- \($0.path): +\($0.added) −\($0.removed)" }
         case .approval(let event):
             guard case .approvalCard(let card) = event.payload else { break }
             lines += ["", "> **Approval asked** — \(card.actionClass): \(card.target)"]
