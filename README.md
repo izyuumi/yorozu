@@ -39,6 +39,7 @@ blind push notifications, and the thread/sync model.
 | `apps/relay` | blind websocket relay — a Cloudflare Worker and a self-hostable `ws` server |
 | `apps/web` | the `yorozu.yumi.to` site (Astro static build on a Cloudflare Worker) |
 | `packages/runtime` | the Node sidecar: relay bridge, OpenClaw channel socket, native agent runners |
+| `packages/openclaw-channel` | the `yorozu` channel plugin for OpenClaw, bundled in the Mac app |
 | `packages/shared` | protocol event types shared by the TypeScript workspaces |
 | `packages/shared-swift` | SwiftUI views and the chat model shared by both apps, and the phone–watch wire types |
 
@@ -154,10 +155,10 @@ A host then continues:
    Settings → **Permissions**. Start at Login and Never Sleep are on that page too — never-sleep
    is a `caffeinate` child process the app owns, and it dies with the app.
 5. Install and configure [OpenClaw](https://docs.openclaw.ai/install), then add Yorozu as one of
-   its chat channels with the [plugin](https://github.com/izyuumi/yorozu-openclaw-channel):
+   its chat channels. The plugin ships inside the app, and linking it keeps it updated with the app:
 
    ```sh
-   openclaw plugins install git:github.com/izyuumi/yorozu-openclaw-channel --accept-capabilities
+   openclaw plugins install --link --accept-capabilities /Applications/Yorozu.app/Contents/Resources/openclaw-channel
    openclaw config set channels.yorozu.enabled true
    openclaw agents bind --bind yorozu   # routes Yorozu to OpenClaw's default agent; add --agent <id> for another
    openclaw gateway restart
