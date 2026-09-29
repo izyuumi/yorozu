@@ -2727,6 +2727,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
       rejectUserMessage("oversized-attachments");
       return state("rejected-oversized-attachments");
     }
+    if (event.kind === "message" && event.data.role === "user" && event.data.attachments?.length &&
+        viaChannel(event.threadId) && channel.attachments === "unsupported") {
+      rejectUserMessage("attachments-unsupported");
+      return state("rejected-attachments-unsupported");
+    }
     if (event.kind === "message" && event.data.delivery !== undefined &&
         event.data.delivery !== "queue" && event.data.delivery !== "steer") {
       rejectUserMessage("invalid-delivery");
@@ -3100,6 +3105,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
     onDeliveryError: (message, error) => {
       if (!stopped) broadcast({ id: randomUUID(), threadId: message.threadId, ts: Date.now(), agentId: MAIN_AGENT,
         kind: "thread_models", data: { requestId: message.id, error: `Message queued: ${error}. Will retry when OpenClaw reconnects.` } });
+    },
+    onRejected: (message, reason) => {
+      if (!stopped) broadcast(control({ kind: "admission_status", data: { eventId: message.id, status: "rejected", reason } }));
     },
     forwarded: ({ id, threadId }) => {
       if (!channelRuns.has(id)) channelRuns.set(id, { threadId });

@@ -9,10 +9,14 @@ import {
   buildChannelInboundEventContext,
   dispatchChannelInboundTurn,
   resolveChannelInboundRouteEnvelope,
+  toInboundMediaFacts,
 } from "openclaw/plugin-sdk/channel-inbound";
+import { saveMediaBuffer } from "openclaw/plugin-sdk/media-store";
 import { createChannelReplyPipeline } from "openclaw/plugin-sdk/channel-reply-pipeline";
 import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 import { createInboundDispatcher } from "./dispatch.js";
+import { CAPABILITIES } from "./capabilities.js";
+import { createAttachmentSaver } from "./media.js";
 import { createProgress } from "./progress.js";
 import { createRuns } from "./runs.js";
 import { connectYorozu } from "./socket.js";
@@ -24,13 +28,11 @@ import { connectYorozu } from "./socket.js";
 
 const DEFAULT_SOCKET = join(homedir(), "Library/Application Support/Yorozu/channel.sock");
 
-// Announced in every hello. model-select-v1 and media-v1 are not: see README ("Model selection").
-export const CAPABILITIES = ["run-boundary-v1", "progress-v1"];
-
 const dispatchInbound = createInboundDispatcher({
   resolveRoute: resolveChannelInboundRouteEnvelope,
   buildContext: buildChannelInboundEventContext,
   createReplyPipeline: createChannelReplyPipeline,
+  attachments: createAttachmentSaver({ saveMedia: saveMediaBuffer, toMediaFacts: toInboundMediaFacts }),
   dispatchTurn: dispatchChannelInboundTurn,
 });
 
@@ -79,7 +81,7 @@ export const yorozuPlugin = createChatChannelPlugin({
         blurb: "Chat with OpenClaw from Yorozu on this Mac, iPhone and iPad.",
         docsPath: "/channels/yorozu",
       },
-      capabilities: { chatTypes: ["direct"], media: false, reactions: false, threads: false, nativeCommands: false },
+      capabilities: { chatTypes: ["direct"], media: true, reactions: false, threads: false, nativeCommands: false },
       reload: { configPrefixes: ["channels.yorozu"] },
       config: {
         listAccountIds: () => ["default"],

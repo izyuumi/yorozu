@@ -1135,6 +1135,29 @@ func draftAgentChangesKeepComposerLocalUntilFirstSend(agent: ThreadAgent) async 
 }
 
 @MainActor
+@Test func attachmentsRejectedAfterReceiptStayVisibleAsNotSent() async throws {
+    let transport = FakeTransport(autoReceipt: true)
+    let model = await connected(transport)
+    defer { model.close() }
+    let photo = try #require(MessageAttachment(name: "photo.jpg", mime: "image/jpeg", bytes: Data(repeating: 1, count: 64)))
+    model.send("", in: "home", attachments: [photo])
+    let message = try #require(await sent(by: transport, atLeast: pairingSends + 1).first { $0.payload.kind == .message })
+    #expect(await eventually { model.outbox.isEmpty })
+    // An old OpenClaw plugin connected after the host queued it: the host says so on every device.
+    await transport.yield(.event(event("late-reject", .admissionStatus(AdmissionStatusData(
+        eventId: message.id, status: .rejected, reason: "attachments-unsupported")))))
+    #expect(await eventually { model.outboxStatus(of: message.id) == .rejected })
+    #expect(model.outboxRejectionReason(of: message.id) == "attachments-unsupported")
+    guard case .message(let shown)? = model.events["home"]?.first(where: { $0.id == message.id })?.payload else {
+        Issue.record("message left the timeline")
+        return
+    }
+    #expect(shown.attachments == [photo])
+    // Not resent: nothing but the original message went out.
+    #expect(await transport.sent.filter { $0.payload.kind == .message }.count == 1)
+}
+
+@MainActor
 @Test func draftsWithInputSurviveNavigationNewSessionsAndSync() async throws {
     let transport = FakeTransport(autoReceipt: true)
     let model = await connected(transport)

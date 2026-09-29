@@ -5198,6 +5198,82 @@ test("old OpenClaw plugins keep chat without model capability; pending model req
   plugin.close(); mac.close();
 }, 15_000);
 
+const photo = { name: "photo.jpg", mime: "image/jpeg", data: Buffer.from("jpeg bytes").toString("base64") };
+const inbounds = (plugin: { frames: HostFrame[] }) =>
+  plugin.frames.flatMap((frame) => frame.type === "inbound" ? [frame.message] : []);
+
+test("OpenClaw plugins with media-v1 get attachments, with or without text", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-channel-media-"));
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir });
+  const plugin = await channelPlugin(dir);
+  plugin.send({ type: "hello", capabilities: ["media-v1"] });
+  const mac = await macClient(dir);
+  createThread(undefined, dir, "pics");
+  mac.send({ kind: "message", threadId: "pics", data: { role: "user", text: "", attachments: [photo] } } as never);
+  mac.send({ kind: "message", threadId: "pics", data: { role: "user", text: "what is this", attachments: [photo] } } as never);
+  await vi.waitFor(() => expect(inbounds(plugin)).toHaveLength(2));
+  expect(inbounds(plugin)).toMatchObject([
+    { threadId: "pics", text: "", attachments: [photo] },
+    { threadId: "pics", text: "what is this", attachments: [photo] },
+  ]);
+  plugin.close(); mac.close();
+});
+
+test("an OpenClaw plugin without media-v1 gets text but rejects attachments with a reason", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-channel-nomedia-"));
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir });
+  const plugin = await channelPlugin(dir, true);
+  const mac = await macClient(dir);
+  createThread(undefined, dir, "old");
+  const rejected = mac.send({ kind: "message", threadId: "old", data: { role: "user", text: "", attachments: [photo] } } as never);
+  await vi.waitFor(() => expect(mac.events).toContainEqual(expect.objectContaining({
+    kind: "admission_status", data: { eventId: rejected, status: "rejected", reason: "attachments-unsupported" } })));
+  mac.send({ kind: "message", threadId: "old", data: { role: "user", text: "just text" } } as never);
+  await vi.waitFor(() => expect(inbounds(plugin)).toMatchObject([{ text: "just text" }]));
+  expect(inbounds(plugin).every((message) => message.id !== rejected)).toBe(true);
+  plugin.close(); mac.close();
+});
+
+test("an attachment queued with no plugin goes out when a media-v1 plugin connects", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-channel-media-wait-"));
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir });
+  const mac = await macClient(dir);
+  createThread(undefined, dir, "wait");
+  const id = mac.send({ kind: "message", threadId: "wait", data: { role: "user", text: "", attachments: [photo] } } as never);
+  await vi.waitFor(() => expect(readThreadEvents("wait", dir).some((event) => event.id === id)).toBe(true));
+  expect(mac.events.some((event) => event.kind === "admission_status" && event.data.status === "rejected")).toBe(false);
+  const plugin = await channelPlugin(dir);
+  plugin.send({ type: "hello", capabilities: ["media-v1"] });
+  await vi.waitFor(() => expect(inbounds(plugin)).toMatchObject([{ id, text: "", attachments: [photo] }]));
+  plugin.close(); mac.close();
+});
+
+test("an attachment queued with no plugin is marked not sent when an old plugin connects, and never resent", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-channel-media-old-"));
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir });
+  const mac = await macClient(dir);
+  createThread(undefined, dir, "wait");
+  const id = mac.send({ kind: "message", threadId: "wait", data: { role: "user", text: "look", attachments: [photo] } } as never);
+  await vi.waitFor(() => expect(readThreadEvents("wait", dir).some((event) => event.id === id)).toBe(true));
+  // Like the published plugin: no hello at all.
+  const plugin = await channelPlugin(dir);
+  await vi.waitFor(() => expect(mac.events).toContainEqual(expect.objectContaining({
+    kind: "admission_status", data: { eventId: id, status: "rejected", reason: "attachments-unsupported" } })),
+    { timeout: 3000 });
+  expect(inbounds(plugin)).toEqual([]);
+  expect(JSON.parse(readFileSync(join(dir, "channel-outbox.json"), "utf8"))).toEqual([]);
+  plugin.close();
+  const again = await channelPlugin(dir);
+  again.send({ type: "hello", capabilities: ["media-v1"] });
+  mac.send({ kind: "message", threadId: "wait", data: { role: "user", text: "next" } } as never);
+  await vi.waitFor(() => expect(inbounds(again)).toMatchObject([{ text: "next" }]));
+  again.close(); mac.close();
+});
+
 test.each(["steer", "unsupported", "declined", "failed"])("follow-up delivery uses %s and reports the effective queue", async (mode) => {
   const ready = Promise.withResolvers<void>();
   const finish = Promise.withResolvers<void>();
