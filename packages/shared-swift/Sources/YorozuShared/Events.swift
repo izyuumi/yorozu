@@ -1298,7 +1298,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     }
 
     /// Whether the agent has said something here since anyone last read it. The one definition
-    /// of unread — what every dot, bold title and app badge on both platforms is drawn from.
+    /// of unread — what every dot and bold title on both platforms is drawn from.
     ///
     /// Deliberately not "a reply arrived while this device had the thread closed": that answer
     /// differs per device, and was wrong on any device that happened to be asleep for it.
