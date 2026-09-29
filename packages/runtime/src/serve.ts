@@ -124,6 +124,7 @@ import {
   threadHome,
   threadModel,
   threadSummaries,
+  threadSummary,
 } from "./threads.js";
 import { codexNativeRunner, connectCodex } from "./codex-native.js";
 import { NativeCards } from "./native-cards.js";
@@ -1045,7 +1046,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const batches = sendToAll(event);
     for (const send of locals.values()) send(event);
     // A suspended phone still needs a wake for a final reply or actionable card.
-    if (announce) notifyRelay(event);
+    if (announce && statusPush(event)) notifyRelay(event);
     return batches;
   };
 
@@ -1080,7 +1081,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           const batches = sendToAll(event, TRACE_BYTES);
           if (batches > 0) {
             largePartialAt.set(event.threadId, now + Math.ceil(Buffer.byteLength(event.data.text) * 4_000 / 65_536));
-            if (announce) notifyRelay(event);
+            if (announce && statusPush(event)) notifyRelay(event);
           }
           return;
         }
@@ -1132,6 +1133,38 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const heldNotifies: YorozuEvent[] = [];
   const latestPerThread = (events: YorozuEvent[]): YorozuEvent[] =>
     [...new Map(events.map((event) => [event.threadId, event])).values()];
+
+  /**
+   * The status each thread last had, for the events that can change it: the phone is woken
+   * only when a thread moves into needs-approval, needs-input, failed or done, not for each
+   * further card or reply while it is already there. Ordered as `ThreadStatus` on the clients.
+   */
+  const lastStatus = new Map<string, "approval" | "input" | "failed" | "working" | "done" | "idle">();
+  const statusOf = (threadId: string, working?: boolean) => {
+    const thread = threadSummary(threadId, dir);
+    const turn = turnStates.get(threadId);
+    if (thread.awaitingApproval) return "approval";
+    if (thread.awaitingQuestion) return "input";
+    if (thread.needsAttention || thread.interruptedTurnId || turn?.state === "stopped-unconfirmed") return "failed";
+    if (working ?? (turn !== undefined && turn.state !== "idle")) return "working";
+    return (thread.lastAgentAt ?? 0) > (thread.lastReadAt ?? 0) ? "done" : "idle";
+  };
+  /** Whether `event` moved its thread into a status worth waking the phone for. */
+  const statusPush = (event: YorozuEvent): boolean => {
+    const { threadId } = event;
+    const finalReply = event.kind === "message" && event.data.role === "agent" &&
+      event.data.done === true && event.parentAgentId === undefined;
+    if (!threadId || !(finalReply || ["approval_card", "approval_answer", "approval_status", "question_card",
+      "question_answer", "interrupt"].includes(event.kind) || event.kind === "message" && event.data.role === "user"))
+      return false;
+    // A user message starts a turn before the host has said so; a final reply ends it, unless
+    // another turn is already queued behind it.
+    const status = statusOf(threadId, event.kind === "message" && !finalReply ? true
+      : finalReply ? (turnStates.get(threadId)?.queued.length ?? 0) > 0 : undefined);
+    const previous = lastStatus.get(threadId);
+    lastStatus.set(threadId, status);
+    return status !== previous && status !== "working" && status !== "idle" && notifyFor(event) !== null;
+  };
 
   /** Everything the runtime sees is logged first: the nightly job reads the log back. */
   function emit(event: YorozuEvent): void {
@@ -2916,6 +2949,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       // reads it. A frame that moves nothing is not worth a list.
       case "thread_read":
         if (markThreadRead(event.threadId, event.data.at, dir, event.data.reset)) {
+          lastStatus.set(event.threadId, statusOf(event.threadId));
           broadcast(threadList());
         }
         return;

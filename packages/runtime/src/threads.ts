@@ -395,37 +395,47 @@ function logSummary(threadId: string, dir: string, minTs = 0):
 
 /** What the phone's thread list renders. */
 export const threadSummaries = (dir = stateDir(), minTs = 0): ThreadSummary[] =>
-  listThreads(dir).map((thread) => {
-    const { preview, lastAgentAt, awaitingApproval, awaitingQuestion, needsAttention } = logSummary(thread.id, dir, minTs);
-    return {
-      id: thread.id,
-      title: thread.title,
-      archived: thread.archived,
-      lastActivity: lastActivity(thread, dir),
-      ...(preview === undefined ? {} : { lastMessage: preview }),
-      pinned: thread.pinned ?? false,
-      ...(thread.model ? { model: thread.model } : {}),
-      ...(thread.effort ? { effort: thread.effort } : {}),
-      ...(thread.agent ? { bypass: thread.bypass ?? false } : {}),
-      ...(thread.nativeTurn?.state === "interrupted" &&
-        ((thread.nativeTurn.recoveryAttempts ?? 0) >= 3 || !thread.nativeTurn.userEventId)
-        ? { interruptedTurnId: thread.nativeTurn.id, canResume: !!thread.nativeTurn.userEventId } : {}),
-      ...(thread.nativeTurn?.userEventId &&
-        (thread.nativeTurn.state === "running" && thread.nativeTurn.recoveryActive === true ||
-          thread.nativeTurn.state === "interrupted" && (thread.nativeTurn.recoveryAttempts ?? 0) < 3)
-        ? { recoveryState: "recovering" as const } : {}),
-      // Absent on a yorozu thread: that is the default, and what older phones already assume.
-      ...(thread.agent ? { agent: thread.agent } : {}),
-      ...(thread.agent && thread.cwd ? { cwd: thread.cwd } : {}),
-      // The two the dot is drawn from. Absent rather than 0 when there is nothing to say, so a
-      // thread nobody has read and nobody has been answered in is not permanently bold.
-      ...(thread.lastReadAt === undefined ? {} : { lastReadAt: thread.lastReadAt }),
-      ...(lastAgentAt === undefined ? {} : { lastAgentAt }),
-      ...(awaitingApproval ? { awaitingApproval } : {}),
-      ...(awaitingQuestion ? { awaitingQuestion } : {}),
-      ...(needsAttention ? { needsAttention } : {}),
-    };
-  });
+  listThreads(dir).map((thread) => summarize(thread, dir, minTs));
+
+/**
+ * One thread's row, as `threadSummaries` draws it. A thread that has a log but no index entry
+ * yet (the first turn of one a phone opened) is drawn from its log alone.
+ */
+export const threadSummary = (id: string, dir = stateDir()): ThreadSummary =>
+  summarize(listThreads(dir).find((candidate) => candidate.id === id) ??
+    { id, title: "", createdAt: "", archived: false }, dir, 0);
+
+const summarize = (thread: ThreadRecord, dir: string, minTs: number): ThreadSummary => {
+  const { preview, lastAgentAt, awaitingApproval, awaitingQuestion, needsAttention } = logSummary(thread.id, dir, minTs);
+  return {
+    id: thread.id,
+    title: thread.title,
+    archived: thread.archived,
+    lastActivity: lastActivity(thread, dir),
+    ...(preview === undefined ? {} : { lastMessage: preview }),
+    pinned: thread.pinned ?? false,
+    ...(thread.model ? { model: thread.model } : {}),
+    ...(thread.effort ? { effort: thread.effort } : {}),
+    ...(thread.agent ? { bypass: thread.bypass ?? false } : {}),
+    ...(thread.nativeTurn?.state === "interrupted" &&
+      ((thread.nativeTurn.recoveryAttempts ?? 0) >= 3 || !thread.nativeTurn.userEventId)
+      ? { interruptedTurnId: thread.nativeTurn.id, canResume: !!thread.nativeTurn.userEventId } : {}),
+    ...(thread.nativeTurn?.userEventId &&
+      (thread.nativeTurn.state === "running" && thread.nativeTurn.recoveryActive === true ||
+        thread.nativeTurn.state === "interrupted" && (thread.nativeTurn.recoveryAttempts ?? 0) < 3)
+      ? { recoveryState: "recovering" as const } : {}),
+    // Absent on a yorozu thread: that is the default, and what older phones already assume.
+    ...(thread.agent ? { agent: thread.agent } : {}),
+    ...(thread.agent && thread.cwd ? { cwd: thread.cwd } : {}),
+    // The two the dot is drawn from. Absent rather than 0 when there is nothing to say, so a
+    // thread nobody has read and nobody has been answered in is not permanently bold.
+    ...(thread.lastReadAt === undefined ? {} : { lastReadAt: thread.lastReadAt }),
+    ...(lastAgentAt === undefined ? {} : { lastAgentAt }),
+    ...(awaitingApproval ? { awaitingApproval } : {}),
+    ...(awaitingQuestion ? { awaitingQuestion } : {}),
+    ...(needsAttention ? { needsAttention } : {}),
+  };
+};
 
 /**
  * One of a thread's files: its log, or the rolling summary beside it. The id is a UUID, but it
