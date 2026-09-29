@@ -46,7 +46,7 @@ test("Codex starts/resumes native threads with cwd, models, effort and independe
   const runner = codexNativeRunner(fake.connect);
   const onSession = vi.fn();
   const first = await runner.run(turn({ onSession, model: "model-a", effort: "ultra" }));
-  expect(first).toEqual({ text: "Done", sessionId: "native" });
+  expect(first).toEqual({ text: "Done", sessionId: "native", completed: true });
   expect(onSession).toHaveBeenCalledWith("native");
   expect(fake.calls).toContainEqual(["thread/start", { cwd: "/tmp/project", model: "model-a", approvalPolicy: "on-request", approvalsReviewer: "user", sandbox: "workspace-write" }]);
   expect(fake.calls.find(([m]) => m === "turn/start")?.[1]).toMatchObject({ threadId: "native", model: "model-a", effort: "ultra" });
@@ -124,7 +124,7 @@ test("Codex maps native thought, tool and reply streams to existing trace events
   const onActivity = vi.fn();
   const onUpdate = vi.fn();
   const onToolBoundary = vi.fn();
-  expect(await codexNativeRunner(fake.connect).run(turn({ onActivity, onUpdate, onToolBoundary }))).toEqual({ text: "Done", sessionId: "native" });
+  expect(await codexNativeRunner(fake.connect).run(turn({ onActivity, onUpdate, onToolBoundary }))).toEqual({ text: "Done", sessionId: "native", completed: true });
   expect(onActivity.mock.calls.map((c) => c[1].kind)).toEqual(["thought", "tool_call", "tool_result"]);
   expect(onActivity.mock.calls[2]?.[1].data.output).toHaveLength(5000);
   expect(onActivity.mock.calls[2]?.[1].data.callId).toBe("turn-1:cmd");
@@ -161,6 +161,26 @@ test("Stop returns Codex's last streamed reply", async () => {
   await vi.waitFor(() => expect(onUpdate).toHaveBeenLastCalledWith("first last"));
   abort.abort();
   expect(await running).toEqual({ text: "first last", sessionId: "native" });
+});
+
+test("Codex reports completed only when the server finishes successfully after Stop", async () => {
+  const abort = new AbortController();
+  const started = Promise.withResolvers<void>();
+  let handlers!: CodexHandlers;
+  const connect: ConnectCodex = (h) => {
+    handlers = h;
+    return { request: async (method) => {
+      if (method === "thread/start") return { thread: { id: "native" } };
+      if (method === "turn/start") { started.resolve(); return { turn: { id: "turn-1" } }; }
+      return {};
+    }, notify() {}, close() {} };
+  };
+  const running = codexNativeRunner(connect).run(turn({ signal: abort.signal }));
+  await started.promise;
+  abort.abort();
+  handlers.notify("item/completed", { threadId: "native", item: { type: "agentMessage", id: "reply", text: "full answer" } });
+  handlers.notify("turn/completed", { threadId: "native", turn: { status: "completed" } });
+  expect(await running).toEqual({ text: "full answer", sessionId: "native", completed: true });
 });
 
 test("Codex failures propagate and unknown server requests fail closed", async () => {

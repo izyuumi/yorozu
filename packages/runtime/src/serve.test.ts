@@ -1547,6 +1547,56 @@ test("steered messages follow the turns they interrupt in live and saved history
     event.data.text === "reply to first")).toBe(true);
 });
 
+test("native turns report changed files after replies and skip unchanged or non-git folders", async () => {
+  const gitFolder = mkdtempSync(join(projectsRoot, "changes-"));
+  const plainFolder = mkdtempSync(join(projectsRoot, "plain-"));
+  execFileSync("git", ["init", "-q", gitFolder]);
+  writeFileSync(join(gitFolder, "file.txt"), "alpha\nbeta\ngamma\n");
+  execFileSync("git", ["add", "file.txt"], { cwd: gitFolder });
+  execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+    "-c", "commit.gpgsign=false", "commit", "-qm", "initial"], { cwd: gitFolder });
+  writeFileSync(join(gitFolder, "staged.txt"), "pending\n");
+  execFileSync("git", ["add", "staged.txt"], { cwd: gitFolder });
+  const staged = execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: gitFolder, encoding: "utf8" });
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    if (turn.text === "edit") writeFileSync(join(gitFolder, "file.txt"), "alpha\nupdated\ngamma\nnew\n");
+    if (turn.text === "edit again") writeFileSync(join(gitFolder, "file.txt"), "alpha\nupdated\ngamma\nnew\nmore\n");
+    return { text: `reply to ${turn.text}` };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
+  try {
+    send({ kind: "thread_create", data: { agent: "codex", cwd: gitFolder } }, "git-thread");
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "git-thread"));
+    const edited = send({ kind: "message", data: { role: "user", text: "edit" } }, "git-thread");
+    const reply = (await eventsUntil((event) => event.kind === "message" && event.threadId === "git-thread" &&
+      event.data.role === "agent" && event.data.done === true)).at(-1)!;
+    expect(reply.data).toMatchObject({ text: "reply to edit" });
+    const changes = (await eventsUntil((event) => event.kind === "turn_changes" && event.threadId === "git-thread")).at(-1)!;
+    expect(changes).toMatchObject({ data: { turnEventId: edited, files: [{ path: "file.txt", added: 2, removed: 1 }] } });
+    expect(readThreadEvents("git-thread", dir)).toContainEqual(changes);
+    expect(execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: gitFolder, encoding: "utf8" })).toBe(staged);
+
+    const unchanged = send({ kind: "message", data: { role: "user", text: "same" } }, "git-thread");
+    await eventsUntil((event) => event.kind === "message" && event.threadId === "git-thread" &&
+      event.data.role === "agent" && event.data.text === "reply to same" && event.data.done === true);
+    const next = send({ kind: "message", data: { role: "user", text: "edit again" } }, "git-thread");
+    const later = await eventsUntil((event) => event.kind === "turn_changes" && event.data.turnEventId === next);
+    expect(later.filter((event) => event.kind === "turn_changes" && event.data.turnEventId === unchanged)).toEqual([]);
+    send({ kind: "thread_create", data: { agent: "codex", cwd: plainFolder } }, "plain-thread");
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "plain-thread"));
+    const plain = send({ kind: "message", data: { role: "user", text: "plain" } }, "plain-thread");
+    await eventsUntil((event) => event.kind === "message" && event.threadId === "plain-thread" &&
+      event.data.role === "agent" && event.data.text === "reply to plain" && event.data.done === true);
+    expect(readThreadEvents("git-thread", dir).filter((event) => event.kind === "turn_changes" &&
+      event.data.turnEventId === unchanged)).toEqual([]);
+    expect(readThreadEvents("plain-thread", dir).filter((event) => event.kind === "turn_changes" &&
+      event.data.turnEventId === plain)).toEqual([]);
+  } finally {
+    rmSync(gitFolder, { recursive: true, force: true });
+    rmSync(plainFolder, { recursive: true, force: true });
+  }
+});
+
 test("turn state spans queued turns and ignores a stop for an earlier turn", async () => {
   const firstDone = Promise.withResolvers<void>();
   const secondDone = Promise.withResolvers<void>();
@@ -3910,6 +3960,109 @@ test("repeated Stop requests each receive the confirmed outcome", async () => {
     .map((event) => event.kind === "stop_status" && event.data.requestId)).toEqual([first, second]);
   expect(readThreadEvents("multi-stop", dir).filter((event) => event.kind === "message" && event.data.role === "agent"))
     .toEqual([expect.objectContaining({ data: expect.objectContaining({ text: "", done: true, interrupted: true }) })]);
+});
+
+test("Stop reports uncertainty within three seconds when a runner ignores abort", async () => {
+  const terminate = vi.fn();
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    turn.onUpdate?.("partial answer");
+    turn.onTerminate?.(terminate);
+    await new Promise<void>(() => {});
+    return { text: "" };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } }, true);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "hung-stop");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "hung-stop"));
+  const target = send({ kind: "message", data: { role: "user", text: "long run" } }, "hung-stop");
+  await eventsUntil((event) => event.kind === "message" && event.threadId === "hung-stop" && event.data.text === "partial answer");
+  const start = Date.now();
+  send({ kind: "interrupt", data: { targetEventId: target } }, "hung-stop");
+  const result = await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === target &&
+    event.data.status === "unconfirmed");
+  expect(Date.now() - start).toBeLessThan(4_000);
+  expect(terminate).toHaveBeenCalledOnce();
+  expect(result).toContainEqual(expect.objectContaining({ kind: "thread_list", data: expect.objectContaining({
+    threads: expect.arrayContaining([expect.objectContaining({ id: "hung-stop", turnState: "stopped-unconfirmed" })]),
+  }) }));
+  expect(readThreadEvents("hung-stop", dir).some((event) => event.kind === "message" &&
+    event.data.role === "agent" && event.data.done)).toBe(false);
+}, 10_000);
+
+test("Stop confirms when closing the session settles an ignored abort", async () => {
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    const closed = Promise.withResolvers<void>();
+    turn.onTerminate?.(() => closed.resolve());
+    await closed.promise;
+    return { text: "" };
+  } };
+  const { send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } }, true);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "close-stop");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "close-stop"));
+  const target = send({ kind: "message", data: { role: "user", text: "long run" } }, "close-stop");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === "close-stop" && thread.turnState === "running"));
+  send({ kind: "interrupt", data: { targetEventId: target } }, "close-stop");
+  const outcome = await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === target &&
+    event.data.status === "stopped");
+  expect(outcome.some((event) => event.kind === "stop_status" && event.data.status === "unconfirmed")).toBe(false);
+}, 10_000);
+
+test("a successful native completion during Stop keeps the full reply and tool result", async () => {
+  const finish = Promise.withResolvers<void>();
+  let turn!: NativeTurn;
+  const runner: NativeAgentRunner = { run: async (current) => {
+    turn = current;
+    current.onActivity?.("call:work", { kind: "tool_call", data: { callId: "work", name: "Bash", args: {} } });
+    await finish.promise;
+    current.onActivity?.("result:work", { kind: "tool_result", data: { callId: "work", ok: true, output: "done" } });
+    return { text: "full answer", completed: true };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } }, true);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "race-stop");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "race-stop"));
+  const target = send({ kind: "message", data: { role: "user", text: "work" } }, "race-stop");
+  await eventsUntil((event) => event.kind === "tool_call" && event.threadId === "race-stop");
+  send({ kind: "interrupt", data: { targetEventId: target } }, "race-stop");
+  await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === target &&
+    event.data.status === "requested");
+  expect(turn.signal.aborted).toBe(true);
+  finish.resolve();
+  const outcome = await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === target &&
+    event.data.status === "completed");
+  expect(outcome).toContainEqual(expect.objectContaining({ id: `native:${target}:final`, kind: "message",
+    data: expect.objectContaining({ text: "full answer", done: true }) }));
+  const history = readThreadEvents("race-stop", dir);
+  expect(history).toContainEqual(expect.objectContaining({ id: "codex:race-stop:result:work", kind: "tool_result" }));
+  expect(history).toContainEqual(expect.objectContaining({ id: `native:${target}:final`, kind: "message",
+    data: expect.objectContaining({ text: "full answer", done: true }) }));
+  expect(history.some((event) => event.kind === "message" && event.id === `native:${target}:final` &&
+    event.data.interrupted === true)).toBe(false);
+}, 10_000);
+
+test.each(["approval", "question"] as const)("Stop withdraws an open native %s card before abort", async (kind) => {
+  let turn!: NativeTurn;
+  const runner: NativeAgentRunner = { run: async (current) => {
+    turn = current;
+    if (kind === "approval") await current.approve?.("Bash", {}, current.signal);
+    else await current.ask?.("Which?", ["A"], current.signal);
+    return { text: "" };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } }, true);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "card-stop");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "card-stop"));
+  const target = send({ kind: "message", data: { role: "user", text: "ask" } }, "card-stop");
+  const cardKind = kind === "approval" ? "approval_card" : "question_card";
+  const card = (await eventsUntil((event) => event.kind === cardKind)).at(-1)!;
+  send({ kind: "interrupt", data: { targetEventId: target } }, "card-stop");
+  const result = await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === target &&
+    event.data.status === "stopped");
+  const answer = result.find((event) => event.kind === (kind === "approval" ? "approval_answer" : "question_answer"));
+  expect(answer).toMatchObject(kind === "approval"
+    ? { data: { actionId: card.kind === "approval_card" ? card.data.actionId : "", answer: "no" } }
+    : { data: { questionId: card.kind === "question_card" ? card.data.questionId : "", answer: "Cancelled" } });
+  expect(turn.signal.aborted).toBe(true);
+  expect(readThreadEvents("card-stop", dir)).toContainEqual(expect.objectContaining({ kind: answer?.kind,
+    data: expect.objectContaining(answer?.data ?? {}) }));
 });
 
 

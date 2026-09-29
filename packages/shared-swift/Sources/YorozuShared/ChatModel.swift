@@ -756,6 +756,14 @@ public final class ChatModel {
     public func send(in thread: ThreadSummary) {
         let text = (drafts[thread.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let attachments = attachments[thread.id] ?? []
+        if let card = pendingComposerCards(in: thread.id).first {
+            guard case .questionCard(let question) = card.payload, !text.isEmpty else { return }
+            guard answerQuestion(question.questionId, in: thread.id, text) else { return }
+            drafts[thread.id] = ""
+            do { try saveComposer() }
+            catch { failure = "Could not save draft: \(error.localizedDescription)" }
+            return
+        }
         // Files on their own are a message: only an empty composer is nothing to send.
         guard !text.isEmpty || !attachments.isEmpty else { return }
         guard queueMessage(text, in: thread.id, attachments: attachments, fromComposer: true) else { return }
@@ -1002,11 +1010,13 @@ public final class ChatModel {
     /// Every message goes through the outbox, link or no link: it leaves only on the runtime's
     /// receipt, so a send onto a socket that was quietly dead is sent again rather than lost.
     /// `queue` says whether there was a link to try now.
-    private func deliver(_ event: YorozuEvent, queue: Bool) {
-        guard !stopped else { return }
+    @discardableResult
+    private func deliver(_ event: YorozuEvent, queue: Bool) -> Bool {
+        guard !stopped else { return false }
         outbox = Outbox.pruned(outbox + [OutboxItem(event: event)])
-        guard saveOutbox() else { return }
+        guard saveOutbox() else { return false }
         if !queue { flush() }
+        return true
     }
 
     /// Only the first unreceipted operation in a thread may be sent. A socket send remains
@@ -1412,7 +1422,9 @@ public final class ChatModel {
     }
 
     public func canStop(in threadId: String) -> Bool {
-        generating.contains(threadId) && activeEventId(in: threadId) != nil && !stopPending(in: threadId)
+        let state = synced.first { $0.id == threadId }?.turnState
+        return generating.contains(threadId) && activeEventId(in: threadId) != nil && !stopPending(in: threadId) &&
+            (!hostOwnsTurnState || state == .starting || state == .running)
     }
 
     private var hostOwnsTurnState: Bool {
@@ -1797,6 +1809,29 @@ public final class ChatModel {
         }
     }
 
+    public func pendingComposerCards(in threadId: String) -> [YorozuEvent] {
+        guard generating.contains(threadId) else { return [] }
+        return timeline(threadId).events.filter { event in
+            switch event.payload {
+            case .approvalCard(let card):
+                return !answered.contains(card.actionId) && !approvalPending(card.actionId) &&
+                    approvalOutcomes[card.actionId] != .noLongerNeeded && approvalOutcomes[card.actionId] != .expired
+            case .questionCard(let card):
+                return !answeredQuestions.contains(card.questionId)
+            default: return false
+            }
+        }
+    }
+
+    public func composerPlaceholder(in threadId: String, default defaultText: String) -> String {
+        guard let card = pendingComposerCards(in: threadId).first else { return defaultText }
+        switch card.payload {
+        case .approvalCard: return String(localized: "Resolve approval to continue")
+        case .questionCard: return String(localized: "Type a custom answer or pick an option")
+        default: return defaultText
+        }
+    }
+
     private func retireApproval(_ status: ApprovalStatusData) {
         if let index = outbox.firstIndex(where: { $0.id == status.requestId }),
            case .approvalAnswer(let answer) = outbox[index].event.payload,
@@ -1848,10 +1883,21 @@ public final class ChatModel {
 
     /// Answers a question the agent asked, in the thread it asked it in. The agent's `ask_user`
     /// call is suspended on this: until it arrives, or expires, the turn is parked.
-    public func answerQuestion(_ questionId: String, in threadId: String, _ answer: String) {
+    @discardableResult
+    public func answerQuestion(_ questionId: String, in threadId: String, _ answer: String) -> Bool {
+        guard !stopped, !answeredQuestions.contains(questionId) else { return false }
+        let request = event(.questionAnswer(QuestionAnswerData(questionId: questionId, answer: answer)), in: threadId)
+        guard deliver(request, queue: !canDeliver) else { return false }
         answeredQuestions.insert(questionId)
         questionChoices[questionId] = answer
-        emit(.questionAnswer(QuestionAnswerData(questionId: questionId, answer: answer)), in: threadId)
+        return true
+    }
+
+    public func answerQuestionOption(_ number: Int, in threadId: String) {
+        guard let event = pendingComposerCards(in: threadId).first,
+              case .questionCard(let card) = event.payload,
+              (1...9).contains(number), card.options.indices.contains(number - 1) else { return }
+        answerQuestion(card.questionId, in: threadId, card.options[number - 1])
     }
 
     private func emit(_ payload: YorozuEvent.Payload, in threadId: String) {

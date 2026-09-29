@@ -8,11 +8,12 @@
  * both the same pairing string. `MINT` on stdin asks the relay for a fresh join token.
  */
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { execFile, execFileSync } from "node:child_process";
+import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { argv, env, stdin, stdout } from "node:process";
+import { promisify } from "node:util";
 import {
   acceptsSeq,
   localPeerInfo,
@@ -58,6 +59,7 @@ import {
   type SkillOption,
   type ProgressCardData,
   type ThreadAgent,
+  type TurnChangesData,
   type YorozuEvent,
 } from "@yorozu/shared";
 import WebSocket from "ws";
@@ -128,6 +130,55 @@ import { questionDesk, QUESTION_TIMEOUT_MS } from "./tools/cards.js";
 import { appendTranscript, transcriptDir } from "./transcripts.js";
 
 const DEFAULT_STATE_DIR = join(homedir(), "Library", "Application Support", "Yorozu");
+
+const gitExec = promisify(execFile);
+
+/** Synchronous so a folder outside git starts its turn without an extra tick. */
+function gitRoot(cwd: string): string | undefined {
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"],
+      { cwd, encoding: "utf8", timeout: 5_000, stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch { return undefined; }
+}
+
+/**
+ * The working tree as a tree object, staged through a throwaway index so the person's index,
+ * HEAD and refs are never touched. The throwaway starts as a copy of the real index: its stat
+ * cache lets `add -A` hash only what changed instead of every file in the repository.
+ */
+async function workingTree(root: string, abort?: AbortSignal): Promise<{ root: string; tree: string } | undefined> {
+  const signal = abort ? AbortSignal.any([AbortSignal.timeout(5_000), abort]) : AbortSignal.timeout(5_000);
+  let temporary: string | undefined;
+  try {
+    temporary = mkdtempSync(join(tmpdir(), "yorozu-git-index-"));
+    const index = join(temporary, "index");
+    const gitEnv = { ...env, GIT_INDEX_FILE: index };
+    const run = (args: string[]) => gitExec("git", args, { cwd: root, env: gitEnv, signal });
+    const real = (await gitExec("git", ["rev-parse", "--path-format=absolute", "--git-path", "index"],
+      { cwd: root, encoding: "utf8", signal })).stdout.trim();
+    try { copyFileSync(real, index); }
+    catch {
+      try { await run(["read-tree", "HEAD"]); }
+      catch { await run(["read-tree", "--empty"]); }
+    }
+    await run(["add", "-A"]);
+    return { root, tree: (await run(["write-tree"])).stdout.trim() };
+  } catch { return undefined; }
+  finally { if (temporary) try { rmSync(temporary, { recursive: true, force: true }); } catch { /* Best effort. */ } }
+}
+
+async function changedFiles(start: { root: string; tree: string }): Promise<TurnChangesData["files"]> {
+  const end = await workingTree(start.root);
+  if (!end) return [];
+  try {
+    const { stdout } = await gitExec("git", ["diff", "--no-renames", "--numstat", "-z", start.tree, end.tree],
+      { cwd: start.root, encoding: "utf8", timeout: 5_000 });
+    return stdout.split("\0").filter(Boolean).map((line) => {
+      const [added, removed, ...path] = line.split("\t");
+      return { path: path.join("\t"), added: added === "-" ? 0 : Number(added), removed: removed === "-" ? 0 : Number(removed) };
+    });
+  } catch { return []; }
+}
 const RECONNECT_MS = 2_000;
 /** Where the redial delay stops doubling while the relay keeps turning this Mac away. */
 const RECONNECT_MAX_MS = 30_000;
@@ -630,8 +681,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
   /** One controller per running turn, so an `interrupt` cancels every tree at once. */
   const running = new Map<string, AbortController>();
   const runningEventIds = new Map<string, string>();
+  const terminateRunning = new Map<string, () => void>();
+  const stopTimers = new Map<string, ReturnType<typeof setTimeout>>();
   type TurnState = "idle" | "starting" | "running" | "stopping" | "stopped-unconfirmed";
   const turnStates = new Map<string, { state: TurnState; activeEventId?: string; queued: string[] }>();
+  const pendingChanges = new Map<string, Promise<void>>();
   const workingThreadIds = (): string[] =>
     [...turnStates].filter(([, turn]) => turn.state !== "idle").map(([id]) => id);
   const turnQueues = new Map<string, Promise<void>>();
@@ -1561,11 +1615,27 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // thread's folder, with its own tools. Yorozu's dispatch and approval gate are not here.
     if (agent !== "yorozu") {
       const runner = nativeRunners[agent];
+      let startTree: Awaited<ReturnType<typeof workingTree>>;
+      let changesScheduled = false;
+      const reportChanges = (): void => {
+        if (changesScheduled) return;
+        if (startTree && userEventId) {
+          changesScheduled = true;
+          const turnEventId = userEventId;
+          const pending = changedFiles(startTree).then((files) => {
+            if (files.length) emit({ id: randomUUID(), threadId, ts: Date.now(), agentId: MAIN_AGENT,
+              kind: "turn_changes", data: { turnEventId, files } });
+          }).catch(() => {});
+          pendingChanges.set(threadId, pending);
+          void pending.finally(() => { if (pendingChanges.get(threadId) === pending) pendingChanges.delete(threadId); });
+        }
+      };
       const finish = (reply: string, failed = false): void => {
         const final = message(reply, true, failed);
         appendTranscript(final, transcripts);
         appendThreadEvent(final, dir);
         broadcast(final);
+        reportChanges();
       };
       // Finished, so the composer is not left offering Stop for a turn nobody is running.
       if (!runner || !agentDescriptors.some(({ id }) => id === agent)) {
@@ -1602,6 +1672,20 @@ export function serve(options: ServeOptions = {}): Sidecar {
       drainPauses.set(threadId, pauseForUpdate);
       const seenResults = new Set(readThreadEvents(threadId, dir).filter((event) => event.kind === "tool_result").map((event) => event.id));
       try {
+        const root = home.cwd ? gitRoot(home.cwd) : undefined;
+        if (root) {
+          const pending = pendingChanges.get(threadId);
+          if (pending && !turn.signal.aborted) {
+            let onAbort: () => void = () => {};
+            const aborted = new Promise<void>((resolve) => {
+              onAbort = resolve;
+              turn.signal.addEventListener("abort", onAbort, { once: true });
+            });
+            try { await Promise.race([pending, aborted]); }
+            finally { turn.signal.removeEventListener("abort", onAbort); }
+          }
+          if (!turn.signal.aborted) startTree = await workingTree(root, turn.signal);
+        }
         while (!turn.signal.aborted) {
           if (recovering) recoveryAttempts += 1;
           setNativeTurn(threadId, { id, state: "running", ...(userEventId ? { userEventId } : {}), recoveryAttempts,
@@ -1630,6 +1714,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
               effort: threadEffort(threadId, dir),
               signal: turn.signal,
               onSession: (sessionId) => { executionStarted = true; setThreadSession(threadId, sessionId, dir); },
+              onTerminate: (terminate) => terminateRunning.set(threadId, terminate),
               approve: async (tool, input, signal) =>
                 loadSettings(dir).yolo || nativeCards.approve(threadId, agent, tool, input, signal),
               ask: (question, options, signal) => nativeCards.ask(threadId, agent, question, options, signal),
@@ -1669,6 +1754,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
               },
             });
             if (done.sessionId && done.sessionId !== currentHome.sessionId) setThreadSession(threadId, done.sessionId, dir);
+            const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
+            if (done.completed && stop && (stop.status === "requested" || stop.status === "unconfirmed")) {
+              finish(done.text);
+              completeStop(stop, "completed");
+              return;
+            }
             if (turn.signal.aborted) return;
             if (done.failed) throw new Error(`${agent} reported an unsuccessful turn`);
             finish(done.text);
@@ -1696,11 +1787,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
         }
       } finally {
         drainPauses.delete(threadId);
+        terminateRunning.delete(threadId);
         openToolCalls.delete(threadId);
         if (running.get(threadId) === turn) running.delete(threadId);
         if (runningEventIds.get(threadId) === userEventId) runningEventIds.delete(threadId);
         const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
         if (stop) completeStop(stop);
+        if (stop && !paused) reportChanges();
         if (!stopped && !paused) {
           setNativeTurn(threadId, undefined, dir);
           broadcast(threadList());
@@ -1835,26 +1928,53 @@ export function serve(options: ServeOptions = {}): Sidecar {
       kind: "message", data: { role: "agent", text, done: true, interrupted: true } };
     emit(final);
   };
-  function completeStop(record: StopRecord): void {
-    if (record.status !== "requested") return;
-    persistStoppedReply(record);
-    const finished = { ...record, status: "stopped" as const };
+  function completeStop(record: StopRecord, status: "stopped" | "completed" = "stopped"): void {
+    if (record.status !== "requested" && record.status !== "unconfirmed") return;
+    clearTimeout(stopTimers.get(record.targetEventId));
+    stopTimers.delete(record.targetEventId);
+    if (status === "stopped") persistStoppedReply(record);
+    const finished = { ...record, status };
     rememberStop(finished);
     broadcastStop(finished);
   }
 
   const abortTarget = (threadId: string, target: string): boolean => {
     if (runningEventIds.get(threadId) !== target) return false;
-    running.get(threadId)?.abort();
     for (const card of [...pending.values()]) if (card.threadId === threadId) card.settle({ answer: "no" }, "cancelled");
     questions.cancelAll(threadId);
+    nativeCards.cancelAll(threadId);
+    running.get(threadId)?.abort();
     return true;
   };
 
   const finishStop = (record: StopRecord): void => {
     if (record.status !== "requested") return;
     const target = record.targetEventId;
-    if (!abortTarget(record.threadId, target)) {
+    if (abortTarget(record.threadId, target)) {
+      if (!stopTimers.has(target)) {
+        const timer = setTimeout(() => {
+          if (stoppedTurns.get(target)?.status !== "requested") return;
+          const confirm = setTimeout(() => {
+            stopTimers.delete(target);
+            if (stoppedTurns.get(target)?.status !== "requested") return;
+            const uncertain = { ...record, status: "unconfirmed" as const };
+            rememberStop(uncertain);
+            const turn = turnStates.get(record.threadId);
+            if (turn?.activeEventId === target) {
+              turn.state = "stopped-unconfirmed";
+              publishTurnState(record.threadId);
+            }
+            broadcastStop(uncertain);
+          }, 100);
+          confirm.unref?.();
+          stopTimers.set(target, confirm);
+          try { terminateRunning.get(record.threadId)?.(); }
+          catch (error) { state(`native-terminate-error ${String(error)}`); }
+        }, 3_000);
+        timer.unref?.();
+        stopTimers.set(target, timer);
+      }
+    } else {
       const nativeTurn = listThreads(dir).find((thread) => thread.id === record.threadId)?.nativeTurn;
       if (nativeTurn?.id === completionIdFor(record.threadId, target) && nativeTurn.state === "interrupted") {
         // The old SDK process is gone, but its last external effect is unknowable here.
@@ -3354,6 +3474,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     close: async () => {
       stopped = true;
+      for (const timer of stopTimers.values()) clearTimeout(timer);
+      stopTimers.clear();
       wakeDrainWaiters();
       clearTraces();
       partials.clear();

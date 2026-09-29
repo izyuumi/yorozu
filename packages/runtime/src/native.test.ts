@@ -59,7 +59,7 @@ test("a turn runs in the thread's folder and hands back the session to resume", 
     threadId: "cc", cwd: "/tmp/proj", text: "fix the tests", signal: new AbortController().signal,
     effort: "high", onUpdate: (text) => updates.push(text),
   });
-  expect(first).toEqual({ text: "hello from claude", sessionId: "s-1" });
+  expect(first).toEqual({ text: "hello from claude", sessionId: "s-1", completed: true });
   expect(calls[0]).toMatchObject({ prompt: "fix the tests", cwd: "/tmp/proj", effort: "high" });
   expect(calls[0]).not.toHaveProperty("resume");
   // The agent keeps its own tools and settings: Yorozu names none of them.
@@ -171,6 +171,17 @@ test("stop returns streamed text and keeps the SDK session resumable", async () 
   expect(calls).toHaveLength(1);
 });
 
+test("Claude Code reports a successful result after Stop as completed", async () => {
+  const turn = new AbortController();
+  const query: QueryFn = () => Object.assign((async function* () {
+    yield init("s-race");
+    turn.abort();
+    yield result("s-race", "full answer");
+  })(), { close() {} }) as ReturnType<QueryFn>;
+  expect(await claudeCodeRunner(query).run({ threadId: "cc", cwd: "/tmp/proj", text: "work", signal: turn.signal }))
+    .toEqual({ text: "full answer", sessionId: "s-race", completed: true });
+});
+
 test("a failure the agent reports is the reply; a transport failure is thrown", async () => {
   const failed = fakeQuery([init("s-4"), { type: "result", subtype: "error_max_turns", session_id: "s-4", is_error: true }]);
   const reported = await claudeCodeRunner(failed.query).run({ threadId: "cc", cwd: "/tmp/proj", text: "x", signal: new AbortController().signal });
@@ -213,7 +224,7 @@ test.each(["yes", "no"] as const)("native SDK permission %s holds the turn and r
   expect(cards.answer(reply)).toBe(true);
   await running;
   expect(decision).toMatchObject({ behavior: answer === "yes" ? "allow" : "deny" });
-  expect(finished).toHaveBeenCalledWith({ text: "finished", sessionId: "permission-session" });
+  expect(finished).toHaveBeenCalledWith({ text: "finished", sessionId: "permission-session", completed: true });
   expect(cards.answer(reply)).toBe(false);
 });
 
