@@ -1135,6 +1135,29 @@ func draftAgentChangesKeepComposerLocalUntilFirstSend(agent: ThreadAgent) async 
 }
 
 @MainActor
+@Test func attachmentsRejectedAfterReceiptStayVisibleAsNotSent() async throws {
+    let transport = FakeTransport(autoReceipt: true)
+    let model = await connected(transport)
+    defer { model.close() }
+    let photo = try #require(MessageAttachment(name: "photo.jpg", mime: "image/jpeg", bytes: Data(repeating: 1, count: 64)))
+    model.send("", in: "home", attachments: [photo])
+    let message = try #require(await sent(by: transport, atLeast: pairingSends + 1).first { $0.payload.kind == .message })
+    #expect(await eventually { model.outbox.isEmpty })
+    // An old OpenClaw plugin connected after the host queued it: the host says so on every device.
+    await transport.yield(.event(event("late-reject", .admissionStatus(AdmissionStatusData(
+        eventId: message.id, status: .rejected, reason: "attachments-unsupported")))))
+    #expect(await eventually { model.outboxStatus(of: message.id) == .rejected })
+    #expect(model.outboxRejectionReason(of: message.id) == "attachments-unsupported")
+    guard case .message(let shown)? = model.events["home"]?.first(where: { $0.id == message.id })?.payload else {
+        Issue.record("message left the timeline")
+        return
+    }
+    #expect(shown.attachments == [photo])
+    // Not resent: nothing but the original message went out.
+    #expect(await transport.sent.filter { $0.payload.kind == .message }.count == 1)
+}
+
+@MainActor
 @Test func draftsWithInputSurviveNavigationNewSessionsAndSync() async throws {
     let transport = FakeTransport(autoReceipt: true)
     let model = await connected(transport)
@@ -3185,4 +3208,43 @@ func deferredAttachmentDownloadsAfterVisibleHistoryArrives(legacyCache: Bool) as
     await transport.yield(.event(event("question", .questionCard(QuestionCardData(questionId: "q", question: "Which?", options: ["A"])))))
     #expect(await eventually { !model.canSendNow(later) })
     #expect(!model.sendNextQueued(in: "home"))
+}
+
+@MainActor
+@Test func startingIsWaitingForOpenClawOnlyInYorozuThreads() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    var openClaw = ThreadSummary(id: "home", title: "OpenClaw", archived: false, lastActivity: 1,
+        activeEventId: "m1", turnState: .starting)
+    var native = ThreadSummary(id: "code", title: "Code", archived: false, lastActivity: 1, agent: .codex,
+        activeEventId: "m2", turnState: .starting)
+    await transport.yield(.event(event("threads", .threadList(ThreadListData(threads: [openClaw, native])))))
+    #expect(await eventually { model.isWaitingForOpenClaw(in: "home") })
+    #expect(!model.isWaitingForOpenClaw(in: "code"))
+    openClaw.turnState = .running
+    native.turnState = .starting
+    await transport.yield(.event(event("running", .threadList(ThreadListData(threads: [openClaw, native])))))
+    #expect(await eventually { !model.isWaitingForOpenClaw(in: "home") })
+}
+
+@MainActor
+@Test func outdatedPluginNoticeAppearsOncePerHostSession() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    // No plugin, or a current one: nothing to say.
+    await transport.yield(.event(event("none", .modelList(ModelListData(models: [], channelCapabilities: [])))))
+    await transport.yield(.event(event("current", .modelList(ModelListData(models: [], channelCapabilities: [
+        "run-boundary-v1", "progress-v1", "model-select-v1", "media-v1"])))))
+    await transport.yield(.event(event("sync", .modelList(ModelListData(models: [], channelCapabilities: ["run-boundary-v1", "missing:progress-v1", "missing:media-v1"])))))
+    #expect(await eventually { model.pluginNotice != nil })
+    let notice = try #require(model.pluginNotice)
+    #expect(notice.contains("progress") && notice.contains("attachments"))
+    #expect(!notice.contains("Stop") && !notice.contains("model picker"))
+    model.dismissPluginNotice()
+    // The picker flag marks this list as applied; the notice stays spent.
+    await transport.yield(.event(event("again", .modelList(ModelListData(models: [], channelCapabilities: ["model-select-v1", "missing:run-boundary-v1"])))))
+    #expect(await eventually { model.channelModelSelection })
+    #expect(model.pluginNotice == nil)
 }

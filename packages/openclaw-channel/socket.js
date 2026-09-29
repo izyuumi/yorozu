@@ -2,7 +2,8 @@
 // Newline-delimited JSON. Both directions are acked by id; the host resends unacked
 // inbound messages on every connect, so inbound ids are deduped here.
 //
-// Host frames:   { type: "inbound", message: { id, threadId, ts, text } }
+// Host frames:   { type: "inbound", message: { id, threadId, ts, text, attachments? } }
+//                  (attachments: [{ name, mime, data: base64 }]; sent only to plugins announcing media-v1)
 //                { type: "ack", id } | { type: "error", id, reason }
 //                { type: "abort", messageId }
 //                { type: "model_catalog_request" | "model_selection_request" | "model_select", requestId, threadId, ... }
@@ -16,7 +17,7 @@ import { createConnection } from "node:net";
 /**
  * @param {{
  *   path: string,
- *   onInbound: (message: { id: string, threadId: string, ts: number, text: string }) => Promise<void>,
+ *   onInbound: (message: { id: string, threadId: string, ts: number, text: string, attachments?: { name: string, mime: string, data: string }[] }) => Promise<void>,
  *   onStatus?: (connected: boolean) => void,
  *   onError?: (message: string) => void,
  *   capabilities?: string[],

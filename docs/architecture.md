@@ -506,8 +506,8 @@ control, so every inbound message is the owner's.
 
 | Frame | Direction | Meaning |
 | --- | --- | --- |
-| `hello` | plugin → host | Optional `{ capabilities: [...] }` announcing `run-boundary-v1` and/or `model-select-v1`. No hello means legacy chat without run state, Stop or model controls. |
-| `inbound` | host → plugin | A user message typed in a `yorozu` thread. Kept in `channel-outbox.json` until acked, resent on every connect. |
+| `hello` | plugin → host | Optional `{ capabilities: [...] }` announcing `run-boundary-v1`, `progress-v1`, `model-select-v1` and/or `media-v1`. No hello means legacy chat without run state, Stop or model controls. |
+| `inbound` | host → plugin | A user message typed in a `yorozu` thread: `{ id, threadId, ts, text, attachments? }`, where `attachments` is `[{ name, mime, data }]` with base64 `data` (at most 10, 20 MB decoded in total) and `text` may be empty when there is at least one. Kept in `channel-outbox.json` until acked, resent on every connect. |
 | `deliver` | plugin → host | An OpenClaw reply for a thread. Logged, synced and pushed like any agent message; an unknown thread id opens a new thread. |
 | `ack` / `error` | both | Receipt by id. Delivery is at least once in both directions and both sides dedupe by id. |
 
@@ -515,8 +515,19 @@ The plugin acks an `inbound` only once OpenClaw has dispatched it. A message Ope
 for example no routing binding while several agents are configured — stays in the outbox and is
 resent when the plugin next connects. Without run-boundary support, a channel message has no
 turn in Yorozu and offers no Stop. Delivered replies keep their existing behavior. There are no
-progress rows or trace pages, and no skill picker. A model picker is offered only while a
+progress rows or trace pages without `progress-v1`, and no skill picker. A model picker is offered only while a
 connected plugin announces `model-select-v1`.
+
+#### Channel attachments (`media-v1`)
+
+A message with attachments goes only to plugins whose `hello` announced `media-v1`; the plugin
+saves each attachment before dispatching and acks only after OpenClaw has the message, so a
+failed save is resent. Text-only messages are unchanged and reach every plugin. When a plugin
+is connected and none announces `media-v1`, the host rejects the message at admission with
+`attachments-unsupported` and forwards nothing. With no plugin connected the message is queued;
+a connecting plugin gets 1 second to say hello (an old one never does). If it lacks `media-v1`,
+the host drops the message from `channel-outbox.json`, never resends it, and broadcasts
+`admission_status` `rejected` with `attachments-unsupported` so every device shows it as not sent.
 
 #### Channel run boundaries (`run-boundary-v1`)
 
@@ -540,6 +551,16 @@ finished, and nonactive message ids cannot close or replace the active run. Run 
 the capability and invalid frames are ignored. Proactive deliveries still create threads, but
 have no user-message run to stop.
 
+The host puts a thread in `starting` when it hands a message to a plugin that announced
+`run-boundary-v1`, and clients show it as "Waiting for OpenClaw". Messages handed off behind
+an active run queue as in other threads. `starting` ends on `run_started` (`running`), on
+`run_finished`, or when the last such plugin disconnects: the thread returns to idle and the
+messages are handed off again, as always, when a plugin reconnects. With a plugin that has no
+run boundaries no turn state exists. `run_finished` with `failed`, before any reply was
+delivered during that run, logs a failed agent message ("OpenClaw could not answer"), as when a
+native agent cannot answer; `completed` or `aborted` with no reply logs nothing, and neither
+does a run the user stopped.
+
 Stop journals its exact target, marks the thread `stopping`, and sends `abort` only to supporting
 connections. Within a 3-second grace, `aborted` reports `stopped`; `completed` or `failed` reports
 `completed` because the run ended without confirmed cancellation. No boundary reports
@@ -549,6 +570,31 @@ outcome. On reconnect, reannounce an unfinished run with `run_started` after hel
 or unconfirmed Stop causes the host to resend its abort. Run boundaries are not acked by this
 protocol. Pending Stop intent survives host restart; ordinary acknowledged runs have no host
 recovery journal.
+
+#### Channel progress (`progress-v1`)
+
+A plugin that announced both `progress-v1` and `run-boundary-v1` may report the tool calls of
+the run it is executing:
+
+| Frame | Direction | Fields |
+| --- | --- | --- |
+| `tool_started` | plugin → host | `messageId`, `callId`, `name`, `args` (an object) |
+| `tool_finished` | plugin → host | `messageId`, `callId`, `ok`, `output` (a string) |
+
+Frames are accepted only for the thread's active run, after `run_started`. Frames for unknown,
+finished or nonactive message ids, from a plugin without both capabilities, or malformed are
+ignored; so is a repeated `callId`, and a `tool_finished` for a call never started. They are
+not acknowledged, and losing one never affects the run or its reply. The host records them as
+ordinary `tool_call` and `tool_result` events, with the same output truncation and full-result
+stash as Claude and Codex threads. The plugin sources them from OpenClaw's observe-only
+`before_tool_call` and `after_tool_call` hooks (no conversation-access opt-in), forwards only
+calls whose requester channel is `yorozu` and whose session has a running Yorozu message, and
+matches a finish to its start by `toolCallId` because the after hook has no requester.
+
+The host reports the plugin in `model_list.channelCapabilities`: the capabilities it announced,
+then `missing:<capability>` for each known one it did not (`run-boundary-v1`, `progress-v1`,
+`model-select-v1`, `media-v1`). Empty means no plugin; any `missing:` entry means a connected
+but outdated plugin, which the clients name once per host session.
 
 #### Channel model selection (`model-select-v1`)
 

@@ -20,6 +20,7 @@ import {
   open,
   seal,
   threadRef,
+  TOOL_RESULT_PREVIEW_CHARS,
   toBase64Url,
   type ApprovalCardData,
   type EventKind,
@@ -4644,7 +4645,7 @@ test("agent_status is answered to the asker with every agent the runtime has", a
 });
 
 /** OpenClaw's `yorozu` channel plugin on `channel.sock`: raw frames, everything it hears. */
-async function channelPlugin(dir: string, runBoundary = false) {
+async function channelPlugin(dir: string, runBoundary: boolean | string[] = false) {
   const socket = createConnection(channelSocketPath(dir));
   const frames: HostFrame[] = [];
   let buffer = "";
@@ -4656,25 +4657,137 @@ async function channelPlugin(dir: string, runBoundary = false) {
     for (const line of lines) if (line) frames.push(JSON.parse(line));
   });
   await new Promise<void>((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
-  if (runBoundary) socket.write(`${JSON.stringify({ type: "hello", capabilities: ["run-boundary-v1"] })}\n`);
+  if (runBoundary) socket.write(`${JSON.stringify({ type: "hello",
+    capabilities: Array.isArray(runBoundary) ? runBoundary : ["run-boundary-v1"] })}\n`);
   return { frames, send: (frame: PluginFrame) => socket.write(`${JSON.stringify(frame)}\n`), close: () => socket.destroy() };
 }
 
-async function channelRun() {
+/** A thread whose message the host has handed to a plugin that announced `capabilities`. */
+async function channelHandedOff(capabilities: boolean | string[] = true) {
   const host = await pairedPhone([], true, {}, true);
-  const plugin = await channelPlugin(host.dir, true);
+  const plugin = await channelPlugin(host.dir, capabilities);
   host.send({ kind: "thread_create", data: {} });
   await host.eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1"));
   const target = host.send({ kind: "message", data: { role: "user", text: "work" } });
   await vi.waitFor(() => expect(plugin.frames).toContainEqual(expect.objectContaining({
     type: "inbound", message: expect.objectContaining({ id: target }),
   })));
+  return { ...host, plugin, target };
+}
+const turnIs = (id: string, turnState: string) => (event: YorozuEvent): boolean =>
+  event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "t1" && thread.turnState === turnState &&
+    (turnState === "idle" || thread.activeEventId === id));
+
+async function channelRun(capabilities: boolean | string[] = true) {
+  const { plugin, target, ...host } = await channelHandedOff(capabilities);
   plugin.send({ type: "ack", id: target });
   plugin.send({ type: "run_started", messageId: target });
   await host.eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
     thread.id === "t1" && thread.activeEventId === target && thread.turnState === "running"));
   return { ...host, plugin, target };
 }
+
+test("a message handed to a run-boundary plugin waits as starting, then runs, then ends", async () => {
+  const { send, eventsUntil, plugin, target } = await channelHandedOff();
+  try {
+    await eventsUntil(turnIs(target, "starting"));
+    const queued = send({ kind: "message", data: { role: "user", text: "next" } });
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+      thread.turnState === "starting" && thread.activeEventId === target && thread.queuedEventIds?.includes(queued)));
+    plugin.send({ type: "run_started", messageId: target });
+    await eventsUntil(turnIs(target, "running"));
+    plugin.send({ type: "run_finished", messageId: target, status: "completed" });
+    await eventsUntil(turnIs(queued, "starting"));
+    plugin.send({ type: "run_started", messageId: queued });
+    await eventsUntil(turnIs(queued, "running"));
+    plugin.send({ type: "run_finished", messageId: queued, status: "completed" });
+    await eventsUntil(turnIs("", "idle"));
+  } finally { plugin.close(); }
+});
+
+test("starting falls back to queued when the plugin disconnects, and is handed off again on reconnect", async () => {
+  const { dir, eventsUntil, plugin, target } = await channelHandedOff();
+  await eventsUntil(turnIs(target, "starting"));
+  plugin.close();
+  await eventsUntil(turnIs("", "idle"));
+  const again = await channelPlugin(dir, true);
+  try {
+    await vi.waitFor(() => expect(again.frames).toContainEqual(expect.objectContaining({
+      type: "inbound", message: expect.objectContaining({ id: target }),
+    })));
+    await eventsUntil(turnIs(target, "starting"));
+  } finally { again.close(); }
+});
+
+test("Stop during starting sends abort", async () => {
+  const { send, eventsUntil, plugin, target } = await channelHandedOff();
+  try {
+    await eventsUntil(turnIs(target, "starting"));
+    send({ kind: "interrupt", data: { targetEventId: target } });
+    await vi.waitFor(() => expect(plugin.frames).toContainEqual({ type: "abort", messageId: target }));
+    plugin.send({ type: "run_started", messageId: target });
+    plugin.send({ type: "run_finished", messageId: target, status: "aborted" });
+    await eventsUntil((event) => event.kind === "stop_status" && event.data.status === "stopped");
+    await eventsUntil(turnIs("", "idle"));
+  } finally { plugin.close(); }
+});
+
+test("a failed run with no reply records a failed agent message; a reply, or completed, does not", async () => {
+  const { dir, send, eventsUntil, plugin, target } = await channelRun();
+  try {
+    plugin.send({ type: "run_finished", messageId: target, status: "failed" });
+    await eventsUntil(turnIs("", "idle"));
+    expect(readThreadEvents("t1", dir).filter((event) => event.kind === "message" && event.data.role === "agent"))
+      .toEqual([expect.objectContaining({ data: expect.objectContaining({ done: true, failed: true }) })]);
+    const replied = send({ kind: "message", data: { role: "user", text: "again" } });
+    await vi.waitFor(() => expect(plugin.frames).toContainEqual(expect.objectContaining({
+      type: "inbound", message: expect.objectContaining({ id: replied }),
+    })));
+    plugin.send({ type: "run_started", messageId: replied });
+    plugin.send({ type: "deliver", id: "answer", threadId: "t1", text: "partial" });
+    await eventsUntil((event) => event.id === "answer");
+    plugin.send({ type: "run_finished", messageId: replied, status: "failed" });
+    await eventsUntil(turnIs("", "idle"));
+    expect(readThreadEvents("t1", dir).filter((event) => event.kind === "message" && event.data.role === "agent")).toHaveLength(2);
+  } finally { plugin.close(); }
+});
+
+test("progress frames become tool rows for the active run only, once per call", async () => {
+  const { dir, eventsUntil, plugin, target } = await channelRun(["run-boundary-v1", "progress-v1"]);
+  const tools = () => readThreadEvents("t1", dir).filter((event) => event.kind === "tool_call" || event.kind === "tool_result");
+  try {
+    const big = "x".repeat(TOOL_RESULT_PREVIEW_CHARS + 10);
+    plugin.send({ type: "tool_started", messageId: "unknown", callId: "c0", name: "exec", args: {} });
+    plugin.send({ type: "tool_started", messageId: target, callId: "c1", name: "exec", args: { cmd: "ls" } });
+    plugin.send({ type: "tool_started", messageId: target, callId: "c1", name: "exec", args: { cmd: "ls" } });
+    plugin.send({ type: "tool_finished", messageId: target, callId: "c1", ok: false, output: big });
+    plugin.send({ type: "tool_finished", messageId: target, callId: "c1", ok: false, output: big });
+    plugin.send({ type: "tool_finished", messageId: target, callId: "never-started", ok: true, output: "" });
+    plugin.send({ type: "deliver", id: "barrier", threadId: "t1", text: "b" });
+    await eventsUntil((event) => event.id === "barrier");
+    expect(tools()).toEqual([
+      expect.objectContaining({ kind: "tool_call", data: { callId: "c1", name: "exec", args: { cmd: "ls" } } }),
+      expect.objectContaining({ kind: "tool_result", data: { callId: "c1", ok: false,
+        output: big.slice(0, TOOL_RESULT_PREVIEW_CHARS), truncated: true } }),
+    ]);
+    plugin.send({ type: "run_finished", messageId: target, status: "completed" });
+    await eventsUntil(turnIs("", "idle"));
+    plugin.send({ type: "tool_started", messageId: target, callId: "late", name: "exec", args: {} });
+    plugin.send({ type: "deliver", id: "barrier-2", threadId: "t1", text: "b" });
+    await eventsUntil((event) => event.id === "barrier-2");
+    expect(tools()).toHaveLength(2);
+  } finally { plugin.close(); }
+});
+
+test("progress frames from a plugin without progress-v1 are ignored", async () => {
+  const { dir, eventsUntil, plugin, target } = await channelRun();
+  try {
+    plugin.send({ type: "tool_started", messageId: target, callId: "c1", name: "exec", args: {} });
+    plugin.send({ type: "deliver", id: "barrier", threadId: "t1", text: "b" });
+    await eventsUntil((event) => event.id === "barrier");
+    expect(readThreadEvents("t1", dir).filter((event) => event.kind === "tool_call")).toEqual([]);
+  } finally { plugin.close(); }
+});
 
 test("channel run boundaries keep working across replies and ignore stale message ids", async () => {
   const { dir, send, eventsUntil, plugin, target } = await channelRun();
@@ -4721,10 +4834,10 @@ test("channel run boundaries keep working across replies and ignore stale messag
   } finally { plugin.close(); }
 });
 
-test.each(["completed", "failed"] as const)("channel run with no reply ends on run_finished %s", async (status) => {
+test("channel run with no reply ends on run_finished completed and records nothing", async () => {
   const { dir, send, eventsUntil, plugin, target } = await channelRun();
   try {
-    plugin.send({ type: "run_finished", messageId: target, status });
+    plugin.send({ type: "run_finished", messageId: target, status: "completed" });
     await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
       thread.id === "t1" && thread.turnState === "idle" && !thread.activeEventId));
     send({ kind: "sync_request", data: { lastSeen: {} } });
@@ -5067,10 +5180,14 @@ test("old OpenClaw plugins keep chat without model capability; pending model req
   const plugin = await channelPlugin(dir);
   const mac = await macClient(dir);
   await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "model_list")).toBe(true));
-  expect(mac.events.find((e) => e.kind === "model_list")?.data).toMatchObject({ channelCapabilities: [] });
+  // Connected but silent: clients hear what it lacks, and no turn state is created.
+  await vi.waitFor(() => expect(mac.events.findLast((e) => e.kind === "model_list")?.data).toMatchObject({
+    channelCapabilities: ["missing:run-boundary-v1", "missing:progress-v1", "missing:model-select-v1", "missing:media-v1"] }));
   createThread(undefined, dir, "old");
   mac.send({ kind: "message", threadId: "old", data: { role: "user", text: "works" } } as never);
   await vi.waitFor(() => expect(plugin.frames.some((f) => f.type === "inbound")).toBe(true));
+  expect(mac.events.filter((e) => e.kind === "thread_list").flatMap((e) => e.data.threads)
+    .filter((thread) => thread.id === "old" && thread.turnState !== undefined && thread.turnState !== "idle")).toEqual([]);
   const unavailable = mac.send({ kind: "thread_models_request", threadId: "old", data: {} } as never);
   await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "thread_models" && e.data.requestId === unavailable && e.data.error)).toBe(true));
   expect(plugin.frames.some((f) => "requestId" in f)).toBe(false);
@@ -5080,6 +5197,82 @@ test("old OpenClaw plugins keep chat without model capability; pending model req
   await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "thread_models" && e.data.requestId === timeout && e.data.error?.includes("timed out"))).toBe(true), { timeout: 12_000 });
   plugin.close(); mac.close();
 }, 15_000);
+
+const photo = { name: "photo.jpg", mime: "image/jpeg", data: Buffer.from("jpeg bytes").toString("base64") };
+const inbounds = (plugin: { frames: HostFrame[] }) =>
+  plugin.frames.flatMap((frame) => frame.type === "inbound" ? [frame.message] : []);
+
+test("OpenClaw plugins with media-v1 get attachments, with or without text", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-channel-media-"));
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir });
+  const plugin = await channelPlugin(dir);
+  plugin.send({ type: "hello", capabilities: ["media-v1"] });
+  const mac = await macClient(dir);
+  createThread(undefined, dir, "pics");
+  mac.send({ kind: "message", threadId: "pics", data: { role: "user", text: "", attachments: [photo] } } as never);
+  mac.send({ kind: "message", threadId: "pics", data: { role: "user", text: "what is this", attachments: [photo] } } as never);
+  await vi.waitFor(() => expect(inbounds(plugin)).toHaveLength(2));
+  expect(inbounds(plugin)).toMatchObject([
+    { threadId: "pics", text: "", attachments: [photo] },
+    { threadId: "pics", text: "what is this", attachments: [photo] },
+  ]);
+  plugin.close(); mac.close();
+});
+
+test("an OpenClaw plugin without media-v1 gets text but rejects attachments with a reason", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-channel-nomedia-"));
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir });
+  const plugin = await channelPlugin(dir, true);
+  const mac = await macClient(dir);
+  createThread(undefined, dir, "old");
+  const rejected = mac.send({ kind: "message", threadId: "old", data: { role: "user", text: "", attachments: [photo] } } as never);
+  await vi.waitFor(() => expect(mac.events).toContainEqual(expect.objectContaining({
+    kind: "admission_status", data: { eventId: rejected, status: "rejected", reason: "attachments-unsupported" } })));
+  mac.send({ kind: "message", threadId: "old", data: { role: "user", text: "just text" } } as never);
+  await vi.waitFor(() => expect(inbounds(plugin)).toMatchObject([{ text: "just text" }]));
+  expect(inbounds(plugin).every((message) => message.id !== rejected)).toBe(true);
+  plugin.close(); mac.close();
+});
+
+test("an attachment queued with no plugin goes out when a media-v1 plugin connects", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-channel-media-wait-"));
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir });
+  const mac = await macClient(dir);
+  createThread(undefined, dir, "wait");
+  const id = mac.send({ kind: "message", threadId: "wait", data: { role: "user", text: "", attachments: [photo] } } as never);
+  await vi.waitFor(() => expect(readThreadEvents("wait", dir).some((event) => event.id === id)).toBe(true));
+  expect(mac.events.some((event) => event.kind === "admission_status" && event.data.status === "rejected")).toBe(false);
+  const plugin = await channelPlugin(dir);
+  plugin.send({ type: "hello", capabilities: ["media-v1"] });
+  await vi.waitFor(() => expect(inbounds(plugin)).toMatchObject([{ id, text: "", attachments: [photo] }]));
+  plugin.close(); mac.close();
+});
+
+test("an attachment queued with no plugin is marked not sent when an old plugin connects, and never resent", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-channel-media-old-"));
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir });
+  const mac = await macClient(dir);
+  createThread(undefined, dir, "wait");
+  const id = mac.send({ kind: "message", threadId: "wait", data: { role: "user", text: "look", attachments: [photo] } } as never);
+  await vi.waitFor(() => expect(readThreadEvents("wait", dir).some((event) => event.id === id)).toBe(true));
+  // Like the published plugin: no hello at all.
+  const plugin = await channelPlugin(dir);
+  await vi.waitFor(() => expect(mac.events).toContainEqual(expect.objectContaining({
+    kind: "admission_status", data: { eventId: id, status: "rejected", reason: "attachments-unsupported" } })),
+    { timeout: 3000 });
+  expect(inbounds(plugin)).toEqual([]);
+  expect(JSON.parse(readFileSync(join(dir, "channel-outbox.json"), "utf8"))).toEqual([]);
+  plugin.close();
+  const again = await channelPlugin(dir);
+  again.send({ type: "hello", capabilities: ["media-v1"] });
+  mac.send({ kind: "message", threadId: "wait", data: { role: "user", text: "next" } } as never);
+  await vi.waitFor(() => expect(inbounds(again)).toMatchObject([{ text: "next" }]));
+  again.close(); mac.close();
+});
 
 test.each(["steer", "unsupported", "declined", "failed"])("follow-up delivery uses %s and reports the effective queue", async (mode) => {
   const ready = Promise.withResolvers<void>();

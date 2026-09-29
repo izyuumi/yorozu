@@ -99,3 +99,14 @@ private func activityEvent(_ id: String, _ payload: YorozuEvent.Payload) -> Yoro
         answeredApprovals: ["delegated-action"], answeredQuestions: ["question"]
     ) == nil)
 }
+
+@Test func chatActivityNamesWaitingForOpenClawApartFromWorking() {
+    #expect(chatActivity(
+        in: [], generating: true, streamingId: nil,
+        answeredApprovals: [], answeredQuestions: [], waitingForOpenClaw: true
+    )?.label == "Waiting for OpenClaw")
+    #expect(chatActivity(
+        in: [], generating: true, streamingId: nil,
+        answeredApprovals: [], answeredQuestions: []
+    ) == .thinking)
+}

@@ -6,12 +6,15 @@ enum ChatActivity: Hashable, Sendable {
     case thinking
     case waitingForApproval
     case waitingForAnswer
+    /// The host has handed the message to OpenClaw, which has not started on it.
+    case waitingForOpenClaw
 
     var label: String {
         switch self {
         case .thinking: String(localized: "Thinking…")
         case .waitingForApproval: String(localized: "Waiting for your approval")
         case .waitingForAnswer: String(localized: "Waiting for your answer")
+        case .waitingForOpenClaw: String(localized: "Waiting for OpenClaw")
         }
     }
 
@@ -20,6 +23,7 @@ enum ChatActivity: Hashable, Sendable {
         case .thinking: nil
         case .waitingForApproval: "hand.raised"
         case .waitingForAnswer: "questionmark.bubble"
+        case .waitingForOpenClaw: "clock"
         }
     }
 }
@@ -31,7 +35,8 @@ func chatActivity(
     generating: Bool,
     streamingId: String?,
     answeredApprovals: Set<String>,
-    answeredQuestions: Set<String>
+    answeredQuestions: Set<String>,
+    waitingForOpenClaw: Bool = false
 ) -> ChatActivity? {
     var waitingForAnswer = false
     for row in rows {
@@ -55,6 +60,7 @@ func chatActivity(
     if waitingForAnswer { return .waitingForAnswer }
 
     guard generating, streamingId == nil else { return nil }
+    if waitingForOpenClaw { return .waitingForOpenClaw }
     if case .work(let work) = rows.last, work.running { return nil }
     return .thinking
 }

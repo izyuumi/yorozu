@@ -7,6 +7,7 @@ export function createRuns(emit) {
   const tails = new Map(); // threadId -> tail of that thread's run queue
   const live = new Map(); // messageId -> AbortController, queued or running
   const journal = new Map(); // messageId -> { status? }: runs the host may not have seen end
+  const bySession = new Map(); // sessionKey -> messageId of the run OpenClaw is executing there
 
   const started = (messageId) => {
     journal.set(messageId, {});
@@ -23,8 +24,8 @@ export function createRuns(emit) {
 
   return {
     /**
-     * Queues `execute(signal, begin)` behind the thread's earlier runs. It calls `begin()` once
-     * OpenClaw starts on the message (run_started) and returns "completed" | "failed" | undefined.
+     * Queues `execute(signal, begin)` behind the thread's earlier runs. It calls `begin(sessionKey)`
+     * once OpenClaw starts on the message (run_started) and returns "completed" | "failed" | undefined.
      * Throwing before `begin()` sends no boundary and rejects, so the host resends the message.
      */
     run(message, execute) {
@@ -32,13 +33,18 @@ export function createRuns(emit) {
       const controller = new AbortController();
       live.set(id, controller);
       const go = async () => {
+        let sessionKey;
         try {
           if (controller.signal.aborted) return started(id), finished(id, "aborted");
           let begun = false;
           let outcome;
           let threw = false;
           try {
-            outcome = await execute(controller.signal, () => ((begun = true), started(id)));
+            outcome = await execute(controller.signal, (key) => {
+              begun = true;
+              if (key) bySession.set((sessionKey = key), id);
+              started(id);
+            });
           } catch (error) {
             if (!begun) throw error;
             threw = true;
@@ -46,6 +52,7 @@ export function createRuns(emit) {
           if (begun) finished(id, settle(controller.signal.aborted, outcome, threw));
         } finally {
           live.delete(id);
+          if (sessionKey && bySession.get(sessionKey) === id) bySession.delete(sessionKey);
         }
       };
       const job = (tails.get(threadId) ?? Promise.resolve()).then(go);
@@ -54,6 +61,8 @@ export function createRuns(emit) {
       tail.then(() => tails.get(threadId) === tail && tails.delete(threadId));
       return job;
     },
+    /** The message id of the run executing in this OpenClaw session, if it is a Yorozu one. */
+    runFor: (sessionKey) => bySession.get(sessionKey),
     /** Host abort: cancels exactly this message's run. The outcome is reported by `run`. */
     abort(messageId) {
       live.get(messageId)?.abort();

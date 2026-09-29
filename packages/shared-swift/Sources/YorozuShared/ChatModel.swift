@@ -407,6 +407,34 @@ public final class ChatModel {
         }
     }
 
+    /// A Yorozu thread whose message the host has handed to OpenClaw, which has not started on it.
+    public func isWaitingForOpenClaw(in threadId: String) -> Bool {
+        guard let thread = synced.first(where: { $0.id == threadId }) else { return false }
+        return (thread.agent ?? .yorozu) == .yorozu && thread.turnState == .starting
+    }
+
+    /// Says what an outdated OpenClaw plugin lacks. Set once per host session, then until dismissed.
+    public private(set) var pluginNotice: String?
+    private var pluginNoticeShown = false
+
+    public func dismissPluginNotice() { pluginNotice = nil }
+
+    private static let pluginFeatures: [(capability: String, name: String)] = [
+        ("run-boundary-v1", String(localized: "working state and Stop")),
+        ("progress-v1", String(localized: "progress")),
+        ("model-select-v1", String(localized: "model picker")),
+        ("media-v1", String(localized: "attachments")),
+    ]
+
+    /// The host reports `missing:<capability>` for a connected plugin that did not announce it.
+    private func noteMissingPluginFeatures(_ capabilities: [String]?) {
+        let missing = Set((capabilities ?? []).compactMap { $0.hasPrefix("missing:") ? String($0.dropFirst(8)) : nil })
+        let names = Self.pluginFeatures.filter { missing.contains($0.capability) }.map(\.name)
+        guard !names.isEmpty, !pluginNoticeShown else { return }
+        pluginNoticeShown = true
+        pluginNotice = String(localized: "Your OpenClaw Yorozu plugin is out of date, so \(names.formatted(.list(type: .and))) are unavailable. Update the Yorozu plugin in OpenClaw.")
+    }
+
     public func offersChannelModels(for thread: ThreadSummary) -> Bool {
         (thread.agent ?? .yorozu) == .yorozu && channelModelSelection
     }
@@ -1502,7 +1530,17 @@ public final class ChatModel {
     }
 
     private func reconcile(_ status: AdmissionStatusData) {
-        guard let index = outbox.firstIndex(where: { $0.id == status.eventId }) else { return }
+        guard let index = outbox.firstIndex(where: { $0.id == status.eventId }) else {
+            // The host took this message and only later found it cannot go out (a plugin without
+            // attachment support connected). Its outbox entry is gone, so the timeline's copy becomes one.
+            if status.status == .rejected, status.reason == "attachments-unsupported",
+               let sent = timelines.values.lazy.flatMap(\.events).first(where: { $0.id == status.eventId }),
+               case .message(let data) = sent.payload, data.role == .user {
+                outbox.append(OutboxItem(event: sent, admissionStatus: .rejected, rejectionReason: status.reason))
+                saveOutbox()
+            }
+            return
+        }
         if case .threadCreate = outbox[index].event.payload {
             guard status.status == .rejected else { return }
             let threadId = outbox[index].event.threadId
@@ -2579,6 +2617,7 @@ public final class ChatModel {
                 break
             case .modelList(let data):
                 channelModelSelection = data.channelCapabilities?.contains("model-select-v1") == true
+                noteMissingPluginFeatures(data.channelCapabilities)
                 if !channelModelSelection {
                     channelModels = [:]
                     channelModelsLoading = []

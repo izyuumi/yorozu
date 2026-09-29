@@ -163,7 +163,8 @@ public struct ChatView: View {
             generating: generating,
             streamingId: streamingId,
             answeredApprovals: model.answered,
-            answeredQuestions: model.answeredQuestions
+            answeredQuestions: model.answeredQuestions,
+            waitingForOpenClaw: model.isWaitingForOpenClaw(in: thread.id)
         )
     }
 
@@ -243,6 +244,10 @@ public struct ChatView: View {
             // failures go in the connection toast below, after the grace, not in a banner.
             if let failure = model.failure, failure != model.linkFailure {
                 Banner(text: failure, systemImage: "exclamationmark.triangle")
+            }
+            if let notice = model.pluginNotice, (thread.agent ?? .yorozu) == .yorozu {
+                Banner(text: notice, systemImage: "arrow.triangle.2.circlepath",
+                    dismiss: { model.dismissPluginNotice() })
             }
             if model.hasUnconfirmedStop(in: thread.id) {
                 Banner(text: "Could not confirm whether this task stopped. Check the host before retrying.",
@@ -616,7 +621,8 @@ public struct ChatView: View {
     @ViewBuilder private func messages(rows: [ChatRow], queuedStatuses: [String: String],
                                        firstQueuedId: String?) -> some View {
         let activity = chatActivity(in: rows, generating: generating, streamingId: streamingId,
-            answeredApprovals: model.answered, answeredQuestions: model.answeredQuestions)
+            answeredApprovals: model.answered, answeredQuestions: model.answeredQuestions,
+            waitingForOpenClaw: model.isWaitingForOpenClaw(in: thread.id))
         #if os(iOS)
             nativeMessages(rows: rows, activity: activity, queuedStatuses: queuedStatuses)
         #else
@@ -2272,13 +2278,21 @@ private struct WorkingBezel: View {
 private struct Banner: View {
     let text: String
     let systemImage: String
+    var dismiss: (() -> Void)?
 
     var body: some View {
-        Label(text, systemImage: systemImage)
-            .font(.scaled(.footnote))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(8)
-            .background(YorozuPalette.stone.opacity(0.6))
+        HStack(alignment: .top) {
+            Label(text, systemImage: systemImage)
+                .font(.scaled(.footnote))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let dismiss {
+                Button("Dismiss", systemImage: "xmark", action: dismiss)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.plain)
+            }
+        }
+        .padding(8)
+        .background(YorozuPalette.stone.opacity(0.6))
     }
 }
 

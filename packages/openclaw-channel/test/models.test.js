@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createModelResponder } from "../models.js";
 import { connectYorozu } from "../socket.js";
+import { CAPABILITIES } from "../capabilities.js";
 
 const until = async (check) => {
   for (let i = 0; i < 200 && !check(); i++) await new Promise((r) => setTimeout(r, 10));
@@ -65,7 +66,7 @@ async function setup({ sessions = {}, apply, catalogError } = {}) {
   };
   const respond = createModelResponder(sdk);
   const link = connectYorozu({
-    path, capabilities: ["run-boundary-v1", "model-select-v1"], onInbound: async () => {},
+    path, capabilities: CAPABILITIES, onInbound: async () => {},
     onModelRequest: (frame) => respond({ cfg: {}, accountId: "default", frame }),
   });
   await until(() => host.frames.length > 0);
@@ -80,7 +81,8 @@ async function setup({ sessions = {}, apply, catalogError } = {}) {
 
 test("hello lists model-select-v1", async () => {
   const t = await setup();
-  assert.deepEqual(t.host.frames[0], { type: "hello", capabilities: ["run-boundary-v1", "model-select-v1"] });
+  assert.deepEqual(t.host.frames[0], { type: "hello", capabilities: CAPABILITIES });
+  assert.ok(CAPABILITIES.includes("model-select-v1"));
   await t.done();
 });
 

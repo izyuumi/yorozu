@@ -9,13 +9,18 @@ import {
   buildChannelInboundEventContext,
   dispatchChannelInboundTurn,
   resolveChannelInboundRouteEnvelope,
+  toInboundMediaFacts,
 } from "openclaw/plugin-sdk/channel-inbound";
+import { saveMediaBuffer } from "openclaw/plugin-sdk/media-store";
 import { createChannelReplyPipeline } from "openclaw/plugin-sdk/channel-reply-pipeline";
 import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 import { applySessionModelSelection } from "openclaw/plugin-sdk/model-session-runtime";
 import { buildPreparedModelsProviderData } from "openclaw/plugin-sdk/models-provider-runtime";
 import { getSessionEntry, resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
 import { createInboundDispatcher } from "./dispatch.js";
+import { CAPABILITIES } from "./capabilities.js";
+import { createAttachmentSaver } from "./media.js";
+import { createProgress } from "./progress.js";
 import { createModelResponder } from "./models.js";
 import { createRuns } from "./runs.js";
 import { connectYorozu } from "./socket.js";
@@ -27,13 +32,11 @@ import { connectYorozu } from "./socket.js";
 
 const DEFAULT_SOCKET = join(homedir(), "Library/Application Support/Yorozu/channel.sock");
 
-// Announced in every hello.
-export const CAPABILITIES = ["run-boundary-v1", "model-select-v1"];
-
 const dispatchInbound = createInboundDispatcher({
   resolveRoute: resolveChannelInboundRouteEnvelope,
   buildContext: buildChannelInboundEventContext,
   createReplyPipeline: createChannelReplyPipeline,
+  attachments: createAttachmentSaver({ saveMedia: saveMediaBuffer, toMediaFacts: toInboundMediaFacts }),
   dispatchTurn: dispatchChannelInboundTurn,
 });
 
@@ -58,6 +61,13 @@ export const normalizeYorozuTarget = (value)=> {
 };
 
 let link;
+let runs;
+
+/** OpenClaw's tool hooks, registered in index.js: they see whichever account is running. */
+export const progress = createProgress({
+  runFor: (sessionKey) => runs?.runFor(sessionKey),
+  send: (frame) => link?.send(frame) ?? false,
+});
 
 async function send(to, text) {
   const threadId = normalizeYorozuTarget(to);
@@ -83,7 +93,7 @@ export const yorozuPlugin = createChatChannelPlugin({
         blurb: "Chat with OpenClaw from Yorozu on this Mac, iPhone and iPad.",
         docsPath: "/channels/yorozu",
       },
-      capabilities: { chatTypes: ["direct"], media: false, reactions: false, threads: false, nativeCommands: false },
+      capabilities: { chatTypes: ["direct"], media: true, reactions: false, threads: false, nativeCommands: false },
       reload: { configPrefixes: ["channels.yorozu"] },
       config: {
         listAccountIds: () => ["default"],
@@ -114,17 +124,18 @@ export const yorozuPlugin = createChatChannelPlugin({
     gateway: {
       startAccount: async (ctx) => {
         ctx.setStatus({ accountId: ctx.accountId, running: true, connected: false });
-        const runs = createRuns((frame) => current.send(frame));
+        const accountRuns = createRuns((frame) => current.send(frame));
+        runs = accountRuns;
         const current = connectYorozu({
           path: ctx.account.socketPath,
           capabilities: CAPABILITIES,
-          onOpen: () => runs.replay(),
-          onAbort: (messageId) => runs.abort(messageId),
+          onOpen: () => accountRuns.replay(),
+          onAbort: (messageId) => accountRuns.abort(messageId),
           onModelRequest: (frame) => respondModel({ cfg: ctx.cfg, accountId: ctx.accountId, frame }),
           onStatus: (connected) => ctx.setStatus({ accountId: ctx.accountId, running: true, connected }),
           onError: (message) => ctx.log?.warn?.(`yorozu: ${message}`),
           onInbound: (message) =>
-            runs.run(message, (signal, begin) =>
+            accountRuns.run(message, (signal, begin) =>
               dispatchInbound({
                 cfg: ctx.cfg,
                 accountId: ctx.accountId,
@@ -143,6 +154,7 @@ export const yorozuPlugin = createChatChannelPlugin({
         });
         current.close();
         if (link === current) link = undefined;
+        if (runs === accountRuns) runs = undefined;
         ctx.setStatus({ accountId: ctx.accountId, running: false, connected: false });
       },
     },
