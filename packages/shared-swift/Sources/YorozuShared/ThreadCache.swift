@@ -104,6 +104,7 @@ public struct ThreadCache: Sendable {
         var readingPositions: [String: ReadingPosition]? = nil
         /// Prepared composer send. Outbox presence decides whether this draft was committed.
         var preparedSend: [String: String]? = nil
+        var restoredWithdrawals: Set<String>? = nil
     }
 
     /// Stable transcript row and its distance from the viewport's top edge.

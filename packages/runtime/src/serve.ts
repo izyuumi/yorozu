@@ -2127,6 +2127,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const downloadFiles = new Map<string, { bytes: Buffer; sha256: string }>();
   let downloadCacheBytes = 0;
   function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0, from?: string, localDevice?: string): void {
+    if (event.kind === "stop_status") return;
     if (event.kind === "attachment_progress" || event.kind === "attachment_download_chunk") return;
     if (event.kind === "attachment_download_request") {
       const compatibility = from ? devices.get(from)?.compatibility : undefined;
@@ -2341,6 +2342,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
           ? { partialText: live.data.text } : {}) };
       rememberStop(record);
       if (record.status === "requested" && turn?.activeEventId === target) {
+        // Withdraw before aborting: the runner can settle and release its queue immediately.
+        for (const queued of turn.queued) {
+          const withdrawn: StopRecord = { targetEventId: queued, threadId: event.threadId,
+            status: "withdrawn", requestIds: [event.id] };
+          rememberStop(withdrawn);
+          removeNativeQueue(queued);
+          emit(stopStatus(withdrawn, event.id));
+        }
+        turn.queued = [];
         turn.state = "stopping";
         publishTurnState(event.threadId);
       } else if (record.status === "requested" && turn) {
