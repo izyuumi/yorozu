@@ -72,6 +72,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadRecover = "thread_recover"
         case modelList = "model_list"
         case projectList = "project_list"
+        case steer
         case interrupt
         case stopStatus = "stop_status"
         case syncRequest = "sync_request"
@@ -125,6 +126,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadRecover(ThreadRecoverData)
         case modelList(ModelListData)
         case projectList(ProjectListData)
+        case steer(SteerData)
         case interrupt(InterruptData)
         case stopStatus(StopStatusData)
         case syncRequest(SyncRequestData)
@@ -178,6 +180,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadRecover: .threadRecover
             case .modelList: .modelList
             case .projectList: .projectList
+            case .steer: .steer
             case .interrupt: .interrupt
             case .stopStatus: .stopStatus
             case .syncRequest: .syncRequest
@@ -266,6 +269,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadSetEffort: payload = .threadSetEffort(try c.decode(ThreadSetEffortData.self, forKey: .data))
             case .modelList: payload = .modelList(try c.decode(ModelListData.self, forKey: .data))
             case .projectList: payload = .projectList(try c.decode(ProjectListData.self, forKey: .data))
+            case .steer: payload = .steer(try c.decode(SteerData.self, forKey: .data))
             case .interrupt: payload = .interrupt(try c.decode(InterruptData.self, forKey: .data))
             case .stopStatus: payload = .stopStatus(try c.decode(StopStatusData.self, forKey: .data))
             case .syncRequest: payload = .syncRequest(try c.decode(SyncRequestData.self, forKey: .data))
@@ -337,6 +341,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadSetEffort(let d): try c.encode(d, forKey: .data)
         case .modelList(let d): try c.encode(d, forKey: .data)
         case .projectList(let d): try c.encode(d, forKey: .data)
+        case .steer(let d): try c.encode(d, forKey: .data)
         case .interrupt(let d): try c.encode(d, forKey: .data)
         case .stopStatus(let d): try c.encode(d, forKey: .data)
         case .syncRequest(let d): try c.encode(d, forKey: .data)
@@ -411,12 +416,21 @@ public struct AttachmentProgressData: Codable, Equatable, Sendable {
     }
 }
 
+public enum MessageDelivery: String, Codable, Sendable { case queue, steer }
+
+public struct SteerData: Codable, Equatable, Sendable {
+    public var targetEventId: String
+    public init(targetEventId: String) { self.targetEventId = targetEventId }
+}
+
 public struct AttachmentCommitData: Codable, Equatable, Sendable {
+    public var delivery: MessageDelivery?
     public var text: String
     public var attachments: [AttachmentDescriptor]
     public var admissionDeadline: Int
 
-    public init(text: String, attachments: [AttachmentDescriptor], admissionDeadline: Int) {
+    public init(text: String, attachments: [AttachmentDescriptor], admissionDeadline: Int, delivery: MessageDelivery? = nil) {
+        self.delivery = delivery
         self.text = text
         self.attachments = attachments
         self.admissionDeadline = admissionDeadline
@@ -524,6 +538,7 @@ public struct AdmissionQueryData: Codable, Equatable, Sendable {
 }
 
 public struct AdmissionStatusData: Codable, Equatable, Sendable {
+    public var delivery: MessageDelivery?
     public enum Status: String, Codable, Sendable {
         case unknown, indeterminate, accepted, queued, running, completed, rejected, expired, withdrawn
     }
@@ -534,7 +549,8 @@ public struct AdmissionStatusData: Codable, Equatable, Sendable {
     public var reason: String?
     public var requestId: String?
     public init(eventId: String, status: Status, runId: String? = nil, completionId: String? = nil,
-                reason: String? = nil, requestId: String? = nil) {
+                reason: String? = nil, requestId: String? = nil, delivery: MessageDelivery? = nil) {
+        self.delivery = delivery
         self.eventId = eventId
         self.status = status
         self.runId = runId
@@ -567,6 +583,7 @@ public struct TurnChangesData: Codable, Equatable, Sendable {
 }
 
 public struct MessageData: Codable, Equatable, Sendable {
+    public var delivery: MessageDelivery?
     public enum Role: String, Codable, Sendable { case user, agent }
     public var role: Role
     public var text: String
@@ -596,8 +613,10 @@ public struct MessageData: Codable, Equatable, Sendable {
         attachments: [MessageAttachment] = [],
         admissionDeadline: Int? = nil,
         runId: String? = nil,
-        completionId: String? = nil
+        completionId: String? = nil,
+        delivery: MessageDelivery? = nil
     ) {
+        self.delivery = delivery
         self.role = role
         self.text = text
         self.done = done
@@ -609,10 +628,11 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, done, failed, interrupted, attachments, admissionDeadline, runId, completionId }
+    private enum CodingKeys: String, CodingKey { case role, text, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        delivery = try c.decodeIfPresent(MessageDelivery.self, forKey: .delivery)
         role = try c.decode(Role.self, forKey: .role)
         text = try c.decode(String.self, forKey: .text)
         done = try c.decodeIfPresent(Bool.self, forKey: .done)
@@ -626,6 +646,7 @@ public struct MessageData: Codable, Equatable, Sendable {
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(delivery, forKey: .delivery)
         try c.encode(role, forKey: .role)
         try c.encode(text, forKey: .text)
         try c.encodeIfPresent(done, forKey: .done)

@@ -29,6 +29,7 @@ private func statusTint(_ host: HostSession) -> Color {
 struct SettingsView: View {
     let session: Session
     let onOpenThread: (String, HostID?) -> Void
+    @AppStorage(ChatModel.followUpBehaviorKey) private var followUpBehavior = MessageDelivery.queue
     @Environment(\.dismiss) private var dismiss
     @State private var addingHost = false
     @State private var repairHostID: HostID?
@@ -43,6 +44,14 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section("Chat") {
+                Picker("Follow-up messages", selection: $followUpBehavior) {
+                    Text("Queue").tag(MessageDelivery.queue)
+                    Text("Steer running turn").tag(MessageDelivery.steer)
+                }
+                    Text("⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now.")
+                        .foregroundStyle(.secondary)
+                }
                 if !session.isDemo {
                     Section(session.hosts.hasMultipleHosts ? "Hosts" : "Connection") {
                         ForEach(session.hosts.sessions) { host in

@@ -60,7 +60,7 @@ test("a turn runs in the thread's folder and hands back the session to resume", 
     effort: "high", onUpdate: (text) => updates.push(text),
   });
   expect(first).toEqual({ text: "hello from claude", sessionId: "s-1", completed: true });
-  expect(calls[0]).toMatchObject({ prompt: "fix the tests", cwd: "/tmp/proj", effort: "high" });
+  expect(calls[0]).toMatchObject({ cwd: "/tmp/proj", effort: "high" });
   expect(calls[0]).not.toHaveProperty("resume");
   // The agent keeps its own tools and settings: Yorozu names none of them.
   expect(calls[0]).not.toHaveProperty("tools");

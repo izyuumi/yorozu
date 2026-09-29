@@ -935,6 +935,8 @@ public struct ChatView: View {
                             } else { retry(data) } } : messageActions.retry.map { prompt in
                                 { retry(prompt) }
                             },
+                    onSendNow: queuedStatus != nil && model.canSendNow(event)
+                        ? { model.sendNow(event) } : nil,
                     onWithdraw: model.canWithdraw(event)
                         ? { model.withdraw(event.id) } : nil,
                     onDelete: { model.delete(event.id, in: thread.id) },
@@ -1253,7 +1255,8 @@ public struct ChatView: View {
                 ComposerTextView(
                     text: draft,
                     placeholder: composerPlaceholder,
-                    onSubmit: send,
+                    onSubmit: { send(alternateDelivery: $0) },
+                    onSendNextQueued: { model.sendNextQueued(in: thread.id) },
                     onQuestionOption: questionOption,
                     onPromptHistory: { model.recallPrompt(in: thread.id, older: $0) },
                     onPasteImage: { pasteImages() },
@@ -1483,9 +1486,7 @@ public struct ChatView: View {
 
     private var fieldBackground: Color { YorozuPalette.paper }
 
-    /// Stop stays beside the composer while a turn runs. Send never changes jobs: another
-    /// message steers that active turn, which is why replacing it with Stop made steering
-    /// impossible from the app.
+    /// Stop stays beside Send while the host is working.
     private var stopPendingLabel: some View {
         Text("Stopping…")
             .font(.scaled(.caption))
@@ -1542,8 +1543,7 @@ public struct ChatView: View {
     }
 
     #if os(macOS)
-        /// Enter with the chosen modifiers sends; every other Enter reaches the field, and the
-        /// field's `onSubmit` makes it the newline it was meant to be.
+        /// The field handles Return, alternate delivery, and Send now before AppKit inserts a newline.
         private var composerKeyMonitor: some View {
             let onPaste: (() -> Void)? = { pasteImages() }
             let onPickerKey: ((SkillPickerKey) -> Void)? = skillChoices.isEmpty ? nil : { skillKey($0) }
@@ -1551,6 +1551,7 @@ public struct ChatView: View {
                 isActive: composerFocused,
                 sendModifiers: sendWithCommandReturn ? .command : [],
                 onSend: sendFromKey,
+                onSendNextQueued: { model.sendNextQueued(in: thread.id) },
                 onPaste: onPaste,
                 onPickerKey: onPickerKey,
                 onQuestionOption: questionOption,
@@ -1560,16 +1561,16 @@ public struct ChatView: View {
 
         /// The send key's send: whether anything went, so an Enter with nothing to send is
         /// the field's to make a newline of.
-        private func sendFromKey() -> Bool {
+        private func sendFromKey(_ alternateDelivery: Bool) -> Bool {
             guard canSend else { return false }
-            send()
+            send(alternateDelivery: alternateDelivery)
             return true
         }
     #endif
 
-    private func send() {
+    private func send(alternateDelivery: Bool = false) {
         guard canSend else { return }
-        model.send(in: thread)
+        model.send(in: thread, alternateDelivery: alternateDelivery)
         sends += 1
         // Sending is always a jump to the end: it is your own message, and you meant it.
         atBottom = true

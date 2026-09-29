@@ -54,6 +54,7 @@ public struct MessageBubble: View {
     private let onEditFromHere: (() -> Void)?
     private let editFromHereEnabled: Bool
     private let onRetry: (() -> Void)?
+    private let onSendNow: (() -> Void)?
     private let onWithdraw: (() -> Void)?
     private let onDelete: (() -> Void)?
     /// Sends the queued message again, for a message the outbox has given up on.
@@ -78,6 +79,7 @@ public struct MessageBubble: View {
         onEditFromHere: (() -> Void)? = nil,
         editFromHereEnabled: Bool = false,
         onRetry: (() -> Void)? = nil,
+        onSendNow: (() -> Void)? = nil,
         onWithdraw: (() -> Void)? = nil,
         onDelete: (() -> Void)? = nil,
         onResend: (() -> Void)? = nil,
@@ -98,6 +100,7 @@ public struct MessageBubble: View {
         self.onEditFromHere = onEditFromHere
         self.editFromHereEnabled = editFromHereEnabled
         self.onRetry = onRetry
+        self.onSendNow = onSendNow
         self.onWithdraw = onWithdraw
         self.onDelete = onDelete
         self.onResend = onResend
@@ -154,6 +157,7 @@ public struct MessageBubble: View {
             if let queuedStatus {
                 HStack(spacing: LayoutMetrics.inner) {
                     Text(queuedStatus)
+                    if let onSendNow { Button("Send now", action: onSendNow) }
                     if let onWithdraw {
                         Button("Remove", action: onWithdraw)
                             .accessibilityHint("Returns text and attachments to the composer")

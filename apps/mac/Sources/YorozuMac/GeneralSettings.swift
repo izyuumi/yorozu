@@ -12,6 +12,7 @@ struct GeneralView: View {
     @State private var showingArchive = false
     @AppStorage(ChatView.sendWithCommandReturnKey) private var sendWithCommandReturn = false
     @AppStorage(HostWindowMode.key) private var backgroundOnlyHost = false
+    @AppStorage(ChatModel.followUpBehaviorKey) private var followUpBehavior = MessageDelivery.queue
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -42,14 +43,21 @@ struct GeneralView: View {
                     Text("Enter").tag(false)
                     Text("⌘ Enter").tag(true)
                 }
+                Picker("Follow-up messages", selection: $followUpBehavior) {
+                    Text("Queue").tag(MessageDelivery.queue)
+                    Text("Steer running turn").tag(MessageDelivery.steer)
+                }
                 ReplyFontPicker()
             } header: {
                 Text("Chat")
             } footer: {
-                Text(sendWithCommandReturn
-                    ? "Enter starts a new line."
-                    : "Shift-Enter starts a new line.")
-                    .leadingFooter()
+                VStack(alignment: .leading) {
+                    Text(sendWithCommandReturn ? "Enter starts a new line." : "Shift-Enter starts a new line.")
+                    Text(sendWithCommandReturn
+                        ? "⌥ ⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now."
+                        : "⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now.")
+                }
+                .leadingFooter()
             }
             Section {
                 LabeledContent("Archived threads") {
