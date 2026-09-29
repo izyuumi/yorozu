@@ -53,6 +53,22 @@ private func message(_ id: String, _ text: String, thread: String = "home") -> Y
     #expect(cache.lastSeen().isEmpty)
 }
 
+@Test func legacyComposerWithReadingPositionsRemainsReadable() throws {
+    let key = SymmetricKey(size: .bits256)
+    let cache = temporaryCache(key: key)
+    defer { try? FileManager.default.removeItem(at: cache.directory) }
+    let legacy = Data(#"{"drafts":{"home":"unsent"},"attachments":{},"threads":[],"openThread":"home","readingPositions":{"home":{"rowID":"older","distanceFromTop":-18}}}"#.utf8)
+    let sealed = try AES.GCM.seal(legacy, using: key).combined!
+    try FileManager.default.createDirectory(at: cache.directory, withIntermediateDirectories: true)
+    try sealed.write(to: cache.directory.appendingPathComponent("composer.bin"))
+
+    let composer = try #require(cache.composer())
+    #expect(composer.drafts["home"] == "unsent")
+    #expect(composer.openThread == "home")
+    try cache.save(composer: composer)
+    #expect(ThreadCache(directory: cache.directory, key: key).composer()?.drafts["home"] == "unsent")
+}
+
 @Test func theCacheIsEncryptedAtRestAndUnreadableWithAnotherKey() throws {
     let cache = temporaryCache()
     cache.save(events: [message("e1", "the secret is 1234")], threadId: "home")

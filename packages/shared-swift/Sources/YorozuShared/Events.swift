@@ -1171,6 +1171,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     public var turnState: ThreadTurnState?
     public var canRewind: Bool?
     public var queuedTurnCount: Int?
+    public var queuedEventIds: [String]?
     public var canResume: Bool?
     public var interruptedTurnId: String?
     public var recoveryState: String?
@@ -1230,11 +1231,13 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         activeEventId: String? = nil,
         turnState: ThreadTurnState? = nil,
         queuedTurnCount: Int? = nil,
+        queuedEventIds: [String]? = nil,
         canRewind: Bool? = nil
     ) {
         self.activeEventId = activeEventId
         self.turnState = turnState
         self.queuedTurnCount = queuedTurnCount
+        self.queuedEventIds = queuedEventIds
         self.canRewind = canRewind
         self.id = id
         self.title = title
@@ -1279,6 +1282,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         activeEventId = try c.decodeIfPresent(String.self, forKey: .activeEventId)
         turnState = try c.decodeIfPresent(ThreadTurnState.self, forKey: .turnState)
         queuedTurnCount = try c.decodeIfPresent(Int.self, forKey: .queuedTurnCount)
+        queuedEventIds = try c.decodeIfPresent([String].self, forKey: .queuedEventIds)
         canRewind = try c.decodeIfPresent(Bool.self, forKey: .canRewind)
         lastReadAt = try c.decodeIfPresent(Double.self, forKey: .lastReadAt)
         lastAgentAt = try c.decodeIfPresent(Double.self, forKey: .lastAgentAt)
@@ -1298,7 +1302,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     }
 
     /// Whether the agent has said something here since anyone last read it. The one definition
-    /// of unread — what every dot, bold title and app badge on both platforms is drawn from.
+    /// of unread — what every dot and bold title on both platforms is drawn from.
     ///
     /// Deliberately not "a reply arrived while this device had the thread closed": that answer
     /// differs per device, and was wrong on any device that happened to be asleep for it.

@@ -35,15 +35,24 @@ export interface ChannelDeliver {
 
 export type HostFrame =
   | { type: "inbound"; message: ChannelInbound }
+  | { type: "abort"; messageId: string }
   | { type: "ack"; id: string }
   | { type: "error"; id: string; reason: string };
 
-export type PluginFrame = ({ type: "deliver" } & ChannelDeliver) | { type: "ack"; id: string };
+export type RunStatus = "completed" | "failed" | "aborted";
+export type PluginFrame = ({ type: "deliver" } & ChannelDeliver)
+  | { type: "ack"; id: string }
+  | { type: "hello"; capabilities: string[] }
+  | { type: "run_started"; messageId: string }
+  | { type: "run_finished"; messageId: string; status: RunStatus };
 
 export interface ChannelHostOptions {
   dir: string;
   /** Makes the message durable in its thread. Throws when it could not. */
   deliver(message: ChannelDeliver): void;
+  forwarded(message: ChannelInbound): void;
+  runStarted(messageId: string): void;
+  runFinished(messageId: string, status: RunStatus): void;
   onError?(message: string): void;
 }
 
@@ -52,6 +61,7 @@ export interface ChannelHost {
   readonly connected: boolean;
   /** Queues a user message for OpenClaw. Durable before it returns. */
   forward(message: ChannelInbound): void;
+  abort(messageId: string): void;
   close(): Promise<void>;
 }
 
@@ -84,18 +94,33 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
   const { dir } = options;
   let outbox = loadOutbox(dir);
   const plugins = new Map<string, Send<HostFrame>>();
+  const runBoundaryPlugins = new Set<string>();
 
   const socket = startLocalChannel<PluginFrame, HostFrame>({
     path: channelSocketPath(dir),
     onOpen: (device, send) => {
       plugins.set(device, send);
-      for (const message of outbox) send({ type: "inbound", message });
+      for (const message of outbox) {
+        options.forwarded(message);
+        send({ type: "inbound", message });
+      }
     },
-    onClose: (device) => plugins.delete(device),
+    onClose: (device) => { plugins.delete(device); runBoundaryPlugins.delete(device); },
     onError: options.onError,
     onEvent: (device, frame) => {
       const send = plugins.get(device);
       if (!send || !frame || typeof frame !== "object") return;
+      if (frame.type === "hello") {
+        if (Array.isArray(frame.capabilities) && frame.capabilities.every((value) => typeof value === "string") &&
+            frame.capabilities.includes("run-boundary-v1")) runBoundaryPlugins.add(device);
+        return;
+      }
+      if (frame.type === "run_started" || frame.type === "run_finished") {
+        if (!runBoundaryPlugins.has(device) || !validId(frame.messageId)) return;
+        if (frame.type === "run_started") options.runStarted(frame.messageId);
+        else if (["completed", "failed", "aborted"].includes(frame.status)) options.runFinished(frame.messageId, frame.status);
+        return;
+      }
       if (frame.type === "ack") {
         if (!validId(frame.id) || !outbox.some((message) => message.id === frame.id)) return;
         outbox = outbox.filter((message) => message.id !== frame.id);
@@ -127,7 +152,11 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
       if (outbox.some((queued) => queued.id === message.id)) return;
       outbox = [...outbox, message];
       saveOutbox(dir, outbox);
+      options.forwarded(message);
       for (const send of plugins.values()) send({ type: "inbound", message });
+    },
+    abort(messageId) {
+      for (const device of runBoundaryPlugins) plugins.get(device)?.({ type: "abort", messageId });
     },
     close: () => socket.close(),
   };

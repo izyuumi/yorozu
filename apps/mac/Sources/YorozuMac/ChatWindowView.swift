@@ -22,6 +22,7 @@ struct ChatWindowView: View {
         }
         // Text with no font of its own, the composer's included, follows ⌘+ and ⌘− too.
         .font(.scaled(.body))
+        .overlay(alignment: .top) { ThreadNotificationToast() }
     }
 }
 
@@ -70,6 +71,7 @@ struct QuickChatView: View {
         .font(.scaled(.body))
         .background(YorozuPalette.canvas)
         .yorozuTint()
+        .overlay(alignment: .top) { ThreadNotificationToast() }
         .onAppear { open() }
         .onChange(of: selection, initial: true) { old, new in
             if let old, old != new { model.discardDraft(old) }
@@ -451,14 +453,12 @@ struct SettingsView: View {
         if session.role == .host {
             panes.append(("devices", "Devices", "iphone.and.arrow.forward"))
             panes.append(("permissions", "Permissions", "lock.shield"))
-            if backgroundOnlyHost {
-                panes.append(("notifications", "Notifications", "bell"))
-            }
         } else if session.hosts.hasMultipleHosts {
             panes.append(("hosts", "Hosts", "desktopcomputer"))
         } else {
             panes.append(("hosts", "Connection", "link"))
         }
+        panes.append(("notifications", "Notifications", "bell"))
         return panes
     }
 
