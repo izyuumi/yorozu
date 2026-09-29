@@ -1280,6 +1280,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           activeEventId: turnStates.get(thread.id)?.activeEventId,
           turnState: turnStates.get(thread.id)?.state ?? "idle",
           queuedTurnCount: turnStates.get(thread.id)?.queued.length ?? 0,
+          queuedEventIds: [...(turnStates.get(thread.id)?.queued ?? [])],
           canRewind: !viaChannel(thread.id),
         } : {}),
         ...(stopping ? { interruptedTurnId: undefined, canResume: undefined, recoveryState: undefined } : {}),
@@ -1865,7 +1866,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       if (stopped) return;
       if (userEventId && stoppedTurns.has(userEventId)) return;
-      startTurnState(threadId, turnKey);
       const logged = queuedBehindTurn ? acceptedEvent : undefined;
       if (logged) {
         // A steered message was admitted while an earlier turn ran. Append its corrected
@@ -1881,6 +1881,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           broadcast(ordered);
         }
       }
+      startTurnState(threadId, turnKey);
       if (userEventId) activeTurnIds.add(userEventId);
       try { await runTurn(threadId, text, recorded, attachments, userEventId); }
       finally {
