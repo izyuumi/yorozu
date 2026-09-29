@@ -138,7 +138,7 @@ public struct AgentTraceView: View {
 
 /// Everything in a trace that is not tool use: what the agent thought, and what it said.
 private struct TraceRow: View {
-    @AppStorage(ReplyFont.key) private var replyFont = ReplyFont.serif
+    @AppStorage(ReplyFont.key) private var replyFont = ReplyFont.sans
     let event: YorozuEvent
 
     var body: some View {

@@ -57,7 +57,7 @@ public struct MessageBubble: View {
     private let onResend: (() -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage(ReplyFont.key) private var replyFont = ReplyFont.serif
+    @AppStorage(ReplyFont.key) private var replyFont = ReplyFont.sans
     @State private var hovering = false
     @State private var copied = false
 

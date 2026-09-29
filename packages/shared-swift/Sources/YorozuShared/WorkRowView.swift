@@ -9,7 +9,7 @@ import SwiftUI
 public struct WorkRowView: View {
     private let work: TurnWork
     @State private var expanded: Bool
-    @AppStorage(ReplyFont.key) private var replyFont = ReplyFont.serif
+    @AppStorage(ReplyFont.key) private var replyFont = ReplyFont.sans
 
     public init(work: TurnWork) {
         self.work = work
