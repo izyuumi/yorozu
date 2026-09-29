@@ -3001,3 +3001,83 @@ func deferredAttachmentDownloadsAfterVisibleHistoryArrives(legacyCache: Bool) as
     #expect(model.queuedMessages(in: thread.id).isEmpty)
     #expect(model.rows(in: thread.id).map(\.id) == [message.id, reply.id])
 }
+
+@MainActor
+@Test func followUpSettingAndAlternateSendChooseDelivery() throws {
+    let key = ChatModel.followUpBehaviorKey
+    let saved = UserDefaults.standard.object(forKey: key)
+    defer { UserDefaults.standard.set(saved, forKey: key) }
+    UserDefaults.standard.removeObject(forKey: key)
+    let model = ChatModel(transport: FakeTransport())
+    let thread = model.newDraft()
+    #expect(model.followUpBehavior == .queue)
+    for (setting, alternate, expected) in [(MessageDelivery.queue, false, MessageDelivery.queue),
+        (.queue, true, .steer), (.steer, false, .steer), (.steer, true, .queue)] {
+        model.followUpBehavior = setting
+        model.drafts[thread.id] = "follow \(setting) \(alternate)"
+        model.send(in: thread, alternateDelivery: alternate)
+        let sent = try #require(model.outbox.last)
+        guard case .message(let message) = sent.event.payload else { Issue.record("Missing message"); return }
+        #expect(message.delivery == expected)
+        let wire = try JSONDecoder().decode(YorozuEvent.self, from: JSONEncoder().encode(sent.event))
+        #expect(wire == sent.event)
+    }
+    #expect(ChatModel(transport: FakeTransport()).followUpBehavior == .steer)
+}
+
+@MainActor
+@Test func sendNowAndShortcutAwaitHostDeliveryAndKeepFallbackQueued() async throws {
+    let transport = FakeTransport(autoReceipt: true)
+    let model = await connected(transport)
+    defer { model.close() }
+    let next = event("next", .message(MessageData(role: .user, text: "next", delivery: .queue)))
+    let later = event("later", .message(MessageData(role: .user, text: "later", delivery: .queue)))
+    var summary = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 10,
+        activeEventId: "active", turnState: .running, queuedTurnCount: 2, queuedEventIds: ["next", "later"])
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1"])))
+    await transport.yield(.event(event("list", .threadList(ThreadListData(threads: [summary])))))
+    await transport.yield(.event(event("sync", .syncDelta(SyncDeltaData(events: [next, later])))))
+    #expect(await eventually { model.queuedMessages(in: "home").count == 2 })
+    #expect(!model.canSendNow(next))
+    #expect(!model.sendNextQueued(in: "home"))
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1", "steer-v1"])))
+    #expect(await eventually { model.canSendNow(next) })
+    model.sendNow(next)
+    #expect(await eventually { await transport.sent.contains { $0.payload == .steer(SteerData(targetEventId: "next")) } })
+    // A fallback echo leaves the row queued, with the active turn's Stop untouched.
+    await transport.yield(.event(next))
+    #expect(await eventually { model.canSendNow(next) })
+    #expect(model.queuedMessages(in: "home").map(\.id) == ["next", "later"])
+    #expect(model.activeEventId(in: "home") == "active")
+    #expect(!model.stopPending(in: "home"))
+    #expect(model.sendNextQueued(in: "home"))
+    #expect(await eventually { await transport.sent.filter { $0.payload == .steer(SteerData(targetEventId: "next")) }.count == 2 })
+    var progress = event("progress", .message(MessageData(role: .agent, text: "working")))
+    progress.ts = 10
+    await transport.yield(.event(progress))
+    var delivered = next
+    delivered.ts = 20
+    delivered.clientTs = next.ts
+    delivered.payload = .message(MessageData(role: .user, text: "next", completionId: "active-reply", delivery: .steer))
+    await transport.yield(.event(delivered))
+    summary.queuedEventIds = ["later"]
+    summary.queuedTurnCount = 1
+    await transport.yield(.event(event("delivered", .threadList(ThreadListData(threads: [summary])))))
+    #expect(await eventually { model.queuedMessages(in: "home").map(\.id) == ["later"] })
+    #expect(model.activeEventId(in: "home") == "active")
+    #expect(!model.canSendNow(delivered))
+    #expect(!model.canWithdraw(delivered))
+    var output = event("output", .message(MessageData(role: .agent, text: "adjusted")))
+    output.ts = 30
+    await transport.yield(.event(output))
+    await transport.yield(.event(next)) // A stale queue echo cannot undo delivery placement.
+    #expect(await eventually {
+        model.events["home"]?.filter { ["progress", "next", "output"].contains($0.id) }.map(\.id)
+            == ["progress", "next", "output"]
+    })
+    #expect(model.sendNextQueued(in: "home"))
+    #expect(await eventually { await transport.sent.contains { $0.payload == .steer(SteerData(targetEventId: "later")) } })
+    await transport.yield(.event(event("question", .questionCard(QuestionCardData(questionId: "q", question: "Which?", options: ["A"])))))
+    #expect(await eventually { !model.canSendNow(later) })
+    #expect(!model.sendNextQueued(in: "home"))
+}

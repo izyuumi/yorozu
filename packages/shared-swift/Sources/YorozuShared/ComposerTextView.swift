@@ -8,7 +8,8 @@
     struct ComposerTextView: UIViewRepresentable {
         @Binding var text: String
         let placeholder: String
-        let onSubmit: () -> Void
+        let onSubmit: (Bool) -> Void
+        let onSendNextQueued: () -> Bool
         let onQuestionOption: (Int) -> Bool
         let onPromptHistory: (Bool) -> Bool
         /// Called when Paste finds an image; nil while images cannot be attached, so Paste goes
@@ -53,6 +54,7 @@
             view.placeholderLabel.text = placeholder
             view.placeholderLabel.isHidden = !text.isEmpty
             view.onSubmit = onSubmit
+            view.onSendNextQueued = onSendNextQueued
             view.onQuestionOption = onQuestionOption
             view.onPromptHistory = onPromptHistory
             view.onPasteImage = onPasteImage
@@ -92,7 +94,8 @@
 
     final class PastingTextView: UITextView {
         let placeholderLabel = UILabel()
-        var onSubmit: () -> Void = {}
+        var onSubmit: (Bool) -> Void = { _ in }
+        var onSendNextQueued: () -> Bool = { false }
         var onQuestionOption: (Int) -> Bool = { _ in false }
         var onPromptHistory: (Bool) -> Bool = { _ in false }
         var onPasteImage: (() -> Void)?
@@ -126,10 +129,10 @@
 
         /// A hardware keyboard's Return sends; Shift-Return is a new line.
         override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-            if let key = presses.first?.key, key.keyCode == .keyboardReturnOrEnter,
-                !key.modifierFlags.contains(.shift)
-            {
-                return onSubmit()
+            if let key = presses.first?.key, key.keyCode == .keyboardReturnOrEnter, markedTextRange == nil {
+                let modifiers = key.modifierFlags.intersection([.shift, .control, .alternate, .command])
+                if modifiers == [.command, .shift], onSendNextQueued() { return }
+                if !modifiers.contains(.shift) { return onSubmit(modifiers == .command) }
             }
             if let key = presses.first?.key, markedTextRange == nil,
                 key.modifierFlags.intersection([.shift, .control, .alternate, .command]).isEmpty,
@@ -146,8 +149,8 @@
     import SwiftUI
 
     /// Which key-down in the Mac's message field is the send key: Return or the keypad's
-    /// Enter with exactly `sendModifiers` held (none, or ⌘ by the Settings choice). Every other
-    /// Enter is the field's, where it inserts a newline. Not while an input method is composing:
+    /// Enter with exactly `sendModifiers` held. The caller also checks ⌘ for alternate delivery
+    /// and ⌘⇧ for Send now. Not while an input method is composing:
     /// that Return confirms the conversion and must reach the field.
     func isSendKey(
         keyCode: UInt16, flags: NSEvent.ModifierFlags, sendModifiers: NSEvent.ModifierFlags, composing: Bool
@@ -155,6 +158,25 @@
         guard !composing, keyCode == 36 || keyCode == 76 else { return false }
         // The keypad's Enter arrives flagged as such; only the modifier keys matter.
         return flags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function]) == sendModifiers
+    }
+
+    enum ComposerSendAction: Equatable { case send(alternate: Bool), sendNextQueued }
+
+    /// What an Enter in the Mac's message field does. ⌘⇧ Enter sends the next queued message
+    /// now; Mod+Enter flips delivery for one message, adding ⌥ when ⌘ Enter is already the
+    /// send key, so choosing ⌘ Enter to send never changes how messages are delivered.
+    func composerSendAction(
+        keyCode: UInt16, flags: NSEvent.ModifierFlags, sendModifiers: NSEvent.ModifierFlags, composing: Bool
+    ) -> ComposerSendAction? {
+        if isSendKey(keyCode: keyCode, flags: flags, sendModifiers: [.command, .shift], composing: composing) {
+            return .sendNextQueued
+        }
+        let flip: NSEvent.ModifierFlags = sendModifiers.contains(.command) ? [.command, .option] : .command
+        if isSendKey(keyCode: keyCode, flags: flags, sendModifiers: flip, composing: composing) {
+            return .send(alternate: true)
+        }
+        return isSendKey(keyCode: keyCode, flags: flags, sendModifiers: sendModifiers, composing: composing)
+            ? .send(alternate: false) : nil
     }
 
     /// What a key means to the skill picker while it is open.
@@ -186,7 +208,8 @@
         let isActive: Bool
         let sendModifiers: NSEvent.ModifierFlags
         /// Returns whether a message went. An Enter with nothing to send reaches the field.
-        let onSend: () -> Bool
+        let onSend: (Bool) -> Bool
+        let onSendNextQueued: () -> Bool
         let onPaste: (() -> Void)?
         /// Set while the skill picker is open, which then has its keys before Send and Stop do.
         let onPickerKey: ((SkillPickerKey) -> Void)?
@@ -199,6 +222,7 @@
             view.isActive = isActive
             view.sendModifiers = sendModifiers
             view.onSend = onSend
+            view.onSendNextQueued = onSendNextQueued
             view.onPaste = onPaste
             view.onPickerKey = onPickerKey
             view.onQuestionOption = onQuestionOption
@@ -208,7 +232,8 @@
         final class MonitorView: NSView {
             var isActive = false
             var sendModifiers: NSEvent.ModifierFlags = []
-            var onSend: () -> Bool = { false }
+            var onSend: (Bool) -> Bool = { _ in false }
+            var onSendNextQueued: () -> Bool = { false }
             var onPaste: (() -> Void)?
             var onPickerKey: ((SkillPickerKey) -> Void)?
             var onQuestionOption: (Int) -> Bool = { _ in false }
@@ -246,10 +271,11 @@
                     {
                         return nil
                     }
-                    if isSendKey(keyCode: event.keyCode, flags: event.modifierFlags,
-                        sendModifiers: self.sendModifiers, composing: composing), self.onSend()
-                    {
-                        return nil
+                    switch composerSendAction(keyCode: event.keyCode, flags: event.modifierFlags,
+                        sendModifiers: self.sendModifiers, composing: composing) {
+                    case .sendNextQueued: if self.onSendNextQueued() { return nil }
+                    case .send(let alternate): if self.onSend(alternate) { return nil }
+                    case nil: break
                     }
                     if let onPaste = self.onPaste,
                         event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,

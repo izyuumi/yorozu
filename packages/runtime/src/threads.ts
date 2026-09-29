@@ -506,7 +506,8 @@ export function appendThreadEvent(event: YorozuEvent, dir = stateDir()): void {
   if (!LOGGED.has(event.kind)) return;
   mkdirSync(threadsDir(dir), { recursive: true, mode: 0o700 });
   appendFileSync(logFile(event.threadId, dir), `${JSON.stringify(event)}\n`,
-    { mode: 0o600, flush: event.kind === "approval_status" || event.kind === "stop_status" || event.kind === "thread_rewound" });
+    { mode: 0o600, flush: event.kind === "approval_status" || event.kind === "stop_status" || event.kind === "thread_rewound" ||
+      event.kind === "message" && event.data.delivery === "steer" && event.clientTs !== undefined });
 }
 
 /** The thread's events, oldest first. Unreadable lines are skipped. */

@@ -230,6 +230,14 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
               .map((file) => ({ type: "localImage", path: file.path }))],
           model: turn.model ?? null, effort: turn.effort ?? null });
         turnId = string(object(started.turn).id) || turnId;
+        turn.onSteer?.(async (text, attachments) => {
+          if (!sessionId || !turnId || signal.aborted || completed) return false;
+          await client.request("turn/steer", { threadId: sessionId, expectedTurnId: turnId,
+            input: [{ type: "text", text, text_elements: [] },
+              ...attachments.filter((file) => file.mime.startsWith("image/"))
+                .map((file) => ({ type: "localImage", path: file.path }))] });
+          return true;
+        });
         if (turn.signal.aborted) abort();
         await completion;
       } catch (error) {

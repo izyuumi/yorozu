@@ -259,7 +259,7 @@ private func sentText(_ transport: DrainTransport) async -> [YorozuEvent] {
     let message = try #require(await sentText(transport).first)
     #expect(message.threadId == "home")
     #expect(message.payload == .message(MessageData(role: .user, text: "on my way",
-        admissionDeadline: message.ts + 30 * 60_000)))
+        admissionDeadline: message.ts + 30 * 60_000, delivery: .queue)))
     await transport.deliver(.event(YorozuEvent(id: "r1", threadId: "home", ts: 2, agentId: "main",
         payload: .receipt(ReceiptData(eventId: message.id)))))
 

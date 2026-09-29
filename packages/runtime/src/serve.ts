@@ -126,7 +126,7 @@ import {
 } from "./threads.js";
 import { codexNativeRunner, connectCodex } from "./codex-native.js";
 import { NativeCards } from "./native-cards.js";
-import { claudeCodeRunner, type NativeAgentRunner } from "./native.js";
+import { claudeCodeRunner, type NativeAgentRunner, type NativeTurn } from "./native.js";
 import { isProjectFolder, listProjects } from "./projects.js";
 import { questionDesk, QUESTION_TIMEOUT_MS } from "./tools/cards.js";
 import { appendTranscript, transcriptDir } from "./transcripts.js";
@@ -684,6 +684,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const running = new Map<string, AbortController>();
   const runningEventIds = new Map<string, string>();
   const terminateRunning = new Map<string, () => void>();
+  const steerRunning = new Map<string, Parameters<NonNullable<NativeTurn["onSteer"]>>[0]>();
+  const steering = new Map<string, { threadId: string; promise: Promise<void> }>();
+  const steered = new Set<string>();
   const stopTimers = new Map<string, ReturnType<typeof setTimeout>>();
   type TurnState = "idle" | "starting" | "running" | "stopping" | "stopped-unconfirmed";
   const turnStates = new Map<string, { state: TurnState; activeEventId?: string; queued: string[] }>();
@@ -1730,6 +1733,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
               signal: turn.signal,
               onSession: (sessionId) => { executionStarted = true; setThreadSession(threadId, sessionId, dir); },
               onTerminate: (terminate) => terminateRunning.set(threadId, terminate),
+              onSteer: (steer) => steerRunning.set(threadId, steer),
               approve: async (tool, input, signal) =>
                 loadSettings(dir).yolo || nativeCards.approve(threadId, agent, tool, input, signal),
               ask: (question, options, signal) => nativeCards.ask(threadId, agent, question, options, signal),
@@ -1767,6 +1771,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
                 }
                 if (payload.kind === "tool_result") { pauseAtSafePoint(threadId); wakeDrainWaiters(); }
               },
+            }).finally(async () => {
+              steerRunning.delete(threadId);
+              await Promise.all([...steering.values()].filter((entry) => entry.threadId === threadId).map((entry) => entry.promise));
             });
             if (done.sessionId && done.sessionId !== currentHome.sessionId) setThreadSession(threadId, done.sessionId, dir);
             const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
@@ -1803,6 +1810,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       } finally {
         drainPauses.delete(threadId);
         terminateRunning.delete(threadId);
+        steerRunning.delete(threadId);
         openToolCalls.delete(threadId);
         if (running.get(threadId) === turn) running.delete(threadId);
         if (runningEventIds.get(threadId) === userEventId) runningEventIds.delete(threadId);
@@ -1866,10 +1874,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
         await new Promise<void>((resolve) => drainWaiters.add(resolve));
       }
       if (stopped) return;
-      if (userEventId && stoppedTurns.has(userEventId)) return;
+      if (userEventId) await steering.get(userEventId)?.promise;
+      if (userEventId && (stoppedTurns.has(userEventId) || steered.has(userEventId))) return;
       const logged = queuedBehindTurn ? acceptedEvent : undefined;
       if (logged) {
-        // A steered message was admitted while an earlier turn ran. Append its corrected
+        // A queued message was admitted while an earlier turn ran. Append its corrected
         // position after that turn, leaving the original log entry for replay cursors.
         const prior = readThreadEvents(threadId, dir);
         const existing = prior.find((known) => known.id === logged.id);
@@ -1904,6 +1913,40 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
     }).catch(() => {});
     return next;
+  }
+
+  function steerMessage(event: YorozuEvent & { kind: "message" }): Promise<void> {
+    const existing = steering.get(event.id);
+    if (existing) return existing.promise;
+    const turn = turnStates.get(event.threadId);
+    const steer = steerRunning.get(event.threadId);
+    const active = turn?.activeEventId;
+    if (!steer || !active || turn.state !== "running" || !turn.queued.includes(event.id) ||
+        stoppedTurns.has(event.id) || updateGate.draining || updateGate.status.phase === "installing" ||
+        nativeCards.waitingThreads().has(event.threadId) || questions.waitingThreads().has(event.threadId) ||
+        [...pending.values()].some((card) => card.threadId === event.threadId)) return Promise.resolve();
+    const delivery = Promise.resolve().then(async () => {
+      if (steerRunning.get(event.threadId) !== steer || turn.state !== "running" || stoppedTurns.has(event.id)) return;
+      const files = attachmentFiles(event.threadId, event.id, event.data.attachments ?? [], dir);
+      const attached = files.map((file) =>
+        `[attached: ${JSON.stringify(file.name)} (${JSON.stringify(file.mime)}) at ${file.path}]`).join("\n");
+      if (!await steer([event.data.text, attached].filter(Boolean).join("\n\n"), files)) return;
+      const prior = readThreadEvents(event.threadId, dir);
+      const ordered: YorozuEvent = { ...event, ts: Math.max(Date.now(), prior.at(-1)?.ts ?? 0),
+        clientTs: event.clientTs ?? event.ts, data: { ...event.data, delivery: "steer",
+          runId: completionIdFor(event.threadId, active), completionId: completionIdFor(event.threadId, active) } };
+      // Persist delivery before removing the queue entry: restart never launches it again.
+      appendTranscript(ordered, transcripts);
+      appendThreadEvent(ordered, dir);
+      steered.add(event.id);
+      removeNativeQueue(event.id);
+      turn.queued = turn.queued.filter((id) => id !== event.id);
+      broadcast(ordered);
+      broadcast(threadList());
+    }).catch((error: unknown) => { state(`steer-error ${String(error)}`); });
+    steering.set(event.id, { threadId: event.threadId, promise: delivery });
+    void delivery.finally(() => steering.delete(event.id));
+    return delivery;
   }
 
   function resumeNativeTurn(threadId: string, retry = false): boolean {
@@ -2162,6 +2205,23 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const downloadFiles = new Map<string, { bytes: Buffer; sha256: string }>();
   let downloadCacheBytes = 0;
   function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0, from?: string, localDevice?: string): void {
+    if (event.kind === "steer") {
+      const compatibility = from ? devices.get(from)?.compatibility : undefined;
+      if (from && (compatibility?.state !== "compatible" || !compatibility.capabilities.includes("steer-v1"))) return;
+      if (typeof event.threadId !== "string" || !event.threadId || event.threadId.length > 128 ||
+          typeof event.data.targetEventId !== "string" || !event.data.targetEventId || event.data.targetEventId.length > 128) return;
+      const message = readThreadEvents(event.threadId, dir).find((known) => known.id === event.data.targetEventId);
+      if (message?.kind !== "message" || message.data.role !== "user") {
+        reply(control({ kind: "receipt", data: { eventId: event.id } }));
+        return;
+      }
+      void steerMessage(message).then(() => {
+        const delivered = readThreadEvents(event.threadId, dir).find((known) => known.id === message.id);
+        if (delivered) reply(delivered);
+        reply(control({ kind: "receipt", data: { eventId: event.id } }));
+      });
+      return;
+    }
     if (event.kind === "stop_status") return;
     if (event.kind === "thread_rewound") return;
     if (event.kind === "thread_rewind") {
@@ -2282,7 +2342,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
             } }));
           } else if (result.attachments) {
             handleEvent({ ...event, kind: "message", data: { role: "user", text: event.data.text,
-              attachments: result.attachments, admissionDeadline: event.data.admissionDeadline } },
+              attachments: result.attachments, admissionDeadline: event.data.admissionDeadline, delivery: event.data.delivery } },
               reply, pairedAt, from, localDevice);
           }
         }).catch((error) => state(`attachment-commit-error ${String(error)}`))
@@ -2370,6 +2430,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (event.kind === "interrupt" && event.data.targetEventId !== undefined) {
       const target = event.data.targetEventId;
       if (typeof target !== "string" || !target || target.length > 128 || !event.threadId) return;
+      const inFlight = steering.get(target);
+      if (inFlight?.threadId === event.threadId) {
+        void inFlight.promise.then(() => handleEvent(event, reply, pairedAt, from, localDevice));
+        return;
+      }
       const existing = stoppedTurns.get(target);
       if (existing && existing.threadId !== event.threadId) {
         reply(control({ kind: "stop_status", data: { targetEventId: target, requestId: event.id, status: "unknown" } }));
@@ -2397,6 +2462,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
         reply(stopStatus(withdrawn, event.id));
         return;
       }
+      if (user?.kind === "message" && user.data.delivery === "steer") {
+        reply(control({ kind: "receipt", data: { eventId: event.id } }));
+        reply(control({ kind: "stop_status", data: { targetEventId: target, requestId: event.id,
+          status: history.some((stored) => stored.id === user.data.completionId && stored.kind === "message" && stored.data.done)
+            ? "completed" : "unknown" } }));
+        return;
+      }
       const turn = turnStates.get(event.threadId);
       const queuedIndex = turn?.queued.indexOf(target) ?? -1;
       if (!existing && user && turn && queuedIndex >= 0) {
@@ -2421,11 +2493,17 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (record.status === "requested" && turn?.activeEventId === target) {
         // Withdraw before aborting: the runner can settle and release its queue immediately.
         for (const queued of turn.queued) {
-          const withdrawn: StopRecord = { targetEventId: queued, threadId: event.threadId,
-            status: "withdrawn", requestIds: [event.id] };
-          rememberStop(withdrawn);
-          removeNativeQueue(queued);
-          emit(stopStatus(withdrawn, event.id));
+          const withdraw = (): void => {
+            if (steered.has(queued)) return;
+            const withdrawn: StopRecord = { targetEventId: queued, threadId: event.threadId,
+              status: "withdrawn", requestIds: [event.id] };
+            rememberStop(withdrawn);
+            removeNativeQueue(queued);
+            emit(stopStatus(withdrawn, event.id));
+          };
+          const inFlight = steering.get(queued);
+          if (inFlight) void inFlight.promise.then(withdraw);
+          else withdraw();
         }
         turn.queued = [];
         turn.state = "stopping";
@@ -2463,13 +2541,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const completionId = recordedCompletionId ?? (final ? oldOpenClawCompletionId : undefined);
       const status = withdrawal?.threadId === event.threadId && withdrawal.status === "withdrawn"
         ? "withdrawn" : !user ? expired?.threadId === event.threadId ? "expired" : "unknown" : final ? "completed"
-        : activeTurnIds.has(id) ? "running"
+        : activeTurnIds.has(id) || user?.data.delivery === "steer" &&
+          recordedCompletionId === completionIdFor(event.threadId, runningEventIds.get(event.threadId) ?? "") ? "running"
         : admittedTurns.has(id) ? "queued" : "indeterminate";
       const runId = (final?.kind === "message" ? final.data.runId : undefined)
         ?? (!viaChannel(event.threadId) ? user?.data.runId : undefined);
       reply(control({ kind: "receipt", data: { eventId: event.id } }));
       reply(control({ kind: "admission_status", data: {
         eventId: id, status, requestId: event.id,
+        ...(user?.data.delivery ? { delivery: user.data.delivery } : {}),
         ...(status === "expired" ? { reason: "admission-deadline" } : {}),
         ...(runId ? { runId } : {}), ...(completionId ? { completionId } : {}),
       } }));
@@ -2568,6 +2648,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (event.kind === "message" && !attachmentsWithinLimits(event.data.attachments ?? [])) {
       rejectUserMessage("oversized-attachments");
       return state("rejected-oversized-attachments");
+    }
+    if (event.kind === "message" && event.data.delivery !== undefined &&
+        event.data.delivery !== "queue" && event.data.delivery !== "steer") {
+      rejectUserMessage("invalid-delivery");
+      return;
     }
     const identity = event.kind === "message" && event.data.role === "user"
       ? userMessageIdentity(event) : undefined;
@@ -2719,7 +2804,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // A channel message has no completion of its own: OpenClaw answers when it answers.
     const turnless = typed || viaChannel(event.threadId);
     const logged = event.kind === "message" && event.data.role === "user"
-      ? { ...event, data: { ...event.data,
+      ? { ...event, data: { ...event.data, delivery: "queue" as const,
         runId: turnless ? undefined : completionIdFor(event.threadId, event.id),
         completionId: turnless ? undefined : completionIdFor(event.threadId, event.id) } } : event;
     appendTranscript(logged, transcripts);
@@ -2727,7 +2812,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (event.kind === "message" && event.data.role === "user" && !typed &&
         threadAgent(event.threadId, dir) !== "yorozu") {
       admittedTurn = enqueueTurn(event.threadId, event.data.text, true,
-        event.data.attachments ?? [], event.id, event);
+        event.data.attachments ?? [], event.id, logged);
+      if (event.data.delivery === "steer" && logged.kind === "message") void steerMessage(logged);
     }
     // Failed admission never poisons the in-memory dedup window.
     alreadySeen(event.id);
@@ -2893,12 +2979,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
       title(event.threadId, event.data.text);
       channel.forward({ id: event.id, threadId: event.threadId, ts: event.ts, text: event.data.text,
         ...(event.data.attachments?.length ? { attachments: event.data.attachments } : {}) });
-      return broadcast(event);
+      return broadcast(logged);
     }
     const queued = admittedTurn ?? enqueueTurn(event.threadId, event.data.text, true,
-      event.data.attachments ?? [], event.id, event);
+      event.data.attachments ?? [], event.id, logged);
     // Admission is durable now. Echoing by id is harmless and converges all clients.
-    broadcast(event);
+    broadcast(logged);
     queued.catch((e: unknown) => {
       state(`agent-error ${String(e)}`);
       // A thrown turn has no final event. Save one so its alert names a real row after sync.
@@ -3575,6 +3661,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     const original = events.find((event) => event.id === entry.eventId &&
       event.kind === "message" && event.data.role === "user");
+    if (original?.kind === "message" && original.data.delivery === "steer") {
+      removeNativeQueue(entry.eventId);
+      continue;
+    }
     if (original?.kind === "message") void enqueueTurn(entry.threadId, original.data.text, true,
       original.data.attachments ?? [], entry.eventId, original);
     else removeNativeQueue(entry.eventId);

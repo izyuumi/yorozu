@@ -67,7 +67,12 @@ export interface AttachmentProgressData {
   nextOffset: number;
   reason?: string;
 }
+export type MessageDelivery = "queue" | "steer";
+
+export interface SteerData { targetEventId: string }
+
 export interface AttachmentCommitData {
+  delivery?: MessageDelivery;
   text: string;
   attachments: AttachmentDescriptor[];
   admissionDeadline: number;
@@ -80,6 +85,8 @@ export interface AttachmentDownloadChunkData {
 }
 
 export interface MessageData {
+  /** Requested delivery on submission; effective delivery in the host echo. */
+  delivery?: MessageDelivery;
   role: "user" | "agent";
   text: string;
   /**
@@ -112,6 +119,7 @@ export interface AdmissionQueryData { eventId: string }
 
 /** Host-owned status. A query response is correlated by requestId. */
 export interface AdmissionStatusData {
+  delivery?: MessageDelivery;
   eventId: string;
   status: "unknown" | "indeterminate" | "accepted" | "queued" | "running" | "completed" | "rejected" | "expired" | "withdrawn";
   runId?: string;
@@ -763,6 +771,7 @@ export type EventPayload =
   | { kind: "thread_recover"; data: { turnId: string; action: "continue" | "dismiss" } }
   | { kind: "model_list"; data: ModelListData }
   | { kind: "project_list"; data: ProjectListData }
+  | { kind: "steer"; data: SteerData }
   | { kind: "interrupt"; data: InterruptData }
   | { kind: "stop_status"; data: StopStatusData }
   | { kind: "sync_request"; data: SyncRequestData }
