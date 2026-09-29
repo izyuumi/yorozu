@@ -16,6 +16,11 @@ on:
         description: 'Optional X.Y.Z override; otherwise release-as in source release-please-config.json'
         required: false
         type: string
+      skip_ui_tests:
+        description: 'Emergency only: publish without the iOS UI-test gate (CI must still pass)'
+        required: false
+        default: false
+        type: boolean
 
 # Superseded pending beta builds may be skipped; never interrupt signing/upload mid-run.
 concurrency:
@@ -59,7 +64,7 @@ jobs:
   ui-tests:
     needs: source
     if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && !inputs.skip_ui_tests) ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
@@ -72,11 +77,15 @@ jobs:
 
   candidate:
     needs: [source, ui-tests]
+    # A skipped gate normally skips this job too; only an explicit emergency dispatch may proceed.
     if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      !cancelled() && needs.source.result == 'success' &&
+      (needs.ui-tests.result == 'success' ||
+       (needs.ui-tests.result == 'skipped' && github.event_name == 'workflow_dispatch' && inputs.skip_ui_tests)) &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
+       github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: macos-latest
     timeout-minutes: 180
     permissions:
