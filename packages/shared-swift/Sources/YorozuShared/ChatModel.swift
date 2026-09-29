@@ -2696,6 +2696,10 @@ public final class ChatModel {
     // hops stretching the fixture over multiple real display frames under parallel load.
     func applyEvent(_ event: YorozuEvent) {
         let key = "\(event.threadId)\u{0}\(event.id)"
+        // A delayed snapshot must not displace a newer revision in this display frame.
+        if case .message(let next) = event.payload, let revision = next.streamRevision,
+            let pending = pendingStreamEvents[key], case .message(let old) = pending.payload,
+            let pendingRevision = old.streamRevision, pendingRevision > revision { return }
         if case .message(let data) = event.payload, data.role == .agent, data.done != true {
             pendingStreamEvents[key] = event
             guard streamFrame == nil else { return }
@@ -3145,11 +3149,14 @@ public final class ChatModel {
                case .message(let old) = thread[index].payload, old.role == .user,
                case .message(let next) = event.payload, next.role == .user { return }
             if case .message(let old) = thread[index].payload, old.role == .agent,
-               case .message(let next) = event.payload, next.role == .agent,
-               (old.done == true && next.done != true ||
-                old.done != true && next.done != true &&
+               case .message(let next) = event.payload, next.role == .agent {
+                if old.done == true && next.done != true { return }
+                if let oldRevision = old.streamRevision, let nextRevision = next.streamRevision {
+                    if nextRevision <= oldRevision { return }
+                } else if old.done != true && next.done != true &&
                     (thread[index].ts > event.ts || thread[index].ts == event.ts && old.text.count > next.text.count) ||
-                old.done == true && next.done == true && thread[index].ts > event.ts) { return }
+                    old.done == true && next.done == true && thread[index].ts > event.ts { return }
+            }
             guard thread[index] != event else { return }
             let timestampChanged = thread[index].ts != event.ts
             let orderingConfirmed = thread[index].clientTs == nil && event.clientTs != nil

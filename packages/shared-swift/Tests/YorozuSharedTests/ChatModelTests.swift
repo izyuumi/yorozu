@@ -749,6 +749,50 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
 }
 
 @MainActor
+@Test func orderedStreamReplacementsCanShrinkWithoutReorderingOrRevivingFinals() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    func snapshot(_ revision: Int, _ text: String, done: Bool = false) throws -> YorozuEvent {
+        let bytes = try JSONSerialization.data(withJSONObject: [
+            "id": "reply", "threadId": "home", "ts": 1, "agentId": "main", "kind": "message",
+            "data": ["role": "agent", "text": text, "done": done,
+                     "attachments": [], "streamRevision": revision],
+        ])
+        return try JSONDecoder().decode(YorozuEvent.self, from: bytes)
+    }
+    func flush(_ id: String) {
+        var barrier = event(id, .thought(ThoughtData(text: "Working")))
+        barrier.ts = 2
+        model.applyEvent(barrier)
+    }
+    model.applyEvent(try snapshot(1, "**日本語の長い下書き**"))
+    flush("first-barrier")
+    model.applyEvent(try snapshot(3, "**短い**"))
+    model.applyEvent(try snapshot(2, "**遅れて届いた長い下書き**"))
+    flush("replacement-barrier")
+    guard case .message(let replacement) = model.events["home"]?.first?.payload else {
+        Issue.record("Missing streamed reply")
+        return
+    }
+    #expect(replacement.text == "**短い**")
+    #expect(replacement.done == false)
+    #expect(model.events["home"]?.first?.ts == 1)
+
+    model.applyEvent(try snapshot(4, "完了", done: true))
+    model.applyEvent(try snapshot(5, "Late partial"))
+    model.applyEvent(try snapshot(3, "Stale final", done: true))
+    flush("final-barrier")
+    guard case .message(let final) = model.events["home"]?.first?.payload else {
+        Issue.record("Missing final reply")
+        return
+    }
+    #expect(final.text == "完了")
+    #expect(final.done == true)
+    #expect(model.events["home"]?.first?.ts == 1)
+}
+
+@MainActor
 @Test func anEventAfterStreamedTextKeepsItsWireOrder() async throws {
     let transport = FakeTransport()
     let model = await connected(transport)

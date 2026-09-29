@@ -633,6 +633,8 @@ public struct MessageData: Codable, Equatable, Sendable {
     public enum Role: String, Codable, Sendable { case user, agent }
     public var role: Role
     public var text: String
+    /// Host-ordered snapshot version, independent of the message's placement timestamp.
+    public var streamRevision: Int?
     /// Set on the last message of a turn — a delegated agent's, so the phone's inline card for
     /// that delegation stops spinning, and the main agent's, so the composer stops offering
     /// Stop. A flag rather than a kind of its own: the final message already ends the turn.
@@ -653,6 +655,7 @@ public struct MessageData: Codable, Equatable, Sendable {
     public init(
         role: Role,
         text: String,
+        streamRevision: Int? = nil,
         done: Bool? = nil,
         failed: Bool? = nil,
         interrupted: Bool? = nil,
@@ -667,6 +670,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.channelModel = channelModel
         self.role = role
         self.text = text
+        self.streamRevision = streamRevision
         self.done = done
         self.failed = failed
         self.interrupted = interrupted
@@ -676,7 +680,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel }
+    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -684,6 +688,10 @@ public struct MessageData: Codable, Equatable, Sendable {
         channelModel = try c.decodeIfPresent(ChannelModelChoice.self, forKey: .channelModel)
         role = try c.decode(Role.self, forKey: .role)
         text = try c.decode(String.self, forKey: .text)
+        streamRevision = try c.decodeIfPresent(Int.self, forKey: .streamRevision)
+        if let streamRevision, !(0...9_007_199_254_740_991).contains(streamRevision) {
+            throw DecodingError.dataCorruptedError(forKey: .streamRevision, in: c, debugDescription: "Invalid stream revision")
+        }
         done = try c.decodeIfPresent(Bool.self, forKey: .done)
         failed = try c.decodeIfPresent(Bool.self, forKey: .failed)
         interrupted = try c.decodeIfPresent(Bool.self, forKey: .interrupted)
@@ -699,6 +707,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         try c.encodeIfPresent(channelModel, forKey: .channelModel)
         try c.encode(role, forKey: .role)
         try c.encode(text, forKey: .text)
+        try c.encodeIfPresent(streamRevision, forKey: .streamRevision)
         try c.encodeIfPresent(done, forKey: .done)
         try c.encodeIfPresent(failed, forKey: .failed)
         try c.encodeIfPresent(interrupted, forKey: .interrupted)
