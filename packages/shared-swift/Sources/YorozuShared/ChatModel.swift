@@ -100,7 +100,7 @@ public final class ChatModel {
         guard !trimmed.isEmpty else { return }
         searchTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self?.searchRequestID.isEmpty == true else { return }
             self?.requestHostSearch()
         }
     }
@@ -2451,7 +2451,11 @@ public final class ChatModel {
             peerInfo = info
             cache?.save(peerInfo: info)
         case .compatibility(let compatibility):
+            let couldSearch = supportsHostSearch
             self.compatibility = compatibility
+            // Search support can be announced after the link came up and the typed query's
+            // request already found the host unable to take it: send it now.
+            if !couldSearch, supportsHostSearch, searchRequestID.isEmpty { requestHostSearch() }
         case .state(let state):
             self.state = state
             if state != .paired {

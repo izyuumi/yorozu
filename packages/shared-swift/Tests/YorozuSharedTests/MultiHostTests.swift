@@ -621,3 +621,30 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
     #expect(restored.outbox.map(\.event.payload.kind) == [.approvalAnswer, .questionAnswer])
     #expect(other.answered.isEmpty && other.answeredQuestions.isEmpty && other.outbox.isEmpty)
 }
+
+/// The slow-runner order: the link is up and the typed query's request has already found the
+/// host without search support, and only then does the host announce it. The query still joins.
+@MainActor
+@Test func searchJoinsWhenSearchSupportIsAnnouncedLate() async throws {
+    let transport = MultiHostTransport()
+    let session = multiHostSession(multiHostID(0), transport: transport)
+    defer { session.model.close() }
+    await transport.online()
+    #expect(await multiHostEventually { session.model.canDeliver })
+    session.model.searchHost("late marker")
+    try await Task.sleep(for: .milliseconds(400))
+    func requests(_ events: [YorozuEvent]) -> Int {
+        events.filter {
+            if case .threadSearchRequest(let data) = $0.payload { return data.query == "late marker" }
+            return false
+        }.count
+    }
+    #expect(requests(await transport.sent) == 0)
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["thread-search-v1"])))
+    var sent = await transport.sent
+    for _ in 0..<300 where requests(sent) == 0 {
+        try await Task.sleep(for: .milliseconds(10))
+        sent = await transport.sent
+    }
+    #expect(requests(sent) == 1)
+}

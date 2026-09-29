@@ -102,7 +102,9 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(expiry.waitForExistence(timeout: 10), "Host did not confirm the approval expiry")
         XCTAssertTrue(app.staticTexts["Every tool request runs without asking, including purchases, messages, commands, and deletes."].exists)
         app.navigationBars["Advanced"].buttons["Settings"].tap()
+        XCTAssertTrue(advanced.waitForExistence(timeout: 10), "Settings did not come back")
         advanced.tap()
+        XCTAssertTrue(first.waitForExistence(timeout: 10), "Advanced did not reopen")
         XCTAssertEqual(first.value as? String, "1", "Returning lost this host's approval setting")
         XCTAssertEqual(second.value as? String, "0", "Changing one host affected another")
         flip(first)
@@ -418,9 +420,13 @@ final class ConnectionTests: XCTestCase {
         try await launchPaired()
         try openThread()
         try await rig.post("hold-answer")
-        composer.tap()
-        if !app.keyboards.firstMatch.waitForExistence(timeout: 5) { composer.tap() }
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10), "Composer did not take focus")
+        // A tap before the relaunched chat has settled can land before the field accepts focus.
+        XCTAssertTrue(composer.waitForExistence(timeout: 10), "No composer")
+        for _ in 0..<3 where !app.keyboards.firstMatch.exists {
+            composer.tap()
+            _ = app.keyboards.firstMatch.waitForExistence(timeout: 5)
+        }
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "Composer did not take focus")
         composer.typeText("lost receipt")
         // Let the message reach the host before blocking its receipt. Dropping host frames
         // while typing can interrupt pairing first, leaving an honestly queued message.
