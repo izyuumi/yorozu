@@ -12,7 +12,11 @@ import {
 } from "openclaw/plugin-sdk/channel-inbound";
 import { createChannelReplyPipeline } from "openclaw/plugin-sdk/channel-reply-pipeline";
 import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
+import { applySessionModelSelection } from "openclaw/plugin-sdk/model-session-runtime";
+import { buildPreparedModelsProviderData } from "openclaw/plugin-sdk/models-provider-runtime";
+import { getSessionEntry, resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
 import { createInboundDispatcher } from "./dispatch.js";
+import { createModelResponder } from "./models.js";
 import { createRuns } from "./runs.js";
 import { connectYorozu } from "./socket.js";
 
@@ -23,14 +27,22 @@ import { connectYorozu } from "./socket.js";
 
 const DEFAULT_SOCKET = join(homedir(), "Library/Application Support/Yorozu/channel.sock");
 
-// Announced in every hello. model-select-v1 is not: see README ("Model selection").
-export const CAPABILITIES = ["run-boundary-v1"];
+// Announced in every hello.
+export const CAPABILITIES = ["run-boundary-v1", "model-select-v1"];
 
 const dispatchInbound = createInboundDispatcher({
   resolveRoute: resolveChannelInboundRouteEnvelope,
   buildContext: buildChannelInboundEventContext,
   createReplyPipeline: createChannelReplyPipeline,
   dispatchTurn: dispatchChannelInboundTurn,
+});
+
+const respondModel = createModelResponder({
+  resolveRoute: resolveChannelInboundRouteEnvelope,
+  buildModelsData: buildPreparedModelsProviderData,
+  getSessionEntry,
+  resolveStorePath,
+  applySelection: applySessionModelSelection,
 });
 
 const section = (cfg) => cfg.channels?.yorozu ?? {};
@@ -108,6 +120,7 @@ export const yorozuPlugin = createChatChannelPlugin({
           capabilities: CAPABILITIES,
           onOpen: () => runs.replay(),
           onAbort: (messageId) => runs.abort(messageId),
+          onModelRequest: (frame) => respondModel({ cfg: ctx.cfg, accountId: ctx.accountId, frame }),
           onStatus: (connected) => ctx.setStatus({ accountId: ctx.accountId, running: true, connected }),
           onError: (message) => ctx.log?.warn?.(`yorozu: ${message}`),
           onInbound: (message) =>
