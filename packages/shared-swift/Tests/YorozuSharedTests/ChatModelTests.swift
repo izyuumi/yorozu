@@ -1162,6 +1162,40 @@ private func summary(
 }
 
 @MainActor
+@Test func threadListStatusTracksHostTurnAndAttentionChanges() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1"])))
+    func status() -> ThreadStatus? {
+        guard let thread = model.threads.first(where: { $0.id == "home" }) else { return nil }
+        return ThreadStatus(thread, working: model.generating.contains(thread.id))
+    }
+    func send(_ id: String, _ thread: ThreadSummary) async {
+        await transport.yield(.event(event(id, .threadList(ThreadListData(threads: [thread])))))
+    }
+
+    await send("working", ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1,
+                                         turnState: .running))
+    #expect(await eventually { status() == .working })
+    await send("input", ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 2,
+                                       awaitingQuestion: true, turnState: .running))
+    #expect(await eventually { status() == .needsInput })
+    await send("approval", ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 3,
+                                          awaitingApproval: true, awaitingQuestion: true, turnState: .running))
+    #expect(await eventually { status() == .needsApproval })
+    await send("failed", ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 4,
+                                        needsAttention: true, turnState: .idle))
+    #expect(await eventually { status() == .failed })
+    await send("done", ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 5,
+                                      lastReadAt: 10, lastAgentAt: 20, turnState: .idle))
+    #expect(await eventually { status() == .doneUnread })
+    await send("read", ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 6,
+                                      lastReadAt: 20, lastAgentAt: 20, turnState: .idle))
+    #expect(await eventually { model.threads.first?.lastActivity == 6 && status() == .idle })
+    model.close()
+}
+
+@MainActor
 @Test func stopWaitsForHostCessationEvenAfterReceipt() async throws {
     let transport = FakeTransport(autoReceipt: true)
     let model = await connected(transport)
