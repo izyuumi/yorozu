@@ -891,6 +891,7 @@ public struct ChatView: View {
         case .message(let event):
             if case .message(let data) = event.payload {
                 let outboxStatus = model.outboxStatus(of: event.id)
+                let messageActions = model.messageActions(for: event)
                 let rejectionReason = model.outboxRejectionReason(of: event.id)
                 let needsNewChat = rejectionReason?.hasPrefix("thread-create-rejected:") == true ||
                     rejectionReason == "thread-not-created"
@@ -898,6 +899,8 @@ public struct ChatView: View {
                     id: event.id,
                     data: data,
                     streaming: event.id == streamingId,
+                    copyAvailable: messageActions.copy,
+                    timestamp: data.role == .agent && data.done == true ? event.ts : nil,
                     status: outboxStatus,
                     rejectionReason: rejectionReason,
                     attachmentTransferLabels: model.attachmentTransferLabels(of: event.id),
@@ -906,7 +909,9 @@ public struct ChatView: View {
                         ? { if needsNewChat {
                                 recoveryMessage = data
                                 choosingAgent = true
-                            } else { retry(data) } } : nil,
+                            } else { retry(data) } } : messageActions.retry.map { prompt in
+                                { retry(prompt) }
+                            },
                     onWithdraw: model.canWithdraw(event)
                         ? { model.withdraw(event.id) } : nil,
                     onDelete: { model.delete(event.id, in: thread.id) },

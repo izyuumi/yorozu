@@ -1087,6 +1087,40 @@ private func summary(
 }
 
 @MainActor
+@Test func replyActionsFollowSettledMessagesAndLatestPrompt() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    let firstPrompt = event("u1", .message(MessageData(role: .user, text: "first")))
+    let firstPartial = event("r1", .message(MessageData(role: .agent, text: "working")))
+    let firstFinal = event("r1", .message(MessageData(role: .agent, text: "done", done: true)))
+    await transport.yield(.event(firstPrompt))
+    await transport.yield(.event(firstPartial))
+    #expect(await eventually { model.events["home"]?.count == 2 })
+    #expect(model.messageActions(for: firstPrompt).copy)
+    #expect(!model.messageActions(for: firstPartial).copy)
+    #expect(model.messageActions(for: firstPartial).retry == nil)
+
+    await transport.yield(.event(firstFinal))
+    #expect(await eventually { model.events["home"]?.last == firstFinal })
+    #expect(model.messageActions(for: firstFinal).copy)
+    #expect(model.messageActions(for: firstFinal).retry?.text == "first")
+
+    model.send("second", in: "home")
+    #expect(model.generating.contains("home"))
+    #expect(model.messageActions(for: firstFinal).retry?.text == "first")
+    let secondPrompt = try #require(model.events["home"]?.last)
+    var secondFinal = event("r2", .message(MessageData(role: .agent, text: "again", done: true)))
+    secondFinal.ts = secondPrompt.ts + 1
+    await transport.yield(.event(secondFinal))
+    #expect(await eventually { model.events["home"]?.last == secondFinal })
+    #expect(model.messageActions(for: secondPrompt).copy)
+    #expect(model.messageActions(for: firstFinal).copy)
+    #expect(model.messageActions(for: firstFinal).retry == nil)
+    #expect(model.messageActions(for: secondFinal).retry?.text == "second")
+    model.close()
+}
+
+@MainActor
 @Test func syncRestoresWorkingTurnsAfterClientRelaunch() async {
     let transport = FakeTransport()
     let model = ChatModel(transport: transport)

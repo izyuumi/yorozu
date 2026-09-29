@@ -44,6 +44,8 @@ public struct MessageBubble: View {
     private let agentLabel: String
     /// Whether this is the reply still being written, which is what earns the caret.
     private let streaming: Bool
+    private let copyAvailable: Bool
+    private let timestamp: Int?
     /// Set while the message is waiting in the outbox, which is what puts a caption under it.
     private let status: OutboxStatus?
     private let rejectionReason: String?
@@ -58,11 +60,15 @@ public struct MessageBubble: View {
     /// Set by the thread's search field; every hit inside this bubble is drawn highlighted.
     @Environment(\.searchHighlight) private var highlight
     @AppStorage(ReplyFont.key) private var replyFont = ReplyFont.serif
+    @State private var hovering = false
+    @State private var copied = false
 
     public init(
         id: String = "",
         data: MessageData,
         streaming: Bool = false,
+        copyAvailable: Bool = true,
+        timestamp: Int? = nil,
         status: OutboxStatus? = nil,
         rejectionReason: String? = nil,
         attachmentTransferLabels: [String]? = nil,
@@ -78,6 +84,8 @@ public struct MessageBubble: View {
         self.agent = agent
         self.agentLabel = agentLabel ?? agent.label
         self.streaming = streaming
+        self.copyAvailable = copyAvailable
+        self.timestamp = timestamp
         self.status = status
         self.rejectionReason = rejectionReason
         self.attachmentTransferLabels = attachmentTransferLabels
@@ -138,14 +146,29 @@ public struct MessageBubble: View {
             if let status {
                 caption(status)
             }
-            if !data.text.isEmpty || onRetry != nil || onDelete != nil {
-                messageActions
-                    .frame(maxWidth: bubbleMaxWidth, alignment: .trailing)
+            if !data.text.isEmpty || onRetry != nil || onDelete != nil || timestamp != nil {
+                HStack(spacing: LayoutMetrics.inner) {
+                    if isUser { Spacer(minLength: 0) }
+                    #if os(macOS)
+                        if hovering { inlineActions }
+                    #else
+                        inlineActions
+                    #endif
+                    if !isUser { Spacer(minLength: 0) }
+                    messageActions
+                }
+                .frame(maxWidth: bubbleMaxWidth, alignment: .trailing)
             }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: speaking)
+        .task(id: copied) {
+            guard copied else { return }
+            try? await Task.sleep(for: .seconds(2))
+            if !Task.isCancelled { copied = false }
+        }
         #if os(macOS)
+            .onHover { hovering = $0 }
             // Mac only: on the phone the long press belongs to text selection.
             .contextMenu { actions }
         #endif
@@ -153,8 +176,8 @@ public struct MessageBubble: View {
 
     /// The explicit menu and the Mac's contextual menu share the same available actions.
     @ViewBuilder private var actions: some View {
-        if !data.text.isEmpty {
-            Button("Copy", systemImage: "doc.on.doc") { copyToPasteboard(data.text) }
+        if copyAvailable, !data.text.isEmpty, !streaming {
+            Button("Copy", systemImage: "doc.on.doc") { copy() }
         }
         if !isUser, !id.isEmpty, !data.text.isEmpty {
             // One utterance at a time, so this is a toggle rather than a second voice.
@@ -179,6 +202,40 @@ public struct MessageBubble: View {
             // would promise something this button cannot do.
             Button("Remove from this device", systemImage: "trash", role: .destructive, action: onDelete)
         }
+    }
+
+    @ViewBuilder private var inlineActions: some View {
+        Group {
+            if copyAvailable, !data.text.isEmpty, !streaming {
+                Button { copy() } label: {
+                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        .frame(minHeight: controlTarget)
+                        .contentShape(.rect)
+                }
+                .accessibilityLabel(copied ? "Copied message" : "Copy message")
+            }
+            if !isUser, !streaming, let onRetry {
+                Button(action: onRetry) {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                        .frame(minHeight: controlTarget)
+                        .contentShape(.rect)
+                }
+                    .accessibilityLabel("Retry reply")
+            }
+            if !isUser, !streaming, let timestamp, timestamp > 0 {
+                Text(Date(timeIntervalSince1970: Double(timestamp) / 1000)
+                    .formatted(date: .omitted, time: .shortened))
+            }
+        }
+        .font(.scaled(.caption))
+        .labelStyle(.titleAndIcon)
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+    }
+
+    private func copy() {
+        copyToPasteboard(data.text)
+        copied = true
     }
 
     private var messageActions: some View {
