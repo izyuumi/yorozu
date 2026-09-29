@@ -3166,7 +3166,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const draft = run.replyDraft;
       if (draft && !readThreadEvents(run.threadId, dir).some((event) => event.id === draft.id)) {
         emit({ ...draft, kind: "message", data: { role: "agent", text: status !== "completed" ? draft.data.text : "",
-          done: true, ...(status === "failed" ? { failed: true } : {}), ...(status === "aborted" ? { interrupted: true } : {}) } });
+          done: true, streamRevision: (draft.data.streamRevision ?? 0) + 1, ...(status === "failed" ? { failed: true } : {}), ...(status === "aborted" ? { interrupted: true } : {}) } });
         run.replied = true;
       }
       run.replyDraft = undefined;
@@ -3185,7 +3185,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (!run || run.threadId !== threadId || run.replied || stoppedTurns.has(messageId) ||
           run.replyDraft && run.replyDraft.id !== id) return;
       const ts = run.replyDraft?.ts ?? Date.now();
-      const draft: YorozuEvent = { id, threadId, ts, agentId: MAIN_AGENT, kind: "message", data: { role: "agent", text } };
+      const draft: YorozuEvent = { id, threadId, ts, agentId: MAIN_AGENT, kind: "message",
+        data: { role: "agent", text, streamRevision: (run.replyDraft?.data.streamRevision ?? 0) + 1 } };
       run.replyDraft = draft;
       broadcast(draft, false);
     },
@@ -3200,7 +3201,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (!thread && !named) title(threadId, text);
       const ts = active?.replyDraft?.id === id ? active.replyDraft.ts : Date.now();
       emit({ id, threadId, ts, agentId: MAIN_AGENT, kind: "message",
-        data: { role: "agent", text, done: true, ...(failed ? { failed: true } : {}), ...(interrupted ? { interrupted: true } : {}) } });
+        data: { role: "agent", text, done: true,
+          ...(messageId ? { streamRevision: (active?.replyDraft?.data.streamRevision ?? 0) + 1 } : {}),
+          ...(failed ? { failed: true } : {}), ...(interrupted ? { interrupted: true } : {}) } });
       if (active) { active.replied = true; active.replyDraft = undefined; }
       if (!thread) broadcast(threadList());
     },

@@ -4799,7 +4799,7 @@ test.each([false, true])("OpenClaw dispatcher streams Markdown through the real 
     expect(readThreadEvents("t1", host.dir).some((event) => event.id === preview.id)).toBe(false);
     finish!();
     const final = (await host.eventsUntil((event) => event.id === preview.id && event.kind === "message" && event.data.done)).at(-1)!;
-    expect(final).toMatchObject({ ts: preview.ts, data: { role: "agent", done: true } });
+    expect(final).toMatchObject({ ts: preview.ts, data: { role: "agent", done: true, streamRevision: 2 } });
     const afterFinal = await host.eventsUntil(turnIs(target, "idle"));
     const received = [final, ...afterFinal.filter((event) => event.kind === "message" && event.data.role === "agent")];
     expect(received.map((event) => event.kind === "message" ? event.data.text : "").join("")).toBe(expected);
@@ -4816,18 +4816,18 @@ test("negotiated reply snapshots replace one message, preserve its position, and
   const { dir, send, eventsUntil, plugin, target } = await channelRun(["run-boundary-v1", "reply-stream-v1"]);
   try {
     expect(plugin.frames).toContainEqual({ type: "hello", capabilities: ["reply-stream-v1"] });
-    const preview = { type: "reply_preview" as const, id: "draft", messageId: target, threadId: "t1", text: "日本語 **" };
+    const preview = { type: "reply_preview" as const, id: "draft", messageId: target, threadId: "t1", text: "日本語 **未確定の長いMarkdown" };
     plugin.send(preview);
     const first = (await eventsUntil((event) => event.id === preview.id)).at(-1)!;
-    expect(first).toMatchObject({ kind: "message", data: { role: "agent", text: preview.text } });
+    expect(first).toMatchObject({ kind: "message", data: { role: "agent", text: preview.text, streamRevision: 1 } });
     expect(first.data).not.toHaveProperty("done");
     expect(readThreadEvents("t1", dir).some((event) => event.id === preview.id)).toBe(false);
     // UTF-16 length is below the legacy limit, but encoded bytes exceed the negotiated frame bound.
     plugin.send({ ...preview, text: "界".repeat(90000) });
-    plugin.send({ ...preview, text: "日本語 **途中**" });
+    plugin.send({ ...preview, text: "日" });
     const next = (await eventsUntil((event) => event.id === preview.id)).at(-1)!;
     expect(next.ts).toBe(first.ts);
-    expect(next).toMatchObject({ data: { text: "日本語 **途中**" } });
+    expect(next).toMatchObject({ data: { text: "日", streamRevision: 2 } });
     plugin.send({ type: "deliver", id: preview.id, messageId: target, threadId: "t1", text: "界".repeat(90000) });
     await vi.waitFor(() => expect(plugin.frames).toContainEqual({ type: "error", id: preview.id, reason: "invalid-deliver" }));
     expect(readThreadEvents("t1", dir).some((event) => event.id === preview.id)).toBe(false);
@@ -4836,14 +4836,14 @@ test("negotiated reply snapshots replace one message, preserve its position, and
     plugin.send(final);
     const received = (await eventsUntil((event) => event.id === preview.id && event.kind === "message" && event.data.done)).at(-1)!;
     expect(received.ts).toBe(first.ts);
-    expect(received).toMatchObject({ data: { role: "agent", text: final.text, done: true } });
+    expect(received).toMatchObject({ data: { role: "agent", text: final.text, done: true, streamRevision: 3 } });
     plugin.send({ ...preview, text: "stale" });
     plugin.send(final); // Lost ack resend: no duplicate persisted final.
     send({ kind: "sync_request", data: { lastSeen: {} } });
     const sync = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
     expect(sync).toMatchObject({ data: { workingThreadIds: ["t1"] } });
     expect(readThreadEvents("t1", dir).filter((event) => event.id === preview.id))
-      .toEqual([expect.objectContaining({ data: { role: "agent", text: final.text, done: true } })]);
+      .toEqual([expect.objectContaining({ data: { role: "agent", text: final.text, done: true, streamRevision: 3 } })]);
     plugin.send({ type: "run_finished", messageId: target, status: "completed" });
     await eventsUntil(turnIs("", "idle"));
   } finally { plugin.close(); }
@@ -4857,7 +4857,7 @@ test.each(["completed", "failed", "aborted"] as const)("channel terminal %s seal
     const first = (await eventsUntil((event) => event.id === preview.id)).at(-1)!;
     plugin.send({ type: "run_finished", messageId: target, status });
     const terminal = (await eventsUntil((event) => event.id === preview.id && event.kind === "message" && event.data.done)).at(-1)!;
-    expect(terminal).toMatchObject({ ts: first.ts, data: { role: "agent", done: true,
+    expect(terminal).toMatchObject({ ts: first.ts, data: { role: "agent", done: true, streamRevision: 2,
       text: status === "completed" ? "" : preview.text } });
     if (status === "failed") expect(terminal.data).toHaveProperty("failed", true);
     if (status === "aborted") expect(terminal.data).toHaveProperty("interrupted", true);

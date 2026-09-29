@@ -601,7 +601,12 @@ but outdated plugin, which the clients name once per host session.
 The host announces `reply-stream-v1` in its initial `hello`; old plugins ignore this frame.
 A plugin must also announce `reply-stream-v1` and `run-boundary-v1` before its
 `reply_preview { id, messageId, threadId, text }` frames are accepted. Previews update one
-transient Markdown message under a stable ID and timestamp, only for the active run. They
+transient Markdown message under a stable ID and timestamp, only for the active run.
+The host assigns `MessageData.streamRevision` independently of placement time: accepted
+snapshots start at 1 and increment; the same-ID final gets the next revision. A final with no
+preview, including each subsequent split-message ID, starts at 1. Terminal fallback also gets
+the next revision. Clients can therefore accept shorter corrected snapshots and reject stale
+revisions without moving the message. Legacy messages omit this field. They
 are not acknowledged, logged, or pushed. Current snapshots are included when a device rejoins.
 
 The plugin uses the official OpenClaw preview callbacks, disables completed block streaming,
