@@ -1442,11 +1442,11 @@ public struct ChatView: View {
     /// message steers that active turn, which is why replacing it with Stop made steering
     /// impossible from the app.
     private var stopPendingLabel: some View {
-        Text("Stop requested · waiting for host")
+        Text("Stopping…")
             .font(.scaled(.caption))
             .foregroundStyle(.secondary)
             .lineLimit(1)
-            .accessibilityLabel("Stop requested, waiting for host")
+            .accessibilityLabel("Stopping")
     }
 
     private var stopButton: some View {

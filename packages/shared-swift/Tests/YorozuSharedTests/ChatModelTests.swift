@@ -1274,13 +1274,32 @@ private func summary(
     let stop = try #require(await sent(by: transport, atLeast: pairingSends + 2)
         .first { $0.payload == .interrupt(InterruptData(targetEventId: target)) })
     #expect(model.stopPending(in: "home"))
+    #expect(!model.canStop(in: "home"))
     #expect(model.generating.contains("home"))
     await transport.yield(.event(event("requested", .stopStatus(StopStatusData(
         targetEventId: target, requestId: stop.id, status: .requested)))))
     #expect(model.stopPending(in: "home"))
+    #expect(!model.canStop(in: "home"))
     await transport.yield(.event(event("stopped", .stopStatus(StopStatusData(
         targetEventId: target, requestId: stop.id, status: .stopped)))))
     #expect(await eventually { !model.stopPending(in: "home") && !model.generating.contains("home") })
+}
+
+@MainActor
+@Test func hostStoppingStateDisablesStopUntilConfirmation() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1"])))
+    await transport.yield(.event(event("stopping", .threadList(ThreadListData(threads: [
+        ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1,
+            activeEventId: "active", turnState: .stopping, queuedTurnCount: 0)
+    ])))))
+    #expect(await eventually { model.generating.contains("home") && !model.canStop(in: "home") })
+    await transport.yield(.event(event("uncertain", .threadList(ThreadListData(threads: [
+        ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1,
+            activeEventId: "active", turnState: .stoppedUnconfirmed, queuedTurnCount: 0)
+    ])))))
+    #expect(await eventually { !model.canStop(in: "home") })
 }
 
 @MainActor

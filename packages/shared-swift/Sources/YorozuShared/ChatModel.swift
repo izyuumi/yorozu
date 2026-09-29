@@ -1422,7 +1422,9 @@ public final class ChatModel {
     }
 
     public func canStop(in threadId: String) -> Bool {
-        generating.contains(threadId) && activeEventId(in: threadId) != nil && !stopPending(in: threadId)
+        let state = synced.first { $0.id == threadId }?.turnState
+        return generating.contains(threadId) && activeEventId(in: threadId) != nil && !stopPending(in: threadId) &&
+            (!hostOwnsTurnState || state == .starting || state == .running)
     }
 
     private var hostOwnsTurnState: Bool {
