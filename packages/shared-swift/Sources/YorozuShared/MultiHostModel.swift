@@ -201,6 +201,7 @@ public final class MultiHostModel {
     }
 
     public var unreadCount: Int { sessions.reduce(0) { $0 + $1.model.unreadCount } }
+    public var waitingCount: Int { sessions.reduce(0) { $0 + $1.model.waitingCount } }
     public func markAllRead() { for session in sessions { session.model.markAllRead() } }
     public func start() { for session in sessions { session.model.start() } }
     public func suspend() { for session in sessions { session.model.suspend() } }

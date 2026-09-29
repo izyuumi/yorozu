@@ -274,7 +274,7 @@ extension View {
 /// host is doing, which outranks what the user has not yet seen. Lower states are not lost —
 /// an unread title stays semibold under any of them. Drawn from the summary alone, never the
 /// connection: a phone going offline changes no row's status.
-enum ThreadStatus: Int, Comparable, Sendable {
+public enum ThreadStatus: Int, Comparable, Sendable {
     case needsApproval
     case needsInput
     /// A turn the host could not resume on its own — see ``ThreadSummary/interruptedTurnId``.
@@ -283,7 +283,7 @@ enum ThreadStatus: Int, Comparable, Sendable {
     case doneUnread
     case idle
 
-    static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
+    public static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
 
     init(_ thread: ThreadSummary, working: Bool) {
         if thread.awaitingApproval == true { self = .needsApproval }

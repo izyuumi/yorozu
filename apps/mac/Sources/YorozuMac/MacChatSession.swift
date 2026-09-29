@@ -301,16 +301,17 @@ final class MacChatSession {
     }
 
     private func updateBadge() {
-        let count = role == .client ? hosts.unreadCount : local.unreadCount
+        let count = role == .client ? hosts.waitingCount : local.waitingCount
         NSApp.dockTile.badgeLabel = count == 0 ? nil : String(count)
     }
     private func configure(_ model: ChatModel) {
-        model.onThreads = { [weak self, weak model] in
+        model.onThreads = { [weak self] in
             self?.updateBadge()
-            if let model { LocalNotifications.shared.threadsChanged(model) }
         }
-        model.onEvent = { [weak model] event in
-            if let model { LocalNotifications.shared.received(event, from: model) }
+        model.onThreadNotification = { [weak model] threadID, status, presentation in
+            if let model {
+                LocalNotifications.shared.statusChanged(threadID, to: status, presentation: presentation, from: model)
+            }
         }
         model.onUpdateStatus = { [weak model] status in
             guard let model else { return }
