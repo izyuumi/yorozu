@@ -13299,6 +13299,66 @@
           }
         }
       }
+    },
+    "%@ · %lld failed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · %2$lld件失敗"
+          }
+        }
+      }
+    },
+    "%@ · awaiting approval": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · 承認待ち"
+          }
+        }
+      }
+    },
+    "%@ · working…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · 作業中…"
+          }
+        }
+      }
+    },
+    "%lld of %lld steps done": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$lldステップ中%1$lldステップ完了"
+          }
+        }
+      }
+    },
+    "failed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "失敗"
+          }
+        }
+      }
+    },
+    "finished": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完了"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

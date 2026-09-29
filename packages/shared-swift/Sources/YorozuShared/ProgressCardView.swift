@@ -163,7 +163,7 @@ public struct ProgressCardView: View {
     private var spoken: String {
         let done = card.steps.filter { $0.state == .done }.count
         return card.running
-            ? "\(done) of \(card.steps.count) steps done"
-            : failed ? "failed" : "finished"
+            ? String(localized: "\(done) of \(card.steps.count) steps done")
+            : failed ? String(localized: "failed") : String(localized: "finished")
     }
 }

@@ -73,9 +73,9 @@ public struct ToolGroupView: View {
     /// One action count per kind, and how the run went.
     private var summary: String {
         let actions = toolSummary(activities)
-        if running { return "\(actions) · working…" }
-        if awaitingApproval { return "\(actions) · awaiting approval" }
-        return !failed.isEmpty ? "\(actions) · \(failed.count) failed" : actions
+        if running { return String(localized: "\(actions) · working…") }
+        if awaitingApproval { return String(localized: "\(actions) · awaiting approval") }
+        return !failed.isEmpty ? String(localized: "\(actions) · \(failed.count) failed") : actions
     }
 }
 

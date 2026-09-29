@@ -604,7 +604,7 @@ public struct ChatView: View {
     /// thread is still running on a concrete first model; hiding that identity made the shipped
     /// toolbar materially different from the design and forced a menu open to discover it.
     private var macModelCaption: String {
-        if presentation.needsFolder && thread.model == nil { return "Auto" }
+        if presentation.needsFolder && thread.model == nil { return String(localized: "Auto") }
         let spec = thread.model ?? model.models(for: thread).first?.id
         guard let spec, !spec.isEmpty else { return "" }
         if let option = model.models(for: thread).first(where: { $0.id == spec }) {
@@ -1519,7 +1519,7 @@ public struct ChatView: View {
     }
 
     private var composerModelLabel: String {
-        guard let spec = thread.model else { return "Auto" }
+        guard let spec = thread.model else { return String(localized: "Auto") }
         return model.models(for: thread).first(where: { $0.id == spec })?.label ?? spec
     }
 
