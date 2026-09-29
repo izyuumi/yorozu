@@ -42,6 +42,17 @@ final class KeyboardChooserTests: XCTestCase {
         let compose = app.buttons[fromChat ? "New session" : "New thread"]
         XCTAssertTrue(compose.waitForExistence(timeout: step))
         compose.tap()
+        let field = composerField(in: app)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: step))
+        field.typeText("Keep my unsent draft")
+        let selector = app.buttons["Choose agent"]
+        XCTAssertTrue(selector.waitForExistence(timeout: step))
+        expectValue(selector, "Yorozu")
+        let draftShot = XCTAttachment(screenshot: app.screenshot())
+        draftShot.name = "Immediate Yorozu draft with keyboard"
+        draftShot.lifetime = .keepAlways
+        add(draftShot)
+        selector.tap()
         let agent = app.buttons["Claude Code, Anthropic’s coding agent, working in a project on your Mac."]
         XCTAssertTrue(agent.waitForExistence(timeout: step))
         agent.tap()
@@ -50,8 +61,11 @@ final class KeyboardChooserTests: XCTestCase {
         XCTAssertTrue(delivered.isHittable, "Picker must remain interactive after the reply")
         delivered.tap()
         XCTAssertTrue(app.textViews["Message"].waitForExistence(timeout: step), "Folder choice must open the new draft")
-        XCTAssertTrue(delivered.waitForNonExistence(timeout: 5), "Starting a thread must dismiss the picker")
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: step), "A new thread must open with its composer focused")
+        XCTAssertTrue(delivered.waitForNonExistence(timeout: 5), "Folder choice must dismiss the picker")
+        expectValue(composerField(in: app), "Keep my unsent draft")
+        expectValue(app.buttons["Choose agent"], "Claude Code")
+        composerField(in: app).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: step), "Composer must remain usable after choosing an agent")
     }
 
     @MainActor

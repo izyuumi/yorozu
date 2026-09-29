@@ -164,6 +164,10 @@ private struct ClientChatWindowView: View {
                         aggregateToastID: hosts.connectionToastNotice?.notice.id,
                         aggregateToastAnnouncementRevision: hosts.connectionToastNotice?.notice.announcementRevision,
                         aggregateToastLabel: hosts.connectionToastLabel,
+                        hosts: hosts,
+                        hostID: selection.hostID,
+                        onDraftMove: { self.selection = $0 },
+                        onNewThread: { if let id = hosts.newDraft() { self.selection = id } },
                         onCreate: { agent, cwd in
                             guard let draft = hosts.newDraft(on: selection.hostID, agent: agent, cwd: cwd) else { return nil }
                             self.selection = draft

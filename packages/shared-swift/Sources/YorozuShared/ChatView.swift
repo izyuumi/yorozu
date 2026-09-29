@@ -25,6 +25,9 @@ extension ModelOption {
 public struct ChatView: View {
     public let model: ChatModel
     public let thread: ThreadSummary
+    private let hosts: MultiHostModel?
+    private let hostID: HostID?
+    private let onDraftMove: ((HostThreadID) -> Void)?
     private let onNewThread: (() -> Void)?
     private let onCreate: ((ThreadAgent, String?) -> String?)?
     private let resumeRequest: UUID?
@@ -124,6 +127,9 @@ public struct ChatView: View {
         aggregateToastID: UUID? = nil,
         aggregateToastAnnouncementRevision: UInt64? = nil,
         aggregateToastLabel: String? = nil,
+        hosts: MultiHostModel? = nil,
+        hostID: HostID? = nil,
+        onDraftMove: ((HostThreadID) -> Void)? = nil,
         onNewThread: (() -> Void)? = nil,
         onCreate: ((ThreadAgent, String?) -> String?)? = nil
     ) {
@@ -140,6 +146,9 @@ public struct ChatView: View {
         self.aggregateToastID = aggregateToastID
         self.aggregateToastAnnouncementRevision = aggregateToastAnnouncementRevision
         self.aggregateToastLabel = aggregateToastLabel
+        self.hosts = hosts
+        self.hostID = hostID
+        self.onDraftMove = onDraftMove
         self.onNewThread = onNewThread
         self.onCreate = onCreate
     }
@@ -199,7 +208,33 @@ public struct ChatView: View {
 
     private func newThread() {
         if let onNewThread { onNewThread() }
-        else { choosingAgent = true }
+        else { _ = onCreate?(.yorozu, nil) }
+    }
+
+    private var draftSelectors: some View {
+        VStack {
+            Button { choosingAgent = true } label: {
+                Label("Agent: \(presentation.agentLabel)", systemImage: "chevron.up.chevron.down")
+            }
+            .accessibilityLabel("Choose agent")
+            .accessibilityValue(presentation.agentLabel)
+            .accessibilityHint("Coding agents require a project folder")
+            if let hosts, let hostID, let host = hosts.session(for: hostID) {
+                Button { choosingAgent = true } label: {
+                    Label("Host: \(hosts.label(for: host))", systemImage: "desktopcomputer")
+                }
+                .accessibilityLabel("Choose host")
+                .accessibilityValue(hosts.label(for: host))
+                .disabled(!hosts.hasMultipleHosts)
+                if !host.model.canDeliver {
+                    Text("Mac offline — messages will queue")
+                        .font(.scaled(.caption))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .buttonStyle(.bordered)
+        .disabled(attachmentLoading)
     }
 
     public var body: some View {
@@ -241,7 +276,9 @@ public struct ChatView: View {
             }
             Group {
                 if rows.isEmpty {
-                    EmptyThreadView(presentation: presentation)
+                    EmptyThreadView(presentation: presentation) {
+                        if model.isDraft(thread.id) { draftSelectors }
+                    }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     // Every link in a message is text the model wrote. Only the web and mail
@@ -298,10 +335,17 @@ public struct ChatView: View {
         // A truncated tool result in this thread's trace asks the Mac for the rest through here.
         .environment(\.fetchToolResult) { model.requestToolResult($0, in: thread.id) }
         .sheet(isPresented: $choosingAgent) {
-            if let onCreate {
+            if model.isDraft(thread.id), let hosts, let hostID {
+                NewThreadPicker(session: hosts, draftID: HostThreadID(hostID: hostID, threadID: thread.id)) {
+                    onDraftMove?($0)
+                }
+                .presentationDetents([.medium, .large])
+            } else {
                 NewThreadPicker(projects: model.projects, agents: model.availableAgents, status: model.projectListStatus,
                     onRefresh: { await model.refreshProjects() }, onStart: { agent, cwd in
-                        if let id = onCreate(agent, cwd), let recoveryMessage {
+                        if model.isDraft(thread.id) {
+                            model.configureDraft(thread.id, agent: agent, cwd: cwd)
+                        } else if let recoveryMessage, let id = onCreate?(agent, cwd) {
                             model.drafts[id] = recoveryMessage.text
                             model.attachments[id] = recoveryMessage.attachments
                         }
@@ -401,6 +445,7 @@ public struct ChatView: View {
                         // Duo places bottom-bar actions at the lower end of its vertical bar.
                         ToolbarItem(placement: .bottomBar) {
                             Button("New session", systemImage: "square.and.pencil", action: newThread)
+                                .keyboardShortcut("n")
                         }
                     }
                 } else {
@@ -409,6 +454,7 @@ public struct ChatView: View {
                             .keyboardShortcut("f")
                         if onNewThread != nil || onCreate != nil {
                             Button("New session", systemImage: "square.and.pencil", action: newThread)
+                                .keyboardShortcut("n")
                         }
                     }
                 }
@@ -2230,8 +2276,9 @@ private struct ScrollToBottomPill: View {
 
 /// A thread nobody has said anything in yet. Compact Quiet leaves it genuinely quiet: the
 /// composer is already the action, so suggestion pills only repeat it and dominate the screen.
-private struct EmptyThreadView: View {
+private struct EmptyThreadView<Controls: View>: View {
     let presentation: ThreadPresentation
+    @ViewBuilder var controls: () -> Controls
 
     var body: some View {
         ScrollView {
@@ -2241,14 +2288,14 @@ private struct EmptyThreadView: View {
                     .font(.scaled(.title3).weight(.semibold))
                     .fontDesign(.serif)
                     .foregroundStyle(YorozuPalette.ink)
+                controls()
                 Text(presentation.emptyMessage)
                     .font(.scaled(.callout))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                    .frame(maxWidth: 360)
             }
             .padding(LayoutMetrics.section)
-            .accessibilityElement(children: .combine)
+            .accessibilityElement(children: .contain)
             .frame(maxWidth: .infinity)
         }
         .defaultScrollAnchor(.center, for: .alignment)

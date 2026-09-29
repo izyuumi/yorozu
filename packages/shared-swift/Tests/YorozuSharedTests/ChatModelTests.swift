@@ -1073,6 +1073,52 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
 }
 
 @MainActor
+@Test(arguments: [ThreadAgent.claudeCode, .codex])
+func draftAgentChangesKeepComposerLocalUntilFirstSend(agent: ThreadAgent) async throws {
+    let transport = FakeTransport(autoReceipt: true)
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.event(event("folders", .projectList(ProjectListData(projects: [
+        ProjectFolder(path: "/Projects/app", name: "app")
+    ])))))
+    #expect(await eventually { model.projects.count == 1 })
+    let draft = model.newDraft()
+    let attachment = MessageAttachment(name: "note.txt", mime: "text/plain", data: "aGk=")
+    model.drafts[draft.id] = "keep this prompt"
+    model.attachments[draft.id] = [attachment]
+    #expect(draft.agent == nil)
+    #expect(!model.configureDraft(draft.id, agent: agent, cwd: nil))
+    #expect(!model.configureDraft(draft.id, agent: agent, cwd: "/Projects/missing"))
+    #expect(model.draft?.agent == nil)
+    #expect(model.configureDraft(draft.id, agent: agent, cwd: "/Projects/app"))
+    #expect(model.configureDraft(draft.id, agent: .yorozu, cwd: nil))
+    #expect(model.draft?.cwd == nil)
+    #expect(model.configureDraft(draft.id, agent: agent, cwd: "/Projects/app"))
+    #expect(model.drafts[draft.id] == "keep this prompt")
+    #expect(model.attachments[draft.id] == [attachment])
+    #expect(model.outbox.isEmpty)
+    #expect(await transport.sent.allSatisfy { $0.threadId != draft.id })
+
+    let selected = try #require(model.draft)
+    model.send(in: selected)
+    let delivered = await sent(by: transport, atLeast: pairingSends + 2)
+        .filter { $0.threadId == draft.id }
+    #expect(delivered.map(\.payload.kind) == [.threadCreate, .message])
+    guard case .threadCreate(let creation) = delivered.first?.payload,
+          case .message(let message) = delivered.last?.payload else {
+        Issue.record("Expected creation followed by the first message")
+        return
+    }
+    #expect(creation.agent == agent)
+    #expect(creation.cwd == "/Projects/app")
+    #expect(message.text == "keep this prompt")
+    #expect(message.attachments == [attachment])
+    #expect(!model.configureDraft(draft.id, agent: .yorozu, cwd: nil))
+    #expect(model.threads.first?.agent == agent)
+    #expect(model.threads.first?.cwd == "/Projects/app")
+}
+
+@MainActor
 @Test func rejectedThreadCreationKeepsItsMessageVisibleAndOffTheWire() async throws {
     let transport = FakeTransport()
     let model = await connected(transport)

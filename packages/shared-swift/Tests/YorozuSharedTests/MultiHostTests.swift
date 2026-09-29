@@ -392,6 +392,96 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
 }
 
 @MainActor
+@Test func draftHostChangesPreserveComposerAndOnlySendToChosenHost() async throws {
+    let root = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let firstCache = ThreadCache(directory: root.appending(path: "first"), key: SymmetricKey(size: .bits256))
+    let secondCache = ThreadCache(directory: root.appending(path: "second"), key: SymmetricKey(size: .bits256))
+    let firstTransport = MultiHostTransport(), secondTransport = MultiHostTransport()
+    let first = multiHostSession(multiHostID(0), transport: firstTransport, cache: firstCache)
+    let second = multiHostSession(multiHostID(1), transport: secondTransport, cache: secondCache)
+    defer { first.model.close(); second.model.close() }
+    let hosts = MultiHostModel(sessions: [first, second], lastUsedHostID: second.id)
+    await firstTransport.online()
+    await secondTransport.online()
+    _ = await multiHostSent(firstTransport, atLeast: multiHostPairingSends)
+    _ = await multiHostSent(secondTransport, atLeast: multiHostPairingSends)
+    await firstTransport.yield(.event(multiHostEvent("folders", .projectList(ProjectListData(projects: [
+        ProjectFolder(path: "/first/project", name: "project")
+    ])))))
+    #expect(await multiHostEventually { first.model.projects.count == 1 })
+    let draft = try #require(hosts.newDraft())
+    #expect(draft.hostID == second.id)
+    #expect(hosts.thread(for: draft)?.thread.agent == nil)
+    let attachment = MessageAttachment(name: "note.txt", mime: "text/plain", data: "aGk=")
+    second.model.drafts[draft.threadID] = "stashed prompt"
+    second.model.stashDraft(in: draft.threadID)
+    second.model.drafts[draft.threadID] = "unsent prompt"
+    second.model.attachments[draft.threadID] = [attachment]
+    #expect(hosts.configureDraft(draft, on: "missing", agent: .yorozu, cwd: nil) == nil)
+    #expect(hosts.configureDraft(draft, on: first.id, agent: .codex, cwd: "/second/project") == nil)
+    #expect(second.model.isDraft(draft.threadID))
+    let moved = try #require(hosts.configureDraft(draft, on: first.id, agent: .codex, cwd: "/first/project"))
+    #expect(moved == HostThreadID(hostID: first.id, threadID: draft.threadID))
+    #expect(hosts.lastUsedHostID == first.id)
+    #expect(!second.model.isDraft(draft.threadID))
+    #expect(first.model.drafts[moved.threadID] == "unsent prompt")
+    #expect(first.model.attachments[moved.threadID] == [attachment])
+    #expect(first.model.stashes[moved.threadID]?.first?.text == "stashed prompt")
+    #expect(first.model.outbox.isEmpty && second.model.outbox.isEmpty)
+    #expect(await firstTransport.sent.allSatisfy { $0.threadId != moved.threadID })
+    #expect(await secondTransport.sent.allSatisfy { $0.threadId != moved.threadID })
+
+    let restored = ChatModel(transport: MultiHostTransport(), cache: firstCache)
+    let old = ChatModel(transport: MultiHostTransport(), cache: secondCache)
+    #expect(restored.draft?.agent == .codex)
+    #expect(restored.draft?.cwd == "/first/project")
+    #expect(restored.drafts[moved.threadID] == "unsent prompt")
+    #expect(restored.attachments[moved.threadID] == [attachment])
+    #expect(old.draft == nil)
+    let selected = try #require(hosts.thread(for: moved)?.thread)
+    first.model.send(in: selected)
+    let delivered = await multiHostSent(firstTransport, atLeast: multiHostPairingSends + 2)
+        .filter { $0.threadId == moved.threadID }
+    #expect(delivered.map(\.payload.kind) == [.threadCreate, .message])
+    guard case .threadCreate(let creation) = delivered.first?.payload,
+          case .message(let message) = delivered.last?.payload else {
+        Issue.record("Expected creation and first message on selected host")
+        return
+    }
+    #expect(creation.agent == .codex && creation.cwd == "/first/project")
+    #expect(message.text == "unsent prompt" && message.attachments == [attachment])
+    #expect(hosts.configureDraft(moved, on: second.id, agent: .yorozu, cwd: nil) == nil)
+    #expect(await secondTransport.sent.allSatisfy { $0.threadId != moved.threadID })
+    hosts.lastUsedHostID = "removed-host"
+    #expect(hosts.newDraft()?.hostID == first.id)
+}
+
+@MainActor
+@Test func failedDraftHostMoveKeepsOriginalComposer() throws {
+    let file = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    try Data("not a cache directory".utf8).write(to: file)
+    defer { try? FileManager.default.removeItem(at: file) }
+    let first = multiHostSession(multiHostID(0), transport: MultiHostTransport())
+    let second = multiHostSession(multiHostID(1), transport: MultiHostTransport(),
+        cache: ThreadCache(directory: file, key: SymmetricKey(size: .bits256)))
+    defer { first.model.close(); second.model.close() }
+    let hosts = MultiHostModel(sessions: [first, second])
+    let draft = try #require(hosts.newDraft())
+    let attachment = MessageAttachment(name: "note.txt", mime: "text/plain", data: "aGk=")
+    first.model.drafts[draft.threadID] = "keep this safe"
+    first.model.attachments[draft.threadID] = [attachment]
+    #expect(hosts.configureDraft(draft, on: second.id, agent: .yorozu, cwd: nil) == nil)
+    #expect(first.model.isDraft(draft.threadID))
+    #expect(first.model.drafts[draft.threadID] == "keep this safe")
+    #expect(first.model.attachments[draft.threadID] == [attachment])
+    #expect(first.model.failure?.contains("Could not save draft") == true)
+    #expect(second.model.draft == nil)
+    #expect(hosts.lastUsedHostID == first.id)
+    #expect(first.model.outbox.isEmpty && second.model.outbox.isEmpty)
+}
+
+@MainActor
 @Test func multiHostRemovalStopsWritesBeforeCacheErasureAndPreservesOtherMacsQueue() async throws {
     let root = URL.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
