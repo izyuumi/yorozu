@@ -14,10 +14,14 @@ import {
 import { saveMediaBuffer } from "openclaw/plugin-sdk/media-store";
 import { createChannelReplyPipeline } from "openclaw/plugin-sdk/channel-reply-pipeline";
 import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
+import { applySessionModelSelection } from "openclaw/plugin-sdk/model-session-runtime";
+import { buildPreparedModelsProviderData } from "openclaw/plugin-sdk/models-provider-runtime";
+import { getSessionEntry, resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
 import { createInboundDispatcher } from "./dispatch.js";
 import { CAPABILITIES } from "./capabilities.js";
 import { createAttachmentSaver } from "./media.js";
 import { createProgress } from "./progress.js";
+import { createModelResponder } from "./models.js";
 import { createRuns } from "./runs.js";
 import { connectYorozu } from "./socket.js";
 
@@ -34,6 +38,14 @@ const dispatchInbound = createInboundDispatcher({
   createReplyPipeline: createChannelReplyPipeline,
   attachments: createAttachmentSaver({ saveMedia: saveMediaBuffer, toMediaFacts: toInboundMediaFacts }),
   dispatchTurn: dispatchChannelInboundTurn,
+});
+
+const respondModel = createModelResponder({
+  resolveRoute: resolveChannelInboundRouteEnvelope,
+  buildModelsData: buildPreparedModelsProviderData,
+  getSessionEntry,
+  resolveStorePath,
+  applySelection: applySessionModelSelection,
 });
 
 const section = (cfg) => cfg.channels?.yorozu ?? {};
@@ -119,6 +131,7 @@ export const yorozuPlugin = createChatChannelPlugin({
           capabilities: CAPABILITIES,
           onOpen: () => accountRuns.replay(),
           onAbort: (messageId) => accountRuns.abort(messageId),
+          onModelRequest: (frame) => respondModel({ cfg: ctx.cfg, accountId: ctx.accountId, frame }),
           onStatus: (connected) => ctx.setStatus({ accountId: ctx.accountId, running: true, connected }),
           onError: (message) => ctx.log?.warn?.(`yorozu: ${message}`),
           onInbound: (message) =>

@@ -611,7 +611,11 @@ Model controls use these newline-delimited JSON frames (all requests have a uniq
 
 The plugin resolves `threadId` through OpenClaw routing and bindings, including a draft's future
 route without dispatching a user message. It supplies permitted models in catalog order, with
-availability reasons; forbidden models are omitted. Model IDs are opaque. `null` clears the
+availability reasons; forbidden models are omitted. Model IDs are opaque. The bundled plugin
+lists only models the agent may use (`available: true`, no `unavailableReason`): OpenClaw's
+plugin-facing catalog omits the rest. A request it cannot serve still gets a reply: an error
+`model_select_result`, or, for the two reads, a frame of the expected type with an `error`
+string and no payload, which the host rejects at once instead of waiting out the timeout. `null` clears the
 session override (Default); neither agent nor global defaults change. No credentials cross this
 protocol. Requests expire after 10 seconds; disconnect rejects outstanding requests. Responses
 must come from the connection that received the request.

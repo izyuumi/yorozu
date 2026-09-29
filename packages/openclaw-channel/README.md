@@ -45,17 +45,27 @@ Newline-delimited JSON over the socket. Both directions are at least once and ac
 | `inbound` | Yorozu → plugin | A user message, with `attachments` (`{ name, mime, data }`, base64) when it has any and `text` empty when it is only attachments (`media-v1`). Each is saved to OpenClaw's media store and passed as one media fact, in order. Acked once OpenClaw has dispatched it; resent on every connect until then. |
 | `deliver` | plugin → Yorozu | An OpenClaw reply. An unknown thread id opens a new thread. |
 | `ack` / `error` | both | Receipt by id. |
-| `hello` | plugin → Yorozu | First frame on every connection: `{ capabilities: ["run-boundary-v1", "progress-v1", "media-v1"] }`. |
+| `hello` | plugin → Yorozu | First frame on every connection: `{ capabilities: ["run-boundary-v1", "progress-v1", "model-select-v1", "media-v1"] }`. |
 | `run_started` / `run_finished` | plugin → Yorozu | `run-boundary-v1`: one run per `inbound`, from OpenClaw starting on it to its end (`completed`, `failed` or `aborted`), however many replies or none. Runs are serialized per thread, and an unfinished run is re-announced after a reconnect. |
 | `abort` | Yorozu → plugin | Cancels exactly that run's OpenClaw turn; the real outcome comes back in `run_finished`. |
 | `tool_started` / `tool_finished` | plugin → Yorozu | `progress-v1`: the tool calls of the running message, from OpenClaw's `before_tool_call` / `after_tool_call` hooks for `yorozu` requesters only. The hooks only observe; frames are best effort and not acked. |
+| `model_catalog_request` / `model_selection_request` / `model_select` | Yorozu → plugin | `model-select-v1`. Answered with `model_catalog`, `model_selection` and `model_select_result`; every request gets a reply. |
 
 ### Model selection
 
-`model-select-v1` (the Yorozu model picker) is **not** announced yet. The per-thread route and the
-session model override are reachable from a plugin, but the model catalog with OpenClaw's policy and
-availability data (`models.list`) is only reachable through `api.runtime.gateway.request`, which
-OpenClaw 2026.9.1 limits to bundled or trusted official plugins. A git-installed plugin cannot use it.
+The plugin announces `model-select-v1`, so Yorozu shows a per-thread model picker, including on a
+draft before its first message. It uses the OpenClaw plugin SDK:
+
+- Catalog: `buildPreparedModelsProviderData` for the thread's agent, in OpenClaw's order.
+- Current model: the thread's session `providerOverride`/`modelOverride`, or none (default).
+- Change: `applySessionModelSelection` on that thread's session only; `null` clears the override.
+  Agent and global defaults never change. A draft's selection creates its session entry, and the
+  first message resolves the same route and session key, so the first run uses the chosen model.
+
+Limitation: only models the agent may use are listed. The SDK's plugin-facing catalog omits the
+others, so Yorozu cannot show an unavailable model with its reason. The full catalog with reasons
+(`models.list`) is reachable only through `api.runtime.gateway.request`, which OpenClaw 2026.9.1
+limits to bundled or trusted official plugins.
 
 Text only for now. The Yorozu side lives in
 [`packages/runtime/src/channel.ts`](https://github.com/izyuumi/yorozu/blob/main/packages/runtime/src/channel.ts).

@@ -6,9 +6,11 @@
 //                  (attachments: [{ name, mime, data: base64 }]; sent only to plugins announcing media-v1)
 //                { type: "ack", id } | { type: "error", id, reason }
 //                { type: "abort", messageId }
+//                { type: "model_catalog_request" | "model_selection_request" | "model_select", requestId, threadId, ... }
 // Plugin frames: { type: "hello", capabilities } (first on every connection)
 //                { type: "deliver", id, threadId, text } | { type: "ack", id }
 //                { type: "run_started", messageId } | { type: "run_finished", messageId, status }
+//                { type: "model_catalog" | "model_selection" | "model_select_result", requestId, ... }
 import { randomUUID } from "node:crypto";
 import { createConnection } from "node:net";
 
@@ -21,10 +23,12 @@ import { createConnection } from "node:net";
  *   capabilities?: string[],
  *   onOpen?: () => void,
  *   onAbort?: (messageId: string) => void,
+ *   onModelRequest?: (frame: object) => Promise<object>,
  *   retryMs?: number,
  *   ackTimeoutMs?: number,
  * }} options `onInbound` resolves once OpenClaw has taken the message; only then is it acked.
  * `capabilities` go out in the hello; `onOpen` runs right after it (replay run boundaries there).
+ * `onModelRequest` resolves with the reply frame, which goes back on the connection that asked.
  */
 export function connectYorozu(options) {
   const retryMs = options.retryMs ?? 2000;
@@ -59,6 +63,13 @@ export function connectYorozu(options) {
       return;
     }
     if (frame.type === "abort") return void options.onAbort?.(frame.messageId);
+    if (frame.type === "model_catalog_request" || frame.type === "model_selection_request" || frame.type === "model_select") {
+      const asked = socket;
+      options.onModelRequest?.(frame).then((reply) => {
+        if (socket === asked) write(reply);
+      }, (error) => options.onError?.(`model request ${frame.requestId} failed: ${String(error)}`));
+      return;
+    }
     const pending = waiting.get(frame.id);
     if (!pending) return;
     waiting.delete(frame.id);
