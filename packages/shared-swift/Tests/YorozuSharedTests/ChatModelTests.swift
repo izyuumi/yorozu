@@ -1397,6 +1397,126 @@ private func summary(
 }
 
 @MainActor
+@Test func threadNotificationsRequireStatusTransitionsAndIgnoreReplay() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1"])))
+    var notices: [ThreadStatus] = []
+    model.onThreadNotification = { threadID, status, presentation in
+        #expect(threadID == "home")
+        #expect(presentation == .system)
+        notices.append(status)
+    }
+    var lists = 0
+    model.onThreads = { lists += 1 }
+    func send(_ thread: ThreadSummary) async {
+        let next = lists + 1
+        await transport.yield(.event(event("list-\(next)", .threadList(ThreadListData(threads: [thread])))))
+        #expect(await eventually { lists == next })
+    }
+    var thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1,
+                               awaitingApproval: true, turnState: .running)
+    await send(thread)
+    #expect(notices.isEmpty)
+    thread.awaitingApproval = false
+    await send(thread)
+    #expect(notices.isEmpty)
+    thread.awaitingQuestion = true
+    await send(thread)
+    #expect(notices == [.needsInput])
+    thread.awaitingApproval = true
+    await send(thread)
+    #expect(notices == [.needsInput, .needsApproval])
+
+    let reply = event("reply", .message(MessageData(role: .agent, text: "still working", done: true)))
+    await transport.yield(.event(reply))
+    await transport.yield(.event(event("replay", .syncDelta(SyncDeltaData(events: [reply])))))
+    thread.lastActivity = 2
+    thread.title = "Renamed"
+    await send(thread)
+    #expect(notices == [.needsInput, .needsApproval])
+    thread.awaitingApproval = false
+    await send(thread)
+    #expect(notices == [.needsInput, .needsApproval, .needsInput])
+    thread.awaitingQuestion = false
+    thread.needsAttention = true
+    thread.turnState = .idle
+    await send(thread)
+    thread.needsAttention = false
+    thread.lastAgentAt = 20
+    thread.lastReadAt = 10
+    await send(thread)
+    #expect(notices == [.needsInput, .needsApproval, .needsInput, .failed, .doneUnread])
+    await transport.yield(.ownerOnline(false))
+    await transport.yield(.ownerOnline(true))
+    await send(thread)
+    #expect(notices.count == 5)
+    thread.lastReadAt = 20
+    await send(thread)
+    #expect(notices.count == 5)
+}
+
+@MainActor
+@Test func threadNotificationsChooseToastOrSystemAndSuppressTheOpenThread() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    var presentations: [ChatModel.ThreadNotificationPresentation] = []
+    model.onThreadNotification = { _, _, presentation in presentations.append(presentation) }
+    var lists = 0
+    model.onThreads = { lists += 1 }
+    func send(waiting: Bool) async {
+        let next = lists + 1
+        await transport.yield(.event(event("list-\(next)", .threadList(ThreadListData(threads: [
+            ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1,
+                          awaitingApproval: waiting)
+        ])))))
+        #expect(await eventually { lists == next })
+    }
+    await send(waiting: false)
+    model.foreground = true
+    model.openThread = "other"
+    await send(waiting: true)
+    #expect(presentations == [.toast])
+    await send(waiting: false)
+    model.openThread = "home"
+    await send(waiting: true)
+    #expect(presentations == [.toast])
+    model.foreground = false
+    await send(waiting: true)
+    #expect(presentations == [.toast])
+    await send(waiting: false)
+    await send(waiting: true)
+    #expect(presentations == [.toast, .system])
+}
+
+@MainActor
+@Test func waitingBadgeCountsThreadsOnceAndClearsResolvedOrRemovedThreads() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    let threads = [
+        ThreadSummary(id: "both", title: "Both", archived: false, lastActivity: 1,
+                      awaitingApproval: true, awaitingQuestion: true),
+        ThreadSummary(id: "input", title: "Input", archived: false, lastActivity: 1, awaitingQuestion: true),
+        ThreadSummary(id: "failed", title: "Failed", archived: false, lastActivity: 1, needsAttention: true),
+        ThreadSummary(id: "unread", title: "Unread", archived: false, lastActivity: 1, lastAgentAt: 20),
+        ThreadSummary(id: "working", title: "Working", archived: false, lastActivity: 1, turnState: .running)
+    ]
+    await transport.yield(.event(event("list", .threadList(ThreadListData(threads: threads)))))
+    #expect(await eventually { model.threads.count == 5 })
+    #expect(model.waitingCount == 2)
+    var resolved = threads[0]
+    resolved.awaitingApproval = false
+    resolved.awaitingQuestion = false
+    await transport.yield(.event(event("resolved", .threadList(ThreadListData(threads: [resolved, threads[1]])))))
+    #expect(await eventually { model.threads.count == 2 && model.waitingCount == 1 })
+    await transport.yield(.event(event("removed", .threadList(ThreadListData(threads: [resolved])))))
+    #expect(await eventually { model.threads.count == 1 && model.waitingCount == 0 })
+}
+
+@MainActor
 @Test func stopWaitsForHostCessationEvenAfterReceipt() async throws {
     let transport = FakeTransport(autoReceipt: true)
     let model = await connected(transport)

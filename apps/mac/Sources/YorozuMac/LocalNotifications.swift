@@ -26,6 +26,7 @@ struct MacAttentionItem: Identifiable {
     let eventID: String?
     let kind: MacAttentionKind
     let label: String
+    var hostID: HostID? = nil
 
     static func pending(in model: ChatModel) -> [Self] {
         model.threads.sorted { $0.lastActivity > $1.lastActivity }.flatMap { thread -> [Self] in
@@ -67,18 +68,14 @@ struct MacAttentionItem: Identifiable {
 }
 
 /// Mac-local presentation only. The runtime and paired devices keep every event independently.
-@MainActor
+@MainActor @Observable
 final class LocalNotifications: NSObject, UNUserNotificationCenterDelegate {
     static let shared = LocalNotifications()
     private let center = UNUserNotificationCenter.current()
-    private let launchTime = Date().timeIntervalSince1970 * 1000
-    private var announced = Set<String>()
-    private var previousAttention = Set<String>()
+    var toast: MacAttentionItem?
 
     func start() {
         center.delegate = self
-        previousAttention = Set(MacAttentionItem.pending(in: MacChatSession.shared.model)
-            .filter { $0.kind == .failure }.map(\.threadID))
     }
 
     func requestAuthorization() async -> String? {
@@ -91,62 +88,79 @@ final class LocalNotifications: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    func received(_ event: YorozuEvent, from model: ChatModel) {
-        guard HostWindowMode.active, model === MacChatSession.shared.model,
-              Double(event.ts) >= launchTime else { return }
+    func statusChanged(_ threadID: String, to status: ThreadStatus,
+                       presentation: ChatModel.ThreadNotificationPresentation, from model: ChatModel) {
+        let session = MacChatSession.shared
+        let hostID = session.hosts.sessions.first { $0.model === model }?.id
+        guard session.role == .host && model === session.model || session.role == .client && hostID != nil else { return }
         let kind: MacAttentionKind
         let body: String
         let preference: String
-        switch event.payload {
-        case .message(let message) where message.role == .agent && message.done == true && event.parentAgentId == nil:
+        switch status {
+        case .doneUnread:
             kind = .answer
-            body = String(message.text.prefix(240))
+            body = "New answer"
             preference = MacNotificationPreference.answers
-        case .approvalCard:
+        case .needsApproval:
             kind = .approval
             body = "Your approval is needed."
             preference = MacNotificationPreference.requests
-        case .questionCard:
+        case .needsInput:
             kind = .question
             body = "Your answer is needed."
             preference = MacNotificationPreference.requests
-        default: return
+        case .failed:
+            kind = .failure
+            body = "This task needs attention."
+            preference = MacNotificationPreference.failures
+        case .working, .idle: return
         }
-        guard announced.insert(event.id).inserted else { return }
-        post(id: event.id, threadID: event.threadId, eventID: event.id, kind: kind,
-            body: body, preference: preference, model: model)
-    }
-
-    func threadsChanged(_ model: ChatModel) {
-        guard MacChatSession.shared.role == .host,
-              model === MacChatSession.shared.model else { return }
-        let current = Set(MacAttentionItem.pending(in: model)
-            .filter { $0.kind == .failure }.map(\.threadID))
-        defer { previousAttention = current }
-        guard HostWindowMode.active else { return }
-        for thread in model.threads where current.contains(thread.id)
-            && !previousAttention.contains(thread.id) && thread.lastActivity >= launchTime {
-            post(id: "failure:\(thread.id):\(Int(thread.lastActivity))", threadID: thread.id,
-                eventID: nil, kind: .failure, body: "This task needs attention.",
-                preference: MacNotificationPreference.failures, model: model)
-        }
-    }
-
-    private func post(id: String, threadID: String, eventID: String?, kind: MacAttentionKind,
-                      body: String, preference: String, model: ChatModel) {
         guard MacNotificationPreference.value(MacNotificationPreference.enabled),
-              MacNotificationPreference.value(preference, default: true),
-              !(model.foreground && model.openThread == threadID) else { return }
+              MacNotificationPreference.value(preference, default: true) else { return }
+        let event = model.events[threadID]?.last { event in
+            switch event.payload {
+            case .message(let message):
+                return kind == .answer && message.role == .agent && message.done == true && event.parentAgentId == nil
+            case .approvalCard(let card):
+                return kind == .approval && !model.answered.contains(card.actionId)
+                    && model.approvalOutcomes[card.actionId] != .expired
+                    && model.approvalOutcomes[card.actionId] != .noLongerNeeded
+            case .questionCard(let card): return kind == .question && !model.answeredQuestions.contains(card.questionId)
+            default: return false
+            }
+        }
+        let id = UUID().uuidString
+        let eventID = event?.id
+        if presentation == .toast || session.hosts.sessions.contains(where: { $0.model.foreground }) {
+            toast = MacAttentionItem(id: id, threadID: threadID, eventID: eventID, kind: kind,
+                label: "\(model.title(of: threadID)) · \(body)", hostID: hostID)
+            return
+        }
         let content = UNMutableNotificationContent()
         content.title = model.title(of: threadID)
-        content.body = MacNotificationPreference.value(MacNotificationPreference.previews) ? body
-            : kind == .answer ? "New answer" : body
+        if MacNotificationPreference.value(MacNotificationPreference.previews),
+           case .message(let message) = event?.payload {
+            content.body = String(message.text.prefix(240))
+        } else { content.body = body }
         if MacNotificationPreference.value(MacNotificationPreference.sound) { content.sound = .default }
         content.userInfo = ["threadID": threadID, "eventID": eventID ?? "", "kind": kind.rawValue]
+        if let hostID { content.userInfo["hostID"] = hostID }
         let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
         Task {
             do { try await center.add(request) }
             catch { Log.write("notifications: delivery failed — \(error.localizedDescription)") }
+        }
+    }
+
+    func open(threadID: String, eventID: String?, kind: MacAttentionKind?, hostID: HostID?) {
+        toast = nil
+        if HostWindowMode.active {
+            HostWindowMode.routeQuickChat(threadID: threadID, eventID: eventID, kind: kind)
+        } else {
+            ChatWindowRouter.shared.hostID = hostID
+            ChatWindowRouter.shared.threadID = threadID
+            OnboardingWindow.openChat?()
+            NSApp.activate()
         }
     }
 
@@ -155,22 +169,36 @@ final class LocalNotifications: NSObject, UNUserNotificationCenterDelegate {
         let info = response.notification.request.content.userInfo
         let threadID = info["threadID"] as? String
         let eventID = info["eventID"] as? String
+        let hostID = info["hostID"] as? String
         let kind = (info["kind"] as? String).flatMap(MacAttentionKind.init(rawValue:))
         completionHandler()
         if let threadID {
-            Task { @MainActor in HostWindowMode.routeQuickChat(threadID: threadID,
-                eventID: eventID?.isEmpty == false ? eventID : nil, kind: kind) }
+            Task { @MainActor in self.open(threadID: threadID,
+                eventID: eventID?.isEmpty == false ? eventID : nil, kind: kind, hostID: hostID) }
         }
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        let threadID = notification.request.content.userInfo["threadID"] as? String
+        let content = notification.request.content
+        let threadID = content.userInfo["threadID"] as? String
+        let hostID = content.userInfo["hostID"] as? String
+        let eventID = content.userInfo["eventID"] as? String
+        let kind = (content.userInfo["kind"] as? String).flatMap(MacAttentionKind.init(rawValue:))
+        let label = "\(content.title) · \(content.body)"
+        let id = notification.request.identifier
         let completion = PresentationCompletion(callback: completionHandler)
         Task { @MainActor in
-            let model = MacChatSession.shared.model
-            if model.foreground && model.openThread == threadID {
+            let session = MacChatSession.shared
+            let model = hostID.flatMap { session.hosts.session(for: $0)?.model } ?? session.model
+            if let threadID, model.isReading(threadID) {
+                completion.callback([])
+            } else if model.foreground || session.hosts.sessions.contains(where: { $0.model.foreground }) {
+                if let threadID, let kind {
+                    self.toast = MacAttentionItem(id: id, threadID: threadID, eventID: eventID,
+                        kind: kind, label: label, hostID: hostID)
+                }
                 completion.callback([])
             } else {
                 var options: UNNotificationPresentationOptions = [.banner, .list]
@@ -185,6 +213,32 @@ final class LocalNotifications: NSObject, UNUserNotificationCenterDelegate {
 /// on the main actor, after reading the current visible thread.
 private struct PresentationCompletion: @unchecked Sendable {
     let callback: (UNNotificationPresentationOptions) -> Void
+}
+
+struct ThreadNotificationToast: View {
+    @State private var notifications = LocalNotifications.shared
+
+    var body: some View {
+        if let toast = notifications.toast {
+            HStack {
+                Text(toast.label).lineLimit(2)
+                Button("Open thread") {
+                    notifications.open(threadID: toast.threadID, eventID: toast.eventID,
+                        kind: toast.kind, hostID: toast.hostID)
+                }
+                Button("Dismiss", systemImage: "xmark") { notifications.toast = nil }
+                    .labelStyle(.iconOnly)
+            }
+            .padding()
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius))
+            .padding()
+            .task(id: toast.id) {
+                AccessibilityNotification.Announcement(toast.label).post()
+                try? await Task.sleep(for: .seconds(8))
+                if !Task.isCancelled, notifications.toast?.id == toast.id { notifications.toast = nil }
+            }
+        }
+    }
 }
 
 struct MacNotificationsView: View {
