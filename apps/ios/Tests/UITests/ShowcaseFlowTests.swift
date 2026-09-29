@@ -45,13 +45,13 @@ final class ShowcaseFlowTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-yorozuShowcase", "approval"]
         app.launch()
-        let allow = app.buttons["Allow once"]
-        XCTAssertTrue(allow.waitForExistence(timeout: 30), "The approval card did not appear")
-        XCTAssertTrue(app.buttons["Don't allow"].exists)
-        allow.tap()
+        let approve = app.buttons["Approve"]
+        XCTAssertTrue(approve.waitForExistence(timeout: 30), "The approval card did not appear")
+        XCTAssertTrue(app.buttons["Decline"].exists)
+        approve.tap()
         XCTAssertTrue(app.staticTexts["Answer pending · waiting for host"].waitForExistence(timeout: 10))
-        XCTAssertFalse(app.buttons["Allow once"].exists)
-        XCTAssertFalse(app.buttons["Don't allow"].exists)
+        XCTAssertFalse(app.buttons["Approve"].exists)
+        XCTAssertFalse(app.buttons["Decline"].exists)
     }
 
     /// "Always allow" opens the rule before anything is saved, and backing out leaves the card
@@ -61,12 +61,15 @@ final class ShowcaseFlowTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-yorozuShowcase", "card"]
         app.launch()
+        let more = app.buttons["More"]
+        XCTAssertTrue(more.waitForExistence(timeout: 30), "The purchase card did not appear")
+        more.tap()
         let always = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Always allow'")).firstMatch
-        XCTAssertTrue(always.waitForExistence(timeout: 30), "The purchase card did not appear")
+        XCTAssertTrue(always.waitForExistence(timeout: 10), "More offers no Always allow")
         always.tap()
         XCTAssertTrue(app.navigationBars["Always allow"].waitForExistence(timeout: 10))
         app.buttons["Cancel"].tap()
-        XCTAssertTrue(app.buttons["Allow once"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Approve"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts["Answer pending · waiting for host"].exists)
     }
 
