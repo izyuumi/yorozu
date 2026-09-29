@@ -2931,6 +2931,39 @@ func deferredAttachmentDownloadsAfterVisibleHistoryArrives(legacyCache: Bool) as
 }
 
 @MainActor
+@Test func queuedMessagesKeepLiveProgressBelowTheLatestMessage() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1"])))
+    var summary = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 4,
+        activeEventId: "active", turnState: .running, queuedTurnCount: 1, queuedEventIds: ["next"])
+    let payloads: [(String, YorozuEvent.Payload)] = [
+        ("active", .message(MessageData(role: .user, text: "Check this"))),
+        ("tool", .toolCall(ToolCallData(callId: "call", name: "Read", args: [:]))),
+        ("reply", .message(MessageData(role: .agent, text: "Checking", done: true))),
+        ("next", .message(MessageData(role: .user, text: "Then check that"))),
+    ]
+    let history = payloads.enumerated().map { index, item in
+        YorozuEvent(id: item.0, threadId: "home", ts: index + 1, agentId: "main", payload: item.1)
+    }
+    await transport.yield(.event(event("list", .threadList(ThreadListData(threads: [summary])))))
+    await transport.yield(.event(event("sync", .syncDelta(SyncDeltaData(events: history)))))
+    #expect(await eventually { model.events["home"]?.count == history.count })
+    #expect(await eventually { model.generating.contains("home") })
+    let rows = model.rows(in: "home")
+    #expect(rows.map(\.id) == ["active", "reply", "next", "work-tool"])
+    #expect(chatActivity(in: rows, generating: true, streamingId: nil,
+        answeredApprovals: [], answeredQuestions: []) == nil)
+
+    summary.activeEventId = nil
+    summary.turnState = .idle
+    await transport.yield(.event(event("idle", .threadList(ThreadListData(threads: [summary])))))
+    #expect(await eventually { !model.generating.contains("home") })
+    #expect(model.rows(in: "home").map(\.id) == ["active", "work-tool", "reply", "next"])
+}
+
+@MainActor
 @Test func removeUnsentQueueRestoresTextAndAttachmentsAcrossRelaunch() async throws {
     let cache = ThreadCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString), key: SymmetricKey(size: .bits256))
     defer { try? FileManager.default.removeItem(at: cache.directory) }

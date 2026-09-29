@@ -187,9 +187,17 @@ public final class ChatModel {
     func rows(in threadId: String, queued queue: [YorozuEvent]? = nil) -> [ChatRow] {
         let queue = queue ?? queuedMessages(in: threadId)
         let summary = synced.first { $0.id == threadId }
-        return timeline(threadId).rows(generating: generating.contains(threadId),
+        var rows = timeline(threadId).rows(generating: generating.contains(threadId),
             activeEventId: summary?.turnState == nil ? nil : summary?.activeEventId,
-            excluding: withdrawnMessageIds(in: threadId).union(queue.map(\.id))) + queue.map(ChatRow.message)
+            excluding: withdrawnMessageIds(in: threadId).union(queue.map(\.id)))
+        // Pending requests remain outside the active turn, but its progress still belongs
+        // below the latest visible message. Inserting here preserves event ownership.
+        let queuePosition = rows.firstIndex { row in
+            if case .work(let work) = row { return work.running }
+            return false
+        } ?? rows.endIndex
+        rows.insert(contentsOf: queue.map(ChatRow.message), at: queuePosition)
+        return rows
     }
 
     /// Inline actions follow the settled message, not the thread's current working state.
