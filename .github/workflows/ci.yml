@@ -140,9 +140,10 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # The Swift wire tests run the phone client against the relay and sidecar built here.
-      - run: pnpm -r build
+      # Website build/tests belong to the Linux web job; no native suite consumes them.
+      - run: pnpm --filter '!@yorozu/web' -r build
       - if: needs.changes.outputs.ts == 'true'
-        run: pnpm -r test
+        run: pnpm --filter '!@yorozu/web' -r test
       # The hosted image's default Xcode can lag; this project needs the newest stable.
       - if: needs.changes.outputs.swift == 'true'
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0

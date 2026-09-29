@@ -17,10 +17,12 @@ Release Please owns `version.txt` and `.release-please-manifest.json`, which rec
 prepared version. Stable promotion requires both to match the candidate at its source SHA.
 Production build scripts require explicit `VERSION` and `BUILD`.
 
-The single `Release` workflow assigns `BUILD = 10000 + github.run_number` to both platforms.
-That number identifies the Mac DMG, iOS archive, and TestFlight upload. Do not upload local builds
-using a number allocated by CI, or reset the counter by replacing the workflow. A failed candidate
-build needs a fresh dispatch; promotion retries reuse the existing candidate.
+The single `Release` workflow assigns the Mac `BUILD = 10000 + github.run_number`; that number
+identifies the DMG and candidate. iOS uses the highest App Store Connect build for its marketing
+version plus one, starting at 1 for a new version. The candidate manifest records both numbers.
+Do not upload local builds using a number allocated by CI, or reset the Mac counter by replacing
+the workflow. A failed candidate build needs a fresh dispatch; promotion retries reuse the
+existing candidate.
 
 ## The Mac DMG
 
