@@ -1383,7 +1383,7 @@ public struct ChatView: View {
                 Button {
                     model.restoreStash(stash.id, in: thread.id)
                 } label: {
-                    Text(stash.text.isEmpty ? (stash.attachments.first?.name ?? "Draft") : stash.text)
+                    Text(stash.text.isEmpty ? (stash.attachments.first?.name ?? String(localized: "Draft")) : stash.text)
                         .lineLimit(1)
                 }
                 .disabled(!draft.wrappedValue.isEmpty || !attachments.wrappedValue.isEmpty || attachmentLoading)
@@ -1464,7 +1464,7 @@ public struct ChatView: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("runSettingsMenu")
                 .accessibilityLabel("Model and effort")
-                .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? "Default effort")")
+                .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? String(localized: "Default effort"))")
         }
     #else
     private var runSettingsButton: some View {
@@ -1502,7 +1502,7 @@ public struct ChatView: View {
         .menuIndicator(.hidden)
         .accessibilityIdentifier("runSettingsMenu")
         .accessibilityLabel("Model and effort")
-        .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? "Default effort")")
+        .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? String(localized: "Default effort"))")
     }
     #endif
 
@@ -2160,12 +2160,12 @@ private struct SearchHitBar: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(total == 0 ? "No matches" : "\(index + 1) of \(total)")
+            Text(total == 0 ? String(localized: "No matches") : String(localized: "\(index + 1) of \(total)"))
                 .font(.scaled(.footnote).monospacedDigit())
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
-            arrow("chevron.up", "Previous match", -1)
-            arrow("chevron.down", "Next match", 1)
+            arrow("chevron.up", String(localized: "Previous match"), -1)
+            arrow("chevron.down", String(localized: "Next match"), 1)
         }
         .padding(.leading, 16)
         .padding(.trailing, 4)

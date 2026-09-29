@@ -107,6 +107,8 @@ xcrun actool "$PWD/apps/mac/Resources/Accent.xcassets" --compile "$ACCENT_RESOUR
 [ -f "$ACCENT_RESOURCES/Assets.car" ] || { echo "actool produced no accent Assets.car" >&2; exit 1; }
 xcrun xcstringstool compile apps/mac/Resources/Localizable.xcstrings \
   --output-directory "$APP/Contents/Resources"
+xcrun xcstringstool compile apps/mac/Resources/InfoPlist.xcstrings \
+  --output-directory "$APP/Contents/Resources"
 # The watchdog, which is a resource rather than an executable on purpose: it has to be
 # runnable by launchd when the app it supervises is not running at all.
 cp apps/mac/Resources/watchdog.sh "$APP/Contents/Resources/watchdog.sh"

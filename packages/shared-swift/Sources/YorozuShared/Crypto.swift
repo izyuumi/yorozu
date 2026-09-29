@@ -25,8 +25,14 @@ public enum YorozuCrypto {
         public let ciphertext: Data
     }
 
-    public enum CryptoError: Error {
+    public enum CryptoError: LocalizedError {
         case malformed(String)
+
+        public var errorDescription: String? {
+            switch self {
+            case .malformed(let reason): reason
+            }
+        }
     }
 
     /// Which end of the live channel a peer is. The Mac seals with the mac->device key and
@@ -94,7 +100,7 @@ public enum YorozuCrypto {
 
     /// Throws if the tag does not verify.
     public static func open(key: SymmetricKey, nonce: Data, ciphertext: Data) throws -> Data {
-        guard ciphertext.count >= tagBytes else { throw CryptoError.malformed("ciphertext too short") }
+        guard ciphertext.count >= tagBytes else { throw CryptoError.malformed(String(localized: "ciphertext too short")) }
         let split = ciphertext.index(ciphertext.endIndex, offsetBy: -tagBytes)
         let box = try ChaChaPoly.SealedBox(
             nonce: ChaChaPoly.Nonce(data: nonce),

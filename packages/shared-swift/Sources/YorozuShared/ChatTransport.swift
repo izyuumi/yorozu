@@ -20,7 +20,7 @@ extension ChatTransport {
 }
 
 struct TransportSendTimeout: LocalizedError {
-    var errorDescription: String? { "Timed out sending to host" }
+    var errorDescription: String? { String(localized: "Timed out sending to host") }
 }
 
 private actor SendResolution {
@@ -209,7 +209,7 @@ public actor LocalSocketTransport: ChatTransport {
             // Usually the sidecar still starting up. Network framework keeps retrying, so this
             // is something to say in the UI rather than a reason to give up.
             updates?.yield(.ownerOnline(false))
-            updates?.yield(.failed("runtime not reachable: \(error.localizedDescription)"))
+            updates?.yield(.failed(String(localized: "Runtime not reachable: \(error.localizedDescription)")))
         case .failed(let error):
             updates?.yield(.failed(error.localizedDescription))
             redial()
@@ -268,7 +268,7 @@ public actor LocalSocketTransport: ChatTransport {
                 updates?.yield(.event(try JSONDecoder().decode(YorozuEvent.self, from: line)))
             } catch {
                 // One bad line is one bad line: the connection is still good.
-                updates?.yield(.failed("undecodable event: \(error.localizedDescription)"))
+                updates?.yield(.failed(String(localized: "Could not read event: \(error.localizedDescription)")))
             }
         }
     }

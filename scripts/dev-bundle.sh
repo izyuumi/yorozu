@@ -64,6 +64,8 @@ xcrun actool "$PWD/apps/mac/Resources/Accent.xcassets" --compile "$ACCENT_RESOUR
 [ -f "$ACCENT_RESOURCES/Assets.car" ] || { echo "actool produced no accent Assets.car" >&2; exit 1; }
 xcrun xcstringstool compile apps/mac/Resources/Localizable.xcstrings \
   --output-directory "$APP/Contents/Resources"
+xcrun xcstringstool compile apps/mac/Resources/InfoPlist.xcstrings \
+  --output-directory "$APP/Contents/Resources"
 
 # The NS…UsageDescription strings, taken from the helper's own Info.plist rather than
 # written out again here: TCC reads them from whichever binary is asking, so the app and

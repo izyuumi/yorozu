@@ -14,7 +14,7 @@ public enum TraceTarget: Hashable, Sendable {
 
     public var title: String {
         switch self {
-        case .main: "Working"
+        case .main: String(localized: "Working")
         case .delegation(let agentId, _): agentId
         }
     }

@@ -130,10 +130,10 @@ struct AttachButton: View {
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
-        .accessibilityLabel(isLoading ? "Loading attachments" : "Attach photos or files")
+        .accessibilityLabel(isLoading ? String(localized: "Loading attachments") : String(localized: "Attach photos or files"))
         .disabled(isLoading || remaining <= 0)
-        .help(remaining <= 0 ? "Remove an attachment to add another" : "Attach photos or files")
-        .accessibilityHint(remaining <= 0 ? "Remove an attachment to add another" : "Choose photos or files for this message")
+        .help(remaining <= 0 ? String(localized: "Remove an attachment to add another") : String(localized: "Attach photos or files"))
+        .accessibilityHint(remaining <= 0 ? String(localized: "Remove an attachment to add another") : String(localized: "Choose photos or files for this message"))
         .alert("Attachments couldn’t be added", isPresented: Binding(
             get: { failureMessage != nil },
             set: { if !$0 { failureMessage = nil } }
@@ -456,8 +456,8 @@ private struct StagedThumbnail: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel(
                 attachment.isImage
-                    ? "Attached image, \(attachment.name)"
-                    : "Attached file, \(attachment.name), \(attachment.size)"
+                    ? String(localized: "Attached image, \(attachment.name)")
+                    : String(localized: "Attached file, \(attachment.name), \(attachment.size)")
             )
     }
 

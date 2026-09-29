@@ -102,13 +102,13 @@ enum PairingStore {
             guard let data = try Keychain.loadRequired(legacyAccount) else { return nil }
             var stored = try JSONDecoder().decode(Stored.self, from: data)
             guard stored.pairing.hostID != nil else {
-                throw YorozuCrypto.CryptoError.malformed("stored Mac public key is invalid")
+                throw YorozuCrypto.CryptoError.malformed(String(localized: "stored Mac public key is invalid"))
             }
             if stored.counters == nil { stored.counters = try legacyCounters(for: stored)?.load() }
             var all = try records()
             if let current = all[stored.hostID],
                current.identity.sessionPublicKey != stored.identity.sessionPublicKey {
-                throw YorozuCrypto.CryptoError.malformed("legacy pairing conflicts with existing host")
+                throw YorozuCrypto.CryptoError.malformed(String(localized: "legacy pairing conflicts with existing host"))
             }
             try CacheStore.migrateLegacy(to: stored.hostID)
             if var current = all[stored.hostID] {
@@ -151,7 +151,7 @@ enum PairingStore {
 
     static func save(_ stored: Stored) throws {
         guard stored.pairing.hostID != nil else {
-            throw YorozuCrypto.CryptoError.malformed("stored Mac public key is invalid")
+            throw YorozuCrypto.CryptoError.malformed(String(localized: "stored Mac public key is invalid"))
         }
         try synchronized {
             try migrateLegacy()
@@ -196,7 +196,7 @@ enum PairingStore {
     static func updateNickname(_ nickname: String?, hostID: HostID) throws {
         let trimmed = nickname?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard (trimmed?.count ?? 0) <= 128 else {
-            throw YorozuCrypto.CryptoError.malformed("host nickname is too long")
+            throw YorozuCrypto.CryptoError.malformed(String(localized: "host nickname is too long"))
         }
         try update(hostID: hostID) { $0.nickname = trimmed?.isEmpty == false ? trimmed : nil }
     }
@@ -254,7 +254,7 @@ struct PairingCounterStorage: ChannelCounterStorage {
         try PairingStore.synchronized {
             guard try PairingStore.records()[hostID] != nil else { return }
             // Counters can disappear only with their keys: remove(hostID:) does both atomically.
-            throw YorozuCrypto.CryptoError.malformed("remove the pairing to clear channel counters")
+            throw YorozuCrypto.CryptoError.malformed(String(localized: "remove the pairing to clear channel counters"))
         }
     }
 

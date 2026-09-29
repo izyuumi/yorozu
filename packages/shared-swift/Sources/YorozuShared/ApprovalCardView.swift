@@ -231,7 +231,7 @@ public struct ApprovalCardView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("approvalItemsDisclosure")
-                .accessibilityValue(itemsExpanded ? "Expanded" : "Collapsed")
+                .accessibilityValue(itemsExpanded ? String(localized: "Expanded") : String(localized: "Collapsed"))
                 .accessibilityHint("This decision covers exactly these items")
 
                 ForEach(itemsExpanded ? items : Array(items.prefix(Self.itemsShown))) { item in
@@ -491,7 +491,7 @@ private struct ApprovalDetailText: View {
                 .foregroundStyle(.tint)
                 .accessibilityIdentifier(identifier)
                 .accessibilityLabel(expanded ? collapseLabel : expandLabel)
-                .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+                .accessibilityValue(expanded ? String(localized: "Expanded") : String(localized: "Collapsed"))
             }
         }
     }
@@ -503,16 +503,16 @@ extension ApprovalRule {
     public var summary: String {
         let noun = ApprovalCardView.verb(for: actionClass).noun
         var phrase = noun
-        if let recipient = scope?["recipient"] { phrase += " to \(recipient.phrase)" }
-        if let merchant = scope?["merchant"] { phrase += " at \(merchant.phrase)" }
-        if let account = scope?["account"] { phrase += " from \(account.phrase)" }
-        if let category = scope?["category"] { phrase += " in \(category.phrase)" }
-        if let target = scope?["target"] { phrase += " on \(target.phrase)" }
+        if let recipient = scope?["recipient"] { phrase = String(localized: "\(phrase) to \(recipient.phrase)") }
+        if let merchant = scope?["merchant"] { phrase = String(localized: "\(phrase) at \(merchant.phrase)") }
+        if let account = scope?["account"] { phrase = String(localized: "\(phrase) from \(account.phrase)") }
+        if let category = scope?["category"] { phrase = String(localized: "\(phrase) in \(category.phrase)") }
+        if let target = scope?["target"] { phrase = String(localized: "\(phrase) on \(target.phrase)") }
         if let cap = maxAmount {
             let amount = ApprovalAmountFormatter.string(amount: cap, currency: currency)
-            phrase += " up to \(amount)"
+            phrase = String(localized: "\(phrase) up to \(amount)")
         } else if let currency, !currency.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            phrase += " in \(currency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased())"
+            phrase = String(localized: "\(phrase) in \(currency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased())")
         }
         return phrase
     }

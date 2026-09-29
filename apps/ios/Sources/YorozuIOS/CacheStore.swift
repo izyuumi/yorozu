@@ -46,11 +46,11 @@ enum CacheStore {
         let hasFiles = FileManager.default.fileExists(atPath: legacyDirectory.path)
         guard oldKey != nil || hasFiles else { return }
         guard let oldKey, oldKey.count == 32 else {
-            throw YorozuCrypto.CryptoError.malformed("legacy thread cache key is unavailable")
+            throw YorozuCrypto.CryptoError.malformed(String(localized: "legacy thread cache key is unavailable"))
         }
         if let current = try Keychain.loadRequired(account(hostID)) {
             guard current == oldKey else {
-                throw YorozuCrypto.CryptoError.malformed("legacy thread cache key conflicts with host")
+                throw YorozuCrypto.CryptoError.malformed(String(localized: "legacy thread cache key conflicts with host"))
             }
         } else {
             try Keychain.save(oldKey, account: account(hostID))
@@ -63,7 +63,7 @@ enum CacheStore {
     private static func key(_ hostID: HostID) throws -> SymmetricKey {
         if let stored = try Keychain.loadRequired(account(hostID)) {
             guard stored.count == 32 else {
-                throw YorozuCrypto.CryptoError.malformed("thread cache key is invalid")
+                throw YorozuCrypto.CryptoError.malformed(String(localized: "thread cache key is invalid"))
             }
             return SymmetricKey(data: stored)
         }

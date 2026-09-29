@@ -808,11 +808,11 @@ public struct ApprovalScope: Codable, Equatable, Sendable {
     /// The fields worth drawing, in the order the card draws them, skipping the empty ones.
     public var rows: [(label: String, value: String)] {
         [
-            ("To", recipient),
-            ("Merchant", merchant),
-            ("Account", account),
-            ("Category", category),
-            ("Quantity", quantity.map { $0 == $0.rounded() ? String(Int($0)) : String($0) }),
+            (String(localized: "To"), recipient),
+            (String(localized: "Merchant"), merchant),
+            (String(localized: "Account"), account),
+            (String(localized: "Category"), category),
+            (String(localized: "Quantity"), quantity.map { $0.formatted(.number.precision(.significantDigits(1...17))) }),
         ].compactMap { label, value in
             guard let value, !value.isEmpty else { return nil }
             return (label, value)
@@ -1231,7 +1231,18 @@ public enum ReasoningEffort: String, Codable, Equatable, Sendable, CaseIterable,
     case minimal, low, medium, high, xhigh, max, ultra, persistent
 
     public var id: Self { self }
-    public var label: String { rawValue.capitalized }
+    public var label: String {
+        switch self {
+        case .minimal: String(localized: "Minimal")
+        case .low: String(localized: "Low")
+        case .medium: String(localized: "Medium")
+        case .high: String(localized: "High")
+        case .xhigh: String(localized: "Extra high")
+        case .max: String(localized: "Max")
+        case .ultra: String(localized: "Ultra")
+        case .persistent: String(localized: "Persistent")
+        }
+    }
 }
 
 /// Renames `threadId` from the base fields. A title the user chose: auto-titling leaves it alone.
@@ -1785,7 +1796,7 @@ public struct QrPayload: Codable, Equatable, Sendable {
     }
 
     public func encoded() throws -> String {
-        guard v == 1 else { throw YorozuCrypto.CryptoError.malformed("not a Yorozu v1 pairing string") }
+        guard v == 1 else { throw YorozuCrypto.CryptoError.malformed(String(localized: "not a Yorozu v1 pairing string")) }
         var components = URLComponents()
         components.scheme = "yorozu"
         components.host = "pair"
@@ -1797,7 +1808,7 @@ public struct QrPayload: Codable, Equatable, Sendable {
         ] + (roomId.map { [URLQueryItem(name: "room", value: $0)] } ?? [])
             + (secret.map { [URLQueryItem(name: "secret", value: $0)] } ?? [])
         guard let string = components.string else {
-            throw YorozuCrypto.CryptoError.malformed("not a Yorozu v1 pairing string")
+            throw YorozuCrypto.CryptoError.malformed(String(localized: "not a Yorozu v1 pairing string"))
         }
         return string
     }
@@ -1843,7 +1854,7 @@ public struct QrPayload: Codable, Equatable, Sendable {
     /// form the Mac shows for copying and encodes in the QR.
     private static func decodePairingString(_ text: String) throws -> QrPayload {
         func malformed() -> Error {
-            YorozuCrypto.CryptoError.malformed("not a Yorozu v1 pairing string")
+            YorozuCrypto.CryptoError.malformed(String(localized: "not a Yorozu v1 pairing string"))
         }
         /// Base64url, unpadded, is the only thing the keys and the token are ever spelled in.
         /// The same check `decodePairingString` makes in TypeScript, so neither side accepts a

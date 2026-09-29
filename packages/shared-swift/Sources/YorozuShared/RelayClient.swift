@@ -178,24 +178,24 @@ public actor RelayClient: ChatTransport {
         onPaired: (@Sendable () -> Void)? = nil
     ) throws {
         guard let url = URL(string: pairing.relayUrl), url.scheme?.hasPrefix("ws") == true else {
-            throw YorozuCrypto.CryptoError.malformed("relay URL is not a websocket URL")
+            throw YorozuCrypto.CryptoError.malformed(String(localized: "relay URL is not a websocket URL"))
         }
         guard let room = pairing.roomId else {
-            throw YorozuCrypto.CryptoError.malformed("QR payload carries no room ID")
+            throw YorozuCrypto.CryptoError.malformed(String(localized: "QR payload carries no room ID"))
         }
         // The room ID is only carried in `join`, which is too late for a relay that has to
         // route the socket before reading it, so it also goes in the URL. Relays that route
         // on the message instead simply ignore the query.
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            throw YorozuCrypto.CryptoError.malformed("relay URL is not a websocket URL")
+            throw YorozuCrypto.CryptoError.malformed(String(localized: "relay URL is not a websocket URL"))
         }
         components.queryItems =
             (components.queryItems ?? []) + [URLQueryItem(name: "room", value: room)]
         guard let dial = components.url else {
-            throw YorozuCrypto.CryptoError.malformed("relay URL is not a websocket URL")
+            throw YorozuCrypto.CryptoError.malformed(String(localized: "relay URL is not a websocket URL"))
         }
         guard let macPub = Data(base64URLEncoded: pairing.macPubkey) else {
-            throw YorozuCrypto.CryptoError.malformed("Mac public key is not base64url")
+            throw YorozuCrypto.CryptoError.malformed(String(localized: "Mac public key is not base64url"))
         }
         self.pairing = pairing
         self.identity = identity
@@ -426,7 +426,7 @@ public actor RelayClient: ChatTransport {
     private func pongMissed(on socket: URLSessionWebSocketTask?) {
         pongDeadline = nil
         guard !stopped, let socket, socket === self.socket else { return }
-        if !onDirect { updates?.yield(.failed("relay stopped answering")) }
+        if !onDirect { updates?.yield(.failed(String(localized: "Relay stopped answering"))) }
         socket.cancel()
     }
 
@@ -435,7 +435,7 @@ public actor RelayClient: ChatTransport {
     /// forgotten would be reused after a relaunch, and the Mac would drop the reuse as a replay.
     public func send(_ event: YorozuEvent) async throws {
         guard ready, !incompatible else {
-            throw YorozuCrypto.CryptoError.malformed("Host compatibility has not been established")
+            throw YorozuCrypto.CryptoError.malformed(String(localized: "Host compatibility has not been established"))
         }
         try await sendEncrypted(event)
         // A send is when a silently dead socket costs the user something, so it asks the relay
@@ -448,9 +448,9 @@ public actor RelayClient: ChatTransport {
 
     private func sendEncrypted(_ event: YorozuEvent) async throws {
         try Task.checkCancellation()
-        guard !stopped, !incompatible else { throw YorozuCrypto.CryptoError.malformed("Host connection is closed") }
+        guard !stopped, !incompatible else { throw YorozuCrypto.CryptoError.malformed(String(localized: "Host connection is closed")) }
         guard let channelFormat else {
-            throw YorozuCrypto.CryptoError.malformed("Mac has not answered pairing")
+            throw YorozuCrypto.CryptoError.malformed(String(localized: "Mac has not answered pairing"))
         }
         if channelFormat == .legacy {
             let box = try YorozuCrypto.seal(key: legacyKey, plaintext: JSONEncoder().encode(event))
@@ -764,7 +764,7 @@ public actor RelayClient: ChatTransport {
         compatibility = .updateRequired(reason)
         updates?.yield(.compatibility(compatibility))
         updates?.yield(.state(.closed))
-        updates?.yield(.failed("Update required: \(reason)"))
+        updates?.yield(.failed(String(localized: "Update required: \(reason)")))
         pinger?.cancel()
         pongDeadline?.cancel()
         peerExchange?.cancel()
@@ -804,7 +804,7 @@ public actor RelayClient: ChatTransport {
     }
 
     private func send(_ message: [String: String]) async throws {
-        guard let socket else { throw YorozuCrypto.CryptoError.malformed("not connected") }
+        guard let socket else { throw YorozuCrypto.CryptoError.malformed(String(localized: "not connected")) }
         let data = try JSONSerialization.data(withJSONObject: message)
         let frame = URLSessionWebSocketTask.Message.string(String(decoding: data, as: UTF8.self))
         // Enqueue on the socket before actor reentrancy: channel seq assignment and frame
