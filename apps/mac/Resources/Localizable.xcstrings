@@ -14814,6 +14814,156 @@
           }
         }
       }
+    },
+    "Allow once": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今回だけ許可"
+          }
+        }
+      }
+    },
+    "Always allow": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "常に許可"
+          }
+        }
+      }
+    },
+    "Choose a host": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストを選択"
+          }
+        }
+      }
+    },
+    "Close model and effort": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルと推論の強度を閉じる"
+          }
+        }
+      }
+    },
+    "If Yorozu doesn’t open, open the app to finish sending. Shares wait for your Mac to reconnect.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozuが開かない場合は、アプリを開いて送信を完了してください。共有内容はMacの再接続を待ちます。"
+          }
+        }
+      }
+    },
+    "New rule": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しいルール"
+          }
+        }
+      }
+    },
+    "Nothing here Yorozu can carry, but a note on its own is a message.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozuで送れる内容がありません。メモだけでもメッセージとして送信できます。"
+          }
+        }
+      }
+    },
+    "Open Yorozu to connect a host before sharing.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "共有する前にYorozuを開いてホストを接続してください。"
+          }
+        }
+      }
+    },
+    "Paste": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "貼り付け"
+          }
+        }
+      }
+    },
+    "Picture": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画像"
+          }
+        }
+      }
+    },
+    "Settings › Devices › Pair Another Device": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定 › デバイス › 別のデバイスをペアリング"
+          }
+        }
+      }
+    },
+    "Take Photo": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真を撮る"
+          }
+        }
+      }
+    },
+    "That picture is over %lld MB. Send it from the app instead.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この画像は%lld MBを超えています。アプリから送信してください。"
+          }
+        }
+      }
+    },
+    "Until %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@まで"
+          }
+        }
+      }
+    },
+    "Version %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バージョン %@"
+          }
+        }
+      }
     }
   }
 }
