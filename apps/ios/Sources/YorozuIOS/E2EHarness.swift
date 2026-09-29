@@ -88,6 +88,12 @@ final class E2EHarness {
         case "queued":
             model.previewThreads()
             model.previewQueued(in: model.threads[0].id)
+        case "fallback-progress":
+            model.previewThreads()
+            let thread = model.threads[0].id
+            model.previewQueued(in: thread)
+            model.previewApproval(in: thread)
+            model.delete("showcase-card", in: thread)
         case "share":
             model.previewThreads()
             ChatShowcase.share = true

@@ -31,10 +31,14 @@ the largest accessibility text size in landscape. Simulator scanner fallback is 
 actual camera permission denial and scanning hardware still require device validation.
 
 Picker regressions also open New thread from the list and New session from a chat, verify an
-immediate Yorozu draft, type a prompt, and choose an agent from the conversation. They then
+immediate Yorozu draft, type a prompt, and choose an inline agent row from the conversation. They then
 deliver an agent reply and unread thread-list update through the offline transport. Delivery
 starts when the folder step appears, so no timing guess is needed. They assert the picker keeps
-that step, stays interactive, and dismisses when a folder is selected without losing draft text.
+that step, stays interactive, preserves the current agent and draft on Cancel, and dismisses when a
+folder is selected without losing draft text. Coding choices then expose their project row inline.
+
+`ProgressFooterTests` seeds a generating turn with no work rows, plus pending and failed messages. Native
+element frames must place the fallback progress label below the latest queued message.
 
 `ConnectionTests` and `ShowcaseFlowTests` need no flags of their own. The connection tests pair
 the app with the real relay and Mac sidecar behind a fault proxy

@@ -537,7 +537,7 @@ final class ConnectionTests: XCTestCase {
     @MainActor
     private func openNewChat() throws {
         app.buttons["New thread"].firstMatch.tap()
-        XCTAssertTrue(app.buttons["Choose agent"].waitForExistence(timeout: 10), "No agent selector in the draft")
+        XCTAssertTrue(app.buttons["session-agent-yorozu"].waitForExistence(timeout: 10), "No inline agent choices in the draft")
         XCTAssertTrue(composer.waitForExistence(timeout: 10), "No composer in the new chat")
     }
 
