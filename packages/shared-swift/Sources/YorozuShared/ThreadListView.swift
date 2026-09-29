@@ -274,30 +274,69 @@ extension View {
 /// host is doing, which outranks what the user has not yet seen. Lower states are not lost —
 /// an unread title stays semibold under any of them. Drawn from the summary alone, never the
 /// connection: a phone going offline changes no row's status.
-enum ThreadStatus: Equatable, Sendable {
-    /// An approval or question card nobody has answered.
-    case needsAnswer
+enum ThreadStatus: Int, Comparable, Sendable {
+    case needsApproval
+    case needsInput
     /// A turn the host could not resume on its own — see ``ThreadSummary/interruptedTurnId``.
-    case needsAttention
+    case failed
     case working
-    case unread
+    case doneUnread
+    case idle
 
-    init?(_ thread: ThreadSummary, working: Bool) {
-        if thread.awaitingApproval == true || thread.awaitingQuestion == true { self = .needsAnswer }
-        else if thread.needsAttention == true || thread.interruptedTurnId != nil { self = .needsAttention }
-        else if working || thread.activeEventId != nil { self = .working }
-        else if thread.isUnread { self = .unread }
-        else { return nil }
+    static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
+
+    init(_ thread: ThreadSummary, working: Bool) {
+        if thread.awaitingApproval == true { self = .needsApproval }
+        else if thread.awaitingQuestion == true { self = .needsInput }
+        // A stop the host could not confirm leaves the person to check, so it is not "Working".
+        else if thread.needsAttention == true || thread.interruptedTurnId != nil ||
+            thread.turnState == .stoppedUnconfirmed { self = .failed }
+        else if thread.turnState.map({ $0 != .idle }) ?? (working || thread.activeEventId != nil) { self = .working }
+        else if thread.isUnread { self = .doneUnread }
+        else { self = .idle }
+    }
+
+    static func highest(in threads: [ThreadSummary], workingThreads: Set<String>) -> Self? {
+        threads.map { Self($0, working: workingThreads.contains($0.id)) }.min()
     }
 
     /// What VoiceOver reads for the mark, and the tail of the row's summary.
     var label: String {
         switch self {
-        case .needsAnswer: String(localized: "Needs your answer")
-        case .needsAttention: String(localized: "Needs attention")
+        case .needsApproval: String(localized: "Needs approval")
+        case .needsInput: String(localized: "Needs input")
+        case .failed: String(localized: "Failed")
         case .working: String(localized: "Working")
-        case .unread: String(localized: "Unread")
+        case .doneUnread: String(localized: "Done, unread")
+        case .idle: String(localized: "Idle")
         }
+    }
+
+    var color: Color {
+        switch self {
+        case .needsApproval, .needsInput, .doneUnread: .accentColor
+        case .failed: YorozuPalette.warning
+        case .working, .idle: .secondary
+        }
+    }
+}
+
+private struct ThreadGroupHeader: View {
+    let title: String
+    let threads: [ThreadSummary]
+    let workingThreads: Set<String>
+
+    var body: some View {
+        let status = ThreadStatus.highest(in: threads, workingThreads: workingThreads)
+        HStack {
+            Text(title)
+            Spacer()
+            if let status, status != .idle {
+                Text(status.label).foregroundStyle(status.color)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel([title, status == .idle ? nil : status?.label].compactMap { $0 }.joined(separator: ", "))
     }
 }
 
@@ -317,7 +356,7 @@ struct ThreadRow: View {
     @ScaledMetric(relativeTo: .body) private var dot = 9
     @ScaledMetric(relativeTo: .body) private var mark = 16
 
-    private var status: ThreadStatus? { ThreadStatus(thread, working: working) }
+    private var status: ThreadStatus { ThreadStatus(thread, working: working) }
 
     var body: some View {
         // Drawn from the thread's own two timestamps, which the runtime owns: reading on the
@@ -392,27 +431,32 @@ struct ThreadRow: View {
             // or clearing never reflows the row. Shape and lightness differ too, never colour alone.
             Group {
                 switch status {
-                case .needsAnswer:
+                case .needsApproval:
+                    Image(systemName: "checkmark.shield.fill")
+                        .font(.scaled(.footnote).weight(.semibold))
+                        .foregroundStyle(.tint)
+                case .needsInput:
                     Image(systemName: "questionmark.circle.fill")
                         .font(.scaled(.footnote).weight(.semibold))
                         .foregroundStyle(.tint)
-                case .needsAttention:
+                case .failed:
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.scaled(.footnote).weight(.semibold))
                         .foregroundStyle(YorozuPalette.warning)
                 case .working:
                     ProgressView().controlSize(.small)
-                case .unread:
+                case .doneUnread:
                     Circle()
                         .fill(.tint)
                         .frame(width: dot, height: dot)
-                case nil:
+                case .idle:
                     Color.clear
                 }
             }
             .frame(width: mark, height: mark)
-            .accessibilityLabel(status?.label ?? "")
-            .accessibilityHidden(status == nil)
+            .accessibilityLabel(status.label)
+            .accessibilityHidden(status == .idle)
+            .help(status == .idle ? "" : status.label)
             if chevron {
                 Image(systemName: "chevron.right")
                     .font(.scaled(.footnote).weight(.semibold))
@@ -445,7 +489,7 @@ struct ThreadRow: View {
         }
         parts.append(thread.displayTitle)
         if status != .working, let preview = preview ?? thread.lastMessage, !preview.isEmpty { parts.append(preview) }
-        if let status { parts.append(status.label) }
+        if status != .idle { parts.append(status.label) }
         if marksArchived && thread.archived { parts.append(String(localized: "Archived")) }
         return parts.joined(separator: ". ")
     }
@@ -982,12 +1026,18 @@ public struct ThreadListView<Destination: View>: View {
         return List(selection: splitLayout ? selection : nil) {
             if searchNeedle.isEmpty {
                 if !groups.pinned.isEmpty {
-                    Section("Pinned") { rows(groups.pinned) }
+                    Section { rows(groups.pinned) } header: {
+                        ThreadGroupHeader(title: String(localized: "Pinned"), threads: groups.pinned,
+                                          workingThreads: workingThreads)
+                    }
                 }
                 // Today, Yesterday, This week, Earlier: the headings are the only thing telling
                 // a thread from this morning apart from one from last month at a glance.
                 ForEach(groups.sections) { section in
-                    Section(section.title) { rows(section.threads) }
+                    Section { rows(section.threads) } header: {
+                        ThreadGroupHeader(title: section.title, threads: section.threads,
+                                          workingThreads: workingThreads)
+                    }
                 }
             } else {
                 Section {
@@ -1409,10 +1459,16 @@ public struct ThreadSidebar: View {
         List(selection: navigationSelection) {
             if searchNeedle.isEmpty {
                 if !groups.pinned.isEmpty {
-                    Section("Pinned") { rows(groups.pinned) }
+                    Section { rows(groups.pinned) } header: {
+                        ThreadGroupHeader(title: String(localized: "Pinned"), threads: groups.pinned,
+                                          workingThreads: workingThreads)
+                    }
                 }
                 ForEach(groups.sections) { section in
-                    Section(section.title) { rows(section.threads) }
+                    Section { rows(section.threads) } header: {
+                        ThreadGroupHeader(title: section.title, threads: section.threads,
+                                          workingThreads: workingThreads)
+                    }
                 }
             } else {
                 Section {
