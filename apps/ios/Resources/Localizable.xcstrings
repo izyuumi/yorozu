@@ -13369,6 +13369,17 @@
           }
         }
       }
+    },
+    "New chat": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "New chat" } },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しいチャット"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
