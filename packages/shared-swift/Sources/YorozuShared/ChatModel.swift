@@ -1829,6 +1829,52 @@ public final class ChatModel {
         return thread
     }
 
+    /// Reconfigure only an unsent draft. A host change copies its composer durably before
+    /// removing the old copy; no transport command is emitted until the first send.
+    @discardableResult
+    public func configureDraft(_ threadId: String, agent: ThreadAgent, cwd: String?, on destination: ChatModel? = nil) -> Bool {
+        let target = destination ?? self
+        guard let index = draftThreads.firstIndex(where: { $0.id == threadId }),
+              let descriptor = target.descriptor(for: agent),
+              !descriptor.needsFolder || target.projects.contains(where: { $0.path == cwd }),
+              target === self || !target.threads.contains(where: { $0.id == threadId }) else { return false }
+        if case .updateRequired = target.compatibility { return false }
+        let original = draftThreads[index]
+        var thread = original
+        thread.agent = agent == .yorozu ? nil : agent
+        thread.cwd = descriptor.needsFolder ? cwd : nil
+        if target !== self || (original.agent ?? .yorozu) != agent {
+            thread.model = target.lastRun[agent.rawValue]?.model
+            thread.effort = target.lastRun[agent.rawValue]?.effort
+        }
+        if target === self {
+            draftThreads[index] = thread
+        } else {
+            target.draftThreads.insert(thread, at: 0)
+            target.drafts[threadId] = drafts[threadId]
+            target.attachments[threadId] = attachments[threadId]
+            target.stashes[threadId] = stashes[threadId]
+        }
+        do {
+            try target.saveComposer()
+            try target.saveDraftState()
+        } catch {
+            if target === self { draftThreads[index] = original }
+            else { target.removeDraft(threadId) }
+            target.saveComposerNow()
+            target.saveDraftsNow()
+            failure = "Could not save draft: \(error.localizedDescription)"
+            return false
+        }
+        if target !== self {
+            removeDraft(threadId)
+            saveComposerNow()
+            saveDraftsNow()
+            target.startedThread = threadId
+        }
+        return true
+    }
+
     /// Leaving a draft discards it only when its composer is empty.
     public func discardDraft(_ threadId: String) {
         guard (drafts[threadId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,

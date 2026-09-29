@@ -193,6 +193,13 @@ public final class MultiHostModel {
         return HostThreadID(hostID: hostID, threadID: session.model.newDraft(agent: agent, cwd: cwd).id)
     }
 
+    public func configureDraft(_ id: HostThreadID, on hostID: HostID, agent: ThreadAgent, cwd: String?) -> HostThreadID? {
+        guard let source = model(for: id), let target = session(for: hostID)?.model,
+              source.configureDraft(id.threadID, agent: agent, cwd: cwd, on: target) else { return nil }
+        lastUsedHostID = hostID
+        return HostThreadID(hostID: hostID, threadID: id.threadID)
+    }
+
     public var unreadCount: Int { sessions.reduce(0) { $0 + $1.model.unreadCount } }
     public var waitingCount: Int { sessions.reduce(0) { $0 + $1.model.waitingCount } }
     public func markAllRead() { for session in sessions { session.model.markAllRead() } }

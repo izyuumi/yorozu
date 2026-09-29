@@ -977,7 +977,7 @@ public struct ThreadListView<Destination: View>: View {
 
     private func newThread() {
         if let onNewThread { onNewThread() }
-        else { choosingAgent = true }
+        else { onCreate(.yorozu, nil) }
     }
 
     private func prepareSearchNavigation(_ id: String) {
@@ -1170,8 +1170,7 @@ public struct ThreadListView<Destination: View>: View {
     }
 
     /// Native toolbar button on both platforms. Keeping it in the bar leaves the final thread
-    /// and the always-visible search field unobstructed. It asks who should answer — one tap
-    /// for Yorozu, two for a coding agent in a recent folder.
+    /// and the always-visible search field unobstructed. Opens a Yorozu draft immediately.
     @ViewBuilder private var newThreadButton: some View {
         Button("New thread", systemImage: "square.and.pencil", action: newThread)
             // ⌘N on an iPad keyboard; the Mac's File menu carries its own — see ``ThreadCommands``.
@@ -1512,9 +1511,6 @@ public struct ThreadSidebar: View {
             if threads.contains(where: \.isUnread), let onReadAll {
                 Button("Mark all as read", systemImage: "envelope.open", action: onReadAll)
             }
-            // The same compose glyph the phone's list and every Mac mail or notes app use. It
-            // asks who should answer in the same modal as the keyboard shortcut — and, on a
-            // client, in the caller's own picker, the one that knows the hosts and their folders.
             Button("New thread", systemImage: "square.and.pencil", action: newThread)
         }
         .renameAlert($renaming, onRename: onRename)
@@ -1530,7 +1526,7 @@ public struct ThreadSidebar: View {
         #if os(macOS)
             // What the Mac's File menu acts on. Published from here because a new thread is the
             // list's business and outlives whichever one is open — see ``ThreadCommands``.
-            // ⌘N uses the same agent picker as the compose button.
+            // ⌘N opens the same Yorozu draft as the compose button.
             .focusedSceneValue(\.threadCommands, ThreadCommands(newThread: newThread))
             // Delete on a selected row puts it away, as it does in every Mac list. Archiving
             // rather than deleting, because that is the only removal this list has — and it
@@ -1545,7 +1541,7 @@ public struct ThreadSidebar: View {
 
     private func newThread() {
         if let onNewThread { onNewThread() }
-        else { choosingAgent = true }
+        else { onCreate(.yorozu, nil) }
     }
 
     private func prepareSearchNavigation(_ id: String) {

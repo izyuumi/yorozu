@@ -579,7 +579,6 @@ struct RootView: View {
     /// it before this view was ever built, so the first frame is already the chat.
     @State private var path: [String] = Session.shared.openPath
     @State private var hostPath: [HostThreadID] = Session.shared.hostPath
-    @State private var choosingThreadHost = false
     @State private var settings = launchArgument("yorozuShowcase") == "settings"
     /// Screenshot only: `-yorozuShowcase share` draws the share extension's composer here,
     /// because a simulator cannot be made to open a real share sheet.
@@ -868,16 +867,15 @@ struct RootView: View {
                      aggregateToastID: session.hosts.connectionToastNotice?.notice.id,
                      aggregateToastAnnouncementRevision: session.hosts.connectionToastNotice?.notice.announcementRevision,
                      aggregateToastLabel: session.hosts.connectionToastLabel,
-                     onNewThread: session.hosts.hasMultipleHosts ? { choosingThreadHost = true } : nil,
+                     hosts: session.hosts,
+                     hostID: host.id,
+                     onDraftMove: { hostPath = [$0] },
+                     onNewThread: { if let id = session.hosts.newDraft() { hostPath = [id] } },
                      onCreate: { agent, cwd in
                          guard let draft = session.hosts.newDraft(on: host.id, agent: agent, cwd: cwd) else { return nil }
                          hostPath = [draft]
                          return draft.threadID
                      })
-        }
-        .sheet(isPresented: $choosingThreadHost) {
-            NewThreadPicker(session: session.hosts) { hostPath = [$0] }
-                .presentationDetents([.medium, .large])
         }
         .onChange(of: session.hostPath) { _, opened in hostPath = opened }
         .onChange(of: session.hosts.sessions.map(\.id)) { _, ids in hostPath.removeAll { !ids.contains($0.hostID) } }
