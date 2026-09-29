@@ -2,6 +2,8 @@
 
 Research date: 2026-09-30 (Asia/Tokyo). Primary sources only. OpenClaw `main` inspected at commit [`c1fb7e853f8301ef5a9f01ceeac6d63e19124c15`](https://github.com/openclaw/openclaw/commit/c1fb7e853f8301ef5a9f01ceeac6d63e19124c15), committed 2026-09-29 18:41:14 UTC. Its [`package.json`](https://github.com/openclaw/openclaw/blob/c1fb7e853f8301ef5a9f01ceeac6d63e19124c15/package.json#L3) declares `2026.9.6`; this is a source snapshot, not proof of the version installed on a Yorozu host.
 
+Yorozu observations below describe baseline `60d869d05c3e501f4f6d0315cd8ddb4f96966337`, before this study's streaming and progress-placement fixes.
+
 ## Finding
 
 Signal does expose agent progress. Its implementation combines lifecycle reactions on the triggering user message, refreshed typing indicators, and optional completed reply blocks. It does **not** implement the editable progress-draft transport used by Telegram/Discord. Signal's schema uses delivery-streaming configuration, and its channel handler installs lifecycle callbacks rather than a draft editor. [Signal schema](https://github.com/openclaw/openclaw/blob/c1fb7e853f8301ef5a9f01ceeac6d63e19124c15/extensions/signal/src/config-schema.ts#L117), [Signal handler](https://github.com/openclaw/openclaw/blob/c1fb7e853f8301ef5a9f01ceeac6d63e19124c15/extensions/signal/src/monitor/event-handler.ts#L573).
