@@ -598,10 +598,12 @@ private func toolResult(_ id: String, ok: Bool = true, output: String = "", at t
         event(.thought(ThoughtData(text: "Checking")), id: "thought", at: 2_000),
         event(reply("Done", done: true), id: "reply", at: 193_000),
     ]
-    guard case .work(let live) = chatRows(from: events, generating: true, activeEventId: "ask")[1],
+    let liveRows = chatRows(from: events, generating: true, activeEventId: "ask")
+    #expect(liveRows.map(\.id) == ["ask", "reply", "work-thought"])
+    guard case .work(let live) = liveRows.last,
           case .work(let done) = chatRows(from: events)[1],
           case .thought(let thought) = done.entries[0] else {
-        Issue.record("expected work before the reply")
+        Issue.record("expected live work below the reply and settled work above it")
         return
     }
     #expect(live.running)
@@ -611,6 +613,25 @@ private func toolResult(_ id: String, ok: Bool = true, output: String = "", at t
     #expect(!thought.running)
     #expect(thought.label == "Thought for 191 s")
     #expect(chatRows(from: events).map(\.id) == ["ask", "work-thought", "reply"])
+}
+
+@Test(arguments: [false, true])
+func liveProgressFollowsTheLatestReplyWithinItsTurn(_ done: Bool) throws {
+    let prompt = event(ask("inspect"), id: "ask")
+    let progress = event(.progressCard(ProgressCardData(cardId: "plan", title: "Inspecting",
+        steps: [ProgressStep(label: "Check files", state: .running)])), id: "progress")
+    let response = event(reply("Found **three** files", done: done), id: "reply")
+    let next = event(ask("next request"), id: "next")
+    let events = [prompt, progress, response, next]
+    let rows = chatRows(from: events, generating: true, activeEventId: "ask")
+    #expect(rows.map(\.id) == ["ask", "reply", "work-progress", "next"])
+    guard case .work(let work) = rows[2] else {
+        Issue.record("expected active progress below the reply, before the next request")
+        return
+    }
+    #expect(work.running)
+    #expect(work.entries == [.progress(progress)])
+    #expect(chatRows(from: events).map(\.id) == ["ask", "work-progress", "reply", "next"])
 }
 
 @Test(arguments: [StopStatusData.Status.stopped, .completed, .requested, .withdrawn, .unknown, .unconfirmed])

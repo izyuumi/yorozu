@@ -463,7 +463,31 @@ public func chatRows(from events: [YorozuEvent], generating: Bool = false, activ
         }
         rows[index] = .work(current)
     }
-    return rows
+    // Live work follows this turn's latest reply. Once the host settles the turn, the
+    // original order puts its activity history back above the reply. Never move work
+    // across a later user request or an unreadable conversation boundary.
+    var rendered: [ChatRow] = []
+    var liveWork: [ChatRow] = []
+    for row in rows {
+        switch row {
+        case .work(let work) where work.running:
+            liveWork.append(row)
+            continue
+        case .message(let event):
+            if case .message(let data) = event.payload, data.role == .user {
+                rendered.append(contentsOf: liveWork)
+                liveWork.removeAll(keepingCapacity: true)
+            }
+        case .unreadable:
+            rendered.append(contentsOf: liveWork)
+            liveWork.removeAll(keepingCapacity: true)
+        default:
+            break
+        }
+        rendered.append(row)
+    }
+    rendered.append(contentsOf: liveWork)
+    return rendered
 }
 
 /// One short line for a trace row — `path=/tmp/x, depth=2` — clipped so a pasted file cannot
