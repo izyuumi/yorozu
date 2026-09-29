@@ -8,7 +8,7 @@
  * id and hands back the one to store, so a later prompt resumes where the agent left off.
  */
 
-import { query as sdkQuery, type ModelInfo, type Options, type Query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query as sdkQuery, type ModelInfo, type Options, type Query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname } from "node:path";
@@ -42,6 +42,8 @@ export interface NativeTurn {
   onSession?: (sessionId: string) => void;
   /** Let the host close a session if its abort does not settle the turn. */
   onTerminate?: (terminate: () => void) => void;
+  /** Register delivery into this live turn; false means it no longer accepts input. */
+  onSteer?: (steer: (text: string, attachments: NonNullable<NativeTurn["attachments"]>) => Promise<boolean>) => void;
   approve?: (tool: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<boolean>;
   ask?: (question: string, options: string[], signal: AbortSignal) => Promise<string | undefined>;
   beforeTool?: (signal: AbortSignal) => Promise<boolean>;
@@ -195,8 +197,22 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
         return { ...input, answers };
       };
 
+      const inputs: SDKUserMessage[] = [];
+      let wake: (() => void) | undefined;
+      let accepting = true;
+      const push = (text: string): void => {
+        inputs.push({ type: "user", message: { role: "user", content: text },
+          parent_tool_use_id: null, session_id: turn.sessionId ?? "", priority: "now" });
+        wake?.();
+      };
+      push(turn.text);
       const session = query({
-        prompt: turn.text,
+        prompt: (async function* () {
+          while (accepting) {
+            if (!inputs.length) await new Promise<void>((resolve) => { wake = resolve; });
+            while (inputs.length) yield inputs.shift()!;
+          }
+        })(),
         options: {
           abortController: abort,
           cwd,
@@ -243,6 +259,11 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
         },
       });
       turn.onTerminate?.(() => session.close());
+      turn.onSteer?.(async (text) => {
+        if (!accepting || turn.signal.aborted) return false;
+        push(text);
+        return true;
+      });
 
       let text = "";
       let streamed = "";
@@ -292,6 +313,8 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
               });
             }
           } else if (message.type === "result") {
+            accepting = false;
+            wake?.();
             if (message.subtype === "success") { text = message.result || text; completed = true; }
             else if (!turn.signal.aborted) {
               failed = true;
@@ -303,6 +326,8 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
         // Stop is an answer of its own; anything else is the agent's failure to report.
         if (!turn.signal.aborted) throw error;
       } finally {
+        accepting = false;
+        wake?.();
         turn.signal.removeEventListener("abort", onAbort);
         session.close();
       }

@@ -8,13 +8,8 @@ import SwiftUI
     public static var onFoldersAppear: (() -> Void)?
 }
 
-/// Who should answer a new thread, and — for a coding agent — where. Two steps at most, and a
-/// recent folder is two taps from the `+`: the agent, then the folder at the top of its list.
-///
-/// A Yorozu thread is one tap and asks nothing else. The coding agents are pushed onto the
-/// sheet's own stack, so the folder step has the system back button and edge swipe. Both apps
-/// show this as a sheet from their new-thread buttons and keyboard shortcuts. Both call
-/// `onStart` with a draft's worth of answer and close themselves.
+/// Chooses an unsent draft's agent and, for coding agents, its project folder.
+/// Selection is applied only after the folder step; Cancel leaves the draft untouched.
 public struct NewThreadPicker: View {
     private let fallbackProjects: [ProjectFolder]
     private let fallbackStatus: ProjectListStatus
@@ -22,6 +17,7 @@ public struct NewThreadPicker: View {
     private let fallbackAgents: [AgentDescriptor]
     private let onStart: (ThreadAgent, String?) -> Void
     private let session: MultiHostModel?
+    private let draftID: HostThreadID?
     private let onHostStart: ((HostThreadID) -> Void)?
 
     @State private var selectedHostID: HostID?
@@ -42,20 +38,22 @@ public struct NewThreadPicker: View {
         self.fallbackRefresh = onRefresh
         self.onStart = onStart
         self.session = nil
+        self.draftID = nil
         self.onHostStart = nil
     }
 
     /// Host choice stays inside the existing sheet. Each change replaces the project source
     /// and pops any agent's folder step before a draft can be created on another Mac.
-    public init(session: MultiHostModel, onStart: @escaping (HostThreadID) -> Void) {
+    public init(session: MultiHostModel, draftID: HostThreadID? = nil, onStart: @escaping (HostThreadID) -> Void) {
         self.fallbackProjects = []
         self.fallbackAgents = []
         self.fallbackStatus = .ready
         self.fallbackRefresh = nil
         self.onStart = { _, _ in }
         self.session = session
+        self.draftID = draftID
         self.onHostStart = onStart
-        self._selectedHostID = State(initialValue: session.preferredHostID)
+        self._selectedHostID = State(initialValue: draftID?.hostID ?? session.preferredHostID)
     }
 
     private var selectedHost: HostSession? {
@@ -113,7 +111,7 @@ public struct NewThreadPicker: View {
     public var body: some View {
         NavigationStack(path: $path) {
             runtimes
-                .navigationTitle("New thread")
+                .navigationTitle("Choose agent")
                 #if os(iOS)
                     .navigationBarTitleDisplayMode(.inline)
                 #endif
@@ -172,7 +170,7 @@ public struct NewThreadPicker: View {
                     Button { start(descriptor.id, nil) } label: { runtime(descriptor) }
                         .disabled(!canStart)
                         .listRowBackground(YorozuPalette.paper)
-                        .accessibilityHint("Starts a thread now")
+                        .accessibilityHint("Use this agent for the draft")
                 }
             } header: {
                 YorozuQuestion("Who should answer?")
@@ -341,7 +339,7 @@ public struct NewThreadPicker: View {
             .listRowBackground(YorozuPalette.paper)
             .accessibilityLabel("\(folder.name), \(label(agent))")
             .accessibilityValue(folder.path)
-            .accessibilityHint("Starts a thread in this folder on the host Mac")
+            .accessibilityHint("Use this project folder for the draft")
             #if os(macOS)
                 .help(folder.path)
             #endif
@@ -351,9 +349,14 @@ public struct NewThreadPicker: View {
     private func start(_ agent: ThreadAgent, _ cwd: String?) {
         if let session {
             guard canStart, !needsFolder(agent) || projects.contains(where: { $0.path == cwd }),
-                let selectedHostID, selectedHost != nil,
-                let id = session.newDraft(on: selectedHostID, agent: agent, cwd: cwd)
-            else { return }
+                let selectedHostID, selectedHost != nil else { return }
+            let id: HostThreadID?
+            if let draftID {
+                id = session.configureDraft(draftID, on: selectedHostID, agent: agent, cwd: cwd)
+            } else {
+                id = session.newDraft(on: selectedHostID, agent: agent, cwd: cwd)
+            }
+            guard let id else { return }
             onHostStart?(id)
         } else {
             onStart(agent, cwd)

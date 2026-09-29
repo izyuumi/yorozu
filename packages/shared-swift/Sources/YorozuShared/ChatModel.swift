@@ -525,6 +525,13 @@ public final class ChatModel {
     public var onRules: (() -> Void)?
     /// Called for every event kept in a thread, after it has been applied.
     public var onEvent: ((YorozuEvent) -> Void)?
+    /// Live status changes only; the first thread list establishes a quiet baseline.
+    public var onThreadNotification: ((String, ThreadStatus, ThreadNotificationPresentation) -> Void)?
+    private var notificationStatuses: [String: ThreadStatus] = [:]
+
+    public enum ThreadNotificationPresentation: Sendable {
+        case toast, system
+    }
 
     private let transport: any ChatTransport
     private var cache: ThreadCache?
@@ -920,8 +927,15 @@ public final class ChatModel {
         return match
     }
 
+    public static let followUpBehaviorKey = "followUpBehavior"
+
+    public var followUpBehavior: MessageDelivery {
+        get { MessageDelivery(rawValue: UserDefaults.standard.string(forKey: Self.followUpBehaviorKey) ?? "") ?? .queue }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.followUpBehaviorKey) }
+    }
+
     /// Sends what the composer holds. Clear it only after the outbox owns the message.
-    public func send(in thread: ThreadSummary) {
+    public func send(in thread: ThreadSummary, alternateDelivery: Bool = false) {
         let text = (drafts[thread.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let attachments = attachments[thread.id] ?? []
         if let card = pendingComposerCards(in: thread.id).first {
@@ -934,7 +948,7 @@ public final class ChatModel {
         }
         // Files on their own are a message: only an empty composer is nothing to send.
         guard !text.isEmpty || !attachments.isEmpty else { return }
-        guard queueMessage(text, in: thread.id, attachments: attachments, fromComposer: true) else { return }
+        guard queueMessage(text, in: thread.id, attachments: attachments, fromComposer: true, alternateDelivery: alternateDelivery) else { return }
         drafts[thread.id] = ""
         self.attachments[thread.id] = nil
         preparedSend[thread.id] = nil
@@ -956,7 +970,7 @@ public final class ChatModel {
 
     @discardableResult
     private func queueMessage(_ text: String, in threadId: String, attachments: [MessageAttachment],
-                              fromComposer: Bool = false) -> Bool {
+                              fromComposer: Bool = false, alternateDelivery: Bool = false) -> Bool {
         guard !stopped else { return false }
         guard !attachments.contains(where: \.isDeferred) else {
             failure = "Wait for attachment download before sending."
@@ -993,7 +1007,9 @@ public final class ChatModel {
             ts: createdAt,
             agentId: device,
             payload: .message(MessageData(role: .user, text: text, attachments: attachments,
-                admissionDeadline: createdAt + 30 * 60_000, channelModel: channelChoice))
+                admissionDeadline: createdAt + 30 * 60_000,
+                delivery: alternateDelivery ? (followUpBehavior == .queue ? .steer : .queue) : followUpBehavior,
+                channelModel: channelChoice))
         )
         // Persist creation and its first message in one encrypted write. A failed write leaves
         // the composer and draft thread intact, with no phantom bubble or unsaved outbox item.
@@ -1132,7 +1148,7 @@ public final class ChatModel {
         let ts = Int(Date().timeIntervalSince1970 * 1000)
         let renewed = YorozuEvent(id: UUID().uuidString, threadId: old.threadId, ts: ts,
             agentId: device, payload: .message(MessageData(role: .user, text: original.text,
-                attachments: original.attachments, admissionDeadline: ts + 30 * 60_000)))
+                attachments: original.attachments, admissionDeadline: ts + 30 * 60_000, delivery: original.delivery)))
         var pending = outbox
         // A draft's creation and settings must reach the host before its renewed first message.
         // Their original IDs are safe to retry; the host deduplicates accepted operations.
@@ -1343,7 +1359,8 @@ public final class ChatModel {
         }
         let commit = YorozuEvent(id: item.id, threadId: item.event.threadId, ts: item.event.ts,
             agentId: item.event.agentId, payload: .attachmentCommit(AttachmentCommitData(
-                text: message.text, attachments: descriptors, admissionDeadline: deadline, channelModel: message.channelModel)))
+                text: message.text, attachments: descriptors, admissionDeadline: deadline, delivery: message.delivery,
+                channelModel: message.channelModel)))
         inFlightUpload[item.id] = (item.id, -1)
         try await transport.send(commit)
     }
@@ -1661,8 +1678,31 @@ public final class ChatModel {
         activeEventId(in: threadId).map { stopPending(for: $0) } ?? false
     }
 
+    public func canSendNow(_ event: YorozuEvent) -> Bool {
+        guard event.clientTs == nil else { return false }
+        guard case .compatible(_, let capabilities) = compatibility, capabilities.contains("steer-v1"),
+              canDeliver, !sendingHeld(in: event.threadId), !stopPending(in: event.threadId),
+              synced.first(where: { $0.id == event.threadId })?.turnState == .running,
+              synced.first(where: { $0.id == event.threadId })?.queuedEventIds?.contains(event.id) == true,
+              !stopPending(for: event.id) else { return false }
+        return !outbox.contains { $0.event.payload == .steer(SteerData(targetEventId: event.id)) }
+    }
+
+    public func sendNow(_ event: YorozuEvent) {
+        guard canSendNow(event) else { return }
+        deliver(self.event(.steer(SteerData(targetEventId: event.id)), in: event.threadId), queue: false)
+    }
+
+    @discardableResult
+    public func sendNextQueued(in threadId: String) -> Bool {
+        guard let next = queuedMessages(in: threadId).first, canSendNow(next) else { return false }
+        sendNow(next)
+        return true
+    }
+
     public func canWithdraw(_ event: YorozuEvent) -> Bool {
         guard case .message(let data) = event.payload, data.role == .user else { return false }
+        if data.delivery == .steer && event.clientTs != nil { return false }
         if let item = outbox.first(where: { $0.id == event.id }) {
             return item.admissionStatus != .withdrawn && item.admissionStatus != .rejected &&
                 item.replacementId == nil && !stopPending(for: event.id)
@@ -1852,6 +1892,52 @@ public final class ChatModel {
         return thread
     }
 
+    /// Reconfigure only an unsent draft. A host change copies its composer durably before
+    /// removing the old copy; no transport command is emitted until the first send.
+    @discardableResult
+    public func configureDraft(_ threadId: String, agent: ThreadAgent, cwd: String?, on destination: ChatModel? = nil) -> Bool {
+        let target = destination ?? self
+        guard let index = draftThreads.firstIndex(where: { $0.id == threadId }),
+              let descriptor = target.descriptor(for: agent),
+              !descriptor.needsFolder || target.projects.contains(where: { $0.path == cwd }),
+              target === self || !target.threads.contains(where: { $0.id == threadId }) else { return false }
+        if case .updateRequired = target.compatibility { return false }
+        let original = draftThreads[index]
+        var thread = original
+        thread.agent = agent == .yorozu ? nil : agent
+        thread.cwd = descriptor.needsFolder ? cwd : nil
+        if target !== self || (original.agent ?? .yorozu) != agent {
+            thread.model = target.lastRun[agent.rawValue]?.model
+            thread.effort = target.lastRun[agent.rawValue]?.effort
+        }
+        if target === self {
+            draftThreads[index] = thread
+        } else {
+            target.draftThreads.insert(thread, at: 0)
+            target.drafts[threadId] = drafts[threadId]
+            target.attachments[threadId] = attachments[threadId]
+            target.stashes[threadId] = stashes[threadId]
+        }
+        do {
+            try target.saveComposer()
+            try target.saveDraftState()
+        } catch {
+            if target === self { draftThreads[index] = original }
+            else { target.removeDraft(threadId) }
+            target.saveComposerNow()
+            target.saveDraftsNow()
+            failure = "Could not save draft: \(error.localizedDescription)"
+            return false
+        }
+        if target !== self {
+            removeDraft(threadId)
+            saveComposerNow()
+            saveDraftsNow()
+            target.startedThread = threadId
+        }
+        return true
+    }
+
     /// Leaving a draft discards it only when its composer is empty.
     public func discardDraft(_ threadId: String) {
         guard (drafts[threadId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -1979,10 +2065,32 @@ public final class ChatModel {
         change(&synced[index])
     }
 
-    /// Threads with something in them nobody has read yet, on any device. What the app icon's
-    /// badge counts, and drawn from the runtime's two timestamps rather than from anything this
-    /// device happened to witness — see ``ThreadSummary/isUnread``.
+    /// Threads with something in them nobody has read yet, on any device, drawn from the
+    /// runtime's two timestamps rather than anything this device happened to witness — see
+    /// ``ThreadSummary/isUnread``.
     public var unreadCount: Int { threads.filter(\.isUnread).count }
+
+    public var waitingCount: Int {
+        threads.filter {
+            let status = ThreadStatus($0, working: generating.contains($0.id))
+            return status == .needsApproval || status == .needsInput
+        }.count
+    }
+
+    private func notifyStatusChanges() {
+        let previous = notificationStatuses
+        notificationStatuses = Dictionary(synced.map {
+            ($0.id, ThreadStatus($0, working: generating.contains($0.id)))
+        }, uniquingKeysWith: { _, latest in latest })
+        guard listed else { return }
+        for thread in synced {
+            guard let status = notificationStatuses[thread.id],
+                  status != (previous[thread.id] ?? .idle),
+                  [.needsApproval, .needsInput, .failed, .doneUnread].contains(status),
+                  !isReading(thread.id) else { continue }
+            onThreadNotification?(thread.id, status, foreground ? .toast : .system)
+        }
+    }
 
     /// Whether `threadId` is genuinely being read here, right now: it is the thread on screen
     /// *and* the app is in the foreground. Both halves matter, and nothing is ever reported
@@ -2382,6 +2490,7 @@ public final class ChatModel {
                 if hostOwnsTurnState {
                     generating = Set(data.threads.filter { $0.turnState.map { $0 != .idle } == true }.map(\.id))
                 }
+                notifyStatusChanges()
                 listed = true
                 persist(threads: synced)
                 requestOpenHistory()

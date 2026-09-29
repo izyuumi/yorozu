@@ -36,7 +36,8 @@ import { WebSocketServer } from "ws";
 import { openaiCompat, type Message } from "./provider.js";
 import { summaryFile } from "./summary.js";
 import { ensureStateDir, loadChannelSeqs, loadDevices, loadKeys, parseFrameBody, serve as startSidecar, typedAnswer, type ServeOptions, type Sidecar } from "./serve.js";
-import type { NativeAgentRunner, NativeTurn } from "./native.js";
+import { claudeCodeRunner, type NativeAgentRunner, type NativeTurn, type QueryFn } from "./native.js";
+import { codexNativeRunner, type CodexHandlers, type ConnectCodex } from "./codex-native.js";
 import * as schedulerModule from "./scheduler.js";
 import { localSocketPath } from "./local.js";
 import { channelSocketPath, type HostFrame, type PluginFrame } from "./channel.js";
@@ -1510,7 +1511,7 @@ test("stopping a turn persists its latest unsent draft", async () => {
     .toHaveLength(1);
 });
 
-test("steered messages follow the turns they interrupt in live and saved history", async () => {
+test("queued messages follow earlier turns in live and saved history", async () => {
   const firstFinished = Promise.withResolvers<void>();
   const runner: NativeAgentRunner = { run: async (turn) => {
     if (turn.text === "first") await firstFinished.promise;
@@ -4930,3 +4931,214 @@ test("old OpenClaw plugins keep chat without model capability; pending model req
   await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "thread_models" && e.data.requestId === timeout && e.data.error?.includes("timed out"))).toBe(true), { timeout: 12_000 });
   plugin.close(); mac.close();
 }, 15_000);
+
+test.each(["steer", "unsupported", "declined", "failed"])("follow-up delivery uses %s and reports the effective queue", async (mode) => {
+  const ready = Promise.withResolvers<void>();
+  const finish = Promise.withResolvers<void>();
+  const inputs: { text: string; attachments: NativeTurn["attachments"] }[] = [];
+  const run = vi.fn(async (turn: NativeTurn) => {
+    if (turn.text === "first") {
+      if (mode !== "unsupported") turn.onSteer?.(async (text, attachments) => {
+        if (mode === "failed") throw new Error("turn ended");
+        if (mode === "declined") return false;
+        inputs.push({ text, attachments });
+        return true;
+      });
+      ready.resolve();
+      await finish.promise;
+    }
+    return { text: `reply to ${turn.text}` };
+  });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } }, true);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "delivery");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "delivery"));
+  const active = send({ kind: "message", data: { role: "user", text: "first" } }, "delivery");
+  await ready.promise;
+  const follow = randomUUID();
+  const ts = Date.now();
+  const bytes = Buffer.from("context");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  send({ kind: "attachment_chunk", data: { messageId: follow, index: 0, offset: 0,
+    totalBytes: bytes.length, sha256, deadline: ts + 30 * 60_000, data: bytes.toString("base64") } }, "delivery");
+  await eventsUntil((event) => event.kind === "attachment_progress" && event.data.messageId === follow);
+  sendRaw({ id: follow, ts, threadId: "delivery", agentId: "phone", kind: "attachment_commit",
+    data: { text: "follow", delivery: "steer", admissionDeadline: ts + 30 * 60_000,
+      attachments: [{ name: "note.txt", mime: "text/plain", bytes: bytes.length, sha256 }] } });
+  await eventsUntil((event) => event.kind === "message" && event.id === follow &&
+    event.data.delivery === (mode === "steer" ? "steer" : "queue"));
+  // Send now targets the already admitted message; retries cannot inject it twice.
+  send({ kind: "steer", data: { targetEventId: follow } }, "delivery");
+  const retry = send({ kind: "steer", data: { targetEventId: follow } }, "delivery");
+  await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === retry);
+  send({ kind: "admission_query", data: { eventId: follow } }, "delivery");
+  const status = (await eventsUntil((event) => event.kind === "admission_status" && event.data.eventId === follow)).at(-1);
+  expect(status).toMatchObject({ data: { status: mode === "steer" ? "running" : "queued",
+    delivery: mode === "steer" ? "steer" : "queue" } });
+  expect(run).toHaveBeenCalledTimes(1);
+  if (mode === "steer") {
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]!.text).toContain("follow\n\n[attached:");
+    expect(readFileSync(inputs[0]!.attachments![0]!.path, "utf8")).toBe("context");
+    expect(readThreadEvents("delivery", dir).find((event) => event.id === follow))
+      .toMatchObject({ clientTs: expect.any(Number), data: { completionId: `native:${active}:final` } });
+  } else expect(inputs).toEqual([]);
+  finish.resolve();
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === "delivery" && thread.turnState === "idle"));
+  expect(run).toHaveBeenCalledTimes(mode === "steer" ? 1 : 2);
+  const history = readThreadEvents("delivery", dir).filter((event) => event.kind === "message");
+  expect(history.map((event) => event.data.role)).toEqual(mode === "steer"
+    ? ["user", "user", "agent"] : ["user", "agent", "user", "agent"]);
+  await sidecar.close();
+  await relay.close();
+  const restarted = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } }, true);
+  restarted.send({ kind: "admission_query", data: { eventId: follow } }, "delivery");
+  expect((await restarted.eventsUntil((event) => event.kind === "admission_status" && event.data.eventId === follow)).at(-1))
+    .toMatchObject({ data: { status: "completed", delivery: mode === "steer" ? "steer" : "queue" } });
+  expect(run).toHaveBeenCalledTimes(mode === "steer" ? 1 : 2);
+});
+
+test("Send now removes only the selected queue entry and holds while a question is open", async () => {
+  const ready = Promise.withResolvers<NativeTurn>();
+  const finish = Promise.withResolvers<void>();
+  const inputs: string[] = [];
+  const run = vi.fn(async (turn: NativeTurn) => {
+    if (turn.text === "first") {
+      turn.onSteer?.(async (text) => { inputs.push(text); return true; });
+      ready.resolve(turn);
+      await finish.promise;
+    }
+    return { text: `reply to ${turn.text}` };
+  });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } }, true);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "send-now");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "send-now"));
+  const active = send({ kind: "message", data: { role: "user", text: "first" } }, "send-now");
+  const turn = await ready.promise;
+  const next = send({ kind: "message", data: { role: "user", text: "next" } }, "send-now");
+  const later = send({ kind: "message", data: { role: "user", text: "later" } }, "send-now");
+  await eventsUntil((event) => event.kind === "message" && event.id === later);
+  const answer = turn.ask!("Which?", ["A", "B"], turn.signal);
+  const card = (await eventsUntil((event) => event.kind === "question_card")).at(-1)!;
+  const held = send({ kind: "steer", data: { targetEventId: next } }, "send-now");
+  await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === held);
+  expect(inputs).toEqual([]);
+  if (card.kind !== "question_card") throw new Error("missing question");
+  send({ kind: "question_answer", data: { questionId: card.data.questionId, answer: "A" } }, "send-now");
+  await answer;
+  send({ kind: "steer", data: { targetEventId: next } }, "send-now");
+  await eventsUntil((event) => event.kind === "message" && event.id === next && event.data.delivery === "steer");
+  expect(inputs).toEqual(["next"]);
+  const state = (await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === "send-now" && thread.queuedEventIds?.length === 1))).at(-1);
+  expect(state).toMatchObject({ data: { threads: expect.arrayContaining([
+    expect.objectContaining({ id: "send-now", activeEventId: active, turnState: "running", queuedEventIds: [later] }),
+  ]) } });
+  finish.resolve();
+  await eventsUntil((event) => event.kind === "message" && event.data.text === "reply to later");
+  expect(run.mock.calls.map(([turn]) => turn.text)).toEqual(["first", "later"]);
+  expect(readThreadEvents("send-now", dir).filter((event) => event.kind === "message").map((event) => event.data.text))
+    .toEqual(["first", "next", "reply to first", "later", "reply to later"]);
+});
+
+test.each(["claude-code", "codex"])("%s delivers follow-ups through its live native input without another turn", async (agent) => {
+  const ready = Promise.withResolvers<void>();
+  const finish = Promise.withResolvers<void>();
+  const inputs: unknown[] = [];
+  let starts = 0;
+  let handlers: CodexHandlers;
+  const query = (({ prompt }: Parameters<QueryFn>[0]) => {
+    starts += 1;
+    if (typeof prompt === "string") throw new Error("steering needs streaming input");
+    const stream = prompt[Symbol.asyncIterator]();
+    return Object.assign((async function* () {
+      inputs.push((await stream.next()).value);
+      ready.resolve();
+      yield { type: "system", subtype: "init", session_id: "session" };
+      inputs.push((await stream.next()).value);
+      await finish.promise;
+      yield { type: "result", subtype: "success", session_id: "session", result: "followed" };
+    })(), { close: () => { finish.resolve(); } });
+  }) as QueryFn;
+  const connect: ConnectCodex = (h) => {
+    handlers = h;
+    return {
+      async request(method, params) {
+        if (method === "thread/start") return { thread: { id: "session" } };
+        if (method === "turn/start") {
+          starts += 1;
+          inputs.push(params);
+          ready.resolve();
+          return { turn: { id: "active-turn" } };
+        }
+        if (method === "turn/steer") {
+          inputs.push(params);
+          return { turnId: "active-turn" };
+        }
+        return {};
+      },
+      notify() {}, close() {},
+    };
+  };
+  const runner = agent === "claude-code" ? claudeCodeRunner(query) : codexNativeRunner(connect);
+  const { send, eventsUntil } = await pairedPhone([], false,
+    { nativeRunners: { [agent]: { ...runner, models: async () => [], skills: async () => [] } } }, true);
+  send({ kind: "thread_create", data: { agent, cwd: proj } }, "native-steer");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "native-steer"));
+  const active = send({ kind: "message", data: { role: "user", text: "start" } }, "native-steer");
+  await ready.promise;
+  const follow = send({ kind: "message", data: { role: "user", text: "adjust", delivery: "steer",
+    attachments: [{ name: "image.png", mime: "image/png", data: "aGk=" }] } }, "native-steer");
+  await eventsUntil((event) => event.kind === "message" && event.id === follow && event.data.delivery === "steer");
+  await vi.waitFor(() => expect(inputs).toHaveLength(2));
+  if (agent === "claude-code") {
+    expect(inputs[0]).toMatchObject({ type: "user", message: { role: "user", content: "start" } });
+    expect(inputs[1]).toMatchObject({ type: "user", message: { role: "user", content: expect.stringContaining("adjust\n\n[attached:") } });
+    finish.resolve();
+  } else {
+    expect(inputs[1]).toMatchObject({ threadId: "session", expectedTurnId: "active-turn", input: [
+      { type: "text", text: expect.stringContaining("adjust\n\n[attached:"), text_elements: [] },
+      { type: "localImage", path: expect.stringContaining("image.png") },
+    ] });
+    handlers!.notify("item/completed", { threadId: "session", item: { type: "agentMessage", id: "reply", text: "followed" } });
+    handlers!.notify("turn/completed", { threadId: "session", turn: { id: "active-turn", status: "completed" } });
+  }
+  await eventsUntil((event) => event.kind === "message" && event.id === `native:${active}:final` && event.data.done === true);
+  expect(starts).toBe(1);
+});
+
+test.each(["complete", "stop", "withdraw"])("steering confirmation racing %s never starts or withdraws the delivered follow-up", async (action) => {
+  const ready = Promise.withResolvers<void>();
+  const attempted = Promise.withResolvers<void>();
+  const delivered = Promise.withResolvers<boolean>();
+  const finish = Promise.withResolvers<void>();
+  const run = vi.fn(async (turn: NativeTurn) => {
+    turn.onSteer?.(() => { attempted.resolve(); return delivered.promise; });
+    turn.signal.addEventListener("abort", () => finish.resolve(), { once: true });
+    ready.resolve();
+    await finish.promise;
+    return { text: "finished" };
+  });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } }, true);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "steer-race");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "steer-race"));
+  const active = send({ kind: "message", data: { role: "user", text: "first" } }, "steer-race");
+  await ready.promise;
+  const follow = send({ kind: "message", data: { role: "user", text: "follow", delivery: "steer" } }, "steer-race");
+  await attempted.promise;
+  if (action === "complete") finish.resolve();
+  else send({ kind: "interrupt", data: { targetEventId: action === "stop" ? active : follow } }, "steer-race");
+  send({ kind: "admission_query", data: { eventId: follow } }, "steer-race");
+  await eventsUntil((event) => event.kind === "admission_status" && event.data.eventId === follow);
+  delivered.resolve(true);
+  await eventsUntil((event) => event.kind === "message" && event.id === follow && event.data.delivery === "steer");
+  finish.resolve();
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === "steer-race" && thread.turnState === "idle"));
+  const history = readThreadEvents("steer-race", dir);
+  expect(history.filter((event) => event.kind === "message").map((event) => event.id))
+    .toEqual([active, follow, `native:${active}:final`]);
+  expect(history.some((event) => event.kind === "stop_status" && event.data.targetEventId === follow && event.data.status === "withdrawn"))
+    .toBe(false);
+  expect(run).toHaveBeenCalledTimes(1);
+});

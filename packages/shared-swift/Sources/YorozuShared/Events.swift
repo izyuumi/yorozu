@@ -74,6 +74,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadModelsRequest = "thread_models_request"
         case threadModels = "thread_models"
         case projectList = "project_list"
+        case steer
         case interrupt
         case stopStatus = "stop_status"
         case syncRequest = "sync_request"
@@ -129,6 +130,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadModelsRequest(ThreadModelsRequestData)
         case threadModels(ThreadModelsData)
         case projectList(ProjectListData)
+        case steer(SteerData)
         case interrupt(InterruptData)
         case stopStatus(StopStatusData)
         case syncRequest(SyncRequestData)
@@ -184,6 +186,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadModelsRequest: .threadModelsRequest
             case .threadModels: .threadModels
             case .projectList: .projectList
+            case .steer: .steer
             case .interrupt: .interrupt
             case .stopStatus: .stopStatus
             case .syncRequest: .syncRequest
@@ -274,6 +277,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadModels: payload = .threadModels(try c.decode(ThreadModelsData.self, forKey: .data))
             case .modelList: payload = .modelList(try c.decode(ModelListData.self, forKey: .data))
             case .projectList: payload = .projectList(try c.decode(ProjectListData.self, forKey: .data))
+            case .steer: payload = .steer(try c.decode(SteerData.self, forKey: .data))
             case .interrupt: payload = .interrupt(try c.decode(InterruptData.self, forKey: .data))
             case .stopStatus: payload = .stopStatus(try c.decode(StopStatusData.self, forKey: .data))
             case .syncRequest: payload = .syncRequest(try c.decode(SyncRequestData.self, forKey: .data))
@@ -347,6 +351,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadModelsRequest(let d): try c.encode(d, forKey: .data)
         case .threadModels(let d): try c.encode(d, forKey: .data)
         case .projectList(let d): try c.encode(d, forKey: .data)
+        case .steer(let d): try c.encode(d, forKey: .data)
         case .interrupt(let d): try c.encode(d, forKey: .data)
         case .stopStatus(let d): try c.encode(d, forKey: .data)
         case .syncRequest(let d): try c.encode(d, forKey: .data)
@@ -421,6 +426,13 @@ public struct AttachmentProgressData: Codable, Equatable, Sendable {
     }
 }
 
+public enum MessageDelivery: String, Codable, Sendable { case queue, steer }
+
+public struct SteerData: Codable, Equatable, Sendable {
+    public var targetEventId: String
+    public init(targetEventId: String) { self.targetEventId = targetEventId }
+}
+
 public struct ChannelModelChoice: Codable, Equatable, Sendable {
     public var model: String?
     public init(model: String?) { self.model = model }
@@ -455,12 +467,14 @@ public struct ThreadModelsData: Codable, Equatable, Sendable {
 }
 
 public struct AttachmentCommitData: Codable, Equatable, Sendable {
+    public var delivery: MessageDelivery?
     public var channelModel: ChannelModelChoice?
     public var text: String
     public var attachments: [AttachmentDescriptor]
     public var admissionDeadline: Int
 
-    public init(text: String, attachments: [AttachmentDescriptor], admissionDeadline: Int, channelModel: ChannelModelChoice? = nil) {
+    public init(text: String, attachments: [AttachmentDescriptor], admissionDeadline: Int, delivery: MessageDelivery? = nil, channelModel: ChannelModelChoice? = nil) {
+        self.delivery = delivery
         self.channelModel = channelModel
         self.text = text
         self.attachments = attachments
@@ -569,6 +583,7 @@ public struct AdmissionQueryData: Codable, Equatable, Sendable {
 }
 
 public struct AdmissionStatusData: Codable, Equatable, Sendable {
+    public var delivery: MessageDelivery?
     public enum Status: String, Codable, Sendable {
         case unknown, indeterminate, accepted, queued, running, completed, rejected, expired, withdrawn
     }
@@ -579,7 +594,8 @@ public struct AdmissionStatusData: Codable, Equatable, Sendable {
     public var reason: String?
     public var requestId: String?
     public init(eventId: String, status: Status, runId: String? = nil, completionId: String? = nil,
-                reason: String? = nil, requestId: String? = nil) {
+                reason: String? = nil, requestId: String? = nil, delivery: MessageDelivery? = nil) {
+        self.delivery = delivery
         self.eventId = eventId
         self.status = status
         self.runId = runId
@@ -612,6 +628,7 @@ public struct TurnChangesData: Codable, Equatable, Sendable {
 }
 
 public struct MessageData: Codable, Equatable, Sendable {
+    public var delivery: MessageDelivery?
     public var channelModel: ChannelModelChoice?
     public enum Role: String, Codable, Sendable { case user, agent }
     public var role: Role
@@ -643,8 +660,10 @@ public struct MessageData: Codable, Equatable, Sendable {
         admissionDeadline: Int? = nil,
         runId: String? = nil,
         completionId: String? = nil,
+        delivery: MessageDelivery? = nil,
         channelModel: ChannelModelChoice? = nil
     ) {
+        self.delivery = delivery
         self.channelModel = channelModel
         self.role = role
         self.text = text
@@ -657,10 +676,11 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, channelModel }
+    private enum CodingKeys: String, CodingKey { case role, text, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        delivery = try c.decodeIfPresent(MessageDelivery.self, forKey: .delivery)
         channelModel = try c.decodeIfPresent(ChannelModelChoice.self, forKey: .channelModel)
         role = try c.decode(Role.self, forKey: .role)
         text = try c.decode(String.self, forKey: .text)
@@ -675,6 +695,7 @@ public struct MessageData: Codable, Equatable, Sendable {
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(delivery, forKey: .delivery)
         try c.encodeIfPresent(channelModel, forKey: .channelModel)
         try c.encode(role, forKey: .role)
         try c.encode(text, forKey: .text)
@@ -1352,7 +1373,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     }
 
     /// Whether the agent has said something here since anyone last read it. The one definition
-    /// of unread — what every dot, bold title and app badge on both platforms is drawn from.
+    /// of unread — what every dot and bold title on both platforms is drawn from.
     ///
     /// Deliberately not "a reply arrived while this device had the thread closed": that answer
     /// differs per device, and was wrong on any device that happened to be asleep for it.

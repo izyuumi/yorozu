@@ -29,10 +29,10 @@ private func statusTint(_ host: HostSession) -> Color {
 struct SettingsView: View {
     let session: Session
     let onOpenThread: (String, HostID?) -> Void
+    @AppStorage(ChatModel.followUpBehaviorKey) private var followUpBehavior = MessageDelivery.queue
     @Environment(\.dismiss) private var dismiss
     @State private var addingHost = false
     @State private var repairHostID: HostID?
-    @State private var reregistered = false
 
     private static var version: String {
         let info = Bundle.main.infoDictionary
@@ -43,6 +43,14 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section("Chat") {
+                Picker("Follow-up messages", selection: $followUpBehavior) {
+                    Text("Queue").tag(MessageDelivery.queue)
+                    Text("Steer running turn").tag(MessageDelivery.steer)
+                }
+                    Text("⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now.")
+                        .foregroundStyle(.secondary)
+                }
                 if !session.isDemo {
                     Section(session.hosts.hasMultipleHosts ? "Hosts" : "Connection") {
                         ForEach(session.hosts.sessions) { host in
@@ -92,25 +100,16 @@ struct SettingsView: View {
                     }
                     .listRowBackground(YorozuPalette.paper)
                 }
-                if !session.isDemo {
-                    Section {
-                        Button {
-                            session.reregisterPush()
-                            reregistered = true
-                        } label: {
-                            LabeledContent("Re-register push notifications") {
-                                if reregistered { Image(systemName: "checkmark").foregroundStyle(YorozuPalette.sage) }
-                            }
-                        }
-                    } header: {
-                        Text("Notifications")
-                    } footer: {
-                        Text("Try this if notifications stop arriving or arrive twice.")
-                    }
-                    .listRowBackground(YorozuPalette.paper)
-                }
                 Section("Chat") { ReplyFontPicker() }
                     .listRowBackground(YorozuPalette.paper)
+                Section {
+                    NavigationLink {
+                        AdvancedSettingsView(session: session)
+                    } label: {
+                        Label("Advanced", systemImage: "gearshape.2")
+                    }
+                }
+                .listRowBackground(YorozuPalette.paper)
                 if let failure = session.failure {
                     Section { Label(failure, systemImage: "exclamationmark.circle").foregroundStyle(.secondary) }
                         .listRowBackground(YorozuPalette.paper)
@@ -247,18 +246,8 @@ private struct HostSettingsView: View {
             }
             .listRowBackground(YorozuPalette.paper)
             Section {
-                Toggle("Skip approvals for all agents", isOn: Binding(get: { host.model.yoloMode }, set: host.model.setYoloMode))
-            } header: { Text("Approvals") } footer: {
-                approvalsFooter
-            }
-            .listRowBackground(YorozuPalette.paper)
-            Section {
                 Button("Retry connection") { host.model.start(); host.model.reconnect() }
                     .disabled(host.model.canDeliver)
-                Button("Copy diagnostics", systemImage: "doc.on.doc") {
-                    UIPasteboard.general.string = ConnectionDiagnostics.snapshot(for: host.model)
-                    AccessibilityNotification.Announcement("Diagnostics copied").post()
-                }
                 Button("Repair connection", action: onRepair)
                 Button(session.hosts.hasMultipleHosts ? "Remove host" : "Remove connection", role: .destructive) {
                     confirmingRemoval = true
@@ -272,7 +261,7 @@ private struct HostSettingsView: View {
         }
         .paperList()
         .navigationTitle(session.hosts.hasMultipleHosts ? session.hosts.label(for: host) : "Connection")
-        .onAppear { nickname = host.nickname ?? ""; host.model.requestApprovalSettings() }
+        .onAppear { nickname = host.nickname ?? "" }
         .alert(session.hosts.hasMultipleHosts ? "Remove \(session.hosts.label(for: host))?" : "Remove connection?", isPresented: $confirmingRemoval) {
             Button(session.hosts.hasMultipleHosts ? "Remove host" : "Remove connection", role: .destructive) {
                 removing = true
@@ -289,6 +278,68 @@ private struct HostSettingsView: View {
                  : "This removes pairing keys, cached chats, queued sends, and notifications from this device. Scan a new pairing code to connect again.")
         }
         .yorozuTint()
+    }
+}
+
+private struct AdvancedSettingsView: View {
+    let session: Session
+    @State private var reregistered = false
+
+    var body: some View {
+        List {
+            if session.isDemo {
+                Section {
+                    Text("Host controls are unavailable in demo mode.")
+                        .foregroundStyle(.secondary)
+                }
+                .listRowBackground(YorozuPalette.paper)
+            } else {
+                Section {
+                    Button {
+                        session.reregisterPush()
+                        reregistered = true
+                    } label: {
+                        LabeledContent("Re-register push notifications") {
+                            if reregistered { Image(systemName: "checkmark").foregroundStyle(YorozuPalette.sage) }
+                        }
+                    }
+                } header: {
+                    Text("Notifications")
+                } footer: {
+                    Text("Try this if notifications stop arriving or arrive twice.")
+                }
+                .listRowBackground(YorozuPalette.paper)
+                ForEach(session.hosts.sessions) { host in
+                    HostAdvancedSection(host: host, label: session.hosts.label(for: host))
+                }
+            }
+        }
+        .paperList()
+        .navigationTitle("Advanced")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct HostAdvancedSection: View {
+    let host: HostSession
+    let label: String
+
+    var body: some View {
+        Section {
+            Toggle("Skip approvals for all agents", isOn: Binding(get: { host.model.yoloMode }, set: host.model.setYoloMode))
+                .accessibilityHint(label)
+            Button("Copy diagnostics", systemImage: "doc.on.doc") {
+                UIPasteboard.general.string = ConnectionDiagnostics.snapshot(for: host.model)
+                AccessibilityNotification.Announcement("Diagnostics copied").post()
+            }
+        } header: {
+            Text(label)
+                .textCase(nil)
+        } footer: {
+            approvalsFooter
+        }
+        .listRowBackground(YorozuPalette.paper)
+        .onAppear { host.model.requestApprovalSettings() }
     }
 
     /// Off, or on with its expiry. Pairing is the grant, so the switch applies at once.

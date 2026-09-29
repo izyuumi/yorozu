@@ -67,11 +67,16 @@ export interface AttachmentProgressData {
   nextOffset: number;
   reason?: string;
 }
+export type MessageDelivery = "queue" | "steer";
+
+export interface SteerData { targetEventId: string }
+
 export interface ChannelModelChoice { model?: string | null }
 export interface ChannelModelOption { id: string; label: string; available: boolean; unavailableReason?: string }
 export interface ThreadModelsData { requestId: string; models?: ChannelModelOption[]; error?: string }
 
 export interface AttachmentCommitData {
+  delivery?: MessageDelivery;
   channelModel?: ChannelModelChoice;
   text: string;
   attachments: AttachmentDescriptor[];
@@ -85,6 +90,8 @@ export interface AttachmentDownloadChunkData {
 }
 
 export interface MessageData {
+  /** Requested delivery on submission; effective delivery in the host echo. */
+  delivery?: MessageDelivery;
   /** First channel message: confirm this session override before delivery. Empty means Default. */
   channelModel?: ChannelModelChoice;
   role: "user" | "agent";
@@ -119,6 +126,7 @@ export interface AdmissionQueryData { eventId: string }
 
 /** Host-owned status. A query response is correlated by requestId. */
 export interface AdmissionStatusData {
+  delivery?: MessageDelivery;
   eventId: string;
   status: "unknown" | "indeterminate" | "accepted" | "queued" | "running" | "completed" | "rejected" | "expired" | "withdrawn";
   runId?: string;
@@ -773,6 +781,7 @@ export type EventPayload =
   | { kind: "thread_models_request"; data: Record<string, never> }
   | { kind: "thread_models"; data: ThreadModelsData }
   | { kind: "project_list"; data: ProjectListData }
+  | { kind: "steer"; data: SteerData }
   | { kind: "interrupt"; data: InterruptData }
   | { kind: "stop_status"; data: StopStatusData }
   | { kind: "sync_request"; data: SyncRequestData }

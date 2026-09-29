@@ -30,10 +30,11 @@ input staying editable, scanner-to-manual recovery, disabled actions while conne
 the largest accessibility text size in landscape. Simulator scanner fallback is covered;
 actual camera permission denial and scanning hardware still require device validation.
 
-Picker regressions also open New thread from the list and New session from a chat, then
+Picker regressions also open New thread from the list and New session from a chat, verify an
+immediate Yorozu draft, type a prompt, and choose an agent from the conversation. They then
 deliver an agent reply and unread thread-list update through the offline transport. Delivery
 starts when the folder step appears, so no timing guess is needed. They assert the picker keeps
-that step, stays interactive, and dismisses when a folder starts the new draft.
+that step, stays interactive, and dismisses when a folder is selected without losing draft text.
 
 `ConnectionTests` and `ShowcaseFlowTests` need no flags of their own. The connection tests pair
 the app with the real relay and Mac sidecar behind a fault proxy
