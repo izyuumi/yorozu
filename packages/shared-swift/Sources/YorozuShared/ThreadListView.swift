@@ -213,13 +213,13 @@ public let openWindow: TimeInterval = 2 * 60 * 60
 /// replace vague large relative numbers after a year.
 public func compactThreadTime(_ date: Date, now: Date = Date()) -> String {
     let seconds = max(0, now.timeIntervalSince(date))
-    if seconds < 60 { return "\(Int(seconds))s" }
-    if seconds < 120 { return "1m \(Int(seconds) - 60)s" }
-    if seconds < 3_600 { return "\(Int(seconds / 60))m" }
-    if seconds < 86_400 { return "\(Int(seconds / 3_600))h" }
-    if seconds < 604_800 { return "\(Int(seconds / 86_400))d" }
-    if seconds < 2_629_800 { return "\(Int(seconds / 604_800))w" }
-    if seconds < 31_557_600 { return "\(Int(seconds / 2_629_800))mo" }
+    if seconds < 60 { return String(localized: "\(Int(seconds))s") }
+    if seconds < 120 { return String(localized: "1m \(Int(seconds) - 60)s") }
+    if seconds < 3_600 { return String(localized: "\(Int(seconds / 60))m") }
+    if seconds < 86_400 { return String(localized: "\(Int(seconds / 3_600))h") }
+    if seconds < 604_800 { return String(localized: "\(Int(seconds / 86_400))d") }
+    if seconds < 2_629_800 { return String(localized: "\(Int(seconds / 604_800))w") }
+    if seconds < 31_557_600 { return String(localized: "\(Int(seconds / 2_629_800))mo") }
     return date.formatted(.dateTime.month(.abbreviated).day())
 }
 

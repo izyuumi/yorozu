@@ -13209,6 +13209,96 @@
           }
         }
       }
+    },
+    "%lldd": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld日"
+          }
+        }
+      }
+    },
+    "%lldh": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld時間"
+          }
+        }
+      }
+    },
+    "%lldm": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld分"
+          }
+        }
+      }
+    },
+    "%lldmo": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lldか月"
+          }
+        }
+      }
+    },
+    "%llds": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld秒"
+          }
+        }
+      }
+    },
+    "%lldw": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld週間"
+          }
+        }
+      }
+    },
+    "1m %llds": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1分%lld秒"
+          }
+        }
+      }
+    },
+    "Update Yorozu on this device and its host Mac: a required security or protocol capability is unavailable.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このデバイスとホストのMacでYorozuを更新してください。必要なセキュリティまたは通信プロトコルの機能を利用できません。"
+          }
+        }
+      }
+    },
+    "Update Yorozu on this device and its host Mac: protocol versions do not overlap.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このデバイスとホストのMacでYorozuを更新してください。対応する通信プロトコルのバージョンが異なります。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
