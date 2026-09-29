@@ -45,6 +45,10 @@ export class NativeCards {
     for (const pending of [...this.waiting.values()]) if (pending.kind === "approval_answer") pending.settle("yes");
   }
 
+  cancelAll(threadId: string): void {
+    for (const pending of [...this.waiting.values()]) if (pending.threadId === threadId) pending.settle();
+  }
+
   async approve(threadId: string, agent: Exclude<ThreadAgent, "yorozu">, tool: string, input: Record<string, unknown>, signal: AbortSignal): Promise<boolean> {
     const actionId = randomUUID();
     const answer = await this.request(threadId, actionId, "approval_answer", {

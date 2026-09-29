@@ -841,6 +841,103 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
 }
 
 @MainActor
+@Test func pendingComposerCardsAdvanceThroughApprovalsAndQuestions() async throws {
+    let transport = FakeTransport(autoReceipt: true)
+    let model = await connected(transport)
+    defer { model.close() }
+    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
+    let placeholder = "Message Yorozu"
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1"])))
+    await transport.yield(.event(event("working", .threadList(ThreadListData(threads: [
+        ThreadSummary(id: thread.id, title: thread.title, archived: false, lastActivity: 1,
+            turnState: .running)
+    ])))))
+    #expect(await eventually { model.generating.contains(thread.id) })
+    let first = ApprovalCardData(actionId: "a1", actionClass: "run-command", target: "echo one")
+    let second = ApprovalCardData(actionId: "a2", actionClass: "run-command", target: "echo two")
+    await transport.yield(.event(event("approval-1", .approvalCard(first))))
+    await transport.yield(.event(event("approval-2", .approvalCard(second))))
+    #expect(await eventually { model.pendingComposerCards(in: thread.id).count == 2 })
+    #expect(model.composerPlaceholder(in: thread.id, default: placeholder) == "Resolve approval to continue")
+
+    model.drafts[thread.id] = "keep this draft"
+    model.send(in: thread)
+    #expect(model.drafts[thread.id] == "keep this draft")
+    model.answer(first.actionId, in: thread.id, .yes)
+    #expect(model.pendingComposerCards(in: thread.id).count == 1)
+    model.answer(second.actionId, in: thread.id, .no)
+    #expect(model.pendingComposerCards(in: thread.id).isEmpty)
+    let approvals = await sent(by: transport, atLeast: pairingSends + 2)
+    #expect(approvals.filter { $0.payload.kind == .message }.isEmpty)
+    #expect(Dictionary(uniqueKeysWithValues: approvals.compactMap { event -> (String, ApprovalAnswerData.Answer)? in
+        guard case .approvalAnswer(let answer) = event.payload else { return nil }
+        return (answer.actionId, answer.answer)
+    }) == ["a1": .yes, "a2": .no])
+
+    let options = (1...9).map { "Choice \($0)" }
+    await transport.yield(.event(event("question-1", .questionCard(QuestionCardData(
+        questionId: "q1", question: "Which?", options: options)))))
+    await transport.yield(.event(event("question-2", .questionCard(QuestionCardData(
+        questionId: "q2", question: "Why?", options: ["A", "B"], allowOther: true)))))
+    #expect(await eventually { model.pendingComposerCards(in: thread.id).count == 2 })
+    #expect(model.composerPlaceholder(in: thread.id, default: placeholder) == "Type a custom answer or pick an option")
+    model.answerQuestionOption(0, in: thread.id)
+    model.answerQuestionOption(10, in: thread.id)
+    #expect(model.pendingComposerCards(in: thread.id).count == 2)
+    model.answerQuestionOption(9, in: thread.id)
+    #expect(model.pendingComposerCards(in: thread.id).count == 1)
+    #expect(model.questionChoices["q1"] == "Choice 9")
+
+    model.drafts[thread.id] = "  something else  "
+    model.send(in: thread)
+    #expect(model.drafts[thread.id] == "")
+    #expect(model.pendingComposerCards(in: thread.id).isEmpty)
+    #expect(model.composerPlaceholder(in: thread.id, default: placeholder) == placeholder)
+    let sentEvents = await sent(by: transport, atLeast: pairingSends + 4)
+    #expect(Dictionary(uniqueKeysWithValues: sentEvents.compactMap { event -> (String, String)? in
+        guard case .questionAnswer(let answer) = event.payload else { return nil }
+        return (answer.questionId, answer.answer)
+    }) == ["q1": "Choice 9", "q2": "something else"])
+    #expect(sentEvents.filter { $0.payload.kind == .message }.isEmpty)
+}
+
+@MainActor
+@Test func staleCardsDoNotBlockTheComposerAfterTheHostTurnEnds() async throws {
+    let transport = FakeTransport(autoReceipt: true)
+    let model = await connected(transport)
+    defer { model.close() }
+    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
+    let approval = ApprovalCardData(actionId: "stale", actionClass: "run-command", target: "echo stale")
+    let question = QuestionCardData(questionId: "stale-question", question: "Which?", options: ["A"])
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1"])))
+    await transport.yield(.event(event("working", .threadList(ThreadListData(threads: [
+        ThreadSummary(id: thread.id, title: thread.title, archived: false, lastActivity: 1,
+            turnState: .running)
+    ])))))
+    await transport.yield(.event(event("old-approval", .approvalCard(approval))))
+    await transport.yield(.event(event("old-question", .questionCard(question))))
+    #expect(await eventually { model.pendingComposerCards(in: thread.id).count == 2 })
+
+    await transport.yield(.event(event("idle", .threadList(ThreadListData(threads: [
+        ThreadSummary(id: thread.id, title: thread.title, archived: false, lastActivity: 2,
+            turnState: .idle)
+    ])))))
+    #expect(await eventually { !model.generating.contains(thread.id) })
+    #expect(model.pendingComposerCards(in: thread.id).isEmpty)
+    #expect(model.composerPlaceholder(in: thread.id, default: "Message Yorozu") == "Message Yorozu")
+    model.answerQuestionOption(1, in: thread.id)
+    model.drafts[thread.id] = "new request"
+    model.send(in: thread)
+    #expect(model.drafts[thread.id] == "")
+    let sentEvents = await sent(by: transport, atLeast: pairingSends + 1)
+    #expect(sentEvents.contains { event in
+        guard event.threadId == thread.id, case .message(let data) = event.payload else { return false }
+        return data.role == .user && data.text == "new request"
+    })
+    #expect(sentEvents.allSatisfy { $0.payload.kind != .questionAnswer })
+}
+
+@MainActor
 @Test func aDraftThreadIsNowhereButHereUntilItsFirstMessage() async throws {
     let transport = FakeTransport(autoReceipt: true)
     let model = await connected(transport)
@@ -1162,6 +1259,40 @@ private func summary(
 }
 
 @MainActor
+@Test func threadListStatusTracksHostTurnAndAttentionChanges() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1"])))
+    func status() -> ThreadStatus? {
+        guard let thread = model.threads.first(where: { $0.id == "home" }) else { return nil }
+        return ThreadStatus(thread, working: model.generating.contains(thread.id))
+    }
+    func send(_ id: String, _ thread: ThreadSummary) async {
+        await transport.yield(.event(event(id, .threadList(ThreadListData(threads: [thread])))))
+    }
+
+    await send("working", ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1,
+                                         turnState: .running))
+    #expect(await eventually { status() == .working })
+    await send("input", ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 2,
+                                       awaitingQuestion: true, turnState: .running))
+    #expect(await eventually { status() == .needsInput })
+    await send("approval", ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 3,
+                                          awaitingApproval: true, awaitingQuestion: true, turnState: .running))
+    #expect(await eventually { status() == .needsApproval })
+    await send("failed", ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 4,
+                                        needsAttention: true, turnState: .idle))
+    #expect(await eventually { status() == .failed })
+    await send("done", ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 5,
+                                      lastReadAt: 10, lastAgentAt: 20, turnState: .idle))
+    #expect(await eventually { status() == .doneUnread })
+    await send("read", ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 6,
+                                      lastReadAt: 20, lastAgentAt: 20, turnState: .idle))
+    #expect(await eventually { model.threads.first?.lastActivity == 6 && status() == .idle })
+    model.close()
+}
+
+@MainActor
 @Test func stopWaitsForHostCessationEvenAfterReceipt() async throws {
     let transport = FakeTransport(autoReceipt: true)
     let model = await connected(transport)
@@ -1177,13 +1308,32 @@ private func summary(
     let stop = try #require(await sent(by: transport, atLeast: pairingSends + 2)
         .first { $0.payload == .interrupt(InterruptData(targetEventId: target)) })
     #expect(model.stopPending(in: "home"))
+    #expect(!model.canStop(in: "home"))
     #expect(model.generating.contains("home"))
     await transport.yield(.event(event("requested", .stopStatus(StopStatusData(
         targetEventId: target, requestId: stop.id, status: .requested)))))
     #expect(model.stopPending(in: "home"))
+    #expect(!model.canStop(in: "home"))
     await transport.yield(.event(event("stopped", .stopStatus(StopStatusData(
         targetEventId: target, requestId: stop.id, status: .stopped)))))
     #expect(await eventually { !model.stopPending(in: "home") && !model.generating.contains("home") })
+}
+
+@MainActor
+@Test func hostStoppingStateDisablesStopUntilConfirmation() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1"])))
+    await transport.yield(.event(event("stopping", .threadList(ThreadListData(threads: [
+        ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1,
+            activeEventId: "active", turnState: .stopping, queuedTurnCount: 0)
+    ])))))
+    #expect(await eventually { model.generating.contains("home") && !model.canStop(in: "home") })
+    await transport.yield(.event(event("uncertain", .threadList(ThreadListData(threads: [
+        ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1,
+            activeEventId: "active", turnState: .stoppedUnconfirmed, queuedTurnCount: 0)
+    ])))))
+    #expect(await eventually { !model.canStop(in: "home") })
 }
 
 @MainActor

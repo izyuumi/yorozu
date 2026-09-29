@@ -683,6 +683,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
   /** One controller per running turn, so an `interrupt` cancels every tree at once. */
   const running = new Map<string, AbortController>();
   const runningEventIds = new Map<string, string>();
+  const terminateRunning = new Map<string, () => void>();
+  const stopTimers = new Map<string, ReturnType<typeof setTimeout>>();
   type TurnState = "idle" | "starting" | "running" | "stopping" | "stopped-unconfirmed";
   const turnStates = new Map<string, { state: TurnState; activeEventId?: string; queued: string[] }>();
   const pendingChanges = new Map<string, Promise<void>>();
@@ -1725,6 +1727,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
               effort: threadEffort(threadId, dir),
               signal: turn.signal,
               onSession: (sessionId) => { executionStarted = true; setThreadSession(threadId, sessionId, dir); },
+              onTerminate: (terminate) => terminateRunning.set(threadId, terminate),
               approve: async (tool, input, signal) =>
                 loadSettings(dir).yolo || nativeCards.approve(threadId, agent, tool, input, signal),
               ask: (question, options, signal) => nativeCards.ask(threadId, agent, question, options, signal),
@@ -1764,6 +1767,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
               },
             });
             if (done.sessionId && done.sessionId !== currentHome.sessionId) setThreadSession(threadId, done.sessionId, dir);
+            const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
+            if (done.completed && stop && (stop.status === "requested" || stop.status === "unconfirmed")) {
+              finish(done.text);
+              completeStop(stop, "completed");
+              return;
+            }
             if (turn.signal.aborted) return;
             if (done.failed) throw new Error(`${agent} reported an unsuccessful turn`);
             finish(done.text);
@@ -1791,6 +1800,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         }
       } finally {
         drainPauses.delete(threadId);
+        terminateRunning.delete(threadId);
         openToolCalls.delete(threadId);
         if (running.get(threadId) === turn) running.delete(threadId);
         if (runningEventIds.get(threadId) === userEventId) runningEventIds.delete(threadId);
@@ -1931,26 +1941,53 @@ export function serve(options: ServeOptions = {}): Sidecar {
       kind: "message", data: { role: "agent", text, done: true, interrupted: true } };
     emit(final);
   };
-  function completeStop(record: StopRecord): void {
-    if (record.status !== "requested") return;
-    persistStoppedReply(record);
-    const finished = { ...record, status: "stopped" as const };
+  function completeStop(record: StopRecord, status: "stopped" | "completed" = "stopped"): void {
+    if (record.status !== "requested" && record.status !== "unconfirmed") return;
+    clearTimeout(stopTimers.get(record.targetEventId));
+    stopTimers.delete(record.targetEventId);
+    if (status === "stopped") persistStoppedReply(record);
+    const finished = { ...record, status };
     rememberStop(finished);
     broadcastStop(finished);
   }
 
   const abortTarget = (threadId: string, target: string): boolean => {
     if (runningEventIds.get(threadId) !== target) return false;
-    running.get(threadId)?.abort();
     for (const card of [...pending.values()]) if (card.threadId === threadId) card.settle({ answer: "no" }, "cancelled");
     questions.cancelAll(threadId);
+    nativeCards.cancelAll(threadId);
+    running.get(threadId)?.abort();
     return true;
   };
 
   const finishStop = (record: StopRecord): void => {
     if (record.status !== "requested") return;
     const target = record.targetEventId;
-    if (!abortTarget(record.threadId, target)) {
+    if (abortTarget(record.threadId, target)) {
+      if (!stopTimers.has(target)) {
+        const timer = setTimeout(() => {
+          if (stoppedTurns.get(target)?.status !== "requested") return;
+          const confirm = setTimeout(() => {
+            stopTimers.delete(target);
+            if (stoppedTurns.get(target)?.status !== "requested") return;
+            const uncertain = { ...record, status: "unconfirmed" as const };
+            rememberStop(uncertain);
+            const turn = turnStates.get(record.threadId);
+            if (turn?.activeEventId === target) {
+              turn.state = "stopped-unconfirmed";
+              publishTurnState(record.threadId);
+            }
+            broadcastStop(uncertain);
+          }, 100);
+          confirm.unref?.();
+          stopTimers.set(target, confirm);
+          try { terminateRunning.get(record.threadId)?.(); }
+          catch (error) { state(`native-terminate-error ${String(error)}`); }
+        }, 3_000);
+        timer.unref?.();
+        stopTimers.set(target, timer);
+      }
+    } else {
       const nativeTurn = listThreads(dir).find((thread) => thread.id === record.threadId)?.nativeTurn;
       if (nativeTurn?.id === completionIdFor(record.threadId, target) && nativeTurn.state === "interrupted") {
         // The old SDK process is gone, but its last external effect is unknowable here.
@@ -3487,6 +3524,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     close: async () => {
       stopped = true;
+      for (const timer of stopTimers.values()) clearTimeout(timer);
+      stopTimers.clear();
       wakeDrainWaiters();
       clearTraces();
       partials.clear();
