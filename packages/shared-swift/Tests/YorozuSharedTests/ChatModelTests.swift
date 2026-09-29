@@ -114,6 +114,113 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
 }
 
 @MainActor
+@Test func promptHistoryWalksThreadUserMessagesAndEditsEndBrowsing() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.event(event("first", .message(MessageData(role: .user, text: "first prompt")))))
+    await transport.yield(.event(event("reply", .message(MessageData(role: .agent, text: "reply", done: true)))))
+    await transport.yield(.event(event("other", .message(MessageData(role: .user, text: "other thread")), thread: "other")))
+    await transport.yield(.event(event("last", .message(MessageData(role: .user, text: "last prompt")))))
+    #expect(await eventually { model.events["home"]?.count == 3 && model.events["other"]?.count == 1 })
+
+    model.drafts["home"] = "unfinished"
+    #expect(!model.recallPrompt(in: "home", older: true))
+    #expect(!model.recallPrompt(in: "home", older: false))
+    #expect(model.drafts["home"] == "unfinished")
+    model.drafts["home"] = ""
+    #expect(!model.recallPrompt(in: "home", older: false))
+    #expect(model.recallPrompt(in: "home", older: true))
+    #expect(model.drafts["home"] == "last prompt")
+    #expect(model.recallPrompt(in: "home", older: true))
+    #expect(model.drafts["home"] == "first prompt")
+    #expect(!model.recallPrompt(in: "home", older: true))
+    #expect(model.recallPrompt(in: "home", older: false))
+    #expect(model.drafts["home"] == "last prompt")
+    #expect(model.recallPrompt(in: "home", older: false))
+    #expect(model.drafts["home"] == "")
+    #expect(!model.recallPrompt(in: "empty", older: true))
+
+    #expect(model.recallPrompt(in: "home", older: true))
+    model.drafts["other"] = "independent edit"
+    #expect(model.recallPrompt(in: "home", older: true))
+    model.drafts["home"] = "edited prompt"
+    #expect(!model.recallPrompt(in: "home", older: false))
+    #expect(!model.recallPrompt(in: "home", older: true))
+    #expect(model.drafts["home"] == "edited prompt")
+    model.drafts["home"] = ""
+    let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "aGk=")
+    model.attachments["home"] = [file]
+    #expect(!model.recallPrompt(in: "home", older: true))
+    model.attachments["home"] = []
+    #expect(model.recallPrompt(in: "home", older: true))
+    model.attachments["home"] = [file]
+    model.attachments["home"] = []
+    #expect(!model.recallPrompt(in: "home", older: false))
+    #expect(model.drafts["home"] == "last prompt")
+}
+
+@MainActor
+@Test func stashedDraftsSurviveRelaunchAndRestoreTextAndAttachments() throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    let key = SymmetricKey(size: .bits256)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    func launch() -> ChatModel {
+        ChatModel(transport: FakeTransport(), cache: ThreadCache(directory: directory, key: key))
+    }
+    let model = launch()
+    let thread = model.newDraft()
+    let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "aGk=")
+    model.drafts[thread.id] = "  unfinished\nthought  "
+    model.attachments[thread.id] = [file]
+    model.stashDraft(in: thread.id)
+    #expect(model.drafts[thread.id] == "")
+    #expect((model.attachments[thread.id] ?? []).isEmpty)
+    model.attachments[thread.id] = [file]
+    model.stashDraft(in: thread.id)
+    model.stashDraft(in: thread.id) // An empty composer adds nothing.
+    let other = model.newDraft()
+    model.drafts[other.id] = "another thread"
+    model.stashDraft(in: other.id)
+    model.discardDraft(thread.id)
+
+    let restored = launch() // No flush or close: stash is durable immediately.
+    #expect(restored.isDraft(thread.id))
+    let stashes = try #require(restored.stashes[thread.id])
+    #expect(stashes.count == 2)
+    #expect(restored.stashes[other.id]?.count == 1)
+    restored.drafts[thread.id] = "quick question"
+    restored.restoreStash(stashes[0].id, in: thread.id)
+    #expect(restored.drafts[thread.id] == "quick question")
+    #expect(restored.stashes[thread.id]?.count == 2)
+    restored.drafts[thread.id] = ""
+    restored.attachments[thread.id] = [file]
+    restored.restoreStash(stashes[0].id, in: thread.id)
+    #expect(restored.drafts[thread.id] == "")
+    restored.attachments[thread.id] = []
+    restored.restoreStash(stashes[0].id, in: other.id)
+    #expect(restored.stashes[thread.id]?.count == 2)
+    restored.restoreStash(stashes[0].id, in: thread.id)
+    #expect(restored.drafts[thread.id] == "  unfinished\nthought  ")
+    #expect(restored.attachments[thread.id] == [file])
+    #expect(restored.stashes[thread.id]?.count == 1)
+
+    let again = launch()
+    #expect(again.drafts[thread.id] == "  unfinished\nthought  ")
+    #expect(again.attachments[thread.id] == [file])
+    let remaining = try #require(again.stashes[thread.id]?.first)
+    #expect(remaining.attachments == [file])
+    again.drafts[thread.id] = ""
+    again.attachments[thread.id] = []
+    again.restoreStash(remaining.id, in: thread.id)
+    #expect(again.drafts[thread.id] == "")
+    #expect(again.attachments[thread.id] == [file])
+    #expect(again.stashes[thread.id]?.isEmpty == true)
+    again.archive(other)
+    #expect(launch().stashes[other.id] == nil)
+}
+
+@MainActor
 @Test func stagedComposerSurvivesImmediateRelaunchWithoutFlush() {
     let cache = ThreadCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString),
                             key: SymmetricKey(size: .bits256))
@@ -1363,6 +1470,134 @@ private func summary(
 
     model.interrupt(in: "home")
     #expect(await sent(by: transport, payload: .interrupt(InterruptData(targetEventId: "active")), in: "home") != nil)
+}
+
+@MainActor
+@Test(arguments: [false, true])
+func stopRestoresQueuedDraftOnEveryDevice(localMessages: Bool) async throws {
+    let cache = ThreadCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString), key: SymmetricKey(size: .bits256))
+    defer { try? FileManager.default.removeItem(at: cache.directory) }
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    let existing = MessageAttachment(name: "draft.txt", mime: "text/plain", data: "ZA==")
+    let first = MessageAttachment(name: "first.txt", mime: "text/plain", data: "YQ==")
+    let second = MessageAttachment(name: "second.txt", mime: "text/plain", data: "Yg==")
+    var messages: [YorozuEvent] = []
+    for (text, file) in [("first queued", first), ("second queued", second)] {
+        if localMessages {
+            model.send(text, in: "home", attachment: file)
+            messages.append(try #require(model.events["home"]?.last))
+        } else {
+            messages.append(event(text, .message(MessageData(role: .user, text: text, attachments: [file]))))
+        }
+    }
+    model.drafts["home"] = "existing draft"
+    model.attachments["home"] = [existing]
+    model.drafts["other"] = "other draft"
+    model.attachments["other"] = [existing]
+    model.start()
+    let withdrawnAt = messages.map(\.ts).max()! + 1
+    let withdrawals = messages.enumerated().map { index, message in
+        YorozuEvent(id: "withdraw-\(message.id)", threadId: "home", ts: withdrawnAt + index,
+            agentId: "main", payload: .stopStatus(StopStatusData(
+                targetEventId: message.id, requestId: "stop-on-another-device", status: .withdrawn)))
+    }
+    for message in messages { await transport.yield(.event(message)) }
+    if localMessages {
+        await transport.yield(.event(event("withdrawal-page", .syncDelta(SyncDeltaData(events: withdrawals)))))
+    } else {
+        for withdrawal in withdrawals { await transport.yield(.event(withdrawal)) }
+    }
+    #expect(await eventually { model.drafts["home"] == "existing draft\n\nfirst queued\n\nsecond queued" })
+    #expect(model.attachments["home"] == [existing, first, second])
+    #expect(model.drafts["other"] == "other draft")
+    #expect(model.attachments["other"] == [existing])
+    #expect(messages.allSatisfy { !model.canWithdraw($0) })
+    // A replay, including one after relaunch, must not restore the same text twice.
+    for withdrawal in withdrawals { await transport.yield(.event(withdrawal)) }
+    await transport.yield(.event(event("barrier", .thought(ThoughtData(text: "synced")))))
+    #expect(await eventually { model.events["home"]?.contains(where: { $0.id == "barrier" }) == true })
+    model.drafts["home"] = "edited restored draft"
+    await model.shutdown()
+    let replay = FakeTransport()
+    let restored = ChatModel(transport: replay, cache: cache)
+    restored.start()
+    await replay.yield(.event(event("sync", .syncDelta(SyncDeltaData(events: messages + withdrawals)))))
+    await replay.yield(.event(event("replayed", .thought(ThoughtData(text: "synced")))))
+    #expect(await eventually { restored.events["home"]?.contains(where: { $0.id == "replayed" }) == true })
+    #expect(restored.drafts["home"] == "edited restored draft")
+    #expect(restored.attachments["home"] == [existing, first, second])
+    await restored.shutdown()
+}
+
+@MainActor
+@Test(arguments: [false, true])
+func syncedWithdrawalDoesNotReviveOldDraft(ownOutboxWithLaterMessage: Bool) async throws {
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport)
+    let original: YorozuEvent
+    if ownOutboxWithLaterMessage {
+        model.send("queued", in: "home")
+        original = try #require(model.events["home"]?.first)
+    } else {
+        original = event("old-queued", .message(MessageData(role: .user, text: "queued")))
+    }
+    let withdrawn = YorozuEvent(id: "old-withdrawal", threadId: "home", ts: original.ts + 1,
+        agentId: "main", payload: .stopStatus(StopStatusData(
+            targetEventId: original.id, requestId: "stop", status: .withdrawn)))
+    let later = YorozuEvent(id: "later-user", threadId: "home", ts: withdrawn.ts + 1,
+        agentId: "main", payload: .message(MessageData(role: .user, text: "moved on")))
+    model.start()
+    await transport.yield(.event(event("history", .syncDelta(SyncDeltaData(
+        events: ownOutboxWithLaterMessage ? [original, withdrawn, later] : [original, withdrawn])))))
+    await transport.yield(.event(event("barrier", .thought(ThoughtData(text: "loaded")))))
+    #expect(await eventually { model.events["home"]?.contains(where: { $0.id == "barrier" }) == true })
+    #expect(model.drafts["home", default: ""] == "")
+    #expect(model.attachments["home", default: []].isEmpty)
+    if ownOutboxWithLaterMessage { #expect(model.outboxStatus(of: original.id) == .withdrawn) }
+    await model.shutdown()
+}
+
+@MainActor
+@Test func liveWithdrawalAfterLaterUserLeavesDraftAlone() async throws {
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport)
+    model.start()
+    let original = event("old-queued", .message(MessageData(role: .user, text: "queued")))
+    let later = YorozuEvent(id: "later-user", threadId: "home", ts: 3,
+        agentId: "main", payload: .message(MessageData(role: .user, text: "moved on")))
+    await transport.yield(.event(event("history", .syncDelta(SyncDeltaData(events: [original, later])))))
+    let withdrawn = YorozuEvent(id: "withdrawn", threadId: "home", ts: 2,
+        agentId: "main", payload: .stopStatus(StopStatusData(
+            targetEventId: original.id, requestId: "stop", status: .withdrawn)))
+    await transport.yield(.event(withdrawn))
+    #expect(await eventually { model.events["home"]?.contains(where: { $0.id == "withdrawn" }) == true })
+    #expect(model.drafts["home", default: ""] == "")
+    await model.shutdown()
+}
+
+@MainActor
+@Test func withdrawnAttachmentRestoresWhenHistoryArrivesAndDownloadsIntoComposer() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["attachment-chunks-v1"])))
+    let bytes = Data(repeating: 42, count: 1_024)
+    let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+    let attachment = MessageAttachment(name: "file.txt", mime: "text/plain", data: "", sizeBytes: bytes.count, sha256: digest)
+    await transport.yield(.event(event("withdraw-file", .stopStatus(StopStatusData(
+        targetEventId: "queued-file", requestId: "remote-stop", status: .withdrawn)))))
+    let original = event("queued-file", .message(MessageData(role: .user, text: "", attachments: [attachment])))
+    await transport.yield(.event(event("history", .syncDelta(SyncDeltaData(events: [original])))))
+    #expect(await eventually { model.attachments["home"] == [attachment] })
+    #expect(await sent(by: transport, payload: .attachmentDownloadRequest(AttachmentDownloadRequestData(
+        messageId: original.id, index: 0, offset: 0)), in: "home") != nil)
+    await transport.yield(.event(event("file-bytes", .attachmentDownloadChunk(AttachmentDownloadChunkData(
+        messageId: original.id, index: 0, offset: 0, totalBytes: bytes.count,
+        data: bytes.base64EncodedString(), sha256: digest)))))
+    #expect(await eventually { model.attachments["home"]?.first?.bytes == bytes })
+    #expect(model.attachments["home"]?.count == 1)
+    #expect(model.attachments["home"]?.first?.isDeferred == false)
 }
 
 @MainActor

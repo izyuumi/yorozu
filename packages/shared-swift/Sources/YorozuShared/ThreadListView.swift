@@ -1208,10 +1208,8 @@ public struct ThreadListView<Destination: View>: View {
                     Button("Restore", systemImage: "tray.and.arrow.up") { moveArchive(thread, false) }
                         .tint(.blue)
                 } else {
-                    if thread.isUnread {
-                        Button("Mark as read", systemImage: "envelope.open") { onRead(thread, true) }
-                            .tint(.blue)
-                    }
+                    readButton(thread)
+                        .tint(.blue)
                     Button(
                         thread.pinned ? String(localized: "Unpin") : String(localized: "Pin"),
                         systemImage: thread.pinned ? "pin.slash" : "pin"

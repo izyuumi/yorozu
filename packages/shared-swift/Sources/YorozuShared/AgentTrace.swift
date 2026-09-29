@@ -76,14 +76,31 @@ public func mainTrace(from events: [YorozuEvent]) -> [YorozuEvent] {
     }
 }
 
+/// A thought stays open until the next activity or the turn's terminal event.
+public struct ReasoningActivity: Identifiable, Equatable, Sendable {
+    public var event: YorozuEvent
+    public var finishedAt: Int?
+    public var running: Bool = false
+
+    public var id: String { event.id }
+    public var text: String {
+        if case .thought(let data) = event.payload { return data.text }
+        return ""
+    }
+    public var label: String {
+        if running { return String(localized: "Thinking…") }
+        let seconds = max(0, (finishedAt ?? event.ts) - event.ts) / 1000
+        return String(localized: "Thought for \(seconds) s")
+    }
+}
+
 /// Everything the main agent did between one message and the next, as one row. While it runs
-/// the row is a single live status line; when it is over the row collapses to how many steps
-/// it took and how long, and opens to the full trace — thoughts, tool runs and delegations in
-/// the order they happened. Cards that need a person stay outside it.
+/// the row shows the live work; when it is over the row collapses to how long it took, and
+/// opens to the full trace — thoughts, tool runs and delegations in the order they happened. Cards that need a person stay outside it.
 public struct TurnWork: Identifiable, Equatable, Sendable {
     /// What the trace is made of, in order.
     public enum Entry: Identifiable, Equatable, Sendable {
-        case thought(YorozuEvent)
+        case thought(ReasoningActivity)
         /// An unbroken run of the main agent's tool calls, drawn as one group.
         case tools([ToolActivity])
         case delegation(DelegationCard)
@@ -103,21 +120,23 @@ public struct TurnWork: Identifiable, Equatable, Sendable {
     /// Id of the first event in the work, which is what the row is keyed on.
     public var startEventId: String
     public var entries: [Entry]
-    /// Epoch milliseconds of the first and latest event in it.
+    /// Epoch milliseconds of the turn's start and latest activity.
     public var startedAt: Int
     public var lastAt: Int
     /// Whether the turn this work belongs to is still running. Set by the caller: the events
     /// alone cannot tell "paused" from "finished".
     public var running: Bool
+    public var stopStatus: StopStatusData.Status?
 
     public var id: String { "work-\(startEventId)" }
 
-    public init(startEventId: String, entries: [Entry], startedAt: Int, lastAt: Int, running: Bool) {
+    public init(startEventId: String, entries: [Entry], startedAt: Int, lastAt: Int, running: Bool, stopStatus: StopStatusData.Status? = nil) {
         self.startEventId = startEventId
         self.entries = entries
         self.startedAt = startedAt
         self.lastAt = lastAt
         self.running = running
+        self.stopStatus = stopStatus
     }
 
     /// Tool calls, counting a delegation's own as well: what "N steps" counts.
@@ -141,6 +160,16 @@ public struct TurnWork: Identifiable, Equatable, Sendable {
     /// Wall time between the first and latest event, never negative.
     public var duration: Duration { .milliseconds(max(0, lastAt - startedAt)) }
 
+    public func label(at date: Date = .now) -> String {
+        let end = running ? Int(date.timeIntervalSince1970 * 1000) : lastAt
+        let seconds = max(0, end - startedAt) / 1000
+        let elapsed = Duration.seconds(seconds).formatted(.units(allowed: [.minutes, .seconds], width: .narrow))
+        if running { return String(localized: "Working for \(elapsed)") }
+        if stopStatus == .stopped { return String(localized: "You stopped after \(elapsed)") }
+        if stopStatus == .unconfirmed { return String(localized: "Stop unconfirmed after \(elapsed)") }
+        return String(localized: "Worked for \(elapsed)")
+    }
+
     /// The one line shown while the work runs: what is happening right now. A progress card's
     /// title wins when there is one, because it was written to be read; otherwise the newest
     /// thought, running tool or running delegation.
@@ -158,8 +187,8 @@ public struct TurnWork: Identifiable, Equatable, Sendable {
                     guard let percent = card.percent else { return card.title }
                     return "\(card.title) · \(Int(percent.rounded()))%"
                 }
-            case .thought(let event):
-                if case .thought(let data) = event.payload, !data.text.isEmpty { return data.text }
+            case .thought(let thought):
+                if !thought.text.isEmpty { return thought.text }
             case .tools(let activities):
                 if let live = activities.last(where: { $0.running }) ?? activities.last { return live.currentAction }
             case .delegation(let card):
@@ -199,7 +228,9 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
 ///
 /// - Parameter generating: whether a turn is running in this thread. The last work row is
 ///   live while it is, and settled once it is not; the events alone cannot say which.
-public func chatRows(from events: [YorozuEvent], generating: Bool = false) -> [ChatRow] {
+/// - Parameter activeEventId: the host-owned turn, when available. Its work stays live even
+///   after a reply; only the host settling that turn ends the timer.
+public func chatRows(from events: [YorozuEvent], generating: Bool = false, activeEventId: String? = nil) -> [ChatRow] {
     // A final reply is the turn's terminator, even when a reconnect replays tool activity
     // after that reply reached this client. Keep user-message boundaries intact, but render
     // each completed main-agent reply after every other event in its turn.
@@ -251,7 +282,16 @@ public func chatRows(from events: [YorozuEvent], generating: Bool = false) -> [C
         return (data.turnEventId, event)
     }, uniquingKeysWith: { _, latest in latest })
 
+    let stops = Dictionary(events.compactMap { event -> (String, YorozuEvent)? in
+        guard case .stopStatus(let data) = event.payload,
+              [.stopped, .completed, .unconfirmed].contains(data.status) else { return nil }
+        return (data.targetEventId, event)
+    }, uniquingKeysWith: { _, latest in latest })
     var rows: [ChatRow] = []
+    var workTurns: [String: String] = [:]
+    var turnStarts: [String: Int] = [:]
+    var turnEnds: [String: Int] = [:]
+    var finishedTurns: Set<String> = []
     var turnEventId: String?
     var transientStatus: YorozuEvent?
     /// The work row being filled: everything the main agent does between one message and the
@@ -266,6 +306,11 @@ public func chatRows(from events: [YorozuEvent], generating: Bool = false) -> [C
     }
     func touch(_ event: YorozuEvent) {
         var current = work ?? TurnWork(startEventId: event.id, entries: [], startedAt: event.ts, lastAt: event.ts, running: false)
+        if let index = current.entries.indices.last, case .thought(var thought) = current.entries[index],
+           thought.finishedAt == nil, thought.id != event.id {
+            thought.finishedAt = max(thought.event.ts, event.ts)
+            current.entries[index] = .thought(thought)
+        }
         current.lastAt = max(current.lastAt, event.ts)
         work = current
     }
@@ -276,7 +321,21 @@ public func chatRows(from events: [YorozuEvent], generating: Bool = false) -> [C
     }
     func closeWork() {
         closeTools()
-        if let done = work { rows.append(.work(done)) }
+        if work == nil, let turnEventId, let stop = stops[turnEventId],
+           case .stopStatus(let data) = stop.payload, [.stopped, .unconfirmed].contains(data.status),
+           !workTurns.values.contains(turnEventId) {
+            work = TurnWork(startEventId: turnEventId, entries: [],
+                startedAt: turnStarts[turnEventId] ?? stop.ts,
+                lastAt: turnEnds[turnEventId] ?? stop.ts, running: false)
+        }
+        if let done = work {
+            rows.append(.work(done))
+            if let turnEventId {
+                workTurns[done.id] = turnEventId
+                turnStarts[turnEventId] = min(turnStarts[turnEventId] ?? done.startedAt, done.startedAt)
+                turnEnds[turnEventId] = max(turnEnds[turnEventId] ?? done.lastAt, done.lastAt)
+            }
+        }
         work = nil
     }
 
@@ -315,11 +374,21 @@ public func chatRows(from events: [YorozuEvent], generating: Bool = false) -> [C
             closeWork()
             rows.append(.unreadable(event))
         case .thought where event.parentAgentId == nil:
-            add(.thought(event), at: event)
+            add(.thought(ReasoningActivity(event: event)), at: event)
         case .message(let data) where event.parentAgentId == nil:
+            if data.role == .agent {
+                if work != nil { touch(event) }
+                if let turnEventId {
+                    turnEnds[turnEventId] = max(turnEnds[turnEventId] ?? event.ts, event.ts)
+                    if data.done == true { finishedTurns.insert(turnEventId) }
+                }
+            }
             closeWork()
             rows.append(.message(event))
-            if data.role == .user { turnEventId = event.id }
+            if data.role == .user {
+                turnEventId = event.id
+                turnStarts[event.id] = event.ts
+            }
             if data.role == .agent, data.done == true, let turnEventId, let change = changes[turnEventId] {
                 rows.append(.changes(change))
             }
@@ -328,12 +397,15 @@ public func chatRows(from events: [YorozuEvent], generating: Bool = false) -> [C
         // on it and nothing happens until it is answered. The work row closes on them, so the
         // card sits below the work that led to it.
         case .approvalCard:
+            if work != nil { touch(event) }
             closeWork()
             rows.append(.approval(event))
         case .ruleProposal:
+            if work != nil { touch(event) }
             closeWork()
             rows.append(.proposal(event))
         case .questionCard:
+            if work != nil { touch(event) }
             closeWork()
             rows.append(.question(event))
         // A progress card is only ever read, and while the work runs its title is the status
@@ -356,11 +428,40 @@ public func chatRows(from events: [YorozuEvent], generating: Bool = false) -> [C
     if let transientStatus {
         rows.append(.work(TurnWork(
             startEventId: transientStatus.id,
-            entries: [.thought(transientStatus)],
+            entries: [.thought(ReasoningActivity(event: transientStatus, running: true))],
             startedAt: transientStatus.ts,
             lastAt: transientStatus.ts,
             running: true
         )))
+    }
+    if generating, let activeEventId, !workTurns.values.contains(activeEventId), transientStatus == nil,
+       let prompt = events.first(where: { $0.id == activeEventId }) {
+        let pending = TurnWork(startEventId: activeEventId, entries: [], startedAt: prompt.ts, lastAt: prompt.ts, running: true)
+        rows.append(.work(pending))
+        workTurns[pending.id] = activeEventId
+    }
+    for index in rows.indices {
+        guard case .work(var current) = rows[index] else { continue }
+        if let turn = workTurns[current.id] {
+            current.startedAt = turnStarts[turn] ?? current.startedAt
+            current.lastAt = turnEnds[turn] ?? current.lastAt
+            if let stop = stops[turn], case .stopStatus(let data) = stop.payload {
+                current.stopStatus = data.status
+                // Replayed stop acknowledgements can arrive much later than the reply.
+                if data.status != .completed, !finishedTurns.contains(turn) {
+                    current.lastAt = max(current.lastAt, stop.ts)
+                }
+            }
+            if let activeEventId { current.running = generating && turn == activeEventId }
+            if current.stopStatus == .stopped || current.stopStatus == .unconfirmed { current.running = false }
+        }
+        for entry in current.entries.indices {
+            guard case .thought(var thought) = current.entries[entry] else { continue }
+            thought.running = current.running && thought.finishedAt == nil
+            if !thought.running, thought.finishedAt == nil { thought.finishedAt = current.lastAt }
+            current.entries[entry] = .thought(thought)
+        }
+        rows[index] = .work(current)
     }
     return rows
 }

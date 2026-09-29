@@ -10,6 +10,7 @@
         let placeholder: String
         let onSubmit: () -> Void
         let onQuestionOption: (Int) -> Bool
+        let onPromptHistory: (Bool) -> Bool
         /// Called when Paste finds an image; nil while images cannot be attached, so Paste goes
         /// back to being text-only.
         let onPasteImage: (() -> Void)?
@@ -53,6 +54,7 @@
             view.placeholderLabel.isHidden = !text.isEmpty
             view.onSubmit = onSubmit
             view.onQuestionOption = onQuestionOption
+            view.onPromptHistory = onPromptHistory
             view.onPasteImage = onPasteImage
             if focusThread != view.focusThread {
                 view.focusThread = focusThread
@@ -92,6 +94,7 @@
         let placeholderLabel = UILabel()
         var onSubmit: () -> Void = {}
         var onQuestionOption: (Int) -> Bool = { _ in false }
+        var onPromptHistory: (Bool) -> Bool = { _ in false }
         var onPasteImage: (() -> Void)?
         var focusThread: String?
         private var focusPending = false
@@ -127,6 +130,13 @@
                 !key.modifierFlags.contains(.shift)
             {
                 return onSubmit()
+            }
+            if let key = presses.first?.key, markedTextRange == nil,
+                key.modifierFlags.intersection([.shift, .control, .alternate, .command]).isEmpty,
+                key.keyCode == .keyboardUpArrow || key.keyCode == .keyboardDownArrow,
+                onPromptHistory(key.keyCode == .keyboardUpArrow)
+            {
+                return
             }
             super.pressesBegan(presses, with: event)
         }
@@ -181,6 +191,7 @@
         /// Set while the skill picker is open, which then has its keys before Send and Stop do.
         let onPickerKey: ((SkillPickerKey) -> Void)?
         let onQuestionOption: (Int) -> Bool
+        let onPromptHistory: (Bool) -> Bool
 
         func makeNSView(context: Context) -> MonitorView { MonitorView() }
 
@@ -191,6 +202,7 @@
             view.onPaste = onPaste
             view.onPickerKey = onPickerKey
             view.onQuestionOption = onQuestionOption
+            view.onPromptHistory = onPromptHistory
         }
 
         final class MonitorView: NSView {
@@ -200,6 +212,7 @@
             var onPaste: (() -> Void)?
             var onPickerKey: ((SkillPickerKey) -> Void)?
             var onQuestionOption: (Int) -> Bool = { _ in false }
+            var onPromptHistory: (Bool) -> Bool = { _ in false }
             private var monitor: Any?
 
             override func viewDidMoveToWindow() {
@@ -216,6 +229,12 @@
                             keyCode: event.keyCode, flags: event.modifierFlags, composing: composing)
                     {
                         onPickerKey(key)
+                        return nil
+                    }
+                    if let key = skillPickerKey(
+                        keyCode: event.keyCode, flags: event.modifierFlags, composing: composing),
+                        key == .up || key == .down, self.onPromptHistory(key == .up)
+                    {
                         return nil
                     }
                     if !composing,

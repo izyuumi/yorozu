@@ -208,9 +208,94 @@ public final class ChatModel {
     /// What this device chose for each answered action, so the card can say so afterwards.
     public private(set) var choices: [String: ApprovalAnswerData.Answer] = [:]
     /// One composer draft per thread, so switching threads does not lose what was typed.
-    public var drafts: [String: String] = [:] { didSet { saveDraftsNow() } }
+    public var drafts: [String: String] = [:] {
+        didSet {
+            if !recallingPrompt {
+                for id in promptHistory.keys where drafts[id] != oldValue[id] { promptHistory[id] = nil }
+            }
+            saveDraftsNow()
+        }
+    }
     /// Files staged in each thread's composer but not yet sent, alongside its draft text.
-    public var attachments: [String: [MessageAttachment]] = [:] { didSet { saveComposerNow() } }
+    public var attachments: [String: [MessageAttachment]] = [:] {
+        didSet {
+            for id in promptHistory.keys where attachments[id] != oldValue[id] { promptHistory[id] = nil }
+            saveComposerNow()
+        }
+    }
+    public private(set) var stashes: [String: [ThreadCache.StashedDraft]] = [:]
+    private var promptHistory: [String: String] = [:]
+    private var recallingPrompt = false
+
+    /// Begin on an empty composer; recalled text stays navigable until the next edit.
+    @discardableResult
+    public func recallPrompt(in threadId: String, older: Bool) -> Bool {
+        guard (attachments[threadId] ?? []).isEmpty,
+              promptHistory[threadId] != nil || (drafts[threadId] ?? "").isEmpty else { return false }
+        let prompts = timeline(threadId).events.filter {
+            if case .message(let data) = $0.payload { data.role == .user && !data.text.isEmpty }
+            else { false }
+        }
+        let current = prompts.firstIndex { $0.id == promptHistory[threadId] } ?? prompts.count
+        let next = older ? current - 1 : current + 1
+        guard next >= 0, next <= prompts.count, current != prompts.count || older else { return false }
+        recallingPrompt = true
+        defer { recallingPrompt = false }
+        if next == prompts.count {
+            promptHistory[threadId] = nil
+            drafts[threadId] = ""
+        } else if case .message(let data) = prompts[next].payload {
+            promptHistory[threadId] = prompts[next].id
+            drafts[threadId] = data.text
+        }
+        return true
+    }
+
+    public func stashDraft(in threadId: String) {
+        let text = drafts[threadId] ?? ""
+        let files = attachments[threadId] ?? []
+        guard !text.isEmpty || !files.isEmpty else { return }
+        restoringComposer = true
+        defer { restoringComposer = false }
+        let previous = stashes[threadId]
+        stashes[threadId, default: []].append(.init(text: text, attachments: files))
+        do {
+            // Make the stash durable before clearing either part of the composer.
+            try saveComposer()
+        } catch {
+            stashes[threadId] = previous
+            failure = "Could not save draft: \(error.localizedDescription)"
+            return
+        }
+        drafts[threadId] = ""
+        attachments[threadId] = nil
+        do {
+            try saveComposer()
+            try saveDraftState()
+        } catch { failure = "Could not save draft: \(error.localizedDescription)" }
+    }
+
+    public func restoreStash(_ id: String, in threadId: String) {
+        guard (drafts[threadId] ?? "").isEmpty, (attachments[threadId] ?? []).isEmpty,
+              let stash = stashes[threadId]?.first(where: { $0.id == id }) else { return }
+        restoringComposer = true
+        defer { restoringComposer = false }
+        drafts[threadId] = stash.text
+        attachments[threadId] = stash.attachments
+        let previous = stashes[threadId]
+        do {
+            // Keep the stash until both composer records own the restored draft.
+            try saveDraftState()
+            try saveComposer()
+            stashes[threadId]?.removeAll { $0.id == id }
+            try saveComposer()
+        } catch {
+            stashes[threadId] = previous
+            failure = "Could not save draft: \(error.localizedDescription)"
+        }
+    }
+    private var restoredWithdrawals: Set<String> = []
+    private var liveWithdrawals: Set<String> = []
     /// Threads with a turn in flight, so the composer offers Stop rather than Send.
     ///
     /// Set when this device sends, cleared by the agent message flagged `done` or confirmed
@@ -412,8 +497,10 @@ public final class ChatModel {
     private func saveComposer() throws {
         try cache?.save(composer: .init(drafts: drafts, attachments: attachments, threads: draftThreads,
                                        knownThreads: synced, openThread: openThread,
+                                       stashes: stashes.isEmpty ? nil : stashes,
                                        readingPositions: readingPositions.isEmpty ? nil : readingPositions,
-                                       preparedSend: preparedSend.isEmpty ? nil : preparedSend))
+                                       preparedSend: preparedSend.isEmpty ? nil : preparedSend,
+                                       restoredWithdrawals: restoredWithdrawals.isEmpty ? nil : restoredWithdrawals))
     }
     /// Replay progress follows the runtime's log order, independently of live events and
     /// the timeline's timestamp order. Advancing from either can skip unseen sync pages.
@@ -510,6 +597,8 @@ public final class ChatModel {
             composerPrepared = composer.preparedSend ?? [:]
             drafts = draftState?.drafts ?? composer.drafts
             attachments = composer.attachments
+            stashes = composer.stashes ?? [:]
+            restoredWithdrawals = composer.restoredWithdrawals ?? []
             draftThreads = draftState?.threads ?? composer.threads
             openThread = draftState == nil ? composer.openThread : draftState?.openThread
             readingPositions = composer.readingPositions ?? [:]
@@ -1297,7 +1386,11 @@ public final class ChatModel {
             return
         }
         downloadBytes.removeValue(forKey: key)
+        let deferred = message.attachments[chunk.index]
         message.attachments[chunk.index].data = partial.base64EncodedString()
+        if let staged = attachments[threadId] {
+            attachments[threadId] = staged.map { $0 == deferred ? message.attachments[chunk.index] : $0 }
+        }
         var completed = event
         completed.payload = .message(message)
         upsert(completed)
@@ -1611,6 +1704,33 @@ public final class ChatModel {
         flush()
     }
 
+    private func restoreWithdrawals(in threadId: String) {
+        let history = timeline(threadId).events
+        for event in history {
+            guard case .stopStatus(let status) = event.payload, status.status == .withdrawn,
+                  !restoredWithdrawals.contains(status.targetEventId) else { continue }
+            let ownIndex = outbox.firstIndex(where: { $0.id == status.targetEventId && $0.event.threadId == threadId })
+            let ownMessage = ownIndex.map { outbox[$0].event }
+            guard liveWithdrawals.contains(status.targetEventId) || ownMessage != nil else { continue }
+            if let ownIndex, outbox[ownIndex].admissionStatus != .withdrawn {
+                outbox[ownIndex].admissionStatus = .withdrawn
+                saveOutbox()
+            }
+            guard !history.contains(where: { known in
+                      guard known.ts > event.ts, case .message(let message) = known.payload else { return false }
+                      return message.role == .user
+                  }) else { continue }
+            let original = ownMessage ?? history.first(where: { $0.id == status.targetEventId })
+            guard let original, case .message(let message) = original.payload, message.role == .user else { continue }
+            restoredWithdrawals.insert(status.targetEventId)
+            liveWithdrawals.remove(status.targetEventId)
+            let draft = drafts[threadId] ?? ""
+            drafts[threadId] = [draft, message.text].filter { !$0.isEmpty }.joined(separator: "\n\n")
+            attachments[threadId, default: []].append(contentsOf: message.attachments)
+            if message.attachments.contains(where: \.isDeferred) { requestAttachmentDownloads(original) }
+        }
+    }
+
     /// Forgets one event on this device only: it stays in the runtime's thread log, and a
     /// device that syncs from scratch will see it again. Tidying a transcript, not deleting.
     public func delete(_ eventId: String, in threadId: String) {
@@ -1645,7 +1765,7 @@ public final class ChatModel {
     /// Leaving a draft discards it only when its composer is empty.
     public func discardDraft(_ threadId: String) {
         guard (drafts[threadId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            (attachments[threadId] ?? []).isEmpty
+            (attachments[threadId] ?? []).isEmpty, (stashes[threadId] ?? []).isEmpty
         else { return }
         removeDraft(threadId)
     }
@@ -1654,6 +1774,7 @@ public final class ChatModel {
         guard isDraft(threadId) else { return }
         draftThreads.removeAll { $0.id == threadId }
         drafts[threadId] = nil
+        stashes[threadId] = nil
         attachments[threadId] = nil
     }
 
@@ -2141,13 +2262,14 @@ public final class ChatModel {
                     if data.threadId == nil { syncLastSeen[event.threadId] = event.syncCursor ?? event.id }
                     else { historyCursors[event.threadId] = event.syncCursor ?? event.id }
                 }
+                let syncedThreads = Set(data.events.map(\.threadId))
+                    .union((data.current ?? []).map(\.threadId))
+                    .union(data.threadId.map { [$0] } ?? [])
+                for threadId in syncedThreads { restoreWithdrawals(in: threadId) }
                 if let id = data.threadId {
                     historyInFlight.remove(id)
                     if data.more != true { historyLoaded.insert(id) }
                 }
-                let syncedThreads = Set(data.events.map(\.threadId))
-                    .union((data.current ?? []).map(\.threadId))
-                    .union(data.threadId.map { [$0] } ?? [])
                 persistEvents(in: syncedThreads)
                 if data.more != true { for id in syncedThreads { restoreRewoundPrompt(in: id) } }
                 if let workingThreadIds = data.workingThreadIds {
@@ -2273,6 +2395,12 @@ public final class ChatModel {
         // are flushed before it.
         flushStreamEvents()
         upsert(event)
+        if case .stopStatus(let status) = event.payload, status.status == .withdrawn {
+            liveWithdrawals.insert(status.targetEventId)
+            restoreWithdrawals(in: event.threadId)
+        } else if case .message(let message) = event.payload, message.role == .user {
+            restoreWithdrawals(in: event.threadId)
+        }
     }
 
     private func flushStreamEvents() {
