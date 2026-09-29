@@ -45,9 +45,10 @@ Newline-delimited JSON over the socket. Both directions are at least once and ac
 | `inbound` | Yorozu → plugin | A user message. Acked once OpenClaw has dispatched it; resent on every connect until then. |
 | `deliver` | plugin → Yorozu | An OpenClaw reply. An unknown thread id opens a new thread. |
 | `ack` / `error` | both | Receipt by id. |
-| `hello` | plugin → Yorozu | First frame on every connection: `{ capabilities: ["run-boundary-v1"] }`. |
+| `hello` | plugin → Yorozu | First frame on every connection: `{ capabilities: ["run-boundary-v1", "progress-v1"] }`. |
 | `run_started` / `run_finished` | plugin → Yorozu | `run-boundary-v1`: one run per `inbound`, from OpenClaw starting on it to its end (`completed`, `failed` or `aborted`), however many replies or none. Runs are serialized per thread, and an unfinished run is re-announced after a reconnect. |
 | `abort` | Yorozu → plugin | Cancels exactly that run's OpenClaw turn; the real outcome comes back in `run_finished`. |
+| `tool_started` / `tool_finished` | plugin → Yorozu | `progress-v1`: the tool calls of the running message, from OpenClaw's `before_tool_call` / `after_tool_call` hooks for `yorozu` requesters only. The hooks only observe; frames are best effort and not acked. |
 
 ### Model selection
 

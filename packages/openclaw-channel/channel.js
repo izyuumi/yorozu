@@ -13,6 +13,7 @@ import {
 import { createChannelReplyPipeline } from "openclaw/plugin-sdk/channel-reply-pipeline";
 import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 import { createInboundDispatcher } from "./dispatch.js";
+import { createProgress } from "./progress.js";
 import { createRuns } from "./runs.js";
 import { connectYorozu } from "./socket.js";
 
@@ -23,8 +24,8 @@ import { connectYorozu } from "./socket.js";
 
 const DEFAULT_SOCKET = join(homedir(), "Library/Application Support/Yorozu/channel.sock");
 
-// Announced in every hello. model-select-v1 is not: see README ("Model selection").
-export const CAPABILITIES = ["run-boundary-v1"];
+// Announced in every hello. model-select-v1 and media-v1 are not: see README ("Model selection").
+export const CAPABILITIES = ["run-boundary-v1", "progress-v1"];
 
 const dispatchInbound = createInboundDispatcher({
   resolveRoute: resolveChannelInboundRouteEnvelope,
@@ -46,6 +47,13 @@ export const normalizeYorozuTarget = (value)=> {
 };
 
 let link;
+let runs;
+
+/** OpenClaw's tool hooks, registered in index.js: they see whichever account is running. */
+export const progress = createProgress({
+  runFor: (sessionKey) => runs?.runFor(sessionKey),
+  send: (frame) => link?.send(frame) ?? false,
+});
 
 async function send(to, text) {
   const threadId = normalizeYorozuTarget(to);
@@ -102,16 +110,17 @@ export const yorozuPlugin = createChatChannelPlugin({
     gateway: {
       startAccount: async (ctx) => {
         ctx.setStatus({ accountId: ctx.accountId, running: true, connected: false });
-        const runs = createRuns((frame) => current.send(frame));
+        const accountRuns = createRuns((frame) => current.send(frame));
+        runs = accountRuns;
         const current = connectYorozu({
           path: ctx.account.socketPath,
           capabilities: CAPABILITIES,
-          onOpen: () => runs.replay(),
-          onAbort: (messageId) => runs.abort(messageId),
+          onOpen: () => accountRuns.replay(),
+          onAbort: (messageId) => accountRuns.abort(messageId),
           onStatus: (connected) => ctx.setStatus({ accountId: ctx.accountId, running: true, connected }),
           onError: (message) => ctx.log?.warn?.(`yorozu: ${message}`),
           onInbound: (message) =>
-            runs.run(message, (signal, begin) =>
+            accountRuns.run(message, (signal, begin) =>
               dispatchInbound({
                 cfg: ctx.cfg,
                 accountId: ctx.accountId,
@@ -130,6 +139,7 @@ export const yorozuPlugin = createChatChannelPlugin({
         });
         current.close();
         if (link === current) link = undefined;
+        if (runs === accountRuns) runs = undefined;
         ctx.setStatus({ accountId: ctx.accountId, running: false, connected: false });
       },
     },

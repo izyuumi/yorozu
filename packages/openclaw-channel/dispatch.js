@@ -3,7 +3,7 @@
 
 /**
  * @param {{ resolveRoute: Function, buildContext: Function, createReplyPipeline: Function, dispatchTurn: Function }} sdk
- * @returns {(params: { cfg: object, accountId: string, message: object, deliver: Function, log?: object }, signal: AbortSignal, begin: () => void) => Promise<"completed" | "failed" | undefined>}
+ * @returns {(params: { cfg: object, accountId: string, message: object, deliver: Function, log?: object }, signal: AbortSignal, begin: (sessionKey?: string) => void) => Promise<"completed" | "failed" | undefined>}
  */
 export const createInboundDispatcher = (sdk) => async ({ cfg, accountId, message, deliver, log }, signal, begin) => {
   const peer = { kind: "direct", id: message.threadId };
@@ -35,7 +35,7 @@ export const createInboundDispatcher = (sdk) => async ({ cfg, accountId, message
     cfg, agentId: route.agentId, channel: "yorozu", accountId: route.accountId ?? accountId,
   });
   let outcome; // undefined until OpenClaw reports one
-  begin();
+  begin(route.sessionKey);
   const result = await sdk.dispatchTurn({
     cfg,
     channel: "yorozu",

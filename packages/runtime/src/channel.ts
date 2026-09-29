@@ -49,6 +49,8 @@ export type PluginFrame = ({ type: "deliver" } & ChannelDeliver)
   | { type: "hello"; capabilities?: string[] }
   | { type: "run_started"; messageId: string }
   | { type: "run_finished"; messageId: string; status: RunStatus }
+  | { type: "tool_started"; messageId: string; callId: string; name: string; args: Record<string, unknown> }
+  | { type: "tool_finished"; messageId: string; callId: string; ok: boolean; output: string }
   | { type: "model_catalog"; requestId: string; models: ChannelModelOption[] }
   | { type: "model_selection"; requestId: string; model: string | null }
   | { type: "model_select_result"; requestId: string; ok: boolean; model?: string | null; error?: string };
@@ -60,6 +62,12 @@ export interface ChannelHostOptions {
   forwarded(message: ChannelInbound): void;
   runStarted(messageId: string): void;
   runFinished(messageId: string, status: RunStatus): void;
+  /** A message went to a run-boundary plugin, which will now report its run. Repeats on resend. */
+  handedOff(message: ChannelInbound): void;
+  /** The last run-boundary plugin disconnected: hand-offs that never started are queued again. */
+  runBoundaryLost(): void;
+  toolStarted(messageId: string, callId: string, name: string, args: Record<string, unknown>): void;
+  toolFinished(messageId: string, callId: string, ok: boolean, output: string): void;
   onError?(message: string): void;
   onCapabilities?(): void;
   onModel?(threadId: string, model: string | null): void;
@@ -70,6 +78,8 @@ export interface ChannelHost {
   /** Whether a plugin is connected right now. Messages are queued either way. */
   readonly connected: boolean;
   readonly modelSelection: boolean;
+  /** Capabilities announced by the connected plugins. Empty for a legacy plugin, or none. */
+  readonly announced: ReadonlySet<string>;
   refreshModels(threadId: string): Promise<ChannelModelOption[]>;
   selectModel(threadId: string, model: string | null): Promise<void>;
   retry(threadId: string): void;
@@ -124,6 +134,9 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
   const plugins = new Map<string, Send<HostFrame>>();
   const runBoundaryPlugins = new Set<string>();
   const capable = new Set<string>();
+  const progressPlugins = new Set<string>();
+  const announcedBy = new Map<string, Set<string>>();
+  const helloTimers = new Map<string, NodeJS.Timeout>();
   const sent = new Map<string, Set<string>>();
   type Response = Extract<PluginFrame, { requestId: string }>;
   const pending = new Map<string, { device: string; type: Response["type"];
@@ -208,6 +221,7 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
           if (sent.get(device)?.has(message.id)) continue;
           sent.get(device)?.add(message.id);
           send({ type: "inbound", message: ready });
+          if (runBoundaryPlugins.has(device)) options.handedOff(ready);
         }
       }
     }).catch((error) => options.onError?.(reason(error))).finally(() => {
@@ -221,6 +235,10 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
     onOpen: (device, send) => {
       plugins.set(device, send);
       sent.set(device, new Set());
+      // A plugin that says nothing is legacy. Wait for a hello before telling clients so.
+      const timer = setTimeout(() => { helloTimers.delete(device); options.onCapabilities?.(); }, 1_000);
+      timer.unref?.();
+      helloTimers.set(device, timer);
       for (const threadId of new Set(outbox.map((m) => m.threadId))) drain(threadId);
     },
     onClose: (device) => {
@@ -228,12 +246,17 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
       sent.delete(device);
       capable.delete(device);
       runBoundaryPlugins.delete(device);
+      progressPlugins.delete(device);
+      announcedBy.delete(device);
+      clearTimeout(helloTimers.get(device));
+      helloTimers.delete(device);
       for (const [id, entry] of pending) {
         if (entry.device !== device) continue;
         clearTimeout(entry.timer);
         pending.delete(id);
         entry.reject(new Error("OpenClaw disconnected"));
       }
+      if (!runBoundaryPlugins.size) options.runBoundaryLost();
       options.onCapabilities?.();
     },
     onError: options.onError,
@@ -242,11 +265,20 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
       if (!send || !frame || typeof frame !== "object") return;
       if (frame.type === "hello") {
         if (!Array.isArray(frame.capabilities) || !frame.capabilities.every((c) => typeof c === "string")) return;
+        clearTimeout(helloTimers.get(device));
+        helloTimers.delete(device);
+        announcedBy.set(device, new Set(frame.capabilities));
+        if (frame.capabilities.includes("progress-v1")) progressPlugins.add(device);
+        else progressPlugins.delete(device);
         if (frame.capabilities.includes("run-boundary-v1")) runBoundaryPlugins.add(device);
         else runBoundaryPlugins.delete(device);
         if (frame.capabilities.includes("model-select-v1")) capable.add(device);
         else capable.delete(device);
         options.onCapabilities?.();
+        // Messages sent before this hello were already on their way to a run-boundary plugin.
+        if (runBoundaryPlugins.has(device)) {
+          for (const message of outbox) if (sent.get(device)?.has(message.id)) options.handedOff(message);
+        }
         for (const threadId of new Set(outbox.map((m) => m.threadId))) drain(threadId);
         return;
       }
@@ -254,6 +286,20 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
         if (!runBoundaryPlugins.has(device) || !validId(frame.messageId)) return;
         if (frame.type === "run_started") options.runStarted(frame.messageId);
         else if (["completed", "failed", "aborted"].includes(frame.status)) options.runFinished(frame.messageId, frame.status);
+        return;
+      }
+      if (frame.type === "tool_started" || frame.type === "tool_finished") {
+        // Best effort and unacknowledged: anything malformed or from the wrong plugin is dropped.
+        if (!runBoundaryPlugins.has(device) || !progressPlugins.has(device) ||
+            !validId(frame.messageId) || !validId(frame.callId)) return;
+        if (frame.type === "tool_started") {
+          if (typeof frame.name === "string" && frame.name && frame.name.length <= 256 &&
+              frame.args && typeof frame.args === "object" && !Array.isArray(frame.args)) {
+            options.toolStarted(frame.messageId, frame.callId, frame.name, frame.args);
+          }
+        } else if (typeof frame.ok === "boolean" && typeof frame.output === "string") {
+          options.toolFinished(frame.messageId, frame.callId, frame.ok, frame.output);
+        }
         return;
       }
       if ("requestId" in frame) {
@@ -293,6 +339,7 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
       return plugins.size > 0;
     },
     get modelSelection() { return capable.size > 0; },
+    get announced() { return new Set([...announcedBy.values()].flatMap((caps) => [...caps])); },
     refreshModels: (threadId) => serial(threadId, async () => {
       const device = deviceForModels();
       const models = await catalog(device, threadId);
