@@ -33,7 +33,8 @@ import { createConnection, createServer } from "node:net";
 import { networkInterfaces } from "node:os";
 import { afterEach, expect, test, vi } from "vitest";
 import { WebSocketServer } from "ws";
-import { openaiCompat } from "./provider.js";
+import { openaiCompat, type Message } from "./provider.js";
+import { summaryFile } from "./summary.js";
 import { ensureStateDir, loadChannelSeqs, loadDevices, loadKeys, parseFrameBody, serve as startSidecar, typedAnswer, type ServeOptions, type Sidecar } from "./serve.js";
 import type { NativeAgentRunner, NativeTurn } from "./native.js";
 import * as schedulerModule from "./scheduler.js";
@@ -1597,6 +1598,156 @@ test("native turns report changed files after replies and skip unchanged or non-
   }
 });
 
+test.each(["codex", "claude-code"])("Edit from here keeps the log and resets %s context across restart", async (agent) => {
+  const turns: NativeTurn[] = [];
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    turns.push(turn);
+    turn.onSession?.(`session-${turns.length}`);
+    return { text: `answer-${turns.length}`, sessionId: `session-${turns.length}` };
+  } };
+  const first = await pairedPhone([], false, { nativeRunners: { [agent]: runner } }, true);
+  const { dir, send, eventsUntil } = first;
+  const threadId = "rewind";
+  send({ kind: "thread_create", data: { agent, cwd: proj } }, threadId);
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === threadId));
+  const prompts = [];
+  const attachment = { name: "keep.txt", mime: "text/plain", data: Buffer.from("retained file").toString("base64") };
+  for (const text of ["retained request", "discarded request", "discarded follow-up"]) {
+    prompts.push(send({ kind: "message", data: { role: "user", text,
+      attachments: text === "retained request" ? [attachment] : [] } }, threadId));
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+      thread.id === threadId && thread.turnState === "idle"));
+  }
+  expect(turns[1]?.sessionId).toBe("session-1");
+  const other: YorozuEvent[] = [];
+  const local = createConnection(localSocketPath(dir));
+  let buffer = "";
+  local.on("data", (chunk) => {
+    buffer += chunk.toString();
+    let newline: number;
+    while ((newline = buffer.indexOf("\n")) >= 0) {
+      other.push(JSON.parse(buffer.slice(0, newline)) as YorozuEvent);
+      buffer = buffer.slice(newline + 1);
+    }
+  });
+  await new Promise<void>((resolve) => local.once("connect", resolve));
+  try {
+    const requestId = send({ kind: "thread_rewind", data: { eventId: prompts[1]! } }, threadId);
+    const result = (await eventsUntil((event) => event.kind === "thread_rewound" && event.data.requestId === requestId)).at(-1)!;
+    expect(result).toMatchObject({ kind: "thread_rewound", data: { eventId: prompts[1],
+      hiddenEventIds: [prompts[1], `native:${prompts[1]}:final`, prompts[2], `native:${prompts[2]}:final`] } });
+    await vi.waitFor(() => expect(other).toContainEqual(result));
+    expect(readThreadEvents(threadId, dir)).toContainEqual(result);
+    expect(readThreadEvents(threadId, dir).filter((event) => event.kind === "message")).toHaveLength(6);
+    sendRaw({ id: requestId, threadId, ts: Date.now(), agentId: "phone",
+      kind: "thread_rewind", data: { eventId: prompts[1]! } });
+    expect((await eventsUntil((event) => event.kind === "thread_rewound")).at(-1)).toEqual(result);
+    expect(readThreadEvents(threadId, dir).filter((event) => event.kind === "thread_rewound")).toHaveLength(1);
+    const invalid = send({ kind: "thread_rewind", data: { eventId: prompts[2]! } }, threadId);
+    expect((await eventsUntil((event) => event.kind === "thread_rewound" && event.data.requestId === invalid)).at(-1))
+      .toMatchObject({ data: { reason: "This message is no longer in the conversation." } });
+  } finally { local.destroy(); }
+  await sidecar.close();
+  await relay.close();
+  const restarted = await pairedPhone([], false, { stateDir: dir, nativeRunners: { [agent]: runner } }, true);
+  restarted.send({ kind: "sync_request", data: { lastSeen: {}, threadId } }, "");
+  const synced = (await restarted.eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
+  expect(synced.kind === "sync_delta" && synced.data.events.some((event) => event.kind === "thread_rewound")).toBe(true);
+  restarted.send({ kind: "message", data: { role: "user", text: "replacement" } }, threadId);
+  await restarted.eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === threadId && thread.turnState === "idle"));
+  expect(turns[3]?.sessionId).toBeUndefined();
+  expect(turns[3]?.text).toContain("retained request");
+  expect(turns[3]?.text).toContain("answer-1");
+  expect(turns[3]?.text).toContain("keep.txt");
+  expect(turns[3]?.text).toContain("replacement");
+  expect(turns[3]?.text).not.toContain("discarded");
+  expect(turns[3]?.text).not.toContain("answer-2");
+  restarted.send({ kind: "message", data: { role: "user", text: "continue" } }, threadId);
+  await restarted.eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === threadId && thread.turnState === "idle"));
+  expect(turns[4]?.sessionId).toBe("session-4");
+  expect(turns[4]?.text).toBe("continue");
+  const searchId = randomUUID();
+  restarted.send({ kind: "thread_search_request", data: { requestId: searchId, query: "discarded" } }, "");
+  expect((await restarted.eventsUntil((event) => event.kind === "thread_search_result" &&
+    event.data.requestId === searchId)).at(-1)).toMatchObject({ data: { matches: [] } });
+  const rewindAll = restarted.send({ kind: "thread_rewind", data: { eventId: prompts[0]! } }, threadId);
+  await restarted.eventsUntil((event) => event.kind === "thread_rewound" && event.data.requestId === rewindAll);
+  const fresh = restarted.send({ kind: "message", data: { role: "user", text: "fresh start" } }, threadId);
+  await restarted.eventsUntil((event) => event.kind === "message" && event.id === `native:${fresh}:final` && event.data.done === true);
+  await restarted.eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+    thread.id === threadId && thread.turnState === "idle"));
+  expect(turns[5]?.sessionId).toBeUndefined();
+  expect(turns[5]?.text).toContain("fresh start");
+  expect(turns[5]?.text).not.toContain("retained");
+  expect(turns[5]?.text).not.toContain("replacement");
+});
+
+test("Edit from here excludes hidden messages and stale summaries from provider context", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-rewind-summary-"));
+  createThread("Summary", dir, "summary");
+  const contexts: Message[][] = [];
+  sidecar = serve({ stateDir: dir, relayUrl: `ws://127.0.0.1:${relay.port}`, log: () => {},
+    provider: { auth: async () => ({ ok: true }), stream: async function* (messages) {
+      contexts.push(structuredClone(messages));
+      yield { type: "text", text: `answer-${contexts.length}` };
+    } } });
+  const local = createConnection(localSocketPath(dir));
+  const received: YorozuEvent[] = [];
+  let buffer = "";
+  local.on("data", (chunk) => {
+    buffer += chunk.toString();
+    let newline: number;
+    while ((newline = buffer.indexOf("\n")) >= 0) {
+      received.push(JSON.parse(buffer.slice(0, newline)) as YorozuEvent);
+      buffer = buffer.slice(newline + 1);
+    }
+  });
+  await new Promise<void>((resolve) => local.once("connect", resolve));
+  const send = (payload: EventPayload): string => {
+    const id = randomUUID();
+    local.write(JSON.stringify({ id, threadId: "summary", ts: Date.now(), agentId: "mac", ...payload }) + "\n");
+    return id;
+  };
+  try {
+    const prompts: string[] = [];
+    for (const text of ["retained", "discarded"]) {
+      prompts.push(send({ kind: "message", data: { role: "user", text } }));
+      await vi.waitFor(() => expect(received.some((event) => event.kind === "message" &&
+        event.data.text === `answer-${prompts.length}` && event.data.done)).toBe(true));
+    }
+    writeFileSync(summaryFile("summary", dir), "<!-- yorozu:through 4 -->\ndiscarded summary\n");
+    const request = send({ kind: "thread_rewind", data: { eventId: prompts[1]! } });
+    await vi.waitFor(() => expect(received.some((event) => event.kind === "thread_rewound" &&
+      event.data.requestId === request && !event.data.reason)).toBe(true));
+    send({ kind: "message", data: { role: "user", text: "replacement" } });
+    await vi.waitFor(() => expect(contexts).toHaveLength(3));
+    expect(contexts[2]?.filter((message) => message.role !== "system")).toEqual([
+      { role: "user", content: "retained" }, { role: "assistant", content: "answer-1" },
+      { role: "user", content: "replacement" },
+    ]);
+    expect(JSON.stringify(contexts[2])).not.toContain("discarded");
+  } finally { local.destroy(); }
+});
+
+test("Edit from here rejects a working thread without recording a marker", async () => {
+  const done = Promise.withResolvers<void>();
+  const runner: NativeAgentRunner = { run: async () => { await done.promise; return { text: "done" }; } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } }, true);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "busy-rewind");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "busy-rewind"));
+  const target = send({ kind: "message", data: { role: "user", text: "working" } }, "busy-rewind");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.turnState === "running"));
+  const request = send({ kind: "thread_rewind", data: { eventId: target } }, "busy-rewind");
+  try {
+    const result = (await eventsUntil((event) => event.kind === "thread_rewound" && event.data.requestId === request)).at(-1)!;
+    expect(result).toMatchObject({ data: { reason: "Wait for this thread to finish working." } });
+    expect(readThreadEvents("busy-rewind", dir).some((event) => event.kind === "thread_rewound")).toBe(false);
+  } finally { done.resolve(); }
+});
+
 test("turn state spans queued turns and ignores a stop for an earlier turn", async () => {
   const firstDone = Promise.withResolvers<void>();
   const secondDone = Promise.withResolvers<void>();
@@ -1644,6 +1795,63 @@ test("turn state spans queued turns and ignores a stop for an earlier turn", asy
   secondDone.resolve();
   await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
     thread.id === "turn-state" && thread.turnState === "idle"));
+});
+
+test.each(["phone", "mac"])("Stop from %s drains only its thread queue and reports every withdrawal", async (device) => {
+  const otherDone = Promise.withResolvers<void>();
+  const run = vi.fn<NativeAgentRunner["run"]>(async (turn) => {
+    if (turn.text === "active") await new Promise<void>((resolve) => turn.signal.addEventListener("abort", () => resolve(), { once: true }));
+    if (turn.text === "other active") await otherDone.promise;
+    return { text: `reply to ${turn.text}` };
+  });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } }, true);
+  const mac = await macClient(dir);
+  try {
+    for (const threadId of ["stop-queue", "other-queue"]) {
+      send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, threadId);
+      await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === threadId));
+    }
+    const active = send({ kind: "message", data: { role: "user", text: "active" } }, "stop-queue");
+    send({ kind: "message", data: { role: "user", text: "other active" } }, "other-queue");
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    const queued = ["first queued", "second queued"].map((text) =>
+      send({ kind: "message", data: { role: "user", text } }, "stop-queue"));
+    send({ kind: "message", data: { role: "user", text: "other queued" } }, "other-queue");
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+      thread.id === "other-queue" && thread.queuedTurnCount === 1));
+    send({ kind: "stop_status", data: { targetEventId: queued[0]!, requestId: "forged", status: "withdrawn" } }, "stop-queue");
+    send({ kind: "thread_list", data: { threads: [] } });
+    await eventsUntil((event) => event.kind === "thread_list");
+    expect(readThreadEvents("stop-queue", dir).some((event) => event.kind === "stop_status")).toBe(false);
+    if (device === "phone") send({ kind: "interrupt", data: { targetEventId: active } }, "stop-queue");
+    else mac.sendRawEvent({ id: "mac-stop", threadId: "stop-queue", ts: Date.now(), agentId: "mac",
+      kind: "interrupt", data: { targetEventId: active } });
+    const result = await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+      thread.id === "stop-queue" && thread.turnState === "idle"));
+    const withdrawn = (events: YorozuEvent[]) => events.flatMap((event) =>
+      event.kind === "stop_status" && event.data.status === "withdrawn" ? [event.data.targetEventId] : []);
+    expect(withdrawn(result)).toEqual(queued);
+    await vi.waitFor(() => expect(withdrawn(mac.events)).toEqual(queued));
+    expect(withdrawn(readThreadEvents("stop-queue", dir))).toEqual(queued);
+    expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8")))
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ threadId: "stop-queue" })]));
+    otherDone.resolve();
+    await eventsUntil((event) => event.kind === "message" && event.threadId === "other-queue" && event.data.text === "reply to other queued");
+    expect(run.mock.calls.map(([turn]) => turn.text)).toEqual(["active", "other active", "other queued"]);
+    expect(readThreadEvents("stop-queue", dir).filter((event) => event.kind === "message" && event.data.role === "agent")).toHaveLength(1);
+    await sidecar.close();
+    await relay.close();
+    const restarted = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+    for (const eventId of queued) {
+      restarted.send({ kind: "admission_query", data: { eventId } }, "stop-queue");
+      expect((await restarted.eventsUntil((event) => event.kind === "admission_status" && event.data.eventId === eventId)).at(-1))
+        .toMatchObject({ data: { status: "withdrawn" } });
+    }
+    expect(run).toHaveBeenCalledTimes(3);
+  } finally {
+    otherDone.resolve();
+    mac.close();
+  }
 });
 
 test("withdrawing a queued turn leaves no reply and survives restart", async () => {

@@ -69,6 +69,7 @@ export interface ThreadRecord {
    * it. Never leaves the Mac. Absent until the agent has answered once.
    */
   nativeSessionId?: string;
+  nativeSessionRewindId?: string;
   /**
    * When the thread was last read, on any device, epoch milliseconds. Absent means never.
    *
@@ -83,12 +84,14 @@ export interface ThreadRecord {
 const LOGGED: ReadonlySet<EventKind> = new Set<EventKind>([
   "message",
   "turn_changes",
+  "thread_rewound",
   "thought",
   "tool_call",
   "tool_result",
   "approval_card",
   "approval_answer",
   "approval_status",
+  "stop_status",
   "question_card",
   "question_answer",
   "progress_card",
@@ -322,7 +325,8 @@ export function threadHome(id: string, dir = stateDir()): { cwd?: string; sessio
   const thread = listThreads(dir).find((candidate) => candidate.id === id);
   return {
     ...(thread?.cwd ? { cwd: thread.cwd } : {}),
-    ...(thread?.nativeSessionId ? { sessionId: thread.nativeSessionId } : {}),
+    ...(thread?.nativeSessionId && thread.nativeSessionRewindId === latestRewindId(id, dir)
+      ? { sessionId: thread.nativeSessionId } : {}),
   };
 }
 
@@ -330,7 +334,9 @@ export function threadHome(id: string, dir = stateDir()): { cwd?: string; sessio
 export function setThreadSession(id: string, sessionId: string | undefined, dir = stateDir()): boolean {
   const threads = listThreads(dir);
   const thread = threads.find((candidate) => candidate.id === id);
-  if (!thread || thread.nativeSessionId === sessionId) return false;
+  const rewindId = latestRewindId(id, dir);
+  if (!thread || thread.nativeSessionId === sessionId && thread.nativeSessionRewindId === rewindId) return false;
+  thread.nativeSessionRewindId = rewindId;
   if (sessionId) thread.nativeSessionId = sessionId;
   else delete thread.nativeSessionId;
   saveThreads(threads, dir);
@@ -364,7 +370,7 @@ const PREVIEW_LIMIT = 140;
  */
 function logSummary(threadId: string, dir: string, minTs = 0):
   { preview?: string; lastAgentAt?: number; awaitingApproval?: true; awaitingQuestion?: true; needsAttention?: true } {
-  const events = readThreadEvents(threadId, dir).filter((event) => event.ts >= minTs);
+  const events = visibleThreadEvents(threadId, dir).filter((event) => event.ts >= minTs);
   const last = events.findLast((event) => event.kind === "message");
   const lastAgent = events.findLast(
     (event) => event.kind === "message" && event.data.role === "agent",
@@ -500,7 +506,7 @@ export function appendThreadEvent(event: YorozuEvent, dir = stateDir()): void {
   if (!LOGGED.has(event.kind)) return;
   mkdirSync(threadsDir(dir), { recursive: true, mode: 0o700 });
   appendFileSync(logFile(event.threadId, dir), `${JSON.stringify(event)}\n`,
-    { mode: 0o600, flush: event.kind === "approval_status" });
+    { mode: 0o600, flush: event.kind === "approval_status" || event.kind === "stop_status" || event.kind === "thread_rewound" });
 }
 
 /** The thread's events, oldest first. Unreadable lines are skipped. */
@@ -521,6 +527,18 @@ export function readThreadEvents(threadId: string, dir = stateDir()): YorozuEven
   const corrected = new Map(events.flatMap((event, index) =>
     event.clientTs !== undefined ? [[event.id, index] as const] : []));
   return events.filter((event, index) => !corrected.has(event.id) || corrected.get(event.id) === index);
+}
+
+/** Rewind markers retain the log while removing abandoned events from the conversation. */
+export function visibleThreadEvents(threadId: string, dir = stateDir()): YorozuEvent[] {
+  const events = readThreadEvents(threadId, dir);
+  const hidden = new Set(events.flatMap((event) => event.kind === "thread_rewound" ? event.data.hiddenEventIds ?? [] : []));
+  return events.filter((event) => event.kind !== "thread_rewound" && !hidden.has(event.id) &&
+    !(event.kind === "turn_changes" && hidden.has(event.data.turnEventId)));
+}
+
+export function latestRewindId(threadId: string, dir = stateDir()): string | undefined {
+  return readThreadEvents(threadId, dir).findLast((event) => event.kind === "thread_rewound")?.id;
 }
 
 /** Stream a small slice of host history without blocking message/control handling. */
@@ -570,6 +588,8 @@ export async function searchThreadPage(query: string, offset = 0, dir = stateDir
     if (!existsSync(file)) continue;
     let readOffset = index === offset ? lineOffset : 0;
     if (readOffset > statSync(file).size) { partial = true; continue; }
+    const hidden = new Set(readThreadEvents(thread.id, dir).flatMap((event) =>
+      event.kind === "thread_rewound" ? event.data.hiddenEventIds ?? [] : []));
     const input = createReadStream(file, { start: readOffset });
     let found: ThreadSearchMatch | undefined;
     let resumeAt: number | undefined;
@@ -581,7 +601,7 @@ export async function searchThreadPage(query: string, offset = 0, dir = stateDir
         bytesScanned += lineBytes;
         try {
           const event = JSON.parse(line) as YorozuEvent;
-          if (event.kind === "message" && typeof event.data?.text === "string") {
+          if (event.kind === "message" && !hidden.has(event.id) && typeof event.data?.text === "string") {
             const text = event.data.text;
             const at = fold(text).indexOf(needle);
             if (at >= 0) {
@@ -648,7 +668,7 @@ export function eventsAfter(
  * what it rolls up.
  */
 export function threadMessages(threadId: string, dir = stateDir(), vision = false, activeUserEventId?: string): Message[] {
-  const events = readThreadEvents(threadId, dir).filter((event) => event.kind === "message");
+  const events = visibleThreadEvents(threadId, dir).filter((event) => event.kind === "message");
   const active = events.find((event) => event.id === activeUserEventId && event.data.role === "user");
   const activeIndex = active ? events.indexOf(active) : events.length - 1;
   // Admission can log several user requests before the first turn finishes. The model must
@@ -724,7 +744,12 @@ export function recoverNativeTurns(dir = stateDir()): void {
   let changed = false;
   for (const thread of threads) {
     if (thread.agent && thread.nativeTurn) {
-      const events = readThreadEvents(thread.id, dir);
+      const events = visibleThreadEvents(thread.id, dir);
+      if (thread.nativeTurn.userEventId && !events.some((event) => event.id === thread.nativeTurn!.userEventId)) {
+        delete thread.nativeTurn;
+        changed = true;
+        continue;
+      }
       if (!thread.nativeTurn.userEventId) {
         const match = /^native:(.+):final$/.exec(thread.nativeTurn.id);
         if (match && events.some((event) => event.id === match[1] && event.kind === "message" && event.data.role === "user")) {
