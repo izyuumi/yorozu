@@ -9,6 +9,7 @@
         @Binding var text: String
         let placeholder: String
         let onSubmit: () -> Void
+        let onQuestionOption: (Int) -> Bool
         /// Called when Paste finds an image; nil while images cannot be attached, so Paste goes
         /// back to being text-only.
         let onPasteImage: (() -> Void)?
@@ -48,8 +49,10 @@
         func updateUIView(_ view: PastingTextView, context: Context) {
             context.coordinator.text = $text
             if view.text != text { view.text = text }
+            view.placeholderLabel.text = placeholder
             view.placeholderLabel.isHidden = !text.isEmpty
             view.onSubmit = onSubmit
+            view.onQuestionOption = onQuestionOption
             view.onPasteImage = onPasteImage
             if focusThread != view.focusThread {
                 view.focusThread = focusThread
@@ -75,12 +78,20 @@
             func textViewDidChange(_ textView: UITextView) {
                 text.wrappedValue = textView.text
             }
+
+            func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText replacement: String) -> Bool {
+                guard textView.text.isEmpty, range.length == 0, textView.markedTextRange == nil,
+                      replacement.count == 1, let number = Int(replacement), (1...9).contains(number)
+                else { return true }
+                return !((textView as? PastingTextView)?.onQuestionOption(number) ?? false)
+            }
         }
     }
 
     final class PastingTextView: UITextView {
         let placeholderLabel = UILabel()
         var onSubmit: () -> Void = {}
+        var onQuestionOption: (Int) -> Bool = { _ in false }
         var onPasteImage: (() -> Void)?
         var focusThread: String?
         private var focusPending = false
@@ -169,6 +180,7 @@
         let onPaste: (() -> Void)?
         /// Set while the skill picker is open, which then has its keys before Send and Stop do.
         let onPickerKey: ((SkillPickerKey) -> Void)?
+        let onQuestionOption: (Int) -> Bool
 
         func makeNSView(context: Context) -> MonitorView { MonitorView() }
 
@@ -178,6 +190,7 @@
             view.onSend = onSend
             view.onPaste = onPaste
             view.onPickerKey = onPickerKey
+            view.onQuestionOption = onQuestionOption
         }
 
         final class MonitorView: NSView {
@@ -186,6 +199,7 @@
             var onSend: () -> Bool = { false }
             var onPaste: (() -> Void)?
             var onPickerKey: ((SkillPickerKey) -> Void)?
+            var onQuestionOption: (Int) -> Bool = { _ in false }
             private var monitor: Any?
 
             override func viewDidMoveToWindow() {
@@ -202,6 +216,15 @@
                             keyCode: event.keyCode, flags: event.modifierFlags, composing: composing)
                     {
                         onPickerKey(key)
+                        return nil
+                    }
+                    if !composing,
+                        event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                            .subtracting([.numericPad, .function]).isEmpty,
+                        let characters = event.characters, characters.count == 1,
+                        let number = Int(characters), (1...9).contains(number),
+                        self.onQuestionOption(number)
+                    {
                         return nil
                     }
                     if isSendKey(keyCode: event.keyCode, flags: event.modifierFlags,
