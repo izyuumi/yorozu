@@ -1206,6 +1206,65 @@ test("a registered agent appears in the catalog and answers a thread without a f
   expect(listThreads(dir).find((thread) => thread.id === "custom")?.agent).toBe("test-harness");
 });
 
+test.each([false, true])("default agent catalog follows actual CLI login and refreshes without restarting (installed=%s)", async (installed) => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-configured-agents-"));
+  const bin = join(dir, "bin");
+  const probes = join(dir, "auth-probes");
+  mkdirSync(bin);
+  const codex = (loggedIn: boolean) => {
+    writeFileSync(join(bin, "codex"), `#!/bin/sh\nif [ "$1" = login ] && [ "$2" = status ]; then\n  printf 'probe\\n' >> '${probes}'\n  printf '${loggedIn ? "Logged in using ChatGPT" : "Not logged in"}\\n' >&2\n  exit 0\nfi\nexit 1\n`);
+    chmodSync(join(bin, "codex"), 0o700);
+  };
+  if (installed) {
+    codex(false);
+    writeFileSync(join(bin, "claude"), '#!/bin/sh\nprintf \'{"loggedIn":false}\\n\'\n');
+    chmodSync(join(bin, "claude"), 0o700);
+  }
+  vi.stubEnv("PATH", bin);
+  relay = await startRelay(0);
+  createThread("Saved Codex work", dir, "saved", { agent: "codex", cwd: proj });
+  // Actual default runtime and CLI auth adapters, without injected runners/readiness.
+  sidecar = startSidecar({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, log: () => {} });
+  const mac = await macClient(dir);
+  const others: Awaited<ReturnType<typeof macClient>>[] = [];
+  const catalog = () => mac.events.findLast((event) => event.kind === "model_list");
+  const probeCount = () => existsSync(probes) ? readFileSync(probes, "utf8").trim().split("\n").length : 0;
+  const status = async (requests = 1) => {
+    const before = mac.events.filter((event) => event.kind === "agent_status").length;
+    for (let count = 0; count < requests; count++) mac.send({ kind: "agent_status", data: {} } as never);
+    await vi.waitFor(() => expect(mac.events.filter((event) => event.kind === "agent_status").length).toBe(before + requests));
+    return mac.events.findLast((event) => event.kind === "agent_status");
+  };
+  try {
+    const initial = await status();
+    expect(initial).toMatchObject({ data: { claude: { ok: false, reason: installed ? "not-logged-in" : "not-found" },
+      codex: { ok: false, reason: installed ? "not-logged-in" : "not-found" } } });
+    expect(catalog()).toMatchObject({ data: { agents: [{ id: "yorozu", label: "Yorozu", needsFolder: false }] } });
+    expect(mac.events.some((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "saved"))).toBe(true);
+    codex(true);
+    others.push(await macClient(dir), await macClient(dir));
+    const cached = probeCount();
+    await vi.waitFor(() => expect(others.every((client) => client.events.some((event) => event.kind === "model_list"))).toBe(true));
+    expect(probeCount()).toBe(cached); // Ordinary joins reuse setup probes; explicit refresh sees login.
+    expect((await status(2))).toMatchObject({ data: { codex: { ok: true } } });
+    expect(probeCount()).toBe(cached + 1); // Concurrent setup requests share one in-flight probe.
+    expect(catalog()).toMatchObject({ data: { agents: [
+      { id: "yorozu", label: "Yorozu", needsFolder: false }, { id: "codex", label: "Codex", needsFolder: true },
+    ] } });
+    codex(false);
+    await status();
+    expect(catalog()).toMatchObject({ data: { agents: [{ id: "yorozu", label: "Yorozu", needsFolder: false }] } });
+    codex(true);
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + 60_001);
+    const refreshed = await macClient(dir);
+    others.push(refreshed);
+    await vi.waitFor(() => expect(refreshed.events.findLast((event) => event.kind === "model_list"))
+      .toMatchObject({ data: { agents: [{ id: "yorozu", label: "Yorozu", needsFolder: false },
+        { id: "codex", label: "Codex", needsFolder: true }] } }));
+  } finally { mac.close(); for (const client of others) client.close(); vi.unstubAllEnvs(); }
+});
+
 test("a removed agent's thread stays readable and works again when its runner returns", async () => {
   const dir = mkdtempSync(join(tmpdir(), "yorozu-returning-agent-"));
   createThread("Saved", dir, "custom", { agent: "test-harness", needsFolder: false });

@@ -360,6 +360,15 @@ the same grace, and only a paired link with the Mac present counts as connected.
 state the relay already keeps to decide whether to forward or buffer, so it stays blind to the
 ciphertext.
 
+New-session choices come from `model_list.agents`. Yorozu is always present. Default Claude
+Code and Codex runners appear only after their existing CLI auth probes report usable setup;
+an unknown, missing, or logged-out CLI does not add a choice. Explicitly registered runners
+remain selectable by contract. This advertised subset does not remove runners or saved threads.
+Readiness is cached per host process for one minute, with concurrent requests sharing one probe.
+Device joins refresh expired readiness; explicit `agent_status` refresh bypasses the age cache
+and broadcasts changed choices, so installing or logging in does not require a host restart.
+Models and skills for default coding agents are queried after setup succeeds.
+
 ### Cache
 
 `ThreadCache` keeps the thread list and one file per thread in a host-specific Application
