@@ -4820,7 +4820,8 @@ test.each([{ large: false, restarts: 0 }, { large: true, restarts: 0 }, { large:
   "OpenClaw dispatcher streams Markdown through the real channel socket to the phone (large=$large, restarts=$restarts)", async ({ large, restarts }) => {
   const host = await pairedPhone([], true, {}, true);
   let replyOptions: { onPartialReply?: (payload: { text: string }) => unknown } | undefined;
-  let finish: (() => void) | undefined;
+  const prompt = Promise.withResolvers<void>();
+  const finish = Promise.withResolvers<void>();
   let connections = 0;
   let inboundCalls = 0;
   const sdkReplies = large ? ["日本語🙂".repeat(15000), "日本語🙂".repeat(15000)] : ["**日本語**\n\n完成"];
@@ -4835,8 +4836,9 @@ test.each([{ large: false, restarts: 0 }, { large: true, restarts: 0 }, { large:
     dispatchTurn: async (plan: any) => {
       replyOptions = plan.replyOptions;
       await plan.replyOptions.onPartialReply({ text: "**日本語" });
+      await prompt.promise;
       await plan.delivery.deliver({ text: "Choose whether to continue." }, { kind: "tool" });
-      await new Promise<void>((resolve) => { finish = resolve; });
+      await finish.promise;
       if (large) await plan.replyOptions.onPartialReply({ text: expected });
       for (const text of sdkReplies) await plan.delivery.deliver({ text }, { kind: "final" });
       plan.replyOptions.onAgentRunTerminalOutcome("completed");
@@ -4844,7 +4846,9 @@ test.each([{ large: false, restarts: 0 }, { large: true, restarts: 0 }, { large:
     },
   });
   const runs = createRuns((frame: PluginFrame) => link.send(frame));
-  const link = connectYorozu({ path: channelSocketPath(host.dir), retryMs: 20, ackTimeoutMs: 20,
+  // Exercise real delivery with its production acknowledgement deadline. Short timeout/retry
+  // behavior belongs to the socket tests; a busy CI scheduler must not fail this SDK turn.
+  const link = connectYorozu({ path: channelSocketPath(host.dir), retryMs: 20,
     capabilities: ["run-boundary-v1", "reply-stream-v1"], onStatus: (connected: boolean) => { if (connected) connections++; },
     onOpen: () => runs.replay(), onAbort: (id: string) => runs.abort(id),
     onInbound: (message: any) => {
@@ -4866,6 +4870,7 @@ test.each([{ large: false, restarts: 0 }, { large: true, restarts: 0 }, { large:
     expect(preview).toMatchObject({ data: { role: "agent", text: "**日本語" } });
     expect(preview.data).not.toHaveProperty("done");
     expect(readThreadEvents("t1", host.dir).some((event) => event.id === preview.id)).toBe(false);
+    prompt.resolve();
     await vi.waitFor(() => expect(readThreadEvents("t1", host.dir).some((event) => event.kind === "message" &&
       event.data.text === "Choose whether to continue.")).toBe(true));
     await host.eventsUntil((event) => event.kind === "message" && event.data.text === "Choose whether to continue.");
@@ -4882,7 +4887,7 @@ test.each([{ large: false, restarts: 0 }, { large: true, restarts: 0 }, { large:
       await sidecar.close();
       if (restart === restarts - 1) {
         // Finish while the host is down. The final waits for a durable receipt through retries.
-        finish!();
+        finish.resolve();
         await vi.waitFor(() => expect(link.connected).toBe(false));
       }
       const previous = connections;
@@ -4908,7 +4913,7 @@ test.each([{ large: false, restarts: 0 }, { large: true, restarts: 0 }, { large:
       if (delta.kind === "sync_delta") replayed.push(...delta.data.events);
     }
     expect(inboundCalls).toBe(1);
-    finish!();
+    finish.resolve();
     const final = replayed.find((event) => event.id === preview.id && event.kind === "message" && event.data.done) ??
       (await host.eventsUntil((event) => event.id === preview.id && event.kind === "message" && event.data.done)).at(-1)!;
     expect(final).toMatchObject({ ...(restarts ? {} : { ts: preview.ts }),
@@ -4924,7 +4929,7 @@ test.each([{ large: false, restarts: 0 }, { large: true, restarts: 0 }, { large:
     for (const event of replies) if (event.kind === "message") expect(event.data.text.isWellFormed()).toBe(true);
     expect(final).toMatchObject(replies[0]);
     await vi.waitFor(() => expect(JSON.parse(readFileSync(join(host.dir, "channel-outbox.json"), "utf8"))).toEqual([]));
-  } finally { finish?.(); link.close(); }
+  } finally { prompt.resolve(); finish.resolve(); link.close(); }
 });
 
 test("negotiated reply snapshots replace one message, preserve its position, and persist only final text", async () => {
