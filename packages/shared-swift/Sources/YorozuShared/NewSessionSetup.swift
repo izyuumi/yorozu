@@ -11,6 +11,9 @@ struct NewSessionSetup: View {
     let chooseHost: (HostID) -> Void
 
     private var secondaryInk: Color { YorozuPalette.ink.opacity(0.72) }
+    // The compiled fallback describes old hosts; it cannot prove another agent is set up.
+    private var offersAgentChoice: Bool { model.agents?.contains { $0.id != .yorozu } == true }
+    private var heading: LocalizedStringKey { offersAgentChoice ? "Who should answer?" : "Start a conversation" }
 
     private var agents: [AgentDescriptor] {
         let groups = NewThreadPicker.groups(model.availableAgents)
@@ -20,14 +23,16 @@ struct NewSessionSetup: View {
     var body: some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.section) {
             VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
-                Text("Who should answer?")
+                Text(heading)
                     .font(.scaled(.largeTitle).weight(.semibold))
                     .fontDesign(.serif)
                     .foregroundStyle(YorozuPalette.ink)
                     .accessibilityAddTraits(.isHeader)
-                Text("Choose an agent. Send a message to begin.")
-                    .font(.scaled(.callout))
-                    .foregroundStyle(secondaryInk)
+                if offersAgentChoice {
+                    Text("Choose an agent. Send a message to begin.")
+                        .font(.scaled(.callout))
+                        .foregroundStyle(secondaryInk)
+                }
             }
 
             if let hosts, let hostID, let host = hosts.session(for: hostID) {
@@ -70,16 +75,18 @@ struct NewSessionSetup: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
-                Text("Agent").accessibilityAddTraits(.isHeader)
-                VStack(spacing: 0) {
-                    ForEach(agents) { descriptor in
-                        if descriptor.id != agents.first?.id { Divider() }
-                        agentRow(descriptor)
+            if offersAgentChoice {
+                VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
+                    Text("Agent").accessibilityAddTraits(.isHeader)
+                    VStack(spacing: 0) {
+                        ForEach(agents) { descriptor in
+                            if descriptor.id != agents.first?.id { Divider() }
+                            agentRow(descriptor)
+                        }
                     }
+                    .background(YorozuPalette.paper)
+                    .clipShape(RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius))
                 }
-                .background(YorozuPalette.paper)
-                .clipShape(RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius))
             }
 
             if presentation.needsFolder {

@@ -62,6 +62,14 @@ private actor ShowcaseTransport: ChatTransport {
             self.continuation = continuation
             continuation.yield(.ownerOnline(launchArgument("yorozuShowcase") != "queued"))
             continuation.yield(.state(.paired))
+            let scene = launchArgument("yorozuShowcase")
+            if scene == "threads" || scene == "new-thread" || scene == "session-yorozu" || scene == "session-multiple" {
+                let configured = scene == "session-yorozu" ? [ThreadAgent.yorozu] : ThreadAgent.allCases
+                continuation.yield(.event(YorozuEvent(id: "configured-agents", threadId: "", ts: 0, agentId: "main",
+                    payload: .modelList(ModelListData(models: [], agents: configured.map {
+                        AgentDescriptor(id: $0, label: $0.label, needsFolder: $0.needsFolder)
+                    })))))
+            }
             if launchArgument("yorozuShowcase") == "channel-model" {
                 continuation.yield(.event(YorozuEvent(id: "channel-capability", threadId: "", ts: 0, agentId: "main",
                     payload: .modelList(ModelListData(models: [], channelCapabilities: ["model-select-v1"])))))

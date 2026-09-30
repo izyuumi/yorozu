@@ -29,6 +29,27 @@ final class KeyboardChooserTests: XCTestCase {
         checkPickerDuringReply(fromChat: true)
     }
 
+    /// Only actual host configuration offers a choice; waiting for its catalog must not
+    /// present the compiled fallback list as installed agents.
+    @MainActor
+    func testAgentChoiceRequiresAnotherConfiguredAgent() {
+        let app = XCUIApplication()
+        for scene in ["session-pending", "session-yorozu", "session-multiple"] {
+            app.launchArguments = ["-yorozuShowcase", scene, "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+            app.launch()
+            XCTAssertTrue(app.textViews["Message"].waitForExistence(timeout: step))
+            if scene == "session-multiple" {
+                XCTAssertTrue(app.buttons["session-agent-yorozu"].waitForExistence(timeout: step))
+                XCTAssertTrue(app.buttons["session-agent-claude-code"].exists)
+                XCTAssertTrue(app.buttons["session-agent-codex"].exists)
+            } else {
+                XCTAssertTrue(app.staticTexts["Start a conversation"].waitForExistence(timeout: 5))
+                XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "session-agent-")).firstMatch.exists)
+            }
+            app.terminate()
+        }
+    }
+
     @MainActor
     private func checkPickerDuringReply(fromChat: Bool) {
         let app = XCUIApplication()
