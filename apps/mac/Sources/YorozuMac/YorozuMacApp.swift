@@ -47,6 +47,24 @@ final class Sidecar: ObservableObject {
         case "stopped": return String(localized: "Stopped")
         case "openclaw": return "OpenClaw"
         case "revoked": return String(localized: "Pairing revoked")
+        case "peer-update-required": return String(localized: "Update required")
+        case "heartbeat-timeout": return String(localized: "Connection timed out")
+        case "native-cwd-refused": return String(localized: "Project folder was refused")
+        case "native-model-list-unavailable claude-code", "native-model-list-unavailable codex":
+            return String(localized: "Model list unavailable")
+        case "missing-previous-message": return String(localized: "Waiting for the previous message")
+        case "duplicate-message": return String(localized: "Duplicate message ignored")
+        case "duplicate-command": return String(localized: "Duplicate command ignored")
+        case "tool-result-missing": return String(localized: "Tool result unavailable")
+        case "rejected-oversized-attachments": return String(localized: "Attachments exceed the size limit")
+        case "rejected-attachments-unsupported": return String(localized: "Attachments are not supported")
+        case "rejected-conflicting-message-id": return String(localized: "Conflicting message rejected")
+        case "malformed-frame", "hello-refused", "hello-spub-ignored":
+            return String(localized: "Invalid connection data ignored")
+        case "replayed-frame": return String(localized: "Replayed connection data ignored")
+        case "hello-refused device-limit": return String(localized: "Device limit reached")
+        case "relay-notify rate limit": return String(localized: "Notification rate limit reached")
+
         default:
             if state.hasPrefix("restarting in "), state.hasSuffix("s"), let seconds = Int(state.dropFirst("restarting in ".count).dropLast()) {
                 return String(localized: "Restarting in \(seconds) seconds")
