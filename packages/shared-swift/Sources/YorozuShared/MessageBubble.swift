@@ -328,11 +328,11 @@ public struct MessageBubble: View {
         let label = Label {
             // "tap" on a Mac is a phone app talking to the wrong person.
             #if os(macOS)
-                Text(status == .failed ? "Not sent — click to retry" :
-                    status == .unconfirmed ? "Delivery unconfirmed — click to retry" : description)
+                Text(status == .failed ? String(localized: "Not sent — click to retry") :
+                    status == .unconfirmed ? String(localized: "Delivery unconfirmed — click to retry") : description)
             #else
-                Text(status == .failed ? "Not sent — tap to retry" :
-                    status == .unconfirmed ? "Delivery unconfirmed — tap to retry" : description)
+                Text(status == .failed ? String(localized: "Not sent — tap to retry") :
+                    status == .unconfirmed ? String(localized: "Delivery unconfirmed — tap to retry") : description)
             #endif
         } icon: {
             // The icon carries the red; caption-sized red text is under 4.5:1.

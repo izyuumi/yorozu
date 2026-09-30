@@ -44,24 +44,26 @@ public enum ClientConnectionStatus: Equatable, Sendable {
 public enum ConnectionDiagnostics {
     @MainActor public static func snapshot(for model: ChatModel) -> String {
         let transport: String = switch model.state {
-        case .paired: "paired"
-        case .joined: "joined"
-        case .connecting: "connecting"
-        case .closed: "closed"
+        case .paired: String(localized: "paired")
+        case .joined: String(localized: "joined")
+        case .connecting: String(localized: "connecting")
+        case .closed: String(localized: "closed")
         }
         let compatibility: String = switch model.compatibility {
-        case .legacy: "legacy"
-        case .compatible(let version, _): "protocol \(version)"
-        case .updateRequired: "update required"
+        case .legacy: String(localized: "legacy")
+        case .compatible(let version, _): String(localized: "protocol \(version)")
+        case .updateRequired: String(localized: "update required")
         }
-        return """
+        let presence = model.ownerOnline ? String(localized: "online") : String(localized: "unavailable")
+        let recentFailure = model.failure == nil ? String(localized: "no") : String(localized: "yes")
+        return String(localized: """
         Yorozu connection diagnostics
         Connection: \(model.link.state.label)
         Transport: \(transport)
-        Host presence: \(model.ownerOnline ? "online" : "unavailable")
+        Host presence: \(presence)
         Compatibility: \(compatibility)
-        Recent failure: \(model.failure == nil ? "no" : "yes")
+        Recent failure: \(recentFailure)
         Pending sends: \(model.outbox.count)
-        """
+        """)
     }
 }

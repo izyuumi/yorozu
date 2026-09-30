@@ -865,7 +865,7 @@ public struct ThreadListView<Destination: View>: View {
         messageText: @escaping (String) -> String = { _ in "" },
         remoteMatches: [String: ThreadSearchMatch] = [:],
         remoteQuery: String? = nil,
-        searchScope: String = "Downloaded conversations only",
+        searchScope: String = String(localized: "Downloaded conversations only"),
         onSearchQueryChange: ((String) -> Void)? = nil,
         exportMarkdown: ((ThreadSummary) -> String)? = nil,
         onSettings: (() -> Void)? = nil,
@@ -924,7 +924,7 @@ public struct ThreadListView<Destination: View>: View {
         remoteQuery == searchNeedle ? remoteMatches : [:]
     }
     private var shownSearchScope: String {
-        remoteQuery == searchNeedle ? searchScope : "Downloaded conversations only"
+        remoteQuery == searchNeedle ? searchScope : String(localized: "Downloaded conversations only")
     }
 
     private var searchResults: ThreadSearchResults {
@@ -1372,7 +1372,7 @@ public struct ThreadSidebar: View {
         messageText: @escaping (String) -> String = { _ in "" },
         remoteMatches: [String: ThreadSearchMatch] = [:],
         remoteQuery: String? = nil,
-        searchScope: String = "Downloaded conversations only",
+        searchScope: String = String(localized: "Downloaded conversations only"),
         onSearchQueryChange: ((String) -> Void)? = nil,
         exportMarkdown: ((ThreadSummary) -> String)? = nil,
         onSearchSelect: ((ThreadSearchRequest?) -> Void)? = nil
@@ -1410,7 +1410,7 @@ public struct ThreadSidebar: View {
         remoteQuery == searchNeedle ? remoteMatches : [:]
     }
     private var shownSearchScope: String {
-        remoteQuery == searchNeedle ? searchScope : "Downloaded conversations only"
+        remoteQuery == searchNeedle ? searchScope : String(localized: "Downloaded conversations only")
     }
 
     private var searchResults: ThreadSearchResults {

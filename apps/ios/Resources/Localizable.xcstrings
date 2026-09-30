@@ -13530,6 +13530,336 @@
           }
         }
       }
+    },
+    "Not sent — click to retry" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未送信 — クリックして再試行"
+          }
+        }
+      }
+    },
+    "Delivery unconfirmed — click to retry" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配信を確認できません — クリックして再試行"
+          }
+        }
+      }
+    },
+    "Not sent — tap to retry" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未送信 — タップして再試行"
+          }
+        }
+      }
+    },
+    "Could not confirm whether this task stopped. Check the host before retrying." : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このタスクが停止したか確認できませんでした。再試行する前にホストを確認してください。"
+          }
+        }
+      }
+    },
+    "Exported %@" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@に書き出し"
+          }
+        }
+      }
+    },
+    "Delegated to %@" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@に委任"
+          }
+        }
+      }
+    },
+    "(no reply)" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "（返信なし）"
+          }
+        }
+      }
+    },
+    "You" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "あなた"
+          }
+        }
+      }
+    },
+    "Attached: %@ (%@)" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添付：%@（%@）"
+          }
+        }
+      }
+    },
+    "(no text)" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "（本文なし）"
+          }
+        }
+      }
+    },
+    "1 changed file" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1個の変更されたファイル"
+          }
+        }
+      }
+    },
+    "%lld changed files" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld個の変更されたファイル"
+          }
+        }
+      }
+    },
+    "Approval asked" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "承認の依頼"
+          }
+        }
+      }
+    },
+    "Rule suggested" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ルールの提案"
+          }
+        }
+      }
+    },
+    "Question asked" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "質問"
+          }
+        }
+      }
+    },
+    "Update Yorozu to see this event." : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このイベントを見るにはYorozuを更新してください。"
+          }
+        }
+      }
+    },
+    "Ran %@" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@を実行"
+          }
+        }
+      }
+    },
+    "Ran %lld tools" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld個のツールを実行"
+          }
+        }
+      }
+    },
+    "ok" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "成功"
+          }
+        }
+      }
+    },
+    "pending" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待機中"
+          }
+        }
+      }
+    },
+    "running" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行中"
+          }
+        }
+      }
+    },
+    "done" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完了"
+          }
+        }
+      }
+    },
+    "paired" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ペアリング済み"
+          }
+        }
+      }
+    },
+    "joined" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リレーに接続済み"
+          }
+        }
+      }
+    },
+    "connecting" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続中"
+          }
+        }
+      }
+    },
+    "closed" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "切断済み"
+          }
+        }
+      }
+    },
+    "legacy" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旧形式"
+          }
+        }
+      }
+    },
+    "protocol %lld" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロトコル %lld"
+          }
+        }
+      }
+    },
+    "update required" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新が必要"
+          }
+        }
+      }
+    },
+    "unavailable" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "利用不可"
+          }
+        }
+      }
+    },
+    "no" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "いいえ"
+          }
+        }
+      }
+    },
+    "yes" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "はい"
+          }
+        }
+      }
+    },
+    "Yorozu connection diagnostics\nConnection: %@\nTransport: %@\nHost presence: %@\nCompatibility: %@\nRecent failure: %@\nPending sends: %lld" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozuの接続診断\n接続状態：%@\n通信状態：%@\nホストの状態：%@\n互換性：%@\n最近のエラー：%@\n送信待ち：%lld"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

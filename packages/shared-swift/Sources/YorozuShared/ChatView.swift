@@ -308,7 +308,7 @@ public struct ChatView: View {
                     dismiss: { model.dismissPluginNotice() })
             }
             if model.hasUnconfirmedStop(in: thread.id) {
-                Banner(text: "Could not confirm whether this task stopped. Check the host before retrying.",
+                Banner(text: String(localized: "Could not confirm whether this task stopped. Check the host before retrying."),
                     systemImage: "exclamationmark.triangle")
             }
             if thread.interruptedTurnId != nil { interruptedTurnNotice }
