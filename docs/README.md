@@ -6,6 +6,7 @@ Start with the [project README](../README.md) for installation and development. 
 | Topic | Document |
 | --- | --- |
 | System design, pairing, relay, threads, and apps | [Architecture](architecture.md) |
+| Proposed continuous chat, PAIOS memory ownership, and replaceable execution | [Design v0.0](design/continuous-chat-memory-v0.0.md) |
 | Sizing from the container, never from a guessed number | [UI layout](ui-layout.md) |
 | Release branches, candidates, and promotion | [Release workflow](RELEASE_WORKFLOW.md) |
 | Signing, packaging, TestFlight, and relay hosting | [Releasing](releasing.md) |
