@@ -11,12 +11,14 @@ struct NewSessionSetup: View {
     let chooseHost: (HostID) -> Void
 
     private var secondaryInk: Color { YorozuPalette.ink.opacity(0.72) }
-    // The compiled fallback describes old hosts; it cannot prove another agent is set up.
-    private var offersAgentChoice: Bool { model.agents?.contains { $0.id != .yorozu } == true }
+    private var offersAgentChoice: Bool { agents.contains { $0.id != .yorozu } }
     private var heading: LocalizedStringKey { offersAgentChoice ? "Who should answer?" : "Start a conversation" }
+    private var readinessRequest: String {
+        "\(ObjectIdentifier(model)):\(model.canDeliver):\(model.agents?.map { $0.id.rawValue }.joined(separator: ",") ?? "")"
+    }
 
     private var agents: [AgentDescriptor] {
-        let groups = NewThreadPicker.groups(model.availableAgents)
+        let groups = NewThreadPicker.groups(model.configuredAgents)
         return groups.assistants + groups.codingAgents
     }
 
@@ -121,6 +123,9 @@ struct NewSessionSetup: View {
         .frame(maxWidth: LayoutMetrics.readingWidth, alignment: .leading)
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .contain)
+        .task(id: readinessRequest) {
+            if model.canDeliver { model.requestAgentStatus() }
+        }
     }
 
     private func agentRow(_ descriptor: AgentDescriptor) -> some View {

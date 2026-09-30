@@ -34,7 +34,7 @@ final class KeyboardChooserTests: XCTestCase {
     @MainActor
     func testAgentChoiceRequiresAnotherConfiguredAgent() {
         let app = XCUIApplication()
-        for scene in ["session-pending", "session-yorozu", "session-multiple"] {
+        for scene in ["session-pending", "session-yorozu", "session-legacy", "session-multiple"] {
             app.launchArguments = ["-yorozuShowcase", scene, "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
             app.launch()
             XCTAssertTrue(app.textViews["Message"].waitForExistence(timeout: step))

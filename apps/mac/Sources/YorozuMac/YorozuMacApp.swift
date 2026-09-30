@@ -59,7 +59,7 @@ final class Sidecar: ObservableObject {
         case "rejected-oversized-attachments": return String(localized: "Attachments exceed the size limit")
         case "rejected-attachments-unsupported": return String(localized: "Attachments are not supported")
         case "rejected-conflicting-message-id": return String(localized: "Conflicting message rejected")
-        case "malformed-frame", "hello-refused", "hello-spub-ignored":
+        case "malformed-frame", "frame-error malformed body", "hello-refused", "hello-spub-ignored":
             return String(localized: "Invalid connection data ignored")
         case "replayed-frame": return String(localized: "Replayed connection data ignored")
         case "hello-refused device-limit": return String(localized: "Device limit reached")

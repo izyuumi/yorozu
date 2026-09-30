@@ -63,7 +63,7 @@ private actor ShowcaseTransport: ChatTransport {
             continuation.yield(.ownerOnline(launchArgument("yorozuShowcase") != "queued"))
             continuation.yield(.state(.paired))
             let scene = launchArgument("yorozuShowcase")
-            if scene == "threads" || scene == "new-thread" || scene == "session-yorozu" || scene == "session-multiple" {
+            if scene == "threads" || scene == "new-thread" || scene == "session-yorozu" || scene == "session-multiple" || scene == "session-legacy" {
                 let configured = scene == "session-yorozu" ? [ThreadAgent.yorozu] : ThreadAgent.allCases
                 continuation.yield(.event(YorozuEvent(id: "configured-agents", threadId: "", ts: 0, agentId: "main",
                     payload: .modelList(ModelListData(models: [], agents: configured.map {
@@ -78,6 +78,12 @@ private actor ShowcaseTransport: ChatTransport {
     }
 
     func send(_ event: YorozuEvent) async throws {
+        if case .agentStatus = event.payload, launchArgument("yorozuShowcase") != "session-pending" {
+            let scene = launchArgument("yorozuShowcase")
+            let ready = scene != "session-yorozu" && scene != "session-legacy"
+            continuation?.yield(.event(YorozuEvent(id: "setup-\(event.id)", threadId: "", ts: event.ts, agentId: "main",
+                payload: .agentStatus(AgentStatusData(claude: AgentReadiness(ok: ready), codex: AgentReadiness(ok: ready))))))
+        }
         if case .threadModelsRequest = event.payload {
             continuation?.yield(.event(YorozuEvent(id: "catalog-\(event.id)", threadId: event.threadId,
                 ts: event.ts, agentId: "main", payload: .threadModels(ThreadModelsData(requestId: event.id, models: [

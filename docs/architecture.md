@@ -367,7 +367,11 @@ remain selectable by contract. This advertised subset does not remove runners or
 Readiness is cached per host process for one minute, with concurrent requests sharing one probe.
 Device joins refresh expired readiness; explicit `agent_status` refresh bypasses the age cache
 and broadcasts changed choices, so installing or logging in does not require a host restart.
-Models and skills for default coding agents are queried after setup succeeds.
+Models and skills for default coding agents are queried after setup succeeds. Native clients
+also request this readiness when opening an unsent session, because older hosts advertise
+compiled runners before setup. The last confirmed answer is encrypted in that host's cache
+so choices survive offline relaunch and a pending check; a logged-out answer replaces it.
+Without a confirmed answer, only Yorozu and explicitly registered custom agents are offered.
 
 ### Cache
 

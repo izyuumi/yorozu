@@ -381,8 +381,11 @@ public final class ChatModel {
     /// Includes empty replies, so pairing can await a confirmed list before showing its code.
     public private(set) var deviceListRevision = 0
     /// Whether each agent would answer here. Nil while ``requestAgentStatus()`` waits for the
-    /// runtime, so a check that finds nothing new still reads as a check; only the host Mac asks.
+    /// runtime, so a check that finds nothing new still reads as a check. New-session setup
+    /// and the host Mac's settings ask through the same readiness check.
     public private(set) var agentStatus: AgentStatusData?
+    /// Last authenticated setup, retained while checking again and for this host offline.
+    private var confirmedAgentStatus: AgentStatusData?
     /// Every model a thread can be put on, as the Mac has it configured. Arrives with the
     /// thread list; empty until then, which is a picker that offers only Default.
     public private(set) var channelModelSelection = false
@@ -397,6 +400,17 @@ public final class ChatModel {
 
     public var availableAgents: [AgentDescriptor] {
         agents ?? ThreadAgent.allCases.map { AgentDescriptor(id: $0, label: $0.label, needsFolder: $0.needsFolder) }
+    }
+
+    /// New sessions offer built-in coding agents only after their host confirms setup.
+    public var configuredAgents: [AgentDescriptor] {
+        availableAgents.filter { descriptor in
+            switch descriptor.id {
+            case .claudeCode: confirmedAgentStatus?.claude?.ok == true
+            case .codex: confirmedAgentStatus?.codex?.ok == true
+            default: true
+            }
+        }
     }
 
     public func descriptor(for agent: ThreadAgent) -> AgentDescriptor? {
@@ -692,6 +706,7 @@ public final class ChatModel {
         guard let cache else { return }
         peerInfo = cache.peerInfo()
         agents = cache.agents().map(Self.acceptedAgents)
+        confirmedAgentStatus = cache.agentStatus()
         synced = cache.threads()
         syncLastSeen = cache.lastSeen()
         let storedPending = cache.outbox()
@@ -2659,6 +2674,8 @@ public final class ChatModel {
                 onDevices?()
             case .agentStatus(let data):
                 agentStatus = data
+                confirmedAgentStatus = data
+                cache?.save(agentStatus: data)
             // The stored rules, in answer to `rule_list` and after any change to them. Also
             // not a thread's event: rules are global, which is the whole point of them.
             case .ruleList(let data):

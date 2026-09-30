@@ -107,7 +107,7 @@ final class E2EHarness {
             break
         case "channel-model":
             model.newDraft()
-        case "session-yorozu", "session-multiple", "session-pending":
+        case "session-yorozu", "session-multiple", "session-pending", "session-legacy":
             model.newDraft()
         case "model":
             // Re-seeded whenever the runtime sends a list, for the same reason as `share`: the
