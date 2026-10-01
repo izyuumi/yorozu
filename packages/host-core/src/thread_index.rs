@@ -203,11 +203,37 @@ fn bound_pending(root: &Path) -> io::Result<()> {
     }
     Ok(())
 }
+pub(crate) struct NativeWriter<'a> {
+    root: &'a Path,
+    _owner: WriterLock,
+}
+pub(crate) fn native_writer(root: &Path) -> io::Result<NativeWriter<'_>> {
+    private_dir(root)?;
+    let owner = private_open(&root.join(".rust-thread-index-owner.lock"), false)?;
+    owner.try_lock().map_err(io::Error::other)?;
+    let owner = WriterLock(owner);
+    if fs::symlink_metadata(root.join("threads.json.tmp")).is_ok() {
+        return Err(invalid());
+    }
+    Ok(NativeWriter {
+        root,
+        _owner: owner,
+    })
+}
+impl NativeWriter<'_> {
+    pub(crate) fn replace(&self, request: &Value) -> Value {
+        replace_locked(self.root, request, true)
+            .unwrap_or_else(|_| json!({"error":"thread-index-storage-failed"}))
+    }
+}
 fn replace(root: &Path, request: &Value, native_owned: bool) -> io::Result<Value> {
     private_dir(root)?;
     let owner = private_open(&root.join(".rust-thread-index-owner.lock"), false)?;
     owner.try_lock().map_err(io::Error::other)?;
     let _owner = WriterLock(owner);
+    replace_locked(root, request, native_owned)
+}
+fn replace_locked(root: &Path, request: &Value, native_owned: bool) -> io::Result<Value> {
     // A legacy writer's pending file is ambiguous state, never disposable scratch data.
     if fs::symlink_metadata(root.join("threads.json.tmp")).is_ok() {
         return Ok(json!({"error":"thread-index-recovery-required"}));

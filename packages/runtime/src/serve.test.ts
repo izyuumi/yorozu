@@ -7119,3 +7119,40 @@ exec /usr/bin/git "$@"
     rmSync(gitFolder, { recursive: true, force: true });
   }
 });
+
+
+test("preflight folder refusal cannot publish a failed final for a replacement attempt", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-preflight-owner-"));
+  writeFileSync(join(dir, "threads.json"), JSON.stringify([
+    { id: "preflight-owner", title: "Work", createdAt: new Date().toISOString(), archived: false, agent: "codex" },
+  ]));
+  const home = threadStorage.threadHome;
+  let retained: string | undefined;
+  let origin: string | undefined;
+  let attempt: unknown;
+  vi.spyOn(threadStorage, "threadHome").mockImplementation((threadId, root) => {
+    if (threadId === "preflight-owner" && retained === undefined) {
+      origin = readThreadEvents(threadId, dir).findLast((event) => event.kind === "message" && event.data.role === "user")?.id;
+      if (origin) {
+        const claim = rustSyncModule.syncHostRequest(dir, { op: "run_attempt_claim", threadId, eventId: origin });
+        expect(claim.claimed).toBe(true);
+        attempt = claim.attemptId;
+        retained = readFileSync(join(dir, "threads.json"), "utf8");
+      }
+    }
+    return home(threadId, root);
+  });
+  const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "must not run" });
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+  const eventId = send({ kind: "message", data: { role: "user", text: "work" } }, "preflight-owner");
+  await vi.waitFor(() => expect(retained).toBeDefined());
+  const barrier = send({ kind: "thread_list", data: { threads: [], peerInfo: localPeerInfo("test") } });
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.peerInfoReplyTo === barrier);
+  expect(origin).toBe(eventId);
+  expect(readThreadEvents("preflight-owner", dir).some((event) => event.id === `native:${eventId}:final`)).toBe(false);
+  expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(retained);
+  expect(rustSyncModule.syncHostRequest(dir, { op: "run_attempt_current", threadId: "preflight-owner", eventId,
+    attemptId: attempt, mode: "owned" })).toMatchObject({ current: true, owned: true });
+  expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8"))).toEqual([{ threadId: "preflight-owner", eventId }]);
+  expect(run).not.toHaveBeenCalled();
+});

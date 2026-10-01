@@ -1137,6 +1137,40 @@ and the missing production pre-SDK Update boundary are recorded separately. Full
 in52files with one local worker and unchanged deadlines. Scoped preflight failed-final publication, broader Stop
 fallback and full approval currency remain within finite item3; generic writes are not sealed.
 
+## Scoped Rust preflight failed-final publication
+
+Missing-runner and missing-folder replies now use run_turn_preflight_finish. Node captures the
+native marker before those checks; Rust proves its exact nullable scope, canonical origin, accepted
+conversation and real retained user before admitting the failed final through the existing history
+journal. A metadata writer lease spans scope validation and journal admission, followed by its
+lock-aware CAS. A running or foreign registry refuses publication. An exact interrupted issued
+marker may retire with its matching paused registry, or after restart without that registry.
+Cleanup issues no worker and does not depend on dispatch, FIFO, expiration or retry budget.
+
+The operation accepts only the two existing preflight reasons and generates the canonical error
+reply in Rust. Its scope-bound deterministic key normalizes safe numeric notation and recursively
+sorts object keys while preserving opaque values. Retried publication verifies the original Entry,
+checksum and committed projection, then returns the original final bytes and timestamp/day. It
+never creates another transcript record from a fresh retry timestamp. The existing Entry/Target
+formats, accepted records, queue, Stop journals and recovery snapshots remain intact.
+
+Stored-final confirmation is separate from metadata cleanup. A failed CAS retains marker/registry,
+returns the already durable final and permits exact retry; registry retirement follows confirmed
+CAS. Journal admission/recovery failure fences future execution while retaining independent Stop
+writes. Replays after successful retirement return the same original final without adopting a new
+registry. Node broadcasts only Root-confirmed final evidence and no longer performs generic clears
+in these two preflight paths.
+
+Twenty-seven readiness tests pass, including a held metadata writer lease, replacement/running/
+foreign-registry refusal, paused issued retirement and retained final cleanup after restart across
+midnight. The actual old runtime publishes a false terminal reply after a replacement Root claim;
+the repaired runtime preserves the registry and exact metadata and emits no final. The candidate's
+initial object-order retry bug was independently reproduced and repaired; key stability now covers
+nested and numeric-string keys and safe numeric variants. Strict Clippy, production build and three
+focused runtime cases pass. Complete validation passes141 Rust tests and formatting, plus860
+runtime/plugin checks and1skip in52files with one local worker and unchanged deadlines. Broader Stop
+fallback and full approval currency remain within finite item3; the whole standalone migration is unfinished.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

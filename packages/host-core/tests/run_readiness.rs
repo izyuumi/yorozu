@@ -1607,3 +1607,211 @@ fn unissued_terminal_clear_requires_its_exact_returned_scope_and_durable_agent_c
         }
     }
 }
+
+fn preflight(host: &mut History, expected: &Value, ts: u64) -> Value {
+    host.request(
+        &json!({"op":"run_turn_preflight_finish","threadId":"thread","eventId":"origin",
+        "expectedTurn":expected,"reason":"missing-folder","ts":ts}),
+    )
+}
+#[test]
+fn preflight_admits_failed_final_only_for_its_captured_paused_scope() {
+    for guard in [
+        "null",
+        "legacy",
+        "issued-paused",
+        "restart",
+        "stopped-expired-noqueue",
+        "replacement",
+        "running",
+        "foreign-registry",
+        "hidden",
+        "missing-user",
+        "writer-lease",
+    ] {
+        let temp = Temp::new();
+        let (mut host, _) = open(&temp);
+        seed(&mut host, "origin", "conversation");
+        let mut expected = Value::Null;
+        if ["legacy", "stopped-expired-noqueue", "replacement"].contains(&guard) {
+            pause(&mut host, &temp);
+            expected = snapshot(&temp)["threads"][0]["nativeTurn"].clone();
+        }
+        if ["issued-paused", "restart", "running", "foreign-registry"].contains(&guard) {
+            let scope = issued(&mut host);
+            if guard != "running" {
+                assert_eq!(
+                    lifecycle(&mut host, &scope, "run_attempt_pause")["applied"],
+                    true
+                );
+            }
+            expected = snapshot(&temp)["threads"][0]["nativeTurn"].clone();
+            if guard == "restart" {
+                drop(host);
+                host = History::open(&temp.0).unwrap();
+            }
+            if guard == "foreign-registry" {
+                let read = snapshot(&temp);
+                let mut index = read["threads"].clone();
+                index[0]["nativeTurn"]["attemptId"] = json!("b".repeat(32));
+                expected = index[0]["nativeTurn"].clone();
+                assert_eq!(host.request(&json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index}))["stored"],true);
+            }
+        }
+        if guard == "replacement" {
+            let read = snapshot(&temp);
+            let mut index = read["threads"].clone();
+            index[0]["nativeTurn"]["future"] = json!({"replacement":true});
+            assert_eq!(host.request(&json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index}))["stored"],true);
+        }
+        if guard == "stopped-expired-noqueue" {
+            assert!(host.request(&json!({"op":"stop_save","record":{"threadId":"thread","targetEventId":"origin","status":"requested","requestIds":["stop"]}}))["record"].is_object());
+            assert_eq!(host.request(&json!({"op":"admission_expire","entry":{"id":"origin","threadId":"thread","identity":"a".repeat(64),"deadline":1},"now":2}))["status"],"expired");
+            assert_eq!(
+                host.request(&json!({"op":"queue_remove","threadId":"thread","eventId":"origin"}))
+                    ["stored"],
+                true
+            );
+        }
+        if guard == "hidden" {
+            assert_eq!(host.request(&json!({"op":"history_append","operationId":"rewind","thread":true,"transcript":true,
+                "event":{"id":"rewound","threadId":"thread","ts":3000,"agentId":"main","kind":"thread_rewound",
+                "data":{"requestId":"rewind","eventId":"origin","hiddenEventIds":["origin"]}}}))["stored"],true);
+        }
+        if guard == "missing-user" {
+            fs::write(temp.0.join("threads/thread.jsonl"), b"").unwrap();
+        }
+        let lock = if guard == "writer-lease" {
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(temp.0.join(".rust-thread-index-owner.lock"))
+                .unwrap();
+            file.try_lock().unwrap();
+            Some(file)
+        } else {
+            None
+        };
+        let before = fs::read(temp.0.join("threads.json")).unwrap();
+        let queue = fs::read(temp.0.join("native-turn-queue.json")).unwrap();
+        let history = fs::read(temp.0.join("threads/thread.jsonl")).unwrap();
+        let proof = preflight(&mut host, &expected, 4000);
+        if [
+            "null",
+            "legacy",
+            "issued-paused",
+            "restart",
+            "stopped-expired-noqueue",
+        ]
+        .contains(&guard)
+        {
+            assert_eq!(proof["stored"], true, "{guard}: {proof}");
+            assert_eq!(proof["applied"], true, "{guard}: {proof}");
+            assert_eq!(proof["final"]["id"], "native:origin:final");
+            assert_eq!(proof["final"]["data"]["failed"], true);
+            assert!(snapshot(&temp)["threads"][0].get("nativeTurn").is_none());
+            if expected["attemptId"].is_string() {
+                let currency = host.request(&json!({"op":"run_attempt_current","threadId":"thread","eventId":"origin","attemptId":expected["attemptId"],"mode":"owned"}));
+                assert_eq!(currency["current"], false);
+                assert_ne!(currency["owned"], true);
+            }
+            assert_eq!(
+                preflight(&mut host, &expected, 86_404_000)["final"],
+                proof["final"]
+            );
+        } else {
+            assert_ne!(proof["stored"], true, "{guard}: {proof}");
+            assert!(
+                proof["reason"].is_string() || proof["error"].is_string(),
+                "{guard}: {proof}"
+            );
+            assert_eq!(
+                fs::read(temp.0.join("threads.json")).unwrap(),
+                before,
+                "{guard}"
+            );
+            assert_eq!(
+                fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+                history,
+                "{guard}"
+            );
+        }
+        assert_eq!(
+            fs::read(temp.0.join("native-turn-queue.json")).unwrap(),
+            queue,
+            "{guard}"
+        );
+        drop(lock);
+    }
+}
+#[test]
+fn preflight_metadata_retry_recovers_original_final_across_restart_and_midnight() {
+    let temp = Temp::new();
+    let (mut host, _) = open(&temp);
+    seed(&mut host, "origin", "conversation");
+    let scope = issued(&mut host);
+    assert_eq!(
+        lifecycle(&mut host, &scope, "run_attempt_pause")["applied"],
+        true
+    );
+    let read = snapshot(&temp);
+    let mut index_with_future = read["threads"].clone();
+    index_with_future[0]["nativeTurn"]["future"] =
+        json!({"10":2.0,"2":"kept","nested":{"a":1,"z":true}});
+    assert_eq!(host.request(&json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index_with_future}))["stored"],true);
+    let expected = snapshot(&temp)["threads"][0]["nativeTurn"].clone();
+    let index = fs::read(temp.0.join("threads.json")).unwrap();
+    let queue = fs::read(temp.0.join("native-turn-queue.json")).unwrap();
+    let snapshots = temp.0.join(".thread-index-recovery");
+    fs::rename(&snapshots, temp.0.join("snapshot-backup")).unwrap();
+    fs::write(&snapshots, b"retain blocked metadata backup").unwrap();
+    let first = preflight(&mut host, &expected, 4000);
+    assert_eq!(first["stored"], true, "{first}");
+    assert_eq!(first["applied"], false);
+    assert_eq!(first["reason"], "metadata-unconfirmed");
+    assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), index);
+    let history = fs::read(temp.0.join("threads/thread.jsonl")).unwrap();
+    let transcript = fs::read(temp.0.join("transcripts/1970-01-01.jsonl")).unwrap();
+    drop(host);
+    fs::remove_file(&snapshots).unwrap();
+    fs::rename(temp.0.join("snapshot-backup"), &snapshots).unwrap();
+    let mut host = History::open(&temp.0).unwrap();
+    let mut reordered = Value::Object(
+        expected
+            .as_object()
+            .unwrap()
+            .iter()
+            .rev()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    );
+    reordered["future"] = Value::Object(
+        expected["future"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .rev()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    );
+    reordered["future"]["nested"] = json!({"z":true,"a":1.0});
+    reordered["recoveryAttempts"] = json!(0.0);
+    let retry = preflight(&mut host, &reordered, 86_404_000);
+    assert_eq!(retry["stored"], true, "{retry}");
+    assert_eq!(retry["applied"], true);
+    assert_eq!(retry["final"], first["final"]);
+    assert!(snapshot(&temp)["threads"][0].get("nativeTurn").is_none());
+    assert_eq!(
+        fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+        history
+    );
+    assert_eq!(
+        fs::read(temp.0.join("transcripts/1970-01-01.jsonl")).unwrap(),
+        transcript
+    );
+    assert!(!temp.0.join("transcripts/1970-01-02.jsonl").exists());
+    assert_eq!(
+        fs::read(temp.0.join("native-turn-queue.json")).unwrap(),
+        queue
+    );
+}

@@ -1659,11 +1659,25 @@ export function serve(options: ServeOptions = {}): Sidecar {
         broadcast(final);
         reportChanges();
       };
+      const previous = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
+      const preflightFinish = (reason: "missing-runner" | "missing-folder"): void => {
+        let proof: Record<string, unknown>;
+        try { proof = syncHostResult(dir, { op: "run_turn_preflight_finish", threadId, eventId: userEventId,
+          expectedTurn: previous ?? null, reason, ts: Date.now() }); }
+        catch { proof = {}; }
+        if (proof.stored === true && proof.final && typeof proof.final === "object" && !Array.isArray(proof.final)) {
+          terminalRecorded = true;
+          broadcast(proof.final as YorozuEvent);
+        }
+        if (proof.applied === true) broadcast(threadList());
+        else if (!["scope-replaced", "run-active", "already-completed", "rewound-origin", "not-accepted-conversation", "missing-origin"].includes(String(proof.reason))) {
+          nativeStorageFenced.add(threadId);
+          state("native-finish-unconfirmed");
+        }
+      };
       // Finished, so the composer is not left offering Stop for a turn nobody is running.
       if (!runner || !agentDescriptors.some(({ id }) => id === agent)) {
-        finish(`${agent} is no longer registered on this host.`, true);
-        setNativeTurn(threadId, undefined, dir);
-        broadcast(threadList());
+        preflightFinish("missing-runner");
         return;
       }
       // No folder, no agent: a thread from before folders were required, or one whose folder
@@ -1671,15 +1685,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const home = threadHome(threadId, dir);
       if (agentDescriptors.find(({ id }) => id === agent)?.needsFolder && (!home.cwd || !isProjectFolder(home.cwd))) {
         state("native-cwd-refused");
-        finish(`${agent} needs one of this Mac's project folders, and this thread has none.`, true);
-        setNativeTurn(threadId, undefined, dir);
-        broadcast(threadList());
+        preflightFinish("missing-folder");
         return;
       }
       const turn = new AbortController();
       if (!running.has(threadId)) running.set(threadId, turn);
       if (userEventId) runningEventIds.set(threadId, userEventId);
-      const previous = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
       let recoveryAttempts = previous?.userEventId === userEventId ? previous?.recoveryAttempts ?? 0 : 0;
       let recovering = previous?.state === "interrupted" && previous.userEventId === userEventId;
       let unissuedTurn = previous;
