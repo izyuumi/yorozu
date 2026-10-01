@@ -413,6 +413,12 @@ final class Session {
 
     func requestNotifications() {
         guard !isDemo, launchArgument("yorozuShowcase") == nil, launchArgument("yorozuScene") == nil else { return }
+        #if DEBUG
+        // Network UI tests use synthetic hosts and never grant system permissions.
+        // Notification consent has its own flow and must not intercept a Send tap.
+        if ProcessInfo.processInfo.arguments.contains("-yorozuNoNotificationPrompt") ||
+            ProcessInfo.processInfo.environment["YOROZU_UITEST_NO_NOTIFICATIONS"] == "1" { return }
+        #endif
         Task {
             _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
             UIApplication.shared.registerForRemoteNotifications()

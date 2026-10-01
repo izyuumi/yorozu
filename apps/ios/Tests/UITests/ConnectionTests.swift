@@ -17,6 +17,7 @@ final class ConnectionTests: XCTestCase {
         rig = Rig(control: control)
         try await rig.post("heal")
         app = await XCUIApplication()
+        await MainActor.run { app.launchEnvironment["YOROZU_UITEST_NO_NOTIFICATIONS"] = "1" }
     }
 
     /// Changing destinations during a real connection loss preserves the composer and
@@ -546,7 +547,7 @@ final class ConnectionTests: XCTestCase {
 
     @MainActor
     private func launchPaired() async throws {
-        app.launchArguments = ["-yorozuPair", try await rig.pairing()]
+        app.launchArguments = ["-yorozuPair", try await rig.pairing(), "-yorozuNoNotificationPrompt"]
         app.launch()
         try waitConnected()
     }
@@ -600,7 +601,17 @@ final class ConnectionTests: XCTestCase {
     private func send(_ text: String) {
         composer.tap()
         composer.typeText(text)
-        app.buttons["Send"].tap()
+        let send = app.buttons["Send"]
+        // XCTest on iOS 27 can retain the button's pre-keyboard hit point after typing.
+        // Wait for accessibility geometry to agree with the visible keyboard before tapping.
+        // This changes neither app animations nor the network's timing/receipt behavior.
+        let keyboard = app.keyboards.firstMatch
+        let settled = expectation(for: NSPredicate { _, _ in
+            send.isEnabled && send.isHittable && (!keyboard.exists || send.frame.maxY <= keyboard.frame.minY)
+        }, evaluatedWith: send)
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 10), .completed,
+                       "Send accessibility frame did not settle above the keyboard")
+        send.tap()
         XCTAssertTrue(app.staticTexts[text].waitForExistence(timeout: 10), "\(text) not in the chat")
     }
 }

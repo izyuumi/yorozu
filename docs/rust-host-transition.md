@@ -112,7 +112,7 @@ This extraction implements Unix local transport only. Windows explicitly returns
 currency, capability negotiation, durable thread/admission state, approval decisions and
 provider execution remain future Rust boundaries. No provider credentials enter this worker.
 
-## Expired-admission journal extraction (in progress)
+## Expired-admission journal extraction
 
 Rust now owns the append writer for `expired-admissions.jsonl`. Legacy complete records and
 unknown fields are validated without rewriting their bytes. Interrupted final bytes remain
@@ -203,7 +203,19 @@ composer. The exported accessibility hierarchy and screen recording show an enab
 retained input and no notification prompt. This is a concrete native UI failure under investigation,
 not a pass and not evidence that animation waits alone explain the earlier result.
 A subsequent boolean-only Send-action diagnostic failed at the first offline message in 41.030
-seconds; result collection is still active. Its temporary DEBUG diagnostics are not committed. These runs do not establish the full native release gate.
+seconds. Its terminal result is exit 65; its retained tap trace shows XCTest sending the offline
+Send tap to the pre-keyboard coordinate (364, 757), and only the successful initial Send reached
+the model. The temporary diagnostics have been removed.
+
+The UI-test Send helper now waits, for at most ten seconds, until its enabled/hittable
+accessibility frame is above the visible keyboard before tapping. This preserves app animations,
+network deadlines, receipt behavior and all original message/duplicate assertions. The bounded
+reproduction passed in 63.027 seconds on the installed iOS 27.0 iPhone 17 Pro simulator: both
+messages appeared once, delivery confirmed after reconnect, and both replies arrived once in
+order. Its retained screenshot shows the queued messages and reconnection state. The synthetic
+host binary was pinned for this run so later core development could not replace it mid-test.
+This is evidence for a test-coordinate race, not a production Send-action fix. The full iOS 26.5
+release suite and physical-device/IME checks remain open. These runs do not establish the full native release gate.
 Cross-platform CI, physical devices and publication remain pending.
 
 No speed claim follows from the language choice. Measure cold launch, request latency, streaming
