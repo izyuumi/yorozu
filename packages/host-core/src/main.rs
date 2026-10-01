@@ -77,6 +77,7 @@ fn run() -> io::Result<()> {
         output.flush()
     });
     let mut transports = Transports::new(Path::new(&dir), write_frame.clone());
+    let mut relays = yorozu_host_core::relay::Relays::new(write_frame.clone());
     loop {
         // Read bounded frames without allocating an unbounded line from a broken bridge.
         let mut bytes = Vec::new();
@@ -112,7 +113,15 @@ fn run() -> io::Result<()> {
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty() && s.len() <= 128)
             .ok_or(io::ErrorKind::InvalidData)?;
-        let result = if request
+        let result = if request["op"]
+            .as_str()
+            .is_some_and(|op| op.starts_with("relay_"))
+        {
+            match relays.request(&request) {
+                Some(result) => result,
+                None => continue,
+            }
+        } else if request
             .get("op")
             .and_then(Value::as_str)
             .is_some_and(|op| op.starts_with("transport_"))

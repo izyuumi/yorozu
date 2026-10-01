@@ -57,6 +57,7 @@ import {
   type YorozuEvent,
 } from "@yorozu/shared";
 import WebSocket from "ws";
+import { startRustRelay, type RustRelaySocket } from "./relay-rust.js";
 import { UpdateGate } from "./update-gate.js";
 import { WireCrypto } from "./wire-crypto.js";
 import { SessionSequences } from "./session-sequences.js";
@@ -87,8 +88,6 @@ import { startChannelHost, type RunStatus, type ChannelInbound } from "./channel
 import { startDirect, type Direct } from "./direct.js";
 import type { Provider } from "./provider.js";
 import { autoTitle, onDeviceTitler, type Titler } from "./title.js";
-// Mirrors PING in apps/relay/src/protocol.ts; the shipped runtime must not depend on the relay package.
-const PING = JSON.stringify({ type: "ping" });
 import {
   appendThreadEvent,
   attachmentFiles,
@@ -179,9 +178,6 @@ async function changedFiles(start: { root: string; tree: string }): Promise<Turn
     });
   } catch { return []; }
 }
-const RECONNECT_MS = 2_000;
-/** Where the redial delay stops doubling while the relay keeps turning this Mac away. */
-const RECONNECT_MAX_MS = 30_000;
 /**
  * Heartbeat on the relay socket. Without it a quiet Mac is silently dropped by whatever sits
  * between it and the relay — the relay then tells every phone the Mac is offline, while this
@@ -806,13 +802,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
    */
   const locals = new Map<string, Send>();
 
-  let socket: WebSocket | null = null;
+  let socket: RustRelaySocket | null = null;
   // OPEN only means transport connected; the relay accepts application traffic after register.
   let relayReady = false;
-  let retry: NodeJS.Timeout | null = null;
-  let retryMs = RECONNECT_MS;
+  let relay: ReturnType<typeof startRustRelay> | undefined;
   let stopped = false;
-  const catchupSends = new Map<string, { connection: WebSocket | null; device: PairedDevice;
+  const catchupSends = new Map<string, { connection: RustRelaySocket | null; device: PairedDevice;
     responses: YorozuEvent[]; next: number }>();
   let catchupTimer: NodeJS.Timeout | null = null;
   let nextCatchupAt = 0;
@@ -3486,18 +3481,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     onError: state,
   });
 
-  function connect(): void {
+  function connect(ws: RustRelaySocket): void {
     relayReady = false;
-    state("connecting");
-    // The room ID is only carried in `register`, which is too late for a relay that has to
-    // route the socket before reading it, so it also goes in the URL. It is the hash of our
-    // own signing key, so we know it before we dial; the QR keeps the bare URL.
-    const dial = new URL(relayUrl);
-    dial.searchParams.set(
-      "room",
-      toBase64Url(createHash("sha256").update(keys.signing.publicKey).digest()),
-    );
-    const ws = new WebSocket(dial);
     socket = ws;
     let room: string | null = null;
     /** Set once a replayed frame on this socket threw; nothing after it is acked. */
@@ -3860,34 +3845,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       onFrame(body);
     };
 
-    /**
-     * One ping every PING_MS, and the socket is declared dead if the pong does not come back
-     * within PONG_MS. `terminate()` rather than `close()`: a half-open socket will not complete
-     * a closing handshake, which is the case this exists for. The close handler then reconnects
-     * and re-registers, which is what puts the room's presence right again.
-     */
-    let pinger: NodeJS.Timeout | null = null;
-    let deadline: NodeJS.Timeout | null = null;
-    const stopHeartbeat = (): void => {
-      if (pinger) clearInterval(pinger);
-      if (deadline) clearTimeout(deadline);
-      pinger = deadline = null;
-    };
-
-    ws.on("open", () => {
-      state("connected");
-      pinger = setInterval(() => {
-        // Still waiting on the last pong: the deadline below owns the socket, not us.
-        if (deadline) return;
-        deadline = setTimeout(() => {
-          state("heartbeat-timeout");
-          ws.terminate();
-        }, heartbeat.pongMs);
-        ws.send(PING);
-      }, heartbeat.pingMs);
-      // Node keeps the process alive for a bare interval; the socket is what should.
-      pinger.unref();
-    });
+    ws.on("open", () => state("connected"));
 
     ws.on("message", (data) => {
       try {
@@ -3896,8 +3854,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
         const msg = JSON.parse(data.toString()) as Record<string, unknown>;
         switch (msg.type) {
           case "pong":
-            if (deadline) clearTimeout(deadline);
-            deadline = null;
             return;
           case "nonce":
             return ws.send(
@@ -3914,7 +3870,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
             return;
           case "registered":
             phones = typeof msg.phones === "number" ? msg.phones : undefined;
-            retryMs = RECONNECT_MS;
             room = String(msg.roomId);
             relayReady = true;
             state("registered");
@@ -3992,12 +3947,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       catchupSends.clear();
       if (catchupTimer) clearTimeout(catchupTimer);
       catchupTimer = null;
-      stopHeartbeat();
       state("disconnected");
-      // Doubling until a registration lands: a Mac the relay keeps refusing would otherwise
-      // spend the whole household's connection allowance on its own redials.
-      if (!stopped) retry = setTimeout(connect, retryMs);
-      retryMs = Math.min(retryMs * 2, RECONNECT_MAX_MS);
     });
   }
 
@@ -4060,7 +4010,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
       else removeNativeQueue(entry.eventId);
     }
   });
-  void startupRecovery.then(() => { if (!stopped) connect(); })
+  void startupRecovery.then(() => {
+    if (stopped) return;
+    // Preserve the same room routing URL; Rust owns each connection and redial generation.
+    const dial = new URL(relayUrl);
+    dial.searchParams.set("room", toBase64Url(createHash("sha256").update(keys.signing.publicKey).digest()));
+    relay = startRustRelay({ dir, url: dial.toString(), heartbeat, onSocket: connect, onState: state });
+  })
     .catch(() => state(acceptedStore.available ? "stop-storage-failed" : "accepted-storage-failed"));
 
   // Production never installs legacy agents or starts its scheduler. Initialization remains
@@ -4092,7 +4048,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (catchupTimer) clearTimeout(catchupTimer);
       catchupTimer = null;
       for (const turn of running.values()) turn.abort();
-      if (retry) clearTimeout(retry);
+      await relay?.close();
       await local.close();
       await Promise.allSettled([...pendingChannelAdmissions.values()].map((entry) => entry.promise));
       await Promise.allSettled([...preDispatchStops.values()]);
@@ -4106,12 +4062,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
       await direct?.close();
       await legacyReady?.catch(() => undefined);
       await legacy?.close();
-      return new Promise<void>((done) => {
-        const ws = socket;
-        if (!ws || ws.readyState === WebSocket.CLOSED) return done();
-        ws.once("close", () => done());
-        ws.close();
-      });
     },
   };
   } catch (error) { releaseHistory(); throw error; }

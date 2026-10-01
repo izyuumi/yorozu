@@ -10,8 +10,10 @@ separate conversations. These are migration requirements, not claims about the c
 - `apps/mac` and `apps/ios` provide Swift/SwiftUI interfaces. The shared Swift `ChatModel` and
   `ThreadCache` own encrypted client drafts, attachments, saved-draft recovery and pending sends.
 - The Mac launches the bundled Node executable and `packages/runtime/dist/serve.js`. The
-  TypeScript host currently owns relay transport, admission policy, sequencing, approvals,
-  history read/sync policy, recovery policy and orchestration. Rust owns the extracted durable
+  TypeScript host currently owns relay registration/frame policy, admission policy, approvals,
+  history read/sync policy, recovery policy and orchestration. Rust owns relay socket IO,
+  heartbeat/reconnect, authenticated channel crypto and sequence reservation/replay currency,
+  plus the extracted durable
   attachment/outbox/expiry/Stop/accepted-message stores, event/transcript transactions, native queue
   writes, steering intent/outcomes, private session identity and wire cryptography, thread metadata
   mutations and Unix listeners. This is approximately 4,000 lines in `serve.ts`,
@@ -27,8 +29,9 @@ separate conversations. These are migration requirements, not claims about the c
 
 ## First Rust extraction
 
-`packages/host-core` is a Rust library and headless executable with no Swift, UI, provider SDK,
-gateway, credential or network dependency. Its first production integration replaces the
+`packages/host-core` is a Rust library and headless executable with no Swift, UI or provider SDK
+dependency. The initial storage extraction had no network dependency; the current library also
+owns relay WebSocket/TLS IO. Its first production integration replaces the
 TypeScript attachment staging/assembly engine behind the existing async `AttachmentUploads`
 interface. The compatibility bridge uses private bounded JSON lines over child-process pipes.
 
@@ -520,6 +523,42 @@ the passing run does not establish a general latency benchmark or a standalone-h
 Relay socket IO, reconnect, catch-up, capability negotiation, provider orchestration and launcher
 ownership still belong to the remaining finite migration work.
 
+## Rust relay socket ownership
+
+The portable worker now owns relay WebSocket/TLS connections, connection/write deadlines, JSON
+heartbeat expiry and reconnection. Established Tokio/Tungstenite/Rustls libraries implement the
+wire/TLS protocols, with the ring provider selected explicitly by Cargo features. Certificate
+verification uses the standard trust roots; no credential files, provider environment, new grants
+or relaxed certificate checks enter this worker. The existing room query and registration/frame
+formats remain intact.
+
+Every connection has a new generation. Outgoing work is bound to that generation and never replayed
+onto a replacement socket. Writes confirm socket IO only, not message delivery or admission. Input
+and individual output messages are bounded to the relay's 1 MiB contract, the Rust command queue to
+32 frames, and the compatibility facade to 8 MiB of output. Writes have a five-second deadline;
+DNS/TCP/TLS/handshake share a cancellable ten-second deadline. Reconnect starts at two seconds,
+doubles to thirty seconds and resets after registration. Actual process termination still leaves
+unconfirmed operations for their existing durable identity/recovery policy.
+
+Three independent real-socket tests pass: room routing, opaque text/binary frames, protocol ping,
+old-generation exclusion, output bounds, cancellable incomplete WS/WSS handshakes, and rejection
+of an actual self-signed relay. The initial WSS test exposed missing Rustls provider selection;
+that failed evidence is retained and the library configuration is repaired. Nine existing host
+relay tests also pass, including heartbeat recovery, buffered replay, pairing counters and startup
+gating. A separate compatibility-facade test kills the actual owned worker, proves retired callbacks
+cannot send to the replacement connection, and verifies final-owner cleanup. Read-only review also
+identified that cancelling a system DNS future does not bound Tokio runtime destruction. Runtime
+shutdown now detaches that OS resolver while a shared permit bounds resolver work across retries
+and replacement owners. Literal IPs bypass DNS; all resolved IPv4/IPv6 addresses and the original
+TLS hostname/routing are retained. DNS failure cannot stall storage-owner shutdown.
+The complete Rust suite passes 107 tests, strict Clippy and the runtime build pass, and
+the final runtime aggregate passes 817 tests with one skipped across 49 files after the DNS
+repair and worker-termination fixture. An initial full core run failed one
+existing thread-index writer-release fixture (106 passed, one failed); its unchanged isolated
+reproduction and the repeated complete suite pass. Both results are retained without a cause claim.
+Catch-up policy, capability
+negotiation, registration/frame semantics and provider/run orchestration remain TypeScript.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including
@@ -541,7 +580,8 @@ The three focused readiness tests and all 455 shared Swift tests pass locally, i
 and reconnect harness. Temporary build products avoid generated Finder-metadata signing failures.
 The local toolchain is Xcode 27, and CI latest-stable currently uses Xcode 26.6; neither proves the
 required iOS 26.5 release gate. This is not proof of the still-unimplemented Windows local transport
-or a standalone host.
+or a standalone host. The signed `d8f244e` follow-up passes every CI job, including all three Rust
+platforms, shared Swift, runtime/plugin suites and native iOS build/catalog checks.
 
 ## Accepted conversation and storage target (implementation pending)
 
@@ -593,6 +633,46 @@ current capabilities/catalog/provider configuration. A model change retains conv
 task identities, applies safely to subsequent turns and does not change an in-flight task's recorded
 model. Unavailable models and interrupted changes need explicit recoverable states. These are pending
 finite UI/orchestration requirements, not implemented behavior in the current compatibility host.
+
+## Accepted account access priority (implementation pending)
+
+Yorozu is initially a free open-source local tool: this checkout has the existing MIT license,
+which remains unchanged. Users supply their own supported provider accounts and pay their providers.
+Do not add Yorozu subscriptions, credits, inference resale or managed-model billing. ELM is a
+separate managed service and this decision does not change its pricing or eligibility.
+
+The primary connection is official Sign in with ChatGPT for an eligible open-source local client.
+Use dynamic client registration and user authorization, without a partner API key/client secret
+([official quickstart](https://developers.openai.com/siwc/quickstart)). Account/access source,
+LLM selection and internal execution worker are separate identities behind one visible Yorozu agent.
+Supported installed Codex/Claude Code routes are optional alternatives; API keys are the last
+setup and implementation priority, in Advanced settings, not an alpha prerequisite or default.
+No live authorization, new key or private credential extraction is authorized by this design.
+
+Use the supported direct Responses route for Yorozu's own loop, or the official Codex app-server
+connection with app-owned Sign in with ChatGPT credentials, avoiding a second Codex sign-in
+([official app-server route](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server)).
+Keep the portable Rust boundary on the supported JSON-lines protocol; do not claim an official
+Rust SDK. App-managed conversation history remains required with streaming HTTP and `store:false`.
+The preview permits custom local function tools but excludes hosted computer use, MCP connectors,
+image generation, hosted file search/code interpreter/tool search, audio/video and Files uploads
+([preview limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)).
+Existing plan usage/quota is shared; never silently switch to billed API or opt into credits.
+Check the current account-scoped catalog and actual eligibility, rather than treating cached model
+names as entitlement proof.
+
+Claude connection must use the provider-managed, unmodified installed Claude Code binary with its
+built-in authentication options, and users authorize directly. Do not implement Yorozu-owned
+claude.ai OAuth, collect/intermediate credentials or resell access
+([official legal guidance](https://code.claude.com/docs/en/legal-and-compliance)). Validate these
+contracts using synthetic credentials before any separately authorized live connection. Voice stays
+deferred. During setup users may opt into automatic compatible updates of installed Codex and
+Claude Code using the official installation route. Update only while idle, without interrupting
+in-flight tasks; exclude competing updaters, smoke-test protocol/start/auth using synthetic data,
+and retain the known working version for rollback on failure. Advanced settings retain manual
+version control. This requirement does not authorize updating the user's installed CLIs now.
+This priority belongs to finite worker/conversation items four and six, not a new feature
+program, and none of these account flows is implemented by the relay extraction.
 
 ## Compatibility requirements
 
