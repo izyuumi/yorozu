@@ -690,6 +690,21 @@ affected paging/history/bridge checks. Read-only reviewers checked the cursor, f
 repairs. Current-state extraction, device-specific rendering, approval/run orchestration and the
 actual standalone launcher remain unfinished finite migration work.
 
+## Shared-owner thread metadata transactions
+
+Thread metadata writes now use the pinned history owner's bounded protocol instead of spawning a
+Rust process for each native marker, session or metadata update. The same existing transaction
+implementation keeps exact-byte revisions, ownership locks, immutable unknown fields, recovery
+snapshots and pending-file fences. A storage failure fence still precedes delegation; Node updates
+its expected revision only after a validated durable stored/hash proof. The old production process
+helper was removed. The standalone thread-index CLI remains available for recovery/compatibility
+and existing independent transaction tests; it obeys the same ownership lock.
+
+All nine Rust metadata contracts,47 runtime history contracts and three affected update/drain/queue
+checks pass. Complete verification also passes110 Rust and824 runtime tests plus one skip,
+formatting, strictClippy and the production build. Read-only review found no remaining defect.
+This reduces process boundaries without claiming ownership of run/approval policy yet.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

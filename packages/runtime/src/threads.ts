@@ -21,8 +21,7 @@ import {
 import { stateDir } from "./memory.js";
 import type { Message } from "./provider.js";
 import { rustSyncPage } from "./thread-sync-rust.js";
-import { threadIndexRequest } from "./rust-host.js";
-import { persistHistory, persistHistoryBatch } from "./rust-sync.js";
+import { persistHistory, persistHistoryBatch, syncHostRequest } from "./rust-sync.js";
 
 /** How much of a thread's log is replayed to the model as context. */
 export const HISTORY_LIMIT = 40;
@@ -90,8 +89,12 @@ const indexFile = (dir: string): string => join(dir, "threads.json");
 const indexBases = new WeakMap<ThreadRecord[], string | null>();
 function saveThreads(threads: ThreadRecord[], dir: string): void {
   if (!indexBases.has(threads)) throw new Error("Missing thread index revision");
-  const proof = threadIndexRequest(dir, threads, indexBases.get(threads)!);
-  indexBases.set(threads, proof);
+  let proof: Record<string, unknown>;
+  try { proof = syncHostRequest(dir, { op: "thread_index_replace", threads, expectedHash: indexBases.get(threads)! }); }
+  catch { throw new Error("Rust thread index remains unconfirmed"); }
+  if (proof.stored !== true || typeof proof.hash !== "string" || !/^[a-f0-9]{64}$/.test(proof.hash))
+    throw new Error("Rust thread index remains unconfirmed");
+  indexBases.set(threads, proof.hash);
 }
 
 /**

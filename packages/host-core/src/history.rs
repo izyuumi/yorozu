@@ -724,6 +724,11 @@ impl History {
         {
             return self.catchup.request(request);
         }
+        if request["op"] == "thread_index_replace" {
+            let mut transaction = request.clone();
+            transaction["op"] = json!("replace");
+            return crate::thread_index::request(&self.root, &transaction);
+        }
         if request["op"] == "history_page" || request["op"] == "history_page_result" {
             return self.paging.request(&self.root, request);
         }
