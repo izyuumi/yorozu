@@ -146,6 +146,7 @@ pub struct History {
     stops: Option<crate::stops::Stops>,
     admissions: Option<crate::admission::Admissions>,
     outbox: Option<crate::outbox::ChannelOutbox>,
+    attempts: HashMap<String, (String, String)>,
 }
 impl Drop for History {
     fn drop(&mut self) {
@@ -179,6 +180,7 @@ impl History {
             stops: None,
             admissions: None,
             outbox: None,
+            attempts: HashMap::new(),
         };
         let mut keys = HashSet::new();
         let mut done = HashSet::new();
@@ -810,6 +812,118 @@ impl History {
             json!({"ready":true,"eventId":origin,"threadId":thread,"agent":home["agent"],"completionId":completion}),
         )
     }
+    fn attempt_request(&mut self, request: &Value) -> io::Result<Value> {
+        use rand_core::{OsRng, RngCore};
+        let thread = request["threadId"]
+            .as_str()
+            .filter(|id| !invalid_id(id))
+            .ok_or_else(invalid)?
+            .to_owned();
+        let origin = request["eventId"]
+            .as_str()
+            .filter(|id| !invalid_id(id))
+            .ok_or_else(invalid)?
+            .to_owned();
+        if request["op"] == "run_attempt_claim" {
+            let proof = self.run_ready(request)?;
+            if proof["ready"] != true {
+                return Ok(proof);
+            }
+            if !self.attempts.contains_key(&thread) && self.attempts.len() >= 1024 {
+                return Ok(json!({"error":"run-attempt-capacity"}));
+            }
+            let bytes = crate::thread_index::current(&self.root)?.ok_or_else(invalid)?;
+            let mut index: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+            let home = index
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|row| row["id"] == thread)
+                .ok_or_else(invalid)?;
+            let recovering = request["recovering"].as_bool().ok_or_else(invalid)?;
+            let previous = home["nativeTurn"]["recoveryAttempts"].as_u64().unwrap_or(0);
+            let count = previous + u64::from(recovering);
+            if count > 3 {
+                return Ok(json!({"ready":false,"reason":"recovery-exhausted"}));
+            }
+            let mut currency = [0u8; 16];
+            OsRng
+                .try_fill_bytes(&mut currency)
+                .map_err(|error| io::Error::other(error.to_string()))?;
+            let attempt: String = currency.iter().map(|byte| format!("{byte:02x}")).collect();
+            home["nativeTurn"] = json!({"id":proof["completionId"],"state":"running","userEventId":origin,"recoveryAttempts":count,"recoveryActive":recovering,"attemptId":attempt});
+            let stored = crate::thread_index::request(
+                &self.root,
+                &json!({"op":"replace","expectedHash":digest(&bytes),"threads":index}),
+            );
+            if stored["stored"] != true {
+                return Ok(stored);
+            }
+            self.attempts
+                .insert(thread.clone(), (origin.clone(), attempt.clone()));
+            return Ok(
+                json!({"claimed":true,"threadId":thread,"eventId":origin,"attemptId":attempt,"recoveryAttempts":count}),
+            );
+        }
+        let attempt = request["attemptId"].as_str().ok_or_else(invalid)?;
+        let matches = self
+            .attempts
+            .get(&thread)
+            .is_some_and(|owner| owner.0 == origin && owner.1 == attempt);
+        if request["op"] == "run_attempt_release" {
+            if matches {
+                self.attempts.remove(&thread);
+            }
+            return Ok(json!({"released":matches}));
+        }
+        if request["op"] != "run_attempt_current" {
+            return Err(invalid());
+        }
+        if !matches {
+            return Ok(json!({"current":false}));
+        }
+        let bytes = crate::thread_index::current(&self.root)?.ok_or_else(invalid)?;
+        let index: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        let home = index
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == thread)
+            .ok_or_else(invalid)?;
+        let mode = request["mode"]
+            .as_str()
+            .filter(|mode| ["effect", "terminal", "owned"].contains(mode))
+            .ok_or_else(invalid)?;
+        if home["nativeTurn"]["attemptId"] != attempt || home["nativeTurn"]["userEventId"] != origin
+        {
+            return Ok(json!({"current":false}));
+        }
+        if mode == "owned" {
+            return Ok(json!({"current":true,"owned":true}));
+        }
+        if home["nativeTurn"]["state"] != "running" {
+            return Ok(json!({"current":false,"owned":true,"reason":"paused"}));
+        }
+        for (op, key, result) in [
+            ("stop_get", "targetEventId", "record"),
+            ("admission_get", "messageId", "entry"),
+        ] {
+            let mut query = json!({"op":op});
+            query[key] = json!(origin);
+            let proof = self.request(&query);
+            if proof.get("error").is_some() {
+                return Ok(proof);
+            }
+            // Only the explicit completed result may reconcile a Stop race. No new SDK effect
+            // may use that exception. Expired admission never permits completion either.
+            if !(proof[result].is_null() || op == "stop_get" && mode == "terminal") {
+                return Ok(
+                    json!({"current":false,"owned":true,"reason":if op == "stop_get" { "stopped" } else { "expired" }}),
+                );
+            }
+        }
+        Ok(json!({"current":true,"owned":true}))
+    }
     pub fn request(&mut self, request: &Value) -> Value {
         // Keep each existing operational journal's own failure fence, including durable Stop
         // recording when an unrelated history projection is unavailable.
@@ -863,6 +977,14 @@ impl History {
         }
         if self.failed {
             return json!({"error":"history-storage-failed"});
+        }
+        if request["op"]
+            .as_str()
+            .is_some_and(|op| op.starts_with("run_attempt_"))
+        {
+            return self
+                .attempt_request(request)
+                .unwrap_or_else(|_| json!({"error":"run-attempt-unconfirmed"}));
         }
         if request["op"] == "run_ready" {
             return self

@@ -180,3 +180,57 @@ fn fifo_and_interrupted_ownership_never_discard_or_overwrite_the_paused_origin()
     );
     assert_eq!(ready(&mut host, "waiting")["ready"], true);
 }
+
+#[test]
+fn issued_attempts_fence_replaced_stopped_and_restarted_workers_without_losing_evidence() {
+    let temp = Temp::new();
+    let (mut host, _) = open(&temp);
+    seed(&mut host, "origin", "conversation");
+    let claim = |host: &mut History, recovering| {
+        host.request(&json!({"op":"run_attempt_claim","threadId":"thread","eventId":"origin","recovering":recovering}))
+    };
+    let query = |host: &mut History, attempt: &Value, mode| {
+        host.request(&json!({"op":"run_attempt_current","threadId":"thread","eventId":"origin","attemptId":attempt,"mode":mode}))
+    };
+    let first = claim(&mut host, false);
+    assert_eq!(first["claimed"], true);
+    assert_eq!(first["attemptId"].as_str().unwrap().len(), 32);
+    assert_eq!(
+        query(&mut host, &first["attemptId"], "effect")["current"],
+        true
+    );
+    let second = claim(&mut host, true);
+    assert_eq!(second["recoveryAttempts"], 1);
+    assert_ne!(first["attemptId"], second["attemptId"]);
+    assert_eq!(
+        query(&mut host, &first["attemptId"], "owned")["current"],
+        false
+    );
+    assert_eq!(host.request(&json!({"op":"run_attempt_release","threadId":"thread","eventId":"origin","attemptId":first["attemptId"]}))["released"], false);
+    assert_eq!(
+        query(&mut host, &second["attemptId"], "effect")["current"],
+        true
+    );
+    assert!(host.request(&json!({"op":"stop_save","record":{"targetEventId":"origin","threadId":"thread","status":"requested","requestIds":["cancel"]}}))["record"].is_object());
+    let denied = query(&mut host, &second["attemptId"], "effect");
+    assert_eq!(denied["current"], false);
+    assert_eq!(denied["owned"], true);
+    assert_eq!(denied["reason"], "stopped");
+    assert_eq!(
+        query(&mut host, &second["attemptId"], "terminal")["current"],
+        true
+    );
+    assert_eq!(
+        query(&mut host, &second["attemptId"], "owned")["current"],
+        true
+    );
+    assert_eq!(claim(&mut host, true)["reason"], "stopped");
+    let retained = fs::read(temp.0.join("threads.json")).unwrap();
+    drop(host);
+    let mut host = History::open(&temp.0).unwrap();
+    assert_eq!(
+        query(&mut host, &second["attemptId"], "owned")["current"],
+        false
+    );
+    assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), retained);
+}

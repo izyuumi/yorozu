@@ -4357,21 +4357,12 @@ test("native session and running marker reach disk before completion, and surviv
   expect(listThreads(dir)[0]?.nativeTurn?.state).toBe("running");
 });
 
-test.each(["claude-code", "codex"] as const)("late %s callbacks cannot overwrite a replacement host's native metadata", async (agent) => {
+test.each([
+  ["claude-code", "host"], ["codex", "host"],
+  ["claude-code", "attempt"], ["codex", "attempt"],
+] as const)("late %s callbacks cannot overwrite a replacement %s's native metadata", async (agent, replacementScope) => {
   let oldTurn!: NativeTurn;
-  let finishOld!: (result: { text: string; sessionId: string; completed: boolean }) => void;
-  const oldRun: NativeAgentRunner["run"] = async (turn) => {
-    oldTurn = turn;
-    turn.onSession!("old-session");
-    return new Promise((resolve) => { finishOld = resolve; });
-  };
-  const { dir, send } = await pairedPhone([], false, { nativeRunners: { [agent]: { run: oldRun } } });
-  send({ kind: "thread_create", data: { agent, cwd: proj } }, "cc");
-  const userId = send({ kind: "message", data: { role: "user", text: "Continue this task" } }, "cc");
-  await vi.waitFor(() => expect(oldTurn).toBeDefined());
-  await sidecar.close();
-  expect(oldTurn.signal.aborted).toBe(true);
-
+  const oldResult = Promise.withResolvers<{ text: string; sessionId: string; completed: boolean }>();
   let freshTurn!: NativeTurn;
   let finishFresh!: (result: { text: string; sessionId: string }) => void;
   const freshRun: NativeAgentRunner["run"] = async (turn) => {
@@ -4379,14 +4370,37 @@ test.each(["claude-code", "codex"] as const)("late %s callbacks cannot overwrite
     turn.onSession!("fresh-session");
     return new Promise((resolve) => { finishFresh = resolve; });
   };
-  const replacement = await pairedPhone([], false, { stateDir: dir, nativeRunners: { [agent]: { run: freshRun } } });
+  const oldRun: NativeAgentRunner["run"] = async (turn) => {
+    if (oldTurn) return freshRun(turn);
+    oldTurn = turn;
+    turn.onSession!("old-session");
+    return oldResult.promise;
+  };
+  const originalHost = await pairedPhone([], false, { nativeRunners: { [agent]: { run: oldRun } } });
+  const { dir, send } = originalHost;
+  send({ kind: "thread_create", data: { agent, cwd: proj } }, "cc");
+  const userId = send({ kind: "message", data: { role: "user", text: "Continue this task" } }, "cc");
+  await vi.waitFor(() => expect(oldTurn).toBeDefined());
+  let replacement = originalHost;
+  if (replacementScope === "host") {
+    await sidecar.close();
+    expect(oldTurn.signal.aborted).toBe(true);
+    replacement = await pairedPhone([], false, { stateDir: dir, nativeRunners: { [agent]: { run: freshRun } } });
+  } else {
+    // A provider can deliver callbacks from its failed first SDK attempt after recovery begins.
+    oldResult.reject(new Error("worker transport failed after session creation"));
+  }
   await vi.waitFor(() => expect(freshTurn).toBeDefined());
   const index = readFileSync(join(dir, "threads.json"), "utf8");
   const history = readThreadEvents("cc", dir);
   oldTurn.onSession!("stale-session");
   oldTurn.onActivity!("stale-result", { kind: "tool_result", data: { callId: "stale", ok: true, output: "late" } });
   oldTurn.onUpdate!("stale partial");
-  finishOld({ text: "stale completion", sessionId: "stale-completion-session", completed: true });
+  oldTurn.onActivity!("stale-call", { kind: "tool_call", data: { callId: "stale", name: "Bash", args: {} } });
+  expect(await oldTurn.approve!("Bash", {}, new AbortController().signal)).toBe(false);
+  expect(await oldTurn.ask!("Stale question?", [], new AbortController().signal)).toBe("Interrupted");
+  expect(await oldTurn.beforeTool!(new AbortController().signal)).toBe(false);
+  oldResult.resolve({ text: "stale completion", sessionId: "stale-completion-session", completed: true });
   await new Promise<void>((resolve) => setImmediate(resolve));
   replacement.send({ kind: "thread_list", data: { threads: [] } });
   await replacement.eventsUntil((event) => event.kind === "thread_list");
@@ -4652,6 +4666,38 @@ test.each(["approval", "question"] as const)("Stop withdraws an open native %s c
     data: expect.objectContaining(answer?.data ?? {}) }));
 });
 
+
+test("scheduled native work is durably admitted while the preceding worker is still running", async () => {
+  const scheduler = vi.spyOn(schedulerModule, "startScheduler");
+  let release!: () => void;
+  const run = vi.fn<NativeAgentRunner["run"]>().mockImplementation(async (turn) => {
+    turn.onSession!("scheduled-session");
+    if (turn.text === "first") await new Promise<void>((resolve) => { release = resolve; });
+    return { text: `reply to ${turn.text}` };
+  });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } });
+  await vi.waitFor(() => expect(scheduler).toHaveBeenCalledTimes(1));
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "scheduled");
+  const first = send({ kind: "message", data: { role: "user", text: "first" } }, "scheduled");
+  await vi.waitFor(() => expect(release).toBeDefined());
+  try {
+    scheduler.mock.calls[0]![0]({ id: "due", threadId: "scheduled", instruction: "queued scheduled task", createdBy: "main" });
+    await vi.waitFor(() => expect(readThreadEvents("scheduled", dir).filter((event) => event.kind === "message" &&
+      event.data.role === "user")).toHaveLength(2));
+    const origin = readThreadEvents("scheduled", dir).find((event) => event.kind === "message" && event.data.text === "queued scheduled task")!;
+    expect((await rustHost.hostRequest(dir, { op: "accepted_get", messageId: origin.id })).entry)
+      .toMatchObject({ id: origin.id, threadId: "scheduled", purpose: "conversation" });
+    expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8")))
+      .toContainEqual({ eventId: origin.id, threadId: "scheduled" });
+    expect(run).toHaveBeenCalledTimes(1);
+    release();
+    await eventsUntil((event) => event.kind === "message" && event.id === `native:${origin.id}:final` && event.data.done === true);
+    expect(run).toHaveBeenCalledTimes(2);
+    const history = readThreadEvents("scheduled", dir);
+    expect(history.findIndex((event) => event.id === `native:${first}:final`))
+      .toBeLessThan(history.findIndex((event) => event.id === `native:${origin.id}:final`));
+  } finally { release(); }
+});
 
 test.each([true, false])("legacy setup runs only with an injected provider (OpenClaw=%s)", async (openclaw) => {
   const scheduler = vi.spyOn(schedulerModule, "startScheduler");

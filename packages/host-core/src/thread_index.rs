@@ -61,6 +61,11 @@ fn valid_record(record: &Value) -> bool {
                         .is_some_and(|n| n.fract() == 0.0 && (0.0..=3.0).contains(&n))
                 })
                 && turn.get("recoveryActive").is_none_or(Value::is_boolean)
+                && turn.get("attemptId").is_none_or(|v| {
+                    v.as_str().is_some_and(|id| {
+                        id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    })
+                })
         })
 }
 pub(crate) fn file_name(id: &str) -> String {

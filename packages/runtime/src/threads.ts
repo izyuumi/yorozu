@@ -41,7 +41,7 @@ export interface ThreadRecord {
   /** Durable identity of the client command that created this thread, when known. */
   creation?: { eventId: string; identity: string };
   bypass?: boolean;
-  nativeTurn?: { id: string; state: "running" | "interrupted"; userEventId?: string; recoveryAttempts?: number; recoveryActive?: boolean };
+  nativeTurn?: { attemptId?: string; id: string; state: "running" | "interrupted"; userEventId?: string; recoveryAttempts?: number; recoveryActive?: boolean };
   id: string;
   /** Empty until the runtime auto-titles the thread or the user renames it. */
   title: string;

@@ -766,9 +766,8 @@ Before a retained native origin reaches its SDK, the same Rust History owner now
 acceptance, conversation purpose, durable Stop and expiration, steering ownership/uncertainty,
 per-thread queue head, thread worker ownership, the canonical retained origin identity, and stable completion
 evidence. Legacy accepted purpose remains immutable and can recover only with matching retained
-conversation evidence. Failed operational journals refuse new dispatch. This is a readiness decision,
-not an attempt claim: Rust-owned attempt identity and scoped approval/callback transitions remain
-unfinished parts of checklist item3.
+conversation evidence. Failed operational journals refuse new dispatch. This operation decides readiness; the subsequent SDK attempt claims and callback fencing are
+described below. Full approval/control transitions remain unfinished parts of checklist item3.
 
 A paused exhausted owner keeps its marker and queue head. Later work remains queued until explicit
 Retry completes that origin; it cannot replace the interrupted task. Every refused dispatch settles
@@ -789,6 +788,49 @@ under the original 5-second deadlines. Verification passes 114 Rust tests and 82
 tests plus one skip across 52 files, formatting, strict Clippy and the production build.
 Retained run evidence uses the existing bounded JSONL reader and exact file identity checks; it
 currently scans the retained log. SQLite indexing remains checklist item6, not a second truth store.
+
+## Rust-issued SDK callback ownership
+
+Each native SDK iteration now claims a fresh Rust-issued internal attempt ID after the existing
+operational readiness checks. The same History owner persists it on the existing nativeTurn through
+metadata CAS; there is no new truth file or credential. At most 1,024 active thread scopes are retained.
+The process registry excludes previous iterations and dead Rust-owner epochs. Same-thread recovery
+claims retain the origin/completion IDs and increment the bounded recovery count from current metadata.
+
+SDK callbacks capture the issued scope. Session updates, steering hooks, stream updates, new tool
+calls and permission requests require the exact current running scope without Stop/expiry. Approvals,
+questions and tool waits recheck after awaits and share an iteration abort signal. Settled iterations
+cancel orphaned requests. Buffered observations flush before replacement; a result for an already
+observed open call may still be recorded under exact ownership after Stop. Explicit completed results
+retain the existing completed-after-Stop exception. Losing ownership pauses recoverable work; policy
+denial is distinct from lost ownership. Stable final evidence prevents a late ownership loss during
+change reporting from resurrecting a completed task. Change reports finish before releasing the scope
+and advancing the same-thread queue. Synthetic native origins also enter accepted/queue currency.
+
+The actual late-callback regression failed for both Codex and Claude within one host before this
+change; replacing the host already passed. The extended owner test now covers four replacement cases,
+including stale session/activity/stream writes and rejected old approvals/questions/tools. All42
+focused native recovery/Stop tests pass with assertions unchanged. An initial implementation dropped
+an already-running tool's result during Stop; the retained failing log and repaired existing Stop test
+preserve that evidence. The Rust owner contract exercises fresh/replaced/restarted scopes and separates
+Stop denial from ownership while retaining metadata bytes. The first full runtime run passed829
+plus1skip/52files, and115 Rust tests passed; strictClippy and production build passed after an
+equivalent Boolean simplification. A further real scheduler regression then proved that native jobs
+waiting behind a worker had not entered durable history/acceptance. Native synthetic admission now
+precedes FIFO reservation, including direct legacy turn callers, so queued jobs survive host recovery.
+The failing baseline expected2 retained origins but got1. The follow-up full runtime run passed830
+plus1skip/52files. Final cleanup also recognizes a durable terminal produced during a pre-claim
+Stop/pause, preserves the exact retained scope and only clears that marker; it cannot block a
+successor or clear a replacement. Pre-claim runs cannot publish unowned change reports. The exact
+Rust Stop-denial proof now explicitly checks that ownership remains true. After these final cleanup
+refinements, all4 Rust ownership and43 focused native runtime tests pass, along with formatting,
+strictClippy and production build. The830-test full run preceded those final cleanup refinements;
+its passing log and the final focused validation are retained separately.
+
+This is an incremental callback boundary. Generic metadata/control/startup transitions and successful
+result/explicit Retry recovery resets still use the compatibility host; their full Rust policy and
+approval ownership remain checklist item3. The bounded provider-worker contract, platform IPC,
+standalone launcher, SQLite/Markdown conversation plan and native release gates remain items4–7.
 
 ## Isolated alpha CI
 
