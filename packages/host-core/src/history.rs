@@ -968,8 +968,20 @@ impl History {
                 .iter_mut()
                 .find(|row| row["id"] == thread)
                 .ok_or_else(invalid)?;
-            let recovering = request["recovering"].as_bool().ok_or_else(invalid)?;
-            let previous = home["nativeTurn"]["recoveryAttempts"].as_u64().unwrap_or(0);
+            // Admission comes from retained state, never a worker's recovery hint.
+            let marker = home.get("nativeTurn");
+            if marker.is_some_and(|turn| turn["state"] == "running") {
+                return Ok(json!({"ready":false,"reason":"run-active"}));
+            }
+            if marker.is_some_and(|turn| turn.get("pauseReason").is_some()) {
+                return Ok(json!({"ready":false,"reason":"retry-required"}));
+            }
+            let recovering = marker.is_some();
+            // Valid legacy JSON permits integer counters written as e.g. 2.0.
+            let previous = home["nativeTurn"]["recoveryAttempts"]
+                .as_f64()
+                .map(|count| count as u64)
+                .unwrap_or(0);
             let count = previous + u64::from(recovering);
             if count > 3 {
                 return Ok(json!({"ready":false,"reason":"recovery-exhausted"}));
@@ -990,7 +1002,7 @@ impl History {
             self.attempts
                 .insert(thread.clone(), (origin.clone(), attempt.clone()));
             return Ok(
-                json!({"claimed":true,"threadId":thread,"eventId":origin,"attemptId":attempt,"recoveryAttempts":count}),
+                json!({"claimed":true,"threadId":thread,"eventId":origin,"attemptId":attempt,"recovering":recovering,"recoveryAttempts":count}),
             );
         }
         if request["op"] == "run_attempt_session" {

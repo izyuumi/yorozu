@@ -1781,11 +1781,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
           let claim: Record<string, unknown>;
           try { claim = syncHostRequest(dir, { op: "run_attempt_claim", threadId, eventId: userEventId, recovering }); }
           catch { claim = {}; }
-          if (claim.claimed !== true || typeof claim.attemptId !== "string" || typeof claim.recoveryAttempts !== "number") {
+          if (claim.claimed !== true || typeof claim.attemptId !== "string" || typeof claim.recoveryAttempts !== "number" || typeof claim.recovering !== "boolean") {
             paused = true;
+            if (claim.ready === false && ["run-active", "retry-required", "recovery-exhausted"].includes(String(claim.reason))) {
+              broadcast(threadList());
+              return;
+            }
             try {
               const marker = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
-              if (marker && marker.userEventId === userEventId) setNativeTurn(threadId, { ...marker, state: "interrupted", pauseReason: "unconfirmed" }, dir);
+              if (marker?.id === id && marker.userEventId === userEventId &&
+                  marker.attemptId === (activeAttempt ?? previous?.attemptId)) {
+                setNativeTurn(threadId, { ...marker, state: "interrupted", pauseReason: "unconfirmed" }, dir);
+              }
               else nativeStorageFenced.add(threadId);
             } catch { nativeStorageFenced.add(threadId); state("thread-index-storage-failed"); }
             state("native-attempt-unconfirmed");
@@ -1795,6 +1802,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           const attempt = claim.attemptId;
           activeAttempt = attempt;
           recoveryAttempts = claim.recoveryAttempts;
+          recovering = claim.recovering;
           broadcast(threadList());
           const attemptAbort = new AbortController();
           let attemptLive = true;
@@ -1940,9 +1948,23 @@ export function serve(options: ServeOptions = {}): Sidecar {
               finish(`${agent} could not answer; see the Mac log.`, true);
               return;
             }
+            // Confirm interruption before Rust admits a replacement attempt. A failed
+            // write keeps the running marker and queue fenced for storage repair.
+            try {
+              const marker = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
+              if (marker?.id !== id || marker.userEventId !== userEventId || marker.attemptId !== attempt) {
+                paused = true; turn.abort(); nativeStorageFenced.add(threadId);
+                state("native-attempt-unconfirmed");
+                return;
+              }
+              setNativeTurn(threadId, { ...marker, state: "interrupted" }, dir);
+            } catch {
+              paused = true; turn.abort(); nativeStorageFenced.add(threadId);
+              state("thread-index-storage-failed");
+              return;
+            }
             if (recoveryAttempts >= 3) {
               paused = true;
-              setNativeTurn(threadId, { id, ...((activeAttempt ?? previous?.attemptId) ? { attemptId: activeAttempt ?? previous?.attemptId } : {}), state: "interrupted", ...(userEventId ? { userEventId } : {}), recoveryAttempts }, dir);
               emit({ id: randomUUID(), threadId, ts: Date.now(), agentId: MAIN_AGENT, kind: "message",
                 data: { role: "agent", text: `${agent} could not recover automatically. Retry to continue.`,
                   done: true, failed: true } });
@@ -2112,7 +2134,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
       visited.add(entry.threadId);
       if (admittedTurns.has(entry.eventId) || stoppedTurns.has(entry.eventId) || steered.has(entry.eventId) || uncertainSteering(entry.eventId)) continue;
       const marker = listThreads(dir).find((thread) => thread.id === entry.threadId)?.nativeTurn;
-      if (marker?.state === "interrupted") continue;
+      // A retained running owner also blocks automatic redispatch. Explicit recovery
+      // has its own admission path, and successful completion clears its marker first.
+      if (marker) continue;
       const original = events.find((event) => event.id === entry.eventId && event.kind === "message" && event.data.role === "user");
       if (original?.kind !== "message") continue;
       try {

@@ -210,7 +210,18 @@ fn issued_attempts_fence_replaced_stopped_and_restarted_workers_without_losing_e
     forged[0]["nativeSessionId"] = json!("unscoped-session");
     assert_eq!(host.request(&json!({"op":"thread_index_replace","expectedHash":stored["hash"],"threads":forged,"nativeOwned":true}))["error"], "unscoped-native-session-transition");
     assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), bytes);
-    let second = claim(&mut host, true);
+    assert_eq!(claim(&mut host, false)["reason"], "run-active");
+    let read = snapshot(&temp);
+    let mut index = read["threads"].clone();
+    index[0]["nativeTurn"]["state"] = json!("interrupted");
+    assert_eq!(
+        host.request(
+            &json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index})
+        )["stored"],
+        true
+    );
+    let second = claim(&mut host, false);
+    assert_eq!(second["recovering"], true);
     assert_eq!(second["recoveryAttempts"], 1);
     assert_ne!(first["attemptId"], second["attemptId"]);
     assert_eq!(
@@ -503,4 +514,62 @@ fn no_origin_legacy_dismiss_still_refuses_a_matching_stop() {
         "stopped"
     );
     assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), metadata);
+}
+
+#[test]
+fn claim_budget_comes_from_retained_state_and_explicit_retry_not_caller_flags() {
+    let temp = Temp::new();
+    let (mut host, _) = open(&temp);
+    seed(&mut host, "origin", "conversation");
+    let claim = |host: &mut History, requested| {
+        host.request(&json!({"op":"run_attempt_claim","threadId":"thread","eventId":"origin","recovering":requested}))
+    };
+    let first = claim(&mut host, true);
+    assert_eq!(first["recovering"], false);
+    assert_eq!(first["recoveryAttempts"], 0);
+    for count in 1..=3 {
+        let bytes = fs::read(temp.0.join("threads.json")).unwrap();
+        assert_eq!(claim(&mut host, false)["reason"], "run-active");
+        assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), bytes);
+        let read = snapshot(&temp);
+        let mut index = read["threads"].clone();
+        index[0]["nativeTurn"]["state"] = json!("interrupted");
+        if count == 3 {
+            index[0]["nativeTurn"]["recoveryAttempts"] = json!(2.0);
+        }
+        assert_eq!(
+            host.request(
+                &json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index})
+            )["stored"],
+            true
+        );
+        let recovered = claim(&mut host, false);
+        assert_eq!(recovered["recovering"], true);
+        assert_eq!(recovered["recoveryAttempts"], count);
+    }
+    let read = snapshot(&temp);
+    let mut index = read["threads"].clone();
+    index[0]["nativeTurn"]["state"] = json!("interrupted");
+    assert_eq!(
+        host.request(
+            &json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index})
+        )["stored"],
+        true
+    );
+    let bytes = fs::read(temp.0.join("threads.json")).unwrap();
+    assert_eq!(claim(&mut host, false)["reason"], "recovery-exhausted");
+    assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), bytes);
+    let read = snapshot(&temp);
+    let mut index = read["threads"].clone();
+    index[0]["nativeTurn"]["pauseReason"] = json!("unconfirmed");
+    assert_eq!(host.request(&json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index.clone()}))["stored"], true);
+    let bytes = fs::read(temp.0.join("threads.json")).unwrap();
+    assert_eq!(claim(&mut host, false)["reason"], "retry-required");
+    assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), bytes);
+    let scope = json!({"threadId":"thread","turnId":"native:origin:final","eventId":"origin","attemptId":index[0]["nativeTurn"]["attemptId"]});
+    assert_eq!(
+        control(&mut host, &scope, "run_turn_retry")["applied"],
+        true
+    );
+    assert_eq!(claim(&mut host, false)["recoveryAttempts"], 1);
 }

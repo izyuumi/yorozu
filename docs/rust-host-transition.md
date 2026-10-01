@@ -898,8 +898,8 @@ Dismiss. Core cases also cover empty legacy queue repair, issued-scope mismatch,
 terminal evidence, successor FIFO protection, recovery snapshots and legacy Stop denial.
 
 This slice transfers explicit interrupted-control policy only. Generic marker lifecycle/startup and
-successful-result resets still use Node compatibility paths; the claim recovery flag and full approval
-currency remain unfinished item3 work. The provider-worker contract, platform IPC, standalone
+successful-result resets still use Node compatibility paths; full approval currency remains unfinished
+item3 work. Claim recovery admission is now derived by Rust as described below. The provider-worker contract, platform IPC, standalone
 launcher/conversation persistence and native release gates remain required later items.
 
 Validation for interrupted controls: all119 Rust tests, formatting, strictClippy and production
@@ -909,6 +909,31 @@ production build and104 affected native/summary/recovery/Stop/queue/restart case
 terminal-without-queue negative baseline demonstrates the repair bug; repaired guards also cover
 missing retained history without modifying queue bytes. Earlier new-fixture/read-operation and
 Clippy failures were corrected, with their logs preserved separately. All commands are terminal.
+
+## Retained-state recovery admission
+
+Rust now derives initial/recovery admission and its counter from retained nativeTurn state. A running
+marker cannot be replaced, including after loss of the Rust process epoch. An interrupted marker
+increments the retained counter up to three automatic recoveries; a caller's recovering hint cannot
+reset it. Integer-valued legacy JSON counters such as 2.0 retain their meaning. A pauseReason blocks
+admission until the existing typed explicit Retry confirms its reset. Successful claims return both
+the authoritative recovering flag and counter; Node uses them before constructing the SDK prompt.
+
+After an SDK failure with observed execution, Node confirms interruption of the exact origin and
+issued attempt before requesting a replacement. A failed interruption write fences further dispatch
+and preserves the running marker and durable queue for storage repair. Known claim policy refusals
+preserve the current marker; uncertain persistence can only pause the previously captured scope.
+This does not migrate the remaining generic startup/Stop/update marker lifecycle or progress-based
+counter resets. Those remain item3 work before the bounded provider worker and later finite items.
+
+Validation: all120 Rust tests, formatting, strictClippy and production build pass. The complete
+runtime/plugin suite passes841 tests plus1skip/52files with one local worker and unchanged five-second
+test deadlines. Two local two-worker runs each had a different existing integration flow time out;
+both flows subsequently pass under the original deadlines in the focused diagnostic (eight cases).
+Repository CI remains at two workers. Negative baselines demonstrate caller-driven budget admission
+and replacement marker mutation; regression coverage includes legacy numeric counters, running owner
+refusal, sticky uncertainty, explicit Retry, failed interruption storage and unchanged replacement
+marker/queue bytes. Initial new-fixture barrier/title issues were corrected and their logs retained.
 
 ## Isolated alpha CI
 

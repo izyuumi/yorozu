@@ -4295,6 +4295,59 @@ test("native backend crash after execution starts recovers the same user turn", 
   expect(readThreadEvents("cc", dir).filter((event) => event.kind === "message" && event.data.role === "user")).toHaveLength(1);
 });
 
+test.each(["active", "paused", "exhausted"] as const)("a refused native claim preserves a replacement marker (%s)", async (mode) => {
+  const request = rustSyncModule.syncHostRequest;
+  let retained: string | undefined;
+  let claims = 0;
+  vi.spyOn(rustSyncModule, "syncHostRequest").mockImplementation((dir, data, bytes) => {
+    if (data.op === "run_attempt_claim" && data.threadId === "claim-replaced") {
+      claims++;
+      setNativeTurn("claim-replaced", { id: `native:${data.eventId}:final`, userEventId: data.eventId as string,
+        attemptId: "b".repeat(32), state: mode === "active" ? "running" : "interrupted",
+        recoveryAttempts: mode === "exhausted" ? 3 : 1,
+        ...(mode === "paused" ? { pauseReason: "unconfirmed" as const } : {}) }, dir);
+      retained = readFileSync(join(dir, "threads.json"), "utf8");
+    }
+    return request(dir, data, bytes);
+  });
+  const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "must not start" });
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-claim-replaced-"));
+  createThread("Work", dir, "claim-replaced", { agent: "codex", cwd: proj });
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+  const origin = send({ kind: "message", data: { role: "user", text: "work" } }, "claim-replaced");
+  await vi.waitFor(() => expect(claims).toBe(1));
+  const barrier = send({ kind: "thread_list", data: { threads: [], peerInfo: localPeerInfo("test") } });
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.peerInfoReplyTo === barrier);
+  expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(retained);
+  expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8")))
+    .toContainEqual({ threadId: "claim-replaced", eventId: origin });
+  expect(run).not.toHaveBeenCalled();
+  expect(claims).toBe(1);
+});
+
+test("failed interruption storage fences automatic native recovery without clearing its running marker", async () => {
+  let pending: string | undefined;
+  const run = vi.fn<NativeAgentRunner["run"]>().mockImplementation(async (turn) => {
+    turn.onUpdate!("partial reply");
+    pending = join(dir, "threads.json.tmp");
+    writeFileSync(pending, "owned interruption conflict fixture");
+    throw new Error("backend disconnected after work started");
+  });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } });
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "pause-fence");
+  const origin = send({ kind: "message", data: { role: "user", text: "work" } }, "pause-fence");
+  try {
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    send({ kind: "thread_list", data: { threads: [] } });
+    await eventsUntil((event) => event.kind === "thread_list");
+    expect(listThreads(dir).find((thread) => thread.id === "pause-fence")?.nativeTurn)
+      .toMatchObject({ state: "running", userEventId: origin, recoveryAttempts: 0 });
+    expect(readFileSync(pending!, "utf8")).toBe("owned interruption conflict fixture");
+    expect(readThreadEvents("pause-fence", dir).some((event) => event.id === `native:${origin}:final`)).toBe(false);
+    expect(run).toHaveBeenCalledTimes(1);
+  } finally { if (pending) rmSync(pending); }
+});
+
 test("a native agent is handed the user's attachments as files inside the host's state", async () => {
   const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "seen", sessionId: "session" });
   const { dir, send } = await pairedPhone([], false, { nativeRunners: { codex: { run } } });
