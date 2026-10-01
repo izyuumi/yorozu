@@ -10,7 +10,7 @@ separate conversations. These are migration requirements, not claims about the c
 - `apps/mac` and `apps/ios` provide Swift/SwiftUI interfaces. The shared Swift `ChatModel` and
   `ThreadCache` own encrypted client drafts, attachments, saved-draft recovery and pending sends.
 - The Mac launches the bundled Node executable and `packages/runtime/dist/serve.js`. The
-  TypeScript host currently owns relay/local/channel transport, admission, sequencing, approvals,
+  TypeScript host currently owns relay transport, admission, sequencing, approvals,
   thread history, recovery and orchestration. This is approximately 4,000 lines in `serve.ts`,
   plus its supporting modules; replacing a launcher alone would not rewrite the backend.
 - Claude uses a TypeScript SDK adapter; Codex has both SDK and native app-server adapters.
@@ -46,7 +46,7 @@ receive the durable offset. Fixed storage failure codes exclude internal paths o
 diagnostics. No provider environment or credentials are passed to this worker.
 
 This is a real Rust backend component, **not a completed independent Rust runtime**. Transport,
-thread/admission state, approval currency and agent execution remain TypeScript
+relay transport, thread/admission state, approval currency and agent execution remain TypeScript
 until their individual compatibility and recovery tests pass. The existing native UI slices are
 preserved, including separate conversations. Actual schedules, PAIOS ownership and the future
 continuous-conversation task store remain unimplemented.
@@ -76,9 +76,41 @@ replay; otherwise a final reply could be lost while async recovery is still runn
 
 Snapshots contain only outbox IDs and thread IDs; attachment payloads are fetched one message
 at a time. Bridge request frames are limited to 32 MiB, responses to 34 MiB, with at most 32
-pending requests and 64 MiB of pending encoded input. Channel transport, peer capabilities,
+pending requests and 64 MiB of pending encoded input. Channel protocol semantics, peer capabilities,
 thread logs, admission identity and Stop journals remain in TypeScript. This is the second
 production Rust state component, not the completed standalone host rewrite.
+
+## Native local transport extraction
+
+The production local and OpenClaw channel listeners now use Rust-owned Unix sockets. The
+TypeScript `startLocalChannel` interface remains a compatibility facade for frame dispatch;
+it no longer creates listeners, parses socket bytes, changes socket permissions or writes
+socket payloads. Bound-listener confirmation is distinct from worker-spawn success.
+
+The Rust listener retains the existing UTF-8 JSON-lines protocol and preserves unknown fields.
+New sockets are private inside a private state directory. Existing directory permissions and
+process umask are unchanged. A per-socket OS-held writer lock refuses another active writer;
+an existing live legacy listener, regular file or symlink is retained. A stale socket is
+recovered only after connection refusal. Shutdown removes only the socket inode this owner
+created, closes idle peers and wakes its bounded idle wait.
+
+Limits are 16 peers per listener, eight listeners per worker, 32 MiB per frame and 64 MiB of
+reserved inbound bytes per listener. Writes have a five-second deadline. The compatibility
+facade snapshots each outbound frame before asynchronous dispatch, serializes writes per peer,
+and bounds queued output to 64 MiB per listener. Failed writes remain unconfirmed. Oversized
+or invalid input produces fixed error codes without echoing contents.
+
+A worker crash disconnects existing peers. Listener recovery uses bounded backoff and new
+transport/peer identities; an old callback cannot send into a newly connected peer. Listener
+recovery does not replay user operations or generate replacement operation IDs. Storage and
+listener owners share a worker lease: closing one owner cannot kill its siblings, and closing
+the last owner waits for its own child to exit. Child I/O deadlines use the actual event-loop
+clock independently of application approval-expiry clocks.
+
+This extraction implements Unix local transport only. Windows explicitly returns
+`local-transport-unavailable`; it does not claim readiness. Relay encryption, device sequence
+currency, capability negotiation, durable thread/admission state, approval decisions and
+provider execution remain future Rust boundaries. No provider credentials enter this worker.
 
 ## Following migration boundaries
 
@@ -118,11 +150,30 @@ the older pairing-history test; it passed in the focused diagnostic run and the 
 verification. The timeout is retained in the local evidence rather than treated as a confirmed
 root-caused fix.
 
-An additional native repeated-send UI run stopped before test execution because signing rejected
-Finder metadata in a generated Swift resource bundle under Documents. The earlier native
-navigation/composer evidence remains valid for those prior slices; this failed attempt does not
-verify the Rust extraction's native repeated-send workflow. Cross-platform CI, the full native
-release gate, physical devices and publication remain pending.
+The local transport extraction passes six additional Rust socket tests, including fragmented
+Unicode, malformed input followed by valid input, live-owner exclusion, stale socket recovery,
+retained files/links/permissions, idle-peer shutdown and peer/frame limits. All 25 Rust tests,
+strict clippy and the TypeScript runtime build pass. The affected aggregate host suite passes
+300 tests. Five initial failures were resolved by waiting for actual listener readiness and
+separating child I/O deadlines from the injected application clock. The complete runtime suite passes 776 tests with one skipped across 43 files, using four workers
+to bound process concurrency. The unconstrained runs exposed additional greeting/broadcast
+ordering assumptions, now corrected; they also exceeded the five-second test budget in two
+multi-step cases during parallel simulator building. Synthetic upload-stage timings measured
+4.455 seconds through the repeated receipt in the bounded aggregate run. Temporary tracing
+was removed after diagnosis. These results are not a latency benchmark.
+
+Native validation used a disposable simulator and synthetic hosts. The first build under
+Documents failed because signing rejected Finder metadata in a generated resource bundle.
+A build using temporary derived data then passed the lost-receipt/relaunch case (62.979 seconds).
+The repeated-send case failed when a simulator notification prompt intercepted Send. A DEBUG-only
+UI-test flag now avoids requesting that unrelated permission; release behavior is unchanged.
+The following run displayed the first queued message but was interrupted after more than ten
+minutes of XCTest animation-idle waits. It is incomplete, not passed. A bounded 180-second
+reproduction subsequently failed in 44.374 seconds: the initial Send tap left “hello” in the
+composer. The exported accessibility hierarchy and screen recording show an enabled Send control,
+retained input and no notification prompt. This is a concrete native UI failure under investigation,
+not a pass and not evidence that animation waits alone explain the earlier result. These runs do not establish the full native release gate.
+Cross-platform CI, physical devices and publication remain pending.
 
 No speed claim follows from the language choice. Measure cold launch, request latency, streaming
 under large history/attachments, memory and recovery time on comparable builds. Maintain bounded
@@ -145,7 +196,9 @@ automatic-distribution setting in the App Store Connect UI.
 
 Live group membership and automatic distribution remain unverified. Automatic approval review
 rejected adding ASC credentials to a pull-request workflow because branch code could expose them;
-that credential workflow was not added. A separately approved read-only ASC access path is needed.
+that credential workflow was not added. The parent's separate official ASC browser audit reached Apple passkey confirmation and is waiting
+for the user's device action; authenticated access and group readback are not yet verified. Safari
+is left untouched by this implementation task.
 No release has been dispatched, no tester access changed, and no version or tag overwritten.
 Gateway authorization remains pending; no gateway connection or credential issuance/rotation is
 part of this migration.

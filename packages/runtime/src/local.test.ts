@@ -597,7 +597,12 @@ test("a progress card re-reported under the same id moves in place", async () =>
   send(socket, "t1", { kind: "thread_create", data: { title: "Chores" } });
   await events.nextOf("thread_list");
   send(socket, "t1", { kind: "message", data: { role: "user", text: "book a table" } });
-  await events.nextOf("message");
+  // A user echo can arrive in its own frame before either progress update.
+  // Wait for the final answer rather than relying on TCP batching.
+  for (;;) {
+    const event = await events.nextOf("message");
+    if (event.kind === "message" && event.data.role === "agent" && event.data.done) break;
+  }
 
   const cards = events.all.filter((event) => event.kind === "progress_card");
   expect(cards).toHaveLength(2);
@@ -668,8 +673,8 @@ test("the state dir and socket are created owner-only, and the umask is put back
   const before = process.umask();
   const channel = bareChannel(path);
   try {
-    // The bind is synchronous but the listen callback, which restores the umask, is a tick later.
-    await vi.waitFor(() => expect(process.umask()).toBe(before));
+    await channel.ready;
+    expect(process.umask()).toBe(before);
     // Keys and plaintext logs live in the state dir, so nobody but the owner may even list it.
     expect(statSync(join(tmp, "state")).mode & 0o777).toBe(0o700);
     expect(statSync(path).mode & 0o777).toBe(0o600);
@@ -685,8 +690,8 @@ test("a wide-open umask still yields a 0600 socket, and is restored as found rat
     const path = join(tmp, "state", "local.sock");
     const channel = bareChannel(path);
     try {
-      // What the channel puts back must be what it found, not some hard-coded default.
-      await vi.waitFor(() => expect(process.umask()).toBe(0o000));
+      await channel.ready;
+      expect(process.umask()).toBe(0o000);
       expect(statSync(path).mode & 0o777).toBe(0o600);
       expect(statSync(join(tmp, "state")).mode & 0o777).toBe(0o700);
     } finally {
@@ -700,8 +705,7 @@ test("a wide-open umask still yields a 0600 socket, and is restored as found rat
 test("a channel closed before it ever listened still puts the umask back", async () => {
   const tmp = mkdtempSync(join(tmpdir(), "yorozu-early-close-"));
   const before = process.umask();
-  // No tick between start and close: Node never emits `listening` for a server closed this
-  // early, so the listen callback is not where the restore can be relied on to happen.
+  // Closing during asynchronous startup must reclaim the listener and worker lease.
   await bareChannel(join(tmp, "state", "local.sock")).close();
   expect(process.umask()).toBe(before);
 });

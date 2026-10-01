@@ -715,6 +715,7 @@ test("a box whose seq cannot be recorded is not acted on, and is taken when it c
  * with what a phone may only ask for. Keeps everything it hears.
  */
 async function macClient(dir: string) {
+  await vi.waitFor(() => expect(existsSync(localSocketPath(dir))).toBe(true));
   const socket = createConnection(localSocketPath(dir));
   const events: YorozuEvent[] = [];
   let buffer = "";
@@ -731,6 +732,9 @@ async function macClient(dir: string) {
     socket.write(`${JSON.stringify({ id, threadId: "", ts: Date.now(), agentId: "mac", ...event })}\n`);
     return id;
   };
+  // OS connect completion precedes host acceptance. Wait for the protocol greeting
+  // before a different peer emits a broadcast this client is expected to observe.
+  await vi.waitFor(() => expect(events.some((event) => event.kind === "thread_list")).toBe(true));
   const settings = (): YorozuEvent[] => events.filter((event) => event.kind === "approval_settings");
   const sendRawEvent = (event: YorozuEvent): void => { socket.write(`${JSON.stringify(event)}\n`); };
   return { events, settings, send, sendRawEvent, close: () => socket.destroy() };
@@ -1628,6 +1632,7 @@ test.each(["codex", "claude-code"])("Edit from here keeps the log and resets %s 
   }
   expect(turns[1]?.sessionId).toBe("session-1");
   const other: YorozuEvent[] = [];
+  await vi.waitFor(() => expect(existsSync(localSocketPath(dir))).toBe(true));
   const local = createConnection(localSocketPath(dir));
   let buffer = "";
   local.on("data", (chunk) => {
@@ -1639,6 +1644,7 @@ test.each(["codex", "claude-code"])("Edit from here keeps the log and resets %s 
     }
   });
   await new Promise<void>((resolve) => local.once("connect", resolve));
+  await vi.waitFor(() => expect(other.some((event) => event.kind === "thread_list")).toBe(true));
   try {
     const requestId = send({ kind: "thread_rewind", data: { eventId: prompts[1]! } }, threadId);
     const result = (await eventsUntil((event) => event.kind === "thread_rewound" && event.data.requestId === requestId)).at(-1)!;
@@ -1702,6 +1708,7 @@ test("Edit from here excludes hidden messages and stale summaries from provider 
       contexts.push(structuredClone(messages));
       yield { type: "text", text: `answer-${contexts.length}` };
     } } });
+  await vi.waitFor(() => expect(existsSync(localSocketPath(dir))).toBe(true));
   const local = createConnection(localSocketPath(dir));
   const received: YorozuEvent[] = [];
   let buffer = "";
@@ -2539,6 +2546,7 @@ test("large historical attachment crosses relay as preview and bounded downloads
   expect(oldPreview).toMatchObject({ kind: "message", data: { attachments: [{
     data: `yorozu-deferred-v1:${bytes.length}:${createHash("sha256").update(bytes).digest("hex")}`,
   }] } });
+  await vi.waitFor(() => expect(existsSync(localSocketPath(dir))).toBe(true));
   const local = await new Promise<ReturnType<typeof createConnection>>((resolve, reject) => {
     const socket = createConnection(localSocketPath(dir));
     socket.once("connect", () => resolve(socket));
@@ -3159,6 +3167,7 @@ test.each([
     provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: async () => sse("answered") }),
     log: (line) => void lines.push(line),
   });
+  await vi.waitFor(() => expect(existsSync(localSocketPath(stateDir))).toBe(true));
   const local = createConnection(localSocketPath(stateDir));
   local.on("data", () => {});
   const finals = (): number => readThreadEvents("quiet-thread", stateDir)
@@ -3211,6 +3220,7 @@ test("an open relay socket holds notifications until registration completes", as
     provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: async () => sse("answered before registration") }),
     log: () => {},
   });
+  await vi.waitFor(() => expect(existsSync(localSocketPath(stateDir))).toBe(true));
   const local = createConnection(localSocketPath(stateDir));
   local.on("data", () => {});
   try {
@@ -4653,6 +4663,7 @@ test("agent_status is answered to the asker with every agent the runtime has", a
 
 /** OpenClaw's `yorozu` channel plugin on `channel.sock`: raw frames, everything it hears. */
 async function channelPlugin(dir: string, runBoundary: boolean | string[] = false) {
+  await vi.waitFor(() => expect(existsSync(channelSocketPath(dir))).toBe(true));
   const socket = createConnection(channelSocketPath(dir));
   const frames: HostFrame[] = [];
   let buffer = "";
@@ -4664,6 +4675,7 @@ async function channelPlugin(dir: string, runBoundary: boolean | string[] = fals
     for (const line of lines) if (line) frames.push(JSON.parse(line));
   });
   await new Promise<void>((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
+  await vi.waitFor(() => expect(frames.some((frame) => frame.type === "hello")).toBe(true));
   if (runBoundary) socket.write(`${JSON.stringify({ type: "hello",
     capabilities: Array.isArray(runBoundary) ? runBoundary : ["run-boundary-v1"] })}\n`);
   return { frames, send: (frame: PluginFrame) => socket.write(`${JSON.stringify(frame)}\n`), close: () => socket.destroy() };
@@ -5794,8 +5806,10 @@ test.each([false, true])("lost reply ack/restart never becomes a false rejection
   plugin.close();
   await sidecar.close();
   sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir });
-  const old = await channelPlugin(dir, files ? ["run-boundary-v1", "reply-context-v1"] : ["run-boundary-v1"]);
+  // Delivery uncertainty is a live broadcast; subscribe before the downgraded
+  // plugin announces capabilities and the host evaluates pending dispatch.
   const mac = await macClient(dir);
+  const old = await channelPlugin(dir, files ? ["run-boundary-v1", "reply-context-v1"] : ["run-boundary-v1"]);
   try {
     await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "thread_models" &&
       event.data.requestId === id && event.data.error?.includes("unconfirmed"))).toBe(true));

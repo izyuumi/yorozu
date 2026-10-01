@@ -1,123 +1,109 @@
-/**
- * The local channel: a Unix domain socket at `<state dir>/local.sock` carrying the same
- * `YorozuEvent` JSON the relay carries, one event per line, in the clear.
- *
- * The Mac app is on the same machine as the sidecar and runs as the same user, so there is
- * nothing to encrypt against and no relay hop worth paying for: the socket's own mode is the
- * access control. Every connection is treated as one more paired device by serve.ts, which is
- * what makes broadcasts — replies, approval cards, thread lists — reach it for free.
- * See docs/spec-v1.html section 8.
- */
-import { chmodSync, mkdirSync, rmSync } from "node:fs";
-import { createServer, type Socket } from "node:net";
-import { dirname, join } from "node:path";
+/** Native plaintext JSON-lines sockets, owned by the portable Rust worker. */
+import { basename, dirname, join, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { YorozuEvent } from "@yorozu/shared";
+import { hostRequest, retainHostWorker, subscribeHostEvents } from "./rust-host.js";
 
-/** Writes one event to a single connected client. */
 export type Send<Out = YorozuEvent> = (event: Out) => void;
-
-let narrowed = 0;
-let outerUmask = 0;
-
 export const localSocketPath = (dir: string): string => join(dir, "local.sock");
-
 export interface LocalChannelOptions<In = YorozuEvent, Out = YorozuEvent> {
   path: string;
-  /** A client connected. `device` is its id for the lifetime of the connection. */
   onOpen(device: string, send: Send<Out>): void;
   onEvent(device: string, event: In): void;
   onClose(device: string): void;
   onError?(message: string): void;
 }
-
 export interface LocalChannel {
   readonly path: string;
+  /** Actual bound-listener confirmation, rather than process-spawn success. */
+  readonly ready: Promise<void>;
   close(): Promise<void>;
 }
 
 export function startLocalChannel<In = YorozuEvent, Out = YorozuEvent>(options: LocalChannelOptions<In, Out>): LocalChannel {
-  // Keys and plaintext logs live in the state dir, so nobody but the owner may even list it.
-  // It is usually there already (loadKeys and the transcripts make it); this is for when it is not.
-  mkdirSync(dirname(options.path), { recursive: true, mode: 0o700 });
-  // A socket file left behind by a killed sidecar would refuse the bind. There is only ever
-  // one sidecar per state dir, so whatever is there is ours and stale.
-  rmSync(options.path, { force: true });
-
-  const clients = new Set<Socket>();
-  let devices = 0;
-
-  const server = createServer((socket) => {
-    const device = `local-${++devices}`;
-    clients.add(socket);
-    socket.setEncoding("utf8");
-    let buffer = "";
-
-    const send: Send<Out> = (event) => {
-      if (!socket.destroyed) socket.write(`${JSON.stringify(event)}\n`);
-    };
-
-    socket.on("data", (chunk: string) => {
-      buffer += chunk;
-      // Everything before the last newline is a whole line; what follows it is the start of
-      // the next one, which the next chunk finishes.
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          options.onEvent(device, JSON.parse(line) as In);
-        } catch (e) {
-          // A bad line is one bad line: never a reason to drop the connection.
-          options.onError?.(`local-frame-error ${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
-    });
-    socket.on("error", (e) => options.onError?.(`local-error ${e.message}`));
-    socket.on("close", () => {
-      clients.delete(socket);
-      options.onClose(device);
-    });
-
-    options.onOpen(device, send);
-  });
-
-  server.on("error", (e) => options.onError?.(`local-error ${e.message}`));
-  // Plaintext events cross this socket, so only its owner may open it. The bind creates the
-  // node with the process umask applied, so a chmod afterwards leaves a window in which another
-  // local user could connect: the umask is narrowed around the bind so the node is 0600 from
-  // the start. It is put back as soon as listen settles, either way, so a failed bind does not
-  // leave the whole process at 0o077 — and again from close(), because a server closed before
-  // `listening` fires never fires it at all. Only the first restore does anything.
-  // Binds can overlap (local.sock and channel.sock start together): the first one in saves the
-  // umask and the last one out puts it back.
-  if (narrowed++ === 0) outerUmask = process.umask(0o077);
-  let restored = false;
-  const restore = () => {
-    if (restored) return;
-    restored = true;
-    if (--narrowed === 0) process.umask(outerUmask);
+  const dir = dirname(resolve(options.path)); const name = basename(options.path);
+  const release = retainHostWorker(dir);
+  let closing = false; let port = ""; let devices = 0; let queuedBytes = 0;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  let retryMs = 100;
+  let opening: Promise<void> = Promise.resolve();
+  const peers = new Map<string, { logical: string; port: string }>();
+  const active = new Map<string, { peer: string; port: string }>();
+  const writes = new Map<string, Promise<void>>();
+  const closed = (logical: string): void => {
+    if (!active.delete(logical)) return;
+    writes.delete(logical); options.onClose(logical);
   };
-  server.once("error", restore);
-  server.listen(options.path, () => {
-    restore();
-    // Belt and braces, for a platform whose bind ignores the umask.
+  const recover = (): void => {
+    if (closing || retry) return;
+    retry = setTimeout(() => { retry = undefined; opening = open(); void opening.catch(() => {}); }, retryMs);
+    retry.unref(); retryMs = Math.min(30_000, retryMs * 2);
+  };
+  const failed = (): void => {
+    peers.clear(); for (const logical of [...active.keys()]) closed(logical);
+    options.onError?.("local-host-unavailable"); recover();
+  };
+  const send = (logical: string, frame: Out): void => {
+    const target = active.get(logical);
+    if (closing || !target) return;
+    let bytes: number; let snapshot: Out;
     try {
-      chmodSync(options.path, 0o600);
-    } catch (e) {
-      options.onError?.(`local-error ${e instanceof Error ? e.message : String(e)}`);
+      const encoded = JSON.stringify(frame);
+      bytes = Buffer.byteLength(encoded); snapshot = JSON.parse(encoded) as Out;
+    } catch { options.onError?.("invalid-local-frame"); return; }
+    if (bytes > 32 * 1024 * 1024 - 512 || queuedBytes + bytes > 64 * 1024 * 1024) {
+      options.onError?.("local-output-limit");
+      void hostRequest(dir, { op: "transport_disconnect", transportId: target.port, device: target.peer }).catch(() => {});
+      closed(logical); return;
+    }
+    queuedBytes += bytes;
+    const next = (writes.get(logical) ?? opening).catch(() => {}).then(async () => {
+      if (closing || active.get(logical) !== target) return;
+      const result = await hostRequest(dir, { op: "transport_send", transportId: target.port, device: target.peer, frame: snapshot }) as { sent?: unknown; error?: unknown };
+      if (result?.sent !== true) { closed(logical); options.onError?.("local-write-unconfirmed"); }
+    }).catch(() => { closed(logical); options.onError?.("local-write-unconfirmed"); })
+      .finally(() => { queuedBytes -= bytes; if (writes.get(logical) === next) writes.delete(logical); });
+    writes.set(logical, next);
+  };
+  const unsubscribe = subscribeHostEvents(dir, (event) => {
+    if (closing) return;
+    if (event.event === "lost") return failed();
+    if (event.transportId !== port) return;
+    if (event.event === "open") {
+      const logical = `local-${++devices}`;
+      peers.set(event.device, { logical, port }); active.set(logical, { peer: event.device, port });
+      options.onOpen(logical, (frame) => send(logical, frame));
+    } else {
+      const peer = peers.get(event.device);
+      if (!peer || peer.port !== port) return;
+      if (event.event === "close") { peers.delete(event.device); closed(peer.logical); }
+      else if (event.event === "error") options.onError?.("local-frame-error");
+      else if (event.event === "frame") {
+        try { options.onEvent(peer.logical, event.frame as In); }
+        catch { options.onError?.("local-frame-error"); }
+      }
     }
   });
-
+  async function open(): Promise<void> {
+    if (closing) return;
+    port = randomUUID();
+    try {
+      const result = await hostRequest(dir, { op: "transport_open", transportId: port, name }) as { ready?: unknown };
+      if (result?.ready !== true) throw new Error("local-listener-unavailable");
+      retryMs = 100;
+    } catch (error) { if (!closing) { options.onError?.("local-listener-unavailable"); recover(); } throw error; }
+  }
+  opening = open(); const ready = opening; void ready.catch(() => {});
   return {
-    path: options.path,
-    close: () =>
-      new Promise<void>((done) => {
-        restore();
-        for (const socket of clients) socket.destroy();
-        server.close(() => {
-          rmSync(options.path, { force: true });
-          done();
-        });
-      }),
+    path: options.path, ready,
+    async close() {
+      if (closing) return;
+      closing = true; if (retry) clearTimeout(retry);
+      await opening.catch(() => {});
+      await Promise.allSettled([...writes.values()]);
+      await hostRequest(dir, { op: "transport_close", transportId: port }).catch(() => {});
+      unsubscribe(); peers.clear(); for (const logical of [...active.keys()]) closed(logical);
+      await release();
+    },
   };
 }

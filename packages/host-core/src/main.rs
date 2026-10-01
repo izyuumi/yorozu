@@ -1,6 +1,8 @@
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
+use yorozu_host_core::transport::{Emit, Transports};
 use yorozu_host_core::{AttachmentStore, now_ms, outbox::ChannelOutbox};
 
 fn run() -> io::Result<()> {
@@ -15,7 +17,16 @@ fn run() -> io::Result<()> {
     let mut store = AttachmentStore::open(Path::new(&dir))?;
     let mut outbox: Option<ChannelOutbox> = None;
     let mut input = io::stdin().lock();
-    let mut output = io::stdout().lock();
+    let output = Arc::new(Mutex::new(io::stdout()));
+    let write_frame: Emit = Arc::new(move |frame| {
+        let mut output = output
+            .lock()
+            .map_err(|_| io::Error::other("output unavailable"))?;
+        serde_json::to_writer(&mut *output, &frame).map_err(io::Error::other)?;
+        output.write_all(b"\n")?;
+        output.flush()
+    });
+    let mut transports = Transports::new(Path::new(&dir), write_frame.clone());
     loop {
         // Read bounded frames without allocating an unbounded line from a broken bridge.
         let mut bytes = Vec::new();
@@ -54,19 +65,19 @@ fn run() -> io::Result<()> {
         let result = if request
             .get("op")
             .and_then(Value::as_str)
+            .is_some_and(|op| op.starts_with("transport_"))
+        {
+            transports.request(&request)
+        } else if request
+            .get("op")
+            .and_then(Value::as_str)
             .is_some_and(|op| op.starts_with("outbox_"))
         {
             if outbox.is_none() {
                 match ChannelOutbox::open(Path::new(&dir)) {
                     Ok(store) => outbox = Some(store),
                     Err(_) => {
-                        serde_json::to_writer(
-                            &mut output,
-                            &json!({"id":id,"result":{"error":"channel-storage-failed"}}),
-                        )
-                        .map_err(io::Error::other)?;
-                        output.write_all(b"\n")?;
-                        output.flush()?;
+                        write_frame(json!({"id":id,"result":{"error":"channel-storage-failed"}}))?;
                         continue;
                     }
                 }
@@ -97,10 +108,7 @@ fn run() -> io::Result<()> {
                 _ => return Err(io::ErrorKind::InvalidData.into()),
             }
         };
-        serde_json::to_writer(&mut output, &json!({"id":id,"result":result}))
-            .map_err(io::Error::other)?;
-        output.write_all(b"\n")?;
-        output.flush()?;
+        write_frame(json!({"id":id,"result":result}))?;
     }
 }
 fn main() {
