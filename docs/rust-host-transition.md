@@ -701,6 +701,16 @@ checks pass. Complete verification also passes110 Rust and824 runtime tests plus
 formatting, strictClippy and the production build. Read-only review found no remaining defect.
 This reduces process boundaries without claiming ownership of run/approval policy yet.
 
+Metadata locking now explicitly unlocks every return and error after acquisition, while retaining
+ownership through final publication/readback. Dropping one File can leave a shared open description
+locked in a concurrent fork or duplicate ([Rust File locking contract](https://doc.rust-lang.org/std/fs/struct.File.html#method.try_lock)).
+An isolated Linux Rust 1.92 diagnostic retained a real duplicate descriptor: the unchanged no-op then
+mutation contract failed at the same assertion as CI with WouldBlock/errno11. The acquired-lock guard
+makes that diagnostic pass, as well as all nine unchanged Linux metadata contracts. Local validation
+also passes 23 Rust metadata/history/readiness contracts, 50 runtime storage/shared-owner contracts,
+formatting, strict Clippy and the production build. The original CI timing was not reproduced by
+ordinary baseline repetition; the diagnostic establishes the lock hazard without a production hook.
+
 ## Shared bounded response transport
 
 Every history-owner operation now uses the same result transport, removing paging-specific handles

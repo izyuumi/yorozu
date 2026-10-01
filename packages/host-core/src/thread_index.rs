@@ -12,6 +12,13 @@ const INDEX_BYTES: u64 = 16 * 1024 * 1024;
 const SNAPSHOTS_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 const RECORDS: usize = 65_536;
 const INTERRUPTED_WRITES: usize = 128;
+struct WriterLock(fs::File);
+impl Drop for WriterLock {
+    fn drop(&mut self) {
+        // A concurrent fork can retain the open description after this File closes.
+        let _ = self.0.unlock();
+    }
+}
 fn invalid() -> io::Error {
     io::ErrorKind::InvalidData.into()
 }
@@ -195,6 +202,7 @@ fn replace(root: &Path, request: &Value) -> io::Result<Value> {
     private_dir(root)?;
     let owner = private_open(&root.join(".rust-thread-index-owner.lock"), false)?;
     owner.try_lock().map_err(io::Error::other)?;
+    let _owner = WriterLock(owner);
     // A legacy writer's pending file is ambiguous state, never disposable scratch data.
     if fs::symlink_metadata(root.join("threads.json.tmp")).is_ok() {
         return Ok(json!({"error":"thread-index-recovery-required"}));
@@ -300,7 +308,6 @@ fn replace(root: &Path, request: &Value) -> io::Result<Value> {
     if current(root)?.as_deref() != Some(bytes.as_slice()) {
         return Err(invalid());
     }
-    let _ = owner.unlock();
     Ok(json!({"stored":true,"hash":digest(&bytes),"changed":true}))
 }
 pub fn request(root: &Path, request: &Value) -> Value {
