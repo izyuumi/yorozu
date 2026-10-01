@@ -5648,9 +5648,9 @@ test.each(["steer", "unsupported", "declined", "failed"])("follow-up delivery us
   const run = vi.fn(async (turn: NativeTurn) => {
     if (turn.text === "first") {
       if (mode !== "unsupported") turn.onSteer?.(async (text, attachments) => {
-        if (mode === "failed") throw new Error("turn ended");
         if (mode === "declined") return false;
         inputs.push({ text, attachments });
+        if (mode === "failed") throw new Error("reply lost after SDK accepted input");
         return true;
       });
       ready.resolve();
@@ -5681,7 +5681,7 @@ test.each(["steer", "unsupported", "declined", "failed"])("follow-up delivery us
   await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === retry);
   send({ kind: "admission_query", data: { eventId: follow } }, "delivery");
   const status = (await eventsUntil((event) => event.kind === "admission_status" && event.data.eventId === follow)).at(-1);
-  expect(status).toMatchObject({ data: { status: mode === "steer" ? "running" : "queued",
+  expect(status).toMatchObject({ data: { status: mode === "failed" ? "indeterminate" : mode === "steer" ? "running" : "queued",
     delivery: mode === "steer" ? "steer" : "queue" } });
   expect(run).toHaveBeenCalledTimes(1);
   if (mode === "steer") {
@@ -5690,21 +5690,66 @@ test.each(["steer", "unsupported", "declined", "failed"])("follow-up delivery us
     expect(readFileSync(inputs[0]!.attachments![0]!.path, "utf8")).toBe("context");
     expect(readThreadEvents("delivery", dir).find((event) => event.id === follow))
       .toMatchObject({ clientTs: expect.any(Number), data: { completionId: `native:${active}:final` } });
+  } else if (mode === "failed") {
+    expect(inputs).toHaveLength(1);
+    expect(status).toMatchObject({ data: { reason: "steering-outcome-unconfirmed" } });
+    const stop = send({ kind: "interrupt", data: { targetEventId: follow } }, "delivery");
+    expect((await eventsUntil((event) => event.kind === "stop_status" && event.data.requestId === stop)).at(-1))
+      .toMatchObject({ data: { status: "unconfirmed" } });
+    expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8")))
+      .toContainEqual({ threadId: "delivery", eventId: follow });
   } else expect(inputs).toEqual([]);
   finish.resolve();
   await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
     thread.id === "delivery" && thread.turnState === "idle"));
-  expect(run).toHaveBeenCalledTimes(mode === "steer" ? 1 : 2);
+  expect(run).toHaveBeenCalledTimes(mode === "steer" || mode === "failed" ? 1 : 2);
   const history = readThreadEvents("delivery", dir).filter((event) => event.kind === "message");
-  expect(history.map((event) => event.data.role)).toEqual(mode === "steer"
+  expect(history.map((event) => event.data.role)).toEqual(mode === "steer" || mode === "failed"
     ? ["user", "user", "agent"] : ["user", "agent", "user", "agent"]);
   await sidecar.close();
   await relay.close();
   const restarted = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } }, true);
   restarted.send({ kind: "admission_query", data: { eventId: follow } }, "delivery");
   expect((await restarted.eventsUntil((event) => event.kind === "admission_status" && event.data.eventId === follow)).at(-1))
-    .toMatchObject({ data: { status: "completed", delivery: mode === "steer" ? "steer" : "queue" } });
-  expect(run).toHaveBeenCalledTimes(mode === "steer" ? 1 : 2);
+    .toMatchObject({ data: { status: mode === "failed" ? "indeterminate" : "completed", delivery: mode === "steer" ? "steer" : "queue" } });
+  expect(run).toHaveBeenCalledTimes(mode === "steer" || mode === "failed" ? 1 : 2);
+  if (mode === "failed") {
+    expect(inputs).toHaveLength(1);
+    expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8")))
+      .toContainEqual({ threadId: "delivery", eventId: follow });
+    expect(readFileSync(inputs[0]!.attachments![0]!.path, "utf8")).toBe("context");
+  }
+});
+
+test("late steering confirmation cannot mutate a replacement host or execute its uncertain follow-up", async () => {
+  const sdkReply=Promise.withResolvers<boolean>(); const entered=Promise.withResolvers<void>();
+  const finishOld=Promise.withResolvers<{text:string}>();
+  const oldRun=vi.fn(async(turn:NativeTurn)=>{
+    turn.onSession?.("original-session");
+    turn.onSteer?.(async()=>{ entered.resolve(); return sdkReply.promise; });
+    return finishOld.promise;
+  });
+  const {dir,send}=await pairedPhone([],false,{nativeRunners:{codex:{run:oldRun}}},true);
+  send({kind:"thread_create",data:{agent:"codex",cwd:proj}},"late-steer");
+  const active=send({kind:"message",data:{role:"user",text:"first"}},"late-steer");
+  await vi.waitFor(()=>expect(oldRun).toHaveBeenCalledTimes(1));
+  const follow=send({kind:"message",data:{role:"user",text:"keep me",delivery:"steer"}},"late-steer");
+  await entered.promise;
+  expect(JSON.parse(readFileSync(join(dir,"native-steering.jsonl"),"utf8").trim())).toMatchObject({eventId:follow,activeEventId:active,status:"attempting"});
+  await sidecar.close(); await relay.close();
+  const freshRun=vi.fn(async()=>({text:"unexpected replay"}));
+  const replacement=await pairedPhone([],false,{stateDir:dir,nativeRunners:{codex:{run:freshRun}}},true);
+  expect(freshRun).not.toHaveBeenCalled();
+  const history=readThreadEvents("late-steer",dir); const queue=readFileSync(join(dir,"native-turn-queue.json")); const journal=readFileSync(join(dir,"native-steering.jsonl"));
+  sdkReply.resolve(true); finishOld.resolve({text:"stale completion"});
+  await new Promise<void>((resolve)=>setImmediate(resolve));
+  const query=replacement.send({kind:"admission_query",data:{eventId:follow}},"late-steer");
+  expect((await replacement.eventsUntil((event)=>event.kind==="admission_status"&&event.data.requestId===query)).at(-1)).toMatchObject({data:{status:"indeterminate",reason:"steering-outcome-unconfirmed"}});
+  expect(readThreadEvents("late-steer",dir)).toEqual(history); expect(readFileSync(join(dir,"native-turn-queue.json"))).toEqual(queue); expect(readFileSync(join(dir,"native-steering.jsonl"))).toEqual(journal);
+  replacement.send({kind:"thread_recover",data:{turnId:`native:${active}:final`,action:"continue"}},"late-steer");
+  await replacement.eventsUntil((event)=>event.kind==="thought"&&event.threadId==="late-steer"&&event.data.text.includes("remains paused"));
+  expect(freshRun).not.toHaveBeenCalled(); expect(readThreadEvents("late-steer",dir).some((event)=>event.id===`native:${follow}:final`)).toBe(false);
+  expect(listThreads(dir).find((thread)=>thread.id==="late-steer")?.nativeTurn?.state).toBe("interrupted");
 });
 
 test("Send now removes only the selected queue entry and holds while a question is open", async () => {

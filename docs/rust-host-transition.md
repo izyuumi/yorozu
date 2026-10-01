@@ -12,7 +12,8 @@ separate conversations. These are migration requirements, not claims about the c
 - The Mac launches the bundled Node executable and `packages/runtime/dist/serve.js`. The
   TypeScript host currently owns relay transport, admission policy, sequencing, approvals,
   history read/sync policy, recovery policy and orchestration. Rust owns the extracted durable
-  attachment/outbox/expiry/Stop/accepted-message stores, event/transcript transactions, thread metadata mutations and Unix listeners. This is approximately 4,000 lines in `serve.ts`,
+  attachment/outbox/expiry/Stop/accepted-message stores, event/transcript transactions, native queue
+  writes, steering intent/outcomes, thread metadata mutations and Unix listeners. This is approximately 4,000 lines in `serve.ts`,
   plus its supporting modules; replacing a launcher alone would not rewrite the backend.
 - Claude uses a TypeScript SDK adapter; Codex has both SDK and native app-server adapters.
   OpenClaw's separate channel plugin uses a local JSON-lines socket and durable acknowledged
@@ -357,6 +358,44 @@ native interruption/queue/update regressions and two startup/waiting-turn fence 
 The full runtime suite passes 811 tests with one skipped across 47 files using four workers.
 The first queue check stopped on a Clippy formatting warning before any build or host test; this was
 fixed and all checks rerun. Cross-platform execution and actual power-loss durability remain unverified.
+
+## Durable native steering
+
+Before invoking live SDK input, the compatibility host now requires Rust to durably reserve a
+steering intent in `native-steering.jsonl`. The immutable binding includes the original accepted
+message identity, conversation, active operation, completion, attempt and optional native session.
+Repeated intents cannot reserve another external effect. A definite `false` from a provider proves
+no input was accepted and allows queue fallback; a thrown error preserves the attempted effect as
+uncertain. Only a fresh explicit attempt may retry a definitively rejected intent. Original message
+bodies and attachments remain in accepted/history storage and are never deleted by steering recovery.
+
+Rust commits successful delivery through the existing two-projection history transaction under a
+stable attempt identity, then writes its outcome and removes the native queue entry. If interrupted
+between those steps, startup verifies the original projection and finishes only outcome/queue cleanup.
+It cannot repeat the SDK call. Unknown outcomes stay queued in storage and report `indeterminate`;
+Stop reports `unconfirmed`, without falsely claiming withdrawal. An interrupted active run with an
+uncertain follow-up remains paused rather than injecting that follow-up through an automatic recovery
+prompt. Continue explains the unconfirmed outcome. Normal recovery omits undispatched queue entries.
+Late confirmations from a closed host cannot mutate its replacement's state.
+
+The journal has an exclusive OS writer lock and limits of 64 MiB, 65,536 rows and 1 MiB per row.
+Startup snapshots are paged by at most 64 records/512 KiB. Unknown fields and incomplete legacy tails
+are retained; an incomplete tail is copied privately before a subsequent safe append. Invalid complete
+rows and conflicting bindings fail closed. The host still supplies execution decisions and constructs
+the corrected message; provider reconciliation of ambiguous external effects remains part of the
+required run-orchestration/provider-worker work, rather than a completed standalone Rust host.
+
+Ten steering tests and all 84 Rust tests pass, with strict Clippy. Fifteen focused host regressions
+pass, covering real Claude/Codex adapters, repeated Send now, tool-question gating, concurrent
+completion/Stop/withdrawal, lost response after accepted input, attachments through restart, paused
+uncertain recovery, and late confirmation after host replacement. The initial focused run passed nine
+and failed one outdated expectation that an SDK exception permitted another execution; the tightened
+fixture now proves that accepted input with a lost response is retained without replay. A subsequent
+late-confirmation test exposed recovery prompts admitting undispatched follow-ups, which is now fixed.
+The first recovery-filter build stopped on TypeScript union narrowing before host tests; after preserving
+the event-kind narrowing, the production runtime build and focused checks pass. The final full runtime
+suite passes 812 tests with one skipped across 47 files using four workers. Earlier failure logs
+remain retained. Cross-platform execution, physical power loss and native release gates remain open.
 
 ## Required 0.6.0 host work
 

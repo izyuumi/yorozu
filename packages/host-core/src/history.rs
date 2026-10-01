@@ -137,6 +137,7 @@ pub struct History {
     temporaries: usize,
     failed: bool,
     queue: Option<crate::native_queue::NativeQueue>,
+    steering: Option<crate::steering::Steering>,
 }
 impl Drop for History {
     fn drop(&mut self) {
@@ -161,6 +162,7 @@ impl History {
             temporaries: 0,
             failed: false,
             queue: None,
+            steering: None,
         };
         let mut keys = HashSet::new();
         let mut done = HashSet::new();
@@ -600,6 +602,104 @@ impl History {
         self.recover()?;
         Ok(json!({"stored":true,"key":key}))
     }
+    fn queue_request(&mut self, request: &Value) -> Value {
+        if self.queue.is_none() {
+            match crate::native_queue::NativeQueue::open(&self.root) {
+                Ok(queue) => self.queue = Some(queue),
+                Err(_) => return json!({"error":"native-queue-storage-failed"}),
+            }
+        }
+        self.queue.as_mut().unwrap().request(request)
+    }
+    fn steering_operation(record: &Value) -> String {
+        format!(
+            "native-steer:{}",
+            digest(record["attemptId"].as_str().unwrap().as_bytes())
+        )
+    }
+    fn steering_event_matches(record: &Value, event: &Value) -> bool {
+        event["id"] == record["eventId"]
+            && event["threadId"] == record["threadId"]
+            && event["kind"] == "message"
+            && event["data"]["role"] == "user"
+            && event["data"]["delivery"] == "steer"
+            && event["data"]["completionId"] == record["completionId"]
+            && event["data"]["runId"] == record["completionId"]
+    }
+    fn steering_delivered(&mut self, record: &Value) -> io::Result<Value> {
+        let result = self.steering.as_mut().unwrap().finish(
+            record["eventId"].as_str().unwrap(),
+            record["attemptId"].as_str().unwrap(),
+            "delivered",
+        );
+        if result.get("error").is_some() {
+            return Err(invalid());
+        }
+        let removal = self.queue_request(
+            &json!({"op":"queue_remove","eventId":record["eventId"],"threadId":record["threadId"]}),
+        );
+        if removal.get("error").is_some() {
+            return Err(invalid());
+        }
+        Ok(result)
+    }
+    fn steering_request(&mut self, request: &Value) -> io::Result<Value> {
+        if self.steering.is_none() {
+            self.steering = Some(crate::steering::Steering::open(&self.root)?);
+            // A recovered projection is durable evidence of delivery even if its outcome/queue
+            // cleanup was interrupted. Replay cleanup only, never the external SDK call.
+            for record in self.steering.as_ref().unwrap().records() {
+                if record["status"] == "rejected" {
+                    continue;
+                }
+                let operation = Self::steering_operation(&record);
+                let key = digest(operation.as_bytes());
+                if !self.committed.contains_key(&key) {
+                    if record["status"] == "delivered" {
+                        return Err(invalid());
+                    }
+                    continue;
+                }
+                let value: Value = serde_json::from_slice(&read_private(
+                    &self.directory.join(format!("{key}.json")),
+                    RECORD_BYTES,
+                )?)
+                .map_err(io::Error::other)?;
+                let line = value["entry"]["line"].as_str().ok_or_else(invalid)?;
+                let event: Value = serde_json::from_str(line).map_err(io::Error::other)?;
+                if !Self::steering_event_matches(&record, &event) {
+                    return Err(invalid());
+                }
+                let proof=self.append(&json!({"op":"history_append","operationId":operation,"event":event,"thread":true,"transcript":true}))?;
+                if proof.get("error").is_some() {
+                    return Err(invalid());
+                }
+                self.steering_delivered(&record)?;
+            }
+        }
+        if request["op"] != "steering_commit" {
+            return Ok(self.steering.as_mut().unwrap().request(request));
+        }
+        let Some(record) = self
+            .steering
+            .as_ref()
+            .unwrap()
+            .get(request["eventId"].as_str().unwrap_or(""))
+        else {
+            return Ok(json!({"error":"unknown-steering-intent"}));
+        };
+        if record["attemptId"] != request["attemptId"]
+            || record["status"] == "rejected"
+            || !Self::steering_event_matches(&record, &request["event"])
+        {
+            return Ok(json!({"error":"conflicting-steering-outcome"}));
+        }
+        let proof=self.append(&json!({"op":"history_append","operationId":Self::steering_operation(&record),"event":request["event"],"thread":true,"transcript":true}))?;
+        if proof.get("error").is_some() {
+            return Ok(proof);
+        }
+        self.steering_delivered(&record)
+    }
     pub fn request(&mut self, request: &Value) -> Value {
         if self.failed {
             return json!({"error":"history-storage-failed"});
@@ -608,13 +708,16 @@ impl History {
             .as_str()
             .is_some_and(|op| op.starts_with("queue_"))
         {
-            if self.queue.is_none() {
-                match crate::native_queue::NativeQueue::open(&self.root) {
-                    Ok(queue) => self.queue = Some(queue),
-                    Err(_) => return json!({"error":"native-queue-storage-failed"}),
-                }
-            }
-            return self.queue.as_mut().unwrap().request(request);
+            return self.queue_request(request);
+        }
+        if request["op"]
+            .as_str()
+            .is_some_and(|op| op.starts_with("steering_"))
+        {
+            return self.steering_request(request).unwrap_or_else(|_| {
+                self.failed = true;
+                json!({"error":"steering-storage-failed"})
+            });
         }
         let result = match request["op"].as_str() {
             Some("history_open") => Ok(json!({"stored":true})),

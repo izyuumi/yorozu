@@ -6,6 +6,7 @@ pub mod history;
 mod journal;
 pub mod native_queue;
 pub mod outbox;
+pub mod steering;
 pub mod stops;
 pub mod thread_index;
 pub mod transport;

@@ -524,6 +524,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const releaseHistory = retainSyncHost(dir);
   try {
   syncHostRequest(dir, { op: "queue_open" });
+  syncHostRequest(dir, { op: "steering_open" });
   // A SIGKILL cannot run the SDK's exit cleanup. Stop an orphaned CLI before any native
   // recovery starts; a live old CLI beside a resumed one could repeat external tool effects.
   const agentProcessesFile = join(dir, "native-agent-processes.json");
@@ -646,6 +647,22 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const steerRunning = new Map<string, Parameters<NonNullable<NativeTurn["onSteer"]>>[0]>();
   const steering = new Map<string, { threadId: string; promise: Promise<void> }>();
   const steered = new Set<string>();
+  type SteeringRecord = { eventId: string; threadId: string; attemptId: string;
+    activeEventId: string; completionId: string; status: "attempting" | "delivered" | "rejected" };
+  const steeringRecords = new Map<string, SteeringRecord>();
+  let steeringFenced = false;
+  for (let offset: number | null = 0; offset !== null;) {
+    const page = syncHostRequest(dir, { op: "steering_list", offset });
+    for (const record of page.records as SteeringRecord[]) {
+      steeringRecords.set(record.eventId, record);
+      if (record.status === "delivered") steered.add(record.eventId);
+    }
+    offset = page.next as number | null;
+  }
+  const uncertainSteering = (eventId: string): boolean => steeringRecords.get(eventId)?.status === "attempting";
+  const uncertainActiveSteering = (threadId: string, activeEventId: string): boolean =>
+    [...steeringRecords.values()].some((record) => record.threadId === threadId &&
+      record.activeEventId === activeEventId && record.status === "attempting");
   const stopTimers = new Map<string, ReturnType<typeof setTimeout>>();
   type TurnState = "idle" | "starting" | "running" | "stopping" | "stopped-unconfirmed";
   const turnStates = new Map<string, { state: TurnState; activeEventId?: string; queued: string[] }>();
@@ -1569,9 +1586,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const completionIdFor = (threadId: string, userEventId: string): string =>
     `${threadAgent(threadId, dir) === "yorozu" ? "legacy" : "native"}:${userEventId}:final`;
 
-  const nativeRecoveryPrompt = (threadId: string, original: string): string => {
+  const nativeRecoveryPrompt = (threadId: string, original: string, userEventId?: string): string => {
     const recent = visibleThreadEvents(threadId, dir).filter((event) =>
-      event.kind === "message" || event.kind === "tool_call" || event.kind === "tool_result").slice(-20).map((event) => {
+      event.kind === "message" || event.kind === "tool_call" || event.kind === "tool_result").filter((event) =>
+      !(event.kind === "message" && event.data.role === "user" && event.id !== userEventId &&
+        (uncertainSteering(event.id) || queuedNative.some((entry) => entry.eventId === event.id))))
+      .slice(-20).map((event) => {
       if (event.kind === "message") return `${event.data.role}: ${event.data.text.slice(0, 2_000)}`;
       if (event.kind === "tool_call") return `tool call ${event.data.name}: ${JSON.stringify(event.data.args).slice(0, 2_000)}`;
       return `tool result ${event.data.callId}: ${event.data.output.slice(0, 2_000)}`;
@@ -1748,6 +1768,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
           if (!turn.signal.aborted) startTree = await workingTree(root, turn.signal);
         }
         while (!turn.signal.aborted) {
+          if (recovering && userEventId && uncertainActiveSteering(threadId, userEventId)) {
+            paused = true;
+            setNativeTurn(threadId, { id, state: "interrupted", userEventId, recoveryAttempts }, dir);
+            state("native-follow-up-unconfirmed");
+            broadcast(threadList());
+            return;
+          }
           if (recovering) recoveryAttempts += 1;
           setNativeTurn(threadId, { id, state: "running", ...(userEventId ? { userEventId } : {}), recoveryAttempts,
             recoveryActive: recovering }, dir);
@@ -1761,7 +1788,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
             const files = attachmentFiles(threadId, userEventId ?? id, attachments, dir);
             const attached = files.map((file) =>
               `[attached: ${JSON.stringify(file.name)} (${JSON.stringify(file.mime)}) at ${file.path}]`).join("\n");
-            let prompt = recovering ? nativeRecoveryPrompt(threadId, text) : withStoppedContext(threadId,
+            let prompt = recovering ? nativeRecoveryPrompt(threadId, text, userEventId) : withStoppedContext(threadId,
               skillPath ? text.slice(skillName!.length + 1).trimStart() : text, userEventId);
             if (!currentHome.sessionId && latestRewindId(threadId, dir)) {
               const history = visibleThreadEvents(threadId, dir);
@@ -1933,7 +1960,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       if (stopped) return;
       if (userEventId) await steering.get(userEventId)?.promise;
-      if (userEventId && (!stopStore.available || !acceptedStore.available || stoppedTurns.has(userEventId) || steered.has(userEventId))) return;
+      if (userEventId && uncertainSteering(userEventId)) {
+        finishTurnState(threadId, turnKey);
+        return;
+      }
+      if (userEventId && (!stopStore.available || !acceptedStore.available || steeringFenced || stoppedTurns.has(userEventId) || steered.has(userEventId) || uncertainSteering(userEventId))) return;
       const logged = queuedBehindTurn ? acceptedEvent : undefined;
       if (logged) {
         // A queued message was admitted while an earlier turn ran. Append its corrected
@@ -1974,9 +2005,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
     return next;
   }
 
-  function steerMessage(event: YorozuEvent & { kind: "message" }): Promise<void> {
+  function steerMessage(event: YorozuEvent & { kind: "message" }, attemptId = event.id): Promise<void> {
     const existing = steering.get(event.id);
     if (existing) return existing.promise;
+    if (steeringFenced || steered.has(event.id) || uncertainSteering(event.id)) return Promise.resolve();
     const turn = turnStates.get(event.threadId);
     const steer = steerRunning.get(event.threadId);
     const active = turn?.activeEventId;
@@ -1989,19 +2021,45 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const files = attachmentFiles(event.threadId, event.id, event.data.attachments ?? [], dir);
       const attached = files.map((file) =>
         `[attached: ${JSON.stringify(file.name)} (${JSON.stringify(file.mime)}) at ${file.path}]`).join("\n");
-      if (!await steer([event.data.text, attached].filter(Boolean).join("\n\n"), files)) return;
+      const completionId = completionIdFor(event.threadId, active);
+      const sessionId = threadHome(event.threadId, dir).sessionId;
+      const intent = syncHostRequest(dir, { op: "steering_begin", record: {
+        eventId: event.id, threadId: event.threadId, attemptId, activeEventId: active,
+        completionId, identity: userMessageIdentity(event), ...(sessionId ? { sessionId } : {}),
+      } });
+      const record = intent.record as SteeringRecord;
+      steeringRecords.set(event.id, record);
+      if (intent.reserved !== true) return;
+      let delivered: boolean;
+      try { delivered = await steer([event.data.text, attached].filter(Boolean).join("\n\n"), files); }
+      catch {
+        if (!stopped) {
+          state("steer-outcome-unconfirmed");
+          broadcast({ ...control({ kind: "admission_status", data: { eventId: event.id,
+            status: "indeterminate", reason: "steering-outcome-unconfirmed" } }), threadId: event.threadId });
+        }
+        return;
+      }
+      if (stopped) return;
+      if (!delivered) {
+        const rejected = syncHostRequest(dir, { op: "steering_reject", eventId: event.id, attemptId });
+        steeringRecords.set(event.id, rejected.record as SteeringRecord);
+        return;
+      }
       const prior = readThreadEvents(event.threadId, dir);
       const ordered: YorozuEvent = { ...event, ts: Math.max(Date.now(), prior.at(-1)?.ts ?? 0),
         clientTs: event.clientTs ?? event.ts, data: { ...event.data, delivery: "steer",
-          runId: completionIdFor(event.threadId, active), completionId: completionIdFor(event.threadId, active) } };
-      // Persist delivery before removing the queue entry: restart never launches it again.
-      persistThreadAndTranscript(ordered, dir);
+          runId: completionId, completionId } };
+      // Rust commits the two projections, outcome and queue cleanup. On restart it completes
+      // interrupted cleanup using the original projection, without repeating the SDK effect.
+      const committed = syncHostRequest(dir, { op: "steering_commit", eventId: event.id, attemptId, event: ordered });
+      steeringRecords.set(event.id, committed.record as SteeringRecord);
       steered.add(event.id);
       removeNativeQueue(event.id);
       turn.queued = turn.queued.filter((id) => id !== event.id);
       broadcast(ordered);
       broadcast(threadList());
-    }).catch((error: unknown) => { state(`steer-error ${String(error)}`); });
+    }).catch(() => { if (!stopped) { steeringFenced = true; state("steer-storage-unconfirmed"); } });
     steering.set(event.id, { threadId: event.threadId, promise: delivery });
     void delivery.finally(() => steering.delete(event.id));
     return delivery;
@@ -2011,6 +2069,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const marker = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
     if (marker?.state !== "interrupted" || !marker.userEventId || nativeRecoveryStarted.has(threadId) ||
       stoppedTurns.has(marker.userEventId) || (!retry && (marker.recoveryAttempts ?? 0) >= 3)) return false;
+    if (uncertainActiveSteering(threadId, marker.userEventId)) {
+      if (retry) broadcast({ ...control({ kind: "thought", data: {
+        text: "A follow-up may already have reached this run. Yorozu cannot confirm its outcome, so this run remains paused.",
+      } }), threadId });
+      return false;
+    }
     const original = visibleThreadEvents(threadId, dir).find((event) => event.id === marker.userEventId &&
       event.kind === "message" && event.data.role === "user");
     if (original?.kind !== "message") return false;
@@ -2300,7 +2364,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         reply(control({ kind: "receipt", data: { eventId: event.id } }));
         return;
       }
-      void steerMessage(message).then(() => {
+      void steerMessage(message, event.id).then(() => {
         const delivered = readThreadEvents(event.threadId, dir).find((known) => known.id === message.id);
         if (delivered) reply(delivered);
         reply(control({ kind: "receipt", data: { eventId: event.id } }));
@@ -2560,6 +2624,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
           return;
         }
         const history = readThreadEvents(event.threadId, dir);
+        if (uncertainSteering(target) && steeringRecords.get(target)?.threadId === event.threadId) {
+          const uncertain: StopRecord = { targetEventId: target, threadId: event.threadId,
+            status: "unconfirmed", requestIds: [...new Set([...(existing?.requestIds ?? []), event.id])] };
+          await rememberStop(uncertain);
+          reply(control({ kind: "receipt", data: { eventId: event.id } }));
+          reply(stopStatus(uncertain, event.id));
+          return;
+        }
         const user = history.find((stored) => stored.id === target && stored.kind === "message" && stored.data.role === "user");
         const channelAdmission = pendingChannelAdmissions.get(target);
         const acceptance = acceptedStore.pending.get(target);
@@ -2627,7 +2699,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           // Withdraw before aborting: the runner can settle and release its queue immediately.
           for (const queued of turn.queued) {
             const withdraw = async (): Promise<void> => {
-              if (steered.has(queued)) return;
+              if (steered.has(queued) || uncertainSteering(queued)) return;
               const withdrawn: StopRecord = { targetEventId: queued, threadId: event.threadId,
                 status: "withdrawn", requestIds: [event.id] };
               await rememberStop(withdrawn);
@@ -2688,7 +2760,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const final = candidate ? history.find((stored): stored is YorozuEvent & { kind: "message" } =>
         stored.id === candidate && stored.kind === "message" && stored.data.role === "agent" && stored.data.done === true) : undefined;
       const completionId = recordedCompletionId ?? (final ? oldOpenClawCompletionId : undefined);
-      const status = withdrawal?.threadId === event.threadId && withdrawal.status === "withdrawn"
+      const steeringUnconfirmed = uncertainSteering(id) && steeringRecords.get(id)?.threadId === event.threadId;
+      const status = steeringUnconfirmed ? "indeterminate" : withdrawal?.threadId === event.threadId && withdrawal.status === "withdrawn"
         ? "withdrawn" : rejectedReply ? "rejected" : !user ? expired?.threadId === event.threadId ? "expired"
           : accepted?.threadId === event.threadId || !acceptedStore.available ? "indeterminate" : "unknown" : final ? "completed"
         : activeTurnIds.has(id) || user?.data.delivery === "steer" &&
@@ -2701,6 +2774,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         eventId: id, status, requestId: event.id,
         ...(user?.data.delivery ? { delivery: user.data.delivery } : {}),
         ...(status === "expired" ? { reason: "admission-deadline" } : {}),
+        ...(steeringUnconfirmed ? { reason: "steering-outcome-unconfirmed" } : {}),
         ...(rejectedReply?.kind === "admission_status" ? { reason: rejectedReply.data.reason } : {}),
         ...(runId ? { runId } : {}), ...(completionId ? { completionId } : {}),
       } }));
@@ -4032,6 +4106,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
     for (const entry of [...queuedNative]) {
       if (admittedTurns.has(entry.eventId)) continue;
+      if (uncertainSteering(entry.eventId)) continue;
       if (stoppedTurns.has(entry.eventId)) { removeNativeQueue(entry.eventId); continue; }
       const marker = listThreads(dir).find((thread) => thread.id === entry.threadId)?.nativeTurn;
       if (marker?.state === "interrupted" && marker.userEventId === entry.eventId) continue;
