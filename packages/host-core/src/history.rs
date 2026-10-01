@@ -898,6 +898,9 @@ impl History {
             .as_str()
             .filter(|id| !invalid_id(id))
             .ok_or_else(invalid)?;
+        if request["op"] == "run_turn_stop_fallback" {
+            return self.stop_fallback(request, thread);
+        }
         if request["op"] == "run_turn_preflight_finish" {
             return self.preflight_finish(request, thread);
         }
@@ -1032,20 +1035,13 @@ impl History {
             json!({"applied":true,"queueRemoved":queue_removed,"queueRepaired":queue_repaired,"recoveryAttempts":if action == "run_turn_retry" { Some(0) } else { None }}),
         )
     }
-    fn preflight_finish(&mut self, request: &Value, thread: &str) -> io::Result<Value> {
-        let origin = request["eventId"]
-            .as_str()
-            .filter(|id| !invalid_id(id))
-            .ok_or_else(invalid)?;
-        let expected = request
-            .get("expectedTurn")
-            .filter(|v| v.is_null() || v.is_object())
-            .ok_or_else(invalid)?;
-        let reason = request["reason"]
-            .as_str()
-            .filter(|reason| ["missing-runner", "missing-folder"].contains(reason))
-            .ok_or_else(invalid)?;
-        day(&request["ts"])?;
+    fn final_operation(
+        prefix: &str,
+        thread: &str,
+        origin: &str,
+        reason: &str,
+        expected: &Value,
+    ) -> io::Result<String> {
         // Match safe JSON.parse numeric notation without rounding opaque large values.
         fn canonical(value: &Value) -> Value {
             match value {
@@ -1067,14 +1063,80 @@ impl History {
                 _ => value.clone(),
             }
         }
-        let operation = format!(
-            "preflight:{}",
+        Ok(format!(
+            "{prefix}:{}",
             digest(
                 &serde_json::to_vec(&json!([thread, origin, reason, canonical(expected)]))
                     .map_err(io::Error::other)?
             )
-        );
+        ))
+    }
+    fn append_final(&mut self, operation: &str, event: &Value) -> io::Result<Value> {
+        match self.append(&json!({"op":"history_append","operationId":operation,"event":event,"thread":true,"transcript":true})) {
+            Ok(proof) => Ok(proof),
+            Err(error) => { self.failed = true; Err(error) }
+        }
+    }
+    fn retained_final(&mut self, operation: &str, template: &Value) -> io::Result<Option<Value>> {
+        if let Err(error) = self.recover() {
+            self.failed = true;
+            return Err(error);
+        }
         let key = digest(operation.as_bytes());
+        if !self.committed.contains_key(&key) {
+            return Ok(None);
+        }
+        let value: Value = serde_json::from_slice(&read_private(
+            &self.directory.join(format!("{key}.json")),
+            RECORD_BYTES,
+        )?)
+        .map_err(io::Error::other)?;
+        let entry: Entry =
+            serde_json::from_value(value["entry"].clone()).map_err(io::Error::other)?;
+        if entry.key != key
+            || entry.operation_id != operation
+            || !self.valid_entry(&entry)
+            || value["checksum"] != digest(&serde_json::to_vec(&entry).map_err(io::Error::other)?)
+        {
+            return Err(invalid());
+        }
+        let events: Vec<Value> = entry
+            .line
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()
+            .map_err(io::Error::other)?;
+        if events.len() != 1 {
+            return Err(invalid());
+        }
+        let original = &events[0];
+        let mut at_original_time = template.clone();
+        at_original_time["ts"] = original["ts"].clone();
+        if original != &at_original_time {
+            return Err(invalid());
+        }
+        let proof = self.append_final(operation, original)?;
+        if proof["stored"] != true {
+            self.failed = true;
+            return Err(invalid());
+        }
+        Ok(Some(original.clone()))
+    }
+    fn preflight_finish(&mut self, request: &Value, thread: &str) -> io::Result<Value> {
+        let origin = request["eventId"]
+            .as_str()
+            .filter(|id| !invalid_id(id))
+            .ok_or_else(invalid)?;
+        let expected = request
+            .get("expectedTurn")
+            .filter(|v| v.is_null() || v.is_object())
+            .ok_or_else(invalid)?;
+        let reason = request["reason"]
+            .as_str()
+            .filter(|reason| ["missing-runner", "missing-folder"].contains(reason))
+            .ok_or_else(invalid)?;
+        day(&request["ts"])?;
+        let operation = Self::final_operation("preflight", thread, origin, reason, expected)?;
         let root = self.root.clone();
         // Scope validation and final intent admission share the actual metadata writer lease.
         let writer = crate::thread_index::native_writer(&root)?;
@@ -1100,53 +1162,10 @@ impl History {
         };
         let mut final_event = json!({"id":completion,"threadId":thread,"ts":request["ts"],"agentId":"main","kind":"message",
             "data":{"role":"agent","text":text,"done":true,"failed":true}});
-        let mut stored = false;
-        if let Err(error) = self.recover() {
-            self.failed = true;
-            return Err(error);
-        }
-        if self.committed.contains_key(&key) {
-            // Recover original bytes/day rather than minting a second final after a lost response.
-            let value: Value = serde_json::from_slice(&read_private(
-                &self.directory.join(format!("{key}.json")),
-                RECORD_BYTES,
-            )?)
-            .map_err(io::Error::other)?;
-            let entry: Entry =
-                serde_json::from_value(value["entry"].clone()).map_err(io::Error::other)?;
-            if entry.key != key
-                || entry.operation_id != operation
-                || !self.valid_entry(&entry)
-                || value["checksum"]
-                    != digest(&serde_json::to_vec(&entry).map_err(io::Error::other)?)
-            {
-                return Err(invalid());
-            }
-            let events: Vec<Value> = entry
-                .line
-                .lines()
-                .map(serde_json::from_str)
-                .collect::<Result<_, _>>()
-                .map_err(io::Error::other)?;
-            if events.len() != 1 {
-                return Err(invalid());
-            }
-            let original = &events[0];
-            let mut at_original_time = final_event.clone();
-            at_original_time["ts"] = original["ts"].clone();
-            if original != &at_original_time {
-                return Err(invalid());
-            }
-            final_event = original.clone();
-            let proof = self.append(&json!({"op":"history_append","operationId":operation,"event":final_event,"thread":true,"transcript":true}));
-            match proof {
-                Ok(proof) if proof["stored"] == true => stored = true,
-                Ok(proof) => return Ok(proof),
-                Err(error) => {
-                    self.failed = true;
-                    return Err(error);
-                }
-            }
+        let retained = self.retained_final(&operation, &final_event)?;
+        let stored = retained.is_some();
+        if let Some(original) = retained {
+            final_event = original;
         }
         let refusal = |reason: &str| json!({"stored":stored,"applied":false,"reason":reason,"final":if stored {Some(&final_event)}else{None}});
         let marker = home["nativeTurn"].clone();
@@ -1191,10 +1210,9 @@ impl History {
                     json!({"stored":false,"applied":false,"terminal":true,"reason":"already-completed"}),
                 );
             }
-            match self.append(&json!({"op":"history_append","operationId":operation,"event":final_event,"thread":true,"transcript":true})) {
-                Ok(proof) if proof["stored"] == true => {},
-                Ok(proof) => return Ok(proof),
-                Err(error) => { self.failed = true; return Err(error); }
+            let proof = self.append_final(&operation, &final_event)?;
+            if proof["stored"] != true {
+                return Ok(proof);
             }
         }
         if marker.is_null() {
@@ -1210,6 +1228,112 @@ impl History {
         }
         self.attempts.remove(thread);
         Ok(json!({"stored":true,"applied":true,"cleared":true,"final":final_event}))
+    }
+    fn stop_fallback(&mut self, request: &Value, thread: &str) -> io::Result<Value> {
+        let origin = request["eventId"]
+            .as_str()
+            .filter(|id| !invalid_id(id))
+            .ok_or_else(invalid)?;
+        let expected = request
+            .get("expectedTurn")
+            .filter(|v| v.is_null() || v.is_object())
+            .ok_or_else(invalid)?;
+        day(&request["ts"])?;
+        let stop = self.request(&json!({"op":"stop_get","targetEventId":origin}));
+        if stop.get("error").is_some() {
+            return Ok(stop);
+        }
+        let record = &stop["record"];
+        if record["targetEventId"] != origin
+            || record["threadId"] != thread
+            || record["preDispatch"] == true
+        {
+            return Ok(json!({"error":"stop-owner-unconfirmed"}));
+        }
+        let prior = record["status"].as_str().ok_or_else(invalid)?;
+        let root = self.root.clone();
+        let _writer = crate::thread_index::native_writer(&root)?;
+        let bytes = crate::thread_index::current(&root)?.ok_or_else(invalid)?;
+        let index: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        let home = index
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == thread)
+            .ok_or_else(invalid)?;
+        if home["agent"]
+            .as_str()
+            .is_none_or(|agent| agent.is_empty() || agent == "yorozu")
+        {
+            return Err(invalid());
+        }
+        let completion = format!("native:{origin}:final");
+        let operation =
+            Self::final_operation("stop-fallback", thread, origin, "stopped", expected)?;
+        let template = json!({"id":completion,"threadId":thread,"ts":request["ts"],"agentId":"main","kind":"message",
+            "data":{"role":"agent","text":record["partialText"].as_str().unwrap_or(""),"done":true,"interrupted":true}});
+        let mut final_event = self.retained_final(&operation, &template)?;
+        let mut outcome = "unconfirmed";
+        let reason;
+        if ["stopped", "completed", "withdrawn"].contains(&prior) {
+            outcome = prior;
+            reason = "already-recorded";
+        } else if final_event.is_some() {
+            outcome = "stopped";
+            reason = "already-stored";
+        } else {
+            let accepted = self.request(&json!({"op":"accepted_get","messageId":origin}));
+            if accepted.get("error").is_some() {
+                return Ok(accepted);
+            }
+            let entry = &accepted["entry"];
+            if entry["id"] == origin
+                && entry["threadId"] == thread
+                && ["conversation", "legacy"].contains(&entry["purpose"].as_str().unwrap_or(""))
+            {
+                let (seen, terminal, hidden, conflict) =
+                    crate::paging::stop_evidence(&root, thread, entry, &completion)?;
+                if !seen {
+                    reason = "missing-origin";
+                } else if hidden {
+                    reason = "rewound-origin";
+                } else if conflict {
+                    reason = "completion-conflict";
+                } else if let Some(terminal) = terminal {
+                    outcome = terminal;
+                    reason = "terminal-known";
+                } else if !crate::thread_index::compatible(&home["nativeTurn"], expected) {
+                    reason = "scope-replaced";
+                } else if !home["nativeTurn"].is_null() || self.attempts.contains_key(thread) {
+                    reason = "execution-unconfirmed";
+                } else {
+                    let head = self.queue_request(&json!({"op":"queue_head","threadId":thread}));
+                    if head["eventId"] != origin || head.get("error").is_some() {
+                        reason = "not-queue-head";
+                    } else {
+                        let proof = self.append_final(&operation, &template)?;
+                        if proof["stored"] != true {
+                            return Ok(proof);
+                        }
+                        final_event = Some(template);
+                        outcome = "stopped";
+                        reason = "pending-withdrawn";
+                    }
+                }
+            } else {
+                reason = "not-accepted-conversation";
+            }
+        }
+        let mut next = record.clone();
+        next["status"] = json!(outcome);
+        let proof = self.request(&json!({"op":"stop_save","record":next}));
+        let confirmed = proof["record"]["threadId"] == thread
+            && proof["record"]["targetEventId"] == origin
+            && proof["record"]["status"] == outcome;
+        Ok(
+            json!({"stopConfirmed":confirmed,"record":if confirmed {&proof["record"]}else{record},
+            "stored":final_event.is_some(),"final":final_event,"reason":if confirmed {reason}else{"stop-status-unconfirmed"}}),
+        )
     }
     fn unissued_turn(&mut self, request: &Value, thread: &str) -> io::Result<Value> {
         let origin = request["eventId"]

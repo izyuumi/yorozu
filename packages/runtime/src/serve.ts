@@ -2346,7 +2346,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   };
   const persistStoppedReply = (record: StopRecord, text = record.partialText ?? ""): void => {
     const id = completionIdFor(record.threadId, record.targetEventId);
-    if (readThreadEvents(record.threadId, dir).some((event) => event.id === id && event.kind === "message" && event.data.done)) return;
+    if (readThreadEvents(record.threadId, dir).some((event) => event.id === id && event.kind === "message" && event.data.role === "agent" && event.data.done === true)) return;
     const final: YorozuEvent = { id, threadId: record.threadId, ts: Date.now(), agentId: MAIN_AGENT,
       kind: "message", data: { role: "agent", text, done: true, interrupted: true } };
     emit(final);
@@ -2414,8 +2414,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
   const finishStop = async (record: StopRecord, captured?: { nativeTurn: ThreadRecord["nativeTurn"] }): Promise<void> => {
     const expectedNativeTurn = captured ? captured.nativeTurn : listThreads(dir).find((thread) => thread.id === record.threadId)?.nativeTurn;
-    const pending = stopStore.pending(record.targetEventId);
-    if (pending) await pending;
+    let pending: Promise<void> | undefined;
+    while ((pending = stopStore.pending(record.targetEventId))) await pending;
     record = stoppedTurns.get(record.targetEventId) ?? record;
     if (record.status !== "requested") return;
     const target = record.targetEventId;
@@ -2468,6 +2468,31 @@ export function serve(options: ServeOptions = {}): Sidecar {
         stopTimers.set(target, timer);
       }
     } else {
+      if (threadAgent(record.threadId, dir) !== "yorozu") {
+        let proof: Record<string, unknown>;
+        try { proof = await stopStore.reconcileNativeFallback(record.threadId, target, expectedNativeTurn ?? null); }
+        catch { proof = {}; }
+        if (proof.stored === true && proof.final && typeof proof.final === "object" && !Array.isArray(proof.final))
+          broadcast(proof.final as YorozuEvent);
+        let current = stopStore.confirmed(target) ?? record;
+        if (proof.stopConfirmed !== true) {
+          state("native-stop-unconfirmed");
+          if (stopStore.available && !["stopped", "completed", "withdrawn"].includes(current.status)) {
+            await rememberStop({ ...current, status: "unconfirmed" });
+            current = stopStore.confirmed(target) ?? current;
+          }
+        }
+        if (["unconfirmed", "stopped"].includes(current.status)) {
+          const turn = turnStates.get(record.threadId);
+          if (current.status === "unconfirmed" && turn?.activeEventId === target) {
+            turn.state = "stopped-unconfirmed";
+            publishTurnState(record.threadId);
+          }
+          reconcilePausedStop(current, expectedNativeTurn);
+        }
+        broadcastStop(current);
+        return;
+      }
       const nativeTurn = listThreads(dir).find((thread) => thread.id === record.threadId)?.nativeTurn;
       if (nativeTurn?.id === completionIdFor(record.threadId, target) && nativeTurn.state === "interrupted") {
         // The old SDK process is gone, but its last external effect is unknowable here.
@@ -2920,7 +2945,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         }
         const final = viaChannel(event.threadId) ? !!channelRun?.status && channelRun.status !== "aborted"
           : history.some((stored) => stored.id === completionIdFor(event.threadId, target) &&
-            stored.kind === "message" && stored.data.done === true && stored.data.interrupted !== true);
+            stored.kind === "message" && stored.data.role === "agent" && stored.data.done === true && stored.data.interrupted !== true);
         if (!existing && !user) {
           const withdrawn: StopRecord = { targetEventId: target, threadId: event.threadId,
             status: "withdrawn", requestIds: [event.id] };
@@ -2932,7 +2957,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (user?.kind === "message" && user.data.delivery === "steer") {
           reply(control({ kind: "receipt", data: { eventId: event.id } }));
           reply(control({ kind: "stop_status", data: { targetEventId: target, requestId: event.id,
-            status: history.some((stored) => stored.id === user.data.completionId && stored.kind === "message" && stored.data.done)
+            status: history.some((stored) => stored.id === user.data.completionId && stored.kind === "message" && stored.data.role === "agent" && stored.data.done === true)
               ? "completed" : "unknown" } }));
           return;
         }

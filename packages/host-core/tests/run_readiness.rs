@@ -1815,3 +1815,162 @@ fn preflight_metadata_retry_recovers_original_final_across_restart_and_midnight(
         queue
     );
 }
+
+fn stop_fallback(host: &mut History, expected: &Value, ts: u64) -> Value {
+    host.request(
+        &json!({"op":"run_turn_stop_fallback","threadId":"thread","eventId":"origin",
+        "expectedTurn":expected,"ts":ts}),
+    )
+}
+#[test]
+fn native_stop_fallback_requires_actual_pending_ownership_and_agent_terminal_evidence() {
+    for guard in [
+        "pending",
+        "paused",
+        "issued",
+        "replacement",
+        "foreign-head",
+        "no-queue",
+        "user-done",
+        "agent-undone",
+        "completed",
+        "already-stopped",
+        "hidden",
+    ] {
+        let temp = Temp::new();
+        let (mut host, _) = open(&temp);
+        if guard == "foreign-head" {
+            seed(&mut host, "first", "conversation");
+        }
+        seed(&mut host, "origin", "conversation");
+        let mut expected = Value::Null;
+        if ["paused", "replacement"].contains(&guard) {
+            pause(&mut host, &temp);
+            expected = snapshot(&temp)["threads"][0]["nativeTurn"].clone();
+        }
+        if guard == "replacement" {
+            let read = snapshot(&temp);
+            let mut index = read["threads"].clone();
+            index[0].as_object_mut().unwrap().remove("nativeTurn");
+            assert_eq!(host.request(&json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index}))["stored"],true);
+            issued(&mut host);
+        }
+        if guard == "issued" {
+            issued(&mut host);
+            expected = snapshot(&temp)["threads"][0]["nativeTurn"].clone();
+        }
+        if guard == "no-queue" {
+            assert_eq!(
+                host.request(&json!({"op":"queue_remove","threadId":"thread","eventId":"origin"}))
+                    ["stored"],
+                true
+            );
+        }
+        if ["user-done", "agent-undone", "completed", "already-stopped"].contains(&guard) {
+            assert_eq!(host.request(&json!({"op":"history_append","operationId":"occupied-final","thread":true,"transcript":true,
+                "event":{"id":"native:origin:final","threadId":"thread","ts":2000,"agentId":"main","kind":"message",
+                "data":{"role":if guard=="user-done"{"user"}else{"agent"},"text":"retained",
+                    "done":guard!="agent-undone","interrupted":guard=="already-stopped"}}}))["stored"],true);
+        }
+        if guard == "hidden" {
+            assert_eq!(host.request(&json!({"op":"history_append","operationId":"rewind-stop","thread":true,"transcript":true,
+                "event":{"id":"rewound","threadId":"thread","ts":2000,"agentId":"main","kind":"thread_rewound",
+                "data":{"requestId":"rewind","eventId":"origin","hiddenEventIds":["origin"]}}}))["stored"],true);
+        }
+        assert_eq!(host.request(&json!({"op":"stop_save","record":{"threadId":"thread","targetEventId":"origin",
+            "status":"requested","requestIds":["stop"],"partialText":"retained partial","future":{"kept":true}}}))["record"]["status"],"requested");
+        let before = fs::read(temp.0.join("threads.json")).unwrap();
+        let queue = fs::read(temp.0.join("native-turn-queue.json")).unwrap();
+        let history = fs::read(temp.0.join("threads/thread.jsonl")).unwrap();
+        let proof = stop_fallback(&mut host, &expected, 3000);
+        let status = if guard == "completed" {
+            "completed"
+        } else if ["pending", "already-stopped"].contains(&guard) {
+            "stopped"
+        } else {
+            "unconfirmed"
+        };
+        assert_eq!(proof["stopConfirmed"], true, "{guard}: {proof}");
+        assert_eq!(proof["record"]["status"], status, "{guard}: {proof}");
+        assert_eq!(proof["record"]["future"], json!({"kept":true}));
+        assert_eq!(
+            host.request(&json!({"op":"stop_get","targetEventId":"origin"}))["record"],
+            proof["record"]
+        );
+        if guard == "pending" {
+            assert_eq!(proof["stored"], true);
+            assert_eq!(
+                proof["final"]["data"],
+                json!({"role":"agent","text":"retained partial","done":true,"interrupted":true})
+            );
+        } else {
+            assert_ne!(proof["stored"], true, "{guard}: {proof}");
+            assert_eq!(
+                fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+                history,
+                "{guard}"
+            );
+        }
+        assert_eq!(
+            fs::read(temp.0.join("threads.json")).unwrap(),
+            before,
+            "{guard}"
+        );
+        assert_eq!(
+            fs::read(temp.0.join("native-turn-queue.json")).unwrap(),
+            queue,
+            "{guard}"
+        );
+    }
+}
+#[test]
+fn native_stop_fallback_reuses_saved_final_after_status_failure_restart_and_request_growth() {
+    let temp = Temp::new();
+    let (mut host, _) = open(&temp);
+    seed(&mut host, "origin", "conversation");
+    assert_eq!(
+        host.request(
+            &json!({"op":"stop_save","record":{"threadId":"thread","targetEventId":"origin",
+        "status":"requested","requestIds":["first"],"partialText":"original partial"}})
+        )["record"]["status"],
+        "requested"
+    );
+    let path = temp.0.join("stopped-turns.jsonl");
+    fs::rename(&path, temp.0.join("stop-backup.jsonl")).unwrap();
+    fs::create_dir(&path).unwrap();
+    let first = stop_fallback(&mut host, &Value::Null, 3000);
+    assert_eq!(first["stored"], true, "{first}");
+    assert_eq!(first["stopConfirmed"], false);
+    assert_eq!(first["record"]["status"], "requested");
+    let history = fs::read(temp.0.join("threads/thread.jsonl")).unwrap();
+    let transcript = fs::read(temp.0.join("transcripts/1970-01-01.jsonl")).unwrap();
+    drop(host);
+    fs::remove_dir(&path).unwrap();
+    fs::rename(temp.0.join("stop-backup.jsonl"), &path).unwrap();
+    let mut host = History::open(&temp.0).unwrap();
+    assert_eq!(
+        host.request(
+            &json!({"op":"stop_save","record":{"threadId":"thread","targetEventId":"origin",
+        "status":"requested","requestIds":["second"]}})
+        )["record"]["requestIds"],
+        json!(["first", "second"])
+    );
+    let retry = stop_fallback(&mut host, &Value::Null, 86_403_000);
+    assert_eq!(retry["stopConfirmed"], true, "{retry}");
+    assert_eq!(retry["record"]["status"], "stopped");
+    assert_eq!(retry["record"]["requestIds"], json!(["first", "second"]));
+    assert_eq!(retry["final"], first["final"]);
+    assert_eq!(
+        stop_fallback(&mut host, &Value::Null, 86_403_001)["final"],
+        first["final"]
+    );
+    assert_eq!(
+        fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+        history
+    );
+    assert_eq!(
+        fs::read(temp.0.join("transcripts/1970-01-01.jsonl")).unwrap(),
+        transcript
+    );
+    assert!(!temp.0.join("transcripts/1970-01-02.jsonl").exists());
+}

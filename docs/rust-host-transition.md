@@ -1171,6 +1171,44 @@ focused runtime cases pass. Complete validation passes141 Rust tests and formatt
 runtime/plugin checks and1skip in52files with one local worker and unchanged deadlines. Broader Stop
 fallback and full approval currency remain within finite item3; the whole standalone migration is unfinished.
 
+## Rust native Stop fallback decision and currency
+
+The fallback reached when no local native runner owns the Stop target now uses
+run_turn_stop_fallback. Rust holds the metadata writer lease, checks durable same-thread Stop,
+immutable Accepted origin and real user evidence, and classifies canonical terminal history.
+Only role-agent done=true is completion; interrupted agent completion means stopped. A canonical
+ID occupied by a user, another kind, a nonterminal row or conflicting terminal meanings remains
+unconfirmed without publication or overwrite. Hidden origins do not authorize a new final.
+
+A new stopped reply requires exact captured null scope, no registry and actual FIFO ownership of
+pending work. Every retained marker or registry makes absence of a local controller insufficient
+evidence of cessation. Running/replacement scopes remain intact and receive an unconfirmed Stop.
+The existing exact paused-Stop cleanup can then retire an interrupted captured scope after durable
+Stop currency, with the writer lease already released. The fallback itself never changes metadata,
+registry, queue or accepted history.
+
+Rust records the decided Stop through the existing Stop journal and returns confirmed currency
+separately from saved-final evidence. A Stop write failure returns the last known requested record
+and stopConfirmed=false while preserving any saved final. The common final-journal helper retains
+the previous preflight key/schema and original event bytes/day; Stop keys exclude growing request
+IDs. Restart can confirm a saved final without another history/transcript append. Partial history
+admission still fences dispatch while independent Stop writes remain available.
+
+StopStore.reconcileNativeFallback awaits all pending target writes, then performs synchronous
+Root mutation and adoption of both confirmed and reservation mirrors without an intervening await.
+It validates target/thread, retained request IDs and terminal status. Only a real Stop-currency
+failure fences that store. Node's initial Stop and steered completion selectors now require strict
+agent terminal proof, so they cannot bypass Root with a user/done row.
+
+Actual old runtime regressions report stopped for an issued replacement and completed for a
+retained user/done row. Both fail before the repair and pass afterward. Twenty-nine readiness
+cases, strict Clippy, production build and39 focused Stop/preflight runtime cases pass, including
+startup greeting gating and replacement during post-currency cleanup. The fixtures now gate the
+actual StopStore reconciliation boundary and use its real Root result. The complete checks pass:
+143 Rust tests and862 runtime/plugin tests, one existing skip, across52 runtime files with the
+original deadlines and one local worker. Active-worker acknowledgement provenance and provider/plugin approval
+currency remain unfinished; this does not claim the entire orchestration or standalone migration.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

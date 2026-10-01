@@ -2,7 +2,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { hostRequest } from "./rust-host.js";
-import { retainSharedSyncHost } from "./rust-sync.js";
+import { syncHostResult, retainSharedSyncHost } from "./rust-sync.js";
 export type StopRecord = { targetEventId: string; threadId: string;
   status: "requested" | "stopped" | "completed" | "withdrawn" | "unconfirmed";
   sessionKey?: string; runId?: string; partialText?: string; preDispatch?: boolean; requestIds: string[] };
@@ -48,6 +48,28 @@ export class StopStore {
   }
   confirmed(id: string): StopRecord | undefined { return this.committed.get(id); }
   pending(id: string): Promise<void> | undefined { return this.pendingWrites.get(id); }
+  async reconcileNativeFallback(threadId: string, targetEventId: string, expectedTurn: unknown): Promise<Record<string, unknown>> {
+    const expected = structuredClone(expectedTurn);
+    if (!this.available) throw new Error("Stop remains unconfirmed");
+    let pending: Promise<void> | undefined;
+    while ((pending = this.pendingWrites.get(targetEventId))) await pending;
+    if (!this.available) throw new Error("Stop remains unconfirmed");
+    const prior = this.committed.get(targetEventId);
+    if (!prior || prior.threadId !== threadId) throw new Error("Stop owner remains unconfirmed");
+    // No await between Root mutation and adoption: older target saves have all settled.
+    const proof = syncHostResult(this.dir, { op: "run_turn_stop_fallback", threadId, eventId: targetEventId,
+      expectedTurn: expected ?? null, ts: Date.now() });
+    const record = proof.record;
+    if (!valid(record) || record.targetEventId !== targetEventId || record.threadId !== threadId ||
+        !prior.requestIds.every((id) => record.requestIds.includes(id)) ||
+        ["stopped", "completed", "withdrawn"].includes(prior.status) && record.status !== prior.status)
+      throw new Error("Stop remains unconfirmed");
+    const confirmed = structuredClone(record);
+    this.committed.set(targetEventId, confirmed);
+    this.records.set(targetEventId, confirmed);
+    if (proof.stopConfirmed !== true) this.failed = true;
+    return proof;
+  }
   save(record: StopRecord): Promise<void> {
     if (!this.available || !valid(record) || this.writes >= 32) return Promise.reject(new Error("Stop remains unconfirmed"));
     const previous = this.records.get(record.targetEventId);

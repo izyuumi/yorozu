@@ -398,12 +398,38 @@ pub(crate) fn rewind_evidence(
     unchanged(&path, &file, &stamp)?;
     Ok(seen_anchor.then_some(proven))
 }
+#[derive(Default)]
+struct RunEvidence {
+    seen: bool,
+    finished: bool,
+    hidden: bool,
+    terminal: Option<&'static str>,
+    conflict: bool,
+}
 pub(crate) fn run_evidence(
     root: &Path,
     thread: &str,
     accepted: &Value,
     completion: &str,
 ) -> io::Result<(bool, bool, bool)> {
+    let proof = detailed_run_evidence(root, thread, accepted, completion)?;
+    Ok((proof.seen, proof.finished, proof.hidden))
+}
+pub(crate) fn stop_evidence(
+    root: &Path,
+    thread: &str,
+    accepted: &Value,
+    completion: &str,
+) -> io::Result<(bool, Option<&'static str>, bool, bool)> {
+    let proof = detailed_run_evidence(root, thread, accepted, completion)?;
+    Ok((proof.seen, proof.terminal, proof.hidden, proof.conflict))
+}
+fn detailed_run_evidence(
+    root: &Path,
+    thread: &str,
+    accepted: &Value,
+    completion: &str,
+) -> io::Result<RunEvidence> {
     let origin = accepted["id"].as_str().ok_or_else(invalid)?;
     let expected =
         crate::accepted::fingerprint(accepted, &accepted["event"]).ok_or_else(invalid)?;
@@ -412,7 +438,7 @@ pub(crate) fn run_evidence(
         .join(format!("{}.jsonl", crate::thread_index::file_name(thread)));
     let mut file = match open(&path) {
         Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((false, false, false)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(RunEvidence::default()),
         Err(error) => return Err(error),
     };
     let stamp = Stamp::new(&file.metadata()?);
@@ -420,6 +446,8 @@ pub(crate) fn run_evidence(
     let mut seen = false;
     let mut finished = false;
     let mut hidden = false;
+    let mut terminal = None;
+    let mut conflict = false;
     {
         let mut reader = BufReader::new(&mut file);
         while let Some(text) = line(&mut reader, &mut end, stamp.length)? {
@@ -442,6 +470,22 @@ pub(crate) fn run_evidence(
                     && event["data"]["hiddenEventIds"]
                         .as_array()
                         .is_some_and(|ids| ids.iter().any(|id| id == origin));
+                if event["id"] == completion && event["threadId"] == thread {
+                    if event["kind"] == "message"
+                        && event["data"]["role"] == "agent"
+                        && event["data"]["done"] == true
+                    {
+                        let status = if event["data"]["interrupted"] == true {
+                            "stopped"
+                        } else {
+                            "completed"
+                        };
+                        conflict |= terminal.is_some_and(|prior| prior != status);
+                        terminal = Some(status);
+                    } else {
+                        conflict = true;
+                    }
+                }
                 finished |= event["id"] == completion
                     && event["threadId"] == thread
                     && event["kind"] == "message"
@@ -458,7 +502,13 @@ pub(crate) fn run_evidence(
     {
         return Err(invalid());
     }
-    Ok((seen, finished, hidden))
+    Ok(RunEvidence {
+        seen,
+        finished,
+        hidden,
+        terminal,
+        conflict,
+    })
 }
 impl Paging {
     fn page(&mut self, root: &Path, request: &Value) -> io::Result<Value> {

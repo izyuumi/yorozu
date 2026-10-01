@@ -1,4 +1,4 @@
-import type { StopRecord } from "./stops.js";
+import { StopStore, type StopRecord } from "./stops.js";
 import { createInboundDispatcher } from "../../openclaw-channel/dispatch.js";
 import { createRuns } from "../../openclaw-channel/runs.js";
 import { connectYorozu } from "../../openclaw-channel/socket.js";
@@ -4622,16 +4622,13 @@ test("paused Stop cleanup preserves a scope replaced during durable Stop write",
   const run = vi.fn<NativeAgentRunner["run"]>().mockRejectedValue(new Error("backend crashed"));
   const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
   await vi.waitFor(() => expect(listThreads(dir)[0]?.nativeTurn).toMatchObject({ state: "interrupted", recoveryAttempts: 3 }));
-  const request = rustHost.hostRequest;
+  const reconcile = StopStore.prototype.reconcileNativeFallback;
   let replacement: string | undefined;
-  vi.spyOn(rustHost, "hostRequest").mockImplementation(async (root, data) => {
-    const proof = await request(root, data);
-    const record = data.record as StopRecord | undefined;
-    if (data.op === "stop_save" && record?.targetEventId === "original" && record.status === "unconfirmed") {
-      setNativeTurn("cc", { id: "native:new-scope:final", state: "interrupted", userEventId: "new-scope",
-        attemptId: "b".repeat(32), recoveryAttempts: 1, pauseReason: "unconfirmed" }, dir);
-      replacement = readFileSync(join(dir, "threads.json"), "utf8");
-    }
+  vi.spyOn(StopStore.prototype, "reconcileNativeFallback").mockImplementation(async function (threadId, target, expected) {
+    const proof = await reconcile.call(this, threadId, target, expected);
+    setNativeTurn("cc", { id: "native:new-scope:final", state: "interrupted", userEventId: "new-scope",
+      attemptId: "b".repeat(32), recoveryAttempts: 1, pauseReason: "unconfirmed" }, dir);
+    replacement = readFileSync(join(dir, "threads.json"), "utf8");
     return proof;
   });
   send({ kind: "interrupt", data: { targetEventId: "original" } }, "cc");
@@ -6746,13 +6743,13 @@ test("Rust Stop startup recovery gates local greeting and relay registration unt
   setNativeTurn("cc", { id: "native:original:final", state: "running", userEventId: "original" }, dir);
   writeFileSync(join(dir, "stopped-turns.jsonl"), JSON.stringify({ targetEventId: "original", threadId: "cc",
     status: "requested", requestIds: ["old-stop"] }) + "\n");
-  const original = rustHost.hostRequest;
+  const original = StopStore.prototype.reconcileNativeFallback;
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   let saving = false;
-  vi.spyOn(rustHost, "hostRequest").mockImplementation(async (root, request) => {
-    if (request.op === "stop_save") { saving = true; await gate; }
-    return original(root, request);
+  vi.spyOn(StopStore.prototype, "reconcileNativeFallback").mockImplementation(async function (threadId, target, expected) {
+    saving = true; await gate;
+    return original.call(this, threadId, target, expected);
   });
   const lines: string[] = [];
   const run = vi.fn<NativeAgentRunner["run"]>();
@@ -7154,5 +7151,62 @@ test("preflight folder refusal cannot publish a failed final for a replacement a
   expect(rustSyncModule.syncHostRequest(dir, { op: "run_attempt_current", threadId: "preflight-owner", eventId,
     attemptId: attempt, mode: "owned" })).toMatchObject({ current: true, owned: true });
   expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8"))).toEqual([{ threadId: "preflight-owner", eventId }]);
+  expect(run).not.toHaveBeenCalled();
+});
+
+
+test("Stop fallback does not publish cessation for a replacement issued during requested save", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-stop-fallback-replaced-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  appendThreadEvent({ id: "original", threadId: "cc", ts: 1, agentId: "main", kind: "message",
+    data: { role: "user", text: "Old work" } }, dir);
+  setNativeTurn("cc", { id: "native:original:final", state: "interrupted", userEventId: "original",
+    recoveryAttempts: 3, pauseReason: "unconfirmed" }, dir);
+  writeFileSync(join(dir, "native-turn-queue.json"), JSON.stringify([{ threadId: "cc", eventId: "original" }]));
+  const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "must not run" });
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+  const request = rustHost.hostRequest;
+  let retained: string | undefined;
+  let attempt: unknown;
+  vi.spyOn(rustHost, "hostRequest").mockImplementation(async (root, data) => {
+    const record = data.record as StopRecord | undefined;
+    if (data.op === "stop_save" && record?.targetEventId === "original" && record.status === "requested" && retained === undefined) {
+      setNativeTurn("cc", undefined, dir);
+      const claim = rustSyncModule.syncHostRequest(dir, { op: "run_attempt_claim", threadId: "cc", eventId: "original" });
+      expect(claim.claimed).toBe(true);
+      attempt = claim.attemptId;
+      retained = readFileSync(join(dir, "threads.json"), "utf8");
+    }
+    return request(root, data);
+  });
+  send({ kind: "interrupt", data: { targetEventId: "original" } }, "cc");
+  const response = (await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === "original" &&
+    ["unconfirmed", "stopped", "completed"].includes(event.data.status))).at(-1)!;
+  expect(response).toMatchObject({ data: { status: "unconfirmed" } });
+  expect(retained).toBeDefined();
+  expect(readThreadEvents("cc", dir).some((event) => event.id === "native:original:final")).toBe(false);
+  expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(retained);
+  expect(rustSyncModule.syncHostRequest(dir, { op: "run_attempt_current", threadId: "cc", eventId: "original",
+    attemptId: attempt, mode: "owned" })).toMatchObject({ current: true, owned: true });
+  expect(run).not.toHaveBeenCalled();
+});
+
+test("Stop cannot mistake a retained user/done row for agent completion", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-stop-role-proof-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  appendThreadEvent({ id: "original", threadId: "cc", ts: 1, agentId: "main", kind: "message",
+    data: { role: "user", text: "Old work" } }, dir);
+  setNativeTurn("cc", { id: "native:original:final", state: "interrupted", userEventId: "original",
+    recoveryAttempts: 3, pauseReason: "unconfirmed" }, dir);
+  const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "must not run" });
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+  appendThreadEvent({ id: "native:original:final", threadId: "cc", ts: 2, agentId: "phone", kind: "message",
+    data: { role: "user", text: "retain this conflicting identity", done: true } }, dir);
+  const before = readFileSync(join(dir, "threads", "cc.jsonl"), "utf8");
+  send({ kind: "interrupt", data: { targetEventId: "original" } }, "cc");
+  const response = (await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === "original" &&
+    ["unconfirmed", "stopped", "completed"].includes(event.data.status))).at(-1)!;
+  expect(response).toMatchObject({ data: { status: "unconfirmed" } });
+  expect(readFileSync(join(dir, "threads", "cc.jsonl"), "utf8")).toBe(before);
   expect(run).not.toHaveBeenCalled();
 });
