@@ -46,10 +46,39 @@ receive the durable offset. Fixed storage failure codes exclude internal paths o
 diagnostics. No provider environment or credentials are passed to this worker.
 
 This is a real Rust backend component, **not a completed independent Rust runtime**. Transport,
-thread/admission state, approval currency, agent execution and channel outboxes remain TypeScript
+thread/admission state, approval currency and agent execution remain TypeScript
 until their individual compatibility and recovery tests pass. The existing native UI slices are
 preserved, including separate conversations. Actual schedules, PAIOS ownership and the future
 continuous-conversation task store remain unimplemented.
+
+## Durable channel outbox extraction
+
+The Rust worker now also owns channel enqueue, model-preparation markers, uncertain reply
+dispatch markers, acknowledgements and withdrawal removal. It reads the existing
+`channel-outbox.json` and `channel-model-delivery.json` formats, retains unknown message fields,
+and leaves valid legacy files byte-for-byte unchanged until an actual transition is necessary.
+A separate OS-held lock prevents a second Rust channel writer.
+
+Model preparation and delivery retain replayable intents before removing the associated outbox
+data. New `channel-model-original.json` metadata binds a removed model pin to its original
+choice; `channel-cancelled.json` records pre-dispatch withdrawals before removal. Recovery also
+reads validated prior host withdrawal records with their thread ownership. An attempted quoted
+reply remains uncertain and cannot be converted into a definite rejection or withdrawal.
+
+The compatibility host awaits the Rust save before acknowledging a user message. Repeated pending
+IDs share one save, failed saves receive no receipt, and a fresh message stopped while its save
+is pending is withdrawn before any dispatch. Stop first reports a durable request; confirmed
+withdrawal is reported only after Rust has durably removed the work. A pre-dispatch Stop intent
+survives interruption of that removal and completes on the next host startup. Dispatch eligibility
+is rechecked after storage
+awaits. On restart, run ownership is restored before processing a plugin's immediate lifecycle
+replay; otherwise a final reply could be lost while async recovery is still running.
+
+Snapshots contain only outbox IDs and thread IDs; attachment payloads are fetched one message
+at a time. Bridge request frames are limited to 32 MiB, responses to 34 MiB, with at most 32
+pending requests and 64 MiB of pending encoded input. Channel transport, peer capabilities,
+thread logs, admission identity and Stop journals remain in TypeScript. This is the second
+production Rust state component, not the completed standalone host rewrite.
 
 ## Following migration boundaries
 
@@ -81,6 +110,20 @@ per-message and cross-device global reservations, writer exclusion and newly cre
 Host integration and native regression validation are in progress. macOS process-crash evidence
 does not establish Windows filesystem behavior or physical power-loss durability.
 
+The second extraction has passed nine Rust outbox recovery tests and ten attachment recovery
+tests on this Mac, strict clippy, the runtime build and 277 affected TypeScript host tests across
+channel/admission/replies/Stop, uploads, threads and readiness. Seven credential-free alpha-audit
+tests and nine existing ASC candidate tests also pass. An earlier complete host run timed out in
+the older pairing-history test; it passed in the focused diagnostic run and the subsequent full
+verification. The timeout is retained in the local evidence rather than treated as a confirmed
+root-caused fix.
+
+An additional native repeated-send UI run stopped before test execution because signing rejected
+Finder metadata in a generated Swift resource bundle under Documents. The earlier native
+navigation/composer evidence remains valid for those prior slices; this failed attempt does not
+verify the Rust extraction's native repeated-send workflow. Cross-platform CI, the full native
+release gate, physical devices and publication remain pending.
+
 No speed claim follows from the language choice. Measure cold launch, request latency, streaming
 under large history/attachments, memory and recovery time on comparable builds. Maintain bounded
 queues and measure fsync cost. Reliability must be demonstrated with crash, duplicate, concurrent,
@@ -92,8 +135,17 @@ points to `v0.5.0-beta`. The canonical main release path would replace that beta
 candidate titles are excluded by the existing website's beta discovery. Merely setting GitHub's
 prerelease flag is insufficient.
 
-The canonical iOS workflow currently adds every candidate to the existing Public TestFlight
-group. An isolated alpha destination and its effect on existing external/internal testers must be
-verified before uploading or publishing. No release has been dispatched, and no version or tag
-has been overwritten. Gateway authorization remains pending; no gateway connection or credential
-issuance/rotation is part of this migration.
+The requested iOS destination is internal TestFlight. The canonical iOS workflow currently adds
+every candidate to the existing Public group, so it must not be used unchanged for this alpha.
+`scripts/asc-alpha-audit.mjs` performs only GET requests for app identity, group attributes and
+tester memberships. It detects external recipient overlap and unknown/broadened all-build access,
+and reports aggregate counts without exposing tester identities. Its injected-API tests need no
+credentials. The API's `hasAccessToAllBuilds` attribute alone is not treated as proof of the separate
+automatic-distribution setting in the App Store Connect UI.
+
+Live group membership and automatic distribution remain unverified. Automatic approval review
+rejected adding ASC credentials to a pull-request workflow because branch code could expose them;
+that credential workflow was not added. A separately approved read-only ASC access path is needed.
+No release has been dispatched, no tester access changed, and no version or tag overwritten.
+Gateway authorization remains pending; no gateway connection or credential issuance/rotation is
+part of this migration.

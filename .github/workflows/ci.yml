@@ -91,7 +91,7 @@ jobs:
         with:
           node-version: 26
       - name: Verify App Store candidate checks without credentials
-        run: node --test scripts/asc-candidate.test.mjs
+        run: node --test scripts/asc-candidate.test.mjs scripts/asc-alpha-audit.test.mjs
       - name: Verify English and Japanese catalogs
         run: node scripts/check-localizations.mjs
 
