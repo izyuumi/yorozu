@@ -1111,6 +1111,32 @@ History scans remain bounded by existing log/record limits but repeat for each s
 this slice makes no latency improvement claim. Remaining pre-SDK/unissued marker lifecycle,
 broader Stop fallback and full approval currency still belong to finite item3.
 
+## Scoped Rust unissued pause and retirement
+
+The pre-SDK lifecycle now uses typed run_turn_unissued_pause and run_turn_unissued_finish.
+Rust compares the exact captured nullable marker using safe numeric compatibility. Any attemptId
+field or live registry entry refuses unissued ownership. Null pause creation also requires the
+actual FIFO head. Existing counters, recoveryActive, pause reasons and unknown fields survive;
+creation starts at zero and never issues a worker or increments recovery. Accepted conversation,
+real user, durable Stop/expiration, rewind and terminal evidence prevent resurrection. Metadata
+CAS must confirm before Node receives the authoritative paused marker.
+
+Node retains that returned scope for later cleanup and never adopts a replacement through a
+fresh metadata read after a refused claim. Pure retirement requires physical canonical agent
+completion and its real user origin, independently of dispatch, Stop, expiration, FIFO or retry
+budget. It preserves queue/history and refuses every replacement or issued registry. Update now
+also pauses turns still waiting before SDK issuance; issued work retains its existing approval
+and tool safe boundaries. A known terminal clears the stale automatic-resume flag.
+
+The focused Rust suite passes25 readiness tests and strict Clippy. Production build and five
+runtime cases pass, including a real Git child-process wait interrupted by Update, zero issuance
+before that pause, one issuance on recovery, an issued replacement preserved byte-for-byte,
+and a refused claim preserving both replacement metadata and a foreign queue. The actual old
+runtime fails the ownership and pre-SDK Update cases. An initial title-observation fixture race
+and the missing production pre-SDK Update boundary are recorded separately. Full validation passes139 Rust tests and formatting, plus859 runtime/plugin checks and1skip
+in52files with one local worker and unchanged deadlines. Scoped preflight failed-final publication, broader Stop
+fallback and full approval currency remain within finite item3; generic writes are not sealed.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

@@ -901,6 +901,11 @@ impl History {
         if request["op"] == "run_turn_recover" {
             return self.boot_reconcile(request, thread);
         }
+        if ["run_turn_unissued_pause", "run_turn_unissued_finish"]
+            .contains(&request["op"].as_str().unwrap_or(""))
+        {
+            return self.unissued_turn(request, thread);
+        }
         if request["op"] == "run_turn_rewind" {
             return self.rewind_turn(request, thread);
         }
@@ -1023,6 +1028,130 @@ impl History {
         Ok(
             json!({"applied":true,"queueRemoved":queue_removed,"queueRepaired":queue_repaired,"recoveryAttempts":if action == "run_turn_retry" { Some(0) } else { None }}),
         )
+    }
+    fn unissued_turn(&mut self, request: &Value, thread: &str) -> io::Result<Value> {
+        let origin = request["eventId"]
+            .as_str()
+            .filter(|id| !invalid_id(id))
+            .ok_or_else(invalid)?;
+        let completion = format!("native:{origin}:final");
+        let expected = request
+            .get("expectedTurn")
+            .filter(|v| v.is_null() || v.is_object())
+            .ok_or_else(invalid)?;
+        let pause = request["op"] == "run_turn_unissued_pause";
+        if request["turnId"] != completion {
+            return Ok(json!({"applied":false,"reason":"scope-replaced"}));
+        }
+        if request
+            .get("pauseReason")
+            .is_some_and(|reason| reason != "unconfirmed")
+        {
+            return Err(invalid());
+        }
+        let bytes = crate::thread_index::current(&self.root)?.ok_or_else(invalid)?;
+        let mut index: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        let Some(home) = index
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|row| row["id"] == thread)
+        else {
+            return Ok(json!({"applied":false,"reason":"scope-replaced"}));
+        };
+        let marker = home["nativeTurn"].clone();
+        if home["agent"]
+            .as_str()
+            .is_none_or(|agent| agent.is_empty() || agent == "yorozu")
+            || !crate::thread_index::compatible(&marker, expected)
+            || !marker.is_null()
+                && (marker["id"] != completion
+                    || marker.get("userEventId").is_some_and(|id| id != origin))
+        {
+            return Ok(json!({"applied":false,"reason":"scope-replaced"}));
+        }
+        // Presence, including malformed/null fields, is never an unissued marker.
+        if marker.get("attemptId").is_some() || self.attempts.contains_key(thread) {
+            return Ok(json!({"applied":false,"reason":"run-issued"}));
+        }
+        if pause {
+            let accepted = self.request(&json!({"op":"accepted_get","messageId":origin}));
+            if accepted.get("error").is_some() {
+                return Ok(accepted);
+            }
+            let entry = &accepted["entry"];
+            if entry["id"] != origin
+                || entry["threadId"] != thread
+                || !["conversation", "legacy"].contains(&entry["purpose"].as_str().unwrap_or(""))
+            {
+                return Ok(json!({"applied":false,"reason":"not-accepted-conversation"}));
+            }
+            let (seen, terminal, hidden) =
+                crate::paging::run_evidence(&self.root, thread, entry, &completion)?;
+            if !seen {
+                return Ok(json!({"applied":false,"reason":"missing-origin"}));
+            }
+            if terminal {
+                return Ok(json!({"applied":false,"terminal":true,"reason":"already-completed"}));
+            }
+            if hidden {
+                return Ok(json!({"applied":false,"reason":"rewound-origin"}));
+            }
+            for (op, key, result, reason) in [
+                ("stop_get", "targetEventId", "record", "stopped"),
+                ("admission_get", "messageId", "entry", "expired"),
+            ] {
+                let mut query = json!({"op":op});
+                query[key] = json!(origin);
+                let proof = self.request(&query);
+                if proof.get("error").is_some() {
+                    return Ok(proof);
+                }
+                if !proof[result].is_null() {
+                    return Ok(json!({"applied":false,"reason":reason}));
+                }
+            }
+            if marker.is_null() {
+                let head = self.queue_request(&json!({"op":"queue_head","threadId":thread}));
+                if head.get("error").is_some() {
+                    return Ok(head);
+                }
+                if head["eventId"] != origin {
+                    return Ok(json!({"applied":false,"reason":"not-queue-head"}));
+                }
+                home["nativeTurn"] = json!({"id":completion,"userEventId":origin,"state":"interrupted","recoveryAttempts":0});
+            } else {
+                home["nativeTurn"]["state"] = json!("interrupted");
+                home["nativeTurn"]["userEventId"] = json!(origin);
+            }
+            if let Some(reason) = request.get("pauseReason") {
+                home["nativeTurn"]["pauseReason"] = reason.clone();
+            }
+        } else {
+            // Pure retirement needs retained terminal evidence, not dispatch permission/FIFO.
+            let (seen, terminal, _, _) =
+                crate::paging::boot_evidence(&self.root, thread, Some(origin), &completion)?;
+            if !seen || !terminal {
+                return Ok(json!({"applied":false,"reason":"terminal-unconfirmed"}));
+            }
+            if marker.is_null() {
+                return Ok(json!({"applied":true,"cleared":false}));
+            }
+            home.as_object_mut().unwrap().remove("nativeTurn");
+        }
+        let turn = home["nativeTurn"].clone();
+        let stored = crate::thread_index::request_native(
+            &self.root,
+            &json!({"op":"replace","expectedHash":digest(&bytes),"threads":index}),
+        );
+        if stored["stored"] != true {
+            return Ok(json!({"applied":false,"reason":"metadata-unconfirmed"}));
+        }
+        if pause {
+            Ok(json!({"applied":true,"turn":turn}))
+        } else {
+            Ok(json!({"applied":true,"cleared":true}))
+        }
     }
     fn rewind_turn(&mut self, request: &Value, thread: &str) -> io::Result<Value> {
         let rewind = request["rewindId"]

@@ -709,7 +709,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   } catch {}
   const updateGate = new UpdateGate(postponedUntil, pendingSince);
   const openToolCalls = new Map<string, Set<string>>();
-  const drainPauses = new Map<string, () => void>();
+  const drainPauses = new Map<string, (unissuedOnly?: boolean) => void>();
   const drainInterrupted = new Set<string>();
   const drainWaiters = new Set<() => void>();
   const wakeDrainWaiters = (): void => {
@@ -1682,6 +1682,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const previous = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
       let recoveryAttempts = previous?.userEventId === userEventId ? previous?.recoveryAttempts ?? 0 : 0;
       let recovering = previous?.state === "interrupted" && previous.userEventId === userEventId;
+      let unissuedTurn = previous;
       let paused = false;
       const pauseIssuedAttempt = (attempt: string, pauseReason?: "unconfirmed"): boolean => {
         let proof: Record<string, unknown>;
@@ -1703,6 +1704,25 @@ export function serve(options: ServeOptions = {}): Sidecar {
           state("thread-index-storage-failed");
         }
         state("native-attempt-unconfirmed");
+        return false;
+      };
+      const pauseUnissuedTurn = (pauseReason?: "unconfirmed"): boolean => {
+        let proof: Record<string, unknown>;
+        try { proof = syncHostResult(dir, { op: "run_turn_unissued_pause", threadId, eventId: userEventId,
+          turnId: id, expectedTurn: unissuedTurn ?? null, ...(pauseReason ? { pauseReason } : {}) }); }
+        catch { proof = {}; }
+        turn.abort();
+        if (proof.terminal === true) { terminalRecorded = true; drainInterrupted.delete(threadId); return false; }
+        if (proof.applied === true && proof.turn && typeof proof.turn === "object" && !Array.isArray(proof.turn)) {
+          unissuedTurn = proof.turn as NonNullable<ThreadRecord["nativeTurn"]>;
+          broadcast(threadList());
+          return true;
+        }
+        paused = true;
+        if (!["scope-replaced", "run-issued", "stopped", "expired", "rewound-origin", "not-queue-head", "missing-origin", "not-accepted-conversation"].includes(String(proof.reason))) {
+          nativeStorageFenced.add(threadId);
+          state("thread-index-storage-failed");
+        }
         return false;
       };
       const attemptCurrent = (attempt: string, mode: "effect" | "terminal" | "owned" = "effect"): boolean => {
@@ -1763,17 +1783,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
           queueMicrotask(() => { activityFlushScheduled = false; try { flushActivity(); } catch { /* abort and retained intent report uncertainty */ } });
         }
       };
-      const pauseForUpdate = (): void => {
-        if (paused || turn.signal.aborted) return;
+      const pauseForUpdate = (unissuedOnly = false): void => {
+        if (paused || turn.signal.aborted || unissuedOnly && (activeAttempt ?? previous?.attemptId)) return;
         paused = true;
         drainInterrupted.add(threadId);
         const issued = activeAttempt ?? previous?.attemptId;
         if (issued) {
           if (!pauseIssuedAttempt(issued)) return;
         } else {
-          // A known pre-SDK update pause has no issued scope yet.
-          setNativeTurn(threadId, { ...previous, id, state: "interrupted", ...(userEventId ? { userEventId } : {}), recoveryAttempts }, dir);
-          broadcast(threadList());
+          // No recovery count or issued worker exists at this pre-SDK boundary.
+          if (!pauseUnissuedTurn()) return;
         }
         turn.abort();
       };
@@ -1799,7 +1818,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
             const issued = activeAttempt ?? previous?.attemptId;
             if (issued) {
               if (!pauseIssuedAttempt(issued, "unconfirmed")) return;
-            } else setNativeTurn(threadId, { ...previous, id, state: "interrupted", userEventId, recoveryAttempts }, dir);
+            } else if (!pauseUnissuedTurn("unconfirmed")) return;
             state("native-follow-up-unconfirmed");
             broadcast(threadList());
             return;
@@ -1814,15 +1833,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
               broadcast(threadList());
               return;
             }
-            try {
-              const marker = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
-              if (marker?.id === id && marker.userEventId === userEventId &&
-                  marker.attemptId === (activeAttempt ?? previous?.attemptId)) {
-                if (marker.attemptId) pauseIssuedAttempt(marker.attemptId, "unconfirmed");
-                else setNativeTurn(threadId, { ...marker, state: "interrupted", pauseReason: "unconfirmed" }, dir);
-              }
-              else nativeStorageFenced.add(threadId);
-            } catch { nativeStorageFenced.add(threadId); state("thread-index-storage-failed"); }
+            const issued = activeAttempt ?? previous?.attemptId;
+            if (issued) pauseIssuedAttempt(issued, "unconfirmed");
+            else pauseUnissuedTurn("unconfirmed");
             state("native-attempt-unconfirmed");
             broadcast(threadList());
             return;
@@ -2031,10 +2044,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
               state("native-finish-unconfirmed");
             }
           } else {
-            const marker = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
-            if (marker?.id === id && marker.userEventId === userEventId && !marker.attemptId) {
-              setNativeTurn(threadId, undefined, dir);
-              broadcast(threadList());
+            let proof: Record<string, unknown>;
+            try { proof = syncHostResult(dir, { op: "run_turn_unissued_finish", threadId, eventId: userEventId,
+              turnId: id, expectedTurn: unissuedTurn ?? null }); }
+            catch { proof = {}; }
+            if (proof.applied === true) broadcast(threadList());
+            else if (!["scope-replaced", "run-issued"].includes(String(proof.reason))) {
+              nativeStorageFenced.add(threadId);
+              state("native-finish-unconfirmed");
             }
           }
         }
@@ -3083,6 +3100,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
           } catch { active = null; }
           updateGate.poll(active, Date.now());
           if (updateGate.draining) {
+            // Waiting before SDK issuance is already a safe boundary, even without an approval card.
+            for (const pause of drainPauses.values()) pause(true);
             for (const threadId of nativeCards.waitingThreads()) drainPauses.get(threadId)?.();
           }
           wakeDrainWaiters();

@@ -6997,3 +6997,125 @@ test("paused rewind preserves a scope replaced during durable rewind publication
   expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(replacement);
   expect(run).not.toHaveBeenCalled();
 });
+
+test("a refused pre-SDK claim preserves an unissued replacement scope and foreign queue", async () => {
+  const request = rustSyncModule.syncHostRequest;
+  let retained: string | undefined;
+  let claims = 0;
+  const foreign = JSON.stringify([{ threadId: "foreign", eventId: "other-owner" }]) + "\n";
+  vi.spyOn(rustSyncModule, "syncHostRequest").mockImplementation((dir, data, bytes) => {
+    if (data.op === "run_attempt_claim" && data.threadId === "pre-sdk-replaced") {
+      claims++;
+      setNativeTurn("pre-sdk-replaced", { id: `native:${data.eventId}:final`, userEventId: data.eventId as string,
+        state: "running", recoveryAttempts: 2 }, dir);
+      retained = readFileSync(join(dir, "threads.json"), "utf8");
+      writeFileSync(join(dir, "native-turn-queue.json"), foreign);
+    }
+    return request(dir, data, bytes);
+  });
+  const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "must not start" });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } });
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj, title: "Owned thread" } }, "pre-sdk-replaced");
+  const origin = send({ kind: "message", data: { role: "user", text: "work" } }, "pre-sdk-replaced");
+  await vi.waitFor(() => expect(claims).toBe(1));
+  const barrier = send({ kind: "thread_list", data: { threads: [], peerInfo: localPeerInfo("test") } });
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.peerInfoReplyTo === barrier);
+  expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(retained);
+  expect(readFileSync(join(dir, "native-turn-queue.json"), "utf8")).toBe(foreign);
+  expect(readThreadEvents("pre-sdk-replaced", dir).some((event) => event.id === `native:${origin}:final`)).toBe(false);
+  expect(run).not.toHaveBeenCalled();
+  expect(claims).toBe(1);
+});
+
+
+test.each([false, true])("Update during pre-SDK Git wait preserves issuance and replacement ownership: %s", async (replacement) => {
+  const gitFolder = mkdtempSync(join(projectsRoot, "pre-sdk-update-"));
+  execFileSync("/usr/bin/git", ["init", "--quiet", gitFolder]);
+  writeFileSync(join(gitFolder, "work.txt"), "pending work\n");
+  const fixture = mkdtempSync(join(tmpdir(), "yorozu-pre-sdk-git-"));
+  const entered = join(fixture, "entered");
+  const release = join(fixture, "release");
+  const originalPath = process.env.PATH;
+  const originalEntered = process.env.YOROZU_TEST_GIT_ENTERED;
+  const originalRelease = process.env.YOROZU_TEST_GIT_RELEASE;
+  const git = join(fixture, "git");
+  writeFileSync(git, `#!/bin/sh
+if [ "$1" = "rev-parse" ] && [ "$2" = "--path-format=absolute" ]; then
+  touch "$YOROZU_TEST_GIT_ENTERED"
+  while [ ! -f "$YOROZU_TEST_GIT_RELEASE" ]; do sleep 0.02; done
+fi
+exec /usr/bin/git "$@"
+`);
+  chmodSync(git, 0o755);
+  process.env.PATH = `${fixture}:${originalPath ?? ""}`;
+  process.env.YOROZU_TEST_GIT_ENTERED = entered;
+  process.env.YOROZU_TEST_GIT_RELEASE = release;
+  let mac: Awaited<ReturnType<typeof macClient>> | undefined;
+  try {
+    const threadId = "pre-sdk-update";
+    let dir = "";
+    const run = vi.fn<NativeAgentRunner["run"]>(async () => {
+      expect(listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn)
+        .toMatchObject({ state: "running", recoveryAttempts: 1, attemptId: expect.stringMatching(/^[0-9a-f]{32}$/) });
+      return { text: "resumed once" };
+    });
+    const phone = await pairedPhone([], false, { nativeRunners: { codex: { run } } });
+    dir = phone.dir;
+    mac = await macClient(dir);
+    phone.send({ kind: "thread_create", data: { agent: "codex", cwd: gitFolder, title: "Owned thread" } }, threadId);
+    const eventId = phone.send({ kind: "message", data: { role: "user", text: "work" } }, threadId);
+    await vi.waitFor(() => expect(existsSync(entered)).toBe(true));
+    expect(run).not.toHaveBeenCalled();
+    let retained: string | undefined;
+    let claimed: Record<string, unknown> | undefined;
+    if (replacement) {
+      claimed = rustSyncModule.syncHostRequest(dir, { op: "run_attempt_claim", threadId, eventId });
+      expect(claimed.claimed).toBe(true);
+      retained = readFileSync(join(dir, "threads.json"), "utf8");
+    }
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const status = async (action: "queue" | "poll") => {
+      const requestId = mac!.send({ kind: "update_control", data: { action, updateId: "pre-sdk", version: "1.0" } });
+      await vi.waitFor(() => expect(mac!.events.some((event) => event.kind === "update_status" && event.data.requestId === requestId)).toBe(true));
+    };
+    await status("queue");
+    now += 86_400_000;
+    await status("poll");
+    if (replacement) {
+      expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(retained);
+      expect(rustSyncModule.syncHostRequest(dir, { op: "run_attempt_current", threadId, eventId,
+        attemptId: claimed!.attemptId, mode: "owned" })).toMatchObject({ current: true, owned: true });
+    } else {
+      await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn)
+        .toMatchObject({ id: `native:${eventId}:final`, userEventId: eventId, state: "interrupted", recoveryAttempts: 0 }));
+      expect(listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn?.attemptId).toBeUndefined();
+    }
+    expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8"))).toEqual([{ threadId, eventId }]);
+    expect(run).not.toHaveBeenCalled();
+    expect(readThreadEvents(threadId, dir).some((event) => event.id === `native:${eventId}:final`)).toBe(false);
+    writeFileSync(release, "release\n");
+    mac.close();
+    if (replacement) {
+      const barrier = phone.send({ kind: "thread_list", data: { threads: [], peerInfo: localPeerInfo("test") } });
+      await phone.eventsUntil((event) => event.kind === "thread_list" && event.data.peerInfoReplyTo === barrier);
+      expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(retained);
+      expect(run).not.toHaveBeenCalled();
+    } else {
+      await vi.waitFor(() => expect(readThreadEvents(threadId, dir).some((event) =>
+        event.id === `native:${eventId}:final` && event.kind === "message" && event.data.done)).toBe(true));
+      await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn).toBeUndefined());
+      expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8"))).toEqual([]);
+      expect(run).toHaveBeenCalledTimes(1);
+    }
+  } finally {
+    writeFileSync(release, "release\n");
+    mac?.close();
+    await sidecar?.close();
+    if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+    if (originalEntered === undefined) delete process.env.YOROZU_TEST_GIT_ENTERED; else process.env.YOROZU_TEST_GIT_ENTERED = originalEntered;
+    if (originalRelease === undefined) delete process.env.YOROZU_TEST_GIT_RELEASE; else process.env.YOROZU_TEST_GIT_RELEASE = originalRelease;
+    rmSync(fixture, { recursive: true, force: true });
+    rmSync(gitFolder, { recursive: true, force: true });
+  }
+});

@@ -1412,3 +1412,198 @@ fn durable_rewind_bars_root_dispatch_and_retry_even_if_hidden_origin_still_heads
     assert_eq!(host.request(&json!({"op":"run_turn_retry","threadId":"thread","turnId":marker["id"],"eventId":"origin","attemptId":marker["attemptId"]}))["reason"],"rewound-origin");
     assert_eq!(snapshot(&temp)["threads"][0]["nativeTurn"], marker);
 }
+
+fn unissued(host: &mut History, action: &str, marker: &Value) -> Value {
+    host.request(
+        &json!({"op":action,"threadId":"thread","eventId":"origin","turnId":"native:origin:final",
+        "expectedTurn":marker,"pauseReason":"unconfirmed","recoveryAttempts":999}),
+    )
+}
+#[test]
+fn unissued_pause_preserves_owned_fields_and_never_claims_or_resurrects_work() {
+    for guard in [
+        "new",
+        "retained",
+        "replacement",
+        "issued",
+        "registry",
+        "stop",
+        "expired",
+        "hidden",
+        "terminal",
+        "missing-user",
+        "successor",
+        "metadata-conflict",
+    ] {
+        let temp = Temp::new();
+        let (mut host, _) = open(&temp);
+        if guard == "successor" {
+            seed(&mut host, "first", "conversation");
+        }
+        seed(&mut host, "origin", "conversation");
+        let mut expected = Value::Null;
+        if ["retained", "replacement", "issued", "registry"].contains(&guard) {
+            let read = snapshot(&temp);
+            let mut index = read["threads"].clone();
+            index[0]["nativeTurn"] = json!({"id":"native:origin:final","userEventId":"origin","state":"running",
+                "recoveryAttempts":2.0,"pauseReason":"unconfirmed","recoveryActive":true,"future":{"kept":true}});
+            assert_eq!(host.request(&json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index}))["stored"],true);
+            expected = snapshot(&temp)["threads"][0]["nativeTurn"].clone();
+            if guard == "issued" || guard == "registry" {
+                // Reset the compatibility pause so a real Root-issued registry can be installed.
+                let read = snapshot(&temp);
+                let mut index = read["threads"].clone();
+                index[0].as_object_mut().unwrap().remove("nativeTurn");
+                assert_eq!(host.request(&json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index}))["stored"],true);
+                let scope = issued(&mut host);
+                assert!(scope["attemptId"].is_string());
+                if guard == "issued" {
+                    expected = snapshot(&temp)["threads"][0]["nativeTurn"].clone();
+                } else {
+                    let read = snapshot(&temp);
+                    let mut index = read["threads"].clone();
+                    index[0]["nativeTurn"] = expected.clone();
+                    assert_eq!(host.request(&json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index}))["stored"],true);
+                }
+            }
+            if guard == "replacement" {
+                let read = snapshot(&temp);
+                let mut index = read["threads"].clone();
+                index[0]["nativeTurn"]["future"]["newer"] = json!(true);
+                assert_eq!(host.request(&json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index}))["stored"],true);
+            }
+        }
+        if guard == "stop" {
+            assert!(host.request(&json!({"op":"stop_save","record":{"threadId":"thread","targetEventId":"origin","status":"unconfirmed","requestIds":["cancel"]}}))["record"].is_object());
+        }
+        if guard == "expired" {
+            assert_eq!(host.request(&json!({"op":"admission_expire","entry":{"id":"origin","threadId":"thread","identity":"a".repeat(64),"deadline":1},"now":2}))["status"],"expired");
+        }
+        if guard == "hidden" {
+            assert_eq!(host.request(&json!({"op":"history_append","operationId":"rewind","thread":true,"transcript":true,
+            "event":{"id":"rewind","threadId":"thread","ts":3000,"agentId":"main","kind":"thread_rewound","data":{"requestId":"edit","eventId":"origin","hiddenEventIds":["origin"]}}}))["stored"],true);
+        }
+        if guard == "terminal" {
+            assert_eq!(host.request(&json!({"op":"history_append","operationId":"final","thread":true,"transcript":true,
+            "event":{"id":"native:origin:final","threadId":"thread","ts":2000,"agentId":"main","kind":"message","data":{"role":"agent","text":"retained","done":true,"failed":true}}}))["stored"],true);
+        }
+        if guard == "missing-user" {
+            fs::write(temp.0.join("threads/thread.jsonl"), b"\n").unwrap();
+        }
+        let conflict = temp.0.join("threads.json.tmp");
+        if guard == "metadata-conflict" {
+            fs::write(&conflict, b"owned unissued pause conflict").unwrap();
+        }
+        let before = fs::read(temp.0.join("threads.json")).unwrap();
+        let queue = fs::read(temp.0.join("native-turn-queue.json")).unwrap();
+        let history = fs::read(temp.0.join("threads/thread.jsonl")).unwrap();
+        let proof = unissued(&mut host, "run_turn_unissued_pause", &expected);
+        if ["new", "retained"].contains(&guard) {
+            assert_eq!(proof["applied"], true, "{guard}: {proof}");
+            let marker = snapshot(&temp)["threads"][0]["nativeTurn"].clone();
+            assert_eq!(proof["turn"], marker);
+            assert_eq!(marker["state"], "interrupted");
+            assert_eq!(marker["pauseReason"], "unconfirmed");
+            assert!(marker.get("attemptId").is_none());
+            assert_eq!(
+                marker["recoveryAttempts"].as_f64(),
+                Some(if guard == "new" { 0.0 } else { 2.0 })
+            );
+            if guard == "retained" {
+                assert_eq!(marker["future"], expected["future"]);
+                assert_eq!(marker["recoveryActive"], true);
+            }
+        } else {
+            assert_eq!(proof["applied"], false, "{guard}: {proof}");
+            assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), before);
+        }
+        assert_eq!(
+            fs::read(temp.0.join("native-turn-queue.json")).unwrap(),
+            queue
+        );
+        assert_eq!(
+            fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+            history
+        );
+        if guard == "metadata-conflict" {
+            fs::remove_file(conflict).unwrap();
+            assert_eq!(
+                unissued(&mut host, "run_turn_unissued_pause", &expected)["applied"],
+                true
+            );
+        }
+    }
+}
+#[test]
+fn unissued_terminal_clear_requires_its_exact_returned_scope_and_durable_agent_completion() {
+    for guard in [
+        "success",
+        "null",
+        "replacement",
+        "issued",
+        "wrong-role",
+        "missing-final",
+        "stop-expired",
+        "conflict",
+    ] {
+        let temp = Temp::new();
+        let (mut host, _) = open(&temp);
+        seed(&mut host, "origin", "conversation");
+        let pause = unissued(&mut host, "run_turn_unissued_pause", &Value::Null);
+        assert_eq!(pause["applied"], true);
+        let mut expected = pause["turn"].clone();
+        if guard != "missing-final" {
+            assert_eq!(host.request(&json!({"op":"history_append","operationId":"final","thread":true,"transcript":true,
+            "event":{"id":"native:origin:final","threadId":"thread","ts":2000,"agentId":"main","kind":"message",
+            "data":{"role":if guard=="wrong-role"{"user"}else{"agent"},"text":"retained","done":true,"failed":true}}}))["stored"],true);
+        }
+        if ["null", "replacement", "issued"].contains(&guard) {
+            let read = snapshot(&temp);
+            let mut index = read["threads"].clone();
+            if guard == "null" {
+                index[0].as_object_mut().unwrap().remove("nativeTurn");
+                expected = Value::Null;
+            } else if guard == "issued" {
+                index[0]["nativeTurn"]["attemptId"] = json!("b".repeat(32));
+                expected = index[0]["nativeTurn"].clone();
+            } else {
+                index[0]["nativeTurn"]["future"] = json!({"replacement":true});
+            }
+            assert_eq!(host.request(&json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index}))["stored"],true);
+        }
+        if guard == "stop-expired" {
+            assert!(host.request(&json!({"op":"stop_save","record":{"threadId":"thread","targetEventId":"origin","status":"requested","requestIds":["cancel"]}}))["record"].is_object());
+            assert_eq!(host.request(&json!({"op":"admission_expire","entry":{"id":"origin","threadId":"thread","identity":"a".repeat(64),"deadline":1},"now":2}))["status"],"expired");
+        }
+        let conflict = temp.0.join("threads.json.tmp");
+        if guard == "conflict" {
+            fs::write(&conflict, b"owned unissued finish conflict").unwrap();
+        }
+        let before = fs::read(temp.0.join("threads.json")).unwrap();
+        let queue = fs::read(temp.0.join("native-turn-queue.json")).unwrap();
+        let history = fs::read(temp.0.join("threads/thread.jsonl")).unwrap();
+        let proof = unissued(&mut host, "run_turn_unissued_finish", &expected);
+        if ["success", "null", "stop-expired"].contains(&guard) {
+            assert_eq!(proof["applied"], true, "{guard}: {proof}");
+            assert!(snapshot(&temp)["threads"][0]["nativeTurn"].is_null());
+        } else {
+            assert_eq!(proof["applied"], false, "{guard}: {proof}");
+            assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), before);
+        }
+        assert_eq!(
+            fs::read(temp.0.join("native-turn-queue.json")).unwrap(),
+            queue
+        );
+        assert_eq!(
+            fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+            history
+        );
+        if guard == "conflict" {
+            fs::remove_file(conflict).unwrap();
+            assert_eq!(
+                unissued(&mut host, "run_turn_unissued_finish", &expected)["applied"],
+                true
+            );
+        }
+    }
+}
