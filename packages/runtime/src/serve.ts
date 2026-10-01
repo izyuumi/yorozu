@@ -1929,10 +1929,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (stopped) return;
       if (userEventId) await steering.get(userEventId)?.promise;
       if (userEventId && uncertainSteering(userEventId)) {
-        finishTurnState(threadId, turnKey);
         return;
       }
       if (userEventId && (!stopStore.available || !acceptedStore.available || steeringFenced || stoppedTurns.has(userEventId) || steered.has(userEventId) || uncertainSteering(userEventId))) return;
+      if (userEventId && threadAgent(threadId, dir) !== "yorozu") {
+        const proof = syncHostRequest(dir, { op: "run_ready", threadId, eventId: userEventId });
+        if (proof.ready !== true) { state(`native-run-blocked ${String(proof.reason)}`); return; }
+        if (proof.eventId !== userEventId || proof.threadId !== threadId || proof.agent !== threadAgent(threadId, dir)
+            || proof.completionId !== completionIdFor(threadId, userEventId)) throw new Error("Native run remains unconfirmed");
+      }
       const logged = queuedBehindTurn ? acceptedEvent : undefined;
       if (logged) {
         // A queued message was admitted while an earlier turn ran. Append its corrected
@@ -1947,20 +1952,17 @@ export function serve(options: ServeOptions = {}): Sidecar {
           broadcast(ordered);
         }
       }
-      if (userEventId && threadAgent(threadId, dir) !== "yorozu") syncHostRequest(dir, { op: "queue_ready" });
       startTurnState(threadId, turnKey);
       if (userEventId) activeTurnIds.add(userEventId);
       try { await runTurn(threadId, text, recorded, attachments, userEventId); }
       finally {
         if (userEventId) activeTurnIds.delete(userEventId);
-        finishTurnState(threadId, turnKey);
       }
-    });
+    }).finally(() => { finishTurnState(threadId, turnKey); });
     turnQueues.set(threadId, next);
     if (userEventId) admittedTurns.set(userEventId, next);
     void next.finally(() => {
       if (stopped) return;
-      if (turnQueues.get(threadId) === next) turnQueues.delete(threadId);
       if (userEventId && admittedTurns.get(userEventId) === next) admittedTurns.delete(userEventId);
       if (!updateGate.draining && updateGate.status.phase !== "installing" && drainInterrupted.has(threadId) &&
           resumeNativeTurn(threadId)) drainInterrupted.delete(threadId);
@@ -1969,8 +1971,39 @@ export function serve(options: ServeOptions = {}): Sidecar {
             event.id === completionIdFor(threadId, userEventId) && event.kind === "message" && event.data.done)) {
         removeNativeQueue(userEventId);
       }
+      drainQueuedNative(threadId);
+      if (turnQueues.get(threadId) === next) turnQueues.delete(threadId);
     }).catch(() => {});
     return next;
+  }
+
+  function drainQueuedNative(onlyThread?: string): void {
+    if (stopped || !stopStore.available || !acceptedStore.available || steeringFenced) return;
+    const visited = new Set<string>();
+    for (const entry of [...queuedNative]) {
+      if (onlyThread && entry.threadId !== onlyThread || visited.has(entry.threadId)) continue;
+      const events = visibleThreadEvents(entry.threadId, dir);
+      if (events.some((event) => event.id === completionIdFor(entry.threadId, entry.eventId) &&
+          event.kind === "message" && event.data.done)) { removeNativeQueue(entry.eventId); continue; }
+      if (uncertainSteering(entry.eventId)) { visited.add(entry.threadId); continue; }
+      // A committed Stop bars redispatch even when restart recovery cannot produce
+      // a final reply. Retire only its queue row; keep the uncertainty and Stop record.
+      if (stopStore.confirmed(entry.eventId)?.threadId === entry.threadId) {
+        removeNativeQueue(entry.eventId);
+        continue;
+      }
+      visited.add(entry.threadId);
+      if (admittedTurns.has(entry.eventId) || stoppedTurns.has(entry.eventId) || steered.has(entry.eventId) || uncertainSteering(entry.eventId)) continue;
+      const marker = listThreads(dir).find((thread) => thread.id === entry.threadId)?.nativeTurn;
+      if (marker?.state === "interrupted") continue;
+      const original = events.find((event) => event.id === entry.eventId && event.kind === "message" && event.data.role === "user");
+      if (original?.kind !== "message") continue;
+      try {
+        const proof = syncHostRequest(dir, { op: "run_ready", threadId: entry.threadId, eventId: entry.eventId });
+        if (proof.ready === true) void enqueueTurn(entry.threadId, original.data.text, true,
+          original.data.attachments ?? [], entry.eventId, original);
+      } catch { state("native-queue-unconfirmed"); }
+    }
   }
 
   function steerMessage(event: YorozuEvent & { kind: "message" }, attemptId = event.id): Promise<void> {
@@ -3981,28 +4014,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (viaChannel(thread.id)) channel.retry(thread.id);
     }
 
-    for (const entry of [...queuedNative]) {
-      if (admittedTurns.has(entry.eventId)) continue;
-      if (uncertainSteering(entry.eventId)) continue;
-      if (stoppedTurns.has(entry.eventId)) { removeNativeQueue(entry.eventId); continue; }
-      const marker = listThreads(dir).find((thread) => thread.id === entry.threadId)?.nativeTurn;
-      if (marker?.state === "interrupted" && marker.userEventId === entry.eventId) continue;
-      const events = visibleThreadEvents(entry.threadId, dir);
-      if (events.some((event) => event.id === completionIdFor(entry.threadId, entry.eventId) &&
-          event.kind === "message" && event.data.done)) {
-        removeNativeQueue(entry.eventId);
-        continue;
-      }
-      const original = events.find((event) => event.id === entry.eventId &&
-        event.kind === "message" && event.data.role === "user");
-      if (original?.kind === "message" && original.data.delivery === "steer") {
-        removeNativeQueue(entry.eventId);
-        continue;
-      }
-      if (original?.kind === "message") void enqueueTurn(entry.threadId, original.data.text, true,
-        original.data.attachments ?? [], entry.eventId, original);
-      else removeNativeQueue(entry.eventId);
-    }
+    drainQueuedNative();
   });
   void startupRecovery.then(() => {
     if (stopped) return;

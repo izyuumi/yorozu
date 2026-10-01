@@ -716,6 +716,100 @@ impl History {
         }
         self.steering_delivered(&record)
     }
+    fn run_ready(&mut self, request: &Value) -> io::Result<Value> {
+        let thread = request["threadId"]
+            .as_str()
+            .filter(|id| !invalid_id(id))
+            .ok_or_else(invalid)?
+            .to_owned();
+        let origin = request["eventId"]
+            .as_str()
+            .filter(|id| !invalid_id(id))
+            .ok_or_else(invalid)?
+            .to_owned();
+        let blocked = |reason: &str| json!({"ready":false,"reason":reason});
+        let accepted = self.request(&json!({"op":"accepted_get","messageId":origin}));
+        if accepted.get("error").is_some() {
+            return Ok(accepted);
+        }
+        let entry = &accepted["entry"];
+        if entry["threadId"] != thread
+            || entry["id"] != origin
+            || !["conversation", "legacy"].contains(&entry["purpose"].as_str().unwrap_or(""))
+        {
+            return Ok(blocked("not-accepted-conversation"));
+        }
+        for (op, key, result, reason) in [
+            ("stop_get", "targetEventId", "record", "stopped"),
+            ("admission_get", "messageId", "entry", "expired"),
+        ] {
+            let mut query = json!({"op":op});
+            query[key] = json!(origin);
+            let proof = self.request(&query);
+            if proof.get("error").is_some() {
+                return Ok(proof);
+            }
+            if !proof[result].is_null() {
+                return Ok(blocked(reason));
+            }
+        }
+        let steering = self.request(&json!({"op":"steering_get","eventId":origin}));
+        if steering.get("error").is_some() {
+            return Ok(steering);
+        }
+        if ["attempting", "delivered"]
+            .contains(&steering["record"]["status"].as_str().unwrap_or(""))
+        {
+            return Ok(blocked("follow-up-owned"));
+        }
+        let active =
+            self.request(&json!({"op":"steering_active","threadId":thread,"eventId":origin}));
+        if active.get("error").is_some() {
+            return Ok(active);
+        }
+        if active["unconfirmed"] == true {
+            return Ok(blocked("follow-up-unconfirmed"));
+        }
+        let queue = self.request(&json!({"op":"queue_head","threadId":thread}));
+        if queue.get("error").is_some() {
+            return Ok(queue);
+        }
+        if queue["eventId"] != origin {
+            return Ok(blocked("not-queue-head"));
+        }
+        let bytes = crate::thread_index::current(&self.root)?.ok_or_else(invalid)?;
+        let index: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        let home = index
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == thread)
+            .ok_or_else(invalid)?;
+        if home["agent"]
+            .as_str()
+            .is_none_or(|agent| agent.is_empty() || agent == "yorozu")
+        {
+            return Ok(blocked("not-native-worker"));
+        }
+        if home
+            .get("nativeTurn")
+            .is_some_and(|turn| turn["userEventId"] != origin)
+        {
+            return Ok(blocked("another-run-owned"));
+        }
+        let completion = format!("native:{origin}:final");
+        let (seen, finished) =
+            crate::paging::run_evidence(&self.root, &thread, entry, &completion)?;
+        if finished {
+            return Ok(blocked("already-completed"));
+        }
+        if !seen {
+            return Ok(blocked("missing-origin-history"));
+        }
+        Ok(
+            json!({"ready":true,"eventId":origin,"threadId":thread,"agent":home["agent"],"completionId":completion}),
+        )
+    }
     pub fn request(&mut self, request: &Value) -> Value {
         // Keep each existing operational journal's own failure fence, including durable Stop
         // recording when an unrelated history projection is unavailable.
@@ -769,6 +863,11 @@ impl History {
         }
         if self.failed {
             return json!({"error":"history-storage-failed"});
+        }
+        if request["op"] == "run_ready" {
+            return self
+                .run_ready(request)
+                .unwrap_or_else(|_| json!({"error":"run-readiness-unconfirmed"}));
         }
         if request["op"]
             .as_str()

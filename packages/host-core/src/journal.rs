@@ -106,6 +106,9 @@ impl Journal {
             failed: false,
         })
     }
+    pub fn available(&self) -> bool {
+        !self.failed
+    }
     pub fn take_records(&mut self) -> Vec<Value> {
         std::mem::take(&mut self.records)
     }

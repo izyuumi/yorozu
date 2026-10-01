@@ -136,6 +136,60 @@ fn occurrence(cursor: Option<&str>) -> Option<(u64, &str)> {
     }
     Some((offset.parse().ok()?, tag))
 }
+/// Read the retained execution evidence with the same bounds/parser contract as replay paging.
+pub(crate) fn run_evidence(
+    root: &Path,
+    thread: &str,
+    accepted: &Value,
+    completion: &str,
+) -> io::Result<(bool, bool)> {
+    let origin = accepted["id"].as_str().ok_or_else(invalid)?;
+    let expected =
+        crate::accepted::fingerprint(accepted, &accepted["event"]).ok_or_else(invalid)?;
+    let path = root
+        .join("threads")
+        .join(format!("{}.jsonl", crate::thread_index::file_name(thread)));
+    let mut file = match open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((false, false)),
+        Err(error) => return Err(error),
+    };
+    let stamp = Stamp::new(&file.metadata()?);
+    let mut end = 0;
+    let mut seen = false;
+    let mut finished = false;
+    {
+        let mut reader = BufReader::new(&mut file);
+        while let Some(text) = line(&mut reader, &mut end, stamp.length)? {
+            if let Some(event) = parse(&text)? {
+                if event["id"] == origin
+                    && event["threadId"] == thread
+                    && event["kind"] == "message"
+                    && event["data"]["role"] == "user"
+                {
+                    if crate::accepted::fingerprint(accepted, &event).as_ref() != Some(&expected) {
+                        return Err(invalid());
+                    }
+                    seen = true;
+                }
+                finished |= event["id"] == completion
+                    && event["threadId"] == thread
+                    && event["kind"] == "message"
+                    && event["data"]["role"] == "agent"
+                    && event["data"]["done"] == true;
+            }
+        }
+    }
+    let current = fs::symlink_metadata(&path)?;
+    if current.file_type().is_symlink()
+        || !current.is_file()
+        || Stamp::new(&current) != stamp
+        || Stamp::new(&file.metadata()?) != stamp
+    {
+        return Err(invalid());
+    }
+    Ok((seen, finished))
+}
 impl Paging {
     fn page(&mut self, root: &Path, request: &Value) -> io::Result<Value> {
         let id = request["threadId"]

@@ -143,6 +143,9 @@ impl Steering {
             Some("steering_get") => {
                 json!({"record":self.get(request["eventId"].as_str().unwrap_or(""))})
             }
+            Some("steering_active") => json!({"unconfirmed": self.entries.values().any(|record|
+                record["threadId"] == request["threadId"] && record["activeEventId"] == request["eventId"]
+                && record["status"] == "attempting")}),
             Some("steering_list") => {
                 let offset = request["offset"].as_u64().unwrap_or(0) as usize;
                 let mut records = Vec::new();

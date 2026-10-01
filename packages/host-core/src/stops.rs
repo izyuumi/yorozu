@@ -89,6 +89,9 @@ impl Stops {
         Ok(json!({"record":merged}))
     }
     pub fn request(&mut self, request: &Value) -> Value {
+        if !self.journal.available() {
+            return json!({"error":"stop-storage-failed"});
+        }
         match request["op"].as_str() {
             Some("stop_save") => self
                 .write(&request["record"])

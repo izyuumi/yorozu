@@ -750,6 +750,36 @@ strictClippy and the production build. Final legacy CLI error-name preservation 
 runtime contracts, strictClippy and the production build. Read-only review caught and repaired a queued-deadline reset before this
 slice was committed. Run/approval decision policy remains unfinished.
 
+## Rust native dispatch readiness
+
+Before a retained native origin reaches its SDK, the same Rust History owner now checks immutable
+acceptance, conversation purpose, durable Stop and expiration, steering ownership/uncertainty,
+per-thread queue head, thread worker ownership, the canonical retained origin identity, and stable completion
+evidence. Legacy accepted purpose remains immutable and can recover only with matching retained
+conversation evidence. Failed operational journals refuse new dispatch. This is a readiness decision,
+not an attempt claim: Rust-owned attempt identity and scoped approval/callback transitions remain
+unfinished parts of checklist item3.
+
+A paused exhausted owner keeps its marker and queue head. Later work remains queued until explicit
+Retry completes that origin; it cannot replace the interrupted task. Every refused dispatch settles
+its in-memory admission. Queue draining shares the existing Node availability/steering fences,
+retains uncertain follow-up evidence, and retires a durably stopped queue row while keeping its Stop
+record and unconfirmed status. Restart Stop recovery can therefore admit fresh work without inventing
+an old terminal reply or claiming confirmed cessation.
+
+Three real Rust-owner contracts cover acceptance, FIFO, stable completion, Stop, expiration,
+approval replies, steering uncertainty, failed journal fences, retained-body conflicts and paused
+ownership. The existing failed-result/Retry and Stop-restart tests now check queued successors.
+Failed follow-up preparation also verifies host responsiveness and retained work. Against isolated
+unsafe sources, a new message caused five SDK calls instead of one; the stopped head remained;
+and preparation failure starved the event loop until an external18-second deadline terminated only
+that test process group. All six focused repaired runtime cases pass. The long update integration fixture is split at its
+installation boundary, preserving queue/countdown/control and reconnect/cutoff/replay assertions
+under the original 5-second deadlines. Verification passes 114 Rust tests and 827 runtime/plugin
+tests plus one skip across 52 files, formatting, strict Clippy and the production build.
+Retained run evidence uses the existing bounded JSONL reader and exact file identity checks; it
+currently scans the retained log. SQLite indexing remains checklist item6, not a second truth store.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

@@ -197,6 +197,14 @@ impl NativeQueue {
             }
             return Ok(self.proof());
         }
+        if request["op"] == "queue_head" {
+            let thread = id(request, "threadId")?;
+            let head = self
+                .entries
+                .iter()
+                .find(|entry| entry["threadId"] == thread);
+            return Ok(json!({"stored":true,"eventId":head.map(|entry| &entry["eventId"])}));
+        }
         let event = id(request, "eventId")?;
         let thread = id(request, "threadId")?;
         let existing = self

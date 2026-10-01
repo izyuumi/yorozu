@@ -75,6 +75,9 @@ impl Admissions {
         Ok(json!({"status":"expired"}))
     }
     pub fn request(&mut self, request: &Value) -> Value {
+        if !self.journal.available() {
+            return json!({"error":"admission-storage-failed"});
+        }
         match request["op"].as_str() {
             Some("admission_expire") => request["now"]
                 .as_i64()

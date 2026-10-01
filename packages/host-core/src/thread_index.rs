@@ -104,7 +104,7 @@ fn compatible(left: &Value, right: &Value) -> bool {
         _ => left == right,
     }
 }
-fn current(root: &Path) -> io::Result<Option<Vec<u8>>> {
+pub(crate) fn current(root: &Path) -> io::Result<Option<Vec<u8>>> {
     let path = root.join("threads.json");
     match fs::symlink_metadata(&path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),

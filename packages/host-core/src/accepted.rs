@@ -23,8 +23,7 @@ fn number(value: &Value) -> Option<Value> {
     }
 }
 /// Bind the client-owned content independently of the compatibility host's wire fingerprint.
-fn fingerprint(entry: &Value) -> Option<String> {
-    let event = &entry["event"];
+pub(crate) fn fingerprint(entry: &Value, event: &Value) -> Option<String> {
     let data = &event["data"];
     if !entry.is_object()
         || !event.is_object()
@@ -97,7 +96,7 @@ struct Metadata {
 }
 fn metadata(entry: &Value, bytes: u64, record_hash: String) -> Option<Metadata> {
     Some(Metadata {
-        fingerprint: fingerprint(entry)?,
+        fingerprint: fingerprint(entry, &entry["event"])?,
         record_hash,
         bytes,
         summary: json!({"id":entry["id"],"threadId":entry["threadId"],"identity":entry["identity"],"purpose":entry["purpose"]}),
@@ -211,7 +210,7 @@ impl Accepted {
         Ok(Some(entry))
     }
     fn accept_inner(&mut self, entry: &Value) -> io::Result<Value> {
-        let fingerprint = fingerprint(entry).ok_or_else(invalid)?;
+        let fingerprint = fingerprint(entry, &entry["event"]).ok_or_else(invalid)?;
         let id = entry["id"].as_str().unwrap();
         if let Some(prior) = self.entries.get(id) {
             if fingerprint != prior.fingerprint || entry["identity"] != prior.summary["identity"] {
