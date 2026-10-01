@@ -1,5 +1,5 @@
 use serde_json::{Value, json};
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use yorozu_host_core::transport::{Emit, Transports};
@@ -10,11 +10,28 @@ use yorozu_host_core::{
 
 fn run() -> io::Result<()> {
     let mut args = std::env::args().skip(1);
-    if args.next().as_deref() != Some("attachments") {
-        return Err(io::ErrorKind::InvalidInput.into());
-    }
+    let mode = args.next().ok_or(io::ErrorKind::InvalidInput)?;
     let dir = args.next().ok_or(io::ErrorKind::InvalidInput)?;
     if args.next().is_some() {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    if mode == "thread-index" {
+        let mut bytes = Vec::new();
+        io::stdin()
+            .take(32 * 1024 * 1024 + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() > 32 * 1024 * 1024 {
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+        let request: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        serde_json::to_writer(
+            io::stdout().lock(),
+            &yorozu_host_core::thread_index::request(Path::new(&dir), &request),
+        )
+        .map_err(io::Error::other)?;
+        return Ok(());
+    }
+    if mode != "attachments" {
         return Err(io::ErrorKind::InvalidInput.into());
     }
     let mut store = AttachmentStore::open(Path::new(&dir))?;

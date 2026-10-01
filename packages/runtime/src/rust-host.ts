@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -125,3 +125,21 @@ export async function closeHostWorker(dir: string): Promise<void> {
 
 /** Read-only identity of this module's owned child, for supervision/recovery evidence. */
 export function hostWorkerPid(dir: string): number | undefined { return workers.get(resolve(dir))?.pid; }
+
+/** Synchronous compatibility boundary: native markers must precede external SDK execution.
+ * The portable Rust library owns the mutation; this short-lived bridge will disappear when
+ * orchestration moves into the standalone host. No provider environment is inherited. */
+export function threadIndexRequest(dir: string, threads: unknown[], expectedHash: string | null): string {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of ["PATH", "TMPDIR", "TEMP", "TMP", "SystemRoot", "WINDIR"])
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  const input = JSON.stringify({ op: "replace", threads, expectedHash });
+  if (Buffer.byteLength(input) > 32 * 1024 * 1024) throw new Error("Rust thread index remains unconfirmed");
+  const result = spawnSync(rustHostCommand(), ["thread-index", resolve(dir)], { input, encoding: "utf8", env,
+    timeout: 30_000, maxBuffer: 512 * 1024 });
+  let proof: { stored?: unknown; hash?: unknown };
+  try { proof = JSON.parse(result.stdout) as typeof proof; } catch { throw new Error("Rust thread index remains unconfirmed"); }
+  if (result.status !== 0 || !proof || typeof proof !== "object" || proof.stored !== true || typeof proof.hash !== "string" || !/^[a-f0-9]{64}$/.test(proof.hash))
+    throw new Error("Rust thread index remains unconfirmed");
+  return proof.hash;
+}

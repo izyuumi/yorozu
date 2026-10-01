@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { YorozuEvent } from "@yorozu/shared";
@@ -700,4 +700,24 @@ test("the thread index and a thread's log are written owner-only, with no temp f
   expect(statSync(join(dir, "threads.json")).mode & 0o777).toBe(0o600);
   expect(statSync(join(threadsDir(dir), `${thread.id}.jsonl`)).mode & 0o777).toBe(0o600);
   expect(existsSync(join(dir, "threads.json.tmp"))).toBe(false);
+});
+
+
+test("Rust metadata mutations preserve exact legacy recovery bytes and unknown fields", () => {
+  const original = '[ {"id":"native","title":"Work","createdAt":"2026-01-01T00:00:00.000Z","archived":false,"agent":"codex","cwd":"/tmp/project","future":{"count":1e3}} ]';
+  writeFileSync(join(dir, "threads.json"), original);
+  setThreadSession("native", "session-before-execution", dir);
+  expect(listThreads(dir)[0]).toMatchObject({ nativeSessionId: "session-before-execution", future: { count: 1000 } });
+  const snapshots = readdirSync(join(dir, ".thread-index-recovery"));
+  expect(snapshots).toHaveLength(1);
+  expect(readFileSync(join(dir, ".thread-index-recovery", snapshots[0]!), "utf8")).toBe(original);
+});
+
+test("metadata mutation fails closed around legacy pending writes", () => {
+  const created = createThread("Work", dir, "native", { agent: "codex", cwd: "/tmp/project" });
+  const original = readFileSync(join(dir, "threads.json"), "utf8");
+  writeFileSync(join(dir, "threads.json.tmp"), "unconfirmed old metadata");
+  expect(() => setThreadSession(created.id, "never-confirmed", dir)).toThrow("Rust thread index remains unconfirmed");
+  expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(original);
+  expect(readFileSync(join(dir, "threads.json.tmp"), "utf8")).toBe("unconfirmed old metadata");
 });

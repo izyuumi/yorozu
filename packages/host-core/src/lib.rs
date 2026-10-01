@@ -5,6 +5,7 @@ pub mod admission;
 mod journal;
 pub mod outbox;
 pub mod stops;
+pub mod thread_index;
 pub mod transport;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};

@@ -1748,9 +1748,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
               model: threadModel(threadId, dir),
               effort: threadEffort(threadId, dir),
               signal: turn.signal,
-              onSession: (sessionId) => { executionStarted = true; setThreadSession(threadId, sessionId, dir); },
-              onTerminate: (terminate) => terminateRunning.set(threadId, terminate),
-              onSteer: (steer) => steerRunning.set(threadId, steer),
+              onSession: (sessionId) => { if (!stopped) { executionStarted = true; setThreadSession(threadId, sessionId, dir); } },
+              onTerminate: (terminate) => { if (!stopped) terminateRunning.set(threadId, terminate); },
+              onSteer: (steer) => { if (!stopped) steerRunning.set(threadId, steer); },
               approve: async (tool, input, signal) =>
                 loadSettings(dir).yolo || nativeCards.approve(threadId, agent, tool, input, signal),
               ask: (question, options, signal) => nativeCards.ask(threadId, agent, question, options, signal),
@@ -1769,6 +1769,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
               onToolBoundary: () => pauseAtSafePoint(threadId),
               onUpdate: (reply) => { if (!turn.signal.aborted) { executionStarted = true; broadcast(message(reply)); } },
               onActivity: (key, payload) => {
+                if (stopped) return;
                 executionStarted = true;
                 if (payload.kind === "tool_call") {
                   const calls = openToolCalls.get(threadId) ?? new Set<string>();
@@ -1792,6 +1793,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
               steerRunning.delete(threadId);
               await Promise.all([...steering.values()].filter((entry) => entry.threadId === threadId).map((entry) => entry.promise));
             });
+            if (stopped) return;
             if (done.sessionId && done.sessionId !== currentHome.sessionId) setThreadSession(threadId, done.sessionId, dir);
             const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
             if (done.completed && stop && (stop.status === "requested" || stop.status === "unconfirmed")) {

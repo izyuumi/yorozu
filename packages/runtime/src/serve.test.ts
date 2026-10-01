@@ -4258,6 +4258,51 @@ test("native session and running marker reach disk before completion, and surviv
   expect(listThreads(dir)[0]?.nativeTurn?.state).toBe("running");
 });
 
+test.each(["claude-code", "codex"] as const)("late %s callbacks cannot overwrite a replacement host's native metadata", async (agent) => {
+  let oldTurn!: NativeTurn;
+  let finishOld!: (result: { text: string; sessionId: string; completed: boolean }) => void;
+  const oldRun: NativeAgentRunner["run"] = async (turn) => {
+    oldTurn = turn;
+    turn.onSession!("old-session");
+    return new Promise((resolve) => { finishOld = resolve; });
+  };
+  const { dir, send } = await pairedPhone([], false, { nativeRunners: { [agent]: { run: oldRun } } });
+  send({ kind: "thread_create", data: { agent, cwd: proj } }, "cc");
+  const userId = send({ kind: "message", data: { role: "user", text: "Continue this task" } }, "cc");
+  await vi.waitFor(() => expect(oldTurn).toBeDefined());
+  await sidecar.close();
+  expect(oldTurn.signal.aborted).toBe(true);
+
+  let freshTurn!: NativeTurn;
+  let finishFresh!: (result: { text: string; sessionId: string }) => void;
+  const freshRun: NativeAgentRunner["run"] = async (turn) => {
+    freshTurn = turn;
+    turn.onSession!("fresh-session");
+    return new Promise((resolve) => { finishFresh = resolve; });
+  };
+  const replacement = await pairedPhone([], false, { stateDir: dir, nativeRunners: { [agent]: { run: freshRun } } });
+  await vi.waitFor(() => expect(freshTurn).toBeDefined());
+  const index = readFileSync(join(dir, "threads.json"), "utf8");
+  const history = readThreadEvents("cc", dir);
+  oldTurn.onSession!("stale-session");
+  oldTurn.onActivity!("stale-result", { kind: "tool_result", data: { callId: "stale", ok: true, output: "late" } });
+  oldTurn.onUpdate!("stale partial");
+  finishOld({ text: "stale completion", sessionId: "stale-completion-session", completed: true });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  replacement.send({ kind: "thread_list", data: { threads: [] } });
+  await replacement.eventsUntil((event) => event.kind === "thread_list");
+  expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(index);
+  expect(readThreadEvents("cc", dir)).toEqual(history);
+  expect(listThreads(dir)[0]).toMatchObject({ nativeSessionId: "fresh-session", nativeTurn: {
+    id: `native:${userId}:final`, state: "running", userEventId: userId,
+  } });
+  finishFresh({ text: "fresh completion", sessionId: "fresh-session" });
+  await vi.waitFor(() => expect(readThreadEvents("cc", dir)).toContainEqual(expect.objectContaining({
+    id: `native:${userId}:final`, data: expect.objectContaining({ done: true, text: "fresh completion" }),
+  })));
+  expect(readThreadEvents("cc", dir).filter((event) => event.kind === "message" && event.data.done)).toHaveLength(1);
+});
+
 test("agent models publish separately; selections persist and reject another agent's models", async () => {
   const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "ok", sessionId: "s-model" });
   const models = [{ id: "opus", label: "Opus", providerLabel: "Claude Code", efforts: ["low", "max"] as const }];

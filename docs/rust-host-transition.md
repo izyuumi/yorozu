@@ -11,8 +11,8 @@ separate conversations. These are migration requirements, not claims about the c
   `ThreadCache` own encrypted client drafts, attachments, saved-draft recovery and pending sends.
 - The Mac launches the bundled Node executable and `packages/runtime/dist/serve.js`. The
   TypeScript host currently owns relay transport, admission policy, sequencing, approvals,
-  thread-history projections, recovery and orchestration. Rust owns the extracted durable
-  attachment/outbox/expiry/Stop/accepted-message stores and Unix listeners. This is approximately 4,000 lines in `serve.ts`,
+  thread-history projections, recovery policy and orchestration. Rust owns the extracted durable
+  attachment/outbox/expiry/Stop/accepted-message stores, thread metadata mutations and Unix listeners. This is approximately 4,000 lines in `serve.ts`,
   plus its supporting modules; replacing a launcher alone would not rewrite the backend.
 - Claude uses a TypeScript SDK adapter; Codex has both SDK and native app-server adapters.
   OpenClaw's separate channel plugin uses a local JSON-lines socket and durable acknowledged
@@ -230,6 +230,48 @@ retained. These earlier failures are retained as evidence, not silently counted 
 The final complete runtime suite passes 802 tests with one skipped across 46 files using four
 workers, and the production runtime build passes. Test timing budgets remain unchanged. Windows
 execution and physical power-loss durability remain unverified locally.
+
+## Durable thread metadata extraction
+
+Rust now owns production mutations of `threads.json`: conversation settings, immutable agent and
+working-directory ownership, native session IDs and interrupted-run markers. The existing JSON
+schema and unknown fields are preserved. An identical legacy index remains byte-for-byte unchanged,
+including equivalent safe numeric notation. Before a changed index is published, the exact old
+bytes are saved in a private, content-addressed recovery snapshot. Both snapshot and replacement
+are synced before confirmation. Interrupted private writes remain retained; legacy `threads.json.tmp`
+is treated as unconfirmed state and blocks mutation rather than being overwritten or deleted.
+
+An OS-held transaction lock and a hash of the exact previous bytes exclude competing Rust writes
+and stale revisions. A changed agent, folder, creation identity or unknown field fails closed.
+Conversations cannot be removed; the existing empty legacy Home cleanup is allowed only when its
+history file is absent or a regular empty file, with the old index retained in recovery. Corrupt,
+unsupported, duplicate, colliding sanitized IDs and symlink stores are retained and refused.
+Bounds are 16 MiB per index, 65,536 records, 4 GiB of recovery data and 128 interrupted index writes.
+Existing directory permissions are unchanged; newly created private files use mode 0600 on Unix.
+
+The TypeScript compatibility layer still reads metadata and supplies mutation policy. Its synchronous
+helper call preserves the native recovery ordering: a running marker reaches disk before an SDK can
+start. The bounded helper receives only its JSON transaction and the existing environment allowlist,
+never provider credentials. It has a 30-second deadline and fixed uncertainty errors. No new service,
+listening port or platform permission is introduced. This short-lived process boundary is transitional;
+it will disappear when orchestration moves into the standalone Rust host. It is not a throughput claim.
+
+Native callbacks are fenced after shutdown. A late session, tool result or completed runner response
+cannot overwrite the metadata of a replacement host or append a stale completion. New two-host tests
+exercise this for Claude Code and Codex while the replacement is recovering the original user turn.
+The complete event-log writer, transcripts, queue/steering state, relay, approvals and provider execution
+remain to be migrated. Date/admission policy remains in the compatibility layer; Rust validates the
+structural metadata and durable ownership boundary.
+
+Nine new Rust tests and all 56 core tests pass, including helper process exit, concurrent processes,
+stale revisions, exact recovery bytes, unknown fields, legacy/interrupted pending data, bounds,
+owner locks, symlinks and private new files. Eleven focused metadata/restart tests pass. Formatting,
+strict clippy and the production runtime build pass; all 47 thread tests also pass. The first complete
+runtime run passed 804 tests and timed out in two multi-step update/Stop workflows. Both passed in
+isolation with unchanged five-second budgets. The subsequent complete run, with no overlapping build,
+passes 806 tests with one skipped across 46 files using four workers. The earlier timeout evidence is
+retained; it is not counted as a passing run or a proven production fix. Windows execution and physical
+power-loss durability remain unverified locally.
 
 ## Following migration boundaries
 

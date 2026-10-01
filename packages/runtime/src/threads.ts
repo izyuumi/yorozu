@@ -5,8 +5,8 @@
  * See docs/spec-v1.html sections 3 and 8.
  */
 
-import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, constants, createReadStream, fstatSync, fsyncSync, ftruncateSync, openSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { appendFileSync, closeSync, constants, createReadStream, fstatSync, fsyncSync, ftruncateSync, openSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   validAgentId,
@@ -22,6 +22,7 @@ import {
 import { stateDir } from "./memory.js";
 import type { Message } from "./provider.js";
 import { syncPage } from "./thread-sync.js";
+import { threadIndexRequest } from "./rust-host.js";
 
 /** How much of a thread's log is replayed to the model as context. */
 export const HISTORY_LIMIT = 40;
@@ -102,11 +103,11 @@ export const threadsDir = (dir = stateDir()): string => join(dir, "threads");
 
 const indexFile = (dir: string): string => join(dir, "threads.json");
 
+const indexBases = new WeakMap<ThreadRecord[], string | null>();
 function saveThreads(threads: ThreadRecord[], dir: string): void {
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const temporary = indexFile(dir) + ".tmp";
-  writeFileSync(temporary, `${JSON.stringify(threads, null, 2)}\n`, { flush: true, mode: 0o600 });
-  renameSync(temporary, indexFile(dir));
+  if (!indexBases.has(threads)) throw new Error("Missing thread index revision");
+  const proof = threadIndexRequest(dir, threads, indexBases.get(threads)!);
+  indexBases.set(threads, proof);
 }
 
 /**
@@ -152,14 +153,16 @@ function validThread(value: unknown): value is ThreadRecord {
  */
 export function listThreads(dir = stateDir(), byActivity = true): ThreadRecord[] {
   let stored: ThreadRecord[];
+  let base: string | null = null;
   try {
     let raw: string;
     try {
       raw = readFileSync(indexFile(dir), "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      return [];
+      const empty: ThreadRecord[] = []; indexBases.set(empty, null); return empty;
     }
+    base = createHash("sha256").update(raw).digest("hex");
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed) || !parsed.every(validThread)
       || new Set(parsed.map((t) => t.id)).size !== parsed.length) throw new Error("invalid thread metadata");
@@ -174,6 +177,7 @@ export function listThreads(dir = stateDir(), byActivity = true): ThreadRecord[]
         ? [{ ...thread, title: thread.title || "Home" }]
         : [],
   );
+  indexBases.set(threads, base);
   if (JSON.stringify(threads) !== JSON.stringify(stored)) saveThreads(threads, dir);
   return byActivity ? threads.sort((a, b) => lastActivity(b, dir) - lastActivity(a, dir)) : threads;
 }
@@ -198,7 +202,8 @@ export function createThread(
 ): ThreadRecord {
   const agent = home.agent ?? "yorozu";
   if (!validAgentId(agent)) throw new Error(`invalid agent "${String(agent)}"`);
-  const existing = listThreads(dir).find((thread) => thread.id === id);
+  const known = listThreads(dir);
+  const existing = known.find((thread) => thread.id === id);
   if (existing) return existing;
   const cwd = home.cwd?.trim();
   // A native agent runs in its thread's folder and nowhere else, so a record without one is
@@ -213,7 +218,8 @@ export function createThread(
     // Only a native agent has a home of its own; a `yorozu` thread is the default, unspelled.
     ...(agent !== "yorozu" ? { agent, ...(home.needsFolder !== false && cwd ? { cwd } : {}) } : {}),
   };
-  saveThreads([...listThreads(dir), thread], dir);
+  const next = [...known, thread]; indexBases.set(next, indexBases.get(known)!);
+  saveThreads(next, dir);
   return thread;
 }
 
