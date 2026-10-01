@@ -656,13 +656,14 @@ test("sync seeks through long history without reparsing it for each page", () =>
   let page = eventsAfter(HOME, undefined, dir);
   const parse = vi.spyOn(JSON, "parse");
   try {
-    let count = page.length;
+    const ids = page.map((event) => event.id);
     while (page.length) {
       page = eventsAfter(HOME, page.at(-1)!.syncCursor, dir);
-      count += page.length;
+      ids.push(...page.map((event) => event.id));
     }
-    expect(count).toBe(events.length);
-    expect(parse.mock.calls.length).toBe(events.length - SYNC_LIMIT);
+    expect(ids).toEqual(events.map((event) => event.id));
+    // The host now returns envelopes; avoid repeatedly parsing prior events in the caller.
+    expect(parse.mock.calls.length).toBeLessThanOrEqual(events.length - SYNC_LIMIT);
   } finally { parse.mockRestore(); }
 });
 

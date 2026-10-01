@@ -8,6 +8,7 @@ pub mod history;
 mod journal;
 pub mod native_queue;
 pub mod outbox;
+pub mod paging;
 pub mod peers;
 pub mod relay;
 pub mod sequences;

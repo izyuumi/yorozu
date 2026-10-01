@@ -648,6 +648,48 @@ remaining blocker after the numeric allowance and pre-mutation validation repair
 selection, current-state extraction,
 capability-specific preview rendering and live approval ownership still remain outside this slice.
 
+## Rust retained-history paging
+
+The pinned Rust history owner now selects replay pages directly from retained JSONL. Released
+occurrence cursors keep their physical offsets and decoded-UTF8 prefix hashes, including malformed
+lines and valid unterminated final events. Legacy ID cursors retain last-occurrence behavior except
+retimed queued messages, which keep their first position. Unknown or rewritten cursors restart
+safely; complete-prefix cursors survive appends. Pairing cutoff and approval-status filtering precede
+the page limit. Historical duplicate IDs and unknown event fields are retained.
+
+Pages contain at most200 events and target512KiB of encoded JSON, with the existing single-oversized
+first-event escape so a large retained event cannot prevent forward progress. `more` reports a byte
+or count cutoff, including the released conservative full200-row signal. Oversized first events use
+a one-result token and transient response allocation capped at34MiB; wrong/duplicate tokens do not
+consume another result. The I/O bridge validates the pinned id/result frame and forwards the exact
+Rust result bytes, avoiding JavaScript numeric re-encoding expansion and keeping the same owner.
+
+Metadata indexing is bounded to an estimated4MiB per log and16 recent logs, with no cached message
+bodies. Beyond that limit, up to256 returned offset/SHA checkpoints per log let normal and globally
+truncated sequential pages seek forward. Older arbitrary cursors use a bounded-memory scan. LRU
+registration precedes cache publication so failed reads also obey the cap. Unix stamps include file
+identity, length and nanosecond modification/change times; Windows conservatively rebuilds because
+the supported standard surface cannot establish equivalent replacement identity. Reads refuse
+symlinks, non-files, logs over1GiB and physical lines over32MiB. File drift fails explicitly.
+
+The original TypeScript helper is retained as an independent compatibility oracle, with no production
+paging caller. Three real-owner contracts cover cursors/retimed IDs, split and malformed UTF8,
+EOF/appends/replacements/deletion, pre-limit filtering, byte pages, oversized numeric extensions,
+prepared-result currency, cache overflow and exact retained bytes on unsupported legacy input.
+JavaScript accepts lone escaped UTF16 surrogates and overflowing JSON numbers that the Rust parser
+cannot represent. These cause an explicit unconfirmed query, preserving the complete original file,
+rather than silently hiding rows. The first focused run reproduced the high-surrogate skip and the
+repair includes its actual parser error. These legacy cases remain a migration compatibility limit;
+no conversion or destructive cleanup is claimed.
+
+Complete verification passed110 Rust tests, formatting, strictClippy, production build and824 runtime
+tests plus one skip across52 files. The preceding aggregate passed823/1skip and timed out in the
+existing multi-step update fixture; its unchanged isolated check passed2.35s. Failed evidence is
+retained. The final cache-publication ordering repair was followed by strictClippy/build and all55
+affected paging/history/bridge checks. Read-only reviewers checked the cursor, framing and bounds
+repairs. Current-state extraction, device-specific rendering, approval/run orchestration and the
+actual standalone launcher remain unfinished finite migration work.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

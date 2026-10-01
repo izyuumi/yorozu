@@ -20,7 +20,7 @@ import {
 } from "@yorozu/shared";
 import { stateDir } from "./memory.js";
 import type { Message } from "./provider.js";
-import { syncPage } from "./thread-sync.js";
+import { rustSyncPage } from "./thread-sync-rust.js";
 import { threadIndexRequest } from "./rust-host.js";
 import { persistHistory, persistHistoryBatch } from "./rust-sync.js";
 
@@ -667,9 +667,13 @@ export function eventsAfter(
   afterEventId?: string,
   dir = stateDir(),
   minTs = 0,
-  include?: (event: YorozuEvent) => boolean,
+  includeApprovalStatus = true,
 ): YorozuEvent[] {
-  return syncPage(logFile(threadId, dir), afterEventId, minTs, SYNC_LIMIT, include);
+  return threadSyncPage(threadId, afterEventId, dir, minTs, includeApprovalStatus).events;
+}
+export function threadSyncPage(threadId: string, afterEventId: string | undefined, dir: string,
+  minTs: number, includeApprovalStatus: boolean): { events: YorozuEvent[]; more: boolean } {
+  return rustSyncPage(dir, threadId, afterEventId, minTs, includeApprovalStatus);
 }
 
 /**

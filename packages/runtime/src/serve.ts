@@ -92,7 +92,7 @@ import {
   archiveThread,
   createThread,
   currentThread,
-  eventsAfter,
+  threadSyncPage,
   fullToolResult,
   listThreads,
   markThreadRead,
@@ -1512,10 +1512,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
     let bytes = currentBytes;
     let more = false;
     threads: for (const thread of selected) {
-      const page = eventsAfter(thread.id, lastSeen?.[thread.id], dir, threadId ? 0 : pairedAt,
-        (event) => includeApprovalStatus || event.kind !== "approval_status");
-      if (page.length === SYNC_LIMIT) more = true;
-      for (const stored of page) {
+      const page = threadSyncPage(thread.id, lastSeen?.[thread.id], dir, threadId ? 0 : pairedAt, includeApprovalStatus);
+      if (page.more) more = true;
+      for (const stored of page.events) {
         const event = phoneCanDownload === null ? stored : phoneTrace(stored, phoneCanDownload);
         const size = Buffer.byteLength(JSON.stringify(event));
         if (events.length >= replayEvents ||

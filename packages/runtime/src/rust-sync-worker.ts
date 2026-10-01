@@ -10,11 +10,11 @@ let active: { id: string; signal: Int32Array; output: Uint8Array } | undefined;
 let buffer = ""; let closing = false; let exited = false;
 let idle: ReturnType<typeof setTimeout> | undefined;
 let deadline: ReturnType<typeof setTimeout> | undefined;
-function result(value: unknown, success = true): void {
+function result(value: unknown, success = true, encoded?: Buffer): void {
   const pending = active; active = undefined;
   if (deadline) clearTimeout(deadline);
   if (pending) {
-    const bytes = Buffer.from(JSON.stringify(value));
+    const bytes = encoded ?? Buffer.from(JSON.stringify(value));
     if (bytes.length <= pending.output.length) { pending.output.set(bytes); Atomics.store(pending.signal, 1, bytes.length); }
     else success = false;
     Atomics.store(life, 0, closing ? 2 : 0);
@@ -54,7 +54,11 @@ child.stdout.on("data", (chunk: string) => {
     try {
       const frame = JSON.parse(line) as { id?: unknown; result?: unknown };
       if (!active || frame.id !== active.id || !Object.hasOwn(frame, "result")) return fail();
-      result(frame.result);
+      // The pinned Rust protocol emits exactly id/result in that order. Preserve its result
+      // bytes: JS re-encoding may expand numeric notation beyond a bounded response allowance.
+      const prefix = `{"id":${JSON.stringify(frame.id)},"result":`;
+      if (!line.startsWith(prefix) || !line.endsWith("}") || Object.keys(frame).length !== 2) return fail();
+      result(frame.result, true, Buffer.from(line.slice(prefix.length, -1)));
     } catch { return fail(); }
   }
 });
