@@ -1,7 +1,7 @@
 name: CI
 on:
   push:
-    branches: [main, 'release/*']
+    branches: [main, 'release/*', v0.6.0-alpha]
   pull_request:
 
 # One run per ref: a newer push cancels the one it supersedes.
@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   # Pull requests run only the jobs their paths can break; a job skipped here passes required
-  # checks. Pushes to main and release branches, and edits to this file, run everything.
+  # checks. All listed branch pushes, including the isolated alpha, run everything.
   changes:
     runs-on: ubuntu-latest
     outputs:

@@ -494,6 +494,15 @@ Actual new schedule execution and PAIOS ownership are optional later product fea
 truthful unavailable UI is retained; they cannot expand this checklist or substitute for the requested
 Rust host responsibilities. No control removal may silently remove a required capability.
 
+## Isolated alpha CI
+
+Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including
+Rust on Linux/macOS/Windows. Runtime tests use two workers to bound process/storage concurrency
+while retaining individual deadlines. Automatic Release, Release Please and website deployment
+still exclude the alpha branch. This enables verification only: no upload, publication, beta feed
+change, native-gate exemption or installed-app replacement follows from an alpha CI push.
+The native iOS 26.5 release gate and internal-only distribution remain required later steps.
+
 ## Accepted conversation and storage target (implementation pending)
 
 One user-facing Yorozu agent serves the main conversation and optional focused conversations.
