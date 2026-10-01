@@ -429,3 +429,70 @@ fn real_owner_large_results_are_bounded_and_tokens_cannot_consume_or_replay_anot
     assert!(restarted.wait().unwrap().success());
     assert_eq!(fs::read_to_string(temp.thread()).unwrap(), original);
 }
+
+#[test]
+fn complete_unterminated_legacy_rows_survive_append_retry_and_restart() {
+    for transcript_terminated in [false, true] {
+        let temp = Temp::new();
+        fs::create_dir(temp.0.join("threads")).unwrap();
+        fs::create_dir(temp.0.join("transcripts")).unwrap();
+        let old = b"{ \"legacy\": 1e3, \"future\": [true] }";
+        fs::write(temp.thread(), old).unwrap();
+        let transcript = [
+            old.as_slice(),
+            if transcript_terminated { b"\n" } else { b"" },
+        ]
+        .concat();
+        fs::write(temp.transcript(), transcript).unwrap();
+        let mut store = History::open(&temp.0).unwrap();
+        assert_eq!(store.request(&request("new", "next"))["stored"], true);
+        let expected = [old.as_slice(), b"\n", line("next").as_slice()].concat();
+        assert_eq!(fs::read(temp.thread()).unwrap(), expected);
+        assert_eq!(fs::read(temp.transcript()).unwrap(), expected);
+        assert_eq!(store.request(&request("new", "next"))["stored"], true);
+        drop(store);
+        temp.uncommit();
+        let mut store = History::open(&temp.0).unwrap();
+        assert_eq!(store.request(&request("new", "next"))["stored"], true);
+        assert_eq!(fs::read(temp.thread()).unwrap(), expected);
+        assert_eq!(fs::read(temp.transcript()).unwrap(), expected);
+    }
+}
+
+#[test]
+fn unsupported_legacy_tails_refuse_append_without_changing_visible_bytes() {
+    for tail in [br#"{"legacy":"\ud800"}"#.as_slice(), br#"{"legacy":1e400}"#] {
+        let temp = Temp::new();
+        fs::create_dir(temp.0.join("threads")).unwrap();
+        fs::write(temp.thread(), tail).unwrap();
+        let mut store = History::open(&temp.0).unwrap();
+        assert_ne!(store.request(&request("new", "next"))["stored"], true);
+        assert_eq!(fs::read(temp.thread()).unwrap(), tail);
+        assert!(temp.intents().is_empty());
+    }
+}
+
+#[test]
+fn normalized_legacy_row_does_not_accept_event_when_second_projection_fails() {
+    let temp = Temp::new();
+    fs::create_dir(temp.0.join("threads")).unwrap();
+    fs::create_dir(temp.0.join("transcripts")).unwrap();
+    fs::create_dir(temp.transcript()).unwrap();
+    let old = br#"{ "legacy": 1e3 }"#;
+    fs::write(temp.thread(), old).unwrap();
+    let mut store = History::open(&temp.0).unwrap();
+    assert_ne!(store.request(&request("new", "next"))["stored"], true);
+    assert_eq!(
+        fs::read(temp.thread()).unwrap(),
+        [old.as_slice(), b"\n"].concat()
+    );
+    assert!(temp.intents().is_empty());
+    drop(store);
+    fs::remove_dir(temp.transcript()).unwrap();
+    let mut store = History::open(&temp.0).unwrap();
+    assert_eq!(store.request(&request("new", "next"))["stored"], true);
+    assert_eq!(
+        fs::read(temp.thread()).unwrap(),
+        [old.as_slice(), b"\n", line("next").as_slice()].concat()
+    );
+}

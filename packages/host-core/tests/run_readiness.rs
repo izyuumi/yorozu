@@ -736,3 +736,29 @@ fn scoped_lifecycle_keeps_expected_marker_and_queue_on_metadata_conflict() {
         true
     );
 }
+
+#[test]
+fn complete_unterminated_legacy_origin_survives_sdk_final_and_scoped_cleanup() {
+    let temp = Temp::new();
+    let (mut host, _) = open(&temp);
+    let event = json!({"id":"origin","threadId":"thread","ts":1000,"agentId":"phone","kind":"message","data":{"role":"user","text":"keep this","future":{"kept":true}}});
+    assert_eq!(host.request(&json!({"op":"accepted_accept","entry":{"id":"origin","threadId":"thread","identity":"a".repeat(64),"purpose":"legacy","event":event}}))["status"], "accepted");
+    fs::create_dir_all(temp.0.join("threads")).unwrap();
+    let old = event.to_string().into_bytes();
+    fs::write(temp.0.join("threads/thread.jsonl"), &old).unwrap();
+    assert_eq!(
+        host.request(&json!({"op":"queue_enqueue","threadId":"thread","eventId":"origin"}))["stored"],
+        true
+    );
+    let scope = issued(&mut host);
+    assert_eq!(host.request(&json!({"op":"history_append","operationId":"final","thread":true,"transcript":true,"event":{"id":"native:origin:final","threadId":"thread","ts":2000,"agentId":"main","kind":"message","data":{"role":"agent","text":"done","done":true}}}))["stored"], true);
+    assert!(
+        fs::read(temp.0.join("threads/thread.jsonl"))
+            .unwrap()
+            .starts_with(&old)
+    );
+    assert_eq!(
+        lifecycle(&mut host, &scope, "run_attempt_finish")["applied"],
+        true
+    );
+}

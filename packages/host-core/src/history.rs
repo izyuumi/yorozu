@@ -68,6 +68,46 @@ fn same_file(path: &Path, file: &File) -> io::Result<()> {
     }
     Ok(())
 }
+// Normalize only a complete legacy row; the journal schema and prior raw bytes stay intact.
+fn delimit(path: &Path, original: &File, length: u64, original_hash: &str) -> io::Result<String> {
+    let mut options = OpenOptions::new();
+    options.read(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = options.open(path)?;
+    same_file(path, &file)?;
+    if file.metadata()?.len() != length || prefix(&mut file, length)? != original_hash {
+        return Err(invalid());
+    }
+    same_file(path, &file)?;
+    same_file(path, original)?;
+    if file.seek(SeekFrom::End(0))? != length {
+        return Err(invalid());
+    }
+    // Append mode preserves a concurrent writer's bytes; changed length fails closed below.
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    same_file(path, &file)?;
+    if file.metadata()?.len() != length + 1 || prefix(&mut file, length)? != original_hash {
+        return Err(invalid());
+    }
+    file.seek(SeekFrom::Start(length))?;
+    let mut delimiter = [0u8; 1];
+    file.read_exact(&mut delimiter)?;
+    if delimiter != *b"\n" {
+        return Err(invalid());
+    }
+    let hash = prefix(&mut file, length + 1)?;
+    same_file(path, &file)?;
+    if file.metadata()?.len() != length + 1 {
+        return Err(invalid());
+    }
+    sync_dir(path.parent().ok_or_else(invalid)?)?;
+    Ok(hash)
+}
 pub(crate) fn publish(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let parent = path.parent().ok_or_else(invalid)?;
     let temporary = parent.join(format!(
@@ -346,6 +386,38 @@ impl History {
                 }
                 same_file(&path, &file)?;
                 let hash = prefix(&mut file, length)?;
+                if complete < length {
+                    file.seek(SeekFrom::Start(complete))?;
+                    let mut tail = vec![0; (length - complete) as usize];
+                    file.read_exact(&mut tail)?;
+                    match serde_json::from_slice::<Value>(&tail) {
+                        Ok(_) => {
+                            if length + 1 + line_length > LOG_BYTES {
+                                return Err(invalid());
+                            }
+                            same_file(&path, &file)?;
+                            let normalized = delimit(&path, &file, length, &hash)?;
+                            same_file(&path, &file)?;
+                            if file.metadata()?.len() != length + 1
+                                || prefix(&mut file, length + 1)? != normalized
+                            {
+                                return Err(invalid());
+                            }
+                            return Ok(Target {
+                                folder,
+                                name,
+                                offset: length + 1,
+                                original_length: length + 1,
+                                before_hash: normalized.clone(),
+                                original_hash: normalized,
+                            });
+                        }
+                        Err(error) if crate::paging::unsupported_legacy(&error) => {
+                            return Err(invalid());
+                        }
+                        Err(_) => {}
+                    }
+                }
                 let before = if complete == length {
                     hash.clone()
                 } else {

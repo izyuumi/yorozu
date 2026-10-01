@@ -966,6 +966,29 @@ terminal evidence, independent Stop/expiry/FIFO cleanup and persistent metadata 
 admission checkpoint c10706f CI passes all jobs under the normal two-worker configuration; this
 remains distinct from the required exact native26.5 release gate.
 
+## Legacy complete-row delimiter preservation
+
+A complete legacy JSON row without a trailing newline stays in visible history when a new event
+is appended. Rust verifies the bounded tail and appends exactly one newline before publishing the
+new transaction; original whitespace, numeric spelling and unknown fields remain byte-for-byte.
+Append-mode descriptors, raw-prefix hashes, path/descriptor identity checks and normalized-log bounds
+protect the operation. Target fields and journal schema remain unchanged, with lengths and hashes
+covering the normalized prefix for retry, restart and old-reader compatibility.
+
+An independently normalized projection may retain its delimiter when another destination refuses
+preparation. That does not accept a new event or publish its transaction; recovery requires reopening
+the existing fault-latched owner. Genuine incomplete tails retain the existing exact recovery copy
+and tail-only repair. JS-readable values unsupported by serde, including lone surrogates and
+out-of-range numbers, explicitly refuse append while preserving visible bytes.
+
+Validation: all127 Rust tests, formatting and strictClippy pass. The27 focused history/readiness
+cases include mixed thread/transcript termination, original retry, restart with an uncommitted
+existing-format intent, second-projection refusal and preservation of the accepted native origin
+through final cleanup. Actual prior-code negatives lost visible bytes/origin and accepted unsupported
+tails; logs are retained with the initial recovery-fixture failure. No runtime TypeScript changed in
+this slice. The preceding scoped-lifecycle checkpoint2be39cd passes every CI job, including normal
+two-worker runtime and Rust on all three platforms; exact native26.5 remains a separate release gate.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

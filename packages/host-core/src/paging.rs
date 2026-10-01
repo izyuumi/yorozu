@@ -102,18 +102,20 @@ fn line(
     }
     Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
 }
+pub(crate) fn unsupported_legacy(error: &serde_json::Error) -> bool {
+    let reason = error.to_string();
+    reason.contains("surrogate")
+        || reason.contains("unexpected end of hex escape")
+        || reason.contains("invalid unicode code point")
+        || reason.contains("number out of range")
+}
 fn parse(text: &str) -> io::Result<Option<Value>> {
     match serde_json::from_str::<Value>(text) {
         Ok(event) => Ok((event["id"].is_string() && event["ts"].is_number()).then_some(event)),
         Err(error) => {
             // These legacy values are accepted by JS but cannot be represented by this parser.
             // Refuse the query explicitly, preserving the file instead of silently dropping rows.
-            let reason = error.to_string();
-            if reason.contains("surrogate")
-                || reason.contains("unexpected end of hex escape")
-                || reason.contains("invalid unicode code point")
-                || reason.contains("number out of range")
-            {
+            if unsupported_legacy(&error) {
                 return Err(invalid());
             }
             Ok(None)
