@@ -938,6 +938,39 @@ test("retry repairs a logged native message after queue persistence fails", asyn
   expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8"))).toEqual([]);
 });
 
+test("Rust queue readiness prevents a waiting native turn from executing after external queue mutation", async () => {
+  let finish!: () => void;
+  const run = vi.fn<NativeAgentRunner["run"]>(async () => {
+    await new Promise<void>((resolve) => { finish = resolve; });
+    return { text: "done", sessionId: "session" };
+  });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } });
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "queue-fence");
+  const first = send({ kind: "message", data: { role: "user", text: "first" } }, "queue-fence");
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const second = send({ kind: "message", data: { role: "user", text: "second" } }, "queue-fence");
+  await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === second);
+  const queuePath = join(dir, "native-turn-queue.json");
+  const foreign = JSON.stringify([{ threadId: "foreign", eventId: "retained-other-owner" }]) + "\n";
+  writeFileSync(queuePath, foreign);
+  finish();
+  await eventsUntil((event) => event.kind === "message" && event.id === `native:${first}:final` && event.data.done === true);
+  await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === "queue-fence")?.nativeTurn).toBeUndefined());
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(readFileSync(queuePath, "utf8")).toBe(foreign);
+  expect(readThreadEvents("queue-fence", dir).some((event) => event.id === second && event.kind === "message" && event.data.text === "second")).toBe(true);
+});
+
+test("ambiguous legacy queue recovery blocks host startup without rewriting queue bytes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-blocked-queue-"));
+  const saved = '[ { "threadId": "thread", "eventId": "saved", "unknown": true } ]\n';
+  writeFileSync(join(dir, "native-turn-queue.json"), saved);
+  writeFileSync(join(dir, "native-turn-queue.json.tmp"), "uncertain saved queue");
+  expect(() => serve({ stateDir: dir, relayUrl: "ws://127.0.0.1:1" })).toThrow("remains unconfirmed");
+  expect(readFileSync(join(dir, "native-turn-queue.json"), "utf8")).toBe(saved);
+  expect(readFileSync(join(dir, "native-turn-queue.json.tmp"), "utf8")).toBe("uncertain saved queue");
+});
+
 test("skill lists refresh on join after ten minutes and broadcast only changes", async () => {
   const realNow = Date.now.bind(Date);
   let elapsed = 0;

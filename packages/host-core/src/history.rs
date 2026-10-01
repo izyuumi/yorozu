@@ -68,7 +68,7 @@ fn same_file(path: &Path, file: &File) -> io::Result<()> {
     }
     Ok(())
 }
-fn publish(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn publish(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let parent = path.parent().ok_or_else(invalid)?;
     let temporary = parent.join(format!(
         ".pending.{}.{}",
@@ -136,6 +136,7 @@ pub struct History {
     bytes: u64,
     temporaries: usize,
     failed: bool,
+    queue: Option<crate::native_queue::NativeQueue>,
 }
 impl Drop for History {
     fn drop(&mut self) {
@@ -159,6 +160,7 @@ impl History {
             bytes: 0,
             temporaries: 0,
             failed: false,
+            queue: None,
         };
         let mut keys = HashSet::new();
         let mut done = HashSet::new();
@@ -601,6 +603,18 @@ impl History {
     pub fn request(&mut self, request: &Value) -> Value {
         if self.failed {
             return json!({"error":"history-storage-failed"});
+        }
+        if request["op"]
+            .as_str()
+            .is_some_and(|op| op.starts_with("queue_"))
+        {
+            if self.queue.is_none() {
+                match crate::native_queue::NativeQueue::open(&self.root) {
+                    Ok(queue) => self.queue = Some(queue),
+                    Err(_) => return json!({"error":"native-queue-storage-failed"}),
+                }
+            }
+            return self.queue.as_mut().unwrap().request(request);
         }
         let result = match request["op"].as_str() {
             Some("history_open") => Ok(json!({"stored":true})),

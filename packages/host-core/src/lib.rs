@@ -4,6 +4,7 @@ pub mod accepted;
 pub mod admission;
 pub mod history;
 mod journal;
+pub mod native_queue;
 pub mod outbox;
 pub mod stops;
 pub mod thread_index;

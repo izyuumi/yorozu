@@ -135,7 +135,7 @@ import { claudeCodeRunner, type NativeAgentRunner, type NativeTurn } from "./nat
 import { isProjectFolder, listProjects } from "./projects.js";
 import { questionDesk, QUESTION_TIMEOUT_MS } from "./tools/cards.js";
 import { persistThreadAndTranscript, persistThreadAndTranscriptBatch } from "./transcripts.js";
-import { retainSyncHost } from "./rust-sync.js";
+import { retainSyncHost, syncHostRequest } from "./rust-sync.js";
 
 const DEFAULT_STATE_DIR = join(homedir(), "Library", "Application Support", "Yorozu");
 
@@ -523,6 +523,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   ensureStateDir(dir);
   const releaseHistory = retainSyncHost(dir);
   try {
+  syncHostRequest(dir, { op: "queue_open" });
   // A SIGKILL cannot run the SDK's exit cleanup. Stop an orphaned CLI before any native
   // recovery starts; a live old CLI beside a resumed one could repeat external tool effects.
   const agentProcessesFile = join(dir, "native-agent-processes.json");
@@ -676,10 +677,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
   if (!Array.isArray(queuedNative) || !queuedNative.every((entry) =>
     typeof entry?.threadId === "string" && !!entry.threadId &&
     typeof entry.eventId === "string" && !!entry.eventId)) throw new Error("Invalid native turn queue");
-  const saveNativeQueue = (): void => writeFileAtomic(nativeQueueFile, JSON.stringify(queuedNative));
+  syncHostRequest(dir, { op: "queue_open", expectedHash: existsSync(nativeQueueFile)
+    ? createHash("sha256").update(readFileSync(nativeQueueFile)).digest("hex") : null });
   const removeNativeQueue = (eventId: string): void => {
     const index = queuedNative.findIndex((entry) => entry.eventId === eventId);
-    if (index >= 0) { queuedNative.splice(index, 1); saveNativeQueue(); }
+    if (index >= 0) {
+      syncHostRequest(dir, { op: "queue_remove", eventId, threadId: queuedNative[index]!.threadId });
+      queuedNative.splice(index, 1);
+    }
   };
   const nativeRecoveryStarted = new Set<string>();
   const admittedTurns = new Map<string, Promise<void>>();
@@ -1916,9 +1921,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (admitted) return admitted;
     if (userEventId && threadAgent(threadId, dir) !== "yorozu" &&
         !queuedNative.some((entry) => entry.eventId === userEventId)) {
+      syncHostRequest(dir, { op: "queue_enqueue", threadId, eventId: userEventId });
       queuedNative.push({ threadId, eventId: userEventId });
-      try { saveNativeQueue(); }
-      catch (error) { queuedNative.pop(); throw error; }
     }
     admitTurn(threadId, turnKey);
     const previous = turnQueues.get(threadId) ?? Promise.resolve();
@@ -1944,6 +1948,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           broadcast(ordered);
         }
       }
+      if (userEventId && threadAgent(threadId, dir) !== "yorozu") syncHostRequest(dir, { op: "queue_ready" });
       startTurnState(threadId, turnKey);
       if (userEventId) activeTurnIds.add(userEventId);
       try { await runTurn(threadId, text, recorded, attachments, userEventId); }
@@ -1955,6 +1960,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     turnQueues.set(threadId, next);
     if (userEventId) admittedTurns.set(userEventId, next);
     void next.finally(() => {
+      if (stopped) return;
       if (turnQueues.get(threadId) === next) turnQueues.delete(threadId);
       if (userEventId && admittedTurns.get(userEventId) === next) admittedTurns.delete(userEventId);
       if (!updateGate.draining && updateGate.status.phase !== "installing" && drainInterrupted.has(threadId) &&

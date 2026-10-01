@@ -336,6 +336,28 @@ changing deadlines. The final complete runtime suite passes 809 tests with one s
 using four workers; the production runtime build passes. Queue/steering migration and the remaining
 standalone/native/release gates are still open.
 
+## Durable native queue
+
+Rust now owns `native-turn-queue.json` mutations through the existing pinned local history worker.
+Startup requires a queue-ready proof before orphan cleanup or SDK recovery. Waiting turns recheck
+that proof before execution. Exact legacy bytes and unknown fields are retained until a mutation;
+before each rewrite the prior bytes are saved in a private content-addressed recovery snapshot.
+Original event/thread retries are idempotent; retargeting is rejected. An OS writer lock excludes
+another owner, and unexpected external changes fence the queue without overwriting them. An ambiguous
+legacy `.tmp` remains untouched and blocks startup; a blocker introduced after startup produces a
+retryable failure. Own interrupted private temporaries remain retained and cannot admit work.
+
+Queue files are bounded to 16 MiB/65,536 entries, recovery snapshots to 4 GiB/65,536 files, and pending
+temporaries to 128 files. Native message bodies remain in the existing Rust accepted/history stores.
+This extracts durable queue writes; lifecycle decisions and steering/run policy are still in Node.
+Eight queue tests and all 74 Rust tests pass, including actual worker termination after enqueue/remove
+acknowledgement, exact-byte snapshots, restart retries, owner conflicts, external mutation fencing,
+ambiguous legacy recovery, bounds and symlinks. Strict Clippy, the production runtime build, nine
+native interruption/queue/update regressions and two startup/waiting-turn fence regressions pass.
+The full runtime suite passes 811 tests with one skipped across 47 files using four workers.
+The first queue check stopped on a Clippy formatting warning before any build or host test; this was
+fixed and all checks rerun. Cross-platform execution and actual power-loss durability remain unverified.
+
 ## Required 0.6.0 host work
 
 The requested rewrite has a finite completion checklist. These responsibilities are required before
