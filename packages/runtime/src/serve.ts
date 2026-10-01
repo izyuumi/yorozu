@@ -54,6 +54,7 @@ import {
 } from "@yorozu/shared";
 import WebSocket from "ws";
 import { startRustRelay, type RustRelaySocket } from "./relay-rust.js";
+import { CatchupQueue } from "./catchup-rust.js";
 import { hostPeerInfo, claimPeer } from "./session-peers.js";
 import { UpdateGate } from "./update-gate.js";
 import { WireCrypto } from "./wire-crypto.js";
@@ -803,10 +804,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
   let relayReady = false;
   let relay: ReturnType<typeof startRustRelay> | undefined;
   let stopped = false;
-  const catchupSends = new Map<string, { connection: RustRelaySocket | null; device: PairedDevice;
-    responses: YorozuEvent[]; next: number }>();
+  const catchupQueue = new CatchupQueue(dir);
+  const catchupSends = new Map<string, { connection: RustRelaySocket; device: PairedDevice; generation: string }>();
   let catchupTimer: NodeJS.Timeout | null = null;
-  let nextCatchupAt = 0;
   /**
    * Secrets behind the QRs on screen, newest last. A phone's first `hello` proves it holds one
    * of them, and pairing spends them all: a QR is for one phone, and the next one is drawn fresh.
@@ -1435,6 +1435,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const known = devices.get(pub);
     if (!known) return;
     catchupSends.delete(pub);
+    try { catchupQueue.cancel(pub); } catch { state("catchup-unavailable"); socket?.close(); }
     activeSearchRequests.delete(pub);
     devices.delete(pub);
     wireCrypto.forget(pub);
@@ -2269,42 +2270,34 @@ export function serve(options: ServeOptions = {}): Sidecar {
       ? questions.has(event.data.questionId, event.threadId)
       : true;
 
-  /** One catch-up frame per tick; rotate phones and replace obsolete requests per phone. */
+  /** The compatibility timer only wakes Rust's monotonic, connection-scoped scheduler. */
   const sendCatchup = (): void => {
     catchupTimer = null;
-    const entry = catchupSends.entries().next().value;
-    if (!entry) return;
-    const [pub, job] = entry;
-    catchupSends.delete(pub);
-    if (!stopped && relayReady && socket === job.connection && job.connection?.readyState === WebSocket.OPEN &&
-      devices.get(pub) === job.device) {
-      if (job.connection.bufferedAmount > 512 * 1024) {
-        catchupSends.set(pub, job);
-        catchupTimer = setTimeout(sendCatchup, 100);
-        catchupTimer.unref();
+    if (stopped || !socket) return;
+    const connection = socket;
+    const eligible = [...catchupSends].flatMap(([pub, target]) => devices.get(pub) === target.device && target.connection === connection
+      ? [{ pub, generation: target.generation }] : []);
+    try {
+      // Retired cards do not consume pacing. Bound work in one JS turn while Rust retains jobs.
+      for (let scanned = 0; scanned < 256; scanned++) {
+        const next = catchupQueue.next(connection.epoch, eligible, relayReady && connection.readyState === WebSocket.OPEN, connection.bufferedAmount);
+        let remaining = next.remaining; let waitMs = next.waitMs;
+        if (next.event) {
+          const response = next.event;
+          const fresh = response.kind === "sync_delta" && response.data.current
+            ? { ...response, data: { ...response.data, current: response.data.current.filter(stillActionable) } } : response;
+          const sent = stillActionable(response);
+          if (sent) sendTo(next.pub!, fresh); // Seal/reserve only now, after fresh actionability.
+          const finished = catchupQueue.finish(next.claim!, next.pub!, next.generation!, sent);
+          remaining = finished.remaining; waitMs = finished.waitMs;
+          if (next.done && catchupSends.get(next.pub!)?.generation === next.generation) catchupSends.delete(next.pub!);
+          if (!sent && remaining && scanned < 255) continue;
+        }
+        if (remaining) { catchupTimer = setTimeout(sendCatchup, waitMs); catchupTimer.unref(); }
+        else catchupSends.clear();
         return;
       }
-      while (job.next < job.responses.length) {
-        const response = job.responses[job.next++]!;
-        if (!stillActionable(response)) continue;
-        const fresh = response.kind === "sync_delta" && response.data.current
-          ? { ...response, data: { ...response.data, current: response.data.current.filter(stillActionable) } }
-          : response;
-        try { sendTo(pub, fresh); }
-        catch (error) {
-          state(`catchup-send-error ${String(error)}`);
-          job.connection?.close();
-          return;
-        }
-        nextCatchupAt = Date.now() + 100;
-        break;
-      }
-      if (job.next < job.responses.length) catchupSends.set(pub, job);
-    }
-    if (catchupSends.size) {
-      catchupTimer = setTimeout(sendCatchup, Math.max(0, nextCatchupAt - Date.now()));
-      catchupTimer.unref();
-    }
+    } catch (error) { state(`catchup-send-error ${String(error)}`); connection.close(); }
   };
 
   /**
@@ -3241,10 +3234,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (from) catchupSends.delete(from);
         if (from) {
           const device = devices.get(from);
-          if (!device) return;
-          catchupSends.set(from, { connection: socket, device, responses, next: 0 });
+          if (!device || !socket) { catchupQueue.cancel(from); return; }
+          const generation = randomUUID();
+          catchupQueue.replace(from, generation, socket.epoch, responses);
+          catchupSends.set(from, { connection: socket, device, generation });
           if (!catchupTimer) {
-            catchupTimer = setTimeout(sendCatchup, Math.max(0, nextCatchupAt - Date.now()));
+            catchupTimer = setTimeout(sendCatchup, 0);
             catchupTimer.unref();
           }
         } else for (const response of responses) reply(response);
@@ -3931,9 +3926,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
     ws.on("error", (e) => state(`error ${e.message}`));
 
     ws.on("close", () => {
+      if (socket !== ws) return;
       relayReady = false;
       clearTraces();
       catchupSends.clear();
+      try { catchupQueue.clear(); } catch { state("catchup-unavailable"); }
       if (catchupTimer) clearTimeout(catchupTimer);
       catchupTimer = null;
       state("disconnected");
@@ -4034,6 +4031,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (partialTimer) clearTimeout(partialTimer);
       partialTimer = null;
       catchupSends.clear();
+      try { catchupQueue.clear(); } catch { state("catchup-unavailable"); }
       if (catchupTimer) clearTimeout(catchupTimer);
       catchupTimer = null;
       for (const turn of running.values()) turn.abort();

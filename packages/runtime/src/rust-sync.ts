@@ -38,11 +38,14 @@ function bridgeFor(dir: string): Bridge {
   thread.on("exit", () => { Atomics.store(life, 0, 3); Atomics.notify(life, 0); if (bridges.get(dir) === owned) bridges.delete(dir); });
   return bridge;
 }
-export function syncHostRequest(dir: string, data: Record<string, unknown>): Record<string, unknown> {
+export function syncHostRequest(dir: string, data: Record<string, unknown>, responseBytes = 1024 * 1024): Record<string, unknown> {
+  if (!Number.isSafeInteger(responseBytes) || responseBytes < 1 || responseBytes > 34 * 1024 * 1024) throw new Error("Rust history response limit");
   const id = randomUUID(); const input = JSON.stringify({ ...data, id });
   if (Buffer.byteLength(input) > 32 * 1024 * 1024 - 1) throw new Error("Rust history remains unconfirmed");
   const root = resolve(dir); const bridge = bridgeFor(root);
-  const { signal, output } = bridge; Atomics.store(signal, 0, 0); Atomics.store(signal, 1, 0);
+  const signal = bridge.signal;
+  const output = responseBytes <= bridge.output.length ? bridge.output : new Uint8Array(new SharedArrayBuffer(responseBytes));
+  Atomics.store(signal, 0, 0); Atomics.store(signal, 1, 0);
   if (Atomics.compareExchange(bridge.life, 0, 0, 1) !== 0) throw new Error("Rust history remains unconfirmed");
   bridge.thread.postMessage({ id, input, signal: signal.buffer, output: output.buffer });
   if (Atomics.wait(signal, 0, 0, 31_000) === "timed-out" || Atomics.load(signal, 0) !== 1) {

@@ -14,6 +14,7 @@ export class RustRelaySocket extends EventEmitter {
   private inputBytes = 0;
   private reading = false;
   constructor(private readonly dir: string, private readonly port: string, readonly device: string) { super(); }
+  get epoch(): string { return `${this.port}/${this.device}`; }
   send(frame: string): void {
     if (this.readyState !== 1) throw new Error("Relay connection is closed");
     const bytes = Buffer.byteLength(frame);

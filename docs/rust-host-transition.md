@@ -612,6 +612,42 @@ complete verification passed all 109 Rust tests, formatting, strict Clippy and p
 plus 819 runtime tests and one skip across 50 files. Read-only review found no remaining blocker
 after the ordered-input repair. History page selection and catch-up job policy remain TypeScript.
 
+## Rust catch-up scheduling
+
+The pinned Rust history owner now retains ephemeral plaintext response jobs, one per authenticated
+phone and request generation, bound to the exact relay owner/connection epoch. Replacement and
+cancellation invalidate old claims. Rust controls round-robin rotation, the 512 KiB congestion pause
+and a global 100 ms monotonic dispatch interval. The compatibility timer only wakes the scheduler;
+client timestamps and JavaScript wall-clock changes cannot accelerate its interval. A claim must
+finish with matching token/phone/request generation before the next can be issued. Retired cards
+consume no pacing. Completed jobs release their projection targets rather than accumulating phones.
+
+Jobs are bounded to 32 phones, 65,536 responses and 32 MiB of encoded plaintext per job, 64 MiB in
+aggregate. Failure remains explicit and leaves retained historical events/counters intact. The Node
+facade keeps authenticated pairing/device currency and refreshes card actionability immediately at
+dispatch, including `sync_delta.current`; historical `events` remain unchanged. Encryption and durable
+channel-sequence reservation still occur only after claim selection, never when history is queued.
+Disconnect, revocation, re-pairing and new request generations invalidate obsolete work. Failure of
+an ephemeral cancellation cannot prevent revocation; the connection closes before removal proceeds.
+A retired socket's late close callback cannot clear the replacement connection's jobs.
+
+Ordinary synchronous worker responses retain the 1 MiB limit. Catch-up may request a transient
+larger response allocation, bounded to 34 MiB with envelope allowance; the worker honors that
+specific request's output buffer and stdout bound. The maximum is not permanently allocated for all
+cached bridges. A real-owner fixture returns a multimegabyte UTF-8 response and proves the pinned
+history PID survives, subsequent ordinary RPCs work and excessive response allowances are refused.
+Sizing covers both Rust and original JavaScript encodings: large numeric arrays can expand during
+worker re-encoding. The numeric-extension fixture first reproduced a pinned-owner failure; the
+repaired allowance preserves that owner and the complete unchanged event.
+Additional contracts verify supersession, round-robin/congestion, stale/duplicate claims, monotonic
+pacing, connection invalidation and job/byte bounds. Existing affected sync/catch-up cases pass.
+The first build's Clippy boolean-style failure and omitted `done` response field are retained in
+verification logs. Final complete verification passed all 110 Rust tests, formatting, strict Clippy,
+production build and 821 runtime tests plus one skip across 51 files. Read-only recheck found no
+remaining blocker after the numeric allowance and pre-mutation validation repairs. History page
+selection, current-state extraction,
+capability-specific preview rendering and live approval ownership still remain outside this slice.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

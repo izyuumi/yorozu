@@ -47,7 +47,7 @@ function fail(): void { close(); }
 child.stderr.resume(); child.stdout.setEncoding("utf8");
 child.stdout.on("data", (chunk: string) => {
   buffer += chunk;
-  if (Buffer.byteLength(buffer) > 1024 * 1024) return fail();
+  if (Buffer.byteLength(buffer) > (active?.output.length ?? response.length) + 4096) return fail();
   let newline: number;
   while ((newline = buffer.indexOf("\n")) >= 0) {
     const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
@@ -62,7 +62,8 @@ child.on("error", fail); child.stdin.on("error", fail);
 child.on("close", () => { exited = true; fail(); finish(); });
 port.on("message", (message: { close?: boolean; id: string; input: string; signal: SharedArrayBuffer; output: SharedArrayBuffer }) => {
   if (message.close) return close();
-  const request = { id: message.id, signal: handoff, output: response };
+  if (message.output.byteLength < 1 || message.output.byteLength > 34 * 1024 * 1024) return fail();
+  const request = { id: message.id, signal: handoff, output: new Uint8Array(message.output) };
   if (active || closing || exited) {
     Atomics.store(request.signal, 0, -1); Atomics.notify(request.signal, 0); return;
   }

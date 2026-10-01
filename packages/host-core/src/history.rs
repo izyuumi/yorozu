@@ -140,6 +140,7 @@ pub struct History {
     steering: Option<crate::steering::Steering>,
     crypto: Option<crate::crypto::HostCrypto>,
     sequences: Option<crate::sequences::Sequences>,
+    catchup: crate::catchup::Catchup,
 }
 impl Drop for History {
     fn drop(&mut self) {
@@ -167,6 +168,7 @@ impl History {
             steering: None,
             crypto: None,
             sequences: None,
+            catchup: crate::catchup::Catchup::default(),
         };
         let mut keys = HashSet::new();
         let mut done = HashSet::new();
@@ -713,6 +715,12 @@ impl History {
             .is_some_and(|op| op.starts_with("peer_"))
         {
             return crate::peers::request(request);
+        }
+        if request["op"]
+            .as_str()
+            .is_some_and(|op| op.starts_with("catchup_"))
+        {
+            return self.catchup.request(request);
         }
         // Compose authenticated boxes with their durable currency in one local request.
         // Fixed internal operations keep recursion bounded and retain each component's fences.
