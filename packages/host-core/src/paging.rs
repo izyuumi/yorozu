@@ -253,6 +253,57 @@ impl ProgressAnchor {
         Ok(next)
     }
 }
+pub(crate) fn boot_evidence(
+    root: &Path,
+    thread: &str,
+    origin: Option<&str>,
+    completion: &str,
+) -> io::Result<(bool, bool, bool, bool)> {
+    let path = root
+        .join("threads")
+        .join(format!("{}.jsonl", crate::thread_index::file_name(thread)));
+    let mut file = match open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok((false, false, false, false));
+        }
+        Err(error) => return Err(error),
+    };
+    let stamp = Stamp::new(&file.metadata()?);
+    let mut end = 0;
+    let (mut seen, mut finished, mut hidden_origin, mut hidden_final) =
+        (false, false, false, false);
+    {
+        let mut reader = BufReader::new(&mut file);
+        while let Some(text) = line(&mut reader, &mut end, stamp.length)? {
+            let Some(event) = parse(&text)? else {
+                continue;
+            };
+            if event["threadId"] != thread {
+                continue;
+            }
+            seen |= origin.is_some_and(|id| event["id"] == id)
+                && event["kind"] == "message"
+                && event["data"]["role"] == "user";
+            finished |= !completion.is_empty()
+                && event["id"] == completion
+                && event["kind"] == "message"
+                && event["data"]["role"] == "agent"
+                && event["data"]["done"] == true;
+            if event["kind"] == "thread_rewound"
+                && event["data"].get("reason").is_none()
+                && event["data"]["requestId"].is_string()
+                && event["data"]["eventId"].is_string()
+                && let Some(hidden) = event["data"]["hiddenEventIds"].as_array()
+            {
+                hidden_origin |= origin.is_some_and(|id| hidden.iter().any(|value| value == id));
+                hidden_final |= hidden.iter().any(|value| value == completion);
+            }
+        }
+    }
+    unchanged(&path, &file, &stamp)?;
+    Ok((seen, finished, hidden_origin, hidden_final))
+}
 pub(crate) fn run_evidence(
     root: &Path,
     thread: &str,

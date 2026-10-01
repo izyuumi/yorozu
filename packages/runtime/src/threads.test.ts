@@ -719,3 +719,51 @@ test("metadata mutation fails closed around legacy pending writes", () => {
   expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(original);
   expect(readFileSync(join(dir, "threads.json.tmp"), "utf8")).toBe("unconfirmed old metadata");
 });
+
+
+test.each(["wrong-role", "missing"] as const)("native boot preserves uncertain origins and refuses a user-role terminal (%s)", (mode) => {
+  createThread("Work", dir, "boot-proof", { agent: "codex", cwd: "/tmp/proj" });
+  if (mode === "wrong-role") appendThreadEvent({ id: "origin", threadId: "boot-proof", ts: 1, agentId: "main", kind: "message",
+    data: { role: "user", text: "keep the origin" } }, dir);
+  setNativeTurn("boot-proof", { id: "native:origin:final", state: "running", userEventId: "origin", recoveryAttempts: 2 }, dir);
+  if (mode === "wrong-role") appendThreadEvent({ id: "native:origin:final", threadId: "boot-proof", ts: 2, agentId: "main", kind: "message",
+    data: { role: "user", text: "not an agent completion", done: true } }, dir);
+  recoverNativeTurns(dir);
+  expect(listThreads(dir)[0]?.nativeTurn).toMatchObject({ state: "interrupted", userEventId: "origin", recoveryAttempts: 2,
+    ...(mode === "missing" ? { pauseReason: "unconfirmed" } : {}) });
+});
+
+test("native boot retires dead cards before metadata conflict and retries once", () => {
+  createThread("Work", dir, "boot-conflict", { agent: "codex", cwd: "/tmp/proj" });
+  appendThreadEvent({ id: "origin", threadId: "boot-conflict", ts: 1, agentId: "main", kind: "message",
+    data: { role: "user", text: "retained" } }, dir);
+  setNativeTurn("boot-conflict", { id: "native:origin:final", state: "running", userEventId: "origin" }, dir);
+  appendThreadEvent({ id: "card", threadId: "boot-conflict", ts: 2, agentId: "main", kind: "approval_card",
+    data: { actionId: "dead", nativeAgent: "codex", actionClass: "Bash", target: "pwd" } }, dir);
+  const conflict = join(dir, "threads.json.tmp");
+  writeFileSync(conflict, "owned boot metadata conflict");
+  const before = readFileSync(join(dir, "threads.json"), "utf8");
+  expect(() => recoverNativeTurns(dir)).toThrow();
+  expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(before);
+  expect(readThreadEvents("boot-conflict", dir).filter((event) => event.kind === "approval_answer"))
+    .toMatchObject([{ data: { actionId: "dead", answer: "no" } }]);
+  rmSync(conflict);
+  recoverNativeTurns(dir);
+  recoverNativeTurns(dir);
+  expect(listThreads(dir)[0]?.nativeTurn).toMatchObject({ state: "interrupted", userEventId: "origin" });
+  expect(readThreadEvents("boot-conflict", dir).filter((event) => event.kind === "approval_answer")).toHaveLength(1);
+});
+
+
+test("native boot retains a legacy counter written as a floating integer", () => {
+  createThread("Work", dir, "numeric-boot", { agent: "codex", cwd: "/tmp/proj" });
+  appendThreadEvent({ id: "origin", threadId: "numeric-boot", ts: 1, agentId: "main", kind: "message",
+    data: { role: "user", text: "retained" } }, dir);
+  setNativeTurn("numeric-boot", { id: "native:origin:final", state: "running", userEventId: "origin", recoveryAttempts: 2 }, dir);
+  const path = join(dir, "threads.json");
+  const raw = readFileSync(path, "utf8").replace(/("recoveryAttempts"\s*:\s*)2\b/, "$1" + "2.0");
+  expect(raw).toMatch(/"recoveryAttempts"\s*:\s*2\.0/);
+  writeFileSync(path, raw);
+  recoverNativeTurns(dir);
+  expect(listThreads(dir)[0]?.nativeTurn).toMatchObject({ state: "interrupted", recoveryAttempts: 2, userEventId: "origin" });
+});

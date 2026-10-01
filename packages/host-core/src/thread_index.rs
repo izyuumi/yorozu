@@ -97,7 +97,7 @@ fn valid_index(index: &Value) -> bool {
 }
 // JSON.parse/JSON.stringify can change an exactly representable number's notation.
 // Larger integer values remain opaque: rounding them is never a valid migration.
-fn compatible(left: &Value, right: &Value) -> bool {
+pub(crate) fn compatible(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Number(a), Value::Number(b)) => {
             a == b

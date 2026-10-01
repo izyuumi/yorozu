@@ -776,43 +776,29 @@ export function setNativeTurn(id: string, turn: ThreadRecord["nativeTurn"], dir 
 }
 
 export function recoverNativeTurns(dir = stateDir()): void {
-  const threads = listThreads(dir);
-  let changed = false;
-  for (const thread of threads) {
-    if (thread.agent && thread.nativeTurn) {
-      const events = visibleThreadEvents(thread.id, dir);
-      if (thread.nativeTurn.userEventId && !events.some((event) => event.id === thread.nativeTurn!.userEventId)) {
-        delete thread.nativeTurn;
-        changed = true;
-        continue;
+  for (const thread of listThreads(dir)) {
+    if (!thread.agent || thread.agent === "yorozu" || !thread.nativeTurn) continue;
+    const scope = { op: "run_turn_recover", threadId: thread.id, expectedTurn: thread.nativeTurn };
+    const preview = syncHostRequest(dir, { ...scope, preview: true });
+    if (preview.checked !== true) throw new Error(`Native boot reconciliation remains unconfirmed: ${String(preview.reason)}`);
+    // Persist denial/retirement BEFORE marker CAS. A failure leaves the old marker available
+    // for retry; a partial denial log is idempotent even across another process restart.
+    const events = visibleThreadEvents(thread.id, dir);
+    const answered = new Set(events.flatMap((event) => event.kind === "approval_answer" ? [event.data.actionId]
+      : event.kind === "question_answer" ? [event.data.questionId] : []));
+    for (const event of events) {
+      const base = { id: randomUUID(), threadId: thread.id, ts: Date.now(), agentId: "main" };
+      if (event.kind === "approval_card" && event.data.nativeAgent && !answered.has(event.data.actionId)) {
+        appendThreadEvent({ ...base, kind: "approval_answer", data: { actionId: event.data.actionId, answer: "no" } }, dir);
+        answered.add(event.data.actionId);
+      } else if (event.kind === "question_card" && !answered.has(event.data.questionId)) {
+        appendThreadEvent({ ...base, kind: "question_answer", data: { questionId: event.data.questionId, answer: "Interrupted" } }, dir);
+        answered.add(event.data.questionId);
       }
-      if (!thread.nativeTurn.userEventId) {
-        const match = /^native:(.+):final$/.exec(thread.nativeTurn.id);
-        if (match && events.some((event) => event.id === match[1] && event.kind === "message" && event.data.role === "user")) {
-          thread.nativeTurn.userEventId = match[1];
-          changed = true;
-        }
-      }
-      const finished = events.some((event) => event.id === thread.nativeTurn!.id && event.kind === "message" && event.data.done);
-      const wasRunning = thread.nativeTurn.state === "running";
-      if (finished) delete thread.nativeTurn;
-      else if (wasRunning) thread.nativeTurn.state = "interrupted";
-      else continue;
-      if (!wasRunning) { changed = true; continue; }
-      // SDK callbacks died with the process: historical cards must not keep live buttons.
-      const answered = new Set(events.flatMap((e) => e.kind === "approval_answer" ? [e.data.actionId] : e.kind === "question_answer" ? [e.data.questionId] : []));
-      for (const event of events) {
-        const base = { id: randomUUID(), threadId: thread.id, ts: Date.now(), agentId: "main" };
-        if (event.kind === "approval_card" && event.data.nativeAgent && !answered.has(event.data.actionId)) {
-          appendThreadEvent({ ...base, kind: "approval_answer", data: { actionId: event.data.actionId, answer: "no" } }, dir);
-        } else if (event.kind === "question_card" && !answered.has(event.data.questionId)) {
-          appendThreadEvent({ ...base, kind: "question_answer", data: { questionId: event.data.questionId, answer: "Interrupted" } }, dir);
-        }
-      }
-      changed = true;
     }
+    const applied = syncHostRequest(dir, { ...scope, preview: false });
+    if (applied.applied !== true) throw new Error(`Native boot reconciliation remains unconfirmed: ${String(applied.reason)}`);
   }
-  if (changed) saveThreads(threads, dir);
 }
 
 /** Prompts from a dead Yorozu process have no callback left to answer them. */

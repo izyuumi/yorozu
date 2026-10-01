@@ -923,7 +923,7 @@ After an SDK failure with observed execution, Node confirms interruption of the 
 issued attempt before requesting a replacement. A failed interruption write fences further dispatch
 and preserves the running marker and durable queue for storage repair. Known claim policy refusals
 preserve the current marker; uncertain persistence can only pause the previously captured scope.
-This does not migrate the remaining generic startup/Stop/rewind/pre-SDK marker lifecycle or
+This does not migrate the remaining generic Stop/rewind/pre-SDK marker lifecycle or
 progress-based counter resets. Those remain item3 work before the bounded provider worker and later finite items.
 
 Validation: all120 Rust tests, formatting, strictClippy and production build pass. The complete
@@ -952,8 +952,8 @@ permanent storage fence. Unconfirmed storage/evidence stops recovery and fences 
 Issued SDK error/session/update/ownership-loss pauses now use these operations. Node awaits the
 changed-files report before typed terminal cleanup and attempt release. Failed finish persistence
 retains the canonical final and original marker while queued successors remain fenced. Known
-pre-SDK updates with no issued attempt retain their compatibility path. Generic startup/Stop/rewind,
-progress resets and full approval currency still require migration; generic nativeTurn writes are
+pre-SDK updates with no issued attempt retain their compatibility path. Generic Stop/rewind/pre-SDK
+transitions and full approval currency still require migration; generic nativeTurn writes are
 not yet sealed. This remains a partial transfer within finite item3.
 
 Validation: all123 Rust tests, formatting and strictClippy pass; production build and the complete
@@ -1016,7 +1016,39 @@ replacement. Five focused runtime cases pass; actual previous-Node negatives blo
 success after an earlier failure and failed to abort a swallowed storage error. Prior failed
 fixture/lint logs are retained. Each progress proof currently hashes and scans retained history
 from its beginning, so CPU cost grows with history despite bounded memory; no speedup is claimed.
-Generic startup/Stop/rewind/pre-SDK marker transitions and approval currency remain within item3.
+Generic Stop/rewind/pre-SDK marker transitions and approval currency remain within item3.
+
+## Scoped Rust boot reconciliation
+
+Native boot marker reconciliation now uses a typed Rust preview and metadata transition. The
+checked expected marker uses the existing safe-number compatibility rule, allowing valid legacy
+2.0 counters while refusing rounded opaque values beyond the safe-integer range. Rust clones its
+retained marker and preserves counters, recoveryActive, sticky pause reasons and unknown fields.
+A thread with an issued live Root registry owner refuses boot reconciliation.
+
+Bounded same-thread history evidence identifies a real user origin, canonical issued completion,
+and successful rewind visibility. Legacy canonical IDs may infer an origin only from a retained
+user row. The supported unissued literal-final case can retire from matching agent/done evidence;
+arbitrary no-origin legacy markers stay paused and dismissible. User-role or wrong-thread rows
+cannot satisfy completion. A proven rewind-hidden origin retires distinctly from an unexplained
+missing origin, which remains retained and explicitly unconfirmed.
+
+Node first checks the scope, persists dead-card no/Interrupted answers, then asks Rust to recheck
+and apply metadata CAS. Card retirement occurs before the marker changes, so a failed write or
+crash can retry without losing the cleanup trigger. Existing answers suppress duplicates, including
+repeated card IDs; interrupted markers also retire their dead cards. Card enumeration remains the
+Node full-history compatibility path. No boot operation grants execution or requires Accepted to
+have initialized. Confirmed orphan PID termination remains first; acceptedReady and durable Stop
+recovery still gate actual resumption.
+
+Validation:134 Rust tests and formatting pass; strictClippy and production build pass. The complete
+runtime/plugin suite passes850 checks plus1skip/52files locally with unchanged deadlines and one
+worker. Focused validation passes20 readiness cases and nine startup/rewind/runtime cases. Actual
+previous Node code erased a marker from a user-role final and discarded a missing-origin marker;
+reviewed strict equality also rejected unchanged raw2.0. Those negatives and the initial numeric
+fixture setup failure are retained. Metadata conflicts retain the old marker after dead-card
+answers, and retries retire each card once. Full approval currency and remaining generic
+Stop/rewind/pre-SDK transitions still belong to finite item3.
 
 ## Isolated alpha CI
 

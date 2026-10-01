@@ -971,3 +971,157 @@ fn progress_refuses_same_bytes_at_a_replaced_physical_file() {
         2
     );
 }
+
+fn boot(host: &mut History, marker: &Value, preview: bool) -> Value {
+    host.request(&json!({"op":"run_turn_recover","threadId":"thread","expectedTurn":marker,"preview":preview}))
+}
+#[test]
+fn boot_reconciliation_preserves_legacy_identity_and_uses_visible_same_thread_role_evidence() {
+    for mode in [
+        "inferred",
+        "legacy-final",
+        "wrong-role",
+        "wrong-thread",
+        "missing-origin",
+        "rewound-origin",
+        "hidden-final",
+        "arbitrary-legacy",
+    ] {
+        let temp = Temp::new();
+        let (mut host, _) = open(&temp);
+        if !["legacy-final", "missing-origin", "arbitrary-legacy"].contains(&mode) {
+            assert_eq!(host.request(&json!({"op":"history_append","operationId":"origin","thread":true,"transcript":true,
+                "event":{"id":"origin","threadId":"thread","ts":1000,"agentId":"phone","kind":"message","data":{"role":"user","text":"retained"}}}))["stored"], true);
+        }
+        let id = if mode == "legacy-final" {
+            "final"
+        } else if mode == "arbitrary-legacy" {
+            "crash"
+        } else {
+            "native:origin:final"
+        };
+        let mut marker = json!({"id":id,"state":"running","recoveryAttempts":2,"recoveryActive":true,"future":{"kept":true}});
+        if !["inferred", "legacy-final", "arbitrary-legacy"].contains(&mode) {
+            marker["userEventId"] = json!("origin");
+        }
+        let read = snapshot(&temp);
+        let mut index = read["threads"].clone();
+        index[0]["nativeTurn"] = marker.clone();
+        assert_eq!(
+            host.request(
+                &json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index})
+            )["stored"],
+            true
+        );
+        if ["legacy-final", "wrong-role", "wrong-thread", "hidden-final"].contains(&mode) {
+            assert_eq!(host.request(&json!({"op":"history_append","operationId":"terminal","thread":true,"transcript":true,
+                "event":{"id":id,"threadId":if mode == "wrong-thread" { "other" } else { "thread" },"ts":2000,"agentId":"main","kind":"message",
+                    "data":{"role":if mode == "wrong-role" { "user" } else { "agent" },"text":"not automatically proof","done":true}}}))["stored"], true);
+        }
+        if ["rewound-origin", "hidden-final"].contains(&mode) {
+            assert_eq!(host.request(&json!({"op":"history_append","operationId":"rewind","thread":true,"transcript":true,
+                "event":{"id":"rewind","threadId":"thread","ts":3000,"agentId":"main","kind":"thread_rewound",
+                    "data":{"requestId":"edit","eventId":"origin","hiddenEventIds":[if mode == "hidden-final" { id } else { "origin" }]}}}))["stored"], true);
+        }
+        let before = fs::read(temp.0.join("threads.json")).unwrap();
+        assert_eq!(boot(&mut host, &marker, true)["checked"], true, "{mode}");
+        assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), before);
+        let proof = boot(&mut host, &marker, false);
+        assert_eq!(proof["applied"], true, "{mode}: {proof}");
+        let retained = &snapshot(&temp)["threads"][0]["nativeTurn"];
+        if ["legacy-final", "rewound-origin"].contains(&mode) {
+            assert!(retained.is_null(), "{mode}");
+        } else {
+            assert_eq!(retained["state"], "interrupted");
+            assert_eq!(retained["recoveryAttempts"], 2);
+            assert_eq!(retained["recoveryActive"], true);
+            assert_eq!(retained["future"]["kept"], true);
+            if mode == "inferred" {
+                assert_eq!(retained["userEventId"], "origin");
+            }
+            if mode == "missing-origin" {
+                assert_eq!(retained["pauseReason"], "unconfirmed");
+            }
+            if mode == "arbitrary-legacy" {
+                assert!(retained.get("userEventId").is_none());
+            }
+        }
+        assert!(
+            host.request(&json!({"op":"accepted_get","messageId":"origin"}))["entry"].is_null()
+        );
+    }
+}
+#[test]
+fn boot_reconciliation_refuses_live_and_replaced_scope_and_preserves_metadata_conflicts() {
+    let temp = Temp::new();
+    let (mut host, _) = open(&temp);
+    seed(&mut host, "origin", "conversation");
+    let scope = issued(&mut host);
+    let marker = snapshot(&temp)["threads"][0]["nativeTurn"].clone();
+    let before = fs::read(temp.0.join("threads.json")).unwrap();
+    assert_eq!(boot(&mut host, &marker, true)["reason"], "run-active");
+    assert_eq!(boot(&mut host, &marker, false)["reason"], "run-active");
+    assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), before);
+    assert_eq!(host.request(&json!({"op":"run_attempt_release","threadId":"thread","eventId":"origin","attemptId":scope["attemptId"]}))["released"], true);
+    let mut stale = marker.clone();
+    stale["attemptId"] = json!("b".repeat(32));
+    assert_eq!(boot(&mut host, &stale, false)["reason"], "scope-replaced");
+    let conflict = temp.0.join("threads.json.tmp");
+    fs::write(&conflict, b"owned boot conflict").unwrap();
+    assert_eq!(
+        boot(&mut host, &marker, false)["reason"],
+        "metadata-unconfirmed"
+    );
+    assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), before);
+    assert_eq!(fs::read(&conflict).unwrap(), b"owned boot conflict");
+    fs::remove_file(conflict).unwrap();
+    assert_eq!(boot(&mut host, &marker, false)["applied"], true);
+    assert_eq!(
+        snapshot(&temp)["threads"][0]["nativeTurn"]["state"],
+        "interrupted"
+    );
+}
+
+#[test]
+fn boot_uses_retained_numeric_values_and_refuses_rounded_opaque_identity() {
+    let temp = Temp::new();
+    let (mut host, _) = open(&temp);
+    seed(&mut host, "origin", "conversation");
+    let read = snapshot(&temp);
+    let mut index = read["threads"].clone();
+    let retained = json!({"id":"native:origin:final","state":"running","userEventId":"origin",
+        "recoveryAttempts":2.0,"future":{"integer":2.0}});
+    index[0]["nativeTurn"] = retained;
+    assert_eq!(
+        host.request(
+            &json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index})
+        )["stored"],
+        true
+    );
+    let normalized = json!({"id":"native:origin:final","state":"running","userEventId":"origin",
+        "recoveryAttempts":2,"future":{"integer":2}});
+    assert_eq!(boot(&mut host, &normalized, false)["applied"], true);
+    let read = snapshot(&temp);
+    assert_eq!(
+        read["threads"][0]["nativeTurn"]["recoveryAttempts"].as_f64(),
+        Some(2.0)
+    );
+    assert!(
+        read["threads"][0]["nativeTurn"]["future"]["integer"]
+            .as_u64()
+            .is_none()
+    );
+    let mut index = read["threads"].clone();
+    index[0]["nativeTurn"]["future"]["opaque"] = json!(9_007_199_254_740_993u64);
+    assert_eq!(
+        host.request(
+            &json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index})
+        )["stored"],
+        true
+    );
+    let before = fs::read(temp.0.join("threads.json")).unwrap();
+    let mut rounded = snapshot(&temp)["threads"][0]["nativeTurn"].clone();
+    rounded["future"]["opaque"] = json!(9_007_199_254_740_992u64);
+    assert_eq!(boot(&mut host, &rounded, false)["reason"], "scope-replaced");
+    assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), before);
+}
