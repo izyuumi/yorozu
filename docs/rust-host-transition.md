@@ -1076,6 +1076,41 @@ case passed unchanged in489ms at its original five-second deadline, followed by 
 Both runs are retained. The broader Stop fallback, rewind,
 pre-SDK/unissued marker transitions and full approval currency remain within finite item3.
 
+## Scoped Rust rewind retirement
+
+Edit from here now reconciles the exact durable successful rewind through run_turn_rewind. Rust
+checks its event and request identity, same-thread main-agent result, and real user anchor physically
+before the rewind. Two bounded history passes prove only explicitly hidden prior user IDs from the
+existing queue and retained marker. Agent rows, missing rows, other-thread ownership and users first
+appearing after the rewind do not authorize removal. Failed, ambiguous or foreign rewinds refuse
+cleanup. Root admission and explicit Retry also refuse retained hidden origins.
+
+The authoritative native queue retires all proved rows in one save, preserving its existing raw
+recovery snapshot and unknown fields. Every confirmed result returns the entire remaining queue,
+including no-op retries and metadata-CAS failures. Node refreshes that mirror before interpreting
+the marker result, so a lost response or partial write cannot leave a stale hidden queue head.
+History, accepted and Stop evidence remain retained.
+
+Only the captured safe-compatible canonical interrupted marker may clear, with an exact matching
+registry owner when present. Running, replacement and mismatched registry scopes remain intact;
+registry retirement follows confirmed metadata CAS. Queue-only recovery works after boot has
+already cleared a hidden marker. Replays retry cleanup, and startup reconciles all retained rewinds
+for affected threads after accepted/Stop recovery and before resuming or draining work. A successful
+cleanup also retires stale reply buffers when no current native marker or running replacement owns
+them. Provider-backed Yorozu rewinds retain their compatibility route.
+
+Focused validation passes23 Rust readiness cases, strictClippy, production build and seven runtime
+rewind/Edit-from-here cases. Actual old code retained hidden queued work, stalled multi-rewind
+startup and erased a replacement scope. The reviewed candidate also emitted false native uncertainty
+for a legacy provider; its regression was reproduced and fixed. Initial capability/observation
+fixture failures are retained separately; startup now checks durable completion plus explicit sync.
+Full validation passes137 Rust tests and formatting, plus856 runtime/plugin checks and1skip in
+52files with one local worker and unchanged deadlines. The complete run finished successfully after
+a brief execution-connection interruption; its owned process terminated with exit0.
+History scans remain bounded by existing log/record limits but repeat for each selected rewind;
+this slice makes no latency improvement claim. Remaining pre-SDK/unissued marker lifecycle,
+broader Stop fallback and full approval currency still belong to finite item3.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

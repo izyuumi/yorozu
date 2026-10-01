@@ -232,6 +232,48 @@ impl NativeQueue {
         }
         self.save(next)
     }
+    pub(crate) fn rewind_candidates(&self, thread: &str) -> io::Result<Vec<String>> {
+        self.check()?;
+        if self.failed || blocked(&self.root)? {
+            return Err(invalid());
+        }
+        Ok(self
+            .entries
+            .iter()
+            .filter(|row| row["threadId"] == thread)
+            .map(|row| row["eventId"].as_str().unwrap().to_owned())
+            .collect())
+    }
+    // Only History supplies this set, after checking the exact retained rewind. One save
+    // preserves the original queue snapshot and avoids a save per hidden message.
+    pub(crate) fn retire_rewound(&mut self, thread: &str, hidden: &HashSet<String>) -> Value {
+        if self.failed {
+            return json!({"error":"native-queue-storage-failed"});
+        }
+        let result = (|| -> io::Result<Value> {
+            self.check()?;
+            if blocked(&self.root)? {
+                return Ok(json!({"error":"queue-recovery-required"}));
+            }
+            let next: Vec<Value> = self
+                .entries
+                .iter()
+                .filter(|row| {
+                    row["threadId"] != thread || !hidden.contains(row["eventId"].as_str().unwrap())
+                })
+                .cloned()
+                .collect();
+            if next.len() != self.entries.len() {
+                self.save(next)?;
+            }
+            // A retry/lost response must refresh Node even when the rows were already removed.
+            Ok(json!({"queueConfirmed":true,"queueEntries":self.entries}))
+        })();
+        result.unwrap_or_else(|_| {
+            self.failed = true;
+            json!({"error":"native-queue-storage-failed"})
+        })
+    }
     pub fn request(&mut self, request: &Value) -> Value {
         if self.failed {
             return json!({"error":"native-queue-storage-failed"});

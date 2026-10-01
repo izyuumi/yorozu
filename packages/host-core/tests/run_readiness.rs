@@ -1230,3 +1230,185 @@ fn scoped_stop_clear_requires_durable_uncertainty_and_keeps_queue_history_and_st
         }
     }
 }
+
+fn reconcile_rewind(host: &mut History, expected: &Value) -> Value {
+    host.request(
+        &json!({"op":"run_turn_rewind","threadId":"thread","rewindId":"rewind",
+        "requestId":"edit","expectedTurn":expected}),
+    )
+}
+#[test]
+fn scoped_rewind_retires_only_proven_prior_user_queue_rows_and_preserves_partial_cleanup() {
+    for guard in [
+        "success",
+        "absent",
+        "replacement",
+        "active",
+        "registry-replaced",
+        "metadata-conflict",
+        "queue-conflict",
+        "missing",
+        "failed",
+        "wrong-thread",
+        "agent-anchor",
+        "late-anchor",
+    ] {
+        let temp = Temp::new();
+        let (mut host, _) = open(&temp);
+        seed(&mut host, "origin", "conversation");
+        let scope = issued(&mut host);
+        assert_eq!(
+            lifecycle(&mut host, &scope, "run_attempt_pause")["applied"],
+            true
+        );
+        let expected = snapshot(&temp)["threads"][0]["nativeTurn"].clone();
+        if guard == "registry-replaced" {
+            let newer = issued(&mut host);
+            assert_ne!(newer["attemptId"], scope["attemptId"]);
+            let read = snapshot(&temp);
+            let mut index = read["threads"].clone();
+            index[0]["nativeTurn"] = expected.clone();
+            assert_eq!(host.request(&json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index}))["stored"], true);
+        }
+        seed(&mut host, "hidden", "conversation");
+        for id in ["not-user", "missing-row", "late"] {
+            assert_eq!(
+                host.request(&json!({"op":"queue_enqueue","eventId":id,"threadId":"thread"}))["stored"],
+                true
+            );
+        }
+        assert_eq!(
+            host.request(&json!({"op":"queue_enqueue","eventId":"other-owner","threadId":"other"}))
+                ["stored"],
+            true
+        );
+        assert_eq!(host.request(&json!({"op":"history_append","operationId":"not-user","thread":true,"transcript":true,
+            "event":{"id":"not-user","threadId":"thread","ts":2000,"agentId":"main","kind":"message","data":{"role":"agent","text":"retained","done":true}}}))["stored"],true);
+        if guard != "missing" {
+            let anchor = if guard == "agent-anchor" {
+                "not-user"
+            } else if guard == "late-anchor" {
+                "late"
+            } else {
+                "origin"
+            };
+            let mut event = json!({"id":"rewind","threadId":if guard == "wrong-thread" {"other"} else {"thread"},"ts":3000,"agentId":"main",
+                "kind":"thread_rewound","data":{"requestId":"edit","eventId":anchor,"hiddenEventIds":["origin","hidden","not-user","missing-row","late","other-owner"]}});
+            if guard == "failed" {
+                event["data"]["reason"] = json!("busy");
+            }
+            assert_eq!(host.request(&json!({"op":"history_append","operationId":"rewind","event":event,"thread":true,"transcript":true}))["stored"],true);
+        }
+        seed(&mut host, "late", "conversation");
+        seed(&mut host, "visible", "conversation");
+        let mut captured = expected.clone();
+        if ["absent", "replacement", "active"].contains(&guard) {
+            let read = snapshot(&temp);
+            let mut index = read["threads"].clone();
+            if guard == "absent" {
+                index[0].as_object_mut().unwrap().remove("nativeTurn");
+                captured = Value::Null;
+            } else if guard == "replacement" {
+                index[0]["nativeTurn"] = json!({"id":"native:visible:final","userEventId":"visible","state":"interrupted","recoveryAttempts":3,"future":{"kept":true}});
+            } else {
+                index[0]["nativeTurn"]["state"] = json!("running");
+                captured = index[0]["nativeTurn"].clone();
+            }
+            assert_eq!(host.request(&json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index}))["stored"],true);
+        }
+        let conflict = temp.0.join(if guard == "queue-conflict" {
+            "native-turn-queue.json.tmp"
+        } else {
+            "threads.json.tmp"
+        });
+        if guard.ends_with("conflict") {
+            fs::write(&conflict, b"owned rewind conflict").unwrap();
+        }
+        let metadata = fs::read(temp.0.join("threads.json")).unwrap();
+        let queue = fs::read(temp.0.join("native-turn-queue.json")).unwrap();
+        let history = fs::read(temp.0.join("threads/thread.jsonl")).unwrap();
+        let proof = reconcile_rewind(&mut host, &captured);
+        let invalid = [
+            "missing",
+            "failed",
+            "wrong-thread",
+            "agent-anchor",
+            "late-anchor",
+            "queue-conflict",
+        ]
+        .contains(&guard);
+        if invalid {
+            assert_ne!(proof["queueConfirmed"], true, "{guard}: {proof}");
+            assert_eq!(
+                fs::read(temp.0.join("native-turn-queue.json")).unwrap(),
+                queue
+            );
+        } else {
+            assert_eq!(proof["queueConfirmed"], true, "{guard}: {proof}");
+            let remaining: Value =
+                serde_json::from_slice(&fs::read(temp.0.join("native-turn-queue.json")).unwrap())
+                    .unwrap();
+            assert_eq!(proof["queueEntries"], remaining);
+            assert_eq!(
+                remaining
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|row| row["eventId"].as_str().unwrap())
+                    .collect::<Vec<_>>(),
+                vec!["not-user", "missing-row", "late", "other-owner", "visible"]
+            );
+        }
+        if ["success", "absent"].contains(&guard) {
+            assert_eq!(proof["applied"], true, "{guard}: {proof}");
+            assert!(snapshot(&temp)["threads"][0]["nativeTurn"].is_null());
+            assert_eq!(
+                reconcile_rewind(&mut host, &Value::Null)["queueEntries"],
+                proof["queueEntries"]
+            );
+        } else {
+            assert_eq!(proof["applied"], false, "{guard}: {proof}");
+            assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), metadata);
+        }
+        assert_eq!(
+            fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+            history
+        );
+        assert_eq!(
+            host.request(&json!({"op":"accepted_get","messageId":"origin"}))["entry"]["purpose"],
+            "conversation"
+        );
+        if guard.ends_with("conflict") {
+            assert_eq!(fs::read(&conflict).unwrap(), b"owned rewind conflict");
+            fs::remove_file(conflict).unwrap();
+            let retry = reconcile_rewind(&mut host, &captured);
+            assert_eq!(retry["applied"], true, "{guard}: {retry}");
+            assert_eq!(retry["queueConfirmed"], true);
+        }
+        if guard == "replacement" {
+            let marker = snapshot(&temp)["threads"][0]["nativeTurn"].clone();
+            let retry = reconcile_rewind(&mut host, &marker);
+            assert_eq!(retry["applied"], true);
+            assert_eq!(retry["cleared"], false);
+            assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), metadata);
+        }
+    }
+}
+#[test]
+fn durable_rewind_bars_root_dispatch_and_retry_even_if_hidden_origin_still_heads_queue() {
+    let temp = Temp::new();
+    let (mut host, _) = open(&temp);
+    seed(&mut host, "origin", "conversation");
+    let scope = issued(&mut host);
+    assert_eq!(
+        lifecycle(&mut host, &scope, "run_attempt_pause")["applied"],
+        true
+    );
+    let marker = snapshot(&temp)["threads"][0]["nativeTurn"].clone();
+    assert_eq!(host.request(&json!({"op":"history_append","operationId":"rewind","thread":true,"transcript":true,
+        "event":{"id":"rewind","threadId":"thread","ts":3000,"agentId":"main","kind":"thread_rewound",
+        "data":{"requestId":"edit","eventId":"origin","hiddenEventIds":["origin"]}}}))["stored"],true);
+    assert_eq!(ready(&mut host, "origin")["reason"], "rewound-origin");
+    assert_eq!(host.request(&json!({"op":"run_turn_retry","threadId":"thread","turnId":marker["id"],"eventId":"origin","attemptId":marker["attemptId"]}))["reason"],"rewound-origin");
+    assert_eq!(snapshot(&temp)["threads"][0]["nativeTurn"], marker);
+}

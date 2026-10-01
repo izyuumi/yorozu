@@ -1785,7 +1785,8 @@ test("Edit from here excludes hidden messages and stale summaries from provider 
   const dir = mkdtempSync(join(tmpdir(), "yorozu-rewind-summary-"));
   createThread("Summary", dir, "summary");
   const contexts: Message[][] = [];
-  sidecar = serve({ stateDir: dir, relayUrl: `ws://127.0.0.1:${relay.port}`, log: () => {},
+  const logs: string[] = [];
+  sidecar = serve({ stateDir: dir, relayUrl: `ws://127.0.0.1:${relay.port}`, log: (line) => logs.push(line),
     provider: { auth: async () => ({ ok: true }), stream: async function* (messages) {
       contexts.push(structuredClone(messages));
       yield { type: "text", text: `answer-${contexts.length}` };
@@ -1826,6 +1827,7 @@ test("Edit from here excludes hidden messages and stale summaries from provider 
       { role: "user", content: "replacement" },
     ]);
     expect(JSON.stringify(contexts[2])).not.toContain("discarded");
+    expect(logs).not.toContain("STATE native-rewind-unconfirmed");
   } finally { local.destroy(); }
 });
 
@@ -6893,4 +6895,105 @@ test("a Rust-recorded typed approval reply never becomes new agent work after ho
     expect(fetch).not.toHaveBeenCalled(); expect(readThreadEvents("t1", dir)).toHaveLength(before);
     expect(existsSync(join(dir, "channel-outbox.json"))).toBe(false);
   } finally { mac.close(); }
+});
+
+test("paused rewind retries metadata cleanup while retiring hidden queued work once", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-rewind-cleanup-retry-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  appendThreadEvent({ id: "original", threadId: "cc", ts: 1, agentId: "main", kind: "message",
+    data: { role: "user", text: "Old work" } }, dir);
+  setNativeTurn("cc", { id: "native:original:final", state: "interrupted", userEventId: "original", recoveryAttempts: 3 }, dir);
+  writeFileSync(join(dir, "native-turn-queue.json"), JSON.stringify([{ threadId: "cc", eventId: "original" }]));
+  const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "fresh completed" });
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } }, true);
+  const waiting = send({ kind: "message", data: { role: "user", text: "Also old work" } }, "cc");
+  await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === waiting);
+  send({ kind: "thread_list", data: { threads: [] } });
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "cc" && thread.turnState === "idle"));
+  const request: YorozuEvent = { id: randomUUID(), threadId: "cc", ts: Date.now(), agentId: "phone",
+    kind: "thread_rewind", data: { eventId: "original" } };
+  const conflict = join(dir, "threads.json.tmp");
+  writeFileSync(conflict, "owned rewind metadata conflict");
+  const before = readFileSync(join(dir, "threads.json"), "utf8");
+  try {
+    sendRaw(request);
+    await vi.waitFor(() => expect(readThreadEvents("cc", dir).some((event) => event.kind === "thread_rewound" && event.data.requestId === request.id)).toBe(true));
+    sendRaw(request);
+    await eventsUntil((event) => event.kind === "thread_rewound" && event.data.requestId === request.id);
+    expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(before);
+    expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8"))).toEqual([]);
+    expect(run).not.toHaveBeenCalled();
+  } finally { rmSync(conflict); }
+  sendRaw(request);
+  await eventsUntil((event) => event.kind === "thread_rewound" && event.data.requestId === request.id);
+  expect(listThreads(dir)[0]?.nativeTurn).toBeUndefined();
+  const fresh = send({ kind: "message", data: { role: "user", text: "Fresh work" } }, "cc");
+  await eventsUntil((event) => event.kind === "message" && event.id === `native:${fresh}:final` && event.data.done === true);
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(readThreadEvents("cc", dir).filter((event) => event.kind === "thread_rewound")).toHaveLength(1);
+  expect(readThreadEvents("cc", dir).filter((event) => event.id === "original" || event.id === waiting)).toHaveLength(2);
+  expect(readThreadEvents("cc", dir).some((event) => event.id === "native:original:final" || event.id === `native:${waiting}:final`)).toBe(false);
+  expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8"))).toEqual([]);
+});
+
+test("startup reconciles all retained rewinds before advancing a visible queued message", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-rewind-cleanup-startup-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  for (const [id, ts] of [["old-one", 1], ["old-two", 3], ["visible", 5]] as const) {
+    appendThreadEvent({ id, threadId: "cc", ts, agentId: "main", kind: "message", data: { role: "user", text: id } }, dir);
+    if (id !== "visible") appendThreadEvent({ id: `rewind-${id}`, threadId: "cc", ts: ts + 1, agentId: "main", kind: "thread_rewound",
+      data: { requestId: `edit-${id}`, eventId: id, hiddenEventIds: [id] } }, dir);
+  }
+  setNativeTurn("cc", { id: "native:old-one:final", state: "interrupted", userEventId: "old-one", recoveryAttempts: 3 }, dir);
+  const originalQueue = JSON.stringify(["old-one", "old-two", "visible"].map((eventId) => ({ threadId: "cc", eventId })));
+  writeFileSync(join(dir, "native-turn-queue.json"), originalQueue);
+  const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "visible completed" });
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } }, true);
+  // Negotiation can consume an already-finished startup reply. Observe durable completion
+  // and request catch-up explicitly, so the assertion does not depend on greeting order.
+  await vi.waitFor(() => expect(readThreadEvents("cc", dir).some((event) => event.id === "native:visible:final" &&
+    event.kind === "message" && event.data.done === true)).toBe(true));
+  send({ kind: "sync_request", data: { lastSeen: {}, threadId: "cc" } }, "");
+  const synced = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
+  expect(synced.kind === "sync_delta" && synced.data.events.some((event) => event.id === "native:visible:final")).toBe(true);
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(run.mock.calls[0]?.[0].text).not.toContain("old-one");
+  expect(run.mock.calls[0]?.[0].text).not.toContain("old-two");
+  expect(readThreadEvents("cc", dir).filter((event) => event.kind === "thread_rewound")).toHaveLength(2);
+  expect(readThreadEvents("cc", dir).some((event) => event.id === "native:old-one:final" || event.id === "native:old-two:final")).toBe(false);
+  expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8"))).toEqual([]);
+  const recovery = join(dir, ".rust-native-queue-recovery");
+  expect(readdirSync(recovery).some((name) => readFileSync(join(recovery, name), "utf8") === originalQueue)).toBe(true);
+});
+
+test("paused rewind preserves a scope replaced during durable rewind publication", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-rewind-cleanup-replaced-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  appendThreadEvent({ id: "original", threadId: "cc", ts: 1, agentId: "main", kind: "message", data: { role: "user", text: "Old work" } }, dir);
+  setNativeTurn("cc", { id: "native:original:final", state: "interrupted", userEventId: "original", recoveryAttempts: 3 }, dir);
+  writeFileSync(join(dir, "native-turn-queue.json"), JSON.stringify([{ threadId: "cc", eventId: "original" }]));
+  const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "unexpected execution" });
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } }, true);
+  const append = threadStorage.appendThreadEvent;
+  let replacement: string | undefined;
+  vi.spyOn(threadStorage, "appendThreadEvent").mockImplementation((event, root) => {
+    const value = append(event, root);
+    if (event.threadId === "cc" && event.kind === "thread_rewound") {
+      append({ id: "new-scope", threadId: "cc", ts: event.ts + 1, agentId: "main", kind: "message", data: { role: "user", text: "Fresh scope" } }, dir);
+      setNativeTurn("cc", { id: "native:new-scope:final", state: "interrupted", userEventId: "new-scope",
+        attemptId: "b".repeat(32), recoveryAttempts: 3, pauseReason: "unconfirmed" }, dir);
+      replacement = readFileSync(join(dir, "threads.json"), "utf8");
+    }
+    return value;
+  });
+  const request = send({ kind: "thread_rewind", data: { eventId: "original" } }, "cc");
+  await eventsUntil((event) => event.kind === "thread_rewound" && event.data.requestId === request);
+  expect(replacement).toBeDefined();
+  expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(replacement);
+  expect(run).not.toHaveBeenCalled();
+  expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8"))).toEqual([]);
+  sendRaw({ id: request, threadId: "cc", ts: Date.now(), agentId: "phone", kind: "thread_rewind", data: { eventId: "original" } });
+  await eventsUntil((event) => event.kind === "thread_rewound" && event.data.requestId === request);
+  expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(replacement);
+  expect(run).not.toHaveBeenCalled();
 });

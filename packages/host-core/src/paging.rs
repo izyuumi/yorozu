@@ -3,7 +3,7 @@ use crate::invalid_id;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -304,12 +304,106 @@ pub(crate) fn boot_evidence(
     unchanged(&path, &file, &stamp)?;
     Ok((seen, finished, hidden_origin, hidden_final))
 }
+pub(crate) fn rewind_evidence(
+    root: &Path,
+    thread: &str,
+    rewind: &str,
+    request: &str,
+    candidates: &[String],
+) -> io::Result<Option<HashSet<String>>> {
+    let path = root
+        .join("threads")
+        .join(format!("{}.jsonl", crate::thread_index::file_name(thread)));
+    let mut file = match open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let stamp = Stamp::new(&file.metadata()?);
+    let candidates: HashSet<&str> = candidates.iter().map(String::as_str).collect();
+    let mut selected = None;
+    let mut hidden = HashSet::new();
+    let mut end = 0;
+    {
+        let mut reader = BufReader::new(&mut file);
+        while let Some(text) = line(&mut reader, &mut end, stamp.length)? {
+            let Some(event) = parse(&text)? else {
+                continue;
+            };
+            if event["threadId"] != thread
+                || event["kind"] != "thread_rewound"
+                || (event["id"] != rewind && event["data"]["requestId"] != request)
+            {
+                continue;
+            }
+            let Some(anchor) = event["data"]["eventId"]
+                .as_str()
+                .filter(|id| !invalid_id(id))
+            else {
+                return Ok(None);
+            };
+            let Some(ids) = event["data"]["hiddenEventIds"].as_array() else {
+                return Ok(None);
+            };
+            if selected.is_some()
+                || event["id"] != rewind
+                || event["data"]["requestId"] != request
+                || event["agentId"] != "main"
+                || event["data"].get("reason").is_some()
+                || !ids.iter().all(Value::is_string)
+                || !ids.iter().any(|id| id == anchor)
+            {
+                return Ok(None);
+            }
+            selected = Some(anchor.to_owned());
+            hidden.extend(
+                ids.iter()
+                    .filter_map(Value::as_str)
+                    .filter(|id| candidates.contains(id))
+                    .map(str::to_owned),
+            );
+        }
+    }
+    let Some(anchor) = selected else {
+        return Ok(None);
+    };
+    file.seek(SeekFrom::Start(0))?;
+    let mut proven = HashSet::new();
+    let mut seen_anchor = false;
+    let mut before = true;
+    end = 0;
+    {
+        let mut reader = BufReader::new(&mut file);
+        while let Some(text) = line(&mut reader, &mut end, stamp.length)? {
+            let Some(event) = parse(&text)? else {
+                continue;
+            };
+            if event["threadId"] != thread {
+                continue;
+            }
+            if event["id"] == rewind && event["kind"] == "thread_rewound" {
+                before = false;
+            }
+            if !before || event["kind"] != "message" || event["data"]["role"] != "user" {
+                continue;
+            }
+            if let Some(id) = event["id"].as_str() {
+                seen_anchor |= id == anchor;
+                if hidden.contains(id) {
+                    proven.insert(id.to_owned());
+                }
+            }
+        }
+    }
+    unchanged(&path, &file, &stamp)?;
+    Ok(seen_anchor.then_some(proven))
+}
 pub(crate) fn run_evidence(
     root: &Path,
     thread: &str,
     accepted: &Value,
     completion: &str,
-) -> io::Result<(bool, bool)> {
+) -> io::Result<(bool, bool, bool)> {
     let origin = accepted["id"].as_str().ok_or_else(invalid)?;
     let expected =
         crate::accepted::fingerprint(accepted, &accepted["event"]).ok_or_else(invalid)?;
@@ -318,13 +412,14 @@ pub(crate) fn run_evidence(
         .join(format!("{}.jsonl", crate::thread_index::file_name(thread)));
     let mut file = match open(&path) {
         Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((false, false)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((false, false, false)),
         Err(error) => return Err(error),
     };
     let stamp = Stamp::new(&file.metadata()?);
     let mut end = 0;
     let mut seen = false;
     let mut finished = false;
+    let mut hidden = false;
     {
         let mut reader = BufReader::new(&mut file);
         while let Some(text) = line(&mut reader, &mut end, stamp.length)? {
@@ -339,6 +434,14 @@ pub(crate) fn run_evidence(
                     }
                     seen = true;
                 }
+                hidden |= event["threadId"] == thread
+                    && event["kind"] == "thread_rewound"
+                    && event["data"].get("reason").is_none()
+                    && event["data"]["requestId"].is_string()
+                    && event["data"]["eventId"].is_string()
+                    && event["data"]["hiddenEventIds"]
+                        .as_array()
+                        .is_some_and(|ids| ids.iter().any(|id| id == origin));
                 finished |= event["id"] == completion
                     && event["threadId"] == thread
                     && event["kind"] == "message"
@@ -355,7 +458,7 @@ pub(crate) fn run_evidence(
     {
         return Err(invalid());
     }
-    Ok((seen, finished))
+    Ok((seen, finished, hidden))
 }
 impl Paging {
     fn page(&mut self, root: &Path, request: &Value) -> io::Result<Value> {

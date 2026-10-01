@@ -2345,6 +2345,31 @@ export function serve(options: ServeOptions = {}): Sidecar {
     return true;
   };
 
+  const retireRewoundReply = (threadId: string): void => {
+    if (running.has(threadId) || listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn) return;
+    liveReplies.delete(threadId);
+    partials.delete(threadId);
+  };
+
+  const reconcileNativeRewind = (event: Extract<YorozuEvent, { kind: "thread_rewound" }>,
+    expected: ThreadRecord["nativeTurn"]): boolean => {
+    if (event.data.reason !== undefined || viaChannel(event.threadId)) return false;
+    if (threadAgent(event.threadId, dir) === "yorozu") return true;
+    let proof: Record<string, unknown>;
+    try { proof = syncHostResult(dir, { op: "run_turn_rewind", threadId: event.threadId,
+      rewindId: event.id, requestId: event.data.requestId, expectedTurn: expected ?? null }); }
+    catch { proof = {}; }
+    if (proof.queueConfirmed === true && Array.isArray(proof.queueEntries) &&
+        proof.queueEntries.every((entry) => typeof entry?.threadId === "string" && !!entry.threadId &&
+          typeof entry.eventId === "string" && !!entry.eventId)) {
+      // Refresh even on partial metadata failure or a retry after a lost response.
+      queuedNative.length = 0;
+      for (const entry of proof.queueEntries) queuedNative.push(entry as NativeQueueEntry);
+    } else { state("native-rewind-unconfirmed"); return false; }
+    if (proof.applied !== true && proof.reason !== "scope-replaced") state("native-rewind-unconfirmed");
+    return proof.applied === true;
+  };
+
   const reconcilePausedStop = (record: StopRecord, expected: ThreadRecord["nativeTurn"]): boolean => {
     if (threadAgent(record.threadId, dir) === "yorozu" || !["unconfirmed", "stopped"].includes(record.status)) return false;
     if (expected && (expected.id !== completionIdFor(record.threadId, record.targetEventId) || expected.state !== "interrupted")) return false;
@@ -2611,10 +2636,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (typeof event.threadId !== "string" || !event.threadId || event.threadId.length > 128 ||
           !listThreads(dir).some((thread) => thread.id === event.threadId)) return;
       if (typeof event.data.eventId !== "string" || !event.data.eventId || event.data.eventId.length > 128) return;
+      const expectedNativeTurn = listThreads(dir).find((thread) => thread.id === event.threadId)?.nativeTurn;
       const stored = readThreadEvents(event.threadId, dir);
       const previous = stored.find((known) =>
         known.kind === "thread_rewound" && known.data.requestId === event.id);
-      if (previous) { reply(previous); return; }
+      if (previous?.kind === "thread_rewound") {
+        const reconciled = reconcileNativeRewind(previous, expectedNativeTurn);
+        reply(previous);
+        if (reconciled) { retireRewoundReply(event.threadId); broadcast(threadList()); drainQueuedNative(event.threadId); }
+        return;
+      }
       const history = visibleThreadEvents(event.threadId, dir);
       const index = history.findIndex((known) => known.id === event.data.eventId &&
         known.kind === "message" && known.data.role === "user");
@@ -2628,11 +2659,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
           ...(reason ? { reason } : { hiddenEventIds: history.slice(index).map((known) => known.id) }) } };
       if (reason) { reply(result); return; }
       appendThreadEvent(result, dir);
-      setNativeTurn(event.threadId, undefined, dir);
-      liveReplies.delete(event.threadId);
-      partials.delete(event.threadId);
+      const reconciled = reconcileNativeRewind(result, expectedNativeTurn);
+      retireRewoundReply(event.threadId);
       broadcast(result);
       broadcast(threadList());
+      if (reconciled) drainQueuedNative(event.threadId);
       return;
     }
     if (event.kind === "attachment_progress" || event.kind === "attachment_download_chunk") return;
@@ -4245,6 +4276,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // Recover durable Stop intent before admitting new work or clearing old native markers.
   startupRecovery = acceptedReady.then(() => Promise.all(stopRecovery.map((recover) => recover()))).then(() => {
     if (stopped) return;
+    const rewoundThreads = new Set(queuedNative.map((entry) => entry.threadId));
+    for (const thread of listThreads(dir)) {
+      if (viaChannel(thread.id) || !rewoundThreads.has(thread.id) && !thread.nativeTurn) continue;
+      // Earlier rewinds hide rows no longer listed by a later rewind. Reconcile each durable
+      // result, including queue-only cleanup after boot already retired its marker.
+      for (const event of readThreadEvents(thread.id, dir)) if (event.kind === "thread_rewound" && event.data.reason === undefined) {
+        reconcileNativeRewind(event, listThreads(dir).find((home) => home.id === thread.id)?.nativeTurn);
+      }
+    }
     for (const thread of listThreads(dir)) {
       if (thread.nativeTurn?.state === "interrupted") resumeNativeTurn(thread.id);
       if (viaChannel(thread.id)) channel.retry(thread.id);
