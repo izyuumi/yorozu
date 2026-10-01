@@ -47,7 +47,7 @@ import { localSocketPath } from "./local.js";
 import { channelSocketPath, type HostFrame, type PluginFrame } from "./channel.js";
 import * as rustHost from "./rust-host.js";
 import { AcceptedMessages, type AcceptedEntry } from "./accepted.js";
-import { SYNC_PAGE_BYTES, setNativeTurn, setThreadSession, appendThreadEvent, createThread, eventsAfter, listThreads, readThreadEvents } from "./threads.js";
+import { SYNC_PAGE_BYTES, setNativeTurn, setThreadSession, appendThreadEvent, appendThreadEvents, createThread, eventsAfter, listThreads, readThreadEvents } from "./threads.js";
 import { readTranscripts, transcriptDir } from "./transcripts.js";
 
 /** No native helper here: a thread takes its first words unless a test brings its own titler. */
@@ -2358,10 +2358,8 @@ test("older clients see an upgrade request instead of a false approval receipt",
   expect(response.some((event) => event.kind === "approval_status")).toBe(false);
   sendRaw({ id: "forged-status", threadId: "t1", ts: Date.now(), agentId: "phone", kind: "approval_status",
     data: { requestId: "fake", actionId: card.actionId, status: "applied" } });
-  for (let i = 0; i < 201; i++) {
-    appendThreadEvent({ id: `status-${i}`, threadId: "t1", ts: Date.now(), agentId: "main",
-      kind: "approval_status", data: { requestId: `old-${i}`, actionId: `old-action-${i}`, status: "expired" } }, dir);
-  }
+  appendThreadEvents(Array.from({ length:201 }, (_, i) => ({ id: `status-${i}`, threadId: "t1", ts: Date.now(), agentId: "main",
+    kind: "approval_status" as const, data: { requestId: `old-${i}`, actionId: `old-action-${i}`, status: "expired" as const } })), dir);
   send({ kind: "sync_request", data: { lastSeen: { t1: cardEvent.id }, threadId: "t1" } }, "");
   const replay = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1);
   expect(replay?.kind).toBe("sync_delta");
@@ -6193,7 +6191,7 @@ test("Rust acceptance restores a missing projection before greeting and retries 
   sidecar = serve(options); let mac = await macClient(dir);
   try {
     expect(readThreadEvents("cc", dir)).toEqual([message]); expect(run).not.toHaveBeenCalled();
-    const recovery = readdirSync(join(dir, "threads")).find((name) => name.startsWith(".accepted-projection-recovery."));
+    const recovery = readdirSync(join(dir, "threads")).find((name) => name.startsWith(".history-recovery."));
     expect(recovery).toBeDefined(); expect(readFileSync(join(dir, "threads", recovery!), "utf8")).toBe(interrupted);
     mac.sendRawEvent(message); mac.sendRawEvent(message);
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));

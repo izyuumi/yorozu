@@ -56,7 +56,7 @@ fn valid_record(record: &Value) -> bool {
                 && turn.get("recoveryActive").is_none_or(Value::is_boolean)
         })
 }
-fn file_name(id: &str) -> String {
+pub(crate) fn file_name(id: &str) -> String {
     id.encode_utf16()
         .map(|unit| {
             if unit <= 127

@@ -4,8 +4,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use yorozu_host_core::transport::{Emit, Transports};
 use yorozu_host_core::{
-    AttachmentStore, accepted::Accepted, admission::Admissions, now_ms, outbox::ChannelOutbox,
-    stops::Stops,
+    AttachmentStore, accepted::Accepted, admission::Admissions, history::History, now_ms,
+    outbox::ChannelOutbox, stops::Stops,
 };
 
 fn run() -> io::Result<()> {
@@ -30,6 +30,33 @@ fn run() -> io::Result<()> {
         )
         .map_err(io::Error::other)?;
         return Ok(());
+    }
+    if mode == "history" {
+        let mut store = History::open(Path::new(&dir))?;
+        let mut input = io::stdin().lock();
+        let mut output = io::stdout().lock();
+        loop {
+            let mut bytes = Vec::new();
+            let length = Read::by_ref(&mut input)
+                .take(32 * 1024 * 1024 + 1)
+                .read_until(b'\n', &mut bytes)?;
+            if length == 0 {
+                return Ok(());
+            }
+            if length > 32 * 1024 * 1024 || !bytes.ends_with(b"\n") {
+                return Err(io::ErrorKind::InvalidData.into());
+            }
+            let request: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+            let id = request["id"]
+                .as_str()
+                .filter(|id| !id.is_empty() && id.len() <= 128)
+                .ok_or(io::ErrorKind::InvalidData)?;
+            let result = store.request(&request);
+            serde_json::to_writer(&mut output, &json!({"id":id,"result":result}))
+                .map_err(io::Error::other)?;
+            output.write_all(b"\n")?;
+            output.flush()?;
+        }
     }
     if mode != "attachments" {
         return Err(io::ErrorKind::InvalidInput.into());

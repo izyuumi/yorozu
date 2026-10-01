@@ -4,11 +4,13 @@
  * See docs/spec-v1.html section 5.
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { YorozuEvent } from "@yorozu/shared";
 import type { Tool } from "./index.js";
 import { stateDir } from "./memory.js";
+import { LOGGED } from "./history-kinds.js";
+import { persistHistory, persistHistoryBatch } from "./rust-sync.js";
 
 /** How much of the log one `read_transcripts` call may hand the model. */
 const MAX_EVENTS = 200;
@@ -20,8 +22,8 @@ export function transcriptDir(dir = stateDir()): string {
 const day = (ts: number): string => new Date(ts).toISOString().slice(0, 10);
 
 export function appendTranscript(event: YorozuEvent, dir = transcriptDir()): void {
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  appendFileSync(join(dir, `${day(event.ts)}.jsonl`), `${JSON.stringify(event)}\n`, { mode: 0o600 });
+  if (basename(dir) !== "transcripts") throw new Error("Unsupported transcript directory");
+  persistHistory(event, dirname(dir), false, true);
 }
 
 /** Every logged event at or after `since`, oldest first. Unreadable lines are skipped. */
@@ -75,3 +77,16 @@ export const readTranscriptsTool: Tool = {
     return events.length ? formatTranscript(events) : "no transcripts in that window";
   },
 };
+
+/** One Rust transaction owns both projections before live publication. */
+export function persistThreadAndTranscript(event: YorozuEvent, dir = stateDir()): void {
+  persistHistory(event, dir, LOGGED.has(event.kind), true);
+}
+
+export function appendTranscripts(events: YorozuEvent[], dir = transcriptDir()): void {
+  if (basename(dir) !== "transcripts") throw new Error("Unsupported transcript directory");
+  if (events.length) persistHistoryBatch(events, dirname(dir), false, true);
+}
+export function persistThreadAndTranscriptBatch(events: YorozuEvent[], dir = stateDir()): void {
+  if (events.length) persistHistoryBatch(events, dir, true, true);
+}

@@ -112,3 +112,15 @@ test("explicit reply context uses SDK supplemental quote without changing the co
     new AbortController().signal, () => {});
   assert.equal(calls, 1);
 });
+
+
+test("negotiated SDK tool prompt requests receipt replay independently of final reply identity", async () => {
+  const calls = []; const dispatch = dispatchWith(async (plan) => {
+    await plan.replyOptions.onPartialReply({ text:"Answer preview" });
+    await plan.delivery.deliver({ text:"Choose whether to continue." }, { kind:"tool" });
+    plan.replyOptions.onAgentRunTerminalOutcome("completed"); return { dispatched:true };
+  });
+  await dispatch({ cfg:{}, accountId:"default", message, preview:() => true, deliver:async (payload, reply) => calls.push({ payload, reply }) }, new AbortController().signal, () => {});
+  assert.deepEqual(calls[0], { payload:{ text:"Choose whether to continue." }, reply:{ retryReceipt:true } });
+  assert.equal(calls[1].reply.messageId, message.id); assert.equal(calls[1].reply.retryReceipt, undefined);
+});

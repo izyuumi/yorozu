@@ -11,8 +11,8 @@ separate conversations. These are migration requirements, not claims about the c
   `ThreadCache` own encrypted client drafts, attachments, saved-draft recovery and pending sends.
 - The Mac launches the bundled Node executable and `packages/runtime/dist/serve.js`. The
   TypeScript host currently owns relay transport, admission policy, sequencing, approvals,
-  thread-history projections, recovery policy and orchestration. Rust owns the extracted durable
-  attachment/outbox/expiry/Stop/accepted-message stores, thread metadata mutations and Unix listeners. This is approximately 4,000 lines in `serve.ts`,
+  history read/sync policy, recovery policy and orchestration. Rust owns the extracted durable
+  attachment/outbox/expiry/Stop/accepted-message stores, event/transcript transactions, thread metadata mutations and Unix listeners. This is approximately 4,000 lines in `serve.ts`,
   plus its supporting modules; replacing a launcher alone would not rewrite the backend.
 - Claude uses a TypeScript SDK adapter; Codex has both SDK and native app-server adapters.
   OpenClaw's separate channel plugin uses a local JSON-lines socket and durable acknowledged
@@ -273,7 +273,97 @@ passes 806 tests with one skipped across 46 files using four workers. The earlie
 retained; it is not counted as a passing run or a proven production fix. Windows execution and physical
 power-loss durability remain unverified locally.
 
-## Following migration boundaries
+## Transactional event and transcript extraction
+
+Rust now owns conversation-log and daily-transcript appends. A private immutable transaction
+retains the event bytes, append identity, target offsets and prefix hashes before either projection
+changes. Both projections are synced before a committed marker and acknowledgement. Startup replays
+unfinished transactions before the compatibility host reads history, recovers native markers or
+starts an agent. If only one projection or part of an append survived, recovery finishes the other
+without duplicating the first. Changed unrelated bytes stop recovery and remain untouched.
+
+Append identities are distinct from event IDs: identical progress cards can be appended again with
+new sync cursors. Retrying the original append identity returns the original proof, while different
+content or destinations cannot reuse it. Legacy complete bytes, unknown fields and formerly skipped
+malformed complete rows remain unchanged. These legacy rows are opaque history, not admission proof.
+An incomplete final tail is copied into a private synced recovery file before only that tail is
+removed. Immutable checksums and private exclusive publication protect transaction records.
+
+The existing transcript-only control traffic still belongs only to transcripts, including empty
+conversation IDs. Conversation logs retain their existing event-kind filter. Date/admission, reading,
+search, sync, rewind visibility and provider execution policies still live in the compatibility host.
+New bounded batches preserve event order in one transaction for one conversation/day. Native activity
+bursts collect at most 256 events or 8 MiB before flushing (a single bounded larger event remains
+possible); tool calls/results, approvals, tool boundaries and completion flush before proceeding.
+Live activity is published only after the batch is durable. Long-history fixtures now use this
+production batch API without reducing assertions, data volumes or original timing budgets.
+
+A bounded JS I/O thread carries private child-process pipe requests while the calling compatibility
+thread waits for Rust proof. It has no listener or provider environment. Requests remain limited to
+32 MiB, responses to 1 MiB, and I/O has a 30-second deadline. A host lease keeps its Rust writer and OS
+lock alive while an SDK is idle; another host cannot acquire it. Unleased fixture/helper workers close
+after two seconds idle, and the bridge limits roots to eight, evicting only its own unleased idle
+workers. The transitional JS I/O bridge does not make the current Node launcher a standalone Rust host.
+
+Bounds are 32 MiB per transaction, 1,024 events per batch, 65,536 transactions, 4 GiB including retained
+transaction temporaries, 1 GiB per projection and 128 interrupted temporary writes. Recovery copies
+are separately bounded to 128 and 4 GiB per projection directory. Symlink targets and stores are
+refused; existing permissions remain unchanged. Corrupt/unsupported stores fail closed with originals
+retained. Linux/Windows filesystem execution and physical power-loss durability remain unverified.
+
+Ten Rust history tests and all 66 core tests pass, covering actual worker termination after proof,
+partial/two-projection recovery, exact legacy retention, repeated cards, identity conflicts, bounds,
+symlinks, private files and UTC calendar boundaries. The first thread/transcript run exposed repeated-
+card suppression and per-event setup costs. Correct append identities and bounded batches resolved
+these without increasing timing budgets; all 55 thread/transcript tests pass. The first complete host
+run passed 182 tests and failed 51, mainly because transcript-only control events had been incorrectly
+sent to the conversation log. After restoring the existing distinction, the focused encrypted round-
+trip, trace-burst, accepted recovery and both late-callback cases pass (five tests). Diagnostic state
+logging has been removed. Three bridge tests now pass, including a pinned idle writer, owner exclusion, clean release and actual
+child loss with an original append retry. The subsequent affected aggregate passed 287 tests and
+failed four: one long sequential fixture setup and three SDK auxiliary-delivery cases. The auxiliary
+path previously treated a missing receipt as failure after 20 ms in these fixtures, even though the
+host had durably stored the prompt. Negotiated SDK tool prompts now request receipt replay under
+their original delivery identity, independently of the final reply identity. This local retry option
+is removed before encoding the existing wire frame; legacy delivery behavior is unchanged. All 33
+channel-plugin tests and the four host reproductions pass with unchanged timing budgets. Plugin
+configuration snapshots and settings reload handling are untouched. The long history fixture uses
+the bounded production batch API with all original assertions retained. The next complete run passed 807 tests and failed two: an owned-child exit between request reservation
+and worker-message dispatch missed its failure notification, and the multi-step update case timed out.
+The shared handoff now exists before dispatch and is notified even when no active worker request has
+been installed. Twelve actual child interruptions and the original update reproduction pass without
+changing deadlines. The final complete runtime suite passes 809 tests with one skipped across 47 files
+using four workers; the production runtime build passes. Queue/steering migration and the remaining
+standalone/native/release gates are still open.
+
+## Required 0.6.0 host work
+
+The requested rewrite has a finite completion checklist. These responsibilities are required before
+claiming an independent portable Rust host or replacing the installed application:
+
+1. Finish verified persistence: event/transcript transactions, native queue transitions and durable
+   steering intent/outcomes. Preserve uncertain external effects and existing indexed history.
+2. Move relay/session crypto, sequence currency, reconnection, catch-up and capability negotiation
+   into the Rust host, retaining the current wire contracts and connections.
+3. Move approval/admission/Stop/run orchestration into Rust. SDK workers may supply provider access;
+   they cannot bypass Rust's durable decisions or existing safety confirmations.
+4. Establish a bounded versioned provider-worker contract with run identity, streamed activity,
+   cancellation and explicit approval questions. Preserve provider/session behavior during migration.
+5. Implement and verify Linux/Windows headless operation and the Windows local transport contract.
+   Swift remains an optional macOS OS adapter. Test interrupted/repeated/concurrent workflows.
+6. Switch the actual launcher and package to the standalone Rust host; implement the requested default
+   continuous conversation while preserving explicit separate conversations and saved draft recovery.
+7. Pass native, build, CI and migration/rollback gates; release only 0.6.0 alpha to the authorized
+   internal-only destination, preserve current connections and exclude the 0.5.0 beta updater, then
+   replace the same installed application with a hidden recoverable rollback copy.
+
+Actual new schedule execution and PAIOS ownership are optional later product features. Their current
+truthful unavailable UI is retained; they cannot expand this checklist or substitute for the requested
+Rust host responsibilities. No control removal may silently remove a required capability.
+
+## Compatibility requirements
+
+The following criteria apply to the seven required work items above.
 
 1. Move the durable event/admission/outbox state engine to Rust with one authoritative writer.
    Preserve immutable operation IDs and content identities, receipt-after-durability ordering,

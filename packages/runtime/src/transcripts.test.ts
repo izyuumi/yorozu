@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import { defaultTools } from "./index.js";
 import {
   appendTranscript,
+  appendTranscripts,
   readTranscripts,
   readTranscriptsTool,
   transcriptDir,
@@ -92,12 +93,8 @@ test("the read_transcripts tool reads a window of the state dir's log", () => {
 test("read_transcripts hands over at most the last 200 events", () => {
   const logs = transcriptDir(dir);
   const now = Date.now();
-  for (let i = 0; i < 250; i++) {
-    appendTranscript(
-      { ...message("2026-09-12T09:00:00Z", `line ${i}`), id: `e${i}`, ts: now - (250 - i) * 1_000 },
-      logs,
-    );
-  }
+  appendTranscripts(Array.from({ length: 250 }, (_, i) =>
+    ({ ...message("2026-09-12T09:00:00Z", `line ${i}`), id: `e${i}`, ts: now - (250 - i) * 1_000 })), logs);
 
   const lines = readTranscriptsTool.run({}).split("\n");
   expect(lines).toHaveLength(200);

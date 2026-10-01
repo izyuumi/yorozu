@@ -6,12 +6,11 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, constants, createReadStream, fstatSync, fsyncSync, ftruncateSync, openSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   validAgentId,
   TOOL_RESULT_PREVIEW_CHARS,
-  type EventKind,
   type MessageAttachment,
   type ReasoningEffort,
   type ThreadAgent,
@@ -23,6 +22,7 @@ import { stateDir } from "./memory.js";
 import type { Message } from "./provider.js";
 import { syncPage } from "./thread-sync.js";
 import { threadIndexRequest } from "./rust-host.js";
+import { persistHistory, persistHistoryBatch } from "./rust-sync.js";
 
 /** How much of a thread's log is replayed to the model as context. */
 export const HISTORY_LIMIT = 40;
@@ -81,23 +81,7 @@ export interface ThreadRecord {
   lastReadAt?: number;
 }
 
-/** Kinds that belong to a thread's history. Control traffic is not logged. */
-const LOGGED: ReadonlySet<EventKind> = new Set<EventKind>([
-  "message",
-  "turn_changes",
-  "thread_rewound",
-  "thought",
-  "tool_call",
-  "tool_result",
-  "approval_card",
-  "approval_answer",
-  "approval_status",
-  "stop_status",
-  "admission_status",
-  "question_card",
-  "question_answer",
-  "progress_card",
-]);
+import { LOGGED } from "./history-kinds.js";
 
 export const threadsDir = (dir = stateDir()): string => join(dir, "threads");
 
@@ -521,43 +505,18 @@ export function attachmentFiles(
 /** Appends to the thread's log. Control events (sync, thread admin) are not history. */
 export function appendThreadEvent(event: YorozuEvent, dir = stateDir()): void {
   if (!LOGGED.has(event.kind)) return;
-  mkdirSync(threadsDir(dir), { recursive: true, mode: 0o700 });
-  appendFileSync(logFile(event.threadId, dir), `${JSON.stringify(event)}\n`,
-    { mode: 0o600, flush: event.kind === "approval_status" || event.kind === "stop_status" || event.kind === "thread_rewound" ||
-      event.kind === "message" && event.data.delivery === "steer" && event.clientTs !== undefined });
+  persistHistory(event, dir, true, false);
 }
 
-/** Restore a Rust-backed accepted body, retaining any interrupted projection before repair.
- * Startup calls this synchronously while new client work is gated; canonical acceptance
- * remains in Rust. Never guess or remove a complete legacy event. */
+/** One bounded durable slice of one conversation. */
+export function appendThreadEvents(events: YorozuEvent[], dir = stateDir()): void {
+  const logged = events.filter((event) => LOGGED.has(event.kind)); if (!logged.length) return;
+  persistHistoryBatch(logged, dir, true, false);
+}
+
+/** Rust retains any interrupted projection before repairing an accepted body. */
 export function restoreAcceptedThreadEvent(event: YorozuEvent, dir = stateDir()): void {
-  mkdirSync(threadsDir(dir), { recursive: true, mode: 0o700 });
-  const path = logFile(event.threadId, dir);
-  if (!existsSync(path)) {
-    appendThreadEvent(event, dir);
-    const fd = openSync(path, constants.O_RDWR | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW));
-    try { fsyncSync(fd); } finally { closeSync(fd); }
-    return;
-  }
-  const fd = openSync(path, constants.O_RDWR | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW));
-  try {
-    const metadata = fstatSync(fd);
-    if (!metadata.isFile()) throw new Error("Invalid accepted history projection");
-    const original = readFileSync(fd);
-    if (original.length && original.at(-1) !== 10) {
-      const backup = join(threadsDir(dir), `.accepted-projection-recovery.${randomUUID()}.jsonl`);
-      writeFileSync(backup, original, { flag: "wx", mode: 0o600, flush: true });
-      if (process.platform !== "win32") {
-        const parent = openSync(threadsDir(dir), constants.O_RDONLY);
-        try { fsyncSync(parent); } finally { closeSync(parent); }
-      }
-      if (fstatSync(fd).size !== original.length) throw new Error("Changed accepted history projection");
-      ftruncateSync(fd, original.lastIndexOf(10) + 1);
-      fsyncSync(fd);
-    }
-    appendThreadEvent(event, dir);
-    fsyncSync(fd);
-  } finally { closeSync(fd); }
+  persistHistory(event, dir, true, false);
 }
 
 /** The thread's events, oldest first. Unreadable lines are skipped. */

@@ -138,11 +138,11 @@ export function connectYorozu(options) {
     get streaming() { return streaming; },
     /** Resolves with the message id once Yorozu has logged it. */
     deliver(threadId, text, reply) {
-      if (!connected && !reply?.messageId) return Promise.reject(new Error("yorozu is not running"));
+      if (!connected && !(reply?.messageId || reply?.retryReceipt)) return Promise.reject(new Error("yorozu is not running"));
       if (closed) return Promise.reject(new Error("yorozu is closed"));
-      const { id = randomUUID(), ...fields } = reply ?? {};
+      const { id = randomUUID(), retryReceipt = false, ...fields } = reply ?? {};
       const frame = { type: "deliver", id, threadId, text, ...fields };
-      const replay = Boolean(reply?.messageId);
+      const replay = Boolean(reply?.messageId || retryReceipt);
       return new Promise((resolve, reject) => {
         let timeout;
         const retry = () => {

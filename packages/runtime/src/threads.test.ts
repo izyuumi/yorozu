@@ -5,6 +5,7 @@ import type { YorozuEvent } from "@yorozu/shared";
 import { beforeEach, expect, test, vi } from "vitest";
 import {
   appendThreadEvent,
+  appendThreadEvents,
   attachmentFiles,
   archiveThread,
   createThread,
@@ -244,7 +245,7 @@ test("a delta is everything after the last-seen id, from the start when it is un
 });
 
 test("sync pages advance through a long thread without dropping searchable history", () => {
-  for (let n = 0; n <= SYNC_LIMIT; n++) appendThreadEvent(message(`e${n}`, `m${n}`), dir);
+  appendThreadEvents(Array.from({ length: SYNC_LIMIT + 1 }, (_, n) => message(`e${n}`, `m${n}`)), dir);
   const first = eventsAfter(HOME, undefined, dir);
   expect(first).toHaveLength(SYNC_LIMIT);
   expect(first[0]!.id).toBe("e0");
@@ -280,9 +281,7 @@ test("host search excerpt points at a match after decomposed accents", async () 
 
 test("host search resumes within a long log after its per-page work budget", async () => {
   writeLegacyIndex();
-  for (let index = 0; index <= 1_000; index++) {
-    appendThreadEvent(message(`e${index}`, index === 1_000 ? "needle" : "other"), dir);
-  }
+  appendThreadEvents(Array.from({ length: 1_001 }, (_, index) => message(`e${index}`, index === 1_000 ? "needle" : "other")), dir);
   const first = await searchThreadPage("needle", 0, dir);
   expect(first.matches).toEqual([]);
   expect(first.nextOffset).toBe(0);
@@ -307,9 +306,7 @@ test("sync keeps messages between repeated progress cards across page boundaries
     data: { cardId: "progress", title: "Working", steps: [{ label: "Task", state: "running" }] },
   };
   const messages = Array.from({ length: SYNC_LIMIT - 1 }, (_, n) => message(`e${n}`, `m${n}`));
-  for (const event of [...messages, card, message("e200", "must not disappear"), { ...card, ts: 2 }]) {
-    appendThreadEvent(event, dir);
-  }
+  appendThreadEvents([...messages, card, message("e200", "must not disappear"), { ...card, ts: 2 }], dir);
   const first = eventsAfter(HOME, undefined, dir);
   const second = eventsAfter(HOME, first.at(-1)!.syncCursor ?? first.at(-1)!.id, dir);
   expect([...first, ...second].map((event) => event.id)).toContain("e200");
@@ -342,7 +339,7 @@ test("sync rejects cursors whose log prefix was rewritten", () => {
 });
 
 test("pairing cutoff is applied before the sync page limit", () => {
-  for (let n = 0; n < SYNC_LIMIT + 10; n++) appendThreadEvent(message(`e${n}`, `old ${n}`), dir);
+  appendThreadEvents(Array.from({ length: SYNC_LIMIT + 10 }, (_, n) => message(`e${n}`, `old ${n}`)), dir);
   appendThreadEvent({ ...message("e1000", "new"), ts: 1_000 }, dir);
 
   expect(eventsAfter(HOME, undefined, dir, 1_000).map((event) => event.id)).toEqual(["e1000"]);

@@ -156,3 +156,19 @@ test("duplicate in-flight inbound stays unacked until its original handler finis
     assert.equal(calls, 1);
   } finally { finish?.(); link.close(); await host.close(); }
 });
+
+
+test("SDK auxiliary prompt waits for original durable receipt through timeout and reconnect", async () => {
+  const path = join(mkdtempSync(join(tmpdir(), "yorozu-aux-receipt-")), "channel.sock");
+  const host = fakeHost(path); const link = connectYorozu({ path, retryMs:20, ackTimeoutMs:20, onInbound:async () => {} });
+  try {
+    await until(() => link.connected);
+    const pending = link.deliver("t1", "Confirm this action", { retryReceipt:true });
+    await until(() => host.frames.filter((frame) => frame.type === "deliver").length >= 2);
+    const original = host.frames.find((frame) => frame.type === "deliver");
+    assert.equal(original.retryReceipt, undefined); assert.equal(original.messageId, undefined);
+    host.drop(); await until(() => host.hellos.length >= 2);
+    const copies = host.frames.filter((frame) => frame.type === "deliver"); assert.ok(copies.every((frame) => frame.id === original.id && frame.text === original.text));
+    host.write({ type:"ack", id:original.id }); assert.equal(await pending, original.id);
+  } finally { link.close(); await host.close(); }
+});

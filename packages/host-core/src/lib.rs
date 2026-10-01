@@ -2,6 +2,7 @@
 //! The surrounding host still owns message admission; assembling files never admits a turn.
 pub mod accepted;
 pub mod admission;
+pub mod history;
 mod journal;
 pub mod outbox;
 pub mod stops;

@@ -99,7 +99,6 @@ import { autoTitle, onDeviceTitler, type Titler } from "./title.js";
 const PING = JSON.stringify({ type: "ping" });
 import {
   appendThreadEvent,
-  restoreAcceptedThreadEvent,
   attachmentFiles,
   archiveThread,
   createThread,
@@ -135,7 +134,8 @@ import { NativeCards } from "./native-cards.js";
 import { claudeCodeRunner, type NativeAgentRunner, type NativeTurn } from "./native.js";
 import { isProjectFolder, listProjects } from "./projects.js";
 import { questionDesk, QUESTION_TIMEOUT_MS } from "./tools/cards.js";
-import { appendTranscript, transcriptDir } from "./transcripts.js";
+import { persistThreadAndTranscript, persistThreadAndTranscriptBatch } from "./transcripts.js";
+import { retainSyncHost } from "./rust-sync.js";
 
 const DEFAULT_STATE_DIR = join(homedir(), "Library", "Application Support", "Yorozu");
 
@@ -521,6 +521,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
   env.YOROZU_STATE_DIR = dir;
   // Before anything is read or written under it: keys, pairings and transcripts all live here.
   ensureStateDir(dir);
+  const releaseHistory = retainSyncHost(dir);
+  try {
   // A SIGKILL cannot run the SDK's exit cleanup. Stop an orphaned CLI before any native
   // recovery starts; a live old CLI beside a resumed one could repeat external tool effects.
   const agentProcessesFile = join(dir, "native-agent-processes.json");
@@ -582,7 +584,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // An older build stored a terminal opt-in. Retire it on first launch so rollback cannot
   // silently restore that permission after interactive sessions have been removed.
   rmSync(join(dir, "terminal-settings.json"), { force: true });
-  const transcripts = transcriptDir(dir);
   recoverNativeTurns(dir);
   retireOrphanedCards(dir);
   const keys = loadKeys(dir);
@@ -1141,8 +1142,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // Startup/lifecycle copy is live UI state, not conversation history or memory material.
     const transient = event.kind === "thought" && event.data.transient === true;
     if (!transient) {
-      appendTranscript(event, transcripts);
-      appendThreadEvent(event, dir);
+      persistThreadAndTranscript(event, dir);
     }
     broadcast(event);
     // A raised card shows on the list as well as in the chat, so the list follows it.
@@ -1657,8 +1657,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       };
       const finish = (reply: string, failed = false): void => {
         const final = message(reply, true, failed);
-        appendTranscript(final, transcripts);
-        appendThreadEvent(final, dir);
+        persistThreadAndTranscript(final, dir);
         broadcast(final);
         reportChanges();
       };
@@ -1686,6 +1685,38 @@ export function serve(options: ServeOptions = {}): Sidecar {
       let recoveryAttempts = previous?.userEventId === userEventId ? previous?.recoveryAttempts ?? 0 : 0;
       let recovering = previous?.state === "interrupted" && previous.userEventId === userEventId;
       let paused = false;
+      const activityBuffer: YorozuEvent[] = [];
+      let activityBytes = 0;
+      let activityFlushScheduled = false;
+      const flushActivity = (): void => {
+        if (!activityBuffer.length || stopped) return;
+        const events = activityBuffer.splice(0);
+        activityBytes = 0;
+        try {
+          // Keep day boundaries explicit while preserving event order in each durable batch.
+          let batch: YorozuEvent[] = [];
+          for (const event of events) {
+            if (batch.length && new Date(batch[0]!.ts).toISOString().slice(0, 10) !== new Date(event.ts).toISOString().slice(0, 10)) {
+              persistThreadAndTranscriptBatch(batch, dir); for (const saved of batch) broadcast(saved); batch = [];
+            }
+            batch.push(event);
+          }
+          persistThreadAndTranscriptBatch(batch, dir); for (const saved of batch) broadcast(saved);
+        } catch (error) {
+          paused = true; turn.abort(); state("history-storage-failed"); throw error;
+        }
+      };
+      const queueActivity = (event: YorozuEvent): void => {
+        const bytes = Buffer.byteLength(JSON.stringify(event));
+        if (activityBuffer.length && activityBytes + bytes > 8 * 1024 * 1024) flushActivity();
+        activityBuffer.push(event);
+        activityBytes += bytes;
+        if (activityBuffer.length >= 256 || event.kind === "tool_call" || event.kind === "tool_result") { flushActivity(); return; }
+        if (!activityFlushScheduled) {
+          activityFlushScheduled = true;
+          queueMicrotask(() => { activityFlushScheduled = false; try { flushActivity(); } catch { /* abort and retained intent report uncertainty */ } });
+        }
+      };
       const pauseForUpdate = (): void => {
         if (paused || turn.signal.aborted) return;
         paused = true;
@@ -1751,10 +1782,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
               onSession: (sessionId) => { if (!stopped) { executionStarted = true; setThreadSession(threadId, sessionId, dir); } },
               onTerminate: (terminate) => { if (!stopped) terminateRunning.set(threadId, terminate); },
               onSteer: (steer) => { if (!stopped) steerRunning.set(threadId, steer); },
-              approve: async (tool, input, signal) =>
-                loadSettings(dir).yolo || nativeCards.approve(threadId, agent, tool, input, signal),
-              ask: (question, options, signal) => nativeCards.ask(threadId, agent, question, options, signal),
+              approve: async (tool, input, signal) => {
+                flushActivity(); return loadSettings(dir).yolo || nativeCards.approve(threadId, agent, tool, input, signal);
+              },
+              ask: (question, options, signal) => { flushActivity(); return nativeCards.ask(threadId, agent, question, options, signal); },
               beforeTool: async (signal) => {
+                flushActivity();
                 while (updateGate.draining && !signal.aborted) {
                   pauseAtSafePoint(threadId);
                   if (signal.aborted) break;
@@ -1766,7 +1799,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
                 }
                 return !signal.aborted && updateGate.status.phase !== "installing";
               },
-              onToolBoundary: () => pauseAtSafePoint(threadId),
+              onToolBoundary: () => { flushActivity(); pauseAtSafePoint(threadId); },
               onUpdate: (reply) => { if (!turn.signal.aborted) { executionStarted = true; broadcast(message(reply)); } },
               onActivity: (key, payload) => {
                 if (stopped) return;
@@ -1780,7 +1813,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
                 }
                 const event: YorozuEvent = { id: `${agent}:${threadId}:${key}`, threadId, ts: Date.now(), agentId: MAIN_AGENT, ...payload };
                 const newResult = event.kind === "tool_result" && event.data.ok && !seenResults.has(event.id);
-                emit(event.kind === "tool_result" ? stashToolResult(event, dir) : event);
+                queueActivity(event.kind === "tool_result" ? stashToolResult(event, dir) : event);
                 if (newResult) {
                   seenResults.add(event.id);
                   recoveryAttempts = 0;
@@ -1794,6 +1827,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
               await Promise.all([...steering.values()].filter((entry) => entry.threadId === threadId).map((entry) => entry.promise));
             });
             if (stopped) return;
+            flushActivity();
             if (done.sessionId && done.sessionId !== currentHome.sessionId) setThreadSession(threadId, done.sessionId, dir);
             const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
             if (done.completed && stop && (stop.status === "requested" || stop.status === "unconfirmed")) {
@@ -1806,6 +1840,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
             finish(done.text);
             return;
           } catch (error) {
+            try { flushActivity(); } catch { /* durable failure already aborted this turn */ }
             openToolCalls.delete(threadId);
             if (turn.signal.aborted) return;
             state(`native-error ${error instanceof Error ? error.message : String(error)}`);
@@ -1905,8 +1940,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           const original = existing?.kind === "message" ? existing : logged;
           const ordered = { ...original, ts: Math.max(Date.now(), prior.at(-1)?.ts ?? 0),
             clientTs: original.clientTs ?? original.ts };
-          appendTranscript(ordered, transcripts);
-          appendThreadEvent(ordered, dir);
+          persistThreadAndTranscript(ordered, dir);
           broadcast(ordered);
         }
       }
@@ -1955,8 +1989,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         clientTs: event.clientTs ?? event.ts, data: { ...event.data, delivery: "steer",
           runId: completionIdFor(event.threadId, active), completionId: completionIdFor(event.threadId, active) } };
       // Persist delivery before removing the queue entry: restart never launches it again.
-      appendTranscript(ordered, transcripts);
-      appendThreadEvent(ordered, dir);
+      persistThreadAndTranscript(ordered, dir);
       steered.add(event.id);
       removeNativeQueue(event.id);
       turn.queued = turn.queued.filter((id) => id !== event.id);
@@ -3001,8 +3034,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       ? { ...event, data: { ...event.data, delivery: "queue" as const,
         runId: turnless ? undefined : completionIdFor(event.threadId, event.id),
         completionId: turnless ? undefined : completionIdFor(event.threadId, event.id) } } : event);
-    appendTranscript(logged, transcripts);
-    appendThreadEvent(logged, dir);
+    persistThreadAndTranscript(logged, dir);
     if (event.kind === "message" && event.data.role === "user" && !typed && durable?.purpose !== "approval-reply" &&
         threadAgent(event.threadId, dir) !== "yorozu") {
       admittedTurn = enqueueTurn(event.threadId, event.data.text, true,
@@ -3340,8 +3372,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           ...(failed ? { failed: true } : {}), ...(interrupted ? { interrupted: true } : {}) } };
       if (auxiliary && active && !active.status) {
         // An SDK tool prompt is complete, but the answer and its live draft still run.
-        appendTranscript(event, transcripts);
-        appendThreadEvent(event, dir);
+        persistThreadAndTranscript(event, dir);
         sendBroadcast(event, false);
         notifyRelay(event);
       } else {
@@ -3968,7 +3999,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       event.kind === "message" && event.data.role === "user");
     if (known?.kind === "message" && userMessageIdentity(known) !== entry.identity)
       throw new Error("Conflicting accepted projection");
-    if (!known) { restoreAcceptedThreadEvent(entry.event, dir); appendTranscript(entry.event, transcripts); }
+    if (!known) persistThreadAndTranscript(entry.event, dir);
     acceptedMessages.set(entry.id, entry.identity);
   });
   const stopRecovery: (() => Promise<void>)[] = [];
@@ -4057,6 +4088,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       await stopStore.close();
       await admissionStore.close();
       await attachmentUploads.close();
+      releaseHistory();
       await direct?.close();
       await legacyReady?.catch(() => undefined);
       await legacy?.close();
@@ -4068,6 +4100,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       });
     },
   };
+  } catch (error) { releaseHistory(); throw error; }
 }
 
 if (import.meta.main) {
