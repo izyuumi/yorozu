@@ -2,9 +2,7 @@
     import SwiftUI
     import UIKit
 
-    /// The phone's message field. SwiftUI's `TextField` offers Paste only for text, so an image
-    /// on the pasteboard could reach the composer only through the + menu; this is a
-    /// `UITextView` that takes the edit menu's Paste and ⌘V for images too.
+    /// Native multiline editing and keyboard handling, with explicit Paste for files and images.
     struct ComposerTextView: UIViewRepresentable {
         @Binding var text: String
         let placeholder: String
@@ -12,9 +10,7 @@
         let onSendNextQueued: () -> Bool
         let onQuestionOption: (Int) -> Bool
         let onPromptHistory: (Bool) -> Bool
-        /// Called when Paste finds an image; nil while images cannot be attached, so Paste goes
-        /// back to being text-only.
-        let onPasteImage: (() -> Void)?
+        var onPasteProviders: (([NSItemProvider]) -> Void)? = nil
         /// The thread to take the keyboard for, once each: a thread just started. Nil leaves
         /// focus wherever it is.
         var focusThread: String?
@@ -57,7 +53,7 @@
             view.onSendNextQueued = onSendNextQueued
             view.onQuestionOption = onQuestionOption
             view.onPromptHistory = onPromptHistory
-            view.onPasteImage = onPasteImage
+            view.onPasteProviders = onPasteProviders
             if focusThread != view.focusThread {
                 view.focusThread = focusThread
                 if focusThread != nil { view.focus() }
@@ -98,7 +94,7 @@
         var onSendNextQueued: () -> Bool = { false }
         var onQuestionOption: (Int) -> Bool = { _ in false }
         var onPromptHistory: (Bool) -> Bool = { _ in false }
-        var onPasteImage: (() -> Void)?
+        var onPasteProviders: (([NSItemProvider]) -> Void)?
         var focusThread: String?
         private var focusPending = false
 
@@ -115,16 +111,29 @@
         }
 
         override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
-            // `hasImages` only asks; it does not read, so showing the menu raises no banner.
-            if action == #selector(paste(_:)), onPasteImage != nil, pasteboardHasImages() {
-                return true
-            }
+            if action == #selector(paste(_:)), onPasteProviders != nil { return true }
             return super.canPerformAction(action, withSender: sender)
         }
 
+        override func canPaste(_ itemProviders: [NSItemProvider]) -> Bool {
+            if onPasteProviders != nil, itemProviders.contains(where: { clipboardFileType($0.registeredTypeIdentifiers) != nil }) {
+                return true
+            }
+            return super.canPaste(itemProviders)
+        }
+
         override func paste(_ sender: Any?) {
-            guard let onPasteImage, pasteboardHasImages() else { return super.paste(sender) }
-            onPasteImage()
+            guard onPasteProviders != nil else { return super.paste(sender) }
+            // The user explicitly chose Paste. Never access itemProviders to show the menu.
+            paste(itemProviders: UIPasteboard.general.itemProviders)
+        }
+
+        override func paste(itemProviders: [NSItemProvider]) {
+            guard let onPasteProviders else { return super.paste(itemProviders: itemProviders) }
+            let files = itemProviders.filter { clipboardFileType($0.registeredTypeIdentifiers) != nil }
+            if !files.isEmpty { onPasteProviders(files) }
+            let text = itemProviders.filter { clipboardFileType($0.registeredTypeIdentifiers) == nil }
+            if !text.isEmpty { super.paste(itemProviders: text) }
         }
 
         /// A hardware keyboard's Return sends; Shift-Return is a new line.
@@ -279,7 +288,7 @@
                     }
                     if let onPaste = self.onPaste,
                         event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-                        event.charactersIgnoringModifiers == "v", pasteboardHasImages()
+                        event.charactersIgnoringModifiers == "v", pasteboardHasAttachments()
                     {
                         onPaste()
                         return nil

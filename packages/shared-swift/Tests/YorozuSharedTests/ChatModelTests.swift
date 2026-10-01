@@ -161,63 +161,65 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
 }
 
 @MainActor
-@Test func stashedDraftsSurviveRelaunchAndRestoreTextAndAttachments() throws {
+@Test func legacySavedDraftsRecoverSeparatelyAndSurviveRepeatedRelaunch() throws {
     let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
     let key = SymmetricKey(size: .bits256)
     defer { try? FileManager.default.removeItem(at: directory) }
-    func launch() -> ChatModel {
-        ChatModel(transport: FakeTransport(), cache: ThreadCache(directory: directory, key: key))
-    }
-    let model = launch()
-    let thread = model.newDraft()
+    let cache = ThreadCache(directory: directory, key: key)
+    let source = ThreadSummary(id: "legacy", title: "", archived: false, lastActivity: 1)
     let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "aGk=")
-    model.drafts[thread.id] = "  unfinished\nthought  "
-    model.attachments[thread.id] = [file]
-    model.stashDraft(in: thread.id)
-    #expect(model.drafts[thread.id] == "")
-    #expect((model.attachments[thread.id] ?? []).isEmpty)
-    model.attachments[thread.id] = [file]
-    model.stashDraft(in: thread.id)
-    model.stashDraft(in: thread.id) // An empty composer adds nothing.
-    let other = model.newDraft()
-    model.drafts[other.id] = "another thread"
-    model.stashDraft(in: other.id)
-    model.discardDraft(thread.id)
+    let stashes = [
+        ThreadCache.StashedDraft(id: "text", text: "  unfinished\nthought  ", attachments: []),
+        ThreadCache.StashedDraft(id: "file", text: "", attachments: [file]),
+        ThreadCache.StashedDraft(id: "both", text: "with file", attachments: [file]),
+    ]
+    try cache.save(composer: .init(drafts: [source.id: "current draft"], attachments: [source.id: [file]],
+        threads: [source], knownThreads: [], openThread: source.id, stashes: [source.id: stashes]))
+    func launch() -> ChatModel { ChatModel(transport: FakeTransport(), cache: cache) }
+    let model = launch()
+    for stash in stashes {
+        let id = try #require(model.recoverStash(stash.id, in: source.id))
+        #expect(model.drafts[id] == stash.text)
+        #expect(model.attachments[id] == stash.attachments)
+        #expect(model.recoverStash(stash.id, in: source.id) == id)
+        let again = launch()
+        #expect(again.drafts[id] == stash.text)
+        #expect(again.attachments[id] == stash.attachments)
+        #expect(again.drafts[source.id] == "current draft")
+        #expect(again.attachments[source.id] == [file])
+        #expect(again.stashes[source.id]?.count == 3)
+    }
+    #expect(model.threads.count == 4)
+    model.drafts["recovered-both"] = "edited recovered draft"
+    #expect(model.recoverStash("both", in: source.id) == "recovered-both")
+    #expect(launch().drafts["recovered-both"] == "edited recovered draft")
+    #expect(model.recoverStash("both", in: "other-host") == nil)
+}
 
-    let restored = launch() // No flush or close: stash is durable immediately.
-    #expect(restored.isDraft(thread.id))
-    let stashes = try #require(restored.stashes[thread.id])
-    #expect(stashes.count == 2)
-    #expect(restored.stashes[other.id]?.count == 1)
-    restored.drafts[thread.id] = "quick question"
-    restored.restoreStash(stashes[0].id, in: thread.id)
-    #expect(restored.drafts[thread.id] == "quick question")
-    #expect(restored.stashes[thread.id]?.count == 2)
-    restored.drafts[thread.id] = ""
-    restored.attachments[thread.id] = [file]
-    restored.restoreStash(stashes[0].id, in: thread.id)
-    #expect(restored.drafts[thread.id] == "")
-    restored.attachments[thread.id] = []
-    restored.restoreStash(stashes[0].id, in: other.id)
-    #expect(restored.stashes[thread.id]?.count == 2)
-    restored.restoreStash(stashes[0].id, in: thread.id)
-    #expect(restored.drafts[thread.id] == "  unfinished\nthought  ")
-    #expect(restored.attachments[thread.id] == [file])
-    #expect(restored.stashes[thread.id]?.count == 1)
-
-    let again = launch()
-    #expect(again.drafts[thread.id] == "  unfinished\nthought  ")
-    #expect(again.attachments[thread.id] == [file])
-    let remaining = try #require(again.stashes[thread.id]?.first)
-    #expect(remaining.attachments == [file])
-    again.drafts[thread.id] = ""
-    again.attachments[thread.id] = []
-    again.restoreStash(remaining.id, in: thread.id)
-    #expect(again.drafts[thread.id] == "")
-    #expect(again.attachments[thread.id] == [file])
-    #expect(again.stashes[thread.id]?.isEmpty == true)
-    again.archive(other)
-    #expect(launch().stashes[other.id] == nil)
+@MainActor
+@Test func interruptedLegacyRecoveryKeepsSourceAndRepairsMissingFiles() throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: SymmetricKey(size: .bits256))
+    let source = ThreadSummary(id: "legacy", title: "", archived: false, lastActivity: 1)
+    let recovered = ThreadSummary(id: "recovered-both", title: "", archived: false, lastActivity: 2)
+    let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "aGk=")
+    let stash = ThreadCache.StashedDraft(id: "both", text: "with file", attachments: [file])
+    // Crash after one of the two independently atomic encrypted records was written.
+    for composerFirst in [false, true] {
+        try cache.save(composer: .init(drafts: composerFirst ? [recovered.id: stash.text] : [:],
+            attachments: composerFirst ? [recovered.id: [file]] : [:],
+            threads: composerFirst ? [source, recovered] : [source], knownThreads: [], openThread: source.id,
+            stashes: [source.id: [stash]]))
+        try cache.save(draftState: .init(drafts: composerFirst ? [:] : [recovered.id: stash.text], preparedSend: [:],
+            threads: composerFirst ? [source] : [source, recovered], openThread: source.id))
+        let model = ChatModel(transport: FakeTransport(), cache: cache)
+        #expect(model.recoverStash(stash.id, in: source.id) == recovered.id)
+        let again = ChatModel(transport: FakeTransport(), cache: cache)
+        #expect(again.drafts[recovered.id] == stash.text)
+        #expect(again.attachments[recovered.id] == [file])
+        #expect(again.stashes[source.id]?.first?.attachments == [file])
+    }
 }
 
 @MainActor

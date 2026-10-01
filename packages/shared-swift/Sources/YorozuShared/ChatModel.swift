@@ -325,47 +325,48 @@ public final class ChatModel {
         return true
     }
 
-    public func stashDraft(in threadId: String) {
-        let text = drafts[threadId] ?? ""
-        let files = attachments[threadId] ?? []
-        guard !text.isEmpty || !files.isEmpty else { return }
-        restoringComposer = true
-        defer { restoringComposer = false }
-        let previous = stashes[threadId]
-        stashes[threadId, default: []].append(.init(text: text, attachments: files))
-        do {
-            // Make the stash durable before clearing either part of the composer.
-            try saveComposer()
-        } catch {
-            stashes[threadId] = previous
-            failure = String(localized: "Could not save draft: \(error.localizedDescription)")
-            return
+    /// Recovery copies a legacy saved draft into its own composer. Keep the original as a
+    /// recovery source: a crash between the two encrypted records must never destroy it.
+    /// The stable destination makes repeated recovery reopen the same draft.
+    @discardableResult
+    public func recoverStash(_ id: String, in threadId: String) -> String? {
+        guard let stash = stashes[threadId]?.first(where: { $0.id == id }),
+              let source = threads.first(where: { $0.id == threadId }) else { return nil }
+        let destination = "recovered-" + id
+        if threads.contains(where: { $0.id == destination }) {
+            if isDraft(destination), drafts[destination] == stash.text, attachments[destination] == nil {
+                restoringComposer = true
+                defer { restoringComposer = false }
+                attachments[destination] = stash.attachments
+                do {
+                    try saveComposer()
+                    try saveDraftState()
+                } catch {
+                    failure = String(localized: "Could not save draft: \(error.localizedDescription)")
+                    return nil
+                }
+            }
+            return destination
         }
-        drafts[threadId] = ""
-        attachments[threadId] = nil
-        do {
-            try saveComposer()
-            try saveDraftState()
-        } catch { failure = String(localized: "Could not save draft: \(error.localizedDescription)") }
-    }
-
-    public func restoreStash(_ id: String, in threadId: String) {
-        guard (drafts[threadId] ?? "").isEmpty, (attachments[threadId] ?? []).isEmpty,
-              let stash = stashes[threadId]?.first(where: { $0.id == id }) else { return }
         restoringComposer = true
         defer { restoringComposer = false }
-        drafts[threadId] = stash.text
-        attachments[threadId] = stash.attachments
-        let previous = stashes[threadId]
+        var recovered = ThreadSummary(id: destination, title: "", archived: false,
+            lastActivity: Date().timeIntervalSince1970 * 1000, agent: source.agent, cwd: source.cwd)
+        recovered.model = source.model
+        recovered.effort = source.effort
+        draftThreads.insert(recovered, at: 0)
+        drafts[destination] = stash.text
+        attachments[destination] = stash.attachments
         do {
-            // Keep the stash until both composer records own the restored draft.
+            try saveComposer()
             try saveDraftState()
-            try saveComposer()
-            stashes[threadId]?.removeAll { $0.id == id }
-            try saveComposer()
+            return destination
         } catch {
-            stashes[threadId] = previous
+            draftThreads.removeAll { $0.id == destination }
+            drafts[destination] = nil
+            attachments[destination] = nil
             failure = String(localized: "Could not save draft: \(error.localizedDescription)")
+            return nil
         }
     }
     private var restoredWithdrawals: Set<String> = []

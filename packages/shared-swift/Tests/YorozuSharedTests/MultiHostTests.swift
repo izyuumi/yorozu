@@ -422,8 +422,6 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
     #expect(draft.hostID == second.id)
     #expect(hosts.thread(for: draft)?.thread.agent == nil)
     let attachment = MessageAttachment(name: "note.txt", mime: "text/plain", data: "aGk=")
-    second.model.drafts[draft.threadID] = "stashed prompt"
-    second.model.stashDraft(in: draft.threadID)
     second.model.drafts[draft.threadID] = "unsent prompt"
     second.model.attachments[draft.threadID] = [attachment]
     #expect(hosts.configureDraft(draft, on: "missing", agent: .yorozu, cwd: nil) == nil)
@@ -435,7 +433,6 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
     #expect(!second.model.isDraft(draft.threadID))
     #expect(first.model.drafts[moved.threadID] == "unsent prompt")
     #expect(first.model.attachments[moved.threadID] == [attachment])
-    #expect(first.model.stashes[moved.threadID]?.first?.text == "stashed prompt")
     #expect(first.model.outbox.isEmpty && second.model.outbox.isEmpty)
     #expect(await firstTransport.sent.allSatisfy { $0.threadId != moved.threadID })
     #expect(await secondTransport.sent.allSatisfy { $0.threadId != moved.threadID })
@@ -647,4 +644,27 @@ private func multiHostSession(_ id: HostID, transport: MultiHostTransport, cache
         sent = await transport.sent
     }
     #expect(requests(sent) == 1)
+}
+
+@MainActor
+@Test func legacySavedDraftFollowsItsComposerWhenChangingHosts() throws {
+    let root = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let originalCache = ThreadCache(directory: root.appending(path: "source"), key: SymmetricKey(size: .bits256))
+    let targetCache = ThreadCache(directory: root.appending(path: "target"), key: SymmetricKey(size: .bits256))
+    let draft = ThreadSummary(id: "legacy-draft", title: "", archived: false, lastActivity: 1)
+    let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "aGk=")
+    try originalCache.save(composer: .init(drafts: [draft.id: "current"], attachments: [:], threads: [draft],
+        knownThreads: [], openThread: draft.id, stashes: [draft.id: [.init(id: "saved", text: "legacy", attachments: [file])]]))
+    let source = multiHostSession(multiHostID(0), transport: MultiHostTransport(), cache: originalCache)
+    let target = multiHostSession(multiHostID(1), transport: MultiHostTransport(), cache: targetCache)
+    defer { source.model.close(); target.model.close() }
+    let hosts = MultiHostModel(sessions: [source, target])
+    let moved = try #require(hosts.configureDraft(.init(hostID: source.id, threadID: draft.id), on: target.id, agent: .yorozu, cwd: nil))
+    #expect(source.model.stashes[draft.id] == nil)
+    let restored = ChatModel(transport: MultiHostTransport(), cache: targetCache)
+    let recovered = try #require(restored.recoverStash("saved", in: moved.threadID))
+    #expect(restored.drafts[moved.threadID] == "current")
+    #expect(restored.drafts[recovered] == "legacy")
+    #expect(restored.attachments[recovered] == [file])
 }

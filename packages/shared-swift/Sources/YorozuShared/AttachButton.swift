@@ -24,7 +24,7 @@ struct DroppedFile: Transferable {
     let bytes: Data
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(importedContentType: .data) { received in
-            DroppedFile(name: received.file.lastPathComponent, bytes: try Data(contentsOf: received.file))
+            DroppedFile(name: received.file.lastPathComponent, bytes: try readAttachmentFile(received.file))
         }
     }
 
@@ -79,6 +79,8 @@ struct AttachButton: View {
     let remaining: Int
     let onPick: ([MessageAttachment]) -> Void
     let onTooLarge: () -> Void
+    var onPaste: (() -> Void)? = nil
+    var externalLoading = false
     var onLoadingChanged: (Bool) -> Void = { _ in }
 
     @State private var photos: [PhotosPickerItem] = []
@@ -111,14 +113,9 @@ struct AttachButton: View {
                 }
             #endif
             Button("Files", systemImage: "folder") { browsingFiles = true }
-            #if os(iOS)
-                // The phone's way to the paste the Mac gets from ⌘V. `hasImages` is only a
-                // question about the pasteboard and does not read it, so it raises no banner;
-                // the read itself happens on the tap, which is somebody asking for it.
-                if UIPasteboard.general.hasImages {
-                    Button("Paste", systemImage: "doc.on.clipboard") { pasteImage() }
-                }
-            #endif
+            if let onPaste {
+                Button("Paste attachments", systemImage: "doc.on.clipboard", action: onPaste)
+            }
         } label: {
             Group {
                 if isLoading { ProgressView().controlSize(.small) }
@@ -131,7 +128,7 @@ struct AttachButton: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .accessibilityLabel(isLoading ? String(localized: "Loading attachments") : String(localized: "Attach photos or files"))
-        .disabled(isLoading || remaining <= 0)
+        .disabled(isLoading || externalLoading || remaining <= 0)
         .help(remaining <= 0 ? String(localized: "Remove an attachment to add another") : String(localized: "Attach photos or files"))
         .accessibilityHint(remaining <= 0 ? String(localized: "Remove an attachment to add another") : String(localized: "Choose photos or files for this message"))
         .alert("Attachments couldn’t be added", isPresented: Binding(
@@ -209,7 +206,7 @@ struct AttachButton: View {
                     try await Task.detached(priority: .userInitiated) {
                         let scoped = url.startAccessingSecurityScopedResource()
                         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                        return try Data(contentsOf: url)
+                        return try readAttachmentFile(url)
                     }.value
                 }
             )
@@ -252,12 +249,6 @@ struct AttachButton: View {
     private func reportFailure(_ message: String) {
         failureMessage = failureMessage.map { $0 + "\n\n" + message } ?? message
     }
-
-    #if os(iOS)
-        private func pasteImage() {
-            stage(pasteboardImagePicks())
-        }
-    #endif
 
     private func stage(_ picks: [(name: String, mime: String, bytes: Data)]) {
         // Camera and menu Paste start here; async acquisition already began its attempt.
@@ -433,7 +424,7 @@ private struct StagedThumbnail: View {
     let attachment: MessageAttachment
     let onRemove: () -> Void
 
-    private static let side: CGFloat = 56
+    private static let side: CGFloat = 100
 
     var body: some View {
         thumbnail
@@ -463,13 +454,13 @@ private struct StagedThumbnail: View {
 
     @ViewBuilder private var thumbnail: some View {
         if attachment.isImage, let bytes = attachment.bytes, let image = Image.from(data: bytes) {
-            image.resizable().scaledToFill()
+            image.resizable().scaledToFit()
         } else {
             VStack(spacing: 2) {
                 Image(systemName: "doc").font(.scaled(.title3)).foregroundStyle(.secondary)
                 Text(attachment.name)
                     .font(.scaled(.caption2))
-                    .lineLimit(1)
+                    .lineLimit(2)
                     .truncationMode(.middle)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 2)

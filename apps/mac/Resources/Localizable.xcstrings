@@ -2,6 +2,76 @@
   "sourceLanguage": "en",
   "version": "1.0",
   "strings": {
+    "Paste attachments": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添付ファイルをペースト"
+          }
+        }
+      }
+    },
+    "Recover saved draft": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存済みの下書きを復元"
+          }
+        }
+      }
+    },
+    "Open an older saved draft separately. Your current draft is kept.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "以前に保存した下書きを別の会話として開きます。現在の下書きは保持されます。"
+          }
+        }
+      }
+    },
+    "Saved draft recovered": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下書きを復元しました"
+          }
+        }
+      }
+    },
+    "The recovered draft is in your conversation list. Your current draft and the original saved copy are kept.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "復元した下書きは会話一覧にあります。現在の下書きと元の保存済みコピーは保持されます。"
+          }
+        }
+      }
+    },
+    "No readable files or images were copied. Use Photos or Files to attach them.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "読み込めるファイルや画像がコピーされていません。写真またはファイルから添付してください。"
+          }
+        }
+      }
+    },
+    "Some attachments couldn’t be read or exceeded the import limit. Copy them again or use Files.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一部の添付ファイルを読み込めないか、読み込みの上限を超えています。もう一度コピーするか、ファイルから選択してください。"
+          }
+        }
+      }
+    },
     "Confirming delivery…" : {
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Confirmando la entrega…" } },
