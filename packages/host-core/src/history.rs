@@ -952,6 +952,11 @@ impl History {
             .filter(|id| !invalid_id(id))
             .ok_or_else(invalid)?
             .to_owned();
+        if ["run_attempt_pause", "run_attempt_finish"]
+            .contains(&request["op"].as_str().unwrap_or(""))
+        {
+            return self.attempt_lifecycle(request, &thread, &origin);
+        }
         if request["op"] == "run_attempt_claim" {
             let proof = self.run_ready(request)?;
             if proof["ready"] != true {
@@ -1114,6 +1119,78 @@ impl History {
             }
         }
         Ok(json!({"current":true,"owned":true}))
+    }
+    fn attempt_lifecycle(
+        &mut self,
+        request: &Value,
+        thread: &str,
+        origin: &str,
+    ) -> io::Result<Value> {
+        let attempt = request["attemptId"]
+            .as_str()
+            .filter(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .ok_or_else(invalid)?;
+        let completion = format!("native:{origin}:final");
+        let bytes = crate::thread_index::current(&self.root)?.ok_or_else(invalid)?;
+        let mut index: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        let Some(home) = index
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|row| row["id"] == thread)
+        else {
+            return Ok(json!({"applied":false,"reason":"scope-replaced"}));
+        };
+        let marker = home["nativeTurn"].clone();
+        if request["turnId"] != completion
+            || marker["id"] != completion
+            || marker["userEventId"] != origin
+            || marker["attemptId"] != attempt
+        {
+            return Ok(json!({"applied":false,"reason":"scope-replaced"}));
+        }
+        if home["agent"]
+            .as_str()
+            .is_none_or(|agent| agent.is_empty() || agent == "yorozu")
+        {
+            return Ok(json!({"applied":false,"reason":"scope-replaced"}));
+        }
+        // A retained scope may be conservatively paused after its Rust epoch was lost.
+        // Cleanup requires durable evidence, independent of dispatch/Stop/expiry/FIFO policy.
+        let proof = self.request(&json!({"op":"accepted_get","messageId":origin}));
+        if proof.get("error").is_some() || proof["entry"]["threadId"] != thread {
+            return Err(invalid());
+        }
+        let (seen, terminal) =
+            crate::paging::run_evidence(&self.root, thread, &proof["entry"], &completion)?;
+        if !seen {
+            return Err(invalid());
+        }
+        if request["op"] == "run_attempt_pause" {
+            if terminal {
+                return Ok(json!({"applied":false,"terminal":true,"reason":"already-completed"}));
+            }
+            if let Some(reason) = request.get("pauseReason") {
+                if reason != "unconfirmed" {
+                    return Err(invalid());
+                }
+                home["nativeTurn"]["pauseReason"] = reason.clone();
+            }
+            home["nativeTurn"]["state"] = json!("interrupted");
+        } else {
+            if !terminal {
+                return Ok(json!({"applied":false,"reason":"terminal-unconfirmed"}));
+            }
+            home.as_object_mut().unwrap().remove("nativeTurn");
+        }
+        let stored = crate::thread_index::request_native(
+            &self.root,
+            &json!({"op":"replace","expectedHash":digest(&bytes),"threads":index}),
+        );
+        if stored["stored"] != true {
+            return Ok(json!({"applied":false,"reason":"metadata-unconfirmed"}));
+        }
+        Ok(json!({"applied":true,"terminal":terminal}))
     }
     pub fn request(&mut self, request: &Value) -> Value {
         // Keep each existing operational journal's own failure fence, including durable Stop

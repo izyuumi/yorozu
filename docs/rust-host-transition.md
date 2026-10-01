@@ -923,8 +923,8 @@ After an SDK failure with observed execution, Node confirms interruption of the 
 issued attempt before requesting a replacement. A failed interruption write fences further dispatch
 and preserves the running marker and durable queue for storage repair. Known claim policy refusals
 preserve the current marker; uncertain persistence can only pause the previously captured scope.
-This does not migrate the remaining generic startup/Stop/update marker lifecycle or progress-based
-counter resets. Those remain item3 work before the bounded provider worker and later finite items.
+This does not migrate the remaining generic startup/Stop/rewind/pre-SDK marker lifecycle or
+progress-based counter resets. Those remain item3 work before the bounded provider worker and later finite items.
 
 Validation: all120 Rust tests, formatting, strictClippy and production build pass. The complete
 runtime/plugin suite passes841 tests plus1skip/52files with one local worker and unchanged five-second
@@ -934,6 +934,37 @@ Repository CI remains at two workers. Negative baselines demonstrate caller-driv
 and replacement marker mutation; regression coverage includes legacy numeric counters, running owner
 refusal, sticky uncertainty, explicit Retry, failed interruption storage and unchanged replacement
 marker/queue bytes. Initial new-fixture barrier/title issues were corrected and their logs retained.
+
+## Scoped Rust pause and terminal cleanup
+
+Issued attempt pause and finish now use typed Rust metadata transitions. Both match the exact thread,
+canonical completion, retained origin and issued attempt. Rust verifies the accepted-origin
+fingerprint against retained history; cleanup requires the same-thread canonical agent message with
+done=true. The unrelated exhausted-recovery advisory cannot satisfy that proof. Terminal evidence is
+checked independently of dispatch admission, allowing cleanup after Stop, expiry or FIFO advancement.
+
+A conservative pause can survive loss of the Rust process epoch without granting new execution. It
+preserves counters, unknown fields and existing sticky uncertainty. A known terminal refuses pause
+and tells Node to retire the completed scope without another final or recovery advisory. A replaced
+or absent scope aborts only the captured worker; it does not rewrite the replacement or install a
+permanent storage fence. Unconfirmed storage/evidence stops recovery and fences dispatch.
+
+Issued SDK error/session/update/ownership-loss pauses now use these operations. Node awaits the
+changed-files report before typed terminal cleanup and attempt release. Failed finish persistence
+retains the canonical final and original marker while queued successors remain fenced. Known
+pre-SDK updates with no issued attempt retain their compatibility path. Generic startup/Stop/rewind,
+progress resets and full approval currency still require migration; generic nativeTurn writes are
+not yet sealed. This remains a partial transfer within finite item3.
+
+Validation: all123 Rust tests, formatting and strictClippy pass; production build and the complete
+runtime/plugin suite pass843 tests plus1skip/52files with one local worker and unchanged deadlines.
+Focused checks pass12 Rust readiness/lifecycle cases,76 affected runtime cases, and two new runtime
+terminal-known/finish-conflict cases. The previous runtime's actual terminal-known negative leaves
+waiting work stranded; the repaired path advances it once without another final or advisory. Core
+cases cover epoch loss, replacement scopes, sticky state, noncanonical/wrong-role/wrong-thread
+terminal evidence, independent Stop/expiry/FIFO cleanup and persistent metadata conflicts. Prior
+admission checkpoint c10706f CI passes all jobs under the normal two-worker configuration; this
+remains distinct from the required exact native26.5 release gate.
 
 ## Isolated alpha CI
 

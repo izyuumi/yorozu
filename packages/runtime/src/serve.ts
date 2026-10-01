@@ -1682,6 +1682,28 @@ export function serve(options: ServeOptions = {}): Sidecar {
       let recoveryAttempts = previous?.userEventId === userEventId ? previous?.recoveryAttempts ?? 0 : 0;
       let recovering = previous?.state === "interrupted" && previous.userEventId === userEventId;
       let paused = false;
+      const pauseIssuedAttempt = (attempt: string, pauseReason?: "unconfirmed"): boolean => {
+        let proof: Record<string, unknown>;
+        try { proof = syncHostResult(dir, { op: "run_attempt_pause", threadId, turnId: id,
+          eventId: userEventId, attemptId: attempt, ...(pauseReason ? { pauseReason } : {}) }); }
+        catch { proof = {}; }
+        if (proof.terminal === true) {
+          terminalRecorded = true;
+          turn.abort();
+          drainInterrupted.delete(threadId);
+          reportChanges();
+          return false;
+        }
+        if (proof.applied === true) { broadcast(threadList()); return true; }
+        paused = true;
+        turn.abort();
+        if (proof.reason !== "scope-replaced") {
+          nativeStorageFenced.add(threadId);
+          state("thread-index-storage-failed");
+        }
+        state("native-attempt-unconfirmed");
+        return false;
+      };
       const attemptCurrent = (attempt: string, mode: "effect" | "terminal" | "owned" = "effect"): boolean => {
         if (stopped || attempt !== activeAttempt) return false;
         let current = false;
@@ -1703,11 +1725,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           paused = true;
           turn.abort();
           state("native-attempt-unconfirmed");
-          const marker = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
-          if (marker?.attemptId === attempt) {
-            setNativeTurn(threadId, { ...marker, state: "interrupted" }, dir);
-            broadcast(threadList());
-          }
+          pauseIssuedAttempt(attempt, "unconfirmed");
         }
         return current;
       };
@@ -1748,8 +1766,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (paused || turn.signal.aborted) return;
         paused = true;
         drainInterrupted.add(threadId);
-        setNativeTurn(threadId, { id, ...((activeAttempt ?? previous?.attemptId) ? { attemptId: activeAttempt ?? previous?.attemptId } : {}), state: "interrupted", ...(userEventId ? { userEventId } : {}), recoveryAttempts }, dir);
-        broadcast(threadList());
+        const issued = activeAttempt ?? previous?.attemptId;
+        if (issued) {
+          if (!pauseIssuedAttempt(issued)) return;
+        } else {
+          // A known pre-SDK update pause has no issued scope yet.
+          setNativeTurn(threadId, { ...previous, id, state: "interrupted", ...(userEventId ? { userEventId } : {}), recoveryAttempts }, dir);
+          broadcast(threadList());
+        }
         turn.abort();
       };
       drainPauses.set(threadId, pauseForUpdate);
@@ -1772,7 +1796,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
         while (!turn.signal.aborted) {
           if (recovering && userEventId && uncertainActiveSteering(threadId, userEventId)) {
             paused = true;
-            setNativeTurn(threadId, { id, ...((activeAttempt ?? previous?.attemptId) ? { attemptId: activeAttempt ?? previous?.attemptId } : {}), state: "interrupted", userEventId, recoveryAttempts }, dir);
+            const issued = activeAttempt ?? previous?.attemptId;
+            if (issued) {
+              if (!pauseIssuedAttempt(issued, "unconfirmed")) return;
+            } else setNativeTurn(threadId, { ...previous, id, state: "interrupted", userEventId, recoveryAttempts }, dir);
             state("native-follow-up-unconfirmed");
             broadcast(threadList());
             return;
@@ -1791,7 +1818,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
               const marker = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
               if (marker?.id === id && marker.userEventId === userEventId &&
                   marker.attemptId === (activeAttempt ?? previous?.attemptId)) {
-                setNativeTurn(threadId, { ...marker, state: "interrupted", pauseReason: "unconfirmed" }, dir);
+                if (marker.attemptId) pauseIssuedAttempt(marker.attemptId, "unconfirmed");
+                else setNativeTurn(threadId, { ...marker, state: "interrupted", pauseReason: "unconfirmed" }, dir);
               }
               else nativeStorageFenced.add(threadId);
             } catch { nativeStorageFenced.add(threadId); state("thread-index-storage-failed"); }
@@ -1815,13 +1843,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
               if (!(error instanceof NativeSessionUnconfirmed) || error.reason !== "stopped") {
                 paused = true;
                 state("native-session-unconfirmed");
-                try {
-                  const marker = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
-                  if (marker?.attemptId === attempt && marker.userEventId === userEventId) {
-                    setNativeTurn(threadId, { ...marker, state: "interrupted", pauseReason: "unconfirmed" }, dir);
-                    broadcast(threadList());
-                  }
-                } catch { nativeStorageFenced.add(threadId); state("thread-index-storage-failed"); }
+                pauseIssuedAttempt(attempt, "unconfirmed");
               }
               throw error;
             }
@@ -1948,21 +1970,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
               finish(`${agent} could not answer; see the Mac log.`, true);
               return;
             }
-            // Confirm interruption before Rust admits a replacement attempt. A failed
-            // write keeps the running marker and queue fenced for storage repair.
-            try {
-              const marker = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
-              if (marker?.id !== id || marker.userEventId !== userEventId || marker.attemptId !== attempt) {
-                paused = true; turn.abort(); nativeStorageFenced.add(threadId);
-                state("native-attempt-unconfirmed");
-                return;
-              }
-              setNativeTurn(threadId, { ...marker, state: "interrupted" }, dir);
-            } catch {
-              paused = true; turn.abort(); nativeStorageFenced.add(threadId);
-              state("thread-index-storage-failed");
-              return;
-            }
+            // Rust confirms exact retained interruption before admitting a replacement.
+            if (!pauseIssuedAttempt(attempt)) return;
             if (recoveryAttempts >= 3) {
               paused = true;
               emit({ id: randomUUID(), threadId, ts: Date.now(), agentId: MAIN_AGENT, kind: "message",
@@ -1989,17 +1998,32 @@ export function serve(options: ServeOptions = {}): Sidecar {
           terminalRecorded ||= readThreadEvents(threadId, dir).some((event) => event.id === id && event.kind === "message" &&
             event.data.role === "agent" && event.data.done === true);
         }
+        if (!stopped && !terminalRecorded && !paused && activeAttempt) pauseIssuedAttempt(activeAttempt, "unconfirmed");
         if (stop && (terminalRecorded || !paused)) reportChanges();
         await changesReport;
+        if (!stopped && terminalRecorded) {
+          const issued = activeAttempt ?? previous?.attemptId;
+          if (issued) {
+            let proof: Record<string, unknown>;
+            try { proof = syncHostResult(dir, { op: "run_attempt_finish", threadId, turnId: id,
+              eventId: userEventId, attemptId: issued }); }
+            catch { proof = {}; }
+            if (proof.applied === true) broadcast(threadList());
+            else if (proof.reason !== "scope-replaced") {
+              nativeStorageFenced.add(threadId);
+              state("native-finish-unconfirmed");
+            }
+          } else {
+            const marker = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
+            if (marker?.id === id && marker.userEventId === userEventId && !marker.attemptId) {
+              setNativeTurn(threadId, undefined, dir);
+              broadcast(threadList());
+            }
+          }
+        }
         if (activeAttempt && !stopped) {
           try { syncHostRequest(dir, { op: "run_attempt_release", threadId, eventId: userEventId, attemptId: activeAttempt }); }
           catch { state("native-attempt-unconfirmed"); }
-        }
-        const marker = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
-        if (!stopped && (terminalRecorded || !paused) && marker?.id === id && marker.userEventId === userEventId &&
-            marker.attemptId === (activeAttempt ?? previous?.attemptId)) {
-          setNativeTurn(threadId, undefined, dir);
-          broadcast(threadList());
         }
       }
       return;

@@ -4325,6 +4325,79 @@ test.each(["active", "paused", "exhausted"] as const)("a refused native claim pr
   expect(claims).toBe(1);
 });
 
+test("a canonical terminal during recovery pause retires its marker and advances queued work once", async () => {
+  const fail = Promise.withResolvers<void>();
+  const started = Promise.withResolvers<void>();
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-pause-terminal-"));
+  createThread("Work", dir, "pause-terminal", { agent: "codex", cwd: proj });
+  const run = vi.fn<NativeAgentRunner["run"]>().mockImplementation(async (turn) => {
+    if (run.mock.calls.length === 1) {
+      turn.onUpdate!("work started");
+      started.resolve();
+      await fail.promise;
+      appendThreadEvent({ id: `native:${origin}:final`, threadId: "pause-terminal", ts: Date.now(),
+        agentId: "main", kind: "message", data: { role: "agent", text: "confirmed terminal", done: true } }, dir);
+      throw new Error("worker failed after durable terminal");
+    }
+    return { text: "waiting work completed" };
+  });
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+  const origin = send({ kind: "message", data: { role: "user", text: "first work" } }, "pause-terminal");
+  await started.promise;
+  const waiting = send({ kind: "message", data: { role: "user", text: "waiting work" } }, "pause-terminal");
+  await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === waiting);
+  fail.resolve();
+  await eventsUntil((event) => event.kind === "message" && event.id === `native:${waiting}:final` && event.data.done === true);
+  const barrier = send({ kind: "thread_list", data: { threads: [], peerInfo: localPeerInfo("test") } });
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.peerInfoReplyTo === barrier);
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(run.mock.calls[1]![0].text).toBe("waiting work");
+  expect(listThreads(dir).find((thread) => thread.id === "pause-terminal")?.nativeTurn).toBeUndefined();
+  expect(readThreadEvents("pause-terminal", dir).filter((event) => event.kind === "message" && event.data.role === "agent"))
+    .toEqual([expect.objectContaining({ id: `native:${origin}:final`, data: expect.objectContaining({ text: "confirmed terminal", done: true }) }),
+      expect.objectContaining({ id: `native:${waiting}:final`, data: expect.objectContaining({ text: "waiting work completed", done: true }) })]);
+});
+
+test("failed native finish persistence retains its canonical final and fences the queued successor", async () => {
+  const finish = Promise.withResolvers<void>();
+  const started = Promise.withResolvers<void>();
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-finish-conflict-"));
+  createThread("Work", dir, "finish-conflict", { agent: "codex", cwd: proj });
+  let pending: string | undefined;
+  let finishes = 0;
+  const request = rustSyncModule.syncHostResult;
+  vi.spyOn(rustSyncModule, "syncHostResult").mockImplementation((root, data, bytes) => {
+    if (data.op === "run_attempt_finish" && data.threadId === "finish-conflict") finishes++;
+    return request(root, data, bytes);
+  });
+  const run = vi.fn<NativeAgentRunner["run"]>().mockImplementation(async () => {
+    started.resolve();
+    await finish.promise;
+    pending = join(dir, "threads.json.tmp");
+    writeFileSync(pending, "owned finish conflict fixture");
+    return { text: "confirmed completion" };
+  });
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+  const origin = send({ kind: "message", data: { role: "user", text: "work" } }, "finish-conflict");
+  await started.promise;
+  const waiting = send({ kind: "message", data: { role: "user", text: "next work" } }, "finish-conflict");
+  await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === waiting);
+  finish.resolve();
+  try {
+    await vi.waitFor(() => expect(finishes).toBe(1));
+    const barrier = send({ kind: "thread_list", data: { threads: [], peerInfo: localPeerInfo("test") } });
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.peerInfoReplyTo === barrier);
+    expect(listThreads(dir).find((thread) => thread.id === "finish-conflict")?.nativeTurn)
+      .toMatchObject({ state: "running", userEventId: origin });
+    expect(readThreadEvents("finish-conflict", dir).filter((event) => event.id === `native:${origin}:final`))
+      .toEqual([expect.objectContaining({ data: expect.objectContaining({ text: "confirmed completion", done: true }) })]);
+    expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8")))
+      .toContainEqual({ threadId: "finish-conflict", eventId: waiting });
+    expect(readFileSync(pending!, "utf8")).toBe("owned finish conflict fixture");
+    expect(run).toHaveBeenCalledTimes(1);
+  } finally { if (pending) rmSync(pending); }
+});
+
 test("failed interruption storage fences automatic native recovery without clearing its running marker", async () => {
   let pending: string | undefined;
   const run = vi.fn<NativeAgentRunner["run"]>().mockImplementation(async (turn) => {

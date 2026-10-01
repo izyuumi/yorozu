@@ -573,3 +573,166 @@ fn claim_budget_comes_from_retained_state_and_explicit_retry_not_caller_flags() 
     );
     assert_eq!(claim(&mut host, false)["recoveryAttempts"], 1);
 }
+
+fn lifecycle(host: &mut History, scope: &Value, op: &str) -> Value {
+    let mut request = scope.clone();
+    request["op"] = json!(op);
+    host.request(&request)
+}
+fn issued(host: &mut History) -> Value {
+    let proof =
+        host.request(&json!({"op":"run_attempt_claim","threadId":"thread","eventId":"origin"}));
+    assert_eq!(proof["claimed"], true);
+    json!({"threadId":"thread","turnId":"native:origin:final","eventId":"origin","attemptId":proof["attemptId"]})
+}
+#[test]
+fn scoped_pause_preserves_retained_budget_and_uncertainty_after_owner_epoch_loss() {
+    let temp = Temp::new();
+    let (mut host, _) = open(&temp);
+    seed(&mut host, "origin", "conversation");
+    let scope = issued(&mut host);
+    let read = snapshot(&temp);
+    let mut index = read["threads"].clone();
+    index[0]["nativeTurn"]["recoveryAttempts"] = json!(2);
+    index[0]["nativeTurn"]["pauseReason"] = json!("unconfirmed");
+    index[0]["nativeTurn"]["future"] = json!({"kept":true});
+    assert_eq!(
+        host.request(
+            &json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index})
+        )["stored"],
+        true
+    );
+    drop(host);
+    let mut host = History::open(&temp.0).unwrap();
+    assert_eq!(
+        lifecycle(&mut host, &scope, "run_attempt_pause")["applied"],
+        true
+    );
+    let read = snapshot(&temp);
+    let marker = &read["threads"][0]["nativeTurn"];
+    assert_eq!(marker["state"], "interrupted");
+    assert_eq!(marker["recoveryAttempts"], 2);
+    assert_eq!(marker["pauseReason"], "unconfirmed");
+    assert_eq!(marker["future"]["kept"], true);
+    assert_eq!(
+        lifecycle(&mut host, &scope, "run_attempt_pause")["applied"],
+        true
+    );
+    assert_eq!(
+        control(&mut host, &scope, "run_turn_retry")["applied"],
+        true
+    );
+    let replacement = issued(&mut host);
+    assert_ne!(replacement["attemptId"], scope["attemptId"]);
+    let bytes = fs::read(temp.0.join("threads.json")).unwrap();
+    for op in ["run_attempt_pause", "run_attempt_finish"] {
+        assert_eq!(lifecycle(&mut host, &scope, op)["reason"], "scope-replaced");
+        assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), bytes);
+    }
+}
+#[test]
+fn scoped_cleanup_requires_canonical_terminal_and_ignores_dispatch_policy() {
+    for guard in ["stop", "expiry", "fifo", "wrong-role", "wrong-thread"] {
+        let temp = Temp::new();
+        let (mut host, _) = open(&temp);
+        seed(&mut host, "origin", "conversation");
+        let scope = issued(&mut host);
+        assert_eq!(host.request(&json!({"op":"history_append","operationId":"advisory","thread":true,"transcript":true,"event":{"id":"unrelated-advisory","threadId":"thread","ts":1500,"agentId":"main","kind":"message","data":{"role":"agent","text":"Retry","done":true,"failed":true}}}))["stored"], true);
+        let bytes = fs::read(temp.0.join("threads.json")).unwrap();
+        assert_eq!(
+            lifecycle(&mut host, &scope, "run_attempt_finish")["reason"],
+            "terminal-unconfirmed"
+        );
+        assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), bytes);
+        if guard.starts_with("wrong-") {
+            let thread = if guard == "wrong-thread" {
+                "other"
+            } else {
+                "thread"
+            };
+            let role = if guard == "wrong-role" {
+                "user"
+            } else {
+                "agent"
+            };
+            assert_eq!(host.request(&json!({"op":"history_append","operationId":"wrong-final","thread":true,"transcript":true,"event":{"id":"native:origin:final","threadId":thread,"ts":2000,"agentId":"main","kind":"message","data":{"role":role,"text":"wrong proof","done":true}}}))["stored"], true);
+            assert_eq!(
+                lifecycle(&mut host, &scope, "run_attempt_finish")["reason"],
+                "terminal-unconfirmed"
+            );
+            assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), bytes);
+            assert_eq!(
+                lifecycle(&mut host, &scope, "run_attempt_pause")["applied"],
+                true
+            );
+            continue;
+        }
+        match guard {
+            "stop" => {
+                assert!(host.request(&json!({"op":"stop_save","record":{"targetEventId":"origin","threadId":"thread","status":"requested","requestIds":["cancel"]}}))["record"].is_object());
+            }
+            "expiry" => {
+                assert_eq!(host.request(&json!({"op":"admission_expire","entry":{"id":"origin","threadId":"thread","identity":"a".repeat(64),"deadline":1},"now":2}))["status"], "expired");
+            }
+            _ => {
+                seed(&mut host, "waiting", "conversation");
+                assert_eq!(
+                    host.request(
+                        &json!({"op":"queue_remove","threadId":"thread","eventId":"origin"})
+                    )["stored"],
+                    true
+                );
+            }
+        }
+        assert_eq!(host.request(&json!({"op":"history_append","operationId":"final","thread":true,"transcript":true,"event":{"id":"native:origin:final","threadId":"thread","ts":2000,"agentId":"main","kind":"message","data":{"role":"agent","text":"done","done":true}}}))["stored"], true);
+        let known = lifecycle(&mut host, &scope, "run_attempt_pause");
+        assert_eq!(known["terminal"], true);
+        assert_eq!(known["applied"], false);
+        assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), bytes);
+        let queue = fs::read(temp.0.join("native-turn-queue.json")).unwrap();
+        assert_eq!(
+            lifecycle(&mut host, &scope, "run_attempt_finish")["applied"],
+            true
+        );
+        assert!(snapshot(&temp)["threads"][0].get("nativeTurn").is_none());
+        assert_eq!(snapshot(&temp)["threads"][0]["future"]["kept"], true);
+        assert_eq!(
+            fs::read(temp.0.join("native-turn-queue.json")).unwrap(),
+            queue
+        );
+    }
+}
+#[test]
+fn scoped_lifecycle_keeps_expected_marker_and_queue_on_metadata_conflict() {
+    let temp = Temp::new();
+    let (mut host, _) = open(&temp);
+    seed(&mut host, "origin", "conversation");
+    let scope = issued(&mut host);
+    let bytes = fs::read(temp.0.join("threads.json")).unwrap();
+    let queue = fs::read(temp.0.join("native-turn-queue.json")).unwrap();
+    let conflict = temp.0.join("threads.json.tmp");
+    fs::write(&conflict, b"owned lifecycle conflict fixture").unwrap();
+    assert_eq!(
+        lifecycle(&mut host, &scope, "run_attempt_pause")["reason"],
+        "metadata-unconfirmed"
+    );
+    assert_eq!(host.request(&json!({"op":"history_append","operationId":"final","thread":true,"transcript":true,"event":{"id":"native:origin:final","threadId":"thread","ts":2000,"agentId":"main","kind":"message","data":{"role":"agent","text":"done","done":true}}}))["stored"], true);
+    assert_eq!(
+        lifecycle(&mut host, &scope, "run_attempt_finish")["reason"],
+        "metadata-unconfirmed"
+    );
+    assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), bytes);
+    assert_eq!(
+        fs::read(temp.0.join("native-turn-queue.json")).unwrap(),
+        queue
+    );
+    assert_eq!(
+        fs::read(&conflict).unwrap(),
+        b"owned lifecycle conflict fixture"
+    );
+    fs::remove_file(conflict).unwrap();
+    assert_eq!(
+        lifecycle(&mut host, &scope, "run_attempt_finish")["applied"],
+        true
+    );
+}
