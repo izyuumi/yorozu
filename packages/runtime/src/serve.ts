@@ -46,6 +46,7 @@ import {
   validAgentDescriptor,
   validAgentId,
   type AgentDescriptor,
+  type AgentStatusData,
   type ApprovalCardData,
   type ChannelKeys,
   type ChannelModelOption,
@@ -1374,18 +1375,55 @@ export function serve(options: ServeOptions = {}): Sidecar {
   let codexSkillPaths = new Map<string, string>();
   let skillsBuiltAt: number | undefined;
   let skillsRefreshing: Promise<void> | undefined;
+  let readiness: AgentStatusData | undefined;
+  let readinessBuiltAt: number | undefined;
+  let readinessRefreshing: Promise<AgentStatusData> | undefined;
+  // Explicitly registered runners are usable by contract. Default CLI runners need setup.
+  const configuredAgents = (): AgentDescriptor[] => options.nativeRunners !== undefined ? agentDescriptors
+    : agentDescriptors.filter(({ id }) => id === "yorozu" ||
+      (id === "claude-code" ? readiness?.claude?.ok : id === "codex" ? readiness?.codex?.ok : true));
+  const loadNativeModels = (agent: string): void => {
+    const runner = nativeRunners[agent];
+    if (!runner?.models) return;
+    void Promise.resolve().then(() => runner.models!()).then((models) => {
+      agentModels[agent] = models;
+      if (!stopped) broadcast(modelList());
+    }).catch(() => state(`native-model-list-unavailable ${agent}`));
+  };
+  const refreshReadiness = (force = false): Promise<AgentStatusData> => {
+    if (readinessRefreshing) return readinessRefreshing;
+    if (!force && readiness && readinessBuiltAt !== undefined && Date.now() - readinessBuiltAt < 60_000)
+      return Promise.resolve(readiness);
+    const refresh = agentStatus().then((next) => {
+      if (stopped) return next;
+      const previous = configuredAgents().map(({ id }) => id);
+      readiness = next;
+      readinessBuiltAt = Date.now();
+      const configured = configuredAgents().map(({ id }) => id);
+      if (JSON.stringify(previous) !== JSON.stringify(configured)) {
+        for (const id of configured) if (id !== "yorozu" && !previous.includes(id)) loadNativeModels(id);
+        skillsBuiltAt = undefined;
+        void refreshSkills();
+        if (!stopped) broadcast(modelList());
+      }
+      return next;
+    }).finally(() => { if (readinessRefreshing === refresh) readinessRefreshing = undefined; });
+    readinessRefreshing = refresh;
+    return refresh;
+  };
   const refreshSkills = (): Promise<void> => {
     if (skillsRefreshing) return skillsRefreshing;
     if (skillsBuiltAt !== undefined && Date.now() - skillsBuiltAt < 600_000) return Promise.resolve();
-    const refresh = Promise.all(agentDescriptors.map(async ({ id }) => {
-      try {
-        const skills = await Promise.resolve().then(() =>
-          id === "yorozu" ? [] : nativeRunners[id]?.skills?.() ?? []);
-        return { id, skills: skills as (SkillOption & { path?: string })[] };
-      } catch {
-        return { id, skills: [] as (SkillOption & { path?: string })[] };
-      }
-    })).then((listed) => {
+    const refresh = (options.nativeRunners === undefined ? refreshReadiness() : Promise.resolve())
+      .then(() => Promise.all(configuredAgents().map(async ({ id }) => {
+        try {
+          const skills = await Promise.resolve().then(() =>
+            id === "yorozu" ? [] : nativeRunners[id]?.skills?.() ?? []);
+          return { id, skills: skills as (SkillOption & { path?: string })[] };
+        } catch {
+          return { id, skills: [] as (SkillOption & { path?: string })[] };
+        }
+      }))).then((listed) => {
       const visible = (skills: SkillOption[]): SkillOption[] => {
         const seen = new Set<string>();
         return skills.flatMap((skill) => {
@@ -1433,18 +1471,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
       ...CHANNEL_CAPABILITIES.filter((c) => !announced.has(c)).map((c) => `missing:${c}`)];
   };
   const modelList = (): YorozuEvent =>
-    control({ kind: "model_list", data: { models: modelsFor("yorozu"), agentModels, agents: agentDescriptors, skills: skillsByAgent, channelCapabilities: channelCapabilities() } });
+    control({ kind: "model_list", data: { models: modelsFor("yorozu"), agentModels, agents: configuredAgents(), skills: skillsByAgent, channelCapabilities: channelCapabilities() } });
 
   void refreshSkills();
 
-  for (const { id: agent } of agentDescriptors.filter(({ id }) => id !== "yorozu")) {
-    const runner = nativeRunners[agent];
-    if (!runner?.models) continue;
-    void Promise.resolve().then(() => runner.models!()).then((models) => {
-      agentModels[agent] = models;
-      if (!stopped) broadcast(modelList());
-    }).catch(() => state(`native-model-list-unavailable ${agent}`));
-  }
+  for (const { id } of configuredAgents()) if (id !== "yorozu") loadNativeModels(id);
 
   /**
    * Where a coding agent's thread can be started. Sent with the thread list, like the models:
@@ -3027,7 +3058,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       case "device_remove":
         return forgetDevice(event.data.pub);
       case "agent_status":
-        return void agentStatus()
+        return void refreshReadiness(true)
           .then((data) => reply(control({ kind: "agent_status", data })));
       case "sync_request": {
         if (event.data.threadId !== undefined && (typeof event.data.threadId !== "string" || !event.data.threadId)) return;
@@ -3231,6 +3262,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       state("local-connected");
       send(threadList());
       send(modelList());
+      if (options.nativeRunners === undefined) void refreshReadiness();
       void refreshSkills();
       send(projectList());
       pushDevices();
@@ -3620,6 +3652,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         // A phone that has just paired needs the thread list before it can ask for anything.
         sendTo(body.pub, threadList());
         sendTo(body.pub, modelList());
+        if (options.nativeRunners === undefined) void refreshReadiness();
         void refreshSkills();
         sendTo(body.pub, projectList());
         // And every device's list of devices has just gained one.
@@ -3663,6 +3696,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         sendTo(device, control({ kind: "thread_list", data: { threads: [], peerInfoReplyTo: event.id.slice(0, 128) } }));
         if (known.compatibility.state === "compatible") {
           sendTo(device, modelList());
+          if (options.nativeRunners === undefined) void refreshReadiness();
           sendTo(device, projectList());
         }
         return;

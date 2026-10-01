@@ -11,23 +11,30 @@ struct NewSessionSetup: View {
     let chooseHost: (HostID) -> Void
 
     private var secondaryInk: Color { YorozuPalette.ink.opacity(0.72) }
+    private var offersAgentChoice: Bool { agents.contains { $0.id != .yorozu } }
+    private var heading: LocalizedStringKey { offersAgentChoice ? "Who should answer?" : "Start a conversation" }
+    private var readinessRequest: String {
+        "\(ObjectIdentifier(model)):\(model.canDeliver):\(model.agents?.map { $0.id.rawValue }.joined(separator: ",") ?? "")"
+    }
 
     private var agents: [AgentDescriptor] {
-        let groups = NewThreadPicker.groups(model.availableAgents)
+        let groups = NewThreadPicker.groups(model.configuredAgents)
         return groups.assistants + groups.codingAgents
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.section) {
             VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
-                Text("Who should answer?")
+                Text(heading)
                     .font(.scaled(.largeTitle).weight(.semibold))
                     .fontDesign(.serif)
                     .foregroundStyle(YorozuPalette.ink)
                     .accessibilityAddTraits(.isHeader)
-                Text("Choose an agent. Send a message to begin.")
-                    .font(.scaled(.callout))
-                    .foregroundStyle(secondaryInk)
+                if offersAgentChoice {
+                    Text("Choose an agent. Send a message to begin.")
+                        .font(.scaled(.callout))
+                        .foregroundStyle(secondaryInk)
+                }
             }
 
             if let hosts, let hostID, let host = hosts.session(for: hostID) {
@@ -70,16 +77,18 @@ struct NewSessionSetup: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
-                Text("Agent").accessibilityAddTraits(.isHeader)
-                VStack(spacing: 0) {
-                    ForEach(agents) { descriptor in
-                        if descriptor.id != agents.first?.id { Divider() }
-                        agentRow(descriptor)
+            if offersAgentChoice {
+                VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
+                    Text("Agent").accessibilityAddTraits(.isHeader)
+                    VStack(spacing: 0) {
+                        ForEach(agents) { descriptor in
+                            if descriptor.id != agents.first?.id { Divider() }
+                            agentRow(descriptor)
+                        }
                     }
+                    .background(YorozuPalette.paper)
+                    .clipShape(RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius))
                 }
-                .background(YorozuPalette.paper)
-                .clipShape(RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius))
             }
 
             if presentation.needsFolder {
@@ -114,6 +123,9 @@ struct NewSessionSetup: View {
         .frame(maxWidth: LayoutMetrics.readingWidth, alignment: .leading)
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .contain)
+        .task(id: readinessRequest) {
+            if model.canDeliver { model.requestAgentStatus() }
+        }
     }
 
     private func agentRow(_ descriptor: AgentDescriptor) -> some View {

@@ -30,10 +30,11 @@ final class ConnectionTests: XCTestCase {
         app.navigationBars.buttons["Threads"].tap()
         app.buttons["Settings"].tap()
         let advanced = app.buttons["Advanced"]
+        try revealSettingsControl(advanced)
         XCTAssertTrue(advanced.waitForExistence(timeout: 10), "No Advanced entry in Settings")
         advanced.tap()
         let copy = app.buttons["Copy diagnostics"]
-        for _ in 0..<6 where !copy.isHittable { app.collectionViews.firstMatch.swipeUp() }
+        try revealSettingsControl(copy)
         XCTAssertTrue(copy.isHittable, "Copy diagnostics is unreachable")
         UIPasteboard.general.string = "clipboard sentinel"
         copy.tap()
@@ -86,7 +87,7 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [connected], timeout: 45), .completed)
         settings.tap()
         let advanced = app.buttons["Advanced"]
-        for _ in 0..<6 where !advanced.isHittable { app.collectionViews.firstMatch.swipeUp() }
+        try revealSettingsControl(advanced)
         XCTAssertTrue(advanced.isHittable)
         advanced.tap()
         let switches = app.switches.matching(identifier: "Skip approvals for all agents")
@@ -98,10 +99,11 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(second.value as? String, "0")
         flip(first)
         let expiry = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Until '")).firstMatch
-        for _ in 0..<6 where !expiry.isHittable { app.collectionViews.firstMatch.swipeUp() }
+        try revealSettingsControl(expiry)
         XCTAssertTrue(expiry.waitForExistence(timeout: 10), "Host did not confirm the approval expiry")
         XCTAssertTrue(app.staticTexts["Every tool request runs without asking, including purchases, messages, commands, and deletes."].exists)
         app.navigationBars["Advanced"].buttons["Settings"].tap()
+        try revealSettingsControl(advanced)
         XCTAssertTrue(advanced.waitForExistence(timeout: 10), "Settings did not come back")
         advanced.tap()
         XCTAssertTrue(first.waitForExistence(timeout: 10), "Advanced did not reopen")
@@ -493,6 +495,18 @@ final class ConnectionTests: XCTestCase {
     }
 
     // MARK: - Steps
+
+    /// A Settings sheet leaves the thread list in the accessibility tree. Scroll the foreground
+    /// list, and let virtualized rows appear before asking XCTest to compute their hit point.
+    @MainActor
+    private func revealSettingsControl(_ element: XCUIElement) throws {
+        for _ in 0..<6 where !element.exists || !element.isHittable {
+            let list = try XCTUnwrap(app.collectionViews.allElementsBoundByIndex.first { $0.isHittable },
+                                     "No foreground Settings list")
+            list.swipeUp()
+        }
+        _ = try XCTUnwrap(element.exists ? element : nil, "Settings control is unreachable")
+    }
 
     /// A row's switch is at its trailing edge; a tap on the middle of the row, where the label is,
     /// leaves the switch as it was.

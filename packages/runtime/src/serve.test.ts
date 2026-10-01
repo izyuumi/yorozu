@@ -1206,6 +1206,65 @@ test("a registered agent appears in the catalog and answers a thread without a f
   expect(listThreads(dir).find((thread) => thread.id === "custom")?.agent).toBe("test-harness");
 });
 
+test.each([false, true])("default agent catalog follows actual CLI login and refreshes without restarting (installed=%s)", async (installed) => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-configured-agents-"));
+  const bin = join(dir, "bin");
+  const probes = join(dir, "auth-probes");
+  mkdirSync(bin);
+  const codex = (loggedIn: boolean) => {
+    writeFileSync(join(bin, "codex"), `#!/bin/sh\nif [ "$1" = login ] && [ "$2" = status ]; then\n  printf 'probe\\n' >> '${probes}'\n  printf '${loggedIn ? "Logged in using ChatGPT" : "Not logged in"}\\n' >&2\n  exit 0\nfi\nexit 1\n`);
+    chmodSync(join(bin, "codex"), 0o700);
+  };
+  if (installed) {
+    codex(false);
+    writeFileSync(join(bin, "claude"), '#!/bin/sh\nprintf \'{"loggedIn":false}\\n\'\n');
+    chmodSync(join(bin, "claude"), 0o700);
+  }
+  vi.stubEnv("PATH", bin);
+  relay = await startRelay(0);
+  createThread("Saved Codex work", dir, "saved", { agent: "codex", cwd: proj });
+  // Actual default runtime and CLI auth adapters, without injected runners/readiness.
+  sidecar = startSidecar({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, log: () => {} });
+  const mac = await macClient(dir);
+  const others: Awaited<ReturnType<typeof macClient>>[] = [];
+  const catalog = () => mac.events.findLast((event) => event.kind === "model_list");
+  const probeCount = () => existsSync(probes) ? readFileSync(probes, "utf8").trim().split("\n").length : 0;
+  const status = async (requests = 1) => {
+    const before = mac.events.filter((event) => event.kind === "agent_status").length;
+    for (let count = 0; count < requests; count++) mac.send({ kind: "agent_status", data: {} } as never);
+    await vi.waitFor(() => expect(mac.events.filter((event) => event.kind === "agent_status").length).toBe(before + requests));
+    return mac.events.findLast((event) => event.kind === "agent_status");
+  };
+  try {
+    const initial = await status();
+    expect(initial).toMatchObject({ data: { claude: { ok: false, reason: installed ? "not-logged-in" : "not-found" },
+      codex: { ok: false, reason: installed ? "not-logged-in" : "not-found" } } });
+    expect(catalog()).toMatchObject({ data: { agents: [{ id: "yorozu", label: "Yorozu", needsFolder: false }] } });
+    expect(mac.events.some((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "saved"))).toBe(true);
+    codex(true);
+    others.push(await macClient(dir), await macClient(dir));
+    const cached = probeCount();
+    await vi.waitFor(() => expect(others.every((client) => client.events.some((event) => event.kind === "model_list"))).toBe(true));
+    expect(probeCount()).toBe(cached); // Ordinary joins reuse setup probes; explicit refresh sees login.
+    expect((await status(2))).toMatchObject({ data: { codex: { ok: true } } });
+    expect(probeCount()).toBe(cached + 1); // Concurrent setup requests share one in-flight probe.
+    expect(catalog()).toMatchObject({ data: { agents: [
+      { id: "yorozu", label: "Yorozu", needsFolder: false }, { id: "codex", label: "Codex", needsFolder: true },
+    ] } });
+    codex(false);
+    await status();
+    expect(catalog()).toMatchObject({ data: { agents: [{ id: "yorozu", label: "Yorozu", needsFolder: false }] } });
+    codex(true);
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + 60_001);
+    const refreshed = await macClient(dir);
+    others.push(refreshed);
+    await vi.waitFor(() => expect(refreshed.events.findLast((event) => event.kind === "model_list"))
+      .toMatchObject({ data: { agents: [{ id: "yorozu", label: "Yorozu", needsFolder: false },
+        { id: "codex", label: "Codex", needsFolder: true }] } }));
+  } finally { mac.close(); for (const client of others) client.close(); vi.unstubAllEnvs(); }
+});
+
 test("a removed agent's thread stays readable and works again when its runner returns", async () => {
   const dir = mkdtempSync(join(tmpdir(), "yorozu-returning-agent-"));
   createThread("Saved", dir, "custom", { agent: "test-harness", needsFolder: false });
@@ -4761,7 +4820,8 @@ test.each([{ large: false, restarts: 0 }, { large: true, restarts: 0 }, { large:
   "OpenClaw dispatcher streams Markdown through the real channel socket to the phone (large=$large, restarts=$restarts)", async ({ large, restarts }) => {
   const host = await pairedPhone([], true, {}, true);
   let replyOptions: { onPartialReply?: (payload: { text: string }) => unknown } | undefined;
-  let finish: (() => void) | undefined;
+  const prompt = Promise.withResolvers<void>();
+  const finish = Promise.withResolvers<void>();
   let connections = 0;
   let inboundCalls = 0;
   const sdkReplies = large ? ["日本語🙂".repeat(15000), "日本語🙂".repeat(15000)] : ["**日本語**\n\n完成"];
@@ -4776,8 +4836,9 @@ test.each([{ large: false, restarts: 0 }, { large: true, restarts: 0 }, { large:
     dispatchTurn: async (plan: any) => {
       replyOptions = plan.replyOptions;
       await plan.replyOptions.onPartialReply({ text: "**日本語" });
+      await prompt.promise;
       await plan.delivery.deliver({ text: "Choose whether to continue." }, { kind: "tool" });
-      await new Promise<void>((resolve) => { finish = resolve; });
+      await finish.promise;
       if (large) await plan.replyOptions.onPartialReply({ text: expected });
       for (const text of sdkReplies) await plan.delivery.deliver({ text }, { kind: "final" });
       plan.replyOptions.onAgentRunTerminalOutcome("completed");
@@ -4785,7 +4846,9 @@ test.each([{ large: false, restarts: 0 }, { large: true, restarts: 0 }, { large:
     },
   });
   const runs = createRuns((frame: PluginFrame) => link.send(frame));
-  const link = connectYorozu({ path: channelSocketPath(host.dir), retryMs: 20, ackTimeoutMs: 20,
+  // Exercise real delivery with its production acknowledgement deadline. Short timeout/retry
+  // behavior belongs to the socket tests; a busy CI scheduler must not fail this SDK turn.
+  const link = connectYorozu({ path: channelSocketPath(host.dir), retryMs: 20,
     capabilities: ["run-boundary-v1", "reply-stream-v1"], onStatus: (connected: boolean) => { if (connected) connections++; },
     onOpen: () => runs.replay(), onAbort: (id: string) => runs.abort(id),
     onInbound: (message: any) => {
@@ -4807,6 +4870,7 @@ test.each([{ large: false, restarts: 0 }, { large: true, restarts: 0 }, { large:
     expect(preview).toMatchObject({ data: { role: "agent", text: "**日本語" } });
     expect(preview.data).not.toHaveProperty("done");
     expect(readThreadEvents("t1", host.dir).some((event) => event.id === preview.id)).toBe(false);
+    prompt.resolve();
     await vi.waitFor(() => expect(readThreadEvents("t1", host.dir).some((event) => event.kind === "message" &&
       event.data.text === "Choose whether to continue.")).toBe(true));
     await host.eventsUntil((event) => event.kind === "message" && event.data.text === "Choose whether to continue.");
@@ -4823,7 +4887,7 @@ test.each([{ large: false, restarts: 0 }, { large: true, restarts: 0 }, { large:
       await sidecar.close();
       if (restart === restarts - 1) {
         // Finish while the host is down. The final waits for a durable receipt through retries.
-        finish!();
+        finish.resolve();
         await vi.waitFor(() => expect(link.connected).toBe(false));
       }
       const previous = connections;
@@ -4849,7 +4913,7 @@ test.each([{ large: false, restarts: 0 }, { large: true, restarts: 0 }, { large:
       if (delta.kind === "sync_delta") replayed.push(...delta.data.events);
     }
     expect(inboundCalls).toBe(1);
-    finish!();
+    finish.resolve();
     const final = replayed.find((event) => event.id === preview.id && event.kind === "message" && event.data.done) ??
       (await host.eventsUntil((event) => event.id === preview.id && event.kind === "message" && event.data.done)).at(-1)!;
     expect(final).toMatchObject({ ...(restarts ? {} : { ts: preview.ts }),
@@ -4865,7 +4929,7 @@ test.each([{ large: false, restarts: 0 }, { large: true, restarts: 0 }, { large:
     for (const event of replies) if (event.kind === "message") expect(event.data.text.isWellFormed()).toBe(true);
     expect(final).toMatchObject(replies[0]);
     await vi.waitFor(() => expect(JSON.parse(readFileSync(join(host.dir, "channel-outbox.json"), "utf8"))).toEqual([]));
-  } finally { finish?.(); link.close(); }
+  } finally { prompt.resolve(); finish.resolve(); link.close(); }
 });
 
 test("negotiated reply snapshots replace one message, preserve its position, and persist only final text", async () => {
