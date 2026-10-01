@@ -563,6 +563,70 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
 }
 
 @MainActor
+@Test func signInChecksAreCorrelatedDeduplicatedAndInvalidatedOffline() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    let before = await transport.sent.count
+    model.requestAgentStatus()
+    model.requestAgentStatus()
+    var sentEvents = await sent(by: transport, atLeast: before + 1)
+    let first = try #require(sentEvents.last(where: { $0.payload.kind == .agentStatus }))
+    #expect(sentEvents.filter { $0.payload.kind == .agentStatus }.count == 1)
+    await transport.yield(.event(event("checked", .agentStatus(AgentStatusData(codex: .init(ok: true), requestId: first.id)))))
+    #expect(await eventually { !model.agentStatusChecking && model.agentStatus?.codex?.ok == true })
+    model.requestAgentStatus()
+    sentEvents = await sent(by: transport, atLeast: before + 2)
+    let second = try #require(sentEvents.last(where: { $0.payload.kind == .agentStatus }))
+    #expect(second.id != first.id)
+    await transport.yield(.event(event("late", .agentStatus(AgentStatusData(claude: .init(ok: true), requestId: first.id)))))
+    await transport.yield(.event(event("current", .agentStatus(AgentStatusData(codex: .init(ok: false, reason: .notLoggedIn), requestId: second.id)))))
+    #expect(await eventually { model.agentStatus?.codex?.reason == .notLoggedIn })
+    #expect(model.agentStatus?.claude == nil)
+    await transport.yield(.ownerOnline(false))
+    #expect(await eventually { !model.ownerOnline && model.agentStatus == nil })
+    model.requestAgentStatus()
+    #expect(!model.agentStatusChecking && model.agentStatusFailure != nil)
+    await transport.yield(.ownerOnline(true))
+    #expect(await eventually { model.canDeliver })
+    model.requestAgentStatus()
+    #expect(model.agentStatusChecking && model.agentStatus == nil)
+    await transport.yield(.event(event("stale-after-reconnect", .agentStatus(AgentStatusData(codex: .init(ok: true), requestId: second.id)))))
+    await transport.yield(.state(.closed))
+    #expect(await eventually { !model.agentStatusChecking && model.agentStatus == nil })
+}
+
+@MainActor
+@Test func signInCheckTimeoutAndLegacyAnswersRemainRetryableWithoutDraftLoss() async throws {
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, agentStatusTimeout: .milliseconds(100))
+    await transport.yield(.state(.paired))
+    await transport.yield(.ownerOnline(true))
+    model.start()
+    defer { model.close() }
+    #expect(await eventually { model.canDeliver })
+    model.drafts["home"] = "keep draft"
+    let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "aGk=")
+    model.attachments["home"] = [file]
+    model.requestAgentStatus()
+    #expect(model.agentStatusChecking)
+    #expect(await eventually { !model.agentStatusChecking && model.agentStatusFailure != nil })
+    model.requestAgentStatus()
+    #expect(model.agentStatusChecking)
+    await transport.yield(.event(event("legacy-check", .agentStatus(AgentStatusData(codex: .init(ok: true))))))
+    #expect(await eventually { !model.agentStatusChecking && model.agentStatusFailure?.contains("Update") == true })
+    #expect(model.agentStatus == nil)
+    model.requestAgentStatus()
+    #expect(await eventually { await transport.sent.filter { $0.payload.kind == .agentStatus }.count == 3 })
+    let request = try #require(await transport.sent.last(where: { $0.payload.kind == .agentStatus }))
+    await transport.yield(.event(event("failed-check", .agentStatus(AgentStatusData(requestId: request.id, failed: true)))))
+    #expect(await eventually { !model.agentStatusChecking && model.agentStatusFailure?.contains("Could not check") == true })
+    #expect(model.agentStatus == nil)
+    #expect(model.drafts["home"] == "keep draft")
+    #expect(model.attachments["home"] == [file])
+}
+
+@MainActor
 @Test func deviceRequestAnnouncesReadableOSName() async {
     let transport = FakeTransport()
     let model = await connected(transport)

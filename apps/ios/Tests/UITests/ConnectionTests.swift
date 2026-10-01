@@ -19,6 +19,40 @@ final class ConnectionTests: XCTestCase {
         app = await XCUIApplication()
     }
 
+    /// Changing destinations during a real connection loss preserves the composer and
+    /// distinguishes restored chat from the still unavailable schedule service.
+    @MainActor
+    func testDestinationsPreserveOfflineDraftUntilConnectionReturns() async throws {
+        try await launchPaired()
+        try openThread()
+        composer.tap()
+        composer.typeText("offline navigation draft")
+        let hideKeyboard = app.buttons["hide-composer-keyboard"]
+        XCTAssertTrue(hideKeyboard.waitForExistence(timeout: 5))
+        hideKeyboard.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        try await rig.post("down")
+        nativeDestination("Schedules", in: app).tap()
+        XCTAssertTrue(app.staticTexts["Schedules unavailable"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@",
+            "Saved chats and drafts remain available. Messages wait until your Mac reconnects.")).firstMatch.waitForExistence(timeout: 20))
+        nativeDestination("Settings", in: app).tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
+        nativeDestination("Chat", in: app).tap()
+        XCTAssertEqual(composer.value as? String, "offline navigation draft")
+        nativeDestination("Schedules", in: app).tap()
+        try await rig.post("heal")
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@",
+            "Chat is connected. The assistant must also be set up on your Mac to answer.")).firstMatch.waitForExistence(timeout: 45))
+        XCTAssertTrue(app.staticTexts["Schedules unavailable"].exists)
+        nativeDestination("Chat", in: app).tap()
+        XCTAssertEqual(composer.value as? String, "offline navigation draft")
+        app.buttons["Send"].tap()
+        XCTAssertTrue(app.textViews["echo: offline navigation draft"].waitForExistence(timeout: 30))
+        let starts = try await rig.answerStarts(for: "offline navigation draft")
+        XCTAssertEqual(starts, 1, "Navigation and reconnect must not dispatch the message twice")
+    }
+
     /// The Settings action copies useful connection state without leaking chat content.
     @MainActor
     func testCopiedDiagnosticsExcludeMessageContent() async throws {
@@ -28,7 +62,7 @@ final class ConnectionTests: XCTestCase {
         send(secret)
         XCTAssertTrue(app.textViews["echo: \(secret)"].waitForExistence(timeout: 30))
         app.navigationBars.buttons["Threads"].tap()
-        app.buttons["Settings"].tap()
+        app.buttons["chat-settings"].tap()
         let advanced = app.buttons["Advanced"]
         XCTAssertTrue(advanced.waitForExistence(timeout: 10), "No Advanced entry in Settings")
         advanced.tap()
@@ -38,7 +72,7 @@ final class ConnectionTests: XCTestCase {
         UIPasteboard.general.string = "clipboard sentinel"
         copy.tap()
         app.navigationBars["Advanced"].buttons["Settings"].tap()
-        app.buttons["Done"].tap()
+        nativeDestination("Chat", in: app).tap()
         let thread = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", secret)).firstMatch
         XCTAssertTrue(thread.waitForExistence(timeout: 10))
         thread.tap()
@@ -80,7 +114,7 @@ final class ConnectionTests: XCTestCase {
         }
         app.launchArguments = ["-yorozuPair", try await rig.pairing(), "-yorozuPairSecond", secondPair]
         app.launch()
-        let settings = app.buttons["Settings"]
+        let settings = app.buttons["chat-settings"]
         let connected = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == %@", "2 of 2 hosts connected"), object: settings)
         XCTAssertEqual(XCTWaiter.wait(for: [connected], timeout: 45), .completed)
@@ -110,7 +144,7 @@ final class ConnectionTests: XCTestCase {
         flip(first)
         XCTAssertTrue(expiry.waitForNonExistence(timeout: 10))
         app.navigationBars["Advanced"].buttons["Settings"].tap()
-        app.buttons["Done"].tap()
+        nativeDestination("Chat", in: app).tap()
     }
 
     /// Search downloaded history while the host is unreachable; an older match stays
@@ -200,7 +234,7 @@ final class ConnectionTests: XCTestCase {
         app.launch()
         let back = app.navigationBars.buttons["Threads"]
         if back.waitForExistence(timeout: 5) { back.tap() }
-        let settings = app.buttons["Settings"]
+        let settings = app.buttons["chat-settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 10), "No thread list after relaunch")
         let connected = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == %@", "2 of 2 hosts connected"), object: settings)
@@ -295,7 +329,7 @@ final class ConnectionTests: XCTestCase {
         app.launch()
         let back = app.navigationBars.buttons["Threads"]
         if back.waitForExistence(timeout: 5) { back.tap() }
-        let settings = app.buttons["Settings"]
+        let settings = app.buttons["chat-settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 30))
         let connected = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == %@", "2 of 2 hosts connected"), object: settings)
@@ -347,7 +381,7 @@ final class ConnectionTests: XCTestCase {
         shown.lifetime = .keepAlways
         add(shown)
         XCTAssertTrue(toast.waitForNonExistence(timeout: 12), "Connection toast did not dismiss")
-        let persistentStatus = app.buttons["Settings"].value as? String
+        let persistentStatus = app.buttons["chat-settings"].value as? String
         XCTAssertTrue(["Mac connection: Reconnecting", "Mac connection: Host isn’t reachable"]
             .contains(persistentStatus), "Dismissing toast cleared persistent status: \(persistentStatus ?? "missing")")
         XCTAssertFalse(toast.waitForExistence(timeout: 3), "Retry showed the same interruption again")
@@ -520,7 +554,7 @@ final class ConnectionTests: XCTestCase {
     @MainActor
     private func status(becomes state: String, within seconds: TimeInterval) -> XCTWaiter.Result {
         let expectation = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@", "Mac connection: \(state)"), object: app.buttons["Settings"])
+            predicate: NSPredicate(format: "value == %@", "Mac connection: \(state)"), object: app.buttons["chat-settings"])
         return XCTWaiter.wait(for: [expectation], timeout: seconds)
     }
 
@@ -529,7 +563,7 @@ final class ConnectionTests: XCTestCase {
         // A relaunch reopens the chat that was open, so the list may be one step back.
         let back = app.navigationBars.buttons["Threads"]
         if back.waitForExistence(timeout: 5) { back.tap() }
-        let settings = app.buttons["Settings"]
+        let settings = app.buttons["chat-settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 30), "No thread list")
         XCTAssertEqual(status(becomes: "Connected", within: 45), .completed, "Never connected")
     }

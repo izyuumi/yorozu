@@ -4641,9 +4641,10 @@ test("a seventeenth phone is refused, the list never grows past the cap, and the
 
 test("agent_status is answered to the asker with every agent the runtime has", async () => {
   const { send, eventsUntil } = await pairedPhone([], true);
-  send({ kind: "agent_status", data: {} }, "");
+  const requestId = send({ kind: "agent_status", data: {} }, "");
   const [answer] = (await eventsUntil((event) => event.kind === "agent_status")).slice(-1);
   if (answer?.kind !== "agent_status") throw new Error("no agent_status answer");
+  expect(answer.data.requestId).toBe(requestId);
   expect(answer.data).not.toHaveProperty("openclaw");
   expect(answer.data.claude).toHaveProperty("ok");
   expect(answer.data.codex).toHaveProperty("ok");

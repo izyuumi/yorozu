@@ -3068,7 +3068,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return forgetDevice(event.data.pub);
       case "agent_status":
         return void agentStatus()
-          .then((data) => reply(control({ kind: "agent_status", data })));
+          .then((data) => reply(control({ kind: "agent_status", data: { ...data, requestId: event.id } })))
+          .catch(() => reply(control({ kind: "agent_status", data: { requestId: event.id, failed: true } })));
       case "sync_request": {
         if (event.data.threadId !== undefined && (typeof event.data.threadId !== "string" || !event.data.threadId)) return;
         if (event.data.focusThreadId !== undefined &&

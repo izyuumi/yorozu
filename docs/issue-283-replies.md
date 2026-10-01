@@ -85,8 +85,8 @@ slice. The separate schedule SDK check remains stopped under the boundary docume
 | Retry, Use in composer, cancel send and Stop | Keep their distinct meanings. A refusal can be edited; an uncertain send cannot be safely duplicated as a fresh operation without settlement. |
 | Model, effort, agent and workspace choices | Retain current capabilities pending supported replacements. Explicit reply support is limited by the real adapter contract, not by removing those workflows. |
 | Legacy saved-draft recovery | Keep the first slice's safe recovery menu only for existing data; no stash creation returns. |
-| Chat / Schedules / Settings navigation | Still a separate production slice. A native schedule screen needs a verified, authorized backend or an explicit unavailable state; prototype records are not production schedules. |
-| Setup and answering readiness | Still requires independent connection, adapter and execution evidence. A successful reply test with synthetic transport does not establish provider readiness. |
+| Chat / Schedules / Settings navigation | Delivered in the [navigation slice](issue-283-navigation.md), with schedules explicitly unavailable until a verified service exists. Prototype records are not production schedules. |
+| Setup and answering readiness | The [navigation slice](issue-283-navigation.md) clarifies connection and sign-in checks. Actual answering still needs independent execution evidence; synthetic reply tests do not establish provider readiness. |
 
 ## Verification
 

@@ -15,11 +15,29 @@ import YorozuShared
 /// place the chat lives.
 struct ChatWindowView: View {
     @State private var session = MacChatSession.shared
+    @State private var destination = AppDestination.chat
+    @State private var router = ChatWindowRouter.shared
+    @Environment(\.openWindow) private var openWindow
     var body: some View {
-        Group {
-            if session.role == .client { ClientChatWindowView(session: session) }
-            else { LocalChatWindowView() }
+        TabView(selection: $destination) {
+            Tab("Chat", systemImage: "bubble.left.and.bubble.right", value: .chat) {
+                if session.role == .client { ClientChatWindowView(session: session, isChatVisible: destination == .chat) }
+                else { LocalChatWindowView(isChatVisible: destination == .chat) }
+            }
+            Tab("Schedules", systemImage: "calendar", value: .schedules) {
+                NavigationStack {
+                    SchedulesUnavailableView(models: session.role == .client ? session.hosts.sessions.map(\.model) : [session.model]) {
+                        openWindow(id: YorozuMacApp.settingsWindow)
+                    }
+                    .scrollContentBackground(.hidden)
+                    .background(YorozuPalette.canvas)
+                }
+            }
         }
+        .toolbar { ToolbarItem(placement: .primaryAction) {
+            Button("Settings", systemImage: "gearshape") { openWindow(id: YorozuMacApp.settingsWindow) }
+        } }
+        .onChange(of: router.threadID) { _, id in if id != nil { destination = .chat } }
         // Text with no font of its own, the composer's included, follows ⌘+ and ⌘− too.
         .font(.scaled(.body))
         .overlay(alignment: .top) { ThreadNotificationToast() }
@@ -141,6 +159,7 @@ private struct QuickChatToolbar: ToolbarContent {
 
 private struct ClientChatWindowView: View {
     let session: MacChatSession
+    let isChatVisible: Bool
     @State private var router = ChatWindowRouter.shared
     @State private var selection: HostThreadID?
     @State private var searchedThread: HostThreadID?
@@ -201,6 +220,7 @@ private struct ClientChatWindowView: View {
         }
         .onChange(of: hosts.lastUsedHostID) { _, _ in session.rememberLastHost() }
         .onChange(of: controlActiveState, initial: true) { _, _ in updateReading() }
+        .onChange(of: isChatVisible) { _, _ in updateReading() }
         .onChange(of: hosts.sessions.map(\.id)) { _, _ in
             if let selection, hosts.session(for: selection.hostID) == nil { self.selection = nil }
             if selection == nil { open() }
@@ -235,7 +255,7 @@ private struct ClientChatWindowView: View {
         }
         for host in hosts.sessions {
             let selected = selection?.hostID == host.id
-            host.model.foreground = selected && controlActiveState == .key
+            host.model.foreground = selected && isChatVisible && controlActiveState == .key
             host.model.openThread = selected ? selection?.threadID : nil
         }
     }
@@ -253,6 +273,7 @@ private struct ClientChatWindowView: View {
 }
 
 private struct LocalChatWindowView: View {
+    let isChatVisible: Bool
     @State private var session = MacChatSession.shared
     @State private var router = ChatWindowRouter.shared
     @State private var selection: String?
@@ -359,8 +380,9 @@ private struct LocalChatWindowView: View {
         // A window sitting on a thread behind everything else is nobody reading it, so the
         // thread is only reported read while this window is the key one of the active app.
         .onChange(of: controlActiveState, initial: true) { _, state in
-            model.foreground = state == .key
+            model.foreground = isChatVisible && state == .key
         }
+        .onChange(of: isChatVisible) { _, visible in model.foreground = visible && controlActiveState == .key }
         .onAppear {
             if model.listed { open() }
             // Screenshot harness only — see ``Showcase``.

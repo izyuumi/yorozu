@@ -29,6 +29,17 @@
             view.isScrollEnabled = false
             view.accessibilityLabel = String(localized: "Message")
             view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            // iPhone's native tab bar is hidden while typing. A native keyboard action gives
+            // touch and VoiceOver users a reliable way back to navigation without editing input.
+            let keyboardToolbar = UIToolbar()
+            let hideKeyboard = UIBarButtonItem(title: String(localized: "Hide keyboard"),
+                image: UIImage(systemName: "keyboard.chevron.compact.down"),
+                primaryAction: UIAction { [weak view] _ in view?.resignFirstResponder() })
+            hideKeyboard.accessibilityLabel = String(localized: "Hide keyboard")
+            hideKeyboard.accessibilityIdentifier = "hide-composer-keyboard"
+            keyboardToolbar.items = [UIBarButtonItem(systemItem: .flexibleSpace), hideKeyboard]
+            keyboardToolbar.sizeToFit()
+            view.inputAccessoryView = keyboardToolbar
 
             let label = view.placeholderLabel
             label.text = placeholder

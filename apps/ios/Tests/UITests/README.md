@@ -58,3 +58,11 @@ image through the native debug showcase. They verify keyboard focus on Reply, re
 preserving text and files, attachment removal, and Send remaining fully on screen at normal and
 largest accessibility text sizes. Run both on iPhone and iPad; retained screenshots document the
 actual production composer. These fixtures do not establish live provider or schedule readiness.
+
+Destination regressions switch repeatedly between Chat, Schedules and Settings while preserving
+typed text, a staged file and a quoted reply. They use the native keyboard dismissal action before
+navigating and cover largest accessibility text size and retained list scroll. The connection
+regression drops and restores the real test relay, preserves an offline draft through navigation,
+and checks the host's dispatch count after sending. Schedules must remain explicitly unavailable
+after chat reconnects. Existing archive and diagnostics tests return through the Chat destination;
+the chat's connection control has the stable `chat-settings` accessibility identifier.

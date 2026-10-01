@@ -79,8 +79,8 @@ The installed runtimes are iOS 27.0/27.1; the separate release gate on iOS 26.5 
 | --- | --- |
 | Chat ownership | Implement the Yorozu-owned durable message/task records and explicit context contracts from design v0.0 before presenting one continuous chat as production behavior. |
 | Reply composition | Delivered for negotiated assistant-channel conversations in the [reply slice](issue-283-replies.md). Direct-agent context and the new continuous-chat task store remain separate contracts. |
-| Native navigation | Implement Chat, Schedules and Settings tabs against real models. The approved prototype's schedules are in-memory examples, not a production scheduler. |
-| Connection/readiness | Present independently confirmed link, adapter and execution readiness; preserve honest unknown/offline states and actionable diagnostics/permission requests. |
+| Native navigation | Delivered around the existing production chat and Settings views in the [navigation slice](issue-283-navigation.md). Schedules explicitly remains unavailable pending a supported service. |
+| Connection/readiness | The [navigation slice](issue-283-navigation.md) distinguishes chat connection and sign-in checks from actual answers, with unknown/offline states and retryable errors. Live provider execution and schedule readiness still need independent evidence. |
 | Adapter migration | Keep existing direct-agent/model/workspace capabilities until replacements and recovery exist. Removing controls speculatively would strand current work. |
 | Memory | Verify a real PAIOS contract for full memory ownership, provenance, scoped retrieval and writes. Design documentation does not establish that an API exists. |
 

@@ -1,5 +1,6 @@
 /**
- * Whether each agent would answer a thread right now, for the Mac's setup and settings. The
+ * CLI sign-in and optional gateway reachability, for the Mac's setup and settings. These
+ * checks do not execute a provider request or prove that an assistant can answer. The
  * runtime asks because a thread runs with the runtime's `PATH` and the runtime's logins; a
  * check from the app would see a different `PATH` and could disagree with what actually runs.
  */

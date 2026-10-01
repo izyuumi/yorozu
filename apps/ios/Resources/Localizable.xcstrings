@@ -13710,6 +13710,267 @@
           }
         }
       }
+    },
+    "Schedules": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スケジュール"
+          }
+        }
+      }
+    },
+    "Schedules unavailable": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スケジュールは利用できません"
+          }
+        }
+      }
+    },
+    "This version of Yorozu cannot display or manage schedules yet. Existing schedules are not changed.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このバージョンのYorozuは、まだスケジュールの表示や管理に対応していません。既存のスケジュールは変更されません。"
+          }
+        }
+      }
+    },
+    "You can continue chatting. Scheduled work needs a separate connection that has not been enabled in Yorozu.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "チャットは引き続き利用できます。スケジュールされた作業には別の接続が必要ですが、Yorozuではまだ有効になっていません。"
+          }
+        }
+      }
+    },
+    "No Mac connected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Macが接続されていません"
+          }
+        }
+      }
+    },
+    "Connect your Mac in Settings to use chat. Connecting chat does not enable schedules.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "チャットを使うには、設定でMacを接続してください。チャットを接続してもスケジュールは有効になりません。"
+          }
+        }
+      }
+    },
+    "Update Yorozu on your Mac before sending messages.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メッセージを送信する前に、MacのYorozuをアップデートしてください。"
+          }
+        }
+      }
+    },
+    "Chat is connected. The assistant must also be set up on your Mac to answer.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "チャットは接続されています。応答するには、Macでアシスタントの設定も必要です。"
+          }
+        }
+      }
+    },
+    "Saved chats and drafts remain available. Messages wait until your Mac reconnects.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存済みのチャットと下書きは引き続き利用できます。メッセージはMacが再接続されるまで待機します。"
+          }
+        }
+      }
+    },
+    "Connect your Mac before checking sign-in.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サインインを確認する前にMacを接続してください。"
+          }
+        }
+      }
+    },
+    "Sign-in check did not answer. Re-check when your Mac is connected.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サインインの確認に応答がありませんでした。Macが接続されたら再確認してください。"
+          }
+        }
+      }
+    },
+    "Update Yorozu on your Mac to check sign-in.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サインインを確認するには、MacのYorozuをアップデートしてください。"
+          }
+        }
+      }
+    },
+    "Connection details": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続の詳細"
+          }
+        }
+      }
+    },
+    "Compatibility details": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "互換性の詳細"
+          }
+        }
+      }
+    },
+    "Chat connection": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "チャットの接続"
+          }
+        }
+      }
+    },
+    "Assistant setup": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アシスタントの設定"
+          }
+        }
+      }
+    },
+    "Sign-in and connection checks do not prove the assistant can answer. Send a message to check an actual response.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サインインと接続の確認だけでは、アシスタントが応答できるとは限りません。メッセージを送信して実際の応答を確認してください。"
+          }
+        }
+      }
+    },
+    "Checking sign-in…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サインインを確認中…"
+          }
+        }
+      }
+    },
+    "Reachable": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続可能"
+          }
+        }
+      }
+    },
+    "Signed in": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サインイン済み"
+          }
+        }
+      }
+    },
+    "Not checked": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未確認"
+          }
+        }
+      }
+    },
+    "Assistant connection has not been verified by this check.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この確認では、アシスタントとの接続は検証されていません。"
+          }
+        }
+      }
+    },
+    "Sign-in instructions": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サインインの手順"
+          }
+        }
+      }
+    },
+    "Check details": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "確認の詳細"
+          }
+        }
+      }
+    },
+    "Assistant connection unavailable": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アシスタントに接続できません"
+          }
+        }
+      }
+    },
+    "Hide keyboard": {"localizations": {"ja": {"stringUnit": {"state": "translated", "value": "キーボードを閉じる"}}}},
+    "Could not check sign-in. Re-check or open assistant setup.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サインインを確認できませんでした。再確認するか、アシスタントの設定を開いてください。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

@@ -421,9 +421,14 @@ public final class ChatModel {
     public private(set) var devices: [DeviceInfo] = []
     /// Includes empty replies, so pairing can await a confirmed list before showing its code.
     public private(set) var deviceListRevision = 0
-    /// Whether each agent would answer here. Nil while ``requestAgentStatus()`` waits for the
-    /// runtime, so a check that finds nothing new still reads as a check; only the host Mac asks.
+    /// Sign-in and optional gateway reachability, as checked by this host. This is not
+    /// execution readiness; only the host Mac asks, and disconnect invalidates the result.
     public private(set) var agentStatus: AgentStatusData?
+    public private(set) var agentStatusChecking = false
+    public private(set) var agentStatusFailure: String?
+    private var agentStatusRequestID: String?
+    @ObservationIgnored private var agentStatusTask: Task<Void, Never>?
+    private let agentStatusTimeout: Duration
     /// Every model a thread can be put on, as the Mac has it configured. Arrives with the
     /// thread list; empty until then, which is a picker that offers only Default.
     public private(set) var channelModelSelection = false
@@ -727,7 +732,8 @@ public final class ChatModel {
     private var pendingStreamEvents: [String: YorozuEvent] = [:]
     private var streamFrame: Task<Void, Never>?
 
-    public init(transport: any ChatTransport, cache: ThreadCache? = nil, device: String = "phone") {
+    public init(transport: any ChatTransport, cache: ThreadCache? = nil, device: String = "phone", agentStatusTimeout: Duration = .seconds(10)) {
+        self.agentStatusTimeout = agentStatusTimeout
         self.transport = transport
         self.cache = cache
         self.device = device
@@ -854,6 +860,7 @@ public final class ChatModel {
     }
 
     public func close() {
+        invalidateAgentStatus()
         retryTask?.cancel()
         retryTask = nil
         Task { [transport] in await transport.close() }
@@ -863,6 +870,7 @@ public final class ChatModel {
     /// Detached cache writes keep their snapshots alive, so cancellation alone is not enough:
     /// wait for them before allowing the host's keys and files to be erased.
     public func shutdown() async {
+        invalidateAgentStatus()
         searchTask?.cancel()
         flushStreamEvents()
         do { try saveComposer() }
@@ -2485,10 +2493,35 @@ public final class ChatModel {
             "\(platform) \(version.majorVersion).\(version.minorVersion)\(patch)")), in: "")
     }
 
-    /// Asks the runtime which agents would answer, forgetting the last answer until this one lands.
+    /// Checks sign-in, not execution. Requests are correlated and bounded, so an old result
+    /// cannot turn a disconnected or retried check into a current readiness claim.
     public func requestAgentStatus() {
+        guard !agentStatusChecking else { return }
         agentStatus = nil
-        emit(.agentStatus(AgentStatusData()), in: "")
+        guard canDeliver else {
+            agentStatusFailure = String(localized: "Connect your Mac before checking sign-in.")
+            return
+        }
+        let request = control(.agentStatus(AgentStatusData()))
+        agentStatusFailure = nil
+        agentStatusRequestID = request.id
+        agentStatusChecking = true
+        emit(request)
+        agentStatusTask = Task { [weak self, agentStatusTimeout] in
+            try? await Task.sleep(for: agentStatusTimeout)
+            guard !Task.isCancelled, let self, self.agentStatusRequestID == request.id else { return }
+            self.invalidateAgentStatus()
+            self.agentStatusFailure = String(localized: "Sign-in check did not answer. Re-check when your Mac is connected.")
+        }
+    }
+
+    private func invalidateAgentStatus() {
+        agentStatusTask?.cancel()
+        agentStatusTask = nil
+        agentStatusRequestID = nil
+        agentStatusChecking = false
+        agentStatus = nil
+        agentStatusFailure = nil
     }
 
     /// Forgets a paired device, here and at the relay. Answered with a new list.
@@ -2553,6 +2586,7 @@ public final class ChatModel {
         case .state(let state):
             self.state = state
             if state != .paired {
+                invalidateAgentStatus()
                 channelModelsDisconnected()
                 channelReplyContext = false
                 inFlightUpload.removeAll()
@@ -2585,7 +2619,7 @@ public final class ChatModel {
                 requestHostSearch()
             }
         case .ownerOnline(let online):
-            if !online { channelModelsDisconnected() }
+            if !online { channelModelsDisconnected(); invalidateAgentStatus() }
             let wasOnline = ownerOnline
             ownerOnline = online
             if !online && updateStatus.phase != .none && updateStatus.phase != .installing {
@@ -2742,7 +2776,21 @@ public final class ChatModel {
                 deviceListRevision += 1
                 onDevices?()
             case .agentStatus(let data):
-                agentStatus = data
+                guard agentStatusChecking, canDeliver else { break }
+                guard let id = data.requestId else {
+                    invalidateAgentStatus()
+                    agentStatusFailure = String(localized: "Update Yorozu on your Mac to check sign-in.")
+                    break
+                }
+                guard id == agentStatusRequestID else { break }
+                agentStatusTask?.cancel()
+                agentStatusTask = nil
+                agentStatusRequestID = nil
+                agentStatusChecking = false
+                if data.failed == true {
+                    agentStatus = nil
+                    agentStatusFailure = String(localized: "Could not check sign-in. Re-check or open assistant setup.")
+                } else { agentStatus = data }
             // The stored rules, in answer to `rule_list` and after any change to them. Also
             // not a thread's event: rules are global, which is the whole point of them.
             case .ruleList(let data):
@@ -2771,6 +2819,7 @@ public final class ChatModel {
                 applyEvent(event)
             }
         case .failed(let reason):
+            invalidateAgentStatus()
             flushStreamEvents()
             failure = reason
             linkFailure = reason

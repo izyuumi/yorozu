@@ -740,11 +740,15 @@ export interface AgentReadiness {
 }
 
 /**
- * Whether each agent this Mac can run would answer right now, as the runtime sees it — its
+ * CLI sign-in and optional gateway reachability as the runtime sees it — its
  * `PATH` and logins are the ones a thread uses. Asked with no fields; answered to the asker
  * with every agent the runtime has. `openclaw` is absent on a runtime without the Gateway.
  */
 export interface AgentStatusData {
+  /** Echo of the request event ID; lets clients discard timed-out and stale checks. */
+  requestId?: string;
+  /** The host check failed; no raw subprocess errors or credentials are returned. */
+  failed?: boolean;
   claude?: AgentReadiness;
   codex?: AgentReadiness;
   openclaw?: AgentReadiness;

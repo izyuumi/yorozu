@@ -54,6 +54,75 @@ final class ShowcaseFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testDestinationsPreserveReplyDraftAndFile() { verifyDestinations(accessibility: false) }
+
+    @MainActor
+    func testDestinationsAtLargestAccessibilityTextSize() { verifyDestinations(accessibility: true) }
+
+    @MainActor
+    private func verifyDestinations(accessibility: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["-yorozuShowcase", "chat", "-yorozuReplySupported", "-yorozuReplyAttachment"]
+        if accessibility { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch()
+        let composer = app.textViews["Message"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 30))
+        let actions = app.buttons["messageActions-showcase-thanks"]
+        let timeline = app.collectionViews.element(boundBy: app.collectionViews.count - 1)
+        for _ in 0..<5 where !actions.isHittable { timeline.swipeUp() }
+        actions.tap()
+        app.buttons["Reply"].tap()
+        XCTAssertTrue(app.buttons["Cancel reply"].waitForExistence(timeout: 5))
+        composer.typeText("Keep this draft through navigation")
+        let hideKeyboard = app.buttons["hide-composer-keyboard"]
+        XCTAssertTrue(hideKeyboard.waitForExistence(timeout: 5))
+        hideKeyboard.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        for _ in 0..<2 {
+            let schedules = nativeDestination("Schedules", in: app)
+            XCTAssertTrue(schedules.waitForExistence(timeout: 5))
+            XCTAssertTrue(schedules.isHittable)
+            schedules.tap()
+            let unavailable = app.staticTexts["Schedules unavailable"]
+            // The native List retains its scroll position across destinations.
+            for _ in 0..<4 where !unavailable.exists { app.collectionViews.firstMatch.swipeDown() }
+            XCTAssertTrue(unavailable.waitForExistence(timeout: 10))
+            let schedulesTitle = app.navigationBars["Schedules"].staticTexts["Schedules"]
+            // Native iPad inline presentation can use the selected tab as its title.
+            // If a separate title is rendered, it must fit clear of that control.
+            if schedulesTitle.exists {
+                XCTAssertFalse(schedulesTitle.frame.intersects(schedules.frame), "The native title must not overlap destination controls")
+            }
+            XCTAssertFalse(unavailable.frame.intersects(schedules.frame), "The heading must fit below destination controls")
+            XCTAssertTrue(app.staticTexts["This version of Yorozu cannot display or manage schedules yet. Existing schedules are not changed."].exists)
+            let settings = app.buttons["Open Settings"]
+            for _ in 0..<4 where !settings.isHittable { app.collectionViews.firstMatch.swipeUp() }
+            XCTAssertTrue(settings.isHittable)
+            settings.tap()
+            XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+            let settingsTitle = app.navigationBars["Settings"].staticTexts["Settings"]
+            if settingsTitle.exists {
+                XCTAssertFalse(settingsTitle.frame.intersects(nativeDestination("Settings", in: app).frame), "The native title must not overlap destination controls")
+            }
+            nativeDestination("Chat", in: app).tap()
+            XCTAssertTrue(composer.waitForExistence(timeout: 10))
+            XCTAssertEqual(composer.value as? String, "Keep this draft through navigation")
+            XCTAssertTrue(app.buttons["Remove kitchen.jpg"].exists)
+            XCTAssertTrue(app.buttons["Cancel reply"].exists)
+        }
+        nativeDestination("Schedules", in: app).tap()
+        for _ in 0..<4 where !app.staticTexts["Schedules unavailable"].exists { app.collectionViews.firstMatch.swipeDown() }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = accessibility ? "Schedules unavailable accessibility text" : "Native schedules unavailable"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        nativeDestination("Chat", in: app).tap()
+        app.buttons["Cancel reply"].tap()
+        XCTAssertEqual(composer.value as? String, "Keep this draft through navigation")
+        XCTAssertTrue(app.buttons["Remove kitchen.jpg"].exists)
+    }
+
+    @MainActor
     func testReplyCancelAtLargestAccessibilityTextSize() {
         verifyReplyCancellation(accessibility: true)
     }
@@ -91,7 +160,7 @@ final class ShowcaseFlowTests: XCTestCase {
         quoted.lifetime = .keepAlways
         add(quoted)
         cancel.tap()
-        XCTAssertFalse(cancel.exists)
+        XCTAssertTrue(cancel.waitForNonExistence(timeout: 5))
         XCTAssertEqual(composer.value as? String, "Keep this draft")
         XCTAssertTrue(file.exists)
         for _ in 0..<5 where !actions.isHittable { timeline.swipeUp() }
@@ -188,7 +257,7 @@ final class ShowcaseFlowTests: XCTestCase {
         XCTAssertTrue(row.waitForNonExistence(timeout: 10), "An archived thread stays in the list")
 
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Archived'")).firstMatch.exists)
-        app.buttons["Settings"].tap()
+        app.buttons["chat-settings"].tap()
         let archive = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Archived threads'")).firstMatch
         XCTAssertTrue(archive.waitForExistence(timeout: 10), "No archive in Settings after archiving")
         archive.tap()
@@ -197,11 +266,10 @@ final class ShowcaseFlowTests: XCTestCase {
         let restore = app.buttons["Restore"]
         XCTAssertTrue(restore.waitForExistence(timeout: 10), "Swipe did not reveal Restore")
         restore.tap()
-        // Restoring the last thread takes the Settings row away, and the archive may leave with it.
-        let done = app.buttons["Done"]
-        if !done.waitForExistence(timeout: 3) { app.navigationBars["Archived threads"].buttons["Settings"].tap() }
-        XCTAssertTrue(done.waitForExistence(timeout: 10), "No way back out of Settings")
-        done.tap()
+        // The Chat destination remains available while the archive's navigation is pushed.
+        let chat = nativeDestination("Chat", in: app)
+        XCTAssertTrue(chat.waitForExistence(timeout: 10), "No way back to Chat")
+        chat.tap()
         XCTAssertTrue(row.waitForExistence(timeout: 10), "A restored thread is not back in the list")
     }
 

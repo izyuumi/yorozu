@@ -1710,7 +1710,7 @@ public struct DeviceRemoveData: Codable, Equatable, Sendable {
     public init(pub: String) { self.pub = pub }
 }
 
-/// Whether one agent would answer a thread right now, as the runtime sees it.
+/// CLI sign-in or gateway reachability; successful checks do not prove provider execution.
 public struct AgentReadiness: Codable, Equatable, Sendable {
     /// What the user has to do next, not how the runtime found out.
     public enum Reason: String, Codable, Sendable {
@@ -1730,13 +1730,17 @@ public struct AgentReadiness: Codable, Equatable, Sendable {
     }
 }
 
-/// Asked with no fields; answered with every agent the runtime has. `openclaw` is absent on a
-/// runtime without the Gateway.
+/// Asked with no fields; answers correlate to the request event ID. `openclaw` is absent
+/// when gateway reachability was not checked, not proof of an uninstalled assistant.
 public struct AgentStatusData: Codable, Equatable, Sendable {
+    public var requestId: String?
+    public var failed: Bool?
     public var claude: AgentReadiness?
     public var codex: AgentReadiness?
     public var openclaw: AgentReadiness?
-    public init(claude: AgentReadiness? = nil, codex: AgentReadiness? = nil, openclaw: AgentReadiness? = nil) {
+    public init(claude: AgentReadiness? = nil, codex: AgentReadiness? = nil, openclaw: AgentReadiness? = nil, requestId: String? = nil, failed: Bool? = nil) {
+        self.requestId = requestId
+        self.failed = failed
         self.claude = claude
         self.codex = codex
         self.openclaw = openclaw

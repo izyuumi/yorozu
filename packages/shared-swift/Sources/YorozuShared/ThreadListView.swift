@@ -1153,6 +1153,7 @@ public struct ThreadListView<Destination: View>: View {
                         }
                     }
                     .accessibilityLabel("Settings")
+                    .accessibilityIdentifier("chat-settings")
                     .accessibilityValue(connectionSummary ?? (connectionStatus ?? shownConnection).map { String(localized: "Mac connection: \($0.label)") } ?? "")
                 }
             }

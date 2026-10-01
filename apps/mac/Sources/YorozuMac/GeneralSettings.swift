@@ -38,6 +38,12 @@ struct GeneralView: View {
                 }
             }
             if session.role == .host { RelayView(status: sidecar.state) }
+            if session.role == .host {
+                Section("Assistant setup") {
+                    ChatConnectionSummary(model: session.model)
+                    AgentReadinessList(model: session.model)
+                }
+            }
             Section {
                 Picker("Send message with", selection: $sendWithCommandReturn) {
                     Text("Enter").tag(false)

@@ -590,13 +590,14 @@ final class Session {
 
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var session = Session.shared
     /// The thread ids pushed on the list's stack: at most one, and what lets the app open a
     /// thread by itself rather than waiting to be tapped. Seeded from the session, which decided
     /// it before this view was ever built, so the first frame is already the chat.
     @State private var path: [String] = Session.shared.openPath
     @State private var hostPath: [HostThreadID] = Session.shared.hostPath
-    @State private var settings = launchArgument("yorozuShowcase") == "settings"
+    @State private var destination: AppDestination = launchArgument("yorozuShowcase") == "settings" ? .settings : .chat
     /// Screenshot only: `-yorozuShowcase share` draws the share extension's composer here,
     /// because a simulator cannot be made to open a real share sheet.
     @State private var shareShowcase = ChatShowcase.share
@@ -617,6 +618,7 @@ struct RootView: View {
             // `thread` and `ref` name a thread to open, `share` is the share extension handing
             // over. Anything else is not ours and is ignored, not tried as a pairing code.
             .onOpenURL { url in
+                if ["thread", "ref", "share"].contains(url.host() ?? "") { destination = .chat }
                 switch url.host() {
                 case "thread":
                     // `yorozu://thread/<id>`, so the id is the path with its leading slash off.
@@ -644,14 +646,7 @@ struct RootView: View {
             }
             // A pairing code tapped inside a chat takes the same road as one tapped in Messages.
             .environment(\.onPairingLink) { session.handlePairingLink($0) }
-            .modifier(PairingConfirmation(session: session, enabled: !settings))
-            .sheet(isPresented: $settings) {
-                SettingsView(session: session) { threadID, hostID in
-                    settings = false
-                    if let hostID { hostPath = [HostThreadID(hostID: hostID, threadID: threadID)] }
-                    else { path = [threadID] }
-                }
-            }
+            .modifier(PairingConfirmation(session: session, enabled: destination != .settings))
             // iOS suspends the app and its socket with it. Coming back is the moment to re-dial,
             // rather than waiting out a backoff that ran down while nothing was executing — and
             // the moment to pick up anything shared while it was away.
@@ -679,12 +674,16 @@ struct RootView: View {
             // not being read, and must not report that it was. Kept apart from the switch above
             // so the reconnect only happens on an actual transition into `.active`.
             .onChange(of: scenePhase, initial: true) { _, phase in
-                session.hosts.foreground = phase == .active && !settings
-                if session.hosts.sessions.isEmpty { session.model?.foreground = phase == .active && !settings }
+                updateReading()
             }
-            .onChange(of: settings) { _, shown in
-                session.hosts.foreground = scenePhase == .active && !shown
-                if session.hosts.sessions.isEmpty { session.model?.foreground = scenePhase == .active && !shown }
+            .onChange(of: destination) { _, _ in updateReading() }
+            .onChange(of: session.hostPath) { _, opened in
+                if !opened.isEmpty { destination = .chat }
+                hostPath = opened
+            }
+            .onChange(of: session.openPath) { _, opened in
+                if !opened.isEmpty { destination = .chat }
+                path = opened
             }
             .onChange(of: session.hosts.sessions.map { $0.model.compatibility }) { _, _ in
                 session.finishIncompatiblePairing()
@@ -724,7 +723,36 @@ struct RootView: View {
         }
     }
 
+    private func updateReading() {
+        let reading = scenePhase == .active && destination == .chat
+        session.hosts.foreground = reading
+        if session.hosts.sessions.isEmpty { session.model?.foreground = reading }
+    }
+
     @ViewBuilder private var content: some View {
+        if session.showingHosts || session.model != nil && !session.isPairing {
+            TabView(selection: $destination) {
+                Tab("Chat", systemImage: "bubble.left.and.bubble.right", value: .chat) { chatContent }
+                Tab("Schedules", systemImage: "calendar", value: .schedules) {
+                    NavigationStack {
+                        SchedulesUnavailableView(models: session.allModels) { destination = .settings }
+                            .navigationBarTitleDisplayMode(horizontalSizeClass == .regular ? .inline : .automatic)
+                            .paperList()
+                    }
+                }
+                Tab("Settings", systemImage: "gearshape", value: .settings) {
+                    SettingsView(session: session, showsDone: false) { threadID, hostID in
+                        if let hostID { hostPath = [HostThreadID(hostID: hostID, threadID: threadID)] }
+                        else { path = [threadID] }
+                        destination = .chat
+                    }
+                }
+            }
+            .yorozuTint()
+        } else { chatContent }
+    }
+
+    @ViewBuilder private var chatContent: some View {
         #if DEBUG
         if launchArgument("yorozuShowcase") == "pairing-manual" {
             PairView(onPair: { _ in String(localized: "Not a Yorozu pairing code.") })
@@ -807,7 +835,7 @@ struct RootView: View {
                 searchScope: model.searchScope,
                 onSearchQueryChange: model.searchHost,
                 exportMarkdown: model.markdown(of:),
-                onSettings: { settings = true }
+                onSettings: { destination = .settings }
             ) { thread in
                 let notification = session.notificationOpen.flatMap { $0.threadId == thread.id ? $0 : nil }
                 ChatView(
@@ -864,7 +892,7 @@ struct RootView: View {
         MultiHostThreadListView(
             session: session.hosts,
             path: $hostPath,
-            onSettings: { settings = true },
+            onSettings: { destination = .settings },
             updateStatuses: session.hosts.sessions.map { host in
                 UpdateStatusItem(
                     id: host.id,
