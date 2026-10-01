@@ -454,7 +454,8 @@ test("reflected legacy greetings cannot require negotiation, including after res
   expect(loadDevices(join(stateDir, "devices.json"))[0]).not.toHaveProperty("peerInfoRequired");
 });
 
-test.each([false, true])("a phone rejoins without hello and preserves a safe cutoff (legacy=%s)", async (legacy) => {
+test.each(["current", "legacy", "legacy-ahead"] as const)("a phone rejoins without hello and preserves a safe cutoff (%s)", async (migration) => {
+  const legacy = migration !== "current";
   relay = await startRelay(0);
   const stateDir = mkdtempSync(join(tmpdir(), "yorozu-rejoin-"));
   const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => sse("pong"));
@@ -513,7 +514,8 @@ test.each([false, true])("a phone rejoins without hello and preserves a safe cut
   const originalPairedAt = loadDevices(join(stateDir, "devices.json"))[0]!.pairedAt;
   // Legacy: one file from before the split, counters and all, and no counters file at all.
   if (legacy) {
-    rmSync(join(stateDir, "channel-seq.json"));
+    if (migration === "legacy-ahead") stored.sendSeq += 1000;
+    else rmSync(join(stateDir, "channel-seq.json"));
     writeFileSync(join(stateDir, "devices.json"), JSON.stringify([{ pub, lastSeen: 1, sendSeq: stored.sendSeq, recvSeq: stored.recvSeq }]));
   }
   createThread("Old history", stateDir, "old-history");

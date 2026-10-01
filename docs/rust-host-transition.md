@@ -434,6 +434,35 @@ Five update/notification/steering/Stop reproductions pass. The final full runtim
 with one skipped across 48 files using four workers. Earlier failure evidence remains retained.
 Cross-platform execution and the remaining standalone/native/release gates are open.
 
+## Rust sequence currency extraction
+
+Rust now owns live-channel counter persistence. The compatibility host initializes the counter
+store immediately after identity, before rewriting legacy pairings, and requires a durable Rust
+acknowledgement before accepting a modern box or using a reserved send block. Node still owns
+reservation/replay policy, relay connections, reconnect/catch-up and capability negotiation.
+This extraction does not complete checklist item 2 or make the launcher standalone.
+
+The store retains the exact legacy projection and unknown row fields, seeds counters from legacy
+pairings when needed, merges only nondecreasing currency and retains omitted or re-paired peers.
+The canonical integrity envelope is synchronized before the compatible projection. Restart
+reconciles an old or missing projection, accepts validated forward progress from a stopped old
+build, and refuses lower/malformed state without overwriting it. Live unexplained drift fences
+counter operations; a projection directory blocker remains retryable without advancing counters.
+Original backups are private, content-addressed and bounded to 128 files/128 MiB without deletion.
+An exact existing backup can reopen at the limit. Malformed originals remain untouched.
+
+Ten new Rust tests cover counter bounds, exact migration bytes, monotonicity, omitted peers,
+writer exclusion, corruption, links, projection recovery and actual process termination after
+acknowledgement. The backup-limit regression failed before repair. The existing phone-restart
+fixture now also proves higher legacy pairing counters are durably merged before a pairing
+rewrite strips them; it reproduced a 2000-to-1000 send-ceiling loss before the ordering repair.
+All 102 Rust tests, locked formatting/strict Clippy and the runtime build pass. The initial
+239-test affected runtime suite passed. The final complete runtime suite passes 816 tests with
+one skipped across 48 files, with two workers and every original test deadline retained.
+An earlier four-worker aggregate passed 814, skipped one and timed out in the multi-step update
+fixture; its unchanged isolated reproduction passes. That earlier failed run is retained and
+is not evidence of a root-caused update bug. Two workers bound concurrent process/storage load.
+
 ## Required 0.6.0 host work
 
 The requested rewrite has a finite completion checklist. These responsibilities are required before
@@ -445,12 +474,18 @@ claiming an independent portable Rust host or replacing the installed applicatio
    into the Rust host, retaining the current wire contracts and connections.
 3. Move approval/admission/Stop/run orchestration into Rust. SDK workers may supply provider access;
    they cannot bypass Rust's durable decisions or existing safety confirmations.
-4. Establish a bounded versioned provider-worker contract with run identity, streamed activity,
-   cancellation and explicit approval questions. Preserve provider/session behavior during migration.
+4. Establish a bounded versioned provider-worker contract with run/task/origin identity, streamed
+   activity, cancellation, supersession and explicit approval questions. Claude Code and Codex are
+   internal workers of one user-facing Yorozu agent; remove their direct session-creation entrypoints
+   and reject new direct-provider session requests in the backend. Preserve saved provider history,
+   worker/session compatibility and user installations during migration.
 5. Implement and verify Linux/Windows headless operation and the Windows local transport contract.
    Swift remains an optional macOS OS adapter. Test interrupted/repeated/concurrent workflows.
-6. Switch the actual launcher and package to the standalone Rust host; implement the requested default
-   continuous conversation while preserving explicit separate conversations and saved draft recovery.
+6. Switch the actual launcher and package to the standalone Rust host; implement one continuous main
+   conversation with optional separate conversations and saved draft recovery. Use the approved
+   SQLite operational store plus editable Markdown knowledge with defined synchronization and rollback,
+   as specified below. Topics and tasks remain separate; bounded context and delayed-result ownership
+   are required parts of this item.
 7. Pass native, build, CI and migration/rollback gates; release only 0.6.0 alpha to the authorized
    internal-only destination, preserve current connections and exclude the 0.5.0 beta updater, then
    replace the same installed application with a hidden recoverable rollback copy.
@@ -458,6 +493,39 @@ claiming an independent portable Rust host or replacing the installed applicatio
 Actual new schedule execution and PAIOS ownership are optional later product features. Their current
 truthful unavailable UI is retained; they cannot expand this checklist or substitute for the requested
 Rust host responsibilities. No control removal may silently remove a required capability.
+
+## Accepted conversation and storage target (implementation pending)
+
+One user-facing Yorozu agent serves the main conversation and optional focused conversations.
+Stable message/reply IDs anchor reply ancestry; topic identity is separate from task records.
+Each turn receives a bounded context packet containing the new message, reply ancestry, relevant
+source-backed decisions, current task/evidence and a recent window. Delayed worker results carry
+task and origin IDs and check cancellation/supersession before application. Interleaved topics,
+corrections, cancellation and delayed results need executable coverage before completion.
+
+SQLite is the authoritative operational store for messages, tasks, events, permission records and
+searchable history. Start with SQLite full-text search; embeddings remain optional later. PAIOS
+memory is source-backed and revisable, separate from permission scope and revocation. Memory or
+retrieved text never grants authority. Markdown provides human-readable, editable Obsidian knowledge,
+not a second copy of every operational record. Define stable knowledge IDs, revisions and the last
+exported/imported content hash; import edits against their base revision in a database transaction.
+Concurrent edits preserve both versions as an explicit conflict instead of silently overwriting the
+operational decision. Markdown import must not create or broaden permission grants.
+
+Migrate the verified journals and replayable transaction intents in stages, with one stopped prior
+writer and one authoritative new writer. Retain exact legacy bytes/history and a recoverable migration
+manifest; validate schema/identity and imported counts/content before switching reads. Rollback stops
+the new writer and restores the retained state at a recorded checkpoint. Do not discard verified
+journals or introduce competing writable truth stores. These are accepted requirements, not a claim
+that SQLite, Markdown sync, bounded context or standalone conversation routing already exists.
+
+A visible YOLO mode with user-configured standing policy is a requested design direction. Central
+permission enforcement should reuse already-granted ordinary tool access, record decisions/execution
+and retain Stop. The scope for messaging, spending and permanent deletion awaits the user's answer;
+do not introduce blanket bypass or enable it by default. OS/provider/MFA constraints and tool
+capabilities still apply; no credential expansion follows from this design request. Unknown external
+outcomes remain explicit and require reconciliation. Use provider-supported idempotency when available;
+never claim universal exactly-once external side effects. Voice integration is deferred.
 
 ## Compatibility requirements
 

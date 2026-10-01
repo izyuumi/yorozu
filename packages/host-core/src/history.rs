@@ -139,6 +139,7 @@ pub struct History {
     queue: Option<crate::native_queue::NativeQueue>,
     steering: Option<crate::steering::Steering>,
     crypto: Option<crate::crypto::HostCrypto>,
+    sequences: Option<crate::sequences::Sequences>,
 }
 impl Drop for History {
     fn drop(&mut self) {
@@ -165,6 +166,7 @@ impl History {
             queue: None,
             steering: None,
             crypto: None,
+            sequences: None,
         };
         let mut keys = HashSet::new();
         let mut done = HashSet::new();
@@ -705,6 +707,24 @@ impl History {
     pub fn request(&mut self, request: &Value) -> Value {
         if self.failed {
             return json!({"error":"history-storage-failed"});
+        }
+        if request["op"]
+            .as_str()
+            .is_some_and(|op| op.starts_with("seq_"))
+        {
+            if self.sequences.is_none() {
+                match crate::sequences::Sequences::open(&self.root) {
+                    Ok(sequences) => self.sequences = Some(sequences),
+                    Err(_) => {
+                        return if request["op"] == "seq_open" {
+                            json!({"unavailable":true})
+                        } else {
+                            json!({"error":"sequence-storage-failed"})
+                        };
+                    }
+                }
+            }
+            return self.sequences.as_mut().unwrap().request(request);
         }
         if request["op"]
             .as_str()

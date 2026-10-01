@@ -60,6 +60,7 @@ import {
 import WebSocket from "ws";
 import { UpdateGate } from "./update-gate.js";
 import { WireCrypto } from "./wire-crypto.js";
+import { SessionSequences } from "./session-sequences.js";
 import { AttachmentUploads } from "./attachment-upload.js";
 import { agentStatus } from "./agent-status.js";
 import { MAIN_AGENT } from "./agents.js";
@@ -514,6 +515,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   syncHostRequest(dir, { op: "queue_open" });
   syncHostRequest(dir, { op: "steering_open" });
   const wireCrypto = new WireCrypto(dir);
+  const sessionSequences = new SessionSequences(dir);
   // A SIGKILL cannot run the SDK's exit cleanup. Stop an orphaned CLI before any native
   // recovery starts; a live old CLI beside a resumed one could repeat external tool effects.
   const agentProcessesFile = join(dir, "native-agent-processes.json");
@@ -734,12 +736,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * neither does a relaunch of this sidecar.
    */
   const devicesFile = join(dir, "devices.json");
-  /**
-   * The live-channel counters, in their own file: they change on every accepted box, the
-   * pairings only when a phone joins or leaves, and a pairing file rewritten a thousand times
-   * an hour is a pairing file a crash finds half-written.
-   */
-  const seqFile = join(dir, "channel-seq.json");
   const devices = new Map<string, PairedDevice>();
   /**
    * Announces the paired list to the relay, which replaces what it knows with it. Assigned
@@ -756,11 +752,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
   };
   /** The counters alone: what every accepted box and every thousandth send update. */
   const writeSeqs = (): void => {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
     const seqs: ChannelSeqs = Object.fromEntries(
       [...devices.values()].map(({ record }) => [record.pub, { sendSeq: record.sendSeq ?? 0, recvSeq: record.recvSeq ?? 0 }]),
     );
-    writeFileAtomic(seqFile, JSON.stringify(seqs));
+    sessionSequences.save(seqs);
   };
   const saveDevices = (): void => {
     writeDevices();
@@ -773,8 +768,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // would take our next box for a replay and we would take its replays for new; and the
     // seq last sealed carries on too, so a re-hello burns no block.
     const before = devices.get(record.pub);
-    record.sendSeq ??= before?.record.sendSeq ?? 0;
-    record.recvSeq ??= before?.record.recvSeq ?? 0;
+    const stored = sessionSequences.get(record.pub);
+    record.sendSeq = Math.max(record.sendSeq ?? 0, before?.record.sendSeq ?? 0, stored.sendSeq);
+    record.recvSeq = Math.max(record.recvSeq ?? 0, before?.record.recvSeq ?? 0, stored.recvSeq);
     record.peerInfoRequired ??= before?.record.peerInfoRequired;
     wireCrypto.validate(record.pub);
     devices.set(record.pub, {
@@ -785,13 +781,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
     });
   };
   let migratedPairingTime = false;
-  // Counters from their own file where there is one; a `devices.json` from before the split
-  // still carries them itself, and those are honoured until the first write moves them over.
-  const storedSeqs = loadChannelSeqs(seqFile);
+  // Rust validates and retains legacy counters before the pairing projection can strip them.
   let legacySeqs = false;
   // Never more than the relay will be told about: a file past the cap is read up to it.
   for (const record of loadDevices(devicesFile).slice(0, MAX_DEVICES)) {
     // A key on disk we can no longer agree with is simply dropped, not a reason not to start.
+    const seqs = sessionSequences.get(record.pub);
+    record.sendSeq = Math.max(record.sendSeq ?? 0, seqs.sendSeq);
+    record.recvSeq = Math.max(record.recvSeq ?? 0, seqs.recvSeq);
+    if ((!sessionSequences.hasProjection && (record.sendSeq || record.recvSeq)) ||
+        record.sendSeq !== seqs.sendSeq || record.recvSeq !== seqs.recvSeq) legacySeqs = true;
     try {
       // Older releases never recorded first pairing. Do not invent historical access:
       // start a conservative cutoff once, before even a no-hello reconnect can sync.
@@ -799,22 +798,17 @@ export function serve(options: ServeOptions = {}): Sidecar {
         record.pairedAt = Date.now();
         migratedPairingTime = true;
       }
-      const seqs = storedSeqs?.[record.pub];
-      if (seqs) {
-        record.sendSeq = seqs.sendSeq;
-        record.recvSeq = seqs.recvSeq;
-      } else if (storedSeqs === undefined && (record.sendSeq || record.recvSeq)) {
-        legacySeqs = true;
-      }
-      remember(record);
+      wireCrypto.validate(record.pub);
     } catch {
       // Not a usable X25519 key any more.
+      continue;
     }
+    remember(record);
   }
-  if (migratedPairingTime) saveDevices();
-  // Counters that were only ever in `devices.json` go to their own file now, so the next
-  // start reads them from where every later write puts them.
+  // A legacy pairing can carry higher currency even when a projection already exists.
+  // Prove those counters before rewriting the pairing file without them.
   if (legacySeqs) writeSeqs();
+  if (migratedPairingTime) saveDevices();
 
   /**
    * The same thing for devices on the local socket, which need no key: the Mac app is one more
