@@ -719,14 +719,25 @@ async function macClient(dir: string) {
   await vi.waitFor(() => expect(existsSync(localSocketPath(dir))).toBe(true));
   const socket = createConnection(localSocketPath(dir));
   const events: YorozuEvent[] = [];
+  const waiting = new Set<{ predicate: (event: YorozuEvent) => boolean; resolve(event: YorozuEvent): void; reject(error: Error): void }>();
+  const waitEvent = (predicate: (event: YorozuEvent) => boolean): Promise<YorozuEvent> => {
+    const cached = events.find(predicate);
+    if (cached) return Promise.resolve(cached);
+    return new Promise((resolve, reject) => waiting.add({ predicate, resolve, reject }));
+  };
   let buffer = "";
   socket.setEncoding("utf8");
   socket.on("data", (chunk: string) => {
     buffer += chunk;
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
-    for (const line of lines) if (line) events.push(JSON.parse(line));
+    for (const line of lines) if (line) {
+      const event = JSON.parse(line) as YorozuEvent;
+      events.push(event);
+      for (const waiter of waiting) if (waiter.predicate(event)) { waiting.delete(waiter); waiter.resolve(event); }
+    }
   });
+  socket.on("close", () => { for (const waiter of waiting) waiter.reject(new Error("Local test client disconnected")); waiting.clear(); });
   await new Promise<void>((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
   const send = (event: Omit<YorozuEvent, "id" | "threadId" | "ts" | "agentId">): string => {
     const id = randomUUID();
@@ -735,10 +746,10 @@ async function macClient(dir: string) {
   };
   // OS connect completion precedes host acceptance. Wait for the protocol greeting
   // before a different peer emits a broadcast this client is expected to observe.
-  await vi.waitFor(() => expect(events.some((event) => event.kind === "thread_list")).toBe(true));
+  await waitEvent((event) => event.kind === "thread_list");
   const settings = (): YorozuEvent[] => events.filter((event) => event.kind === "approval_settings");
   const sendRawEvent = (event: YorozuEvent): void => { socket.write(`${JSON.stringify(event)}\n`); };
-  return { events, settings, send, sendRawEvent, close: () => socket.destroy() };
+  return { events, settings, send, sendRawEvent, waitEvent, close: () => socket.destroy() };
 }
 
 const HOUR_MS = 3_600_000;
@@ -757,8 +768,7 @@ test("queued updates wait for approvals and queued turns, prioritize new work, a
   vi.spyOn(Date, "now").mockImplementation(() => now);
   async function control(action: "queue" | "poll" | "cancel" = "poll") {
     const requestId = mac.send({ kind: "update_control", data: { action, updateId: "u1", version: "1.0" } });
-    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "update_status" && event.data.requestId === requestId)).toBe(true));
-    const event = mac.events.find((event) => event.kind === "update_status" && event.data.requestId === requestId)!;
+    const event = await mac.waitEvent((event) => event.kind === "update_status" && event.data.requestId === requestId);
     if (event.kind !== "update_status") throw new Error("missing status");
     return event.data;
   }
@@ -3190,6 +3200,7 @@ test("announces the paired list to the relay as soon as it has registered", asyn
   // The relay's known-device set is rebuilt from `devices.json`, so a relay that lost its
   // storage stops refusing every rejoin with a 4001 the moment the Mac comes back.
   const stateDir = mkdtempSync(join(tmpdir(), "yorozu-announce-"));
+  loadKeys(stateDir);
   const signingPubs = ["kBxLN8wYlBCk9nTYMhHsO6D5Hhw4EJOa2OBCnmHRLkA", "Zm9vYmFyZm9vYmFy"];
   const devices = signingPubs.map((signingPub, i) => ({
     pub: toBase64Url(generateKeypair().publicKey),
@@ -3237,6 +3248,7 @@ test.each([
   ["a live frame arrives from one", { type: "frame", payload: "not-a-frame" }],
 ])("nothing is streamed into a room the relay says is empty, until %s", async (_how, arrival) => {
   const stateDir = mkdtempSync(join(tmpdir(), "yorozu-empty-room-"));
+  loadKeys(stateDir);
   createThread("Home", stateDir, "quiet-thread");
   writeFileSync(join(stateDir, "devices.json"), JSON.stringify([
     { pub: toBase64Url(generateKeypair().publicKey), signingPub: "phone", pairedAt: 1, lastSeen: 1 },
@@ -3292,6 +3304,7 @@ test.each([
 
 test("an open relay socket holds notifications until registration completes", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "yorozu-registering-"));
+  loadKeys(stateDir);
   createThread("Home", stateDir, "early-thread");
   const identity = generateKeypair();
   const removed = toBase64Url(generateKeypair().publicKey);
@@ -3352,6 +3365,7 @@ test("a paired device the relay knows no name for holds the announce back", asyn
   // The list replaces the relay's whole set, so an incomplete one would unpair the device it
   // cannot name — a record kept from before the signing key was. Nothing is sent instead.
   const stateDir = mkdtempSync(join(tmpdir(), "yorozu-announce-partial-"));
+  loadKeys(stateDir);
   writeFileSync(
     join(stateDir, "devices.json"),
     JSON.stringify([{ pub: toBase64Url(generateKeypair().publicKey), lastSeen: 0 }]),
@@ -3635,6 +3649,7 @@ test("the Mac tells the relay what class of thing happened, and nothing about it
  */
 async function statusNotifyHarness(runner: NativeAgentRunner["run"]) {
   const stateDir = mkdtempSync(join(tmpdir(), "yorozu-status-notify-"));
+  loadKeys(stateDir);
   writeFileSync(join(stateDir, "devices.json"), JSON.stringify([
     { pub: toBase64Url(generateKeypair().publicKey), signingPub: "phone", pairedAt: 1, lastSeen: 1 },
   ]));
@@ -4745,6 +4760,7 @@ test("a frame whose body is not a frame is logged and acked, and the relay's own
 test("a seventeenth phone is refused, the list never grows past the cap, and the state dir is tightened", async () => {
   relay = await startRelay(0);
   const stateDir = mkdtempSync(join(tmpdir(), "yorozu-cap-"));
+  loadKeys(stateDir);
   // What an older release left behind: a state directory anyone on the Mac may list.
   chmodSync(stateDir, 0o755);
   const full = Array.from({ length: MAX_DEVICES }, (_, i) => ({

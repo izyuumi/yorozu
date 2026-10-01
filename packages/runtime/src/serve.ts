@@ -22,10 +22,6 @@ import {
   localPeerInfo,
   parsePeerInfo,
   negotiatePeerInfo,
-  decodeEnvelope,
-  deriveChannelKeys,
-  deriveSessionKey,
-  encodeEnvelope,
   encodePairingLink,
   encodePairingString,
   fromBase64Url,
@@ -33,15 +29,11 @@ import {
   isSeq,
   MAX_DEVICES,
   generateSigningKeypair,
-  helloProof,
   attachmentsWithinLimits,
-  open,
-  seal,
   notifyFor,
   notificationPreviewBody,
   NOTIFY_BODY,
   encodeNotificationPreview,
-  signFrame,
   threadRef,
   toBase64Url,
   REASONING_EFFORTS,
@@ -50,7 +42,6 @@ import {
   validAgentId,
   type AgentDescriptor,
   type ApprovalCardData,
-  type ChannelKeys,
   type ChannelModelOption,
   type DeviceInfo,
   type EventPayload,
@@ -68,6 +59,7 @@ import {
 } from "@yorozu/shared";
 import WebSocket from "ws";
 import { UpdateGate } from "./update-gate.js";
+import { WireCrypto } from "./wire-crypto.js";
 import { AttachmentUploads } from "./attachment-upload.js";
 import { agentStatus } from "./agent-status.js";
 import { MAIN_AGENT } from "./agents.js";
@@ -455,10 +447,6 @@ const SEND_SEQ_RESERVE = 1_000;
 
 /** A phone paired over the relay, as the runtime holds it. */
 interface PairedDevice {
-  /** The one shared key, used for push previews and released 0.2.3 live-channel boxes. */
-  key: Uint8Array;
-  /** Live-channel keys, one per direction. */
-  channel: ChannelKeys;
   /** Set by the first box after hello; a modern box can upgrade a legacy connection. */
   format: "current" | "legacy" | null;
   /** Last seq sealed to it; `record.sendSeq` is the ceiling written ahead of it. */
@@ -525,6 +513,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   try {
   syncHostRequest(dir, { op: "queue_open" });
   syncHostRequest(dir, { op: "steering_open" });
+  const wireCrypto = new WireCrypto(dir);
   // A SIGKILL cannot run the SDK's exit cleanup. Stop an orphaned CLI before any native
   // recovery starts; a live old CLI beside a resumed one could repeat external tool effects.
   const agentProcessesFile = join(dir, "native-agent-processes.json");
@@ -588,7 +577,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   rmSync(join(dir, "terminal-settings.json"), { force: true });
   recoverNativeTurns(dir);
   retireOrphanedCards(dir);
-  const keys = loadKeys(dir);
+  const keys = { session: { publicKey: wireCrypto.sessionPub }, signing: { publicKey: wireCrypto.signingPub } };
   const provider = options.provider;
   const titler = options.titler ?? onDeviceTitler;
   /**
@@ -787,10 +776,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     record.sendSeq ??= before?.record.sendSeq ?? 0;
     record.recvSeq ??= before?.record.recvSeq ?? 0;
     record.peerInfoRequired ??= before?.record.peerInfoRequired;
-    const theirPub = fromBase64Url(record.pub);
+    wireCrypto.validate(record.pub);
     devices.set(record.pub, {
-      key: deriveSessionKey(keys.session.privateKey, theirPub),
-      channel: deriveChannelKeys(keys.session.privateKey, theirPub, "mac"),
       format: record.peerInfoRequired ? "current" : null,
       // Fresh from disk the ceiling is all there is, and everything up to it counts as used.
       sent: before?.sent ?? record.sendSeq,
@@ -1476,6 +1463,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     catchupSends.delete(pub);
     activeSearchRequests.delete(pub);
     devices.delete(pub);
+    wireCrypto.forget(pub);
     saveDevices();
     if (known.record.signingPub) {
       revokeAtRelay(known.record.signingPub);
@@ -3534,7 +3522,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
     const signedFrame = (body: FrameBody): { payload: string; sig: string } => {
       const payload = toBase64Url(Buffer.from(JSON.stringify(body)));
-      const sig = signFrame(keys.signing.privateKey, Buffer.from(payload));
+      const sig = wireCrypto.sign(Buffer.from(payload));
       return { payload, sig: toBase64Url(sig) };
     };
     const sendFrame = (body: FrameBody): void => ws.send(JSON.stringify({ type: "frame", ...signedFrame(body) }));
@@ -3588,10 +3576,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
         thread: threadRef(event.threadId), class: cls, quick, title });
       const previews = plaintext
         ? Object.fromEntries(
-            [...devices.values()].flatMap(({ key, record }) => {
+            [...devices.values()].flatMap(({ record }) => {
               if (!record.signingPub || event.ts < (record.pairedAt ?? 0)) return [];
-              const box = seal(key, Buffer.from(plaintext));
-              return [[record.signingPub, { n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) }]];
+              return [[record.signingPub, wireCrypto.preview(record.pub, Buffer.from(plaintext))]];
             }),
           )
         : undefined;
@@ -3637,13 +3624,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
           throw e;
         }
       }
-      const box = seal(known.channel.send, encodeEnvelope(known.sent, event));
-      return { t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) };
+      return { t: "box", ...wireCrypto.seal(known.record.pub, event, known.sent) };
     };
 
     const sealLegacyFor = (known: PairedDevice, event: YorozuEvent): FrameBody => {
-      const box = seal(known.key, Buffer.from(JSON.stringify(event)));
-      return { t: "box", n: toBase64Url(box.nonce), c: toBase64Url(box.ciphertext) };
+      return { t: "box", ...wireCrypto.seal(known.record.pub, event) };
     };
 
     const forAgentCapability = (event: YorozuEvent, supportsOpenAgents: boolean): YorozuEvent => {
@@ -3779,36 +3764,25 @@ export function serve(options: ServeOptions = {}): Sidecar {
      */
     function openFrom(body: { n: string; c: string }): [string, YorozuEvent] | null {
       for (const [device, known] of devices) {
-        let plain: Uint8Array | null = null;
-        try {
-          plain = open(known.channel.recv, fromBase64Url(body.n), fromBase64Url(body.c));
-        } catch {
-          // An older client used the shared key in both directions.
-        }
-        if (plain === null) {
+        const opened = wireCrypto.open(known.record.pub, body);
+        if (opened.status === "unauthenticated") {
           if (known.format === "current" || known.record.peerInfoRequired) continue;
-          try {
-            const legacy = open(known.key, fromBase64Url(body.n), fromBase64Url(body.c));
-            const event = JSON.parse(Buffer.from(legacy).toString()) as YorozuEvent;
-            if (typeof event?.id !== "string" || typeof event?.kind !== "string" ||
-              typeof event?.threadId !== "string" || typeof event?.ts !== "number" ||
-              typeof event?.data !== "object" || event.data === null) {
-              state("malformed-frame");
-              return null;
-            }
-            known.format = "legacy";
-            return [device, event];
-          } catch {
-            continue; // Not sealed for this device: try the next one.
+          const legacy = wireCrypto.open(known.record.pub, body, true);
+          if (legacy.status === "malformed") {
+            state("malformed-frame");
+            return null;
           }
+          if (legacy.status === "opened") {
+            known.format = "legacy";
+            return [device, legacy.event];
+          }
+          continue;
         }
-        let envelope: ReturnType<typeof decodeEnvelope>;
-        try {
-          envelope = decodeEnvelope(plain);
-        } catch {
+        if (opened.status === "malformed") {
           state("malformed-frame");
           return null;
         }
+        const envelope = opened as { status: "opened"; seq: number; event: YorozuEvent };
         if (!acceptsSeq(known.record.recvSeq ?? 0, envelope.seq)) {
           state("replayed-frame");
           return null;
@@ -3846,7 +3820,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         const proved =
           typeof body.proof === "string" &&
           typeof body.spub === "string" &&
-          [...pairingSecrets].some((secret) => helloProof(secret, body.pub, body.spub!) === body.proof);
+          [...pairingSecrets].some((secret) => wireCrypto.helloProof(secret, body.pub, body.spub!) === body.proof);
         if (!known && !proved) return state("hello-refused");
         // A device on file may say hello again without proof, but it cannot move its relay
         // identity without one: `revoke` is addressed to that key, so a relay that could swap
@@ -3972,7 +3946,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
                 type: "register",
                 pubkey: toBase64Url(keys.signing.publicKey),
                 nonceSig: toBase64Url(
-                  signFrame(keys.signing.privateKey, Buffer.from(String(msg.nonce))),
+                  wireCrypto.sign(Buffer.from(String(msg.nonce))),
                 ),
               }),
             );

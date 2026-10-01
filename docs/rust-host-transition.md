@@ -13,7 +13,8 @@ separate conversations. These are migration requirements, not claims about the c
   TypeScript host currently owns relay transport, admission policy, sequencing, approvals,
   history read/sync policy, recovery policy and orchestration. Rust owns the extracted durable
   attachment/outbox/expiry/Stop/accepted-message stores, event/transcript transactions, native queue
-  writes, steering intent/outcomes, thread metadata mutations and Unix listeners. This is approximately 4,000 lines in `serve.ts`,
+  writes, steering intent/outcomes, private session identity and wire cryptography, thread metadata
+  mutations and Unix listeners. This is approximately 4,000 lines in `serve.ts`,
   plus its supporting modules; replacing a launcher alone would not rewrite the backend.
 - Claude uses a TypeScript SDK adapter; Codex has both SDK and native app-server adapters.
   OpenClaw's separate channel plugin uses a local JSON-lines socket and durable acknowledged
@@ -396,6 +397,42 @@ The first recovery-filter build stopped on TypeScript union narrowing before hos
 the event-kind narrowing, the production runtime build and focused checks pass. The final full runtime
 suite passes 812 tests with one skipped across 47 files using four workers. Earlier failure logs
 remain retained. Cross-platform execution, physical power loss and native release gates remain open.
+
+## Rust session cryptography
+
+The compatibility host now routes relay signatures, pairing proofs, modern and legacy encrypted
+boxes, and private notification previews through Rust. Rust loads the existing `keys.json` identity,
+verifies its public/private pairing, and returns only public identity metadata through the local
+worker. Existing key bytes and unknown fields remain unchanged. Missing identity beside any saved
+pairing/counter file blocks readiness rather than generating a replacement room. Readiness is checked
+before orphan cleanup. A connection-identity error explains the recovery action without exposing keys.
+Synthetic tests create temporary identities; no installed application identity or connection was used.
+
+The implementation retains the current X25519/HKDF-SHA256 salt and directional info, ChaCha20-Poly1305
+nonce/tag layout, Ed25519 signatures, envelope format and legacy compatibility policy. Non-contributory
+key agreement is rejected; strict signature verification is used. The checked APIs are documented by
+[x25519-dalek 2.0.1](https://docs.rs/x25519-dalek/2.0.1/x25519_dalek/struct.SharedSecret.html),
+[ed25519-dalek 2.2.0](https://docs.rs/ed25519-dalek/2.2.0/ed25519_dalek/struct.VerifyingKey.html),
+[RustCrypto ChaCha20Poly1305 0.10.1](https://docs.rs/chacha20poly1305/0.10.1/chacha20poly1305/), and
+[HKDF 0.12.4](https://docs.rs/hkdf/0.12.4/hkdf/). Dependencies are locked. Peer-key caches are bounded to
+16 entries and cleared on revocation. The private local worker exchanges public identifiers and
+messages with Node; provider environment variables are excluded. Relay networking, pairing policy,
+sequence persistence, reconnection and catch-up policy still belong to Node.
+
+Eight crypto tests and all 92 Rust tests pass, with strict Clippy. Six bridge/facade tests and the
+production runtime build pass. Thirteen focused encrypted relay/facade tests and ten notification/
+child-recovery reproductions pass with the original timing budgets. The original Swift signature
+fixture verifies but is not byte-identical to a signature reproduced by either Node or Rust; the test
+checks validity for both languages and exact reproduction for the TypeScript fixture. No fixture was
+rewritten. The first full run passed 805 tests and failed ten: nine fixtures had seeded saved pairings
+without creating their synthetic host identity; these now model complete existing installations.
+The repeated child-loss test also exceeded its five-second total budget in that aggregate and passed
+its unchanged focused reproduction. The next aggregate passed 814 and timed out in the multi-step
+update fixture. Its local-client helper now waits on the actual response event rather than accumulating
+50 ms polling intervals; every original assertion and the five-second test budget remain intact.
+Five update/notification/steering/Stop reproductions pass. The final full runtime suite passes 815 tests
+with one skipped across 48 files using four workers. Earlier failure evidence remains retained.
+Cross-platform execution and the remaining standalone/native/release gates are open.
 
 ## Required 0.6.0 host work
 
