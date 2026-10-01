@@ -10,7 +10,7 @@
     "yorozu-mcp": "./dist/mcp-bridge.js"
   },
   "scripts": {
-    "build": "tsc -p .",
+    "build": "sh ../../scripts/build-host-core.sh && tsc -p .",
     "cli": "pnpm build && node dist/cli.js",
     "serve": "pnpm build && node dist/serve.js",
     "test": "vitest run"

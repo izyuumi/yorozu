@@ -42,7 +42,7 @@ jobs:
           flag() {
             if grep -qE "$2|^\.github/workflows/ci\.yml$" <<<"$files"; then echo "$1=true"; else echo "$1=false"; fi
           }
-          build='^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json)$'
+          build='^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json|scripts/build-host-core\.sh)$|^packages/host-core/'
           {
             flag ts "^(apps/relay|packages/runtime|packages/shared|packages/openclaw-channel)/|^fixtures/swift-vectors\.json$|^apps/mac/Sources/YorozuNative/Apple\.swift$|^catalog/models\.json$|$build"
             flag relay '^apps/relay/|^tsconfig\.base\.json$'
@@ -51,6 +51,23 @@ jobs:
             flag ios '^(apps/ios|packages/shared-swift)/|^version\.txt$'
             flag web "^apps/web/|$build"
           } >> "$GITHUB_OUTPUT"
+
+  rust-host:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install the tested Rust toolchain
+        run: rustup toolchain install 1.92.0 --profile minimal --component rustfmt --component clippy
+      - name: Check Rust formatting
+        run: cargo +1.92.0 fmt --manifest-path packages/host-core/Cargo.toml --check
+      - name: Lint the portable core
+        run: cargo +1.92.0 clippy --locked --manifest-path packages/host-core/Cargo.toml --all-targets -- -D warnings
+      - name: Test persistence and process recovery
+        run: cargo +1.92.0 test --locked --manifest-path packages/host-core/Cargo.toml
 
   release-checks:
     runs-on: ubuntu-latest

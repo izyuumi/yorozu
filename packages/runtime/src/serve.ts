@@ -3937,6 +3937,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       for (const turn of running.values()) turn.abort();
       if (retry) clearTimeout(retry);
       await local.close();
+      await attachmentUploads.close();
       await channel.close();
       await direct?.close();
       await legacyReady?.catch(() => undefined);

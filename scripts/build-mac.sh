@@ -42,6 +42,7 @@ STAGE="$DIST/stage"
 # The app embeds shared + runtime. Relay is deployed separately and compiling it here adds work
 # to every local package/release build without changing a byte in the bundle.
 pnpm --filter @yorozu/shared --filter @yorozu/runtime build
+sh scripts/build-host-core.sh --release
 env -u SDKROOT swift build --package-path apps/mac -c release
 BIN="$(env -u SDKROOT swift build --package-path apps/mac -c release --show-bin-path | tail -1)"
 
@@ -152,6 +153,9 @@ tar -xzf "$DIST/$NODE_DIR.tar.gz" -C "$DIST/$NODE_DIR" --strip-components=1
 cp "$DIST/$NODE_DIR/bin/node" "$APP/Contents/Resources/node"
 # A node that cannot start makes a DMG that cannot work; fail here, not on a user's Mac.
 "$APP/Contents/Resources/node" --version >/dev/null
+# The Rust core has no Swift/SDK dependency and needs no JIT or privacy entitlements.
+# It is signed by the nested-code loop below, without the Node runtime exceptions.
+cp packages/host-core/target/release/yorozu-host-core "$APP/Contents/Resources/yorozu-host-core"
 rm -rf "$APP/Contents/Resources/runtime"
 # node-linker=hoisted: pnpm's default layout is a thicket of symlinks into .pnpm, and
 # codesign refuses to seal a bundle containing them ("invalid destination for symbolic

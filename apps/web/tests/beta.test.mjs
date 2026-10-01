@@ -33,6 +33,25 @@ const request = (path, init) => worker.fetch(new Request(`https://yorozu.yumi.to
 });
 afterEach(() => mock.restoreAll());
 
+test('0.5.0 beta discovery excludes a newer manual alpha and a release-branch candidate', async () => {
+  const beta = 'v0.5.0-beta';
+  const assets = name => ['candidate.json', 'appcast.xml', 'Yorozu.dmg'].map(asset => ({
+    name: asset, state: 'uploaded', browser_download_url: `${download}${name}/${asset}`,
+  }));
+  const releases = [
+    { ...release('v0.6.0-alpha.1', 'release/0.6'), name: 'Yorozu 0.6.0 Alpha', assets: assets('v0.6.0-alpha.1') },
+    { ...release('candidate-0.6.0-20000', 'release/0.6'), assets: assets('candidate-0.6.0-20000') },
+    { ...release(beta), name: beta, assets: assets(beta) },
+  ];
+  const requests = upstream([releases], { ...manifest, tag: beta, version: '0.5.0', mac: { asset: 'Yorozu.dmg' } });
+  for (const path of ['/beta/appcast.xml', '/beta', '/beta/']) {
+    const response = await request(path);
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), `${download}${beta}/${path.endsWith('appcast.xml') ? 'appcast.xml' : 'Yorozu.dmg'}`);
+  }
+  assert(requests.every(url => !url.includes('0.6.0')));
+});
+
 test('both beta routes use newest numeric main candidate across all release pages', async () => {
   const first = [release('candidate-0.9.0-10041'), release('candidate-1.0.0-20000', 'release/1.0'),
     { ...release('candidate-2.0.0-30000'), draft: true },
