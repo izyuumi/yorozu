@@ -3,7 +3,7 @@ use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use yorozu_host_core::transport::{Emit, Transports};
-use yorozu_host_core::{AttachmentStore, now_ms, outbox::ChannelOutbox};
+use yorozu_host_core::{AttachmentStore, admission::Admissions, now_ms, outbox::ChannelOutbox};
 
 fn run() -> io::Result<()> {
     let mut args = std::env::args().skip(1);
@@ -16,6 +16,7 @@ fn run() -> io::Result<()> {
     }
     let mut store = AttachmentStore::open(Path::new(&dir))?;
     let mut outbox: Option<ChannelOutbox> = None;
+    let mut admissions: Option<Admissions> = None;
     let mut input = io::stdin().lock();
     let output = Arc::new(Mutex::new(io::stdout()));
     let write_frame: Emit = Arc::new(move |frame| {
@@ -68,6 +69,23 @@ fn run() -> io::Result<()> {
             .is_some_and(|op| op.starts_with("transport_"))
         {
             transports.request(&request)
+        } else if request
+            .get("op")
+            .and_then(Value::as_str)
+            .is_some_and(|op| op.starts_with("admission_"))
+        {
+            if admissions.is_none() {
+                match Admissions::open(Path::new(&dir)) {
+                    Ok(store) => admissions = Some(store),
+                    Err(_) => {
+                        write_frame(
+                            json!({"id":id,"result":{"error":"admission-storage-failed"}}),
+                        )?;
+                        continue;
+                    }
+                }
+            }
+            admissions.as_mut().unwrap().request(&request)
         } else if request
             .get("op")
             .and_then(Value::as_str)

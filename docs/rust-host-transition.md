@@ -112,6 +112,35 @@ This extraction implements Unix local transport only. Windows explicitly returns
 currency, capability negotiation, durable thread/admission state, approval decisions and
 provider execution remain future Rust boundaries. No provider credentials enter this worker.
 
+## Expired-admission journal extraction (in progress)
+
+Rust now owns the append writer for `expired-admissions.jsonl`. Legacy complete records and
+unknown fields are validated without rewriting their bytes. Interrupted final bytes remain
+untouched on open; before the next append Rust saves a private recovery copy of the entire
+original, then removes only the incomplete tail. An OS-held writer lock excludes another Rust
+owner. Bounds are 64 MiB per journal, 1 MiB per record and 65,536 records; unsupported/corrupt
+stores fail closed and retain originals. JavaScript-safe integer deadlines retain equivalent
+legacy numeric notation.
+
+An expired ID stays bound to its original thread, content identity and deadline. Rust syncs the
+record and directory before reporting expiration. Identical pending retries share one save;
+a changed-deadline retry waits for that save and cannot become accepted work. Persistence or
+worker failure leaves expiration unconfirmed and fences new user-message admission until safe host recovery.
+Closing the compatibility owner awaits pending writes before releasing its worker lease.
+
+The surrounding TypeScript host still supplies the trusted clock and admission policy, reads a
+validated legacy snapshot, and owns accepted history. This is the expired-operation currency
+boundary only; accepted-operation/event state, Stop journals and provider execution remain to
+be migrated. Existing approvals and safety confirmations are unchanged.
+
+Seven new Rust recovery tests and the full 32-test core suite pass, including actual process
+termination after acknowledgement, interrupted-tail retention, conflicts, corruption/bounds,
+writer exclusion and symlink refusal. Four facade tests plus host expiry/restart and pending-ID
+race checks pass. The final runtime aggregate passes 782 tests with one skipped across 44 files using four workers,
+including the storage-failure fence and pending-identity/restart regressions. Strict clippy and
+the production runtime build also pass. Windows execution and physical power-loss durability
+remain unverified locally.
+
 ## Following migration boundaries
 
 1. Move the durable event/admission/outbox state engine to Rust with one authoritative writer.
@@ -172,7 +201,9 @@ minutes of XCTest animation-idle waits. It is incomplete, not passed. A bounded 
 reproduction subsequently failed in 44.374 seconds: the initial Send tap left “hello” in the
 composer. The exported accessibility hierarchy and screen recording show an enabled Send control,
 retained input and no notification prompt. This is a concrete native UI failure under investigation,
-not a pass and not evidence that animation waits alone explain the earlier result. These runs do not establish the full native release gate.
+not a pass and not evidence that animation waits alone explain the earlier result.
+A subsequent boolean-only Send-action diagnostic failed at the first offline message in 41.030
+seconds; result collection is still active. Its temporary DEBUG diagnostics are not committed. These runs do not establish the full native release gate.
 Cross-platform CI, physical devices and publication remain pending.
 
 No speed claim follows from the language choice. Measure cold launch, request latency, streaming

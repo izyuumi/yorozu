@@ -13,6 +13,7 @@ import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdtempSync, mkdir
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { argv, env, stdin, stdout } from "node:process";
+import { ExpiredAdmissions } from "./admission.js";
 import { promisify } from "node:util";
 import {
   acceptsSeq,
@@ -612,29 +613,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const peerInfo = localPeerInfo(options.appVersion ?? env.YOROZU_APP_VERSION ?? "unknown");
   // An expired operation ID stays barred after restart. The old encrypted relay copy may
   // arrive later, while a fresh user confirmation must carry a new ID and deadline.
-  const expiredFile = join(dir, "expired-admissions.jsonl");
-  type ExpiredAdmission = { id: string; threadId: string; identity: string; deadline: number };
-  let expiredText = existsSync(expiredFile) ? readFileSync(expiredFile, "utf8") : "";
-  // A torn final append was never acknowledged. Drop only that tail; complete records remain durable.
-  if (expiredText && !expiredText.endsWith("\n")) {
-    expiredText = expiredText.slice(0, expiredText.lastIndexOf("\n") + 1);
-    truncateSync(expiredFile, Buffer.byteLength(expiredText));
-  }
-  const storedExpired: unknown[] = expiredText ? expiredText.trimEnd().split("\n").map((line) => JSON.parse(line)) : [];
-  if (!storedExpired.every((entry) =>
-    typeof entry === "object" && entry !== null &&
-    typeof (entry as ExpiredAdmission).id === "string" && (entry as ExpiredAdmission).id.length > 0 &&
-    (entry as ExpiredAdmission).id.length <= 128 &&
-    typeof (entry as ExpiredAdmission).threadId === "string" && (entry as ExpiredAdmission).threadId.length > 0 &&
-    (entry as ExpiredAdmission).threadId.length <= 128 &&
-    typeof (entry as ExpiredAdmission).identity === "string" && /^[a-f0-9]{64}$/.test((entry as ExpiredAdmission).identity) &&
-    Number.isSafeInteger((entry as ExpiredAdmission).deadline))) throw new Error("Invalid expired admission journal");
-  const expiredAdmissions = new Map((storedExpired as ExpiredAdmission[]).map((entry) => [entry.id, entry]));
-  if (expiredAdmissions.size !== storedExpired.length) throw new Error("Duplicate expired admission ID");
-  const rememberExpired = (entry: ExpiredAdmission): void => {
-    appendFileSync(expiredFile, JSON.stringify(entry) + "\n", { mode: 0o600, flush: true });
-    expiredAdmissions.set(entry.id, entry);
-  };
+  const admissionStore = new ExpiredAdmissions(dir);
+  const expiredAdmissions = admissionStore.records;
   // A Stop is bound to one accepted operation. Keep its intent through sidecar replacement,
   // including the backend run identity needed to finish an interrupted abort request.
   type StopRecord = { targetEventId: string; threadId: string; status: "requested" | "stopped" | "completed" | "withdrawn" | "unconfirmed";
@@ -2851,6 +2831,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
           withdrawal.threadId === event.threadId ? "withdrawn" : "conflicting-message-id");
         return;
       }
+      const pendingExpiration = admissionStore.pendingDisposition(event.id, event.threadId, identity!);
+      if (pendingExpiration) {
+        void pendingExpiration.then((status) => { if (!stopped) rejected(status,
+          status === "expired" ? "admission-deadline" : "conflicting-message-id"); })
+          .catch(() => state("admission-storage-failed"));
+        return;
+      }
       const expired = expiredAdmissions.get(event.id);
       if (expired) {
         rejected(expired.identity === identity ? "expired" : "rejected",
@@ -2870,8 +2857,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
           return;
         }
         if (Date.now() >= deadline) {
-          rememberExpired({ id: event.id, threadId: event.threadId, identity: identity!, deadline });
-          rejected("expired", "admission-deadline");
+          void admissionStore.expire({ id: event.id, threadId: event.threadId, identity: identity!, deadline }, Date.now())
+            .then((status) => { if (!stopped) rejected(status,
+              status === "expired" ? "admission-deadline" : "conflicting-message-id"); })
+            .catch(() => state("admission-storage-failed"));
           return;
         }
         // Deadline-bearing clients create draft threads first. A failed create must not
@@ -3992,6 +3981,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       await Promise.allSettled([...pendingChannelAdmissions.values()].map((entry) => entry.promise));
       await Promise.allSettled([...preDispatchStops.values()]);
       await channel.close();
+      await admissionStore.close();
       await attachmentUploads.close();
       await direct?.close();
       await legacyReady?.catch(() => undefined);

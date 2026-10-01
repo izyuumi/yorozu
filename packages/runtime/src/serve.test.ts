@@ -2409,6 +2409,67 @@ test("a delayed sealed message expires before host admission", async () => {
   expect(readThreadEvents("t1", dir).some((event) => event.id === "delayed-expired")).toBe(false);
 });
 
+test("pending expired identity bars changed-deadline admission and survives host replacement", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-expiration-recovery-"));
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => sse("must not run"));
+  const options = { relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, log: () => {},
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: fetchMock }) };
+  createThread("Expired", dir, "expiry-thread");
+  sidecar = serve(options);
+  let mac = await macClient(dir);
+  const queuedAt = Date.now() - 31 * 60_000;
+  const expired: YorozuEvent = { id: "immutable-expired", threadId: "expiry-thread", ts: queuedAt,
+    agentId: "mac", kind: "message", data: { role: "user", text: "retain original identity",
+      admissionDeadline: queuedAt + 30 * 60_000 } };
+  const freshAt = Date.now();
+  const fresh: YorozuEvent = { ...expired, ts: freshAt, data: { role: "user", text: "retain original identity",
+    admissionDeadline: freshAt + 30 * 60_000 } };
+  // Same socket writes arrive before the Rust fsync acknowledgement. A changed deadline
+  // must not turn the pending expired ID into accepted work.
+  mac.sendRawEvent(expired); mac.sendRawEvent(fresh); mac.sendRawEvent(expired);
+  await vi.waitFor(() => expect(mac.events.filter((event) => event.kind === "admission_status" &&
+    event.data.eventId === expired.id)).toHaveLength(3));
+  expect(mac.events.filter((event) => event.kind === "admission_status").map((event) =>
+    event.kind === "admission_status" && event.data.status)).toEqual(["expired", "rejected", "expired"]);
+  expect(mac.events.some((event) => event.kind === "receipt" && event.data.eventId === expired.id)).toBe(false);
+  expect(readFileSync(join(dir, "expired-admissions.jsonl"), "utf8").trim().split("\n")).toHaveLength(1);
+  mac.close(); await sidecar.close(); sidecar = serve(options); mac = await macClient(dir);
+  try {
+    mac.sendRawEvent(expired); mac.sendRawEvent(fresh);
+    await vi.waitFor(() => expect(mac.events.filter((event) => event.kind === "admission_status" &&
+      event.data.eventId === expired.id)).toHaveLength(2));
+    expect(mac.events.filter((event) => event.kind === "admission_status").map((event) =>
+      event.kind === "admission_status" && event.data.status)).toEqual(["expired", "rejected"]);
+    expect(fetchMock).not.toHaveBeenCalled(); expect(readThreadEvents("expiry-thread", dir)).toEqual([]);
+  } finally { mac.close(); }
+});
+
+test("expired admission storage failure fences new user work until safe host recovery", async () => {
+  relay = await startRelay(0); const dir = mkdtempSync(join(tmpdir(), "yorozu-expiration-fenced-"));
+  const lines: string[] = [];
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => sse("must not run"));
+  createThread("Expiry failure", dir, "expiry-thread");
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir,
+    log: (line) => { lines.push(line); },
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch: fetchMock }) });
+  const mac = await macClient(dir);
+  try {
+    writeFileSync(join(dir, "expired-admissions.jsonl"), "malformed\n");
+    const queuedAt = Date.now() - 31 * 60_000;
+    mac.sendRawEvent({ id: "failed-expiration", threadId: "expiry-thread", ts: queuedAt, agentId: "mac",
+      kind: "message", data: { role: "user", text: "expired", admissionDeadline: queuedAt + 30 * 60_000 } });
+    await vi.waitFor(() => expect(lines).toContain("STATE admission-storage-failed"));
+    const failures = lines.filter((line) => line === "STATE admission-storage-failed").length;
+    mac.sendRawEvent({ id: "new-work", threadId: "expiry-thread", ts: Date.now(), agentId: "mac",
+      kind: "message", data: { role: "user", text: "must remain unconfirmed" } });
+    await vi.waitFor(() => expect(lines.filter((line) => line === "STATE admission-storage-failed")).toHaveLength(failures + 1));
+    expect(mac.events.some((event) => event.kind === "receipt" || event.kind === "admission_status")).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled(); expect(readThreadEvents("expiry-thread", dir)).toEqual([]);
+    expect(readFileSync(join(dir, "expired-admissions.jsonl"), "utf8")).toBe("malformed\n");
+  } finally { mac.close(); }
+});
+
 test("a conflicting retry cannot reuse a receipted user message ID", async () => {
   const { dir } = await pairedPhone([], true);
   createThread("Identity", dir, "identity");
