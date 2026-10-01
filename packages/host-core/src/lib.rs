@@ -1,5 +1,6 @@
 //! Portable durable attachment ingress. No UI, Swift, gateway or credential dependency.
 //! The surrounding host still owns message admission; assembling files never admits a turn.
+pub mod outbox;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -141,6 +142,11 @@ pub struct AttachmentStore {
     root: PathBuf,
     _owner: File,
     last_prune: u64,
+}
+impl Drop for AttachmentStore {
+    fn drop(&mut self) {
+        let _ = self._owner.unlock();
+    }
 }
 impl AttachmentStore {
     pub fn open(state_dir: &Path) -> io::Result<Self> {

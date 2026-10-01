@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
-use yorozu_host_core::{AttachmentStore, now_ms};
+use yorozu_host_core::{AttachmentStore, now_ms, outbox::ChannelOutbox};
 
 fn run() -> io::Result<()> {
     let mut args = std::env::args().skip(1);
@@ -13,13 +13,14 @@ fn run() -> io::Result<()> {
         return Err(io::ErrorKind::InvalidInput.into());
     }
     let mut store = AttachmentStore::open(Path::new(&dir))?;
+    let mut outbox: Option<ChannelOutbox> = None;
     let mut input = io::stdin().lock();
     let mut output = io::stdout().lock();
     loop {
         // Read bounded frames without allocating an unbounded line from a broken bridge.
         let mut bytes = Vec::new();
         let mut complete = false;
-        while bytes.len() <= 1024 * 1024 {
+        while bytes.len() <= 32 * 1024 * 1024 {
             let part = input.fill_buf()?;
             if part.is_empty() {
                 if bytes.is_empty() {
@@ -31,7 +32,7 @@ fn run() -> io::Result<()> {
                 .iter()
                 .position(|b| *b == b'\n')
                 .map_or(part.len(), |n| n + 1);
-            if bytes.len() + length > 1024 * 1024 {
+            if bytes.len() + length > 32 * 1024 * 1024 {
                 return Err(io::ErrorKind::InvalidData.into());
             }
             complete = part[length - 1] == b'\n';
@@ -50,28 +51,51 @@ fn run() -> io::Result<()> {
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty() && s.len() <= 128)
             .ok_or(io::ErrorKind::InvalidData)?;
-        let source = request
-            .get("source")
+        let result = if request
+            .get("op")
             .and_then(Value::as_str)
-            .ok_or(io::ErrorKind::InvalidData)?;
-        let thread = request
-            .get("threadId")
-            .and_then(Value::as_str)
-            .ok_or(io::ErrorKind::InvalidData)?;
-        let result = match request.get("op").and_then(Value::as_str) {
-            Some("chunk") => store.chunk(source, thread, &request["data"], now_ms()),
-            Some("assemble") => {
-                let message = request
-                    .get("messageId")
-                    .and_then(Value::as_str)
-                    .ok_or(io::ErrorKind::InvalidData)?;
-                let deadline = request
-                    .get("deadline")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(u64::MAX);
-                store.assemble(source, message, thread, &request["descriptors"], deadline)
+            .is_some_and(|op| op.starts_with("outbox_"))
+        {
+            if outbox.is_none() {
+                match ChannelOutbox::open(Path::new(&dir)) {
+                    Ok(store) => outbox = Some(store),
+                    Err(_) => {
+                        serde_json::to_writer(
+                            &mut output,
+                            &json!({"id":id,"result":{"error":"channel-storage-failed"}}),
+                        )
+                        .map_err(io::Error::other)?;
+                        output.write_all(b"\n")?;
+                        output.flush()?;
+                        continue;
+                    }
+                }
             }
-            _ => return Err(io::ErrorKind::InvalidData.into()),
+            outbox.as_mut().unwrap().request(&request)
+        } else {
+            let source = request
+                .get("source")
+                .and_then(Value::as_str)
+                .ok_or(io::ErrorKind::InvalidData)?;
+            let thread = request
+                .get("threadId")
+                .and_then(Value::as_str)
+                .ok_or(io::ErrorKind::InvalidData)?;
+            match request.get("op").and_then(Value::as_str) {
+                Some("chunk") => store.chunk(source, thread, &request["data"], now_ms()),
+                Some("assemble") => {
+                    let message = request
+                        .get("messageId")
+                        .and_then(Value::as_str)
+                        .ok_or(io::ErrorKind::InvalidData)?;
+                    let deadline = request
+                        .get("deadline")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(u64::MAX);
+                    store.assemble(source, message, thread, &request["descriptors"], deadline)
+                }
+                _ => return Err(io::ErrorKind::InvalidData.into()),
+            }
         };
         serde_json::to_writer(&mut output, &json!({"id":id,"result":result}))
             .map_err(io::Error::other)?;

@@ -11,12 +11,13 @@ export function rustHostCommand(): string {
   const bundled = join(import.meta.dirname, "..", "..", name);
   return existsSync(bundled) ? bundled : join(import.meta.dirname, "..", "..", "host-core", "target", "debug", name);
 }
-type Pending = { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> };
+type Pending = { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; bytes: number };
 class Worker {
   private child?: ChildProcessWithoutNullStreams;
   private buffer = "";
   private pending = new Map<string, Pending>();
   private stopped = false;
+  private pendingBytes = 0;
   constructor(private readonly dir: string) {}
   private fail(): void {
     const child = this.child;
@@ -24,7 +25,7 @@ class Worker {
     for (const request of this.pending.values()) {
       clearTimeout(request.timer); request.reject(new Error("Rust host request remains unconfirmed"));
     }
-    this.pending.clear(); child?.kill();
+    this.pending.clear(); this.pendingBytes = 0; child?.kill();
   }
   private start(): ChildProcessWithoutNullStreams {
     if (this.stopped) throw new Error("Rust host worker closed");
@@ -47,7 +48,7 @@ class Worker {
           if (typeof frame.id !== "string" || !Object.hasOwn(frame, "result")) return this.fail();
           const request = this.pending.get(frame.id);
           if (!request) return this.fail();
-          this.pending.delete(frame.id); clearTimeout(request.timer); request.resolve(frame.result);
+          this.pending.delete(frame.id); this.pendingBytes -= request.bytes; clearTimeout(request.timer); request.resolve(frame.result);
         } catch { return this.fail(); }
       }
     });
@@ -59,12 +60,14 @@ class Worker {
   request(data: Record<string, unknown>): Promise<unknown> {
     if (this.pending.size >= 32) return Promise.reject(new Error("Rust host worker busy"));
     const id = randomUUID(); const encoded = JSON.stringify({ ...data, id }) + "\n";
-    if (Buffer.byteLength(encoded) > 1024 * 1024) return Promise.reject(new Error("Rust host request too large"));
+    const bytes = Buffer.byteLength(encoded);
+    if (bytes > 32 * 1024 * 1024) return Promise.reject(new Error("Rust host request too large"));
+    if (this.pendingBytes + bytes > 64 * 1024 * 1024) return Promise.reject(new Error("Rust host worker busy"));
     return new Promise((resolve, reject) => {
       try {
         const child = this.start();
         const timer = setTimeout(() => { if (this.child === child && this.pending.has(id)) this.fail(); }, 30_000);
-        this.pending.set(id, { resolve, reject, timer }); child.stdin.write(encoded);
+        this.pendingBytes += bytes; this.pending.set(id, { resolve, reject, timer, bytes }); child.stdin.write(encoded);
       } catch { reject(new Error("Rust host worker unavailable")); }
     });
   }

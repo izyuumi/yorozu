@@ -45,6 +45,7 @@ import { codexNativeRunner, type CodexHandlers, type ConnectCodex } from "./code
 import * as schedulerModule from "./scheduler.js";
 import { localSocketPath } from "./local.js";
 import { channelSocketPath, type HostFrame, type PluginFrame } from "./channel.js";
+import * as rustHost from "./rust-host.js";
 import { SYNC_PAGE_BYTES, setNativeTurn, setThreadSession, appendThreadEvent, createThread, eventsAfter, listThreads, readThreadEvents } from "./threads.js";
 import { readTranscripts, transcriptDir } from "./transcripts.js";
 
@@ -5805,4 +5806,115 @@ test.each([false, true])("lost reply ack/restart never becomes a false rejection
     const forwarded = old.frames.find((frame) => frame.type === "inbound" && frame.message.id === id)!;
     expect(forwarded).not.toHaveProperty("message.replyAttempted");
   } finally { old.close(); mac.close(); }
+});
+
+
+test("Rust channel admission waits for durable save and coalesces a repeated pending ID", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-rust-receipt-"));
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir });
+  createThread(undefined, dir, "rust");
+  const mac = await macClient(dir); const plugin = await channelPlugin(dir, true);
+  const original = rustHost.hostRequest;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let admissions = 0;
+  vi.spyOn(rustHost, "hostRequest").mockImplementation(async (root, request) => {
+    if (request.op === "outbox_enqueue") { admissions++; await gate; }
+    return original(root, request);
+  });
+  const message: YorozuEvent = { id: "pending-rust", threadId: "rust", ts: Date.now(), agentId: "mac",
+    kind: "message", data: { role: "user", text: "keep this once" } };
+  try {
+    mac.sendRawEvent(message); mac.sendRawEvent(message);
+    await vi.waitFor(() => expect(admissions).toBe(1));
+    expect(mac.events.filter((event) => event.kind === "receipt" && event.data.eventId === message.id)).toEqual([]);
+    expect(plugin.frames.filter((frame) => frame.type === "inbound")).toEqual([]);
+    release();
+    await vi.waitFor(() => expect(mac.events.filter((event) => event.kind === "receipt" && event.data.eventId === message.id)).toHaveLength(2));
+    expect(JSON.parse(readFileSync(join(dir, "channel-outbox.json"), "utf8"))).toMatchObject([{ id: message.id }]);
+    expect(readThreadEvents("rust", dir).filter((event) => event.id === message.id)).toHaveLength(1);
+    await vi.waitFor(() => expect(plugin.frames.filter((frame) => frame.type === "inbound")).toHaveLength(1));
+  } finally { release(); mac.close(); plugin.close(); }
+});
+
+test("Rust channel storage failure retains the logged message and retries the same ID without an early receipt", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-rust-retry-"));
+  const lines: string[] = [];
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, log: (line) => lines.push(line) });
+  createThread(undefined, dir, "rust");
+  const mac = await macClient(dir); const original = rustHost.hostRequest;
+  let fail = true;
+  vi.spyOn(rustHost, "hostRequest").mockImplementation((root, request) => {
+    if (request.op === "outbox_enqueue" && fail) return Promise.reject(new Error("synthetic lost storage response"));
+    return original(root, request);
+  });
+  const message: YorozuEvent = { id: "retry-rust", threadId: "rust", ts: Date.now(), agentId: "mac",
+    kind: "message", data: { role: "user", text: "retain intent" } };
+  try {
+    mac.sendRawEvent(message);
+    await vi.waitFor(() => expect(lines).toContain("STATE channel-storage-failed"));
+    expect(mac.events.some((event) => event.kind === "receipt" && event.data.eventId === message.id)).toBe(false);
+    expect(readThreadEvents("rust", dir).filter((event) => event.id === message.id)).toHaveLength(1);
+    fail = false; mac.sendRawEvent(message);
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "receipt" && event.data.eventId === message.id)).toBe(true));
+    expect(JSON.parse(readFileSync(join(dir, "channel-outbox.json"), "utf8"))).toMatchObject([{ id: message.id }]);
+    expect(readThreadEvents("rust", dir).filter((event) => event.id === message.id)).toHaveLength(1);
+  } finally { mac.close(); }
+});
+
+test("Stop during a fresh Rust channel save withdraws before dispatch and stays withdrawn after restart", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-rust-stop-"));
+  const options = { relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir };
+  sidecar = serve(options); createThread(undefined, dir, "rust");
+  let mac = await macClient(dir); let plugin = await channelPlugin(dir, true);
+  const original = rustHost.hostRequest;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let saving = false;
+  vi.spyOn(rustHost, "hostRequest").mockImplementation(async (root, request) => {
+    if (request.op === "outbox_enqueue") { saving = true; await gate; }
+    return original(root, request);
+  });
+  const message: YorozuEvent = { id: "stop-rust", threadId: "rust", ts: Date.now(), agentId: "mac",
+    kind: "message", data: { role: "user", text: "withdraw me" } };
+  try {
+    mac.sendRawEvent(message); await vi.waitFor(() => expect(saving).toBe(true));
+    mac.sendRawEvent({ id: "stop-request", threadId: "rust", ts: Date.now(), agentId: "mac", kind: "interrupt", data: { targetEventId: message.id } });
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "stop_status" && event.data.targetEventId === message.id && event.data.status === "requested")).toBe(true));
+    expect(mac.events.some((event) => event.kind === "stop_status" && event.data.targetEventId === message.id && event.data.status === "withdrawn")).toBe(false);
+    release();
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "stop_status" && event.data.targetEventId === message.id && event.data.status === "withdrawn")).toBe(true));
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "receipt" && event.data.eventId === message.id)).toBe(true));
+    expect(JSON.parse(readFileSync(join(dir, "channel-outbox.json"), "utf8"))).toEqual([]);
+    expect(plugin.frames.filter((frame) => frame.type === "inbound")).toEqual([]);
+    mac.close(); plugin.close(); await sidecar.close();
+    sidecar = serve(options); mac = await macClient(dir); plugin = await channelPlugin(dir, true);
+    mac.sendRawEvent(message);
+    mac.sendRawEvent({ id: "query-withdrawal", threadId: "rust", ts: Date.now(), agentId: "mac", kind: "admission_query", data: { eventId: message.id } });
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "admission_status" && event.data.eventId === message.id && event.data.status === "withdrawn")).toBe(true));
+    expect(plugin.frames.filter((frame) => frame.type === "inbound")).toEqual([]);
+  } finally { release(); mac.close(); plugin.close(); }
+});
+
+
+test("a pre-dispatch Stop intent survives host replacement before Rust removal finishes", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-rust-stop-recovery-"));
+  createThread(undefined, dir, "rust");
+  const message: YorozuEvent = { id: "interrupted-withdrawal", threadId: "rust", ts: Date.now(), agentId: "mac", kind: "message", data: { role: "user", text: "never dispatch" } };
+  appendThreadEvent(message, dir);
+  writeFileSync(join(dir, "channel-outbox.json"), JSON.stringify([{ id: message.id, threadId: message.threadId, ts: message.ts, text: message.data.text }]));
+  writeFileSync(join(dir, "stopped-turns.jsonl"), JSON.stringify({ targetEventId: message.id, threadId: message.threadId, status: "requested", preDispatch: true, requestIds: ["stop-before-replacement"] }) + "\n");
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir });
+  const mac = await macClient(dir); const plugin = await channelPlugin(dir, true);
+  try {
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(join(dir, "channel-outbox.json"), "utf8"))).toEqual([]));
+    await vi.waitFor(() => expect(readFileSync(join(dir, "stopped-turns.jsonl"), "utf8").trimEnd().split("\n").map((line) => JSON.parse(line)).at(-1)).toMatchObject({ status: "withdrawn", targetEventId: message.id }));
+    mac.sendRawEvent({ id: "recovered-stop-query", threadId: message.threadId, ts: Date.now(), agentId: "mac", kind: "admission_query", data: { eventId: message.id } });
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "admission_status" && event.data.eventId === message.id && event.data.status === "withdrawn")).toBe(true));
+    expect(plugin.frames.filter((frame) => frame.type === "inbound")).toEqual([]);
+  } finally { mac.close(); plugin.close(); }
 });

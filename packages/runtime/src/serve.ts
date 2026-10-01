@@ -88,7 +88,7 @@ import type { AssignMode } from "./assign.js";
 import type { TurnContext } from "./index.js";
 import type { createLegacyRunner } from "./legacy.js";
 import { localSocketPath, startLocalChannel, type Send } from "./local.js";
-import { startChannelHost, type RunStatus } from "./channel.js";
+import { startChannelHost, type RunStatus, type ChannelInbound } from "./channel.js";
 import { startDirect, type Direct } from "./direct.js";
 import type { Provider } from "./provider.js";
 import { autoTitle, onDeviceTitler, type Titler } from "./title.js";
@@ -638,7 +638,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // A Stop is bound to one accepted operation. Keep its intent through sidecar replacement,
   // including the backend run identity needed to finish an interrupted abort request.
   type StopRecord = { targetEventId: string; threadId: string; status: "requested" | "stopped" | "completed" | "withdrawn" | "unconfirmed";
-    sessionKey?: string; runId?: string; partialText?: string; requestIds: string[] };
+    sessionKey?: string; runId?: string; partialText?: string; preDispatch?: boolean; requestIds: string[] };
   const stopFile = join(dir, "stopped-turns.jsonl");
   let stopText = existsSync(stopFile) ? readFileSync(stopFile, "utf8") : "";
   if (stopText && !stopText.endsWith("\n")) {
@@ -655,6 +655,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     ((entry as StopRecord).runId === undefined || typeof (entry as StopRecord).runId === "string") &&
     ((entry as StopRecord).sessionKey === undefined || typeof (entry as StopRecord).sessionKey === "string") &&
     ((entry as StopRecord).partialText === undefined || typeof (entry as StopRecord).partialText === "string") &&
+    ((entry as StopRecord).preDispatch === undefined || typeof (entry as StopRecord).preDispatch === "boolean") &&
     Array.isArray((entry as StopRecord).requestIds) &&
     (entry as StopRecord).requestIds.every((id) => typeof id === "string" && id.length > 0 && id.length <= 128))) {
     throw new Error("Invalid stopped-turn journal");
@@ -696,6 +697,21 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const turnStates = new Map<string, { state: TurnState; activeEventId?: string; queued: string[] }>();
   const channelRuns = new Map<string, { threadId: string; status?: RunStatus; replied?: boolean;
     calls?: Set<string>; results?: Set<string>; replyDraft?: Extract<YorozuEvent, { kind: "message" }> }>();
+  const pendingChannelAdmissions = new Map<string, { threadId: string; fresh: boolean; promise: Promise<void> }>();
+  const admitChannel = (message: ChannelInbound, fresh: boolean): Promise<void> => {
+    const existing = pendingChannelAdmissions.get(message.id);
+    if (existing) return existing.promise;
+    const promise = channel.forward(message).then(async () => {
+      const stop = stoppedTurns.get(message.id);
+      if (stop?.preDispatch) await withdrawBeforeDispatch(stop);
+      else if (stop?.status === "withdrawn") await channel.withdraw(message.id);
+    });
+    pendingChannelAdmissions.set(message.id, { threadId: message.threadId, fresh, promise });
+    void promise.finally(() => {
+      if (pendingChannelAdmissions.get(message.id)?.promise === promise) pendingChannelAdmissions.delete(message.id);
+    }).catch(() => {});
+    return promise;
+  };
   const pendingChanges = new Map<string, Promise<void>>();
   const workingThreadIds = (): string[] =>
     [...turnStates].filter(([, turn]) => turn.state !== "idle").map(([id]) => id);
@@ -2028,6 +2044,21 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const broadcastStop = (record: StopRecord): void => {
     for (const id of stoppedTurns.get(record.targetEventId)?.requestIds ?? record.requestIds) broadcast(stopStatus(record, id));
   };
+  const preDispatchStops = new Map<string, Promise<void>>();
+  const withdrawBeforeDispatch = (record: StopRecord): Promise<void> => {
+    const prior = preDispatchStops.get(record.targetEventId);
+    if (prior) return prior;
+    const promise = channel.withdraw(record.targetEventId).then(() => {
+      const current = stoppedTurns.get(record.targetEventId);
+      if (!current?.preDispatch || current.status === "withdrawn") return;
+      const withdrawn = { ...current, status: "withdrawn" as const };
+      rememberStop(withdrawn);
+      if (!stopped) broadcastStop(withdrawn);
+    });
+    preDispatchStops.set(record.targetEventId, promise);
+    void promise.finally(() => { if (preDispatchStops.get(record.targetEventId) === promise) preDispatchStops.delete(record.targetEventId); }).catch(() => {});
+    return promise;
+  };
   const persistStoppedReply = (record: StopRecord, text = record.partialText ?? ""): void => {
     const id = completionIdFor(record.threadId, record.targetEventId);
     if (readThreadEvents(record.threadId, dir).some((event) => event.id === id && event.kind === "message" && event.data.done)) return;
@@ -2520,6 +2551,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       const history = readThreadEvents(event.threadId, dir);
       const user = history.find((stored) => stored.id === target && stored.kind === "message" && stored.data.role === "user");
+      const channelAdmission = pendingChannelAdmissions.get(target);
+      if (existing?.preDispatch || !existing && channelAdmission?.fresh && channelAdmission.threadId === event.threadId && !channelRuns.has(target)) {
+        const request: StopRecord = existing ? { ...existing, requestIds: [...new Set([...existing.requestIds,event.id])] }
+          : { targetEventId: target, threadId: event.threadId, status: "requested", preDispatch: true, requestIds: [event.id] };
+        rememberStop(request);
+        reply(control({ kind: "receipt", data: { eventId: event.id } }));
+        reply(stopStatus(request, event.id));
+        void withdrawBeforeDispatch(request).catch(() => state("channel-storage-failed"));
+        return;
+      }
       const channelRun = channelRuns.get(target);
       if (viaChannel(event.threadId) && !existing &&
           (!channelRun || channelRun.threadId !== event.threadId ||
@@ -2918,10 +2959,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
       // Logged but maybe never queued, if the host died in between. The plugin dedupes by id.
       if (event.kind === "message" && event.data.role === "user" && !typed &&
           viaChannel(event.threadId)) {
-        channel.forward({ id: event.id, threadId: event.threadId, ts: event.ts, text: event.data.text,
+        void admitChannel({ id: event.id, threadId: event.threadId, ts: event.ts, text: event.data.text,
           ...(replyContext ? { replyContext } : {}),
           ...(event.data.channelModel !== undefined ? { channelModel: event.data.channelModel } : {}),
-          ...(event.data.attachments?.length ? { attachments: event.data.attachments } : {}) });
+          ...(event.data.attachments?.length ? { attachments: event.data.attachments } : {}) }, false).then(() => { receipt(); state("duplicate-message"); })
+          .catch(() => state("channel-storage-failed"));
+        return;
       }
       receipt();
       return state("duplicate-message");
@@ -2941,6 +2984,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
       admittedTurn = enqueueTurn(event.threadId, event.data.text, true,
         event.data.attachments ?? [], event.id, logged);
       if (event.data.delivery === "steer" && logged.kind === "message") void steerMessage(logged);
+    }
+    if (event.kind === "message" && event.data.role === "user" && !typed && viaChannel(event.threadId)) {
+      if (identity) acceptedMessages.set(event.id, identity);
+      title(event.threadId, event.data.text);
+      void admitChannel({ id: event.id, threadId: event.threadId, ts: event.ts, text: event.data.text,
+        ...(replyContext ? { replyContext } : {}),
+        ...(event.data.channelModel !== undefined ? { channelModel: event.data.channelModel } : {}),
+        ...(event.data.attachments?.length ? { attachments: event.data.attachments } : {}) }, true).then(() => {
+          alreadySeen(event.id); receipt();
+          if (!stopped) broadcast(logged);
+        }).catch(() => state("channel-storage-failed"));
+      return;
     }
     // Failed admission never poisons the in-memory dedup window.
     alreadySeen(event.id);
@@ -3104,14 +3159,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // turn. Only this thread's: a "yes" typed into another chat is a message there, not an
     // answer to whatever happens to be the oldest card anywhere.
     if (typed && oldest) return oldest.settle(typed);
-    if (viaChannel(event.threadId)) {
-      title(event.threadId, event.data.text);
-      channel.forward({ id: event.id, threadId: event.threadId, ts: event.ts, text: event.data.text,
-        ...(replyContext ? { replyContext } : {}),
-        ...(event.data.channelModel !== undefined ? { channelModel: event.data.channelModel } : {}),
-        ...(event.data.attachments?.length ? { attachments: event.data.attachments } : {}) });
-      return broadcast(logged);
-    }
     const queued = admittedTurn ?? enqueueTurn(event.threadId, event.data.text, true,
       event.data.attachments ?? [], event.id, logged);
     // Admission is durable now. Echoing by id is harmless and converges all clients.
@@ -3139,6 +3186,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   /** OpenClaw's `yorozu` channel plugin. Its messages land like any agent reply: logged, synced, pushed. */
   const channel = startChannelHost({
     dir,
+    canDispatch: (id) => !stopped && !stoppedTurns.has(id),
     onError: (message) => state(`channel-${message}`),
     onCapabilities: () => { if (!stopped) broadcast(modelList()); },
     onModel: (threadId, model) => {
@@ -3872,6 +3920,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
   connect();
 
   for (const stop of stoppedTurns.values()) {
+    if (stop.preDispatch && stop.status !== "withdrawn") {
+      void withdrawBeforeDispatch(stop).catch(() => state("channel-storage-failed"));
+      continue;
+    }
     if (viaChannel(stop.threadId) && (stop.status === "requested" || stop.status === "unconfirmed")) {
       channelRuns.set(stop.targetEventId, { threadId: stop.threadId });
       turnStates.set(stop.threadId, { state: stop.status === "requested" ? "stopping" : "stopped-unconfirmed",
@@ -3937,8 +3989,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
       for (const turn of running.values()) turn.abort();
       if (retry) clearTimeout(retry);
       await local.close();
-      await attachmentUploads.close();
+      await Promise.allSettled([...pendingChannelAdmissions.values()].map((entry) => entry.promise));
+      await Promise.allSettled([...preDispatchStops.values()]);
       await channel.close();
+      await attachmentUploads.close();
       await direct?.close();
       await legacyReady?.catch(() => undefined);
       await legacy?.close();

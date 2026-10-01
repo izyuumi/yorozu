@@ -9,14 +9,13 @@
  *    `channel-outbox.json` until the plugin acks it, and is resent whenever a plugin connects.
  *    Ids can repeat after a crash; the plugin dedupes by id.
  */
-import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ChannelModelChoice, ChannelModelOption, MessageAttachment } from "@yorozu/shared";
 import { startLocalChannel, type Send } from "./local.js";
+import { hostRequest } from "./rust-host.js";
 
 export const channelSocketPath = (dir: string): string => join(dir, "channel.sock");
-const outboxFile = (dir: string): string => join(dir, "channel-outbox.json");
 
 export interface ChannelInbound {
   /** Host outbox marker persisted before sending a quoted request; stripped from plugin frames. */
@@ -71,11 +70,13 @@ export interface ChannelHostOptions {
   deliver(message: ChannelDeliver, auxiliary?: boolean): void;
   /** Best-effort snapshot; durable delivery still goes through deliver. */
   preview?(message: ChannelDeliver & { messageId: string }): void;
-  forwarded(message: ChannelInbound): void;
+  forwarded(message: Pick<ChannelInbound, "id" | "threadId">): void;
   runStarted(messageId: string): void;
   runFinished(messageId: string, status: RunStatus): void;
   /** A message went to a run-boundary plugin, which will now report its run. Repeats on resend. */
-  handedOff(message: ChannelInbound): void;
+  handedOff(message: Pick<ChannelInbound, "id" | "threadId">): void;
+  /** Rechecked after storage awaits and immediately before dispatch. */
+  canDispatch?(messageId: string): boolean;
   /** The last run-boundary plugin disconnected: hand-offs that never started are queued again. */
   runBoundaryLost(): void;
   toolStarted(messageId: string, callId: string, name: string, args: Record<string, unknown>): void;
@@ -99,8 +100,10 @@ export interface ChannelHost {
   refreshModels(threadId: string): Promise<ChannelModelOption[]>;
   selectModel(threadId: string, model: string | null): Promise<void>;
   retry(threadId: string): void;
-  /** Queues a user message for OpenClaw. Durable before it returns. */
-  forward(message: ChannelInbound): void;
+  /** Queues a user message for OpenClaw. Durable before its promise resolves. */
+  forward(message: ChannelInbound): Promise<void>;
+  /** Only a proven pre-dispatch withdrawal may remove queued work. */
+  withdraw(messageId: string): Promise<void>;
   abort(messageId: string): void;
   close(): Promise<void>;
 }
@@ -113,42 +116,33 @@ const validModel = (value: unknown): value is string => typeof value === "string
 const validId = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= MAX_ID;
 
-function loadOutbox(dir: string): ChannelInbound[] {
-  try {
-    return JSON.parse(readFileSync(outboxFile(dir), "utf8")) as ChannelInbound[];
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw new Error(`Cannot read ${outboxFile(dir)}; repair or remove it`, { cause: error });
-  }
-}
-
-function saveJson(file: string, value: unknown): void {
-  writeFileSync(`${file}.tmp`, JSON.stringify(value), { mode: 0o600, flush: true });
-  try {
-    renameSync(`${file}.tmp`, file);
-  } catch (error) {
-    rmSync(`${file}.tmp`, { force: true });
-    throw error;
-  }
-}
-
 export function startChannelHost(options: ChannelHostOptions): ChannelHost {
   const { dir } = options;
-  let outbox = loadOutbox(dir);
-  // Keep model preparation after ack: replaying an old draft must not restore its old pin.
-  const deliveryFile = join(dir, "channel-model-delivery.json");
+  let outbox: Pick<ChannelInbound, "id" | "threadId">[] = [];
   let modelDelivery: Record<string, "prepared" | "delivered"> = {};
-  try { modelDelivery = JSON.parse(readFileSync(deliveryFile, "utf8")); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  if (outbox.some((message) => modelDelivery[message.id] === "delivered")) {
-    outbox = outbox.filter((message) => modelDelivery[message.id] !== "delivered");
-    saveJson(outboxFile(dir), outbox);
-  }
-  const markDelivery = (id: string, status: "prepared" | "delivered"): void => {
-    const updated = { ...modelDelivery, [id]: status };
-    saveJson(deliveryFile, updated);
-    modelDelivery = updated;
+  let storageTail: Promise<unknown> = Promise.resolve();
+  let closing = false;
+  const storage = (op: string, data: Record<string, unknown> = {}): Promise<unknown> => {
+    const next = storageTail.catch(() => {}).then(async () => {
+      const result = await hostRequest(dir, { op, ...data }) as {
+        error?: unknown; outbox?: typeof outbox; modelDelivery?: typeof modelDelivery; message?: ChannelInbound | null;
+      };
+      if (!result || typeof result !== "object" || result.error !== undefined) throw new Error("channel-storage-failed");
+      if (op === "outbox_get") return result.message ?? undefined;
+      if (!Array.isArray(result.outbox) || !result.outbox.every((m) => validId(m.id) && validId(m.threadId)) ||
+          !result.modelDelivery || typeof result.modelDelivery !== "object" ||
+          Object.values(result.modelDelivery).some((status) => status !== "prepared" && status !== "delivered")) {
+        throw new Error("channel-storage-failed");
+      }
+      outbox = result.outbox; modelDelivery = result.modelDelivery;
+    });
+    storageTail = next; return next;
   };
+  const recovered = storage("outbox_snapshot").then(() => {
+    // Run replay may arrive immediately on connect, before an async drain finishes.
+    // Restore ownership from durable metadata before accepting those lifecycle frames.
+    for (const message of outbox) options.forwarded(message);
+  }).catch(() => options.onError?.("channel-storage-failed"));
   const plugins = new Map<string, Send<HostFrame>>();
   const runBoundaryPlugins = new Set<string>();
   const capable = new Set<string>();
@@ -215,27 +209,30 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
     clearTimeout(timer);
     undecided.delete(device);
   };
-  const drainAll = (): void => { for (const threadId of new Set(outbox.map((m) => m.threadId))) drain(threadId); };
+  const drainAll = (): void => {
+    if (closing) return;
+    void storage("outbox_snapshot").then(() => {
+      for (const threadId of new Set(outbox.map((m) => m.threadId))) drain(threadId);
+    }).catch(() => options.onError?.("channel-storage-failed"));
+  };
   const drain = (threadId: string): void => {
+    if (closing) return;
     if (draining.has(threadId)) { drainAgain.add(threadId); return; }
     draining.add(threadId);
     void serial(threadId, async () => {
-      for (const message of outbox.filter((m) => m.threadId === threadId)) {
+      await storage("outbox_snapshot");
+      for (const queued of outbox.filter((m) => m.threadId === threadId)) {
+        if (closing || options.canDispatch?.(queued.id) === false) continue;
+        const message = await storage("outbox_get", { messageId: queued.id }) as ChannelInbound | undefined;
+        if (!message || closing || options.canDispatch?.(queued.id) === false) continue;
         if (modelDelivery[message.id] === "delivered") continue;
         if (message.channelModel !== undefined) {
           try {
             if (modelDelivery[message.id] !== "prepared") {
               await select(deviceForModels(), threadId, message.channelModel.model ?? null);
-              markDelivery(message.id, "prepared");
             }
-            // Persist confirmation before dispatch. Reconnect must not restore an old override.
-            const updated = outbox.map((m) => {
-              if (m.id !== message.id) return m;
-              const { channelModel: _, ...ready } = m;
-              return ready;
-            });
-            saveJson(outboxFile(dir), updated);
-            outbox = updated;
+            // Preparation intent and pin removal are replayable Rust transitions.
+            await storage("outbox_prepared", { messageId: message.id });
           } catch (error) {
             options.onDeliveryError?.(message, reason(error));
             break;
@@ -250,8 +247,7 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
             break;
           }
           options.onRejected?.(ready, "reply-context-unsupported");
-          outbox = outbox.filter((m) => m.id !== message.id);
-          saveJson(outboxFile(dir), outbox);
+          await storage("outbox_reject", { messageId: message.id });
           continue;
         }
         const media = Boolean(ready.attachments?.length);
@@ -262,8 +258,7 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
             options.onDeliveryError?.(ready, "reply-delivery-unconfirmed");
             break;
           }
-          outbox = outbox.filter((m) => m.id !== message.id);
-          saveJson(outboxFile(dir), outbox);
+          await storage("outbox_reject", { messageId: message.id });
           options.onRejected?.(ready, "attachments-unsupported");
           continue;
         }
@@ -276,17 +271,15 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
             break;
           }
           options.onRejected?.(ready, "reply-context-unsupported");
-          outbox = outbox.filter((m) => m.id !== message.id);
-          saveJson(outboxFile(dir), outbox);
+          await storage("outbox_reject", { messageId: message.id });
           continue;
         }
         // Losing an ack cannot turn a possibly executed reply into a definite rejection.
         // Preserve this marker across host restart before the first socket write.
         if (reply && !message.replyAttempted) {
-          const attempted = outbox.map((item) => item.id === message.id ? { ...item, replyAttempted: true } : item);
-          saveJson(outboxFile(dir), attempted);
-          outbox = attempted;
+          await storage("outbox_attempted", { messageId: message.id });
         }
+        if (closing || options.canDispatch?.(message.id) === false) continue;
         options.forwarded(ready);
         for (const [device, send] of eligible) {
           if (sent.get(device)?.has(message.id)) continue;
@@ -301,6 +294,93 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
     });
   };
 
+  const processFrame = (device: string, frame: PluginFrame): void => {
+    const send = plugins.get(device);
+    if (!send || !frame || typeof frame !== "object") return;
+    if (frame.type === "hello") {
+      if (!Array.isArray(frame.capabilities) || !frame.capabilities.every((c) => typeof c === "string")) return;
+      announcedBy.set(device, new Set(frame.capabilities));
+      if (frame.capabilities.includes("progress-v1")) progressPlugins.add(device);
+      else progressPlugins.delete(device);
+      if (frame.capabilities.includes("run-boundary-v1")) runBoundaryPlugins.add(device);
+      else runBoundaryPlugins.delete(device);
+      if (frame.capabilities.includes("model-select-v1")) capable.add(device);
+      else capable.delete(device);
+      if (frame.capabilities.includes("media-v1")) mediaPlugins.add(device);
+      else mediaPlugins.delete(device);
+      decided(device);
+      options.onCapabilities?.();
+      // Messages sent before this hello were already on their way to a run-boundary plugin.
+      if (runBoundaryPlugins.has(device)) {
+        for (const message of outbox) if (sent.get(device)?.has(message.id)) options.handedOff(message);
+      }
+      drainAll();
+      return;
+    }
+    if (frame.type === "run_started" || frame.type === "run_finished") {
+      if (!runBoundaryPlugins.has(device) || !validId(frame.messageId)) return;
+      if (frame.type === "run_started") options.runStarted(frame.messageId);
+      else if (["completed", "failed", "aborted"].includes(frame.status)) options.runFinished(frame.messageId, frame.status);
+      return;
+    }
+    if (frame.type === "tool_started" || frame.type === "tool_finished") {
+      // Best effort and unacknowledged: anything malformed or from the wrong plugin is dropped.
+      if (!runBoundaryPlugins.has(device) || !progressPlugins.has(device) ||
+          !validId(frame.messageId) || !validId(frame.callId)) return;
+      if (frame.type === "tool_started") {
+        if (typeof frame.name === "string" && frame.name && frame.name.length <= 256 &&
+            frame.args && typeof frame.args === "object" && !Array.isArray(frame.args)) {
+          options.toolStarted(frame.messageId, frame.callId, frame.name, frame.args);
+        }
+      } else if (typeof frame.ok === "boolean" && typeof frame.output === "string") {
+        options.toolFinished(frame.messageId, frame.callId, frame.ok, frame.output);
+      }
+      return;
+    }
+    if ("requestId" in frame) {
+      const entry = pending.get(frame.requestId);
+      if (!entry || entry.device !== device || entry.type !== frame.type) return;
+      clearTimeout(entry.timer);
+      pending.delete(frame.requestId);
+      entry.resolve(frame);
+      return;
+    }
+    if (frame.type === "ack") {
+      if (!validId(frame.id) || !sent.get(device)?.has(frame.id) || !outbox.some((message) => message.id === frame.id)) return;
+      void storage("outbox_ack", { messageId: frame.id }).catch(() => options.onError?.("channel-storage-failed"));
+      return;
+    }
+    if (frame.type === "reply_preview") {
+      if (!runBoundaryPlugins.has(device) || !announcedBy.get(device)?.has("reply-stream-v1") ||
+          !validId(frame.id) || !validId(frame.messageId) || !validId(frame.threadId) ||
+          typeof frame.text !== "string" || Buffer.byteLength(JSON.stringify(frame.text)) > MAX_TEXT) return;
+      options.preview?.({ id: frame.id, messageId: frame.messageId, threadId: frame.threadId, text: frame.text });
+      return;
+    }
+    if (frame.type !== "deliver") return;
+    const id = typeof frame.id === "string" ? frame.id.slice(0, MAX_ID) : "";
+    if (!validId(frame.id) || !validId(frame.threadId) || typeof frame.text !== "string" ||
+        frame.text.length > MAX_TEXT || (frame.title !== undefined && typeof frame.title !== "string") ||
+        (frame.messageId !== undefined && (!validId(frame.messageId) || !runBoundaryPlugins.has(device) ||
+          !announcedBy.get(device)?.has("reply-stream-v1") ||
+          Buffer.byteLength(JSON.stringify(frame.text)) > MAX_TEXT)) ||
+        (frame.failed !== undefined && typeof frame.failed !== "boolean") ||
+        (frame.interrupted !== undefined && typeof frame.interrupted !== "boolean")) {
+      return send({ type: "error", id, reason: "invalid-deliver" });
+    }
+    try {
+      options.deliver({ id: frame.id, threadId: frame.threadId, text: frame.text,
+        ...(frame.messageId !== undefined ? { messageId: frame.messageId, failed: frame.failed, interrupted: frame.interrupted } : {}),
+        ...(frame.title !== undefined ? { title: frame.title.slice(0, 200) } : {}) },
+        frame.messageId === undefined && runBoundaryPlugins.has(device) &&
+          announcedBy.get(device)?.has("reply-stream-v1") === true);
+    } catch (error) {
+      // No ack: the plugin keeps it and retries.
+      return send({ type: "error", id, reason: error instanceof Error ? error.message : String(error) });
+    }
+    send({ type: "ack", id: frame.id });
+  };
+  const frameChains = new Map<string, Promise<void>>();
   const socket = startLocalChannel<PluginFrame, HostFrame>({
     path: channelSocketPath(dir),
     onOpen: (device, send) => {
@@ -335,93 +415,12 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
       options.onCapabilities?.();
     },
     onError: options.onError,
-    onEvent: (device, frame) => {
-      const send = plugins.get(device);
-      if (!send || !frame || typeof frame !== "object") return;
-      if (frame.type === "hello") {
-        if (!Array.isArray(frame.capabilities) || !frame.capabilities.every((c) => typeof c === "string")) return;
-        announcedBy.set(device, new Set(frame.capabilities));
-        if (frame.capabilities.includes("progress-v1")) progressPlugins.add(device);
-        else progressPlugins.delete(device);
-        if (frame.capabilities.includes("run-boundary-v1")) runBoundaryPlugins.add(device);
-        else runBoundaryPlugins.delete(device);
-        if (frame.capabilities.includes("model-select-v1")) capable.add(device);
-        else capable.delete(device);
-        if (frame.capabilities.includes("media-v1")) mediaPlugins.add(device);
-        else mediaPlugins.delete(device);
-        decided(device);
-        options.onCapabilities?.();
-        // Messages sent before this hello were already on their way to a run-boundary plugin.
-        if (runBoundaryPlugins.has(device)) {
-          for (const message of outbox) if (sent.get(device)?.has(message.id)) options.handedOff(message);
-        }
-        drainAll();
-        return;
-      }
-      if (frame.type === "run_started" || frame.type === "run_finished") {
-        if (!runBoundaryPlugins.has(device) || !validId(frame.messageId)) return;
-        if (frame.type === "run_started") options.runStarted(frame.messageId);
-        else if (["completed", "failed", "aborted"].includes(frame.status)) options.runFinished(frame.messageId, frame.status);
-        return;
-      }
-      if (frame.type === "tool_started" || frame.type === "tool_finished") {
-        // Best effort and unacknowledged: anything malformed or from the wrong plugin is dropped.
-        if (!runBoundaryPlugins.has(device) || !progressPlugins.has(device) ||
-            !validId(frame.messageId) || !validId(frame.callId)) return;
-        if (frame.type === "tool_started") {
-          if (typeof frame.name === "string" && frame.name && frame.name.length <= 256 &&
-              frame.args && typeof frame.args === "object" && !Array.isArray(frame.args)) {
-            options.toolStarted(frame.messageId, frame.callId, frame.name, frame.args);
-          }
-        } else if (typeof frame.ok === "boolean" && typeof frame.output === "string") {
-          options.toolFinished(frame.messageId, frame.callId, frame.ok, frame.output);
-        }
-        return;
-      }
-      if ("requestId" in frame) {
-        const entry = pending.get(frame.requestId);
-        if (!entry || entry.device !== device || entry.type !== frame.type) return;
-        clearTimeout(entry.timer);
-        pending.delete(frame.requestId);
-        entry.resolve(frame);
-        return;
-      }
-      if (frame.type === "ack") {
-        if (!validId(frame.id) || !sent.get(device)?.has(frame.id) || !outbox.some((message) => message.id === frame.id)) return;
-        if (modelDelivery[frame.id] === "prepared") markDelivery(frame.id, "delivered");
-        outbox = outbox.filter((message) => message.id !== frame.id);
-        saveJson(outboxFile(dir), outbox);
-        return;
-      }
-      if (frame.type === "reply_preview") {
-        if (!runBoundaryPlugins.has(device) || !announcedBy.get(device)?.has("reply-stream-v1") ||
-            !validId(frame.id) || !validId(frame.messageId) || !validId(frame.threadId) ||
-            typeof frame.text !== "string" || Buffer.byteLength(JSON.stringify(frame.text)) > MAX_TEXT) return;
-        options.preview?.({ id: frame.id, messageId: frame.messageId, threadId: frame.threadId, text: frame.text });
-        return;
-      }
-      if (frame.type !== "deliver") return;
-      const id = typeof frame.id === "string" ? frame.id.slice(0, MAX_ID) : "";
-      if (!validId(frame.id) || !validId(frame.threadId) || typeof frame.text !== "string" ||
-          frame.text.length > MAX_TEXT || (frame.title !== undefined && typeof frame.title !== "string") ||
-          (frame.messageId !== undefined && (!validId(frame.messageId) || !runBoundaryPlugins.has(device) ||
-            !announcedBy.get(device)?.has("reply-stream-v1") ||
-            Buffer.byteLength(JSON.stringify(frame.text)) > MAX_TEXT)) ||
-          (frame.failed !== undefined && typeof frame.failed !== "boolean") ||
-          (frame.interrupted !== undefined && typeof frame.interrupted !== "boolean")) {
-        return send({ type: "error", id, reason: "invalid-deliver" });
-      }
-      try {
-        options.deliver({ id: frame.id, threadId: frame.threadId, text: frame.text,
-          ...(frame.messageId !== undefined ? { messageId: frame.messageId, failed: frame.failed, interrupted: frame.interrupted } : {}),
-          ...(frame.title !== undefined ? { title: frame.title.slice(0, 200) } : {}) },
-          frame.messageId === undefined && runBoundaryPlugins.has(device) &&
-            announcedBy.get(device)?.has("reply-stream-v1") === true);
-      } catch (error) {
-        // No ack: the plugin keeps it and retries.
-        return send({ type: "error", id, reason: error instanceof Error ? error.message : String(error) });
-      }
-      send({ type: "ack", id: frame.id });
+    onEvent(device, frame) {
+      // Per-connection wire order survives asynchronous state recovery.
+      const next = (frameChains.get(device) ?? recovered).then(() => { if (!closing) processFrame(device, frame); });
+      frameChains.set(device, next);
+      void next.finally(() => { if (frameChains.get(device) === next) frameChains.delete(device); })
+        .catch(() => options.onError?.("channel-storage-failed"));
     },
   });
 
@@ -444,18 +443,17 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
     }),
     selectModel: (threadId, model) => serial(threadId, () => select(deviceForModels(), threadId, model)),
     retry: drain,
-    forward(message) {
-      if (modelDelivery[message.id] === "delivered") return;
-      if (outbox.some((queued) => queued.id === message.id)) { drain(message.threadId); return; }
-      if ([...sent.values()].some((ids) => ids.has(message.id))) return;
-      outbox = [...outbox, message];
-      saveJson(outboxFile(dir), outbox);
+    async forward(message) {
+      if (closing) throw new Error("channel-closed");
+      await storage("outbox_enqueue", { message });
       drain(message.threadId);
     },
+    async withdraw(messageId) { await storage("outbox_withdraw", { messageId }); },
     abort(messageId) {
       for (const device of runBoundaryPlugins) plugins.get(device)?.({ type: "abort", messageId });
     },
     close: async () => {
+      closing = true;
       for (const entry of pending.values()) {
         clearTimeout(entry.timer);
         entry.reject(new Error("OpenClaw disconnected"));
@@ -464,6 +462,8 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
       for (const timer of undecided.values()) clearTimeout(timer);
       undecided.clear();
       await socket.close();
+      await Promise.allSettled([...operations.values()]);
+      await storageTail.catch(() => {});
     },
   };
 }
