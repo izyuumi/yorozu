@@ -24,6 +24,18 @@ restart the Gateway after one. OpenClaw asks you to confirm a source outside Cla
 non-interactive shell, add `--force` to the install line (it also replaces an older git install). `agents bind` routes Yorozu to OpenClaw's default agent; add `--agent <id>` to pick another.
 With several agents and no binding, OpenClaw rejects every Yorozu message.
 
+### Update
+
+Install the latest Yorozu beta through the app's updater, then run `openclaw gateway restart`
+on the host when you are ready to end active Gateway runs. Updating the app replaces the linked
+plugin files; the restart loads them into OpenClaw. A socket reconnect alone keeps the loaded
+plugin code. If you installed from a checkout or copied directory instead of linking the app's
+bundle, use the install command above to link the updated bundle first.
+
+The plugin reads OpenClaw's current activated configuration for every model request and when
+each queued message begins dispatch. Settings reloads affect subsequent requests without
+restarting this channel; an in-flight request retains the configuration it started with.
+
 `openclaw channels status` then lists **Yorozu** as connected while Yorozu is running.
 
 To work on it from a checkout, link `packages/openclaw-channel` instead and run
