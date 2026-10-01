@@ -11,6 +11,8 @@ allowBuilds:
 
 overrides:
   'undici@7.29.0': 7.29.1
+  'ajv@8.20.0>fast-uri': 3.1.8
+  'express-rate-limit@8.7.0>ip-address': 10.7.2
   # The latest test pool pins this Miniflare to sharp 0.35.2 (GHSA-rgj7-g3m4-5g8c).
   'miniflare@5.20260815.0-alpha>sharp': 0.35.4
 
