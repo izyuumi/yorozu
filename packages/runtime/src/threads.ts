@@ -41,7 +41,7 @@ export interface ThreadRecord {
   /** Durable identity of the client command that created this thread, when known. */
   creation?: { eventId: string; identity: string };
   bypass?: boolean;
-  nativeTurn?: { attemptId?: string; id: string; state: "running" | "interrupted"; userEventId?: string; recoveryAttempts?: number; recoveryActive?: boolean };
+  nativeTurn?: { attemptId?: string; id: string; state: "running" | "interrupted"; userEventId?: string; recoveryAttempts?: number; recoveryActive?: boolean; pauseReason?: "unconfirmed" };
   id: string;
   /** Empty until the runtime auto-titles the thread or the user renames it. */
   title: string;
@@ -324,8 +324,27 @@ export function threadHome(id: string, dir = stateDir()): { cwd?: string; sessio
   };
 }
 
+export class NativeSessionUnconfirmed extends Error {
+  constructor(readonly reason: "stopped" | "paused" | "lost" | "storage" = "storage") {
+    super("Native session remains unconfirmed");
+  }
+}
+
 /** Records the native session the thread's next turn resumes. False when nothing changed. */
-export function setThreadSession(id: string, sessionId: string | undefined, dir = stateDir()): boolean {
+export function setThreadSession(id: string, sessionId: string | undefined, dir = stateDir(),
+  scope?: { eventId: string; attemptId: string; mode?: "effect" | "terminal" }): boolean {
+  if (scope) {
+    try {
+      const proof = syncHostRequest(dir, { op: "run_attempt_session", threadId: id, eventId: scope.eventId,
+        attemptId: scope.attemptId, mode: scope.mode ?? "effect", sessionId: sessionId || null, rewindId: latestRewindId(id, dir) ?? null });
+      if (proof.current === false) throw new NativeSessionUnconfirmed(proof.reason === "stopped" ? "stopped" : proof.reason === "paused" ? "paused" : "lost");
+      if (proof.stored !== true || typeof proof.changed !== "boolean") throw new NativeSessionUnconfirmed();
+      return proof.changed;
+    } catch (error) {
+      if (error instanceof NativeSessionUnconfirmed) throw error;
+      throw new NativeSessionUnconfirmed();
+    }
+  }
   const threads = listThreads(dir);
   const thread = threads.find((candidate) => candidate.id === id);
   const rewindId = latestRewindId(id, dir);
@@ -412,11 +431,11 @@ const summarize = (thread: ThreadRecord, dir: string, minTs: number): ThreadSumm
     ...(thread.effort ? { effort: thread.effort } : {}),
     ...(thread.agent ? { bypass: thread.bypass ?? false } : {}),
     ...(thread.nativeTurn?.state === "interrupted" &&
-      ((thread.nativeTurn.recoveryAttempts ?? 0) >= 3 || !thread.nativeTurn.userEventId)
+      (thread.nativeTurn.pauseReason || (thread.nativeTurn.recoveryAttempts ?? 0) >= 3 || !thread.nativeTurn.userEventId)
       ? { interruptedTurnId: thread.nativeTurn.id, canResume: !!thread.nativeTurn.userEventId } : {}),
     ...(thread.nativeTurn?.userEventId &&
       (thread.nativeTurn.state === "running" && thread.nativeTurn.recoveryActive === true ||
-        thread.nativeTurn.state === "interrupted" && (thread.nativeTurn.recoveryAttempts ?? 0) < 3)
+        thread.nativeTurn.state === "interrupted" && !thread.nativeTurn.pauseReason && (thread.nativeTurn.recoveryAttempts ?? 0) < 3)
       ? { recoveryState: "recovering" as const } : {}),
     // Absent on a yorozu thread: that is the default, and what older phones already assume.
     ...(thread.agent ? { agent: thread.agent } : {}),

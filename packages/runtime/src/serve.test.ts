@@ -46,6 +46,7 @@ import * as schedulerModule from "./scheduler.js";
 import { localSocketPath } from "./local.js";
 import { channelSocketPath, type HostFrame, type PluginFrame } from "./channel.js";
 import * as rustHost from "./rust-host.js";
+import * as rustSyncModule from "./rust-sync.js";
 import * as threadStorage from "./threads.js";
 import { AcceptedMessages, type AcceptedEntry } from "./accepted.js";
 import { SYNC_PAGE_BYTES, setNativeTurn, setThreadSession, appendThreadEvent, appendThreadEvents, createThread, eventsAfter, listThreads, readThreadEvents } from "./threads.js";
@@ -4414,6 +4415,129 @@ test.each([
     id: `native:${userId}:final`, data: expect.objectContaining({ done: true, text: "fresh completion" }),
   })));
   expect(readThreadEvents("cc", dir).filter((event) => event.kind === "message" && event.data.done)).toHaveLength(1);
+});
+
+test.each([false, true])("a rejected scoped session update preserves explicit Retry (restart: %s)", async (restart) => {
+  const request = rustSyncModule.syncHostRequest;
+  let pauseOnce = true;
+  vi.spyOn(rustSyncModule, "syncHostRequest").mockImplementation((dir, data, bytes) => {
+    if (pauseOnce && data.op === "run_attempt_session" && data.sessionId === "unconfirmed-session") {
+      pauseOnce = false;
+      const marker = listThreads(dir).find((thread) => thread.id === "session-race")!.nativeTurn!;
+      setNativeTurn("session-race", { ...marker, state: "interrupted" }, dir);
+    }
+    return request(dir, data, bytes);
+  });
+  const run = vi.fn<NativeAgentRunner["run"]>().mockImplementation(async (turn) => {
+    turn.onSession!("running-session");
+    return { text: run.mock.calls.length === 1 ? "must not complete" : "confirmed reply", sessionId: "unconfirmed-session" };
+  });
+  let client = await pairedPhone([], false, { nativeRunners: { codex: { run } } });
+  const { dir, send } = client;
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "session-race");
+  const origin = send({ kind: "message", data: { role: "user", text: "work" } }, "session-race");
+  await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === "session-race")?.nativeTurn)
+    .toMatchObject({ state: "interrupted", userEventId: origin }));
+  const pausedSummary = threadStorage.threadSummaries(dir).find((thread) => thread.id === "session-race");
+  expect(pausedSummary).toMatchObject({ interruptedTurnId: `native:${origin}:final`, canResume: true });
+  expect(pausedSummary).not.toHaveProperty("recoveryState");
+  expect(listThreads(dir).find((thread) => thread.id === "session-race")?.nativeSessionId).toBe("running-session");
+  expect(readThreadEvents("session-race", dir).some((event) => event.id === `native:${origin}:final`)).toBe(false);
+  expect(run).toHaveBeenCalledTimes(1);
+  if (restart) {
+    await sidecar.close();
+    await relay.close();
+    client = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+    await client.eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) =>
+      thread.id === "session-race" && thread.interruptedTurnId === `native:${origin}:final`));
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(listThreads(dir).find((thread) => thread.id === "session-race")?.nativeTurn)
+      .toMatchObject({ state: "interrupted", pauseReason: "unconfirmed", recoveryAttempts: 0 });
+  }
+  client.send({ kind: "thread_recover", data: { turnId: `native:${origin}:final`, action: "continue" } }, "session-race");
+  await client.eventsUntil((event) => event.kind === "message" && event.id === `native:${origin}:final` && event.data.done === true);
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(readThreadEvents("session-race", dir).filter((event) => event.id === `native:${origin}:final`))
+    .toEqual([expect.objectContaining({ data: expect.objectContaining({ text: "confirmed reply" }) })]);
+});
+
+test.each([false, true])("a swallowed session storage error fences work (persistent conflict: %s)", async (persistent) => {
+  let pending: string | undefined;
+  const request = rustSyncModule.syncHostRequest;
+  vi.spyOn(rustSyncModule, "syncHostRequest").mockImplementation((dir, data, bytes) => {
+    if (data.op === "run_attempt_session" && data.sessionId === "failed-session") {
+      pending = join(dir, "threads.json.tmp");
+      writeFileSync(pending, "owned legacy-writer conflict fixture");
+      try { return request(dir, data, bytes); }
+      finally { if (!persistent) rmSync(pending); }
+    }
+    return request(dir, data, bytes);
+  });
+  const run = vi.fn<NativeAgentRunner["run"]>().mockImplementation(async (turn) => {
+    if (run.mock.calls.length === 1) {
+      try { turn.onSession!("failed-session"); } catch { /* A custom worker may swallow its observer error. */ }
+      turn.onActivity!("after-failure", { kind: "tool_call", data: { callId: "unsafe", name: "Bash", args: {} } });
+      turn.onUpdate!("must not stream");
+      return { text: "must not complete" };
+    }
+    turn.onSession!("recovered-session");
+    return { text: "completed after explicit Retry", sessionId: "recovered-session" };
+  });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } });
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "storage-fence");
+  const origin = send({ kind: "message", data: { role: "user", text: "work" } }, "storage-fence");
+  try {
+    if (persistent) {
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      send({ kind: "thread_list", data: { threads: [] } });
+      await eventsUntil((event) => event.kind === "thread_list");
+      expect(listThreads(dir).find((thread) => thread.id === "storage-fence")?.nativeTurn)
+        .toMatchObject({ state: "running", userEventId: origin });
+      expect(readFileSync(pending!, "utf8")).toBe("owned legacy-writer conflict fixture");
+      expect(readThreadEvents("storage-fence", dir).some((event) => event.kind === "tool_call" || event.id === `native:${origin}:final`)).toBe(false);
+      expect(run).toHaveBeenCalledTimes(1);
+      return;
+    }
+    await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === "storage-fence")?.nativeTurn)
+      .toMatchObject({ state: "interrupted", userEventId: origin }));
+    expect(readThreadEvents("storage-fence", dir).some((event) => event.kind === "tool_call" || event.id === `native:${origin}:final`)).toBe(false);
+    expect(run).toHaveBeenCalledTimes(1);
+    send({ kind: "thread_recover", data: { turnId: `native:${origin}:final`, action: "continue" } }, "storage-fence");
+    await eventsUntil((event) => event.kind === "message" && event.id === `native:${origin}:final` && event.data.done === true);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(listThreads(dir).find((thread) => thread.id === "storage-fence")?.nativeSessionId).toBe("recovered-session");
+    expect(readThreadEvents("storage-fence", dir).filter((event) => event.id === `native:${origin}:final`))
+      .toEqual([expect.objectContaining({ data: expect.objectContaining({ text: "completed after explicit Retry" }) })]);
+  } finally { if (persistent && pending) rmSync(pending); }
+});
+
+test("failed native claim storage preserves its queue without repeated admission", async () => {
+  const request = rustSyncModule.syncHostRequest;
+  let pending: string | undefined;
+  let claims = 0;
+  vi.spyOn(rustSyncModule, "syncHostRequest").mockImplementation((dir, data, bytes) => {
+    if (data.op === "run_attempt_claim" && data.threadId === "claim-fence") {
+      claims++;
+      pending = join(dir, "threads.json.tmp");
+      writeFileSync(pending, "owned persistent claim conflict fixture");
+    }
+    return request(dir, data, bytes);
+  });
+  const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "must not start" });
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } });
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "claim-fence");
+  const origin = send({ kind: "message", data: { role: "user", text: "work" } }, "claim-fence");
+  try {
+    await vi.waitFor(() => expect(claims).toBe(1));
+    send({ kind: "thread_list", data: { threads: [] } });
+    await eventsUntil((event) => event.kind === "thread_list");
+    expect(claims).toBe(1);
+    expect(run).not.toHaveBeenCalled();
+    expect(request(dir, { op: "queue_head", threadId: "claim-fence" }).eventId).toBe(origin);
+    expect(listThreads(dir).find((thread) => thread.id === "claim-fence")?.nativeTurn).toBeUndefined();
+    expect(readThreadEvents("claim-fence", dir).some((event) => event.id === `native:${origin}:final`)).toBe(false);
+    expect(readFileSync(pending!, "utf8")).toBe("owned persistent claim conflict fixture");
+  } finally { if (pending) rmSync(pending); }
 });
 
 test("agent models publish separately; selections persist and reject another agent's models", async () => {

@@ -865,6 +865,57 @@ impl History {
                 json!({"claimed":true,"threadId":thread,"eventId":origin,"attemptId":attempt,"recoveryAttempts":count}),
             );
         }
+        if request["op"] == "run_attempt_session" {
+            request["mode"]
+                .as_str()
+                .filter(|mode| ["effect", "terminal"].contains(mode))
+                .ok_or_else(invalid)?;
+            let mut check = request.clone();
+            check["op"] = json!("run_attempt_current");
+            let proof = self.attempt_request(&check)?;
+            if proof["current"] != true {
+                return Ok(proof);
+            }
+            let session = request
+                .get("sessionId")
+                .filter(|value| value.is_null() || value.is_string())
+                .ok_or_else(invalid)?;
+            let rewind = request
+                .get("rewindId")
+                .filter(|value| value.is_null() || value.is_string())
+                .ok_or_else(invalid)?;
+            let bytes = crate::thread_index::current(&self.root)?.ok_or_else(invalid)?;
+            let mut index: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+            let home = index
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|row| row["id"] == thread)
+                .ok_or_else(invalid)?;
+            if home["nativeTurn"]["attemptId"] != request["attemptId"]
+                || home["nativeTurn"]["userEventId"] != origin
+            {
+                return Ok(json!({"current":false}));
+            }
+            if home["nativeTurn"]["state"] != "running" {
+                return Ok(json!({"current":false,"owned":true,"reason":"paused"}));
+            }
+            let row = home.as_object_mut().unwrap();
+            for (field, value) in [
+                ("nativeSessionId", session),
+                ("nativeSessionRewindId", rewind),
+            ] {
+                if value.is_null() {
+                    row.remove(field);
+                } else {
+                    row.insert(field.to_owned(), value.clone());
+                }
+            }
+            return Ok(crate::thread_index::request_native(
+                &self.root,
+                &json!({"op":"replace","expectedHash":digest(&bytes),"threads":index}),
+            ));
+        }
         let attempt = request["attemptId"].as_str().ok_or_else(invalid)?;
         let matches = self
             .attempts

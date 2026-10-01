@@ -108,6 +108,7 @@ import {
   retireOrphanedCards,
   setThreadModel,
   setThreadSession,
+  NativeSessionUnconfirmed,
   stashToolResult,
   SYNC_LIMIT,
   SYNC_PAGE_BYTES,
@@ -632,6 +633,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     activeEventId: string; completionId: string; status: "attempting" | "delivered" | "rejected" };
   const steeringRecords = new Map<string, SteeringRecord>();
   let steeringFenced = false;
+  // Availability fence only: failed metadata writes leave durable evidence untouched.
+  const nativeStorageFenced = new Set<string>();
   for (let offset: number | null = 0; offset !== null;) {
     const page = syncHostRequest(dir, { op: "steering_list", offset });
     for (const record of page.records as SteeringRecord[]) {
@@ -1683,11 +1686,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (stopped || attempt !== activeAttempt) return false;
         let current = false;
         let owned = false;
+        let reason: unknown;
         try {
           const proof = syncHostRequest(dir, { op: "run_attempt_current", threadId, eventId: userEventId, attemptId: attempt, mode });
           current = proof.current === true;
           owned = proof.owned === true;
+          reason = proof.reason;
         } catch { /* Loss of the Rust owner leaves this run recoverable, never silently complete. */ }
+        if (!current && owned && reason === "paused" && !terminalRecorded) {
+          paused = true;
+          turn.abort();
+          broadcast(threadList());
+        }
         if (!current && !owned && terminalRecorded) state("native-change-evidence-unconfirmed");
         if (!current && !owned && !terminalRecorded && !turn.signal.aborted && !paused) {
           paused = true;
@@ -1773,8 +1783,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
           catch { claim = {}; }
           if (claim.claimed !== true || typeof claim.attemptId !== "string" || typeof claim.recoveryAttempts !== "number") {
             paused = true;
-            const marker = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
-            if (marker && marker.userEventId === userEventId) setNativeTurn(threadId, { ...marker, state: "interrupted" }, dir);
+            try {
+              const marker = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
+              if (marker && marker.userEventId === userEventId) setNativeTurn(threadId, { ...marker, state: "interrupted", pauseReason: "unconfirmed" }, dir);
+              else nativeStorageFenced.add(threadId);
+            } catch { nativeStorageFenced.add(threadId); state("thread-index-storage-failed"); }
             state("native-attempt-unconfirmed");
             broadcast(threadList());
             return;
@@ -1787,6 +1800,24 @@ export function serve(options: ServeOptions = {}): Sidecar {
           let attemptLive = true;
           const effectsAllowed = (): boolean => attemptLive && !turn.signal.aborted && attemptCurrent(attempt);
           const scopedSignal = (signal: AbortSignal): AbortSignal => AbortSignal.any([signal, turn.signal, attemptAbort.signal]);
+          const saveNativeSession = (sessionId: string, mode: "effect" | "terminal" = "effect"): void => {
+            try { setThreadSession(threadId, sessionId, dir, { eventId: userEventId!, attemptId: attempt, mode }); }
+            catch (error) {
+              turn.abort();
+              if (!(error instanceof NativeSessionUnconfirmed) || error.reason !== "stopped") {
+                paused = true;
+                state("native-session-unconfirmed");
+                try {
+                  const marker = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
+                  if (marker?.attemptId === attempt && marker.userEventId === userEventId) {
+                    setNativeTurn(threadId, { ...marker, state: "interrupted", pauseReason: "unconfirmed" }, dir);
+                    broadcast(threadList());
+                  }
+                } catch { nativeStorageFenced.add(threadId); state("thread-index-storage-failed"); }
+              }
+              throw error;
+            }
+          };
           let executionStarted = false;
           try {
             const currentHome = threadHome(threadId, dir);
@@ -1819,7 +1850,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
               model: threadModel(threadId, dir),
               effort: threadEffort(threadId, dir),
               signal: scopedSignal(turn.signal),
-              onSession: (sessionId) => { if (effectsAllowed()) { executionStarted = true; setThreadSession(threadId, sessionId, dir); } },
+              onSession: (sessionId) => { if (effectsAllowed()) { executionStarted = true; saveNativeSession(sessionId); } },
               onTerminate: (terminate) => { if (attemptLive && attemptCurrent(attempt, "owned")) { if (turn.signal.aborted) terminate(); else terminateRunning.set(threadId, terminate); } },
               onSteer: (steer) => { if (effectsAllowed()) steerRunning.set(threadId, steer); },
               approve: async (tool, input, signal) => {
@@ -1886,7 +1917,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
             });
             if (!attemptCurrent(attempt, done.completed ? "terminal" : "effect")) return;
             flushActivity();
-            if (done.sessionId && done.sessionId !== currentHome.sessionId) setThreadSession(threadId, done.sessionId, dir);
+            if (done.sessionId && done.sessionId !== currentHome.sessionId) saveNativeSession(done.sessionId, done.completed ? "terminal" : "effect");
             const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
             if (done.completed && stop && (stop.status === "requested" || stop.status === "unconfirmed")) {
               finish(done.text);
@@ -2018,6 +2049,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       if (userEventId && (!stopStore.available || !acceptedStore.available || steeringFenced || stoppedTurns.has(userEventId) || steered.has(userEventId) || uncertainSteering(userEventId))) return;
       if (userEventId && threadAgent(threadId, dir) !== "yorozu") {
+        if (nativeStorageFenced.has(threadId)) return;
         const proof = syncHostRequest(dir, { op: "run_ready", threadId, eventId: userEventId });
         if (proof.ready !== true) { state(`native-run-blocked ${String(proof.reason)}`); return; }
         if (proof.eventId !== userEventId || proof.threadId !== threadId || proof.agent !== threadAgent(threadId, dir)
@@ -2066,7 +2098,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (stopped || !stopStore.available || !acceptedStore.available || steeringFenced) return;
     const visited = new Set<string>();
     for (const entry of [...queuedNative]) {
-      if (onlyThread && entry.threadId !== onlyThread || visited.has(entry.threadId)) continue;
+      if (onlyThread && entry.threadId !== onlyThread || visited.has(entry.threadId) || nativeStorageFenced.has(entry.threadId)) continue;
       const events = visibleThreadEvents(entry.threadId, dir);
       if (events.some((event) => event.id === completionIdFor(entry.threadId, entry.eventId) &&
           event.kind === "message" && event.data.done)) { removeNativeQueue(entry.eventId); continue; }
@@ -2152,9 +2184,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
   }
 
   function resumeNativeTurn(threadId: string, retry = false): boolean {
+    if (!retry && nativeStorageFenced.has(threadId)) return false;
     const marker = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
     if (marker?.state !== "interrupted" || !marker.userEventId || nativeRecoveryStarted.has(threadId) ||
-      stoppedTurns.has(marker.userEventId) || (!retry && (marker.recoveryAttempts ?? 0) >= 3)) return false;
+      stoppedTurns.has(marker.userEventId) || (!retry && (!!marker.pauseReason || (marker.recoveryAttempts ?? 0) >= 3))) return false;
     if (uncertainActiveSteering(threadId, marker.userEventId)) {
       if (retry) broadcast({ ...control({ kind: "thought", data: {
         text: "A follow-up may already have reached this run. Yorozu cannot confirm its outcome, so this run remains paused.",
@@ -2164,7 +2197,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const original = visibleThreadEvents(threadId, dir).find((event) => event.id === marker.userEventId &&
       event.kind === "message" && event.data.role === "user");
     if (original?.kind !== "message") return false;
-    if (retry) setNativeTurn(threadId, { ...marker, recoveryAttempts: 0 }, dir);
+    if (retry) {
+      setNativeTurn(threadId, { ...marker, recoveryAttempts: 0, pauseReason: undefined }, dir);
+      nativeStorageFenced.delete(threadId);
+    }
     nativeRecoveryStarted.add(threadId);
     // A paused turn can receive Retry before its first worker's finally callback clears this
     // in-memory id. The next attempt still queues behind that worker for the same thread.

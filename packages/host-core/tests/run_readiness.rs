@@ -199,9 +199,27 @@ fn issued_attempts_fence_replaced_stopped_and_restarted_workers_without_losing_e
         query(&mut host, &first["attemptId"], "effect")["current"],
         true
     );
+    let session = |host: &mut History, attempt: &Value, mode, id| {
+        host.request(&json!({"op":"run_attempt_session","threadId":"thread","eventId":"origin","attemptId":attempt,"mode":mode,"sessionId":id,"rewindId":null}))
+    };
+    let stored = session(&mut host, &first["attemptId"], "effect", "first-session");
+    assert_eq!(stored["stored"], true);
+    let bytes = fs::read(temp.0.join("threads.json")).unwrap();
+    let mut forged: Value = serde_json::from_slice(&bytes).unwrap();
+    forged[0]["nativeSessionId"] = json!("unscoped-session");
+    assert_eq!(host.request(&json!({"op":"thread_index_replace","expectedHash":stored["hash"],"threads":forged,"nativeOwned":true}))["error"], "unscoped-native-session-transition");
+    assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), bytes);
     let second = claim(&mut host, true);
     assert_eq!(second["recoveryAttempts"], 1);
     assert_ne!(first["attemptId"], second["attemptId"]);
+    assert_eq!(
+        session(&mut host, &first["attemptId"], "effect", "stale-session")["current"],
+        false
+    );
+    assert_eq!(
+        session(&mut host, &second["attemptId"], "effect", "fresh-session")["stored"],
+        true
+    );
     assert_eq!(
         query(&mut host, &first["attemptId"], "owned")["current"],
         false
@@ -216,6 +234,25 @@ fn issued_attempts_fence_replaced_stopped_and_restarted_workers_without_losing_e
     assert_eq!(denied["current"], false);
     assert_eq!(denied["owned"], true);
     assert_eq!(denied["reason"], "stopped");
+    assert_eq!(
+        session(&mut host, &second["attemptId"], "owned", "bypass-session")["error"],
+        "run-attempt-unconfirmed"
+    );
+    let bytes = fs::read(temp.0.join("threads.json")).unwrap();
+    assert_eq!(
+        session(&mut host, &second["attemptId"], "effect", "stopped-effect")["current"],
+        false
+    );
+    assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), bytes);
+    assert_eq!(
+        session(
+            &mut host,
+            &second["attemptId"],
+            "terminal",
+            "completed-session"
+        )["stored"],
+        true
+    );
     assert_eq!(
         query(&mut host, &second["attemptId"], "terminal")["current"],
         true

@@ -832,6 +832,44 @@ result/explicit Retry recovery resets still use the compatibility host; their fu
 approval ownership remain checklist item3. The bounded provider-worker contract, platform IPC,
 standalone launcher, SQLite/Markdown conversation plan and native release gates remain items4–7.
 
+## Rust-owned native session persistence
+
+Native SDK session and rewind IDs now enter the existing metadata CAS through a scoped Rust
+operation. It accepts only effect or terminal policy, validates the live issued attempt and origin,
+and rechecks that the exact mutation snapshot is still running. Owned-only cleanup proof cannot
+write a session, including after Stop. Terminal mode retains the established completed-after-Stop
+exception. Generic index replacement rejects session-field changes while an issued attempt marker
+is retained; caller JSON cannot grant the internal crate-function privilege. Legacy records without
+an issued attempt remain compatible, and metadata backups and unknown fields are preserved.
+
+A denied or failed scoped write is an error, distinct from an unchanged session. The SDK observer
+aborts and pauses before returning that error, so a custom worker cannot swallow it and continue
+streaming, tool effects or completion. When interrupted state cannot itself be persisted, a sticky
+process-local availability fence blocks automatic admission, queue draining and recovery for that
+thread. Unconfirmed attempt claims use the same fence when they cannot confirm an interrupted
+marker, including absent-marker cases. Durable accepted origins, queue entries and conflicting files
+remain intact. A confirmed unconfirmed-write pause retains its own pause reason, exposes the existing Retry
+control and suppresses the recovering indicator without changing the recovery counter. Automatic
+resume leaves that explicit pause intact across restart; Retry clears it only after a successful
+metadata write. A marker left running by unavailable storage requires storage repair and restart;
+current Retry handlers do not project an unpersisted pause. This fence is not a competing truth store.
+
+The retained regressions use actual Rust requests and real metadata conflicts. They cover a paused
+mutation snapshot, a swallowed session write error, persistent session conflicts and failed claim
+storage without worker launch or repeated admission. Removing the persistent session fence causes
+the negative control to exceed its owned external deadline; with the fence, the host answers its
+thread-list request and preserves the conflict and marker. The Retry projection regression initially lacked the visible Retry control and reported recovering;
+the retained baseline and repaired summary checks cover that false status. Generic control/startup
+transitions and recovery resets still remain item3 work; this slice does not complete the Rust orchestrator or the
+standalone conversation interface.
+
+Validation for this slice: all115 Rust tests, formatting, strictClippy and the production build
+pass. The full runtime/plugin run passes834 tests plus1skip across52files. That aggregate preceded
+the final pause-reason projection; after it, production build and101 focused summary/native
+recovery/Stop/queue/restart tests pass. The final explicit-pause extension additionally passes both
+same-host and restarted-host Retry cases without automatically launching a replacement worker or
+changing the recovery budget. All commands are terminal; baseline and passing logs are retained.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

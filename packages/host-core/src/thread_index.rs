@@ -203,7 +203,7 @@ fn bound_pending(root: &Path) -> io::Result<()> {
     }
     Ok(())
 }
-fn replace(root: &Path, request: &Value) -> io::Result<Value> {
+fn replace(root: &Path, request: &Value, native_owned: bool) -> io::Result<Value> {
     private_dir(root)?;
     let owner = private_open(&root.join(".rust-thread-index-owner.lock"), false)?;
     owner.try_lock().map_err(io::Error::other)?;
@@ -238,6 +238,14 @@ fn replace(root: &Path, request: &Value) -> io::Result<Value> {
                 .iter()
                 .find(|row| row["id"] == previous["id"]);
             if let Some(next) = next {
+                if !native_owned
+                    && previous["nativeTurn"]["attemptId"].is_string()
+                    && ["nativeSessionId", "nativeSessionRewindId"]
+                        .iter()
+                        .any(|field| previous.get(*field) != next.get(*field))
+                {
+                    return Ok(json!({"error":"unscoped-native-session-transition"}));
+                }
                 if next.get("agent") != previous.get("agent")
                     || next.get("cwd") != previous.get("cwd")
                     || next.get("createdAt") != previous.get("createdAt")
@@ -319,5 +327,9 @@ pub fn request(root: &Path, request: &Value) -> Value {
     if request["op"] != "replace" {
         return json!({"error":"invalid-thread-index-request"});
     }
-    replace(root, request).unwrap_or_else(|_| json!({"error":"thread-index-storage-failed"}))
+    replace(root, request, false).unwrap_or_else(|_| json!({"error":"thread-index-storage-failed"}))
+}
+// This privilege is a crate function, never a caller-controlled JSON option.
+pub(crate) fn request_native(root: &Path, request: &Value) -> Value {
+    replace(root, request, true).unwrap_or_else(|_| json!({"error":"thread-index-storage-failed"}))
 }
