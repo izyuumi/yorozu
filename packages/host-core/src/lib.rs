@@ -1,7 +1,9 @@
 //! Portable durable attachment ingress. No UI, Swift, gateway or credential dependency.
 //! The surrounding host still owns message admission; assembling files never admits a turn.
 pub mod admission;
+mod journal;
 pub mod outbox;
+pub mod stops;
 pub mod transport;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};

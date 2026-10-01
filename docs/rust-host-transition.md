@@ -141,6 +141,40 @@ including the storage-failure fence and pending-identity/restart regressions. St
 the production runtime build also pass. Windows execution and physical power-loss durability
 remain unverified locally.
 
+## Durable Stop journal extraction
+
+Rust now owns all production appends to `stopped-turns.jsonl`. Complete legacy rows, unknown
+fields and request identities survive migration without rewriting valid existing bytes.
+Stop intent remains bound to its original operation and conversation; another conversation
+cannot take it, and confirmed stopped/completed/withdrawn proof cannot be downgraded. Repeated
+request IDs are merged without losing the callers that need a final outcome.
+
+Stop and expiry share a private, bounded append journal with an OS-held owner lock. Interrupted
+tails are retained in an fsynced recovery copy before truncation; appends and the containing
+directory are synced before acknowledgement. The shared journal also checks Unix file identity
+before and after writes, so replacing a path cannot produce an acknowledgement for an orphaned
+file. Reading a malformed oversized line is bounded before allocation can grow beyond the
+record limit. Bounds remain 64 MiB, 1 MiB per record and 65,536 rows. Existing user permissions
+are unchanged; newly created private files use the existing private-storage conventions.
+
+The compatibility host reserves Stop identities synchronously to prevent dispatch races, but
+never publishes a terminal status from that reservation. Stop receipts and confirmed status
+wait for Rust persistence. Channel abort waits for durable requested intent, and channel idle
+state follows durable completion. Persistence failure leaves cessation unconfirmed and fences
+new user-message admission. Both local greetings/inbound work and relay registration wait for
+startup Stop recovery; the old interrupted native marker is cleared only after uncertainty is
+durable. This prevents a new turn from racing recovery and losing its marker. The host still
+owns run orchestration, abort timers and thread-history projections.
+
+Six additional Rust recovery tests pass, including actual worker termination after an
+acknowledgement, owner conflicts, terminal-proof retention, interrupted-tail recovery and path
+replacement. All 38 core tests, formatting and strict clippy pass. The focused host/facade suite
+passes 38 tests; six initial host failures identified confirmation/idle and startup readiness
+races that are now covered by the passing workflows. New fixtures additionally hold writes,
+force persistence failure and verify startup connection gating. The final complete runtime suite passes 790 tests with one skipped across 45 files using four
+workers, and the production runtime build passes. Cross-platform execution and physical
+power-loss behavior remain unverified locally.
+
 ## Following migration boundaries
 
 1. Move the durable event/admission/outbox state engine to Rust with one authoritative writer.

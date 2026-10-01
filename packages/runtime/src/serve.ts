@@ -9,11 +9,12 @@
  */
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
-import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { argv, env, stdin, stdout } from "node:process";
 import { ExpiredAdmissions } from "./admission.js";
+import { StopStore, type StopRecord } from "./stops.js";
 import { promisify } from "node:util";
 import {
   acceptsSeq,
@@ -617,42 +618,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const expiredAdmissions = admissionStore.records;
   // A Stop is bound to one accepted operation. Keep its intent through sidecar replacement,
   // including the backend run identity needed to finish an interrupted abort request.
-  type StopRecord = { targetEventId: string; threadId: string; status: "requested" | "stopped" | "completed" | "withdrawn" | "unconfirmed";
-    sessionKey?: string; runId?: string; partialText?: string; preDispatch?: boolean; requestIds: string[] };
-  const stopFile = join(dir, "stopped-turns.jsonl");
-  let stopText = existsSync(stopFile) ? readFileSync(stopFile, "utf8") : "";
-  if (stopText && !stopText.endsWith("\n")) {
-    stopText = stopText.slice(0, stopText.lastIndexOf("\n") + 1);
-    truncateSync(stopFile, Buffer.byteLength(stopText));
-  }
-  const stopLines: unknown[] = stopText ? stopText.trimEnd().split("\n").map((line) => JSON.parse(line)) : [];
-  if (!stopLines.every((entry) => typeof entry === "object" && entry !== null &&
-    typeof (entry as StopRecord).targetEventId === "string" && !!(entry as StopRecord).targetEventId &&
-    (entry as StopRecord).targetEventId.length <= 128 &&
-    typeof (entry as StopRecord).threadId === "string" && !!(entry as StopRecord).threadId &&
-    (entry as StopRecord).threadId.length <= 128 &&
-    ["requested", "stopped", "completed", "withdrawn", "unconfirmed"].includes((entry as StopRecord).status) &&
-    ((entry as StopRecord).runId === undefined || typeof (entry as StopRecord).runId === "string") &&
-    ((entry as StopRecord).sessionKey === undefined || typeof (entry as StopRecord).sessionKey === "string") &&
-    ((entry as StopRecord).partialText === undefined || typeof (entry as StopRecord).partialText === "string") &&
-    ((entry as StopRecord).preDispatch === undefined || typeof (entry as StopRecord).preDispatch === "boolean") &&
-    Array.isArray((entry as StopRecord).requestIds) &&
-    (entry as StopRecord).requestIds.every((id) => typeof id === "string" && id.length > 0 && id.length <= 128))) {
-    throw new Error("Invalid stopped-turn journal");
-  }
-  const stopOwners = new Map<string, string>();
-  for (const entry of stopLines as StopRecord[]) {
-    if (stopOwners.has(entry.targetEventId) && stopOwners.get(entry.targetEventId) !== entry.threadId)
-      throw new Error("Conflicting stopped-turn journal");
-    stopOwners.set(entry.targetEventId, entry.threadId);
-  }
-  const stoppedTurns = new Map((stopLines as StopRecord[]).map((entry) => [entry.targetEventId, entry]));
-  const rememberStop = (entry: StopRecord): void => {
-    const previous = stoppedTurns.get(entry.targetEventId);
-    if (previous?.status === entry.status && previous.requestIds.length === entry.requestIds.length) return;
-    appendFileSync(stopFile, JSON.stringify(entry) + "\n", { mode: 0o600, flush: true });
-    stoppedTurns.set(entry.targetEventId, entry);
-  };
+  const stopStore = new StopStore(dir);
+  const stoppedTurns = stopStore.records;
+  let startupRecovery: Promise<void> = Promise.resolve();
+  const rememberStop = (record: StopRecord): Promise<void> => stopStore.save(record);
   const computerName = options.computerName ?? (() => {
     if (process.platform !== "darwin") return undefined;
     try {
@@ -1824,7 +1793,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
             const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
             if (done.completed && stop && (stop.status === "requested" || stop.status === "unconfirmed")) {
               finish(done.text);
-              completeStop(stop, "completed");
+              await completeStop(stop, "completed");
               return;
             }
             if (turn.signal.aborted) return;
@@ -1860,7 +1829,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (running.get(threadId) === turn) running.delete(threadId);
         if (runningEventIds.get(threadId) === userEventId) runningEventIds.delete(threadId);
         const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
-        if (stop) completeStop(stop);
+        if (stop) await completeStop(stop);
         if (stop && !paused) reportChanges();
         if (!stopped && !paused) {
           setNativeTurn(threadId, undefined, dir);
@@ -1885,7 +1854,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (running.get(threadId) === turn) running.delete(threadId);
       if (runningEventIds.get(threadId) === userEventId) runningEventIds.delete(threadId);
       const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
-      if (stop) completeStop(stop);
+      if (stop) await completeStop(stop);
       broadcastActiveThreadList();
     }
   }
@@ -1920,7 +1889,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       if (stopped) return;
       if (userEventId) await steering.get(userEventId)?.promise;
-      if (userEventId && (stoppedTurns.has(userEventId) || steered.has(userEventId))) return;
+      if (userEventId && (!stopStore.available || stoppedTurns.has(userEventId) || steered.has(userEventId))) return;
       const logged = queuedBehindTurn ? acceptedEvent : undefined;
       if (logged) {
         // A queued message was admitted while an earlier turn ran. Append its corrected
@@ -2022,17 +1991,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
     threadId: record.threadId,
   });
   const broadcastStop = (record: StopRecord): void => {
-    for (const id of stoppedTurns.get(record.targetEventId)?.requestIds ?? record.requestIds) broadcast(stopStatus(record, id));
+    const confirmed = stopStore.confirmed(record.targetEventId);
+    if (confirmed) for (const id of confirmed.requestIds) broadcast(stopStatus(confirmed, id));
   };
   const preDispatchStops = new Map<string, Promise<void>>();
   const withdrawBeforeDispatch = (record: StopRecord): Promise<void> => {
     const prior = preDispatchStops.get(record.targetEventId);
     if (prior) return prior;
-    const promise = channel.withdraw(record.targetEventId).then(() => {
+    const promise = (stopStore.pending(record.targetEventId) ?? Promise.resolve())
+      .then(() => channel.withdraw(record.targetEventId)).then(async () => {
       const current = stoppedTurns.get(record.targetEventId);
       if (!current?.preDispatch || current.status === "withdrawn") return;
       const withdrawn = { ...current, status: "withdrawn" as const };
-      rememberStop(withdrawn);
+      await rememberStop(withdrawn);
       if (!stopped) broadcastStop(withdrawn);
     });
     preDispatchStops.set(record.targetEventId, promise);
@@ -2046,13 +2017,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
       kind: "message", data: { role: "agent", text, done: true, interrupted: true } };
     emit(final);
   };
-  function completeStop(record: StopRecord, status: "stopped" | "completed" = "stopped"): void {
+  async function completeStop(record: StopRecord, status: "stopped" | "completed" = "stopped"): Promise<void> {
+    const pending = stopStore.pending(record.targetEventId);
+    if (pending) await pending;
+    record = stoppedTurns.get(record.targetEventId) ?? record;
     if (record.status !== "requested" && record.status !== "unconfirmed") return;
     clearTimeout(stopTimers.get(record.targetEventId));
     stopTimers.delete(record.targetEventId);
     if (status === "stopped" && !viaChannel(record.threadId)) persistStoppedReply(record);
     const finished = { ...record, status };
-    rememberStop(finished);
+    await rememberStop(finished);
     broadcastStop(finished);
   }
 
@@ -2065,24 +2039,29 @@ export function serve(options: ServeOptions = {}): Sidecar {
     return true;
   };
 
-  const finishStop = (record: StopRecord): void => {
+  const finishStop = async (record: StopRecord): Promise<void> => {
+    const pending = stopStore.pending(record.targetEventId);
+    if (pending) await pending;
+    record = stoppedTurns.get(record.targetEventId) ?? record;
     if (record.status !== "requested") return;
     const target = record.targetEventId;
     if (viaChannel(record.threadId)) {
       if (stopTimers.has(target)) return;
       channel.abort(target);
       const timer = setTimeout(() => {
-        stopTimers.delete(target);
-        const current = stoppedTurns.get(target);
-        if (current?.status !== "requested") return;
-        const uncertain = { ...current, status: "unconfirmed" as const };
-        rememberStop(uncertain);
-        const turn = turnStates.get(record.threadId);
-        if (turn?.activeEventId === target) {
-          turn.state = "stopped-unconfirmed";
-          publishTurnState(record.threadId);
-        }
-        broadcastStop(uncertain);
+        void (async () => {
+          stopTimers.delete(target);
+          const current = stoppedTurns.get(target);
+          if (current?.status !== "requested") return;
+          const uncertain = { ...current, status: "unconfirmed" as const };
+          await rememberStop(uncertain);
+          const turn = turnStates.get(record.threadId);
+          if (turn?.activeEventId === target) {
+            turn.state = "stopped-unconfirmed";
+            publishTurnState(record.threadId);
+          }
+          broadcastStop(uncertain);
+        })().catch(() => state("stop-storage-failed"));
       }, 3_000);
       timer.unref?.();
       stopTimers.set(target, timer);
@@ -2093,16 +2072,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
         const timer = setTimeout(() => {
           if (stoppedTurns.get(target)?.status !== "requested") return;
           const confirm = setTimeout(() => {
-            stopTimers.delete(target);
-            if (stoppedTurns.get(target)?.status !== "requested") return;
-            const uncertain = { ...record, status: "unconfirmed" as const };
-            rememberStop(uncertain);
-            const turn = turnStates.get(record.threadId);
-            if (turn?.activeEventId === target) {
-              turn.state = "stopped-unconfirmed";
-              publishTurnState(record.threadId);
-            }
-            broadcastStop(uncertain);
+            void (async () => {
+              stopTimers.delete(target);
+              if (stoppedTurns.get(target)?.status !== "requested") return;
+              const uncertain = { ...record, status: "unconfirmed" as const };
+              await rememberStop(uncertain);
+              const turn = turnStates.get(record.threadId);
+              if (turn?.activeEventId === target) {
+                turn.state = "stopped-unconfirmed";
+                publishTurnState(record.threadId);
+              }
+              broadcastStop(uncertain);
+            })().catch(() => state("stop-storage-failed"));
           }, 100);
           confirm.unref?.();
           stopTimers.set(target, confirm);
@@ -2117,7 +2098,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (nativeTurn?.id === completionIdFor(record.threadId, target) && nativeTurn.state === "interrupted") {
         // The old SDK process is gone, but its last external effect is unknowable here.
         // Stop recovery without claiming confirmed cessation.
-        rememberStop({ ...record, status: "unconfirmed" });
+        await rememberStop({ ...record, status: "unconfirmed" });
         const turn = turnStates.get(record.threadId);
         if (turn?.activeEventId === target) {
           turn.state = "stopped-unconfirmed";
@@ -2129,7 +2110,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return;
       }
       persistStoppedReply(record);
-      rememberStop({ ...record, status: "stopped" });
+      await rememberStop({ ...record, status: "stopped" });
       broadcastStop(stoppedTurns.get(target)!);
     }
   };
@@ -2517,113 +2498,121 @@ export function serve(options: ServeOptions = {}): Sidecar {
       return;
     }
     if (event.kind === "interrupt" && event.data.targetEventId !== undefined) {
-      const target = event.data.targetEventId;
-      if (typeof target !== "string" || !target || target.length > 128 || !event.threadId) return;
-      const inFlight = steering.get(target);
-      if (inFlight?.threadId === event.threadId) {
-        void inFlight.promise.then(() => handleEvent(event, reply, pairedAt, from, localDevice));
-        return;
-      }
-      const existing = stoppedTurns.get(target);
-      if (existing && existing.threadId !== event.threadId) {
-        reply(control({ kind: "stop_status", data: { targetEventId: target, requestId: event.id, status: "unknown" } }));
-        return;
-      }
-      const history = readThreadEvents(event.threadId, dir);
-      const user = history.find((stored) => stored.id === target && stored.kind === "message" && stored.data.role === "user");
-      const channelAdmission = pendingChannelAdmissions.get(target);
-      if (existing?.preDispatch || !existing && channelAdmission?.fresh && channelAdmission.threadId === event.threadId && !channelRuns.has(target)) {
-        const request: StopRecord = existing ? { ...existing, requestIds: [...new Set([...existing.requestIds,event.id])] }
-          : { targetEventId: target, threadId: event.threadId, status: "requested", preDispatch: true, requestIds: [event.id] };
-        rememberStop(request);
-        reply(control({ kind: "receipt", data: { eventId: event.id } }));
-        reply(stopStatus(request, event.id));
-        void withdrawBeforeDispatch(request).catch(() => state("channel-storage-failed"));
-        return;
-      }
-      const channelRun = channelRuns.get(target);
-      if (viaChannel(event.threadId) && !existing &&
-          (!channelRun || channelRun.threadId !== event.threadId ||
-            (!channelRun.status && turnStates.get(event.threadId)?.activeEventId !== target))) {
-        reply(control({ kind: "receipt", data: { eventId: event.id } }));
-        reply({ ...control({ kind: "stop_status", data: { targetEventId: target, requestId: event.id, status: "unknown" } }),
-          threadId: event.threadId });
-        return;
-      }
-      const final = viaChannel(event.threadId) ? !!channelRun?.status && channelRun.status !== "aborted"
-        : history.some((stored) => stored.id === completionIdFor(event.threadId, target) &&
-          stored.kind === "message" && stored.data.done === true && stored.data.interrupted !== true);
-      if (!existing && !user) {
-        const withdrawn: StopRecord = { targetEventId: target, threadId: event.threadId,
-          status: "withdrawn", requestIds: [event.id] };
-        rememberStop(withdrawn);
-        reply(control({ kind: "receipt", data: { eventId: event.id } }));
-        reply(stopStatus(withdrawn, event.id));
-        return;
-      }
-      if (user?.kind === "message" && user.data.delivery === "steer") {
-        reply(control({ kind: "receipt", data: { eventId: event.id } }));
-        reply(control({ kind: "stop_status", data: { targetEventId: target, requestId: event.id,
-          status: history.some((stored) => stored.id === user.data.completionId && stored.kind === "message" && stored.data.done)
-            ? "completed" : "unknown" } }));
-        return;
-      }
-      const turn = turnStates.get(event.threadId);
-      const queuedIndex = turn?.queued.indexOf(target) ?? -1;
-      if (!existing && user && turn && queuedIndex >= 0) {
-        const withdrawn: StopRecord = { targetEventId: target, threadId: event.threadId,
-          status: "withdrawn", requestIds: [event.id] };
-        rememberStop(withdrawn);
-        turn.queued.splice(queuedIndex, 1);
-        removeNativeQueue(target);
-        if (viaChannel(event.threadId)) channel.abort(target);
-        publishTurnState(event.threadId);
-        reply(control({ kind: "receipt", data: { eventId: event.id } }));
-        reply(stopStatus(withdrawn, event.id));
-        return;
-      }
-      const requestIds = existing ? [...new Set([...existing.requestIds, event.id])] : [event.id];
-      const live = liveReplies.get(event.threadId);
-      const record: StopRecord = final ? { ...(existing ?? { targetEventId: target, threadId: event.threadId }),
-        status: "completed", requestIds } : existing ? { ...existing, requestIds } : { targetEventId: target, threadId: event.threadId,
-        status: channelRun?.status === "aborted" ? "stopped" : "requested", requestIds,
-        ...(runningEventIds.get(event.threadId) === target && live?.kind === "message" && live.data.role === "agent"
-          ? { partialText: live.data.text } : {}) };
-      rememberStop(record);
-      if (record.status === "requested" && turn?.activeEventId === target) {
-        // Withdraw before aborting: the runner can settle and release its queue immediately.
-        for (const queued of turn.queued) {
-          const withdraw = (): void => {
-            if (steered.has(queued)) return;
-            const withdrawn: StopRecord = { targetEventId: queued, threadId: event.threadId,
-              status: "withdrawn", requestIds: [event.id] };
-            rememberStop(withdrawn);
-            removeNativeQueue(queued);
-            if (viaChannel(event.threadId)) channel.abort(queued);
-            emit(stopStatus(withdrawn, event.id));
-          };
-          const inFlight = steering.get(queued);
-          if (inFlight) void inFlight.promise.then(withdraw);
-          else withdraw();
+      const stopEvent = event;
+      void (async () => {
+        const event = stopEvent;
+        const target = event.data.targetEventId;
+        const priorWrite = stopStore.pending(target!);
+        if (priorWrite) { await priorWrite; handleEvent(event, reply, pairedAt, from, localDevice); return; }
+        if (typeof target !== "string" || !target || target.length > 128 || !event.threadId) return;
+        const inFlight = steering.get(target);
+        if (inFlight?.threadId === event.threadId) {
+          void inFlight.promise.then(() => handleEvent(event, reply, pairedAt, from, localDevice));
+          return;
         }
-        turn.queued = [];
-        turn.state = "stopping";
-        publishTurnState(event.threadId);
-      } else if (record.status === "requested" && turn) {
-        const queuedIndex = turn.queued.indexOf(target);
-        if (queuedIndex >= 0) {
+        const existing = stoppedTurns.get(target);
+        if (existing && existing.threadId !== event.threadId) {
+          reply(control({ kind: "stop_status", data: { targetEventId: target, requestId: event.id, status: "unknown" } }));
+          return;
+        }
+        const history = readThreadEvents(event.threadId, dir);
+        const user = history.find((stored) => stored.id === target && stored.kind === "message" && stored.data.role === "user");
+        const channelAdmission = pendingChannelAdmissions.get(target);
+        if (existing?.preDispatch || !existing && channelAdmission?.fresh && channelAdmission.threadId === event.threadId && !channelRuns.has(target)) {
+          const request: StopRecord = existing ? { ...existing, requestIds: [...new Set([...existing.requestIds,event.id])] }
+            : { targetEventId: target, threadId: event.threadId, status: "requested", preDispatch: true, requestIds: [event.id] };
+          await rememberStop(request);
+          reply(control({ kind: "receipt", data: { eventId: event.id } }));
+          reply(stopStatus(request, event.id));
+          void withdrawBeforeDispatch(request).catch(() => state("channel-storage-failed"));
+          return;
+        }
+        const channelRun = channelRuns.get(target);
+        if (viaChannel(event.threadId) && !existing &&
+            (!channelRun || channelRun.threadId !== event.threadId ||
+              (!channelRun.status && turnStates.get(event.threadId)?.activeEventId !== target))) {
+          reply(control({ kind: "receipt", data: { eventId: event.id } }));
+          reply({ ...control({ kind: "stop_status", data: { targetEventId: target, requestId: event.id, status: "unknown" } }),
+            threadId: event.threadId });
+          return;
+        }
+        const final = viaChannel(event.threadId) ? !!channelRun?.status && channelRun.status !== "aborted"
+          : history.some((stored) => stored.id === completionIdFor(event.threadId, target) &&
+            stored.kind === "message" && stored.data.done === true && stored.data.interrupted !== true);
+        if (!existing && !user) {
+          const withdrawn: StopRecord = { targetEventId: target, threadId: event.threadId,
+            status: "withdrawn", requestIds: [event.id] };
+          await rememberStop(withdrawn);
+          reply(control({ kind: "receipt", data: { eventId: event.id } }));
+          reply(stopStatus(withdrawn, event.id));
+          return;
+        }
+        if (user?.kind === "message" && user.data.delivery === "steer") {
+          reply(control({ kind: "receipt", data: { eventId: event.id } }));
+          reply(control({ kind: "stop_status", data: { targetEventId: target, requestId: event.id,
+            status: history.some((stored) => stored.id === user.data.completionId && stored.kind === "message" && stored.data.done)
+              ? "completed" : "unknown" } }));
+          return;
+        }
+        const turn = turnStates.get(event.threadId);
+        const queuedIndex = turn?.queued.indexOf(target) ?? -1;
+        if (!existing && user && turn && queuedIndex >= 0) {
+          const withdrawn: StopRecord = { targetEventId: target, threadId: event.threadId,
+            status: "withdrawn", requestIds: [event.id] };
+          await rememberStop(withdrawn);
           turn.queued.splice(queuedIndex, 1);
+          removeNativeQueue(target);
+          if (viaChannel(event.threadId)) channel.abort(target);
           publishTurnState(event.threadId);
+          reply(control({ kind: "receipt", data: { eventId: event.id } }));
+          reply(stopStatus(withdrawn, event.id));
+          return;
         }
-      }
-      reply(control({ kind: "receipt", data: { eventId: event.id } }));
-      if (record.status === "requested") {
-        finishStop(record);
-        if (turn?.activeEventId === target && runningEventIds.get(event.threadId) !== target &&
-            stoppedTurns.get(target)?.status !== "requested") finishTurnState(event.threadId, target);
-        if (stoppedTurns.get(target)?.status !== "requested") return;
-      }
-      reply(stopStatus(stoppedTurns.get(target)!, event.id));
+        const requestIds = existing ? [...new Set([...existing.requestIds, event.id])] : [event.id];
+        const live = liveReplies.get(event.threadId);
+        const record: StopRecord = final ? { ...(existing ?? { targetEventId: target, threadId: event.threadId }),
+          status: "completed", requestIds } : existing ? { ...existing, requestIds } : { targetEventId: target, threadId: event.threadId,
+          status: channelRun?.status === "aborted" ? "stopped" : "requested", requestIds,
+          ...(runningEventIds.get(event.threadId) === target && live?.kind === "message" && live.data.role === "agent"
+            ? { partialText: live.data.text } : {}) };
+        const persistence: Promise<void>[] = [rememberStop(record)];
+        if (record.status === "requested" && turn?.activeEventId === target) {
+          // Withdraw before aborting: the runner can settle and release its queue immediately.
+          for (const queued of turn.queued) {
+            const withdraw = async (): Promise<void> => {
+              if (steered.has(queued)) return;
+              const withdrawn: StopRecord = { targetEventId: queued, threadId: event.threadId,
+                status: "withdrawn", requestIds: [event.id] };
+              await rememberStop(withdrawn);
+              removeNativeQueue(queued);
+              if (viaChannel(event.threadId)) channel.abort(queued);
+              emit(stopStatus(withdrawn, event.id));
+            };
+            const inFlight = steering.get(queued);
+            if (inFlight) void inFlight.promise.then(withdraw).catch(() => state("stop-storage-failed"));
+            else persistence.push(withdraw());
+          }
+          turn.queued = [];
+          turn.state = "stopping";
+          publishTurnState(event.threadId);
+        } else if (record.status === "requested" && turn) {
+          const queuedIndex = turn.queued.indexOf(target);
+          if (queuedIndex >= 0) {
+            turn.queued.splice(queuedIndex, 1);
+            publishTurnState(event.threadId);
+          }
+        }
+        await Promise.all(persistence);
+        reply(control({ kind: "receipt", data: { eventId: event.id } }));
+        if (record.status === "requested") {
+          await finishStop(record);
+          if (turn?.activeEventId === target && runningEventIds.get(event.threadId) !== target &&
+              stoppedTurns.get(target)?.status !== "requested") finishTurnState(event.threadId, target);
+          if (stoppedTurns.get(target)?.status !== "requested") return;
+        }
+        reply(stopStatus(stoppedTurns.get(target)!, event.id));
+        return;
+      })().catch(() => state("stop-storage-failed"));
       return;
     }
     if (event.kind === "admission_query") {
@@ -2633,7 +2622,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const user = history.find((stored): stored is YorozuEvent & { kind: "message" } =>
         stored.kind === "message" && stored.data.role === "user" && stored.id === id);
       const expired = expiredAdmissions.get(id);
-      const withdrawal = stoppedTurns.get(id);
+      const withdrawal = stopStore.confirmed(id);
       const rejectedReply = history.findLast((stored) => stored.kind === "admission_status" &&
         stored.data.eventId === id && stored.data.status === "rejected" && stored.data.reason?.startsWith("reply-"));
       const recordedCompletionId = user?.data.completionId;
@@ -2765,6 +2754,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     const identity = event.kind === "message" && event.data.role === "user"
       ? userMessageIdentity(event) : undefined;
+    if (identity && !stopStore.available) return state("stop-storage-failed");
     if (identity && acceptedMessages.has(event.id) && acceptedMessages.get(event.id) !== identity) {
       rejectUserMessage("conflicting-message-id");
       return state("rejected-conflicting-message-id");
@@ -3175,7 +3165,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   /** OpenClaw's `yorozu` channel plugin. Its messages land like any agent reply: logged, synced, pushed. */
   const channel = startChannelHost({
     dir,
-    canDispatch: (id) => !stopped && !stoppedTurns.has(id),
+    canDispatch: (id) => !stopped && stopStore.available && !stoppedTurns.has(id),
     onError: (message) => state(`channel-${message}`),
     onCapabilities: () => { if (!stopped) broadcast(modelList()); },
     onModel: (threadId, model) => {
@@ -3261,7 +3251,12 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       run.replyDraft = undefined;
       const stop = stoppedTurns.get(messageId);
-      if (stop) completeStop(stop, status === "aborted" ? "stopped" : "completed");
+      if (stop) {
+        void completeStop(stop, status === "aborted" ? "stopped" : "completed")
+          .then(() => finishTurnState(run.threadId, messageId))
+          .catch(() => state("stop-storage-failed"));
+        return;
+      }
       // A failed run with nothing said leaves the message unanswered: say so, as a native agent does.
       else if (status === "failed" && !run.replied) {
         emit({ id: `openclaw:${messageId}:failed`, threadId: run.threadId, ts: Date.now(), agentId: MAIN_AGENT,
@@ -3312,25 +3307,32 @@ export function serve(options: ServeOptions = {}): Sidecar {
    * The relay-free path in: the Mac app's own chat UI connects here instead of pairing. Its
    * first frame is the thread list, exactly as a phone's `hello` is answered with one.
    */
+  const localConnections = new Set<string>();
   const local = startLocalChannel({
     path: localSocketPath(dir),
     onOpen: (device, send) => {
-      locals.set(device, send);
-      state("local-connected");
-      send(threadList());
-      send(modelList());
-      void refreshSkills();
-      send(projectList());
-      pushDevices();
+      localConnections.add(device);
+      void startupRecovery.then(() => {
+        if (stopped || !localConnections.has(device)) return;
+        locals.set(device, send);
+        state("local-connected");
+        send(threadList());
+        send(modelList());
+        void refreshSkills();
+        send(projectList());
+        pushDevices();
+      }).catch(() => state("stop-storage-failed"));
     },
     onEvent: (device, event) => {
-      try {
+      void startupRecovery.then(() => {
+        if (stopped) return;
         handleEvent(event, locals.get(device) ?? (() => {}), 0, undefined, device);
-      } catch (e) {
+      }).catch((e: unknown) => {
         state(`local-event-error ${e instanceof Error ? e.message : String(e)}`);
-      }
+      });
     },
     onClose: (device) => {
+      localConnections.delete(device);
       locals.delete(device);
       activeSearchRequests.delete(device);
       updateSubscribers.delete(device);
@@ -3906,11 +3908,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
     });
   }
 
-  connect();
-
+  const stopRecovery: Promise<void>[] = [];
   for (const stop of stoppedTurns.values()) {
     if (stop.preDispatch && stop.status !== "withdrawn") {
-      void withdrawBeforeDispatch(stop).catch(() => state("channel-storage-failed"));
+      stopRecovery.push(withdrawBeforeDispatch(stop));
       continue;
     }
     if (viaChannel(stop.threadId) && (stop.status === "requested" || stop.status === "unconfirmed")) {
@@ -3918,34 +3919,40 @@ export function serve(options: ServeOptions = {}): Sidecar {
       turnStates.set(stop.threadId, { state: stop.status === "requested" ? "stopping" : "stopped-unconfirmed",
         activeEventId: stop.targetEventId, queued: [] });
     }
-    if (stop.status === "requested") finishStop(stop);
+    if (stop.status === "requested") stopRecovery.push(finishStop(stop));
   }
 
-  for (const thread of listThreads(dir)) {
-    if (thread.nativeTurn?.state === "interrupted") resumeNativeTurn(thread.id);
-  }
+  // Recover durable Stop intent before admitting new work or clearing old native markers.
+  startupRecovery = Promise.all(stopRecovery).then(() => {
+    if (stopped) return;
+    for (const thread of listThreads(dir)) {
+      if (thread.nativeTurn?.state === "interrupted") resumeNativeTurn(thread.id);
+    }
 
-  for (const entry of [...queuedNative]) {
-    if (admittedTurns.has(entry.eventId)) continue;
-    if (stoppedTurns.has(entry.eventId)) { removeNativeQueue(entry.eventId); continue; }
-    const marker = listThreads(dir).find((thread) => thread.id === entry.threadId)?.nativeTurn;
-    if (marker?.state === "interrupted" && marker.userEventId === entry.eventId) continue;
-    const events = visibleThreadEvents(entry.threadId, dir);
-    if (events.some((event) => event.id === completionIdFor(entry.threadId, entry.eventId) &&
-        event.kind === "message" && event.data.done)) {
-      removeNativeQueue(entry.eventId);
-      continue;
+    for (const entry of [...queuedNative]) {
+      if (admittedTurns.has(entry.eventId)) continue;
+      if (stoppedTurns.has(entry.eventId)) { removeNativeQueue(entry.eventId); continue; }
+      const marker = listThreads(dir).find((thread) => thread.id === entry.threadId)?.nativeTurn;
+      if (marker?.state === "interrupted" && marker.userEventId === entry.eventId) continue;
+      const events = visibleThreadEvents(entry.threadId, dir);
+      if (events.some((event) => event.id === completionIdFor(entry.threadId, entry.eventId) &&
+          event.kind === "message" && event.data.done)) {
+        removeNativeQueue(entry.eventId);
+        continue;
+      }
+      const original = events.find((event) => event.id === entry.eventId &&
+        event.kind === "message" && event.data.role === "user");
+      if (original?.kind === "message" && original.data.delivery === "steer") {
+        removeNativeQueue(entry.eventId);
+        continue;
+      }
+      if (original?.kind === "message") void enqueueTurn(entry.threadId, original.data.text, true,
+        original.data.attachments ?? [], entry.eventId, original);
+      else removeNativeQueue(entry.eventId);
     }
-    const original = events.find((event) => event.id === entry.eventId &&
-      event.kind === "message" && event.data.role === "user");
-    if (original?.kind === "message" && original.data.delivery === "steer") {
-      removeNativeQueue(entry.eventId);
-      continue;
-    }
-    if (original?.kind === "message") void enqueueTurn(entry.threadId, original.data.text, true,
-      original.data.attachments ?? [], entry.eventId, original);
-    else removeNativeQueue(entry.eventId);
-  }
+  });
+  void startupRecovery.then(() => { if (!stopped) connect(); })
+    .catch(() => state("stop-storage-failed"));
 
   // Production never installs legacy agents or starts its scheduler. Initialization remains
   // async so importing the sidecar does not load the old provider/tool graph.
@@ -3981,6 +3988,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       await Promise.allSettled([...pendingChannelAdmissions.values()].map((entry) => entry.promise));
       await Promise.allSettled([...preDispatchStops.values()]);
       await channel.close();
+      await stopStore.close();
       await admissionStore.close();
       await attachmentUploads.close();
       await direct?.close();

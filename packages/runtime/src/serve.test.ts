@@ -5993,3 +5993,90 @@ test("a pre-dispatch Stop intent survives host replacement before Rust removal f
     expect(plugin.frames.filter((frame) => frame.type === "inbound")).toEqual([]);
   } finally { mac.close(); plugin.close(); }
 });
+
+test("Rust Stop persistence fences a fresh request before receipts or abort dispatch", async () => {
+  const { dir, send, eventsUntil, plugin, target } = await channelRun();
+  const original = rustHost.hostRequest;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let saving = false;
+  vi.spyOn(rustHost, "hostRequest").mockImplementation(async (root, request) => {
+    if (request.op === "stop_save") { saving = true; await gate; }
+    return original(root, request);
+  });
+  try {
+    const requestId = send({ kind: "interrupt", data: { targetEventId: target } });
+    await vi.waitFor(() => expect(saving).toBe(true));
+    expect(plugin.frames.some((frame) => frame.type === "abort")).toBe(false);
+    expect(existsSync(join(dir, "stopped-turns.jsonl"))).toBe(false);
+    release();
+    const confirmed = await eventsUntil((event) => event.kind === "stop_status" && event.data.requestId === requestId);
+    expect(confirmed.some((event) => event.kind === "receipt" && event.data.eventId === requestId)).toBe(true);
+    expect(confirmed.at(-1)).toMatchObject({ data: { status: "requested" } });
+    expect(readFileSync(join(dir, "stopped-turns.jsonl"), "utf8")).toContain('"status":"requested"');
+    await vi.waitFor(() => expect(plugin.frames).toContainEqual({ type: "abort", messageId: target }));
+  } finally { release(); plugin.close(); }
+});
+
+test("Rust Stop storage failure reports no cessation or receipt and fences new admissions", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-stop-write-failure-"));
+  const lines: string[] = [];
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, log: (line) => lines.push(line) });
+  createThread(undefined, dir, "rust", { agent: "codex", cwd: proj });
+  const mac = await macClient(dir);
+  writeFileSync(join(dir, "stopped-turns.jsonl"), "invalid\n");
+  try {
+    mac.sendRawEvent({ id: "stop-failed", threadId: "rust", ts: Date.now(), agentId: "mac",
+      kind: "interrupt", data: { targetEventId: "never-admitted" } });
+    await vi.waitFor(() => expect(lines).toContain("STATE stop-storage-failed"));
+    expect(mac.events.some((event) => event.kind === "stop_status" ||
+      event.kind === "receipt" && event.data.eventId === "stop-failed")).toBe(false);
+    const before = lines.filter((line) => line === "STATE stop-storage-failed").length;
+    mac.sendRawEvent({ id: "new-work", threadId: "rust", ts: Date.now(), agentId: "mac",
+      kind: "message", data: { role: "user", text: "do not execute without safe Stop storage" } });
+    await vi.waitFor(() => expect(lines.filter((line) => line === "STATE stop-storage-failed").length).toBeGreaterThan(before));
+    expect(readThreadEvents("rust", dir).some((event) => event.id === "new-work")).toBe(false);
+    expect(mac.events.some((event) => event.kind === "receipt" && event.data.eventId === "new-work")).toBe(false);
+    expect(readFileSync(join(dir, "stopped-turns.jsonl"), "utf8")).toBe("invalid\n");
+  } finally { mac.close(); }
+});
+
+test("Rust Stop startup recovery gates local greeting and relay registration until durable uncertainty", async () => {
+  relay = await startRelay(0);
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-stop-startup-gate-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  appendThreadEvent({ id: "original", threadId: "cc", ts: 1, agentId: "main", kind: "message",
+    data: { role: "user", text: "Finish the report" } }, dir);
+  setNativeTurn("cc", { id: "native:original:final", state: "running", userEventId: "original" }, dir);
+  writeFileSync(join(dir, "stopped-turns.jsonl"), JSON.stringify({ targetEventId: "original", threadId: "cc",
+    status: "requested", requestIds: ["old-stop"] }) + "\n");
+  const original = rustHost.hostRequest;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let saving = false;
+  vi.spyOn(rustHost, "hostRequest").mockImplementation(async (root, request) => {
+    if (request.op === "stop_save") { saving = true; await gate; }
+    return original(root, request);
+  });
+  const lines: string[] = [];
+  const run = vi.fn<NativeAgentRunner["run"]>();
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir,
+    nativeRunners: { codex: { run } }, log: (line) => lines.push(line) });
+  await vi.waitFor(() => expect(existsSync(localSocketPath(dir))).toBe(true));
+  const client = createConnection(localSocketPath(dir)); let received = "";
+  client.on("data", (data) => { received += data.toString(); });
+  try {
+    await vi.waitFor(() => expect(saving).toBe(true));
+    expect(lines.some((line) => line.startsWith("QR "))).toBe(false);
+    expect(received).toBe("");
+    expect(listThreads(dir)[0]?.nativeTurn).toMatchObject({ state: "interrupted", userEventId: "original" });
+    expect(run).not.toHaveBeenCalled();
+    release();
+    await vi.waitFor(() => expect(received).toContain('"kind":"thread_list"'));
+    await vi.waitFor(() => expect(lines.some((line) => line.startsWith("QR "))).toBe(true));
+    expect(listThreads(dir)[0]?.nativeTurn).toBeUndefined();
+    expect(readFileSync(join(dir, "stopped-turns.jsonl"), "utf8")).toContain('"status":"unconfirmed"');
+    expect(run).not.toHaveBeenCalled();
+  } finally { release(); client.destroy(); }
+});
