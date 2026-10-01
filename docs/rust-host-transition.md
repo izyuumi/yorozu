@@ -502,6 +502,11 @@ while retaining individual deadlines. Automatic Release, Release Please and webs
 still exclude the alpha branch. This enables verification only: no upload, publication, beta feed
 change, native-gate exemption or installed-app replacement follows from an alpha CI push.
 The native iOS 26.5 release gate and internal-only distribution remain required later steps.
+The first alpha CI run passes Rust checks/tests on Linux and macOS, release checks, relay image,
+website and iOS compilation/catalog checks. Windows strict Clippy exposed an existing admission
+import used only by a Unix Stop test; that import is now local to its Unix fixture. Assertions and
+lint rules remain intact. The follow-up Windows run must confirm the repair; this is not proof
+of the still-unimplemented Windows local transport or a standalone host.
 
 ## Accepted conversation and storage target (implementation pending)
 

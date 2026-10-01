@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use yorozu_host_core::{admission::Admissions, now_ms, stops::Stops};
+use yorozu_host_core::{now_ms, stops::Stops};
 static ID: AtomicU64 = AtomicU64::new(0);
 struct Temp(PathBuf);
 impl Temp {
@@ -174,6 +174,7 @@ fn acknowledged_stop_survives_actual_worker_termination() {
 #[cfg(unix)]
 #[test]
 fn replaced_journal_fails_closed_without_touching_the_new_path() {
+    use yorozu_host_core::admission::Admissions;
     for stop in [false, true] {
         let temp = Temp::new();
         let (name, entry, mut store_stop, mut store_admission) = if stop {
