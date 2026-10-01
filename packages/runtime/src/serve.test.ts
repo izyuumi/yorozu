@@ -3708,18 +3708,10 @@ async function statusNotifyHarness(runner: NativeAgentRunner["run"]) {
     log: () => {},
   });
   await vi.waitFor(() => expect(macSockets).toHaveLength(1));
-  const local = createConnection(localSocketPath(stateDir));
-  await new Promise<void>((resolve, reject) => { local.once("connect", resolve); local.once("error", reject); });
-  const events: YorozuEvent[] = [];
-  let buffer = "";
-  local.on("data", (chunk) => {
-    buffer += chunk.toString();
-    const lines = buffer.split("\n");
-    buffer = lines.pop()!;
-    for (const line of lines) if (line) events.push(JSON.parse(line) as YorozuEvent);
-  });
+  const local = await macClient(stateDir);
+  const events = local.events;
   const send = (threadId: string, kind: string, data: unknown, id = randomUUID()): void => {
-    local.write(JSON.stringify({ id, threadId, ts: Date.now(), agentId: "mac", kind, data }) + "\n");
+    local.sendRawEvent({ id, threadId, ts: Date.now(), agentId: "mac", kind, data } as YorozuEvent);
   };
   const thread = (id: string): void => send(id, "thread_create", { agent: "codex", cwd: proj });
   const ask = (id: string, text: string): void => send(id, "message", { role: "user", text });
@@ -3731,11 +3723,11 @@ async function statusNotifyHarness(runner: NativeAgentRunner["run"]) {
     send(id, "approval_answer", { actionId: card.data.actionId, answer: "yes" });
   };
   const close = async () => {
-    local.destroy();
+    local.close();
     await sidecar.close();
     await new Promise<void>((done) => fake.close(() => done()));
   };
-  return { stateDir, classes, macSockets, thread, ask, send, finals, cards, answer, close };
+  return { stateDir, classes, macSockets, thread, ask, send, finals, cards, answer, waitEvent: local.waitEvent, close };
 }
 
 test("the phone is woken when a thread moves into needs-approval, not for each further card", async () => {
@@ -3753,12 +3745,18 @@ test("the phone is woken when a thread moves into needs-approval, not for each f
   try {
     t.thread("work");
     t.ask("work", "go");
-    await vi.waitFor(() => expect(t.cards("work")).toHaveLength(2));
-    t.answer("work", t.cards("work")[0]!);
-    t.answer("work", t.cards("work")[1]!);
-    await vi.waitFor(() => expect(t.cards("work")).toHaveLength(3));
+    const firstCard = await t.waitEvent((event) => event.threadId === "work" && event.kind === "approval_card");
+    await t.waitEvent((event) => event.threadId === "work" && event.kind === "approval_card" && event.id !== firstCard.id);
+    expect(t.cards("work")).toHaveLength(2);
+    const firstCards = t.cards("work");
+    t.answer("work", firstCards[0]!);
+    t.answer("work", firstCards[1]!);
+    await t.waitEvent((event) => event.threadId === "work" && event.kind === "approval_card" &&
+      !firstCards.some((previous) => previous.id === event.id));
+    expect(t.cards("work")).toHaveLength(3);
     t.answer("work", t.cards("work")[2]!);
-    await vi.waitFor(() => expect(t.finals("work")).toBe(1));
+    await t.waitEvent((event) => event.threadId === "work" && event.kind === "message" && event.data.role === "agent" && event.data.done === true);
+    expect(t.finals("work")).toBe(1);
     // The reply is the barrier: relay frames arrive in order, so everything before it has landed.
     await vi.waitFor(() => expect(t.classes).toContain("reply"));
     expect(t.classes).toEqual(["approval", "approval", "reply"]);
