@@ -118,6 +118,7 @@ import {
   threadModel,
   threadSummaries,
   threadSummary,
+  type ThreadRecord,
 } from "./threads.js";
 import { codexNativeRunner, connectCodex } from "./codex-native.js";
 import { NativeCards } from "./native-cards.js";
@@ -2344,7 +2345,22 @@ export function serve(options: ServeOptions = {}): Sidecar {
     return true;
   };
 
-  const finishStop = async (record: StopRecord): Promise<void> => {
+  const reconcilePausedStop = (record: StopRecord, expected: ThreadRecord["nativeTurn"]): boolean => {
+    if (threadAgent(record.threadId, dir) === "yorozu" || !["unconfirmed", "stopped"].includes(record.status)) return false;
+    if (expected && (expected.id !== completionIdFor(record.threadId, record.targetEventId) || expected.state !== "interrupted")) return false;
+    let proof: Record<string, unknown>;
+    try { proof = syncHostResult(dir, { op: "run_turn_stop_clear", threadId: record.threadId,
+      eventId: record.targetEventId, turnId: completionIdFor(record.threadId, record.targetEventId), expectedTurn: expected ?? null }); }
+    catch { proof = {}; }
+    if (proof.applied === true) { if (proof.cleared === true) broadcast(threadList()); return true; }
+    // The durable Stop and retained marker already bar dispatch. Keep cleanup retryable;
+    // installing a permanent storage fence here would strand the next task after recovery.
+    if (proof.reason !== "scope-replaced") state("native-stop-clear-unconfirmed");
+    return false;
+  };
+
+  const finishStop = async (record: StopRecord, captured?: { nativeTurn: ThreadRecord["nativeTurn"] }): Promise<void> => {
+    const expectedNativeTurn = captured ? captured.nativeTurn : listThreads(dir).find((thread) => thread.id === record.threadId)?.nativeTurn;
     const pending = stopStore.pending(record.targetEventId);
     if (pending) await pending;
     record = stoppedTurns.get(record.targetEventId) ?? record;
@@ -2409,8 +2425,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           turn.state = "stopped-unconfirmed";
           publishTurnState(record.threadId);
         }
-        setNativeTurn(record.threadId, undefined, dir);
-        broadcast(threadList());
+        reconcilePausedStop(stoppedTurns.get(target)!, expectedNativeTurn);
         broadcastStop(stoppedTurns.get(target)!);
         return;
       }
@@ -2883,6 +2898,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           status: channelRun?.status === "aborted" ? "stopped" : "requested", requestIds,
           ...(runningEventIds.get(event.threadId) === target && live?.kind === "message" && live.data.role === "agent"
             ? { partialText: live.data.text } : {}) };
+        const capturedNativeTurn = listThreads(dir).find((thread) => thread.id === event.threadId)?.nativeTurn;
         const persistence: Promise<void>[] = [rememberStop(record)];
         if (record.status === "requested" && turn?.activeEventId === target) {
           // Withdraw before aborting: the runner can settle and release its queue immediately.
@@ -2913,10 +2929,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
         await Promise.all(persistence);
         reply(control({ kind: "receipt", data: { eventId: event.id } }));
         if (record.status === "requested") {
-          await finishStop(record);
+          await finishStop(record, { nativeTurn: capturedNativeTurn });
           if (turn?.activeEventId === target && runningEventIds.get(event.threadId) !== target &&
               stoppedTurns.get(target)?.status !== "requested") finishTurnState(event.threadId, target);
-          if (stoppedTurns.get(target)?.status !== "requested") return;
+          if (stoppedTurns.get(target)?.status !== "requested") {
+            if (!listThreads(dir).find((thread) => thread.id === event.threadId)?.nativeTurn) drainQueuedNative(event.threadId);
+            return;
+          }
+        } else if (reconcilePausedStop(stoppedTurns.get(target)!, capturedNativeTurn)) {
+          drainQueuedNative(event.threadId);
         }
         reply(stopStatus(stoppedTurns.get(target)!, event.id));
         return;
@@ -4215,6 +4236,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
         activeEventId: stop.targetEventId, queued: [] });
     }
     if (stop.status === "requested") stopRecovery.push(() => finishStop(stop));
+    else if (!viaChannel(stop.threadId) && ["unconfirmed", "stopped"].includes(stop.status)) {
+      const expected = listThreads(dir).find((thread) => thread.id === stop.threadId)?.nativeTurn;
+      stopRecovery.push(async () => { reconcilePausedStop(stop, expected); });
+    }
   }
 
   // Recover durable Stop intent before admitting new work or clearing old native markers.

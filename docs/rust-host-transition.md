@@ -1050,6 +1050,32 @@ fixture setup failure are retained. Metadata conflicts retain the old marker aft
 answers, and retries retire each card once. Full approval currency and remaining generic
 Stop/rewind/pre-SDK transitions still belong to finite item3.
 
+## Scoped Rust paused-Stop cleanup
+
+A durable same-thread Stop with status unconfirmed or stopped can now retire its exact retained
+paused native marker through run_turn_stop_clear. Rust checks the canonical origin, interrupted
+state, existing safe-number compatibility and current registry owner before metadata CAS. It retires
+that registry only after confirmed storage. Missing/requested/wrong-thread Stop evidence, running
+markers, replacement scopes and replacement registry owners preserve state. An absent marker is a
+safe no-op. Queue, history and Stop records remain unchanged; this operation grants no execution
+and does not publish a synthetic final or turn uncertainty into confirmed cessation.
+
+Node captures the marker before awaiting durable Stop storage. Failed cleanup retains the marker
+and allows replay to retry without a permanent Stop-only storage fence. Startup also retries
+unconfirmed/stopped paused markers, while the existing accepted and Stop recovery gates still
+precede queue dispatch. After confirmed cleanup, normal queue draining retires the stopped row and
+advances waiting work once. A scope replaced during the Stop write remains intact.
+
+Focused validation passes21 Rust readiness cases, strictClippy, production build and28 runtime
+Stop cases. Actual previous Root code rejected the new operation; previous Node code stranded
+waiting work after a metadata conflict, failed startup recovery and erased a replacement marker.
+Those failures and the final positive evidence are retained. Full validation passes135 Rust tests
+and formatting plus853 runtime/plugin checks and1skip/52files with one local worker and unchanged
+deadlines. One initial full run timed out only in the existing external-queue-mutation case; that
+case passed unchanged in489ms at its original five-second deadline, followed by the green full rerun.
+Both runs are retained. The broader Stop fallback, rewind,
+pre-SDK/unissued marker transitions and full approval currency remain within finite item3.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

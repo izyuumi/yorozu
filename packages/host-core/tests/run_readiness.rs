@@ -1125,3 +1125,108 @@ fn boot_uses_retained_numeric_values_and_refuses_rounded_opaque_identity() {
     assert_eq!(boot(&mut host, &rounded, false)["reason"], "scope-replaced");
     assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), before);
 }
+
+fn clear_stop(host: &mut History, marker: &Value) -> Value {
+    host.request(
+        &json!({"op":"run_turn_stop_clear","threadId":"thread","eventId":"origin",
+        "turnId":"native:origin:final","expectedTurn":marker}),
+    )
+}
+#[test]
+fn scoped_stop_clear_requires_durable_uncertainty_and_keeps_queue_history_and_stop_evidence() {
+    for guard in [
+        "unconfirmed",
+        "stopped",
+        "missing-stop",
+        "requested",
+        "wrong-thread",
+        "active",
+        "replaced",
+        "registry-replaced",
+        "conflict",
+    ] {
+        let temp = Temp::new();
+        let (mut host, _) = open(&temp);
+        seed(&mut host, "origin", "conversation");
+        let scope = issued(&mut host);
+        assert_eq!(
+            lifecycle(&mut host, &scope, "run_attempt_pause")["applied"],
+            true
+        );
+        let marker = snapshot(&temp)["threads"][0]["nativeTurn"].clone();
+        if guard == "registry-replaced" {
+            let newer = issued(&mut host);
+            assert_ne!(newer["attemptId"], scope["attemptId"]);
+            let read = snapshot(&temp);
+            let mut index = read["threads"].clone();
+            index[0]["nativeTurn"] = marker.clone();
+            assert_eq!(host.request(&json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index}))["stored"], true);
+        }
+        if guard != "missing-stop" {
+            assert!(host.request(&json!({"op":"stop_save","record":{"targetEventId":"origin",
+                "threadId":if guard == "wrong-thread" { "other" } else { "thread" },
+                "status":if guard == "requested" { "requested" } else if guard == "stopped" { "stopped" } else { "unconfirmed" },
+                "requestIds":["stop"],"future":{"kept":true}}}))["record"].is_object());
+        }
+        let mut expected = marker.clone();
+        if guard == "active" || guard == "replaced" {
+            let read = snapshot(&temp);
+            let mut index = read["threads"].clone();
+            if guard == "active" {
+                index[0]["nativeTurn"]["state"] = json!("running");
+            } else {
+                index[0]["nativeTurn"]["attemptId"] = json!("b".repeat(32));
+            }
+            assert_eq!(host.request(&json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index}))["stored"], true);
+            if guard == "active" {
+                expected = snapshot(&temp)["threads"][0]["nativeTurn"].clone();
+            }
+        }
+        let conflict = temp.0.join("threads.json.tmp");
+        if guard == "conflict" {
+            fs::write(&conflict, b"owned Stop clear conflict").unwrap();
+        }
+        let metadata = fs::read(temp.0.join("threads.json")).unwrap();
+        let queue = fs::read(temp.0.join("native-turn-queue.json")).unwrap();
+        let history = fs::read(temp.0.join("threads/thread.jsonl")).unwrap();
+        let stop = fs::read(temp.0.join("stopped-turns.jsonl")).unwrap_or_default();
+        let proof = clear_stop(&mut host, &expected);
+        if ["unconfirmed", "stopped"].contains(&guard) {
+            assert_eq!(proof["applied"], true, "{guard}: {proof}");
+            assert!(snapshot(&temp)["threads"][0]["nativeTurn"].is_null());
+            assert_eq!(clear_stop(&mut host, &Value::Null)["applied"], true);
+            assert_eq!(host.request(&json!({"op":"run_attempt_current","threadId":"thread","eventId":"origin","attemptId":scope["attemptId"],"mode":"owned"}))["current"], false);
+        } else {
+            assert_eq!(proof["applied"], false, "{guard}: {proof}");
+            assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), metadata);
+        }
+        assert_eq!(
+            fs::read(temp.0.join("native-turn-queue.json")).unwrap(),
+            queue
+        );
+        assert_eq!(
+            fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+            history
+        );
+        assert_eq!(
+            fs::read(temp.0.join("stopped-turns.jsonl")).unwrap_or_default(),
+            stop
+        );
+        if guard == "conflict" {
+            assert_eq!(proof["reason"], "metadata-unconfirmed");
+            assert_eq!(fs::read(&conflict).unwrap(), b"owned Stop clear conflict");
+            fs::remove_file(conflict).unwrap();
+            drop(host);
+            let mut host = History::open(&temp.0).unwrap();
+            assert_eq!(clear_stop(&mut host, &expected)["applied"], true);
+            assert_eq!(
+                host.request(&json!({"op":"stop_get","targetEventId":"origin"}))["record"]["status"],
+                "unconfirmed"
+            );
+            assert_eq!(
+                fs::read(temp.0.join("native-turn-queue.json")).unwrap(),
+                queue
+            );
+        }
+    }
+}

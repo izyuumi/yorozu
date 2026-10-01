@@ -898,6 +898,9 @@ impl History {
         if request["op"] == "run_turn_recover" {
             return self.boot_reconcile(request, thread);
         }
+        if request["op"] == "run_turn_stop_clear" {
+            return self.stop_clear(request, thread);
+        }
         let action = request["op"]
             .as_str()
             .filter(|op| ["run_turn_retry", "run_turn_dismiss"].contains(op))
@@ -1014,6 +1017,76 @@ impl History {
         Ok(
             json!({"applied":true,"queueRemoved":queue_removed,"queueRepaired":queue_repaired,"recoveryAttempts":if action == "run_turn_retry" { Some(0) } else { None }}),
         )
+    }
+    fn stop_clear(&mut self, request: &Value, thread: &str) -> io::Result<Value> {
+        let origin = request["eventId"]
+            .as_str()
+            .filter(|id| !invalid_id(id))
+            .ok_or_else(invalid)?;
+        let completion = format!("native:{origin}:final");
+        let expected = request
+            .get("expectedTurn")
+            .filter(|value| value.is_null() || value.is_object())
+            .ok_or_else(invalid)?;
+        if request["turnId"] != completion {
+            return Ok(json!({"applied":false,"reason":"scope-replaced"}));
+        }
+        let proof = self.request(&json!({"op":"stop_get","targetEventId":origin}));
+        if proof.get("error").is_some() {
+            return Ok(proof);
+        }
+        let stop = &proof["record"];
+        if stop["threadId"] != thread
+            || !["unconfirmed", "stopped"].contains(&stop["status"].as_str().unwrap_or(""))
+        {
+            return Ok(json!({"applied":false,"reason":"stop-unconfirmed"}));
+        }
+        let bytes = crate::thread_index::current(&self.root)?.ok_or_else(invalid)?;
+        let mut index: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        let Some(home) = index
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|row| row["id"] == thread)
+        else {
+            return Ok(json!({"applied":false,"reason":"scope-replaced"}));
+        };
+        if home["agent"]
+            .as_str()
+            .is_none_or(|agent| agent.is_empty() || agent == "yorozu")
+        {
+            return Ok(json!({"applied":false,"reason":"scope-replaced"}));
+        }
+        let marker = home["nativeTurn"].clone();
+        if !crate::thread_index::compatible(&marker, expected) {
+            return Ok(json!({"applied":false,"reason":"scope-replaced"}));
+        }
+        if marker.is_null() {
+            return Ok(json!({"applied":true,"cleared":false,"stopStatus":stop["status"]}));
+        }
+        if marker["id"] != completion || marker.get("userEventId").is_some_and(|id| id != origin) {
+            return Ok(json!({"applied":false,"reason":"scope-replaced"}));
+        }
+        if marker["state"] != "interrupted" {
+            return Ok(json!({"applied":false,"reason":"run-active"}));
+        }
+        if self
+            .attempts
+            .get(thread)
+            .is_some_and(|owner| owner.0 != origin || marker["attemptId"] != owner.1)
+        {
+            return Ok(json!({"applied":false,"reason":"scope-replaced"}));
+        }
+        home.as_object_mut().unwrap().remove("nativeTurn");
+        let stored = crate::thread_index::request_native(
+            &self.root,
+            &json!({"op":"replace","expectedHash":digest(&bytes),"threads":index}),
+        );
+        if stored["stored"] != true {
+            return Ok(json!({"applied":false,"reason":"metadata-unconfirmed"}));
+        }
+        self.attempts.remove(thread);
+        Ok(json!({"applied":true,"cleared":true,"stopStatus":stop["status"]}))
     }
     fn boot_reconcile(&mut self, request: &Value, thread: &str) -> io::Result<Value> {
         let expected = request

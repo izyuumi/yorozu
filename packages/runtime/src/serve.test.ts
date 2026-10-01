@@ -1,3 +1,4 @@
+import type { StopRecord } from "./stops.js";
 import { createInboundDispatcher } from "../../openclaw-channel/dispatch.js";
 import { createRuns } from "../../openclaw-channel/runs.js";
 import { connectYorozu } from "../../openclaw-channel/socket.js";
@@ -4550,6 +4551,94 @@ test("a native Stop spanning host restart reports uncertainty and prevents recov
   expect(run).toHaveBeenCalledTimes(1);
   expect(readThreadEvents("cc", dir).some((event) => event.id === "native:original:final")).toBe(false);
   expect(readFileSync(join(dir, "stopped-turns.jsonl"), "utf8")).toContain('"status":"unconfirmed"');
+});
+
+test("a paused Stop retries uncertain metadata cleanup and advances queued work once", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-stop-clear-retry-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  appendThreadEvent({ id: "original", threadId: "cc", ts: 1, agentId: "main", kind: "message",
+    data: { role: "user", text: "Finish the report" } }, dir);
+  setNativeTurn("cc", { id: "native:original:final", state: "running", userEventId: "original" }, dir);
+  const run = vi.fn<NativeAgentRunner["run"]>().mockRejectedValue(new Error("backend crashed"));
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+  await vi.waitFor(() => expect(listThreads(dir)[0]?.nativeTurn).toMatchObject({ state: "interrupted", recoveryAttempts: 3 }));
+  expect(run).toHaveBeenCalledTimes(3);
+  const waiting = send({ kind: "message", data: { role: "user", text: "Next task" } }, "cc");
+  await vi.waitFor(() => expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8")))
+    .toContainEqual({ threadId: "cc", eventId: waiting }));
+  const conflict = join(dir, "threads.json.tmp");
+  writeFileSync(conflict, "owned Stop clear conflict fixture");
+  const before = readFileSync(join(dir, "threads.json"), "utf8");
+  try {
+    send({ kind: "interrupt", data: { targetEventId: "original" } }, "cc");
+    await vi.waitFor(() => expect(readFileSync(join(dir, "stopped-turns.jsonl"), "utf8")).toContain('"status":"unconfirmed"'));
+    // A replayed durable status is a causal barrier after the first failed cleanup.
+    send({ kind: "interrupt", data: { targetEventId: "original" } }, "cc");
+    await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === "original" && event.data.status === "unconfirmed");
+    expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(before);
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(readThreadEvents("cc", dir).some((event) => event.id === "native:original:final")).toBe(false);
+  } finally { rmSync(conflict); }
+  run.mockResolvedValue({ text: "next completed" });
+  send({ kind: "interrupt", data: { targetEventId: "original" } }, "cc");
+  await eventsUntil((event) => event.kind === "message" && event.id === `native:${waiting}:final` && event.data.done === true);
+  expect(run).toHaveBeenCalledTimes(4);
+  expect(listThreads(dir)[0]?.nativeTurn).toBeUndefined();
+  expect(readThreadEvents("cc", dir).some((event) => event.id === "native:original:final")).toBe(false);
+  expect(readFileSync(join(dir, "stopped-turns.jsonl"), "utf8")).toContain('"status":"unconfirmed"');
+  expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8"))).toEqual([]);
+});
+
+test("startup retries a retained paused marker after durable unconfirmed Stop", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-stop-clear-startup-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  for (const [id, text] of [["original", "Old work"], ["waiting", "Next task"]] as const) {
+    appendThreadEvent({ id, threadId: "cc", ts: id === "original" ? 1 : 2, agentId: "main", kind: "message",
+      data: { role: "user", text } }, dir);
+  }
+  setNativeTurn("cc", { id: "native:original:final", state: "interrupted", userEventId: "original", recoveryAttempts: 2 }, dir);
+  writeFileSync(join(dir, "stopped-turns.jsonl"), JSON.stringify({ targetEventId: "original", threadId: "cc",
+    status: "unconfirmed", requestIds: ["old-stop"] }) + "\n");
+  writeFileSync(join(dir, "native-turn-queue.json"), JSON.stringify([{ threadId: "cc", eventId: "original" }, { threadId: "cc", eventId: "waiting" }]));
+  const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "next completed" });
+  await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+  await vi.waitFor(() => expect(readThreadEvents("cc", dir)).toContainEqual(expect.objectContaining({
+    id: "native:waiting:final", data: expect.objectContaining({ done: true, text: "next completed" }),
+  })));
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(readThreadEvents("cc", dir).some((event) => event.id === "native:original:final")).toBe(false);
+  expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8"))).toEqual([]);
+  expect(readFileSync(join(dir, "stopped-turns.jsonl"), "utf8")).toContain('"status":"unconfirmed"');
+});
+
+test("paused Stop cleanup preserves a scope replaced during durable Stop write", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-stop-clear-replaced-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  appendThreadEvent({ id: "original", threadId: "cc", ts: 1, agentId: "main", kind: "message",
+    data: { role: "user", text: "Old work" } }, dir);
+  setNativeTurn("cc", { id: "native:original:final", state: "running", userEventId: "original", recoveryAttempts: 2 }, dir);
+  const run = vi.fn<NativeAgentRunner["run"]>().mockRejectedValue(new Error("backend crashed"));
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+  await vi.waitFor(() => expect(listThreads(dir)[0]?.nativeTurn).toMatchObject({ state: "interrupted", recoveryAttempts: 3 }));
+  const request = rustHost.hostRequest;
+  let replacement: string | undefined;
+  vi.spyOn(rustHost, "hostRequest").mockImplementation(async (root, data) => {
+    const proof = await request(root, data);
+    const record = data.record as StopRecord | undefined;
+    if (data.op === "stop_save" && record?.targetEventId === "original" && record.status === "unconfirmed") {
+      setNativeTurn("cc", { id: "native:new-scope:final", state: "interrupted", userEventId: "new-scope",
+        attemptId: "b".repeat(32), recoveryAttempts: 1, pauseReason: "unconfirmed" }, dir);
+      replacement = readFileSync(join(dir, "threads.json"), "utf8");
+    }
+    return proof;
+  });
+  send({ kind: "interrupt", data: { targetEventId: "original" } }, "cc");
+  await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === "original" && event.data.status === "unconfirmed");
+  expect(replacement).toBeDefined();
+  expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(replacement);
+  expect(listThreads(dir)[0]?.nativeTurn).toMatchObject({ id: "native:new-scope:final", userEventId: "new-scope" });
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(readThreadEvents("cc", dir).some((event) => event.id === "native:original:final")).toBe(false);
 });
 
 test("native session and running marker reach disk before completion, and survive sidecar shutdown", async () => {
