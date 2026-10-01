@@ -310,3 +310,122 @@ fn control_events_are_transcript_only_and_calendar_days_handle_negative_leap_and
     drop(store);
     assert!(History::open(&temp.0).is_ok());
 }
+
+#[test]
+fn real_owner_large_results_are_bounded_and_tokens_cannot_consume_or_replay_another_result() {
+    let temp = Temp::new();
+    fs::create_dir(temp.0.join("threads")).unwrap();
+    let expected = event(&"日本語🙂".repeat(100_000));
+    let original = format!("{expected}\n");
+    fs::write(temp.thread(), &original).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_yorozu-host-core"))
+        .arg("history")
+        .arg(&temp.0)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    fn call(input: &mut impl Write, output: &mut impl BufRead, mut request: Value) -> Value {
+        let id = "request";
+        request["id"] = json!(id);
+        writeln!(input, "{request}").unwrap();
+        input.flush().unwrap();
+        let mut line = String::new();
+        output.read_line(&mut line).unwrap();
+        let frame: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(frame["id"], id);
+        frame["result"].clone()
+    }
+    let query =
+        json!({"op":"history_page","threadId":"thread","minTs":0,"includeApprovalStatus":true});
+    let proof = call(&mut input, &mut output, query.clone());
+    assert!(
+        proof["responseBytes"]
+            .as_u64()
+            .is_some_and(|n| n > 1024 * 1024 && n <= 34 * 1024 * 1024)
+    );
+    assert!(
+        call(
+            &mut input,
+            &mut output,
+            json!({"op":"bridge_result","token":"wrong"})
+        )
+        .get("error")
+        .is_some()
+    );
+    let result = call(
+        &mut input,
+        &mut output,
+        json!({"op":"bridge_result","token":proof["bridgeToken"]}),
+    );
+    assert_eq!(result["events"][0]["data"], expected["data"]);
+    assert!(result["events"][0]["syncCursor"].is_string());
+    assert!(
+        call(
+            &mut input,
+            &mut output,
+            json!({"op":"bridge_result","token":proof["bridgeToken"]})
+        )
+        .get("error")
+        .is_some()
+    );
+    let obsolete = call(&mut input, &mut output, query.clone());
+    let replacement = call(&mut input, &mut output, query.clone());
+    assert_ne!(obsolete["bridgeToken"], replacement["bridgeToken"]);
+    assert!(
+        call(
+            &mut input,
+            &mut output,
+            json!({"op":"bridge_result","token":obsolete["bridgeToken"]})
+        )
+        .get("error")
+        .is_some()
+    );
+    assert_eq!(
+        call(&mut input, &mut output, json!({"op":"history_open"}))["stored"],
+        true
+    );
+    assert!(
+        call(
+            &mut input,
+            &mut output,
+            json!({"op":"bridge_result","token":replacement["bridgeToken"]})
+        )
+        .get("error")
+        .is_some()
+    );
+    drop(input);
+    assert!(child.wait().unwrap().success());
+    let mut restarted = Command::new(env!("CARGO_BIN_EXE_yorozu-host-core"))
+        .arg("history")
+        .arg(&temp.0)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = restarted.stdin.take().unwrap();
+    let mut output = BufReader::new(restarted.stdout.take().unwrap());
+    let fresh = call(&mut input, &mut output, query);
+    assert!(
+        call(
+            &mut input,
+            &mut output,
+            json!({"op":"bridge_result","token":proof["bridgeToken"]})
+        )
+        .get("error")
+        .is_some()
+    );
+    assert_eq!(
+        call(
+            &mut input,
+            &mut output,
+            json!({"op":"bridge_result","token":fresh["bridgeToken"]})
+        )["events"][0]["data"],
+        expected["data"]
+    );
+    drop(input);
+    assert!(restarted.wait().unwrap().success());
+    assert_eq!(fs::read_to_string(temp.thread()).unwrap(), original);
+}

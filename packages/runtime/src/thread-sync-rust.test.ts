@@ -48,10 +48,6 @@ test("Rust pages filter before limits and bound bytes without dropping an oversi
   expect(page).toMatchObject({ events: [large], more: true });
   expect(rustSyncPage(dir, "home", page.events[0]!.syncCursor, 0, true).events.map(e => e.id)).toEqual(["next"]);
   expect(syncHostRequest(dir, { op: "bridge_pid" }).pid).toBe(pid);
-  const proof = syncHostRequest(dir, { op: "history_page", threadId: "home", minTs: 0, includeApprovalStatus: true });
-  expect(() => syncHostRequest(dir, { op: "history_page_result", token: "wrong" })).toThrow("unconfirmed");
-  expect(syncHostRequest(dir, { op: "history_page_result", token: proof.token }, proof.responseBytes as number)).toMatchObject({ events: [large], more: true });
-  expect(() => syncHostRequest(dir, { op: "history_page_result", token: proof.token })).toThrow("unconfirmed");
   expect(syncHostRequest(dir, { op: "bridge_pid" }).pid).toBe(pid);
 }));
 test("Rust cache overflow retains all rows and unsupported legacy values remain untouched", () => fixture((dir, file) => {

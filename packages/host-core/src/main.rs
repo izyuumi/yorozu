@@ -1,3 +1,4 @@
+use rand_core::{OsRng, RngCore};
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
@@ -35,6 +36,13 @@ fn run() -> io::Result<()> {
         let mut store = History::open(Path::new(&dir))?;
         let mut input = io::stdin().lock();
         let mut output = io::stdout().lock();
+        let mut prepared: Option<(String, Vec<u8>)> = None;
+        let mut serial = 0u64;
+        let mut epoch = [0u8; 16];
+        OsRng
+            .try_fill_bytes(&mut epoch)
+            .map_err(|_| io::ErrorKind::InvalidData)?;
+        let epoch = u128::from_le_bytes(epoch);
         loop {
             let mut bytes = Vec::new();
             let length = Read::by_ref(&mut input)
@@ -51,10 +59,41 @@ fn run() -> io::Result<()> {
                 .as_str()
                 .filter(|id| !id.is_empty() && id.len() <= 128)
                 .ok_or(io::ErrorKind::InvalidData)?;
-            let result = store.request(&request);
-            serde_json::to_writer(&mut output, &json!({"id":id,"result":result}))
-                .map_err(io::Error::other)?;
-            output.write_all(b"\n")?;
+            let bytes = if request["op"] == "bridge_result" {
+                if prepared
+                    .as_ref()
+                    .is_some_and(|(token, _)| request["token"] == *token)
+                {
+                    prepared.take().unwrap().1
+                } else {
+                    serde_json::to_vec(&json!({"error":"response-unconfirmed"}))
+                        .map_err(io::Error::other)?
+                }
+            } else {
+                prepared = None;
+                let bytes =
+                    serde_json::to_vec(&store.request(&request)).map_err(io::Error::other)?;
+                if bytes.len() + 4096 > 34 * 1024 * 1024 {
+                    serde_json::to_vec(&json!({"error":"response-unconfirmed"}))
+                        .map_err(io::Error::other)?
+                } else if bytes.len() > 1024 * 1024 - 4096 {
+                    serial = serial.checked_add(1).ok_or(io::ErrorKind::InvalidData)?;
+                    let token = format!("reply:{epoch:032x}:{serial}");
+                    let metadata = json!({"bridgeToken":token,"responseBytes":bytes.len()+4096});
+                    prepared = Some((token, bytes));
+                    serde_json::to_vec(&metadata).map_err(io::Error::other)?
+                } else {
+                    bytes
+                }
+            };
+            // One bounded prepared response belongs to this process. Preserve result bytes.
+            write!(
+                &mut output,
+                "{{\"id\":{},\"result\":",
+                serde_json::to_string(id).map_err(io::Error::other)?
+            )?;
+            output.write_all(&bytes)?;
+            output.write_all(b"}\n")?;
             output.flush()?;
         }
     }

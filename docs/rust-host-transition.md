@@ -631,14 +631,11 @@ Disconnect, revocation, re-pairing and new request generations invalidate obsole
 an ephemeral cancellation cannot prevent revocation; the connection closes before removal proceeds.
 A retired socket's late close callback cannot clear the replacement connection's jobs.
 
-Ordinary synchronous worker responses retain the 1 MiB limit. Catch-up may request a transient
-larger response allocation, bounded to 34 MiB with envelope allowance; the worker honors that
-specific request's output buffer and stdout bound. The maximum is not permanently allocated for all
-cached bridges. A real-owner fixture returns a multimegabyte UTF-8 response and proves the pinned
-history PID survives, subsequent ordinary RPCs work and excessive response allowances are refused.
-Sizing covers both Rust and original JavaScript encodings: large numeric arrays can expand during
-worker re-encoding. The numeric-extension fixture first reproduced a pinned-owner failure; the
-repaired allowance preserves that owner and the complete unchanged event.
+Ordinary synchronous bridge allocations retain the1MiB default. The shared result transport below
+now supplies transient large responses from exact Rust bytes, replacing catch-up's per-job allowance.
+A real-owner fixture returns multimegabyte UTF8 and numeric extensions, proving the pinned PID
+survives and subsequent ordinary RPCs work. The earlier numeric-extension pinned-owner failure and
+its original allowance repair remain recorded; no permanent34MiB buffer is kept for every bridge.
 Additional contracts verify supersession, round-robin/congestion, stale/duplicate claims, monotonic
 pacing, connection invalidation and job/byte bounds. Existing affected sync/catch-up cases pass.
 The first build's Clippy boolean-style failure and omitted `done` response field are retained in
@@ -660,9 +657,8 @@ the page limit. Historical duplicate IDs and unknown event fields are retained.
 Pages contain at most200 events and target512KiB of encoded JSON, with the existing single-oversized
 first-event escape so a large retained event cannot prevent forward progress. `more` reports a byte
 or count cutoff, including the released conservative full200-row signal. Oversized first events use
-a one-result token and transient response allocation capped at34MiB; wrong/duplicate tokens do not
-consume another result. The I/O bridge validates the pinned id/result frame and forwards the exact
-Rust result bytes, avoiding JavaScript numeric re-encoding expansion and keeping the same owner.
+the shared one-result transport described below. The I/O bridge validates the pinned id/result frame
+and forwards exact Rust result bytes, avoiding JavaScript numeric re-encoding expansion.
 
 Metadata indexing is bounded to an estimated4MiB per log and16 recent logs, with no cached message
 bodies. Beyond that limit, up to256 returned offset/SHA checkpoints per log let normal and globally
@@ -704,6 +700,25 @@ All nine Rust metadata contracts,47 runtime history contracts and three affected
 checks pass. Complete verification also passes110 Rust and824 runtime tests plus one skip,
 formatting, strictClippy and the production build. Read-only review found no remaining defect.
 This reduces process boundaries without claiming ownership of run/approval policy yet.
+
+## Shared bounded response transport
+
+Every history-owner operation now uses the same result transport, removing paging-specific handles
+and catch-up buffer sizing. Rust serializes a result once, keeps at most one pending response, and
+returns a small handle only when it exceeds the ordinary1MiB envelope allowance. The compatibility
+bridge fetches it synchronously into a transient buffer proven to fit, capped at34MiB. Any subsequent
+ordinary operation invalidates the pending response. Wrong, duplicate and restart-stale handles
+cannot consume another result. Handles include a fresh random process epoch and checked serial;
+they are internal response currency, never authentication grants or provider credentials.
+
+The real stdio-owner test covers wrong/duplicate handles, ordinary-call invalidation, exact large
+UTF8 results, restart currency and preservation of the retained file. The restart case first exposed
+a serial-only collision, then passed after the process epoch repair. Failed build, restart and full
+runtime runs remain in evidence. The existing update workflow's completion waits now observe exact
+final messages, duplicate receipts and archived-thread broadcasts instead of polling runner counts
+and storage. All original assertions and its5000ms deadline remain in place. Final verification passes111 Rust and824 runtime tests plus one skip across52 files, formatting,
+strictClippy and the production build. Read-only review found no remaining protocol blocker.
+This transport does not complete run/approval policy.
 
 ## Isolated alpha CI
 

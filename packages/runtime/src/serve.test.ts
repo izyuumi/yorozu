@@ -783,17 +783,19 @@ test("queued updates wait for approvals and queued turns, prioritize new work, a
     now += 86_399_000;
     expect((await control()).phase).toBe("waiting");
     send({ kind: "message", data: { role: "user", text: "failure" } }, "work");
-    send({ kind: "message", data: { role: "user", text: "after failure" } }, "work");
+    const afterFailure = send({ kind: "message", data: { role: "user", text: "after failure" } }, "work");
     send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "other");
     send({ kind: "message", data: { role: "user", text: "new task" } }, "other");
     await eventsUntil((event) => event.kind === "message" && event.data.done === true && event.threadId === "other");
     expect((await control()).phase).toBe("waiting");
     send({ kind: "approval_answer", data: { actionId: card.data.actionId, answer: "yes" } }, "work");
-    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
+    await eventsUntil((event) => event.kind === "message" && event.id === `native:${afterFailure}:final` && event.data.done === true);
+    expect(run).toHaveBeenCalledTimes(4);
     expect((await control()).phase).toBe("countdown");
     for (let second = 0; second < 9; second++) { now += 1_000; expect((await control()).phase).toBe("countdown"); }
-    send({ kind: "message", data: { role: "user", text: "last second" } }, "other");
-    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(5));
+    const lastSecond = send({ kind: "message", data: { role: "user", text: "last second" } }, "other");
+    await eventsUntil((event) => event.kind === "message" && event.id === `native:${lastSecond}:final` && event.data.done === true);
+    expect(run).toHaveBeenCalledTimes(5);
     now += 1_000;
     expect((await control()).deadline).toBe(now + 10_000);
     stranger.send({ kind: "update_control", data: { action: "cancel", updateId: "u1" } });
@@ -821,13 +823,16 @@ test("queued updates wait for approvals and queued turns, prioritize new work, a
     mac = await macClient(dir);
     expect((await control("cancel")).phase).toBe("none");
     sendRaw(late);
-    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(6));
+    await eventsUntil((event) => event.kind === "message" && event.id === `native:${late.id}:final` && event.data.done === true);
+    expect(run).toHaveBeenCalledTimes(6);
     sendRaw(late);
-    await vi.waitFor(() => expect(states).toContain("duplicate-command"));
+    await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === late.id);
+    expect(states).toContain("duplicate-command");
     expect(run).toHaveBeenCalledTimes(6);
     expect(readThreadEvents("other", dir).filter((event) => event.id === late.id)).toHaveLength(1);
     sendRaw(archive);
-    await vi.waitFor(() => expect(listThreads(dir).find((thread) => thread.id === "other")?.archived).toBe(true));
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "other" && thread.archived));
+    expect(listThreads(dir).find((thread) => thread.id === "other")?.archived).toBe(true);
   } finally { mac.close(); stranger.close(); }
 });
 

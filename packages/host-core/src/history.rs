@@ -729,7 +729,7 @@ impl History {
             transaction["op"] = json!("replace");
             return crate::thread_index::request(&self.root, &transaction);
         }
-        if request["op"] == "history_page" || request["op"] == "history_page_result" {
+        if request["op"] == "history_page" {
             return self.paging.request(&self.root, request);
         }
         // Compose authenticated boxes with their durable currency in one local request.

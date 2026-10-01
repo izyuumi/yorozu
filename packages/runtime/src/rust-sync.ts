@@ -38,7 +38,7 @@ function bridgeFor(dir: string): Bridge {
   thread.on("exit", () => { Atomics.store(life, 0, 3); Atomics.notify(life, 0); if (bridges.get(dir) === owned) bridges.delete(dir); });
   return bridge;
 }
-export function syncHostRequest(dir: string, data: Record<string, unknown>, responseBytes = 1024 * 1024): Record<string, unknown> {
+function request(dir: string, data: Record<string, unknown>, responseBytes = 1024 * 1024): Record<string, unknown> {
   if (!Number.isSafeInteger(responseBytes) || responseBytes < 1 || responseBytes > 34 * 1024 * 1024) throw new Error("Rust history response limit");
   const id = randomUUID(); const input = JSON.stringify({ ...data, id });
   if (Buffer.byteLength(input) > 32 * 1024 * 1024 - 1) throw new Error("Rust history remains unconfirmed");
@@ -55,6 +55,16 @@ export function syncHostRequest(dir: string, data: Record<string, unknown>, resp
   try { result = JSON.parse(Buffer.from(output.subarray(0, Atomics.load(signal, 1))).toString("utf8")); } catch { throw new Error("Rust history remains unconfirmed"); }
   if (!result || typeof result !== "object" || Array.isArray(result) || Object.hasOwn(result, "error")) throw new Error("Rust history remains unconfirmed");
   return result as Record<string, unknown>;
+}
+/** Large results allocate a transient buffer only after the Rust owner supplies a bounded proof. */
+export function syncHostRequest(dir: string, data: Record<string, unknown>, responseBytes = 1024 * 1024): Record<string, unknown> {
+  const result = request(dir, data, responseBytes);
+  if (!Object.hasOwn(result, "bridgeToken")) return result;
+  if (Object.keys(result).length !== 2 || typeof result.bridgeToken !== "string" || typeof result.responseBytes !== "number")
+    throw new Error("Rust history remains unconfirmed");
+  const complete = request(dir, { op: "bridge_result", token: result.bridgeToken }, result.responseBytes);
+  if (Object.hasOwn(complete, "bridgeToken")) throw new Error("Rust history remains unconfirmed");
+  return complete;
 }
 export function closeSyncHost(dir: string): void {
   const root = resolve(dir); const bridge = bridges.get(root); if (!bridge) return;

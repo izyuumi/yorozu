@@ -54,8 +54,6 @@ pub struct Paging {
     indexes: HashMap<PathBuf, Index>,
     recent: VecDeque<PathBuf>,
     continuations: HashMap<PathBuf, VecDeque<Continuation>>,
-    prepared: Option<(String, Value)>,
-    serial: u64,
 }
 fn open(path: &Path) -> io::Result<File> {
     let metadata = fs::symlink_metadata(path)?;
@@ -332,32 +330,7 @@ impl Paging {
         Ok(json!({"events":events,"more":more}))
     }
     pub fn request(&mut self, root: &Path, request: &Value) -> Value {
-        if request["op"] == "history_page_result" {
-            if self
-                .prepared
-                .as_ref()
-                .is_none_or(|(token, _)| request["token"] != *token)
-            {
-                return json!({"error":"history-page-unconfirmed"});
-            }
-            return self.prepared.take().unwrap().1;
-        }
-        self.prepared = None;
-        let result = (|| {
-            let page = self.page(root, request)?;
-            let bytes = serde_json::to_vec(&page).map_err(io::Error::other)?.len();
-            if bytes + 4096 > 34 * 1024 * 1024 {
-                return Err(invalid());
-            }
-            if bytes > 1024 * 1024 - 4096 {
-                self.serial = self.serial.checked_add(1).ok_or_else(invalid)?;
-                let token = format!("page:{}", self.serial);
-                self.prepared = Some((token.clone(), page));
-                Ok(json!({"token":token,"responseBytes":bytes+4096}))
-            } else {
-                Ok(page)
-            }
-        })();
-        result.unwrap_or_else(|_: io::Error| json!({"error":"history-page-unconfirmed"}))
+        self.page(root, request)
+            .unwrap_or_else(|_: io::Error| json!({"error":"history-page-unconfirmed"}))
     }
 }
