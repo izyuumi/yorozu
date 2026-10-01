@@ -49,6 +49,29 @@ read-only storage alone is not evidence that a connection cannot create a server
 request or grant. Reusing that SDK requires an explicit integration decision and verification of
 the no-new-grants/no-identity-creation policy with synthetic authentication fixtures first.
 
+## Bounded existing-authorization check
+
+A second code-only check assessed reusing the SDK-managed, already authorized operator identity
+with identity creation, pairing, token issuance/refresh and scope upgrades disabled. No credentials
+were opened and no connection was attempted.
+
+The installed `src/gateway/client.ts` read-only mode loads an existing identity and suppresses
+local token-store writes. `src/gateway/call.ts` can require pre-existing stored authority before
+connecting. Neither disables server-side issuance during the connection handshake:
+`src/gateway/server/ws-connection/connect-device-tokens.ts::issueGatewayConnectDeviceTokens`
+calls `ensureDeviceToken` for a normally authorized device with an approved baseline.
+`src/infra/device-pairing-tokens.kernel.ts::ensureDeviceTokenInWorker` reuses an existing token
+only when its approval baseline, issuer and scopes match; otherwise it creates or rotates one.
+There is no verified SDK/protocol flag to prohibit that operation while authenticating an operator
+device. Prechecking local state cannot guarantee the server's state remains unchanged at handshake.
+
+**Exact blocker:** the permitted existing-identity connection cannot guarantee no server-side token
+issuance or rotation. Therefore `cron.list`, `cron.status` and `cron.runs` were not called. A
+supported no-issuance handshake contract, or a separately authorized broader connection lifecycle,
+is needed before live schedule capability can be confirmed. Do not claim read-only local storage
+satisfies the current authorization boundary, and do not replace it with shared secrets or trust
+policy changes.
+
 ## Actionable next implementation
 
 Resolve one supported operator read path before shipping a schedules tab: either reuse an existing
