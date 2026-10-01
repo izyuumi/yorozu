@@ -708,6 +708,12 @@ impl History {
         if self.failed {
             return json!({"error":"history-storage-failed"});
         }
+        if request["op"]
+            .as_str()
+            .is_some_and(|op| op.starts_with("peer_"))
+        {
+            return crate::peers::request(request);
+        }
         // Compose authenticated boxes with their durable currency in one local request.
         // Fixed internal operations keep recursion bounded and retain each component's fences.
         if request["op"] == "session_seal" {

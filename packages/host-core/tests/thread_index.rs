@@ -252,6 +252,9 @@ fn live_writer_lock_excludes_transactions_and_releases_without_mutating_state() 
     owner.try_lock().unwrap();
     assert!(temp.save(json!([record("thread")])).get("error").is_some());
     assert!(!temp.index().exists());
+    // A concurrent child may inherit the open description briefly before exec.
+    // Match the production owner: explicitly release, then prove immediate reacquisition.
+    owner.unlock().unwrap();
     drop(owner);
     assert_eq!(temp.save(json!([record("thread")]))["stored"], true);
 }

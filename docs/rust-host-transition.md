@@ -559,6 +559,27 @@ reproduction and the repeated complete suite pass. Both results are retained wit
 Catch-up policy, capability
 negotiation, registration/frame semantics and provider/run orchestration remain TypeScript.
 
+## Rust peer negotiation
+
+Rust now supplies the host's released capability catalog and validates authenticated peer claims:
+UTF-8 byte/text bounds, capability identifiers/counts/uniqueness, integer protocol ranges, required
+capability subsets and claim/reply shape. Compatibility follows protocol overlap and security
+capabilities, never the display app version. Current shared client metadata and reason strings
+remain compatible. The Node facade retains the existing authenticated-current-box gate and durable
+`peerInfoRequired` projection before requesting a decision; malformed or reflected claims do not
+restore legacy admission. Node's per-command capability checks remain compatibility projections
+until run/admission ownership moves.
+
+A cross-language real-worker check compares Rust against the released shared-client contracts,
+including multibyte UTF-8 bounds, UTF-16 claim-ID lengths, numeric ranges, missing/unknown security
+capabilities and reflected/invalid claims. It and eight existing affected host cases pass. The complete
+runtime run passed 818 tests and skipped one across 50 files; production build passes. The first
+complete Rust run hit the inherited writer-lock fixture race, while its isolated reproduction passed.
+The fixture now explicitly unlocks before close, matching production and retaining immediate
+reacquisition/no-mutation assertions without sleeps or retries. The final complete Rust run passed all
+107 tests, formatting and strict Clippy. Failed verification logs are retained alongside the final runs.
+Catch-up selection and registration/frame policy still remain to migrate.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

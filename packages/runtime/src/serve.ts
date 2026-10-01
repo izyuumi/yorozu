@@ -18,9 +18,6 @@ import { ExpiredAdmissions } from "./admission.js";
 import { StopStore, type StopRecord } from "./stops.js";
 import { promisify } from "node:util";
 import {
-  localPeerInfo,
-  parsePeerInfo,
-  negotiatePeerInfo,
   encodePairingLink,
   encodePairingString,
   fromBase64Url,
@@ -46,7 +43,6 @@ import {
   type EventPayload,
   type Keypair,
   type ModelOption,
-  type PeerInfoData,
   type PeerCompatibility,
   type ReasoningEffort,
   type MessageAttachment,
@@ -58,6 +54,7 @@ import {
 } from "@yorozu/shared";
 import WebSocket from "ws";
 import { startRustRelay, type RustRelaySocket } from "./relay-rust.js";
+import { hostPeerInfo, claimPeer } from "./session-peers.js";
 import { UpdateGate } from "./update-gate.js";
 import { WireCrypto } from "./wire-crypto.js";
 import { SessionSequences } from "./session-sequences.js";
@@ -440,7 +437,6 @@ interface PairedDevice {
   /** Set by the first box after hello; a modern box can upgrade a legacy connection. */
   format: "current" | "legacy" | null;
   record: DeviceRecord;
-  peerInfo?: PeerInfoData;
   compatibility?: PeerCompatibility;
   peerClaimReceived?: boolean;
 }
@@ -594,7 +590,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const log = options.log ?? ((line: string) => void stdout.write(`${line}\n`));
   const heartbeat = options.heartbeat ?? { pingMs: PING_MS, pongMs: PONG_MS };
   const state = (name: string) => log(`STATE ${name}`);
-  const peerInfo = localPeerInfo(options.appVersion ?? env.YOROZU_APP_VERSION ?? "unknown");
+  const peerInfo = hostPeerInfo(dir, options.appVersion ?? env.YOROZU_APP_VERSION ?? "unknown");
   // An expired operation ID stays barred after restart. The old encrypted relay copy may
   // arrive later, while a fresh user confirmation must carry a new ID and deadline.
   const admissionStore = new ExpiredAdmissions(dir);
@@ -3621,7 +3617,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           threads: awaitingCompatibility ? [] : list.data.threads,
           peerInfoSupported: true,
           ...(event.data.peerInfoReplyTo ? { peerInfoReplyTo: event.data.peerInfoReplyTo } : {}),
-          ...(known.peerClaimReceived ? { peerInfo: localPeerInfo(peerInfo.appVersion, name) } : {}),
+          ...(known.peerClaimReceived ? { peerInfo: hostPeerInfo(dir, peerInfo.appVersion, name) } : {}),
           ...(known.compatibility?.state === "update-required" ? { peerInfoError: known.compatibility.reason } : {}),
           // Only inside a replay-protected box: the relay never learns the tailnet name.
           ...(directConfig && known.format === "current" ? { directUrl: directConfig.url } : {}),
@@ -3817,13 +3813,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           catch (error) { delete known.record.peerInfoRequired; throw error; }
         }
         try {
-          if (event.id.length > 128 || !event.id ||
-              ("peerInfoSupported" in event.data && typeof event.data.peerInfoSupported !== "boolean") ||
-              "peerInfoError" in event.data || "peerInfoReplyTo" in event.data) {
-            throw new Error("Invalid peer information");
-          }
-          known.peerInfo = parsePeerInfo(event.data.peerInfo);
-          known.compatibility = negotiatePeerInfo(peerInfo, known.peerInfo);
+          known.compatibility = claimPeer(dir, event);
         } catch {
           known.compatibility = { state: "update-required", reason: "Invalid peer information." };
         }
