@@ -1,6 +1,6 @@
 import { fromBase64Url, toBase64Url, type YorozuEvent } from "@yorozu/shared";
 import { syncHostRequest } from "./rust-sync.js";
-type Opened = { status: "opened"; event: YorozuEvent; seq?: number } | { status: "unauthenticated" | "malformed" };
+type Opened = { status: "opened"; event: YorozuEvent; seq?: number } | { status: "unauthenticated" | "malformed" | "replayed" };
 /** Rust holds the persisted private identity. This facade exchanges public identifiers,
  * messages and authenticated results through the pinned local worker. */
 export class WireCrypto {
@@ -34,6 +34,16 @@ export class WireCrypto {
   }
   seal(pub: string, event: YorozuEvent, seq?: number): { n: string; c: string } {
     return this.box({ pub, event, mode: seq === undefined ? "legacy" : "current", ...(seq === undefined ? {} : { seq }) });
+  }
+  sealCurrent(pub: string, event: YorozuEvent): { n: string; c: string } {
+    const result = this.request({ op: "session_seal", pub, event });
+    if (typeof result.nonce !== "string" || typeof result.ciphertext !== "string") throw new Error("Rust session remains unconfirmed");
+    return { n: result.nonce, c: result.ciphertext };
+  }
+  openCurrent(pub: string, box: { n: string; c: string }): Opened {
+    const result = this.request({ op: "session_open_box", pub, nonce: box.n, ciphertext: box.c });
+    if (!["opened", "replayed", "malformed", "unauthenticated"].includes(result.status as string)) throw new Error("Rust session remains unconfirmed");
+    return result as Opened;
   }
   preview(pub: string, plaintext: Uint8Array): { n: string; c: string } {
     return this.box({ pub, mode: "preview", plaintext: toBase64Url(plaintext) });

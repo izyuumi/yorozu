@@ -5,6 +5,7 @@ use crate::{
 };
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
     fs,
     fs::File,
     io::{self, Write},
@@ -16,6 +17,7 @@ const STATE_BYTES: u64 = 8 * 1024 * 1024;
 const BACKUP_FILES: usize = 128;
 const BACKUP_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_SEQ: u64 = 9_007_199_254_740_991;
+const SEND_RESERVE: u64 = 1000;
 fn invalid() -> io::Error {
     io::ErrorKind::InvalidData.into()
 }
@@ -107,6 +109,7 @@ pub struct Sequences {
     canonical: Option<Vec<u8>>,
     raw: Option<Vec<u8>>,
     failed: bool,
+    sent: HashMap<String, u64>,
 }
 impl Drop for Sequences {
     fn drop(&mut self) {
@@ -127,6 +130,7 @@ impl Sequences {
             canonical,
             raw: raw.clone(),
             failed: false,
+            sent: HashMap::new(),
         };
         if let Some(bytes) = &store.canonical {
             let envelope: Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
@@ -298,6 +302,12 @@ impl Sequences {
         if bytes.len() as u64 > PROJECTION_BYTES {
             return Err(invalid());
         }
+        for (pubkey, record) in records.as_object().ok_or_else(invalid)? {
+            if count(&record["sendSeq"]) != count(&self.state["records"][pubkey]["sendSeq"]) {
+                // An explicit currency advance burns any earlier in-memory reservation.
+                self.sent.remove(pubkey);
+            }
+        }
         self.state["previousHash"] = hash(&self.raw);
         self.state["records"] = records;
         self.state["raw"] = json!(String::from_utf8(bytes.clone()).map_err(|_| invalid())?);
@@ -335,6 +345,46 @@ impl Sequences {
                 Ok(
                     json!({"sendSeq":count(&record["sendSeq"]).unwrap_or(0),"recvSeq":count(&record["recvSeq"]).unwrap_or(0)}),
                 )
+            }
+            Some("seq_next" | "seq_accept") => {
+                let pubkey = request["pub"]
+                    .as_str()
+                    .filter(|pubkey| !invalid_id(pubkey))
+                    .ok_or_else(invalid)?;
+                let prior = &self.state["records"][pubkey];
+                let ceiling = count(&prior["sendSeq"]).unwrap_or(0);
+                let accepted = count(&prior["recvSeq"]).unwrap_or(0);
+                let mut record = if prior.is_object() {
+                    prior.clone()
+                } else {
+                    json!({"sendSeq":0,"recvSeq":0})
+                };
+                if request["op"] == "seq_accept" {
+                    let Some(seq) = count(&request["seq"]).filter(|seq| *seq > 0) else {
+                        return Ok(json!({"error":"invalid-sequence-number"}));
+                    };
+                    if seq <= accepted {
+                        return Ok(json!({"accepted":false,"recvSeq":accepted}));
+                    }
+                    record["recvSeq"] = json!(seq);
+                    let mut records = self.state["records"].clone();
+                    merge(&mut records, &json!({pubkey:record}))?;
+                    self.save(records)?;
+                    return Ok(json!({"accepted":true,"recvSeq":seq}));
+                }
+                let last = self.sent.get(pubkey).copied().unwrap_or(ceiling);
+                if last == MAX_SEQ {
+                    return Ok(json!({"error":"sequence-exhausted"}));
+                }
+                let seq = last + 1;
+                if seq > ceiling {
+                    record["sendSeq"] = json!((seq + SEND_RESERVE - 1).min(MAX_SEQ));
+                    let mut records = self.state["records"].clone();
+                    merge(&mut records, &json!({pubkey:record}))?;
+                    self.save(records)?;
+                }
+                self.sent.insert(pubkey.to_owned(), seq);
+                Ok(json!({"seq":seq}))
             }
             Some("seq_save") => {
                 let input = &request["records"];

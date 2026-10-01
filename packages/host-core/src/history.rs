@@ -708,6 +708,35 @@ impl History {
         if self.failed {
             return json!({"error":"history-storage-failed"});
         }
+        // Compose authenticated boxes with their durable currency in one local request.
+        // Fixed internal operations keep recursion bounded and retain each component's fences.
+        if request["op"] == "session_seal" {
+            let peer = self.request(&json!({"op":"crypto_peer","pub":request["pub"]}));
+            if peer["valid"] != true {
+                return peer;
+            }
+            let currency = self.request(&json!({"op":"seq_next","pub":request["pub"]}));
+            if currency.get("error").is_some() {
+                return currency;
+            }
+            return self.request(&json!({"op":"crypto_seal","pub":request["pub"],"mode":"current","seq":currency["seq"],"event":request["event"]}));
+        }
+        if request["op"] == "session_open_box" {
+            let opened = self.request(&json!({"op":"crypto_open_box","pub":request["pub"],"mode":"current","nonce":request["nonce"],"ciphertext":request["ciphertext"]}));
+            if opened["status"] != "opened" {
+                return opened;
+            }
+            let currency =
+                self.request(&json!({"op":"seq_accept","pub":request["pub"],"seq":opened["seq"]}));
+            if currency.get("error").is_some() {
+                return currency;
+            }
+            return if currency["accepted"] == true {
+                opened
+            } else {
+                json!({"status":"replayed"})
+            };
+        }
         if request["op"]
             .as_str()
             .is_some_and(|op| op.starts_with("seq_"))

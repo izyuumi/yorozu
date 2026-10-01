@@ -198,12 +198,20 @@ fn invalid_identity_and_missing_identity_with_saved_connections_never_regenerate
         assert!(HostCrypto::open(&temp.0).is_err());
         assert_eq!(fs::read(temp.0.join("keys.json")).unwrap(), old);
     }
-    let temp = Temp::new();
-    let old = b"[{\"pub\":\"saved-connection\",\"future\":true}]";
-    fs::write(temp.0.join("devices.json"), old).unwrap();
-    assert!(HostCrypto::open(&temp.0).is_err());
-    assert!(!temp.0.join("keys.json").exists());
-    assert_eq!(fs::read(temp.0.join("devices.json")).unwrap(), old);
+    for name in [
+        "devices.json",
+        "channel-seq.json",
+        ".rust-channel-seq-state.json",
+        ".rust-channel-seq-projection-original.retained.json",
+        ".rust-channel-seq-pending.interrupted",
+    ] {
+        let temp = Temp::new();
+        let old = b"[{\"pub\":\"saved-connection\",\"future\":true}]";
+        fs::write(temp.0.join(name), old).unwrap();
+        assert!(HostCrypto::open(&temp.0).is_err(), "{name}");
+        assert!(!temp.0.join("keys.json").exists());
+        assert_eq!(fs::read(temp.0.join(name)).unwrap(), old);
+    }
 }
 #[test]
 fn low_order_exchange_tampered_tags_and_invalid_signatures_are_refused_with_fixed_errors() {
@@ -284,4 +292,62 @@ fn linked_identity_is_refused_and_new_identity_is_private_without_changing_root_
     symlink(temp.0.join("original"), &file).unwrap();
     assert!(HostCrypto::open(&temp.0).is_err());
     assert_eq!(fs::read(temp.0.join("original")).unwrap(), bytes);
+}
+
+#[test]
+fn composed_session_boxes_prove_currency_before_sending_or_exposing_an_authenticated_event() {
+    use yorozu_host_core::history::History;
+    let temp = Temp::new();
+    let v = fixture("ts");
+    keys(&temp, &v);
+    let mut host = History::open(&temp.0).unwrap();
+    let wire = WireKeys::derive(fixed(&v, "alicePriv"), fixed(&v, "bobPub")).unwrap();
+    let sealed = host.request(&json!({"op":"session_seal","pub":v["bobPub"],"event":event()}));
+    let outgoing: Value = serde_json::from_slice(
+        &crypto::open(
+            &wire.send,
+            &fixed(&sealed, "nonce"),
+            &bytes(&sealed, "ciphertext"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(outgoing, json!({"seq":1,"event":event()}));
+    assert_eq!(
+        host.request(&json!({"op":"seq_get","pub":v["bobPub"]}))["sendSeq"],
+        1000
+    );
+    let incoming = |seq| {
+        let nonce = [seq as u8; 12];
+        let cipher = crypto::seal(
+            &wire.recv,
+            &nonce,
+            &serde_json::to_vec(&json!({"seq":seq,"event":event()})).unwrap(),
+        )
+        .unwrap();
+        json!({"op":"session_open_box","pub":v["bobPub"],"nonce":crypto::encode(&nonce),"ciphertext":crypto::encode(&cipher)})
+    };
+    let first = incoming(9);
+    assert_eq!(
+        host.request(&first),
+        json!({"status":"opened","seq":9,"event":event()})
+    );
+    assert_eq!(host.request(&first), json!({"status":"replayed"}));
+    fs::remove_file(temp.0.join("channel-seq.json")).unwrap();
+    fs::create_dir(temp.0.join("channel-seq.json")).unwrap();
+    let retry = incoming(10);
+    assert_eq!(
+        host.request(&retry)["error"],
+        "sequence-projection-unavailable"
+    );
+    fs::remove_dir(temp.0.join("channel-seq.json")).unwrap();
+    assert_eq!(
+        host.request(&json!({"op":"seq_get","pub":v["bobPub"]}))["recvSeq"],
+        9
+    );
+    assert_eq!(
+        host.request(&retry),
+        json!({"status":"opened","seq":10,"event":event()})
+    );
+    assert_eq!(host.request(&retry), json!({"status":"replayed"}));
 }

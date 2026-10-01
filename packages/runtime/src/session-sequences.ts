@@ -1,6 +1,6 @@
 import { syncHostRequest } from "./rust-sync.js";
 import type { ChannelSeqs } from "./serve.js";
-/** Rust owns durable sequence currency; Node retains reservation and replay policy for now. */
+/** Rust owns durable currency, send reservations and replay decisions. */
 export class SessionSequences {
   readonly hasProjection: boolean;
   constructor(private readonly dir: string) {

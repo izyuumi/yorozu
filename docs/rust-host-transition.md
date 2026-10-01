@@ -494,6 +494,32 @@ Actual new schedule execution and PAIOS ownership are optional later product fea
 truthful unavailable UI is retained; they cannot expand this checklist or substitute for the requested
 Rust host responsibilities. No control removal may silently remove a required capability.
 
+## Rust reservation and replay decisions
+
+Rust now chooses outgoing sequence numbers and reserves the existing 1000-number blocks before
+sealing a current box. Restart skips the whole previously reserved ceiling; receive admission
+rejects stale counters and proves new currency before exposing an authenticated event. The
+compatibility host no longer increments, reserves or rolls back its own live counter copies.
+Generic legacy seeding still merges monotonic records before pairing projection rewrites.
+An explicit stored send advance burns an earlier in-memory block. At the shared JavaScript/Swift
+safe-integer limit, the last reservation is capped and subsequent sends report exhaustion rather
+than wrapping or publishing an invalid envelope.
+
+The history worker composes encryption and sequence decisions into one bounded local request per
+current box, reducing compatibility-bridge round trips. Component ownership and storage fences
+remain intact. Missing identity also refuses canonical counter files, original backups and pending
+counter publications, even if the legacy projections disappeared. The missing-canonical identity
+regression failed before repair; original evidence remains retained without generating a new room.
+
+All 104 Rust tests, locked formatting/strict Clippy and the production runtime build pass. The
+uncomposed policy passed 240 affected runtime tests but its full aggregate timed out in the same
+multi-step update fixture (815 passed, one skipped, one failed). Eight composed-box/migration/crypto
+focused tests and the final complete runtime suite pass: 816 passed, one skipped across 48 files,
+two workers, with original assertions/deadlines intact. Failed aggregates remain in local evidence;
+the passing run does not establish a general latency benchmark or a standalone-host completion.
+Relay socket IO, reconnect, catch-up, capability negotiation, provider orchestration and launcher
+ownership still belong to the remaining finite migration work.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including
@@ -505,8 +531,11 @@ The native iOS 26.5 release gate and internal-only distribution remain required 
 The first alpha CI run passes Rust checks/tests on Linux and macOS, release checks, relay image,
 website and iOS compilation/catalog checks. Windows strict Clippy exposed an existing admission
 import used only by a Unix Stop test; that import is now local to its Unix fixture. Assertions and
-lint rules remain intact. The follow-up Windows run must confirm the repair; this is not proof
-of the still-unimplemented Windows local transport or a standalone host.
+lint rules remain intact. The follow-up CI at `43b3a569` passes Rust checks/tests on all three
+platforms and the TypeScript suites, release checks, web, relay image and iOS compilation/catalog.
+The shared Swift suite then fails its short-deadline sign-in fixture; that native gate is being
+repaired without dropping coverage. This is not proof of the still-unimplemented Windows local
+transport or a standalone host.
 
 ## Accepted conversation and storage target (implementation pending)
 
@@ -533,13 +562,31 @@ the new writer and restores the retained state at a recorded checkpoint. Do not 
 journals or introduce competing writable truth stores. These are accepted requirements, not a claim
 that SQLite, Markdown sync, bounded context or standalone conversation routing already exists.
 
-A visible YOLO mode with user-configured standing policy is a requested design direction. Central
-permission enforcement should reuse already-granted ordinary tool access, record decisions/execution
-and retain Stop. The scope for messaging, spending and permanent deletion awaits the user's answer;
-do not introduce blanket bypass or enable it by default. OS/provider/MFA constraints and tool
-capabilities still apply; no credential expansion follows from this design request. Unknown external
-outcomes remain explicit and require reconciliation. Use provider-supported idempotency when available;
-never claim universal exactly-once external side effects. Voice integration is deferred.
+The clarified permission direction is comprehensive initial setup for selected capabilities,
+remembered preferences and explicit standing grants, so ordinary remote work avoids repeated dialogs.
+Preferences can reduce clarification but do not infer authorization from annoyance or retrieved text.
+Keep a foreground capability matrix, preflight and real smoke tests, stable application identity and
+a native Swift capability broker separate from portable Rust. Passive runtime health checks never
+trigger consent dialogs: report ready, needs permission, needs sign-in, unsupported or check failed,
+pause only dependent tasks, and send a precise next step. Separate OS/browser access, service
+OAuth/MFA and action scope. Do not automate OS security dialogs or grant actual permissions during
+development. This supersedes a blanket consequential-action bypass interpretation of YOLO; central
+policy reuses explicit grants and records decisions/execution with visible mode and Stop. Unknown
+external outcomes remain explicit and need reconciliation; use provider-supported idempotency when
+available and never claim universal exactly-once external effects. Voice remains deferred.
+
+Normal conversation hides scripts, raw tool logs and execution traces. A native three-dot working
+indicator reflects authoritative running task activity, with meaningful acknowledgements, milestones,
+blockers and final results anchored to task/origin IDs and deduplicated after reconnect. Waiting,
+queued, blocked, disconnected and failed states must not animate indefinitely or imply completion;
+concurrent/background jobs aggregate sensibly with accessibility and reduced-motion support.
+Advanced settings expose technical details/commands as an optional preference, off by default and
+persisted per user. Both views redact secrets/sensitive credentials or tool arguments; neither shows
+hidden chain-of-thought. Advanced settings also select the LLM behind the single Yorozu agent using
+current capabilities/catalog/provider configuration. A model change retains conversation, PAIOS and
+task identities, applies safely to subsequent turns and does not change an in-flight task's recorded
+model. Unavailable models and interrupted changes need explicit recoverable states. These are pending
+finite UI/orchestration requirements, not implemented behavior in the current compatibility host.
 
 ## Compatibility requirements
 

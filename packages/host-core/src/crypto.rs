@@ -122,6 +122,17 @@ impl HostCrypto {
                         _ => return Err(invalid()),
                     }
                 }
+                // Canonical counter state, original backups and interrupted publications also
+                // prove an earlier connection identity, even if legacy projections are absent.
+                for entry in fs::read_dir(root)? {
+                    if entry?
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(".rust-channel-seq-")
+                    {
+                        return Err(invalid());
+                    }
+                }
                 let session = StaticSecret::from(random::<32>()?);
                 let signing = SigningKey::from_bytes(&random::<32>()?);
                 let bytes=Zeroizing::new(serde_json::to_vec(&json!({"session":{"priv":encode(&session.to_bytes()),"pub":encode(PublicKey::from(&session).as_bytes())},"signing":{"priv":encode(&signing.to_bytes()),"pub":encode(signing.verifying_key().as_bytes())}})).map_err(io::Error::other)?);

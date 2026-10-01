@@ -18,7 +18,6 @@ import { ExpiredAdmissions } from "./admission.js";
 import { StopStore, type StopRecord } from "./stops.js";
 import { promisify } from "node:util";
 import {
-  acceptsSeq,
   localPeerInfo,
   parsePeerInfo,
   negotiatePeerInfo,
@@ -440,18 +439,10 @@ export interface DeviceRecord {
   recvSeq?: number;
 }
 
-/**
- * How many send seqs are written ahead at a time. A restart resumes past the whole block, so
- * no seq is ever sealed twice without paying a disk write per streamed delta.
- */
-const SEND_SEQ_RESERVE = 1_000;
-
 /** A phone paired over the relay, as the runtime holds it. */
 interface PairedDevice {
   /** Set by the first box after hello; a modern box can upgrade a legacy connection. */
   format: "current" | "legacy" | null;
-  /** Last seq sealed to it; `record.sendSeq` is the ceiling written ahead of it. */
-  sent: number;
   record: DeviceRecord;
   peerInfo?: PeerInfoData;
   compatibility?: PeerCompatibility;
@@ -750,7 +741,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       JSON.stringify([...devices.values()].map(({ record: { sendSeq: _send, recvSeq: _recv, ...record } }) => record)),
     );
   };
-  /** The counters alone: what every accepted box and every thousandth send update. */
+  /** Merge legacy pairing counters before their fields can be stripped from devices.json. */
   const writeSeqs = (): void => {
     const seqs: ChannelSeqs = Object.fromEntries(
       [...devices.values()].map(({ record }) => [record.pub, { sendSeq: record.sendSeq ?? 0, recvSeq: record.recvSeq ?? 0 }]),
@@ -775,8 +766,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
     wireCrypto.validate(record.pub);
     devices.set(record.pub, {
       format: record.peerInfoRequired ? "current" : null,
-      // Fresh from disk the ceiling is all there is, and everything up to it counts as used.
-      sent: before?.sent ?? record.sendSeq,
       record,
     });
   };
@@ -3604,21 +3593,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
      * written ahead in blocks so a restart resumes past anything this process may have sent.
      */
     const sealFor = (known: PairedDevice, event: YorozuEvent): FrameBody => {
-      known.sent += 1;
-      if (known.sent > (known.record.sendSeq ?? 0)) {
-        // If the write fails the ceiling stays where it was, so the next send tries again
-        // rather than sealing the rest of a block nothing on disk knows about. The seq that
-        // was about to go out is burnt either way: a gap costs nothing, a reuse costs the box.
-        const ceiling = known.record.sendSeq;
-        known.record.sendSeq = known.sent + SEND_SEQ_RESERVE - 1;
-        try {
-          writeSeqs();
-        } catch (e) {
-          known.record.sendSeq = ceiling;
-          throw e;
-        }
-      }
-      return { t: "box", ...wireCrypto.seal(known.record.pub, event, known.sent) };
+      return { t: "box", ...wireCrypto.sealCurrent(known.record.pub, event) };
     };
 
     const sealLegacyFor = (known: PairedDevice, event: YorozuEvent): FrameBody => {
@@ -3758,7 +3733,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
      */
     function openFrom(body: { n: string; c: string }): [string, YorozuEvent] | null {
       for (const [device, known] of devices) {
-        const opened = wireCrypto.open(known.record.pub, body);
+        const opened = wireCrypto.openCurrent(known.record.pub, body);
         if (opened.status === "unauthenticated") {
           if (known.format === "current" || known.record.peerInfoRequired) continue;
           const legacy = wireCrypto.open(known.record.pub, body, true);
@@ -3776,24 +3751,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
           state("malformed-frame");
           return null;
         }
-        const envelope = opened as { status: "opened"; seq: number; event: YorozuEvent };
-        if (!acceptsSeq(known.record.recvSeq ?? 0, envelope.seq)) {
+        // Rust exposes the event only after durable receive admission. A storage blocker
+        // leaves it unaccepted for retry; replay decisions never use a Node counter copy.
+        if (opened.status === "replayed") {
           state("replayed-frame");
           return null;
         }
-        // Written before the event is acted on: a crash between the two must not reopen it.
-        // And acted on only if written: a box whose seq could not be recorded is left for the
-        // relay's replay to bring again, so the counter is put back to say so.
-        const accepted = known.record.recvSeq;
-        known.record.recvSeq = envelope.seq;
-        try {
-          writeSeqs();
-        } catch (e) {
-          known.record.recvSeq = accepted;
-          throw e;
-        }
         known.format = "current";
-        return [device, envelope.event];
+        return [device, (opened as { status: "opened"; event: YorozuEvent }).event];
       }
       return null;
     }

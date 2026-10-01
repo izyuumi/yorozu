@@ -188,12 +188,27 @@ fn projection_directory_blocker_is_retryable_without_advancing_accepted_currency
     fs::remove_file(temp.projection()).unwrap();
     fs::create_dir(temp.projection()).unwrap();
     assert_eq!(
-        save(&mut store, records(1000, 2))["error"],
+        store.request(&json!({"op":"seq_accept","pub":"peer","seq":2}))["error"],
+        "sequence-projection-unavailable"
+    );
+    assert_eq!(
+        store.request(&json!({"op":"seq_next","pub":"peer"}))["error"],
         "sequence-projection-unavailable"
     );
     fs::remove_dir(temp.projection()).unwrap();
     assert_eq!(get(&mut store, "peer")["recvSeq"], 1);
-    assert_eq!(save(&mut store, records(1000, 2))["stored"], true);
+    assert_eq!(
+        store.request(&json!({"op":"seq_accept","pub":"peer","seq":2}))["accepted"],
+        true
+    );
+    assert_eq!(
+        store.request(&json!({"op":"seq_accept","pub":"peer","seq":2}))["accepted"],
+        false
+    );
+    assert_eq!(
+        store.request(&json!({"op":"seq_next","pub":"peer"}))["seq"],
+        1001
+    );
 }
 #[test]
 fn malformed_projection_devices_and_corrupt_canonical_are_retained_without_migration() {
@@ -266,20 +281,27 @@ fn actual_worker_termination_after_currency_ack_preserves_reserved_sends_and_acc
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    writeln!(
-        child.stdin.as_mut().unwrap(),
-        "{}",
-        json!({"id":"rpc","op":"seq_save","records":records(1000, 11)})
-    )
-    .unwrap();
-    let mut response = String::new();
-    BufReader::new(child.stdout.take().unwrap())
-        .read_line(&mut response)
-        .unwrap();
-    assert_eq!(
-        serde_json::from_str::<Value>(&response).unwrap()["result"]["stored"],
-        true
-    );
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    for (request, key, expected) in [
+        (
+            json!({"id":"send","op":"seq_next","pub":"peer"}),
+            "seq",
+            json!(1),
+        ),
+        (
+            json!({"id":"receive","op":"seq_accept","pub":"peer","seq":11}),
+            "accepted",
+            json!(true),
+        ),
+    ] {
+        writeln!(child.stdin.as_mut().unwrap(), "{request}").unwrap();
+        let mut response = String::new();
+        output.read_line(&mut response).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&response).unwrap()["result"][key],
+            expected
+        );
+    }
     child.kill().unwrap();
     child.wait().unwrap();
     let mut store = Sequences::open(&temp.0).unwrap();
@@ -290,6 +312,14 @@ fn actual_worker_termination_after_currency_ack_preserves_reserved_sends_and_acc
     assert_eq!(
         save(&mut store, records(999, 11))["error"],
         "conflicting-sequence-currency"
+    );
+    assert_eq!(
+        store.request(&json!({"op":"seq_next","pub":"peer"}))["seq"],
+        1001
+    );
+    assert_eq!(
+        store.request(&json!({"op":"seq_accept","pub":"peer","seq":11}))["accepted"],
+        false
     );
 }
 #[cfg(unix)]
@@ -341,4 +371,71 @@ fn symlinks_are_refused_and_generated_files_private_without_changing_existing_di
     )
     .unwrap();
     assert!(Sequences::open(&temp.0).is_err());
+}
+
+#[test]
+fn send_blocks_reuse_only_unspent_currency_and_never_wrap_at_the_shared_safe_integer_limit() {
+    let temp = Temp::new();
+    let mut store = Sequences::open(&temp.0).unwrap();
+    assert_eq!(
+        store.request(&json!({"op":"seq_next","pub":"peer"}))["seq"],
+        1
+    );
+    assert_eq!(get(&mut store, "peer")["sendSeq"], 1000);
+    for seq in [2, 3] {
+        assert_eq!(
+            store.request(&json!({"op":"seq_next","pub":"peer"}))["seq"],
+            seq
+        );
+    }
+    assert_eq!(
+        store.request(&json!({"op":"seq_accept","pub":"peer","seq":7}))["accepted"],
+        true
+    );
+    assert_eq!(
+        store.request(&json!({"op":"seq_next","pub":"peer"}))["seq"],
+        4
+    );
+    for seq in [json!(0), json!(-1), json!(1.5), json!(9007199254740992u64)] {
+        assert_eq!(
+            store.request(&json!({"op":"seq_accept","pub":"peer","seq":seq}))["error"],
+            "invalid-sequence-number"
+        );
+    }
+    assert_eq!(
+        store.request(&json!({"op":"seq_accept","pub":"peer","seq":6}))["accepted"],
+        false
+    );
+    assert_eq!(get(&mut store, "peer")["recvSeq"], 7);
+    for seq in 5..=1000 {
+        assert_eq!(
+            store.request(&json!({"op":"seq_next","pub":"peer"}))["seq"],
+            seq
+        );
+    }
+    assert_eq!(get(&mut store, "peer")["sendSeq"], 1000);
+    assert_eq!(
+        store.request(&json!({"op":"seq_next","pub":"peer"}))["seq"],
+        1001
+    );
+    assert_eq!(get(&mut store, "peer")["sendSeq"], 2000);
+    assert_eq!(
+        save(&mut store, records(9007199254740990, 7))["stored"],
+        true
+    );
+    assert_eq!(
+        store.request(&json!({"op":"seq_next","pub":"peer"}))["seq"],
+        9007199254740991u64
+    );
+    assert_eq!(
+        store.request(&json!({"op":"seq_next","pub":"peer"}))["error"],
+        "sequence-exhausted"
+    );
+    assert_eq!(get(&mut store, "peer")["sendSeq"], 9007199254740991u64);
+    drop(store);
+    let mut store = Sequences::open(&temp.0).unwrap();
+    assert_eq!(
+        store.request(&json!({"op":"seq_next","pub":"peer"}))["error"],
+        "sequence-exhausted"
+    );
 }
