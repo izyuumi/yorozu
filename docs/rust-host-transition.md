@@ -989,6 +989,35 @@ tails; logs are retained with the initial recovery-fixture failure. No runtime T
 this slice. The preceding scoped-lifecycle checkpoint2be39cd passes every CI job, including normal
 two-worker runtime and Rust on all three platforms; exact native26.5 remains a separate release gate.
 
+## Scoped Rust retained-progress reset
+
+Rust captures one raw physical history-prefix cursor per issued attempt, within the1024-owner cap.
+A progress reset requires the current running scope and effect admission, including Stop and expiry
+checks. It accepts only the first successful MAIN same-thread tool_result occurrence after the
+claim and last confirmed cursor. A replayed old success cannot replenish the recovery budget by
+being appended at a later offset. A failed-only ID can later supply its first retained success.
+Activity IDs retain the event record budget rather than the shorter origin-ID limit.
+
+Raw-prefix hashes detect truncation or rewrites, with physical identity checks on Unix. Metadata
+CAS resets only recoveryAttempts, preserving recoveryActive and unknown marker fields. The cursor
+advances only after confirmed CAS; a failed metadata write leaves both cursor and counter intact.
+Node removes its unbounded result-ID set and uses the authoritative result. Unconfirmed progress
+aborts and fences the worker independently of callback exceptions, suppressing even an explicit
+completed result if a provider swallows the observer error. Normal duplicate refusals leave the
+counter untouched. This still trusts the compatibility worker's scoped admission; full origin and
+attempt provenance belongs to finite item4.
+
+Validation:131 Rust tests, formatting and strictClippy pass locally; production build and the full
+runtime/plugin suite pass846 tests plus1skip/52files with one local worker and unchanged deadlines.
+The17 readiness cases include successful progress, failed-then-success IDs before/after claim,
+replays, successive fresh successes, long IDs, wrong sender/thread, absent/failed results, Stop,
+expiry, scope replacement, epoch loss, metadata conflict retry, same-inode rewrite and Unix file
+replacement. Five focused runtime cases pass; actual previous-Node negatives blocked a first
+success after an earlier failure and failed to abort a swallowed storage error. Prior failed
+fixture/lint logs are retained. Each progress proof currently hashes and scans retained history
+from its beginning, so CPU cost grows with history despite bounded memory; no speedup is claimed.
+Generic startup/Stop/rewind/pre-SDK marker transitions and approval currency remain within item3.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

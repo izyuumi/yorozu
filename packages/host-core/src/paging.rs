@@ -139,6 +139,120 @@ fn occurrence(cursor: Option<&str>) -> Option<(u64, &str)> {
     Some((offset.parse().ok()?, tag))
 }
 /// Read the retained execution evidence with the same bounds/parser contract as replay paging.
+// A bounded raw prefix proves progress belongs after this process's issued claim.
+// Unlike paging cursors, it hashes physical bytes and is never exposed to the worker.
+#[derive(Clone)]
+pub(crate) struct ProgressAnchor {
+    offset: u64,
+    raw_hash: String,
+    #[cfg(unix)]
+    identity: (u64, u64),
+}
+fn raw_prefix(file: &mut File, length: u64) -> io::Result<String> {
+    file.seek(SeekFrom::Start(0))?;
+    let mut reader = Read::by_ref(file).take(length);
+    let mut sha = Sha256::new();
+    let mut buffer = [0u8; 65536];
+    let mut read = 0;
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        sha.update(&buffer[..count]);
+        read += count as u64;
+    }
+    if read != length {
+        return Err(invalid());
+    }
+    Ok(hash(&sha))
+}
+fn unchanged(path: &Path, file: &File, stamp: &Stamp) -> io::Result<()> {
+    let current = fs::symlink_metadata(path)?;
+    if current.file_type().is_symlink()
+        || !current.is_file()
+        || Stamp::new(&current) != *stamp
+        || Stamp::new(&file.metadata()?) != *stamp
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+impl ProgressAnchor {
+    pub(crate) fn capture(root: &Path, thread: &str) -> io::Result<Self> {
+        let path = root
+            .join("threads")
+            .join(format!("{}.jsonl", crate::thread_index::file_name(thread)));
+        let mut file = open(&path)?;
+        let stamp = Stamp::new(&file.metadata()?);
+        let raw_hash = raw_prefix(&mut file, stamp.length)?;
+        unchanged(&path, &file, &stamp)?;
+        Ok(Self {
+            offset: stamp.length,
+            raw_hash,
+            #[cfg(unix)]
+            identity: (stamp.identity.0, stamp.identity.1),
+        })
+    }
+    pub(crate) fn advance(
+        &self,
+        root: &Path,
+        thread: &str,
+        activity: &str,
+    ) -> io::Result<Option<Self>> {
+        let path = root
+            .join("threads")
+            .join(format!("{}.jsonl", crate::thread_index::file_name(thread)));
+        let mut file = open(&path)?;
+        let stamp = Stamp::new(&file.metadata()?);
+        #[cfg(unix)]
+        if self.identity != (stamp.identity.0, stamp.identity.1) {
+            return Err(invalid());
+        }
+        if stamp.length < self.offset || raw_prefix(&mut file, self.offset)? != self.raw_hash {
+            return Err(invalid());
+        }
+        file.seek(SeekFrom::Start(0))?;
+        let mut end = 0;
+        let mut candidate = None;
+        {
+            let mut reader = BufReader::new(&mut file);
+            while end < stamp.length {
+                let start = end;
+                if let Some(text) = line(&mut reader, &mut end, stamp.length)?
+                    && let Some(event) = parse(&text)?
+                    && event["id"] == activity
+                    && event["threadId"] == thread
+                    && event["agentId"] == "main"
+                    && event["kind"] == "tool_result"
+                    && event["data"]["ok"] == true
+                {
+                    // Only the first successful occurrence can count. Re-appending an old
+                    // success with a fresh physical offset cannot replenish the budget.
+                    if start >= self.offset {
+                        candidate = Some(end);
+                    }
+                    break;
+                }
+            }
+        }
+        let next = if let Some(offset) = candidate {
+            Some(Self {
+                offset,
+                raw_hash: raw_prefix(&mut file, offset)?,
+                #[cfg(unix)]
+                identity: self.identity,
+            })
+        } else {
+            None
+        };
+        if raw_prefix(&mut file, self.offset)? != self.raw_hash {
+            return Err(invalid());
+        }
+        unchanged(&path, &file, &stamp)?;
+        Ok(next)
+    }
+}
 pub(crate) fn run_evidence(
     root: &Path,
     thread: &str,

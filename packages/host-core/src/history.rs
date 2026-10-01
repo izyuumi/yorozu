@@ -186,7 +186,7 @@ pub struct History {
     stops: Option<crate::stops::Stops>,
     admissions: Option<crate::admission::Admissions>,
     outbox: Option<crate::outbox::ChannelOutbox>,
-    attempts: HashMap<String, (String, String)>,
+    attempts: HashMap<String, (String, String, crate::paging::ProgressAnchor)>,
 }
 impl Drop for History {
     fn drop(&mut self) {
@@ -1063,6 +1063,7 @@ impl History {
             if count > 3 {
                 return Ok(json!({"ready":false,"reason":"recovery-exhausted"}));
             }
+            let progress = crate::paging::ProgressAnchor::capture(&self.root, &thread)?;
             let mut currency = [0u8; 16];
             OsRng
                 .try_fill_bytes(&mut currency)
@@ -1077,10 +1078,60 @@ impl History {
                 return Ok(stored);
             }
             self.attempts
-                .insert(thread.clone(), (origin.clone(), attempt.clone()));
+                .insert(thread.clone(), (origin.clone(), attempt.clone(), progress));
             return Ok(
                 json!({"claimed":true,"threadId":thread,"eventId":origin,"attemptId":attempt,"recovering":recovering,"recoveryAttempts":count}),
             );
+        }
+        if request["op"] == "run_attempt_progress" {
+            let activity = request["activityId"]
+                .as_str()
+                .filter(|id| !id.is_empty() && id.len() as u64 <= RECORD_BYTES)
+                .ok_or_else(invalid)?;
+            let mut check = request.clone();
+            check["op"] = json!("run_attempt_current");
+            check["mode"] = json!("effect");
+            let proof = self.attempt_request(&check)?;
+            if proof.get("error").is_some() {
+                return Ok(proof);
+            }
+            if proof["current"] != true {
+                return Ok(
+                    json!({"applied":false,"reason":proof.get("reason").cloned().unwrap_or(json!("scope-replaced"))}),
+                );
+            }
+            let anchor = &self.attempts.get(&thread).ok_or_else(invalid)?.2;
+            let Some(next) = anchor.advance(&self.root, &thread, activity)? else {
+                return Ok(json!({"applied":false,"reason":"no-new-progress"}));
+            };
+            let bytes = crate::thread_index::current(&self.root)?.ok_or_else(invalid)?;
+            let mut index: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+            let home = index
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|row| row["id"] == thread)
+                .ok_or_else(invalid)?;
+            if home["nativeTurn"]["attemptId"] != request["attemptId"]
+                || home["nativeTurn"]["userEventId"] != origin
+                || home["nativeTurn"]["id"] != format!("native:{origin}:final")
+                || request["turnId"] != format!("native:{origin}:final")
+            {
+                return Ok(json!({"applied":false,"reason":"scope-replaced"}));
+            }
+            if home["nativeTurn"]["state"] != "running" {
+                return Ok(json!({"applied":false,"reason":"paused"}));
+            }
+            home["nativeTurn"]["recoveryAttempts"] = json!(0);
+            let stored = crate::thread_index::request_native(
+                &self.root,
+                &json!({"op":"replace","expectedHash":digest(&bytes),"threads":index}),
+            );
+            if stored["stored"] != true {
+                return Ok(json!({"applied":false,"reason":"metadata-unconfirmed"}));
+            }
+            self.attempts.get_mut(&thread).ok_or_else(invalid)?.2 = next;
+            return Ok(json!({"applied":true,"recoveryAttempts":0}));
         }
         if request["op"] == "run_attempt_session" {
             request["mode"]

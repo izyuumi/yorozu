@@ -762,3 +762,212 @@ fn complete_unterminated_legacy_origin_survives_sdk_final_and_scoped_cleanup() {
         true
     );
 }
+
+fn result(
+    host: &mut History,
+    operation: &str,
+    activity: &str,
+    thread: &str,
+    agent: &str,
+    ok: bool,
+) {
+    assert_eq!(host.request(&json!({"op":"history_append","operationId":operation,"thread":true,"transcript":true,
+        "event":{"id":activity,"threadId":thread,"ts":2000,"agentId":agent,"kind":"tool_result","data":{"callId":"call","ok":ok,"output":"retained"}}}))["stored"], true);
+}
+fn budget(host: &mut History, temp: &Temp, count: u64) {
+    let read = snapshot(temp);
+    let mut index = read["threads"].clone();
+    index[0]["nativeTurn"]["recoveryAttempts"] = json!(count);
+    index[0]["nativeTurn"]["future"] = json!({"kept":true});
+    assert_eq!(
+        host.request(
+            &json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index})
+        )["stored"],
+        true
+    );
+}
+fn progress(host: &mut History, scope: &Value, activity: &str) -> Value {
+    let mut request = scope.clone();
+    request["op"] = json!("run_attempt_progress");
+    request["activityId"] = json!(activity);
+    request["recoveryAttempts"] = json!(0);
+    request["ok"] = json!(true);
+    host.request(&request)
+}
+#[test]
+fn progress_requires_first_retained_success_after_claim_and_preserves_marker_fields() {
+    for mode in [
+        "fresh",
+        "long-id",
+        "prior-success",
+        "prior-failed",
+        "failed-then-success",
+        "new-failed",
+        "wrong-thread",
+        "wrong-agent",
+        "missing",
+    ] {
+        let temp = Temp::new();
+        let (mut host, _) = open(&temp);
+        seed(&mut host, "origin", "conversation");
+        let activity = if mode == "long-id" {
+            "activity:".repeat(30)
+        } else {
+            "activity".to_owned()
+        };
+        if mode.starts_with("prior-") {
+            result(
+                &mut host,
+                "prior",
+                &activity,
+                "thread",
+                "main",
+                mode == "prior-success",
+            );
+        }
+        let scope = issued(&mut host);
+        budget(&mut host, &temp, 2);
+        if mode == "failed-then-success" {
+            result(&mut host, "failed", &activity, "thread", "main", false);
+        }
+        if mode != "missing" {
+            result(
+                &mut host,
+                "observed",
+                &activity,
+                if mode == "wrong-thread" {
+                    "other"
+                } else {
+                    "thread"
+                },
+                if mode == "wrong-agent" {
+                    "phone"
+                } else {
+                    "main"
+                },
+                mode != "new-failed",
+            );
+        }
+        let before = fs::read(temp.0.join("threads.json")).unwrap();
+        let proof = progress(&mut host, &scope, &activity);
+        let accepted = ["fresh", "long-id", "prior-failed", "failed-then-success"].contains(&mode);
+        assert_eq!(proof["applied"] == true, accepted, "{mode}: {proof}");
+        if accepted {
+            let marker = &snapshot(&temp)["threads"][0]["nativeTurn"];
+            assert_eq!(marker["recoveryAttempts"], 0);
+            assert_eq!(marker["future"]["kept"], true);
+            assert_eq!(marker["recoveryActive"], false);
+            budget(&mut host, &temp, 2);
+            result(&mut host, "replay", &activity, "thread", "main", true);
+            assert_eq!(progress(&mut host, &scope, &activity)["applied"], false);
+            assert_eq!(
+                snapshot(&temp)["threads"][0]["nativeTurn"]["recoveryAttempts"],
+                2
+            );
+            result(
+                &mut host,
+                "next-success",
+                "next-success",
+                "thread",
+                "main",
+                true,
+            );
+            assert_eq!(progress(&mut host, &scope, "next-success")["applied"], true);
+            assert_eq!(
+                snapshot(&temp)["threads"][0]["nativeTurn"]["recoveryAttempts"],
+                0
+            );
+        } else {
+            assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), before);
+        }
+    }
+}
+#[test]
+fn progress_cursor_advances_only_after_confirmed_metadata_and_rejects_prefix_rewrite() {
+    let temp = Temp::new();
+    let (mut host, _) = open(&temp);
+    seed(&mut host, "origin", "conversation");
+    let scope = issued(&mut host);
+    budget(&mut host, &temp, 2);
+    result(&mut host, "first", "first", "thread", "main", true);
+    let conflict = temp.0.join("threads.json.tmp");
+    fs::write(&conflict, b"owned progress conflict").unwrap();
+    let before = fs::read(temp.0.join("threads.json")).unwrap();
+    assert_eq!(
+        progress(&mut host, &scope, "first")["reason"],
+        "metadata-unconfirmed"
+    );
+    assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), before);
+    fs::remove_file(conflict).unwrap();
+    assert_eq!(progress(&mut host, &scope, "first")["applied"], true);
+    budget(&mut host, &temp, 2);
+    result(&mut host, "second", "second", "thread", "main", true);
+    let path = temp.0.join("threads/thread.jsonl");
+    let raw = fs::read_to_string(&path).unwrap();
+    let changed = raw.replacen("retained", "rewritte", 1);
+    assert_ne!(raw, changed);
+    assert_eq!(raw.len(), changed.len());
+    fs::write(&path, changed).unwrap();
+    assert!(progress(&mut host, &scope, "second").get("error").is_some());
+    assert_eq!(
+        snapshot(&temp)["threads"][0]["nativeTurn"]["recoveryAttempts"],
+        2
+    );
+}
+#[test]
+fn progress_cannot_reset_stopped_expired_replaced_or_restarted_scope() {
+    for mode in ["stopped", "expired", "replaced", "restarted"] {
+        let temp = Temp::new();
+        let (mut host, _) = open(&temp);
+        seed(&mut host, "origin", "conversation");
+        let scope = issued(&mut host);
+        budget(&mut host, &temp, 2);
+        result(&mut host, "observed", "fresh", "thread", "main", true);
+        match mode {
+            "stopped" => {
+                assert!(host.request(&json!({"op":"stop_save","record":{"targetEventId":"origin","threadId":"thread","status":"requested","requestIds":["cancel"]}}))["record"].is_object());
+            }
+            "expired" => {
+                assert_eq!(host.request(&json!({"op":"admission_expire","entry":{"id":"origin","threadId":"thread","identity":"a".repeat(64),"deadline":1},"now":2}))["status"], "expired");
+            }
+            "replaced" => {
+                let read = snapshot(&temp);
+                let mut index = read["threads"].clone();
+                index[0]["nativeTurn"]["attemptId"] = json!("b".repeat(32));
+                assert_eq!(host.request(&json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index}))["stored"], true);
+            }
+            _ => {
+                drop(host);
+                host = History::open(&temp.0).unwrap();
+            }
+        }
+        let before = fs::read(temp.0.join("threads.json")).unwrap();
+        assert_eq!(
+            progress(&mut host, &scope, "fresh")["applied"],
+            false,
+            "{mode}"
+        );
+        assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), before);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn progress_refuses_same_bytes_at_a_replaced_physical_file() {
+    let temp = Temp::new();
+    let (mut host, _) = open(&temp);
+    seed(&mut host, "origin", "conversation");
+    let scope = issued(&mut host);
+    budget(&mut host, &temp, 2);
+    result(&mut host, "fresh", "fresh", "thread", "main", true);
+    let path = temp.0.join("threads/thread.jsonl");
+    let bytes = fs::read(&path).unwrap();
+    fs::rename(&path, path.with_extension("old")).unwrap();
+    fs::write(&path, &bytes).unwrap();
+    assert!(progress(&mut host, &scope, "fresh").get("error").is_some());
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    assert_eq!(
+        snapshot(&temp)["threads"][0]["nativeTurn"]["recoveryAttempts"],
+        2
+    );
+}

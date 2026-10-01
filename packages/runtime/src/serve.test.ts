@@ -4275,6 +4275,63 @@ test("new completed tool work resets the native recovery budget", async () => {
   expect(run).toHaveBeenCalledTimes(2);
 });
 
+test.each(["replay", "failed-then-success"] as const)("retained native progress admits only a first success (%s)", async (mode) => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-native-progress-proof-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  appendThreadEvent({ id: "original", threadId: "cc", ts: 1, agentId: "main", kind: "message",
+    data: { role: "user", text: "Finish the report" } }, dir);
+  appendThreadEvent({ id: "codex:cc:result:known", threadId: "cc", ts: 2, agentId: "main", kind: "tool_result",
+    data: { callId: "known", ok: mode === "replay", output: "prior retained result" } }, dir);
+  setNativeTurn("cc", { id: "native:original:final", state: "running", userEventId: "original", recoveryAttempts: 2 }, dir);
+  const run = vi.fn<NativeAgentRunner["run"]>()
+    .mockImplementationOnce(async (turn) => {
+      turn.onActivity?.("result:known", { kind: "tool_result", data: { callId: "known", ok: true, output: "observed success" } });
+      throw new Error("backend crashed after observed result");
+    }).mockResolvedValue({ text: "completed" });
+  await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+  if (mode === "replay") {
+    await vi.waitFor(() => expect(listThreads(dir)[0]?.nativeTurn).toMatchObject({ state: "interrupted", recoveryAttempts: 3 }));
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(readThreadEvents("cc", dir).some((event) => event.id === "native:original:final")).toBe(false);
+  } else {
+    await vi.waitFor(() => expect(readThreadEvents("cc", dir)).toContainEqual(expect.objectContaining({
+      id: "native:original:final", data: expect.objectContaining({ done: true, text: "completed" }),
+    })));
+    expect(run).toHaveBeenCalledTimes(2);
+  }
+});
+
+test("unconfirmed native progress aborts even when a worker swallows the callback error", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-native-progress-conflict-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  appendThreadEvent({ id: "original", threadId: "cc", ts: 1, agentId: "main", kind: "message",
+    data: { role: "user", text: "Finish the report" } }, dir);
+  setNativeTurn("cc", { id: "native:original:final", state: "running", userEventId: "original", recoveryAttempts: 2 }, dir);
+  const conflict = join(dir, "threads.json.tmp");
+  let callbackEnded = false;
+  let aborted = false;
+  const run = vi.fn<NativeAgentRunner["run"]>().mockImplementation(async (turn) => {
+    writeFileSync(conflict, "owned progress conflict fixture");
+    try { turn.onActivity?.("result:fresh", { kind: "tool_result", data: { callId: "fresh", ok: true, output: "retained" } }); }
+    catch { /* a provider may swallow observer errors; host ownership still has to stop */ }
+    aborted = turn.signal.aborted;
+    callbackEnded = true;
+    return { text: "must not finalize", completed: true };
+  });
+  try {
+    const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+    await vi.waitFor(() => expect(callbackEnded).toBe(true));
+    expect(aborted).toBe(true);
+    const barrier = send({ kind: "thread_list", data: { threads: [], peerInfo: localPeerInfo("test") } });
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.peerInfoReplyTo === barrier);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(readThreadEvents("cc", dir)).toContainEqual(expect.objectContaining({ id: "codex:cc:result:fresh", kind: "tool_result" }));
+    expect(readThreadEvents("cc", dir).some((event) => event.id === "native:original:final")).toBe(false);
+    expect(listThreads(dir)[0]?.nativeTurn).toMatchObject({ state: "running", userEventId: "original", recoveryAttempts: 3 });
+    expect(readFileSync(conflict, "utf8")).toBe("owned progress conflict fixture");
+  } finally { if (existsSync(conflict)) rmSync(conflict); }
+});
+
 test("native backend crash after execution starts recovers the same user turn", async () => {
   const run = vi.fn<NativeAgentRunner["run"]>()
     .mockImplementationOnce(async (turn) => {

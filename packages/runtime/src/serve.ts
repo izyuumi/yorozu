@@ -1777,7 +1777,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
         turn.abort();
       };
       drainPauses.set(threadId, pauseForUpdate);
-      const seenResults = new Set(readThreadEvents(threadId, dir).filter((event) => event.kind === "tool_result").map((event) => event.id));
       try {
         const root = home.cwd ? gitRoot(home.cwd) : undefined;
         if (root) {
@@ -1834,6 +1833,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
           broadcast(threadList());
           const attemptAbort = new AbortController();
           let attemptLive = true;
+          let progressUnconfirmed = false;
           const effectsAllowed = (): boolean => attemptLive && !turn.signal.aborted && attemptCurrent(attempt);
           const scopedSignal = (signal: AbortSignal): AbortSignal => AbortSignal.any([signal, turn.signal, attemptAbort.signal]);
           const saveNativeSession = (sessionId: string, mode: "effect" | "terminal" = "effect"): void => {
@@ -1926,13 +1926,29 @@ export function serve(options: ServeOptions = {}): Sidecar {
                   openToolCalls.get(threadId)?.delete(payload.data.callId);
                 }
                 const event: YorozuEvent = { id: `${agent}:${threadId}:${key}`, threadId, ts: Date.now(), agentId: MAIN_AGENT, ...payload };
-                const newResult = event.kind === "tool_result" && event.data.ok && !seenResults.has(event.id);
                 queueActivity(event.kind === "tool_result" ? stashToolResult(event, dir) : event);
-                if (newResult && mayAct) {
-                  seenResults.add(event.id);
-                  recoveryAttempts = 0;
-                  setNativeTurn(threadId, { id, attemptId: attempt, state: "running", ...(userEventId ? { userEventId } : {}), recoveryAttempts,
-                    recoveryActive: recovering }, dir);
+                if (event.kind === "tool_result" && event.data.ok === true && mayAct) {
+                  let proof: Record<string, unknown>;
+                  try { proof = syncHostResult(dir, { op: "run_attempt_progress", threadId, turnId: id,
+                    eventId: userEventId, attemptId: attempt, activityId: event.id }); }
+                  catch { proof = {}; }
+                  if (proof.applied === true) {
+                    recoveryAttempts = proof.recoveryAttempts as number;
+                  } else if (proof.reason !== "no-new-progress") {
+                    turn.abort();
+                    if (["scope-replaced", "stopped", "expired", "paused"].includes(String(proof.reason))) {
+                      if (proof.reason === "paused") paused = true;
+                      return;
+                    }
+                    // A provider can swallow observer errors. Retain the fence independently
+                    // so even an explicit completed result cannot retire this uncertain scope.
+                    progressUnconfirmed = true;
+                    paused = true;
+                    nativeStorageFenced.add(threadId);
+                    state("native-progress-unconfirmed");
+                    pauseIssuedAttempt(attempt, "unconfirmed");
+                    throw new Error("Native progress remains unconfirmed");
+                  }
                 }
                 if (payload.kind === "tool_result") { pauseAtSafePoint(threadId); wakeDrainWaiters(); }
               },
@@ -1945,7 +1961,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
               }
               await Promise.all([...steering.values()].filter((entry) => entry.threadId === threadId).map((entry) => entry.promise));
             });
-            if (!attemptCurrent(attempt, done.completed ? "terminal" : "effect")) return;
+            if (progressUnconfirmed || !attemptCurrent(attempt, done.completed ? "terminal" : "effect")) return;
             flushActivity();
             if (done.sessionId && done.sessionId !== currentHome.sessionId) saveNativeSession(done.sessionId, done.completed ? "terminal" : "effect");
             const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
