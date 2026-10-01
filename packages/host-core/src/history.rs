@@ -142,6 +142,10 @@ pub struct History {
     sequences: Option<crate::sequences::Sequences>,
     catchup: crate::catchup::Catchup,
     paging: crate::paging::Paging,
+    accepted: Option<crate::accepted::Accepted>,
+    stops: Option<crate::stops::Stops>,
+    admissions: Option<crate::admission::Admissions>,
+    outbox: Option<crate::outbox::ChannelOutbox>,
 }
 impl Drop for History {
     fn drop(&mut self) {
@@ -171,6 +175,10 @@ impl History {
             sequences: None,
             catchup: crate::catchup::Catchup::default(),
             paging: crate::paging::Paging::default(),
+            accepted: None,
+            stops: None,
+            admissions: None,
+            outbox: None,
         };
         let mut keys = HashSet::new();
         let mut done = HashSet::new();
@@ -709,6 +717,56 @@ impl History {
         self.steering_delivered(&record)
     }
     pub fn request(&mut self, request: &Value) -> Value {
+        // Keep each existing operational journal's own failure fence, including durable Stop
+        // recording when an unrelated history projection is unavailable.
+        if request["op"]
+            .as_str()
+            .is_some_and(|op| op.starts_with("accepted_"))
+        {
+            if self.accepted.is_none() {
+                match crate::accepted::Accepted::open(&self.root) {
+                    Ok(store) => self.accepted = Some(store),
+                    Err(_) => return json!({"error":"accepted-storage-failed"}),
+                }
+            }
+            return self.accepted.as_mut().unwrap().request(request);
+        }
+        if request["op"]
+            .as_str()
+            .is_some_and(|op| op.starts_with("stop_"))
+        {
+            if self.stops.is_none() {
+                match crate::stops::Stops::open(&self.root) {
+                    Ok(store) => self.stops = Some(store),
+                    Err(_) => return json!({"error":"stop-storage-failed"}),
+                }
+            }
+            return self.stops.as_mut().unwrap().request(request);
+        }
+        if request["op"]
+            .as_str()
+            .is_some_and(|op| op.starts_with("admission_"))
+        {
+            if self.admissions.is_none() {
+                match crate::admission::Admissions::open(&self.root) {
+                    Ok(store) => self.admissions = Some(store),
+                    Err(_) => return json!({"error":"admission-storage-failed"}),
+                }
+            }
+            return self.admissions.as_mut().unwrap().request(request);
+        }
+        if request["op"]
+            .as_str()
+            .is_some_and(|op| op.starts_with("outbox_"))
+        {
+            if self.outbox.is_none() {
+                match crate::outbox::ChannelOutbox::open(&self.root) {
+                    Ok(store) => self.outbox = Some(store),
+                    Err(_) => return json!({"error":"channel-storage-failed"}),
+                }
+            }
+            return self.outbox.as_mut().unwrap().request(request);
+        }
         if self.failed {
             return json!({"error":"history-storage-failed"});
         }

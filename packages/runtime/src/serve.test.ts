@@ -2,7 +2,7 @@ import { createInboundDispatcher } from "../../openclaw-channel/dispatch.js";
 import { createRuns } from "../../openclaw-channel/runs.js";
 import { connectYorozu } from "../../openclaw-channel/socket.js";
 import { createHash, randomUUID } from "node:crypto";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -978,14 +978,22 @@ test("Rust queue readiness prevents a waiting native turn from executing after e
   expect(readThreadEvents("queue-fence", dir).some((event) => event.id === second && event.kind === "message" && event.data.text === "second")).toBe(true);
 });
 
-test("ambiguous legacy queue recovery blocks host startup without rewriting queue bytes", () => {
-  const dir = mkdtempSync(join(tmpdir(), "yorozu-blocked-queue-"));
-  const saved = '[ { "threadId": "thread", "eventId": "saved", "unknown": true } ]\n';
-  writeFileSync(join(dir, "native-turn-queue.json"), saved);
-  writeFileSync(join(dir, "native-turn-queue.json.tmp"), "uncertain saved queue");
-  expect(() => serve({ stateDir: dir, relayUrl: "ws://127.0.0.1:1" })).toThrow("remains unconfirmed");
-  expect(readFileSync(join(dir, "native-turn-queue.json"), "utf8")).toBe(saved);
-  expect(readFileSync(join(dir, "native-turn-queue.json.tmp"), "utf8")).toBe("uncertain saved queue");
+test.each(["queue", "Stop"] as const)("ambiguous legacy %s blocks startup, preserves bytes and releases partial owners", async (journal) => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-blocked-startup-"));
+  const originals: Record<string, string> = journal === "queue" ? {
+    "native-turn-queue.json": '[ { "threadId": "thread", "eventId": "saved", "unknown": true } ]\n',
+    "native-turn-queue.json.tmp": "uncertain saved queue",
+  } : { "stopped-turns.jsonl": "invalid JSON\n" };
+  try {
+    for (const [name, bytes] of Object.entries(originals)) writeFileSync(join(dir, name), bytes);
+    expect(() => serve({ stateDir: dir, relayUrl: "ws://127.0.0.1:1" }))
+      .toThrow(journal === "queue" ? /remains unconfirmed/ : /JSON/);
+    // Stop fails after the admission adapter is retained: its lease must drain/release too.
+    await vi.waitFor(() => expect(spawnSync(rustHost.rustHostCommand(), ["history", dir], {
+      input: JSON.stringify({ id: "probe", op: "history_open" }) + "\n", timeout: 1000,
+    }).status).toBe(0));
+    for (const [name, bytes] of Object.entries(originals)) expect(readFileSync(join(dir, name), "utf8")).toBe(bytes);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("skill lists refresh on join after ten minutes and broadcast only changes", async () => {

@@ -1,7 +1,8 @@
 /** Read-only legacy snapshot plus the Rust-authoritative expired-operation writer. */
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { hostRequest, retainHostWorker } from "./rust-host.js";
+import { hostRequest } from "./rust-host.js";
+import { retainSharedSyncHost } from "./rust-sync.js";
 export type ExpiredAdmission = { id: string; threadId: string; identity: string; deadline: number };
 function valid(entry: unknown): entry is ExpiredAdmission {
   if (!entry || typeof entry !== "object") return false;
@@ -16,7 +17,7 @@ function same(a: ExpiredAdmission, b: ExpiredAdmission): boolean {
 export class ExpiredAdmissions {
   readonly records: Map<string, ExpiredAdmission>;
   private readonly pending = new Map<string, { entry: ExpiredAdmission; promise: Promise<"expired" | "rejected"> }>();
-  private readonly release: () => Promise<void>;
+  private readonly release: () => void;
   private closed = false;
   private failed = false;
   constructor(private readonly dir: string) {
@@ -33,7 +34,7 @@ export class ExpiredAdmissions {
     if (!entries.every(valid)) throw new Error("Invalid expired admission journal");
     this.records = new Map(entries.map((entry) => [entry.id, entry]));
     if (this.records.size !== entries.length) throw new Error("Duplicate expired admission ID");
-    this.release = retainHostWorker(dir);
+    this.release = retainSharedSyncHost(dir);
   }
   /** Hold this identity while persistence is pending, including a changed-deadline retry. */
   pendingDisposition(id: string, threadId: string, identity: string): Promise<"expired" | "rejected"> | undefined {

@@ -2,6 +2,9 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { syncHostResult } from "./rust-sync.js";
+import { performance } from "node:perf_hooks";
+const ioNow = performance.now.bind(performance);
 import { setTimeout as nativeTimeout, clearTimeout as nativeClearTimeout } from "node:timers";
 // Child-process IO liveness uses the real event-loop clock, independently of
 // application deadlines and injected test/business clocks.
@@ -103,7 +106,34 @@ function workerFor(dir: string): Worker {
   if (!worker) { worker = new Worker(key); workers.set(key, worker); }
   return worker;
 }
-export function hostRequest(dir: string, data: Record<string, unknown>): Promise<unknown> { return workerFor(dir).request(data); }
+const operationalPending = new Map<string, { count: number; bytes: number }>();
+export function hostRequest(dir: string, data: Record<string, unknown>): Promise<unknown> {
+  const op = data.op;
+  if (typeof op !== "string" || !["accepted_", "stop_", "admission_", "outbox_"].some((prefix) => op.startsWith(prefix)))
+    return workerFor(dir).request(data);
+  const root = resolve(dir);
+  const pending = operationalPending.get(root) ?? { count: 0, bytes: 0 };
+  if (pending.count >= 32) return Promise.reject(new Error("Rust host worker busy"));
+  let snapshot: Record<string, unknown>; let bytes: number;
+  try {
+    const encoded = JSON.stringify({ ...data, id: randomUUID() });
+    bytes = Buffer.byteLength(encoded) + 1;
+    if (bytes > 32 * 1024 * 1024) return Promise.reject(new Error("Rust host request too large"));
+    if (pending.bytes + bytes > 64 * 1024 * 1024) return Promise.reject(new Error("Rust host worker busy"));
+    snapshot = JSON.parse(encoded) as Record<string, unknown>;
+  } catch { return Promise.reject(new Error("Rust host request unavailable")); }
+  pending.count++; pending.bytes += bytes; operationalPending.set(root, pending);
+  const began = ioNow();
+  // Preserve asynchronous acceptance and immutable input, with bounded queued IO wait.
+  return Promise.resolve().then(() => {
+    const remaining = 30_000 - (ioNow() - began);
+    if (remaining <= 0) throw new Error("Rust host request remains unconfirmed");
+    return syncHostResult(root, snapshot, 1024 * 1024, remaining);
+  }).finally(() => {
+    pending.count--; pending.bytes -= bytes;
+    if (!pending.count && operationalPending.get(root) === pending) operationalPending.delete(root);
+  });
+}
 export function subscribeHostEvents(dir: string, listener: (event: HostTransportEvent) => void): () => void {
   const worker = workerFor(dir); worker.listeners.add(listener); return () => { worker.listeners.delete(listener); };
 }

@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import type { ChannelModelChoice, ChannelModelOption, MessageAttachment } from "@yorozu/shared";
 import { startLocalChannel, type Send } from "./local.js";
 import { hostRequest } from "./rust-host.js";
+import { retainSharedSyncHost } from "./rust-sync.js";
 
 export const channelSocketPath = (dir: string): string => join(dir, "channel.sock");
 
@@ -118,6 +119,8 @@ const validId = (value: unknown): value is string =>
 
 export function startChannelHost(options: ChannelHostOptions): ChannelHost {
   const { dir } = options;
+  const releaseStorage = retainSharedSyncHost(dir);
+  try {
   let outbox: Pick<ChannelInbound, "id" | "threadId">[] = [];
   let modelDelivery: Record<string, "prepared" | "delivered"> = {};
   let storageTail: Promise<unknown> = Promise.resolve();
@@ -464,6 +467,8 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
       await socket.close();
       await Promise.allSettled([...operations.values()]);
       await storageTail.catch(() => {});
+      releaseStorage();
     },
   };
+  } catch (error) { releaseStorage(); throw error; }
 }

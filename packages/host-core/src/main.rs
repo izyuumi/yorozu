@@ -4,10 +4,7 @@ use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use yorozu_host_core::transport::{Emit, Transports};
-use yorozu_host_core::{
-    AttachmentStore, accepted::Accepted, admission::Admissions, history::History, now_ms,
-    outbox::ChannelOutbox, stops::Stops,
-};
+use yorozu_host_core::{AttachmentStore, history::History, now_ms};
 
 fn run() -> io::Result<()> {
     let mut args = std::env::args().skip(1);
@@ -101,10 +98,7 @@ fn run() -> io::Result<()> {
         return Err(io::ErrorKind::InvalidInput.into());
     }
     let mut store = AttachmentStore::open(Path::new(&dir))?;
-    let mut outbox: Option<ChannelOutbox> = None;
-    let mut admissions: Option<Admissions> = None;
-    let mut stops: Option<Stops> = None;
-    let mut accepted: Option<Accepted> = None;
+    let mut operations: Option<History> = None;
     let mut input = io::stdin().lock();
     let output = Arc::new(Mutex::new(io::stdout()));
     let write_frame: Emit = Arc::new(move |frame| {
@@ -166,68 +160,24 @@ fn run() -> io::Result<()> {
             .is_some_and(|op| op.starts_with("transport_"))
         {
             transports.request(&request)
-        } else if request
-            .get("op")
-            .and_then(Value::as_str)
-            .is_some_and(|op| op.starts_with("accepted_"))
-        {
-            if accepted.is_none() {
-                match Accepted::open(Path::new(&dir)) {
-                    Ok(store) => accepted = Some(store),
-                    Err(_) => {
-                        write_frame(json!({"id":id,"result":{"error":"accepted-storage-failed"}}))?;
-                        continue;
-                    }
-                }
-            }
-            accepted.as_mut().unwrap().request(&request)
-        } else if request
-            .get("op")
-            .and_then(Value::as_str)
-            .is_some_and(|op| op.starts_with("stop_"))
-        {
-            if stops.is_none() {
-                match Stops::open(Path::new(&dir)) {
-                    Ok(store) => stops = Some(store),
-                    Err(_) => {
-                        write_frame(json!({"id":id,"result":{"error":"stop-storage-failed"}}))?;
-                        continue;
-                    }
-                }
-            }
-            stops.as_mut().unwrap().request(&request)
-        } else if request
-            .get("op")
-            .and_then(Value::as_str)
-            .is_some_and(|op| op.starts_with("admission_"))
-        {
-            if admissions.is_none() {
-                match Admissions::open(Path::new(&dir)) {
-                    Ok(store) => admissions = Some(store),
+        } else if request["op"].as_str().is_some_and(|op| {
+            ["accepted_", "stop_", "admission_", "outbox_"]
+                .iter()
+                .any(|prefix| op.starts_with(prefix))
+        }) {
+            // Legacy CLI callers use the same root owner and component locks as production.
+            if operations.is_none() {
+                match History::open(Path::new(&dir)) {
+                    Ok(store) => operations = Some(store),
                     Err(_) => {
                         write_frame(
-                            json!({"id":id,"result":{"error":"admission-storage-failed"}}),
+                            json!({"id":id,"result":{"error":"operational-storage-failed"}}),
                         )?;
                         continue;
                     }
                 }
             }
-            admissions.as_mut().unwrap().request(&request)
-        } else if request
-            .get("op")
-            .and_then(Value::as_str)
-            .is_some_and(|op| op.starts_with("outbox_"))
-        {
-            if outbox.is_none() {
-                match ChannelOutbox::open(Path::new(&dir)) {
-                    Ok(store) => outbox = Some(store),
-                    Err(_) => {
-                        write_frame(json!({"id":id,"result":{"error":"channel-storage-failed"}}))?;
-                        continue;
-                    }
-                }
-            }
-            outbox.as_mut().unwrap().request(&request)
+            operations.as_mut().unwrap().request(&request)
         } else {
             let source = request
                 .get("source")

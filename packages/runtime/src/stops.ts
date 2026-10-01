@@ -1,7 +1,8 @@
 /** Stop intent reservations plus the Rust-authoritative durable Stop journal. */
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { hostRequest, retainHostWorker } from "./rust-host.js";
+import { hostRequest } from "./rust-host.js";
+import { retainSharedSyncHost } from "./rust-sync.js";
 export type StopRecord = { targetEventId: string; threadId: string;
   status: "requested" | "stopped" | "completed" | "withdrawn" | "unconfirmed";
   sessionKey?: string; runId?: string; partialText?: string; preDispatch?: boolean; requestIds: string[] };
@@ -25,7 +26,7 @@ export class StopStore {
   private writes = 0;
   private failed = false;
   private closed = false;
-  private readonly release: () => Promise<void>;
+  private readonly release: () => void;
   get available(): boolean { return !this.failed && !this.closed; }
   constructor(private readonly dir: string) {
     const path = join(dir, "stopped-turns.jsonl");
@@ -43,7 +44,7 @@ export class StopStore {
         throw new Error("Conflicting stopped-turn journal");
       this.records.set(entry.targetEventId, entry); this.committed.set(entry.targetEventId, entry);
     }
-    this.release = retainHostWorker(dir);
+    this.release = retainSharedSyncHost(dir);
   }
   confirmed(id: string): StopRecord | undefined { return this.committed.get(id); }
   pending(id: string): Promise<void> | undefined { return this.pendingWrites.get(id); }

@@ -1,6 +1,7 @@
 /** Immutable Rust acceptance currency; thread logs remain recoverable compatibility projections. */
 import type { YorozuEvent } from "@yorozu/shared";
-import { hostRequest, retainHostWorker } from "./rust-host.js";
+import { hostRequest } from "./rust-host.js";
+import { retainSharedSyncHost } from "./rust-sync.js";
 export type AcceptedMessage = Extract<YorozuEvent, { kind: "message" }>;
 export type AcceptedSummary = { id: string; threadId: string; identity: string; purpose: "conversation" | "approval-reply" | "legacy" };
 export type AcceptedEntry = AcceptedSummary & { event: AcceptedMessage; approvalActionId?: string };
@@ -22,9 +23,9 @@ export class AcceptedMessages {
   private failed = false;
   private closed = false;
   private initialized = false;
-  private readonly release: () => Promise<void>;
+  private readonly release: () => void;
   get available(): boolean { return this.initialized && !this.failed && !this.closed; }
-  constructor(private readonly dir: string) { this.release = retainHostWorker(dir); }
+  constructor(private readonly dir: string) { this.release = retainSharedSyncHost(dir); }
   async initialize(legacy: Iterable<AcceptedEntry>, restore: (entry: AcceptedEntry) => void): Promise<void> {
     try {
       let after: string | undefined;

@@ -720,6 +720,36 @@ and storage. All original assertions and its5000ms deadline remain in place. Fin
 strictClippy and the production build. Read-only review found no remaining protocol blocker.
 This transport does not complete run/approval policy.
 
+## Shared-owner operational journals
+
+Acceptance, durable Stop, irreversible expiration and channel outbox operations now run inside the
+same pinned Rust history owner as queue, steering, crypto and metadata. Existing component code,
+private files, ownership locks, checksums, recovery snapshots and independent failure fences remain
+in use. Stop recording remains available when an unrelated history projection fails. The legacy
+attachments CLI delegates these operations through the same root owner, so it cannot become a
+second operational writer. Transport and attachment ingress keep their existing separate IO worker.
+No additional operational truth store or journal format is introduced by this step; the approved
+SQLite migration remains required below.
+
+The async facade snapshots queued input immediately, bounds it to32 requests,32MiB per frame and
+64MiB aggregate, and keeps its original30s total deadline through queue wait, RPC and any large
+response fetch. Domain error objects remain intact, including the benign admission-not-expired
+response; the existing throwing synchronous facade still requires a successful proof. Bound native
+monotonic clocks keep IO liveness independent of business/test wall clocks. Independent shared
+leases prevent one adapter or host controller from closing another's writer. Each adapter drains
+pending operations before release; failed startup closes collected partial owners before their
+last lease can disappear.
+
+The expanded real-owner contract exercises large immutable accepted content, direct operational
+reads through that same owner, future-expiration refusal followed by valid expiration,32 queued
+requests and excess refusal, idle ownership, external writer exclusion and independent release.
+Startup cases preserve both ambiguous queue bytes and invalid Stop bytes, then prove root ownership
+is released even when failure occurs after an admission lease is retained. Existing component
+recovery/failure contracts and affected update/Stop checks pass. Complete verification passes111 Rust and825 runtime tests plus one skip across52 files, formatting,
+strictClippy and the production build. Final legacy CLI error-name preservation also passes42 focused Rust component contracts,18
+runtime contracts, strictClippy and the production build. Read-only review caught and repaired a queued-deadline reset before this
+slice was committed. Run/approval decision policy remains unfinished.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

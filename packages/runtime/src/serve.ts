@@ -486,7 +486,6 @@ export interface Sidecar {
 export function serve(options: ServeOptions = {}): Sidecar {
   const relayUrl = options.relayUrl ?? env.YOROZU_RELAY_URL ?? "wss://relay.yumi.to";
   const dir = options.stateDir ?? env.YOROZU_STATE_DIR ?? DEFAULT_STATE_DIR;
-  const attachmentUploads = new AttachmentUploads(dir);
   const assemblingAttachments = new Set<string>();
   let assemblyTail: Promise<void> = Promise.resolve();
   // Memory and the schedule tools resolve their own paths from the environment:
@@ -495,7 +494,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // Before anything is read or written under it: keys, pairings and transcripts all live here.
   ensureStateDir(dir);
   const releaseHistory = retainSyncHost(dir);
+  const startupClosers: (() => Promise<void>)[] = [];
+  let stopped = false;
   try {
+  const attachmentUploads = new AttachmentUploads(dir);
+  startupClosers.push(() => attachmentUploads.close());
   syncHostRequest(dir, { op: "queue_open" });
   syncHostRequest(dir, { op: "steering_open" });
   const wireCrypto = new WireCrypto(dir);
@@ -595,11 +598,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // An expired operation ID stays barred after restart. The old encrypted relay copy may
   // arrive later, while a fresh user confirmation must carry a new ID and deadline.
   const admissionStore = new ExpiredAdmissions(dir);
+  startupClosers.push(() => admissionStore.close());
   const expiredAdmissions = admissionStore.records;
   // A Stop is bound to one accepted operation. Keep its intent through sidecar replacement,
   // including the backend run identity needed to finish an interrupted abort request.
   const stopStore = new StopStore(dir);
+  startupClosers.push(() => stopStore.close());
   const acceptedStore = new AcceptedMessages(dir);
+  startupClosers.push(() => acceptedStore.close());
   const stoppedTurns = stopStore.records;
   let startupRecovery: Promise<void> = Promise.resolve();
   const rememberStop = (record: StopRecord): Promise<void> => stopStore.save(record);
@@ -803,7 +809,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // OPEN only means transport connected; the relay accepts application traffic after register.
   let relayReady = false;
   let relay: ReturnType<typeof startRustRelay> | undefined;
-  let stopped = false;
   const catchupQueue = new CatchupQueue(dir);
   const catchupSends = new Map<string, { connection: RustRelaySocket; device: PairedDevice; generation: string }>();
   let catchupTimer: NodeJS.Timeout | null = null;
@@ -824,6 +829,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     onFrame: (_, payload) => onDirectFrame(payload),
     onError: state,
   });
+  if (direct) startupClosers.push(() => direct.close());
   /** The direct socket a device is on right now, if any; its boxes skip the relay. */
   const directFor = (known: PairedDevice): WebSocket | undefined =>
     known.record.signingPub ? direct?.socketFor(known.record.signingPub) : undefined;
@@ -3419,6 +3425,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
   });
 
+  startupClosers.push(() => channel.close());
+
   /**
    * The relay-free path in: the Mac app's own chat UI connects here instead of pairing. Its
    * first frame is the thread list, exactly as a phone's `hello` is answered with one.
@@ -3470,6 +3478,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     onError: state,
   });
+  startupClosers.push(() => local.close());
 
   function connect(ws: RustRelaySocket): void {
     relayReady = false;
@@ -4050,7 +4059,11 @@ export function serve(options: ServeOptions = {}): Sidecar {
       await legacy?.close();
     },
   };
-  } catch (error) { releaseHistory(); throw error; }
+  } catch (error) {
+    stopped = true;
+    void Promise.allSettled(startupClosers.reverse().map((close) => close()));
+    releaseHistory(); throw error;
+  }
 }
 
 if (import.meta.main) {
