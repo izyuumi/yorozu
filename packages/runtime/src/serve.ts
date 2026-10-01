@@ -13,6 +13,7 @@ import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdtempSync, mkdir
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { argv, env, stdin, stdout } from "node:process";
+import { AcceptedMessages, type AcceptedEntry } from "./accepted.js";
 import { ExpiredAdmissions } from "./admission.js";
 import { StopStore, type StopRecord } from "./stops.js";
 import { promisify } from "node:util";
@@ -98,6 +99,7 @@ import { autoTitle, onDeviceTitler, type Titler } from "./title.js";
 const PING = JSON.stringify({ type: "ping" });
 import {
   appendThreadEvent,
+  restoreAcceptedThreadEvent,
   attachmentFiles,
   archiveThread,
   createThread,
@@ -619,6 +621,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   // A Stop is bound to one accepted operation. Keep its intent through sidecar replacement,
   // including the backend run identity needed to finish an interrupted abort request.
   const stopStore = new StopStore(dir);
+  const acceptedStore = new AcceptedMessages(dir);
   const stoppedTurns = stopStore.records;
   let startupRecovery: Promise<void> = Promise.resolve();
   const rememberStop = (record: StopRecord): Promise<void> => stopStore.save(record);
@@ -1889,7 +1892,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }
       if (stopped) return;
       if (userEventId) await steering.get(userEventId)?.promise;
-      if (userEventId && (!stopStore.available || stoppedTurns.has(userEventId) || steered.has(userEventId))) return;
+      if (userEventId && (!stopStore.available || !acceptedStore.available || stoppedTurns.has(userEventId) || steered.has(userEventId))) return;
       const logged = queuedBehindTurn ? acceptedEvent : undefined;
       if (logged) {
         // A queued message was admitted while an earlier turn ran. Append its corrected
@@ -2245,7 +2248,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const activeSearchRequests = new Map<string, string>();
   const downloadFiles = new Map<string, { bytes: Buffer; sha256: string }>();
   let downloadCacheBytes = 0;
-  function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0, from?: string, localDevice?: string): void {
+  function handleEvent(event: YorozuEvent, reply: Send, pairedAt = 0, from?: string, localDevice?: string, durable?: AcceptedEntry): void {
     if (event.kind === "steer") {
       const compatibility = from ? devices.get(from)?.compatibility : undefined;
       if (from && (compatibility?.state !== "compatible" || !compatibility.capabilities.includes("steer-v1"))) return;
@@ -2518,7 +2521,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
         const history = readThreadEvents(event.threadId, dir);
         const user = history.find((stored) => stored.id === target && stored.kind === "message" && stored.data.role === "user");
         const channelAdmission = pendingChannelAdmissions.get(target);
-        if (existing?.preDispatch || !existing && channelAdmission?.fresh && channelAdmission.threadId === event.threadId && !channelRuns.has(target)) {
+        const acceptance = acceptedStore.pending.get(target);
+        if (existing?.preDispatch || !existing && !channelRuns.has(target) &&
+            (channelAdmission?.fresh && channelAdmission.threadId === event.threadId ||
+              viaChannel(event.threadId) && acceptance?.entry.threadId === event.threadId && !user)) {
           const request: StopRecord = existing ? { ...existing, requestIds: [...new Set([...existing.requestIds,event.id])] }
             : { targetEventId: target, threadId: event.threadId, status: "requested", preDispatch: true, requestIds: [event.id] };
           await rememberStop(request);
@@ -2618,6 +2624,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (event.kind === "admission_query") {
       const id = event.data.eventId;
       if (typeof id !== "string" || !id || id.length > 128 || !event.threadId) return;
+      const acceptance = acceptedStore.pending.get(id);
+      if (acceptance?.entry.threadId === event.threadId) {
+        void acceptance.promise.then(() => { if (!stopped) handleEvent(event, reply, pairedAt, from, localDevice); })
+          .catch(() => {
+            if (!stopped) reply(control({ kind: "admission_status", data: {
+              eventId: id, requestId: event.id, status: "indeterminate", reason: "accepted-storage-unconfirmed" } }));
+          });
+        return;
+      }
+      const accepted = acceptedStore.records.get(id);
       const history = readThreadEvents(event.threadId, dir);
       const user = history.find((stored): stored is YorozuEvent & { kind: "message" } =>
         stored.kind === "message" && stored.data.role === "user" && stored.id === id);
@@ -2632,7 +2648,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
         stored.id === candidate && stored.kind === "message" && stored.data.role === "agent" && stored.data.done === true) : undefined;
       const completionId = recordedCompletionId ?? (final ? oldOpenClawCompletionId : undefined);
       const status = withdrawal?.threadId === event.threadId && withdrawal.status === "withdrawn"
-        ? "withdrawn" : rejectedReply ? "rejected" : !user ? expired?.threadId === event.threadId ? "expired" : "unknown" : final ? "completed"
+        ? "withdrawn" : rejectedReply ? "rejected" : !user ? expired?.threadId === event.threadId ? "expired"
+          : accepted?.threadId === event.threadId || !acceptedStore.available ? "indeterminate" : "unknown" : final ? "completed"
         : activeTurnIds.has(id) || user?.data.delivery === "steer" &&
           recordedCompletionId === completionIdFor(event.threadId, runningEventIds.get(event.threadId) ?? "") ? "running"
         : admittedTurns.has(id) ? "queued" : "indeterminate";
@@ -2705,6 +2722,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
               .filter((thread) => thread.nativeTurn?.state === "interrupted").map((thread) => thread.id);
             active = new Set([
               ...running.keys(), ...(!updateGate.draining ? turnQueues.keys() : []), ...interrupted,
+              ...[...acceptedStore.pending.values()].map((pending) => pending.entry.threadId),
             ]).size;
           } catch { active = null; }
           updateGate.poll(active, Date.now());
@@ -2755,6 +2773,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const identity = event.kind === "message" && event.data.role === "user"
       ? userMessageIdentity(event) : undefined;
     if (identity && !stopStore.available) return state("stop-storage-failed");
+    if (identity && !acceptedStore.available) return state("accepted-storage-failed");
     if (identity && acceptedMessages.has(event.id) && acceptedMessages.get(event.id) !== identity) {
       rejectUserMessage("conflicting-message-id");
       return state("rejected-conflicting-message-id");
@@ -2906,19 +2925,43 @@ export function serve(options: ServeOptions = {}): Sidecar {
         });
       }
     }
+    const oldest = event.kind === "message" && event.data.role === "user"
+      ? [...pending.values()].find((card) => card.threadId === event.threadId) : undefined;
+    const typedCandidate = oldest && event.kind === "message" && event.data.replyTo === undefined
+      ? typedAnswer(event.data.text, oldest.card) : undefined;
+    const typed = !durable || durable.purpose === "legacy" || durable.purpose === "approval-reply" &&
+      durable.approvalActionId === oldest?.card.actionId ? typedCandidate : undefined;
+    if (event.kind === "message" && event.data.role === "user" && !durable) {
+      const turnless = typed || viaChannel(event.threadId);
+      const projected = knownMessage?.kind === "message" ? knownMessage : { ...event, data: { ...event.data,
+        delivery: "queue" as const, ...(turnless ? {} : { runId: completionIdFor(event.threadId, event.id),
+          completionId: completionIdFor(event.threadId, event.id) }) } };
+      const entry: AcceptedEntry = { id: event.id, threadId: event.threadId, identity: identity!, event: projected,
+        purpose: acceptedStore.records.get(event.id)?.purpose ?? (knownMessage ? "legacy" : typed ? "approval-reply" : "conversation"),
+        ...(typed && oldest ? { approvalActionId: oldest.card.actionId } : {}) };
+      updateGate.activity();
+      void acceptedStore.accept(entry).then((confirmed) => {
+        acceptedMessages.set(event.id, confirmed.identity);
+        if (stopped) return;
+        try { handleEvent(event, reply, pairedAt, from, localDevice, confirmed); }
+        catch { state("message-processing-failed"); }
+      }).catch((error: unknown) => {
+        if (error instanceof Error && error.message === "Conflicting message ID") rejectUserMessage("conflicting-message-id");
+        else state("accepted-storage-failed");
+      });
+      return;
+    }
     if (seenCommands.has(event.id)) {
       if (event.kind === "message" && !knownMessage) return state("missing-previous-message");
-      if (event.kind === "message" && event.data.role === "user" && viaChannel(event.threadId)) channel.retry(event.threadId);
+      if (event.kind === "message" && event.data.role === "user" && durable?.purpose !== "approval-reply" && viaChannel(event.threadId)) channel.retry(event.threadId);
       receipt();
       return state("duplicate-command");
     }
     // A message this thread already holds is the same message again: not a second turn, and
     // not a second line in the log.
     const duplicateMessage = Boolean(knownMessage);
-    const oldest = event.kind === "message" && event.data.role === "user"
-      ? [...pending.values()].find((card) => card.threadId === event.threadId) : undefined;
-    const typed = oldest && event.kind === "message" && event.data.replyTo === undefined ? typedAnswer(event.data.text, oldest.card) : undefined;
     if (duplicateMessage) {
+      if (durable?.purpose === "approval-reply") { receipt(); return; }
       if (!visibleThreadEvents(event.threadId, dir).some((known) => known.id === event.id)) {
         receipt();
         return;
@@ -2952,19 +2995,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
     let admittedTurn: Promise<void> | undefined;
     // A channel message has no completion of its own: OpenClaw answers when it answers.
     const turnless = typed || viaChannel(event.threadId);
-    const logged = event.kind === "message" && event.data.role === "user"
+    const logged = durable?.event ?? (event.kind === "message" && event.data.role === "user"
       ? { ...event, data: { ...event.data, delivery: "queue" as const,
         runId: turnless ? undefined : completionIdFor(event.threadId, event.id),
-        completionId: turnless ? undefined : completionIdFor(event.threadId, event.id) } } : event;
+        completionId: turnless ? undefined : completionIdFor(event.threadId, event.id) } } : event);
     appendTranscript(logged, transcripts);
     appendThreadEvent(logged, dir);
-    if (event.kind === "message" && event.data.role === "user" && !typed &&
+    if (event.kind === "message" && event.data.role === "user" && !typed && durable?.purpose !== "approval-reply" &&
         threadAgent(event.threadId, dir) !== "yorozu") {
       admittedTurn = enqueueTurn(event.threadId, event.data.text, true,
         event.data.attachments ?? [], event.id, logged);
       if (event.data.delivery === "steer" && logged.kind === "message") void steerMessage(logged);
     }
-    if (event.kind === "message" && event.data.role === "user" && !typed && viaChannel(event.threadId)) {
+    if (event.kind === "message" && event.data.role === "user" && !typed && durable?.purpose !== "approval-reply" && viaChannel(event.threadId)) {
       if (identity) acceptedMessages.set(event.id, identity);
       title(event.threadId, event.data.text);
       void admitChannel({ id: event.id, threadId: event.threadId, ts: event.ts, text: event.data.text,
@@ -3137,6 +3180,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
     // A plain "yes" while a card is up in this thread answers the card rather than starting a
     // turn. Only this thread's: a "yes" typed into another chat is a message there, not an
     // answer to whatever happens to be the oldest card anywhere.
+    if (durable?.purpose === "approval-reply") {
+      if (typed && oldest) oldest.settle(typed);
+      return;
+    }
     if (typed && oldest) return oldest.settle(typed);
     const queued = admittedTurn ?? enqueueTurn(event.threadId, event.data.text, true,
       event.data.attachments ?? [], event.id, logged);
@@ -3165,7 +3212,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   /** OpenClaw's `yorozu` channel plugin. Its messages land like any agent reply: logged, synced, pushed. */
   const channel = startChannelHost({
     dir,
-    canDispatch: (id) => !stopped && stopStore.available && !stoppedTurns.has(id),
+    canDispatch: (id) => !stopped && stopStore.available && acceptedStore.available && !stoppedTurns.has(id),
     onError: (message) => state(`channel-${message}`),
     onCapabilities: () => { if (!stopped) broadcast(modelList()); },
     onModel: (threadId, model) => {
@@ -3908,10 +3955,24 @@ export function serve(options: ServeOptions = {}): Sidecar {
     });
   }
 
-  const stopRecovery: Promise<void>[] = [];
+  function* legacyAccepted(): Iterable<AcceptedEntry> {
+    for (const thread of listThreads(dir)) for (const event of readThreadEvents(thread.id, dir)) {
+      if (event.kind === "message" && event.data.role === "user") yield { id: event.id, threadId: event.threadId,
+        identity: userMessageIdentity(event), purpose: "legacy", event };
+    }
+  }
+  const acceptedReady = acceptedStore.initialize(legacyAccepted(), (entry) => {
+    const known = readThreadEvents(entry.threadId, dir).find((event) => event.id === entry.id &&
+      event.kind === "message" && event.data.role === "user");
+    if (known?.kind === "message" && userMessageIdentity(known) !== entry.identity)
+      throw new Error("Conflicting accepted projection");
+    if (!known) { restoreAcceptedThreadEvent(entry.event, dir); appendTranscript(entry.event, transcripts); }
+    acceptedMessages.set(entry.id, entry.identity);
+  });
+  const stopRecovery: (() => Promise<void>)[] = [];
   for (const stop of stoppedTurns.values()) {
     if (stop.preDispatch && stop.status !== "withdrawn") {
-      stopRecovery.push(withdrawBeforeDispatch(stop));
+      stopRecovery.push(() => withdrawBeforeDispatch(stop));
       continue;
     }
     if (viaChannel(stop.threadId) && (stop.status === "requested" || stop.status === "unconfirmed")) {
@@ -3919,14 +3980,15 @@ export function serve(options: ServeOptions = {}): Sidecar {
       turnStates.set(stop.threadId, { state: stop.status === "requested" ? "stopping" : "stopped-unconfirmed",
         activeEventId: stop.targetEventId, queued: [] });
     }
-    if (stop.status === "requested") stopRecovery.push(finishStop(stop));
+    if (stop.status === "requested") stopRecovery.push(() => finishStop(stop));
   }
 
   // Recover durable Stop intent before admitting new work or clearing old native markers.
-  startupRecovery = Promise.all(stopRecovery).then(() => {
+  startupRecovery = acceptedReady.then(() => Promise.all(stopRecovery.map((recover) => recover()))).then(() => {
     if (stopped) return;
     for (const thread of listThreads(dir)) {
       if (thread.nativeTurn?.state === "interrupted") resumeNativeTurn(thread.id);
+      if (viaChannel(thread.id)) channel.retry(thread.id);
     }
 
     for (const entry of [...queuedNative]) {
@@ -3952,7 +4014,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
   });
   void startupRecovery.then(() => { if (!stopped) connect(); })
-    .catch(() => state("stop-storage-failed"));
+    .catch(() => state(acceptedStore.available ? "stop-storage-failed" : "accepted-storage-failed"));
 
   // Production never installs legacy agents or starts its scheduler. Initialization remains
   // async so importing the sidecar does not load the old provider/tool graph.
@@ -3988,6 +4050,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
       await Promise.allSettled([...pendingChannelAdmissions.values()].map((entry) => entry.promise));
       await Promise.allSettled([...preDispatchStops.values()]);
       await channel.close();
+      await startupRecovery.catch(() => {});
+      await acceptedStore.close();
       await stopStore.close();
       await admissionStore.close();
       await attachmentUploads.close();

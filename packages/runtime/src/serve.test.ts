@@ -46,6 +46,7 @@ import * as schedulerModule from "./scheduler.js";
 import { localSocketPath } from "./local.js";
 import { channelSocketPath, type HostFrame, type PluginFrame } from "./channel.js";
 import * as rustHost from "./rust-host.js";
+import { AcceptedMessages, type AcceptedEntry } from "./accepted.js";
 import { SYNC_PAGE_BYTES, setNativeTurn, setThreadSession, appendThreadEvent, createThread, eventsAfter, listThreads, readThreadEvents } from "./threads.js";
 import { readTranscripts, transcriptDir } from "./transcripts.js";
 
@@ -6079,4 +6080,125 @@ test("Rust Stop startup recovery gates local greeting and relay registration unt
     expect(readFileSync(join(dir, "stopped-turns.jsonl"), "utf8")).toContain('"status":"unconfirmed"');
     expect(run).not.toHaveBeenCalled();
   } finally { release(); client.destroy(); }
+});
+
+test("Rust acceptance saves once before receipts, projection or native execution, and rejects pending retargeting", async () => {
+  relay = await startRelay(0); const dir = mkdtempSync(join(tmpdir(), "yorozu-accepted-pending-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  const run = vi.fn<NativeAgentRunner["run"]>(async () => {});
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, nativeRunners: { codex: { run } }, log: () => {} });
+  const mac = await macClient(dir); const original = rustHost.hostRequest;
+  let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; }); let saves = 0;
+  vi.spyOn(rustHost, "hostRequest").mockImplementation(async (root, request) => {
+    if (request.op === "accepted_accept") { saves++; await gate; } return original(root, request);
+  });
+  const message: YorozuEvent = { id: "accepted-once", threadId: "cc", ts: Date.now(), agentId: "mac", kind: "message", data: { role: "user", text: "save this once" } };
+  try {
+    mac.sendRawEvent(message); mac.sendRawEvent(message);
+    await vi.waitFor(() => expect(saves).toBe(1));
+    expect(readThreadEvents("cc", dir)).toEqual([]); expect(run).not.toHaveBeenCalled();
+    expect(mac.events.some((event) => event.kind === "receipt" && event.data.eventId === message.id)).toBe(false);
+    mac.sendRawEvent({ id: "pending-query", threadId: "cc", ts: Date.now(), agentId: "mac", kind: "admission_query", data: { eventId: message.id } });
+    mac.sendRawEvent({ ...message, data: { role: "user", text: "changed while pending" } });
+    await vi.waitFor(() => expect(mac.events).toContainEqual(expect.objectContaining({ kind: "admission_status", data: { eventId: message.id, status: "rejected", reason: "conflicting-message-id" } })));
+    release(); await vi.waitFor(() => expect(mac.events.filter((event) => event.kind === "receipt" && event.data.eventId === message.id)).toHaveLength(2));
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "admission_status" && event.data.requestId === "pending-query" && event.data.status !== "unknown")).toBe(true));
+    expect(readThreadEvents("cc", dir).filter((event) => event.id === message.id)).toHaveLength(1);
+  } finally { release(); mac.close(); }
+});
+
+test.each(["codex", "yorozu"] as const)("Stop while Rust acceptance is pending withdraws %s without executing after restart", async (agent) => {
+  relay = await startRelay(0); const dir = mkdtempSync(join(tmpdir(), "yorozu-accepted-stop-"));
+  createThread("Work", dir, "work", { agent, ...(agent === "codex" ? { cwd: proj } : {}) });
+  const run = vi.fn<NativeAgentRunner["run"]>(async () => {});
+  const options = { relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, nativeRunners: { codex: { run } }, log: () => {} };
+  sidecar = serve(options); let mac = await macClient(dir); const original = rustHost.hostRequest;
+  let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; }); let saving = false;
+  vi.spyOn(rustHost, "hostRequest").mockImplementation(async (root, request) => {
+    if (request.op === "accepted_accept") { saving = true; await gate; } return original(root, request);
+  });
+  const message: YorozuEvent = { id: "withdraw-accepted", threadId: "work", ts: Date.now(), agentId: "mac", kind: "message", data: { role: "user", text: "cancel before dispatch" } };
+  try {
+    mac.sendRawEvent(message); await vi.waitFor(() => expect(saving).toBe(true));
+    mac.sendRawEvent({ id: "stop-before-acceptance", threadId: "work", ts: Date.now(), agentId: "mac", kind: "interrupt", data: { targetEventId: message.id } });
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "stop_status" && event.data.status === "withdrawn")).toBe(true));
+    release(); await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "admission_status" && event.data.eventId === message.id && event.data.status === "withdrawn")).toBe(true));
+    expect(run).not.toHaveBeenCalled(); expect(readThreadEvents("work", dir).some((event) => event.id === message.id)).toBe(false);
+    mac.close(); await sidecar.close(); sidecar = serve(options); mac = await macClient(dir);
+    expect(readThreadEvents("work", dir).filter((event) => event.id === message.id)).toHaveLength(1);
+    expect(run).not.toHaveBeenCalled();
+    mac.sendRawEvent({ id: "query-withdrawn", threadId: "work", ts: Date.now(), agentId: "mac", kind: "admission_query", data: { eventId: message.id } });
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "admission_status" && event.data.eventId === message.id && event.data.status === "withdrawn")).toBe(true));
+    expect(existsSync(join(dir, "channel-outbox.json")) ? JSON.parse(readFileSync(join(dir, "channel-outbox.json"), "utf8")) : []).toEqual([]);
+  } finally { release(); mac.close(); }
+});
+
+test("Rust acceptance restores a missing projection before greeting and retries the original native operation once", async () => {
+  relay = await startRelay(0); const dir = mkdtempSync(join(tmpdir(), "yorozu-accepted-project-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  const message: AcceptedEntry["event"] = { id: "restore-original", threadId: "cc", ts: 1000, agentId: "mac", kind: "message", data: { role: "user", text: "restore original text", delivery: "queue", runId: "native:restore-original:final", completionId: "native:restore-original:final" } };
+  const entry: AcceptedEntry = { id: message.id, threadId: message.threadId, identity: createHash("sha256").update(JSON.stringify([message.threadId, message.ts, "user", message.data.text, null, []])).digest("hex"), purpose: "conversation", event: message };
+  const saved = new AcceptedMessages(dir); await saved.initialize([], () => {}); await saved.accept(entry); await saved.close();
+  mkdirSync(join(dir, "threads"), { recursive: true });
+  const interrupted = "{unfinished accepted projection";
+  writeFileSync(join(dir, "threads", "cc.jsonl"), interrupted);
+  const run = vi.fn<NativeAgentRunner["run"]>(async () => {});
+  const options = { relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, nativeRunners: { codex: { run } }, log: () => {} };
+  sidecar = serve(options); let mac = await macClient(dir);
+  try {
+    expect(readThreadEvents("cc", dir)).toEqual([message]); expect(run).not.toHaveBeenCalled();
+    const recovery = readdirSync(join(dir, "threads")).find((name) => name.startsWith(".accepted-projection-recovery."));
+    expect(recovery).toBeDefined(); expect(readFileSync(join(dir, "threads", recovery!), "utf8")).toBe(interrupted);
+    mac.sendRawEvent(message); mac.sendRawEvent(message);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mac.events.filter((event) => event.kind === "receipt" && event.data.eventId === message.id)).toHaveLength(2));
+    await vi.waitFor(() => expect(readThreadEvents("cc", dir).some((event) => event.id === message.data.completionId)).toBe(true));
+    mac.close(); await sidecar.close(); sidecar = serve(options); mac = await macClient(dir); mac.sendRawEvent(message);
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "receipt" && event.data.eventId === message.id)).toBe(true));
+    expect(run).toHaveBeenCalledTimes(1); expect(readThreadEvents("cc", dir).filter((event) => event.id === message.id)).toHaveLength(1);
+  } finally { mac.close(); }
+});
+
+test("Rust acceptance failure produces no receipt, history or execution and fences subsequent messages", async () => {
+  relay = await startRelay(0); const dir = mkdtempSync(join(tmpdir(), "yorozu-accepted-failure-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  const lines: string[] = []; const run = vi.fn<NativeAgentRunner["run"]>();
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir, nativeRunners: { codex: { run } }, log: (line) => lines.push(line) });
+  const mac = await macClient(dir); const original = rustHost.hostRequest;
+  vi.spyOn(rustHost, "hostRequest").mockImplementation((root, request) => request.op === "accepted_accept" ? Promise.reject(new Error("synthetic lost storage response")) : original(root, request));
+  try {
+    mac.sendRawEvent({ id: "unconfirmed", threadId: "cc", ts: Date.now(), agentId: "mac", kind: "message", data: { role: "user", text: "keep pending" } });
+    await vi.waitFor(() => expect(lines).toContain("STATE accepted-storage-failed"));
+    mac.sendRawEvent({ id: "new-after-failure", threadId: "cc", ts: Date.now(), agentId: "mac", kind: "message", data: { role: "user", text: "do not execute" } });
+    await vi.waitFor(() => expect(lines.filter((line) => line === "STATE accepted-storage-failed")).toHaveLength(2));
+    expect(mac.events.some((event) => event.kind === "receipt" && ["unconfirmed", "new-after-failure"].includes(event.data.eventId))).toBe(false);
+    expect(readThreadEvents("cc", dir)).toEqual([]); expect(run).not.toHaveBeenCalled();
+  } finally { mac.close(); }
+});
+
+test("a Rust-recorded typed approval reply never becomes new agent work after host replacement", async () => {
+  const { dir, send, eventsUntil, isReply } = await pairedPhone([
+    () => shellTurn("rm -rf /tmp/yorozu-accepted-approval-must-not-run"),
+    () => sse("I will skip that action."),
+  ]);
+  send({ kind: "message", data: { role: "user", text: "check first" } });
+  await eventsUntil((event) => event.kind === "approval_card");
+  const answerId = send({ kind: "message", data: { role: "user", text: "no" } });
+  await eventsUntil(isReply);
+  const recorded = readThreadEvents("t1", dir).find((event) => event.id === answerId);
+  expect(recorded).toMatchObject({ kind: "message", data: { role: "user", text: "no" } });
+  const before = readThreadEvents("t1", dir).length;
+  await sidecar.close();
+  const fetch = vi.fn<typeof globalThis.fetch>(async () => sse("unexpected extra turn"));
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir,
+    provider: openaiCompat({ baseUrl: "https://example.invalid", model: "m", fetch }), log: () => {} });
+  const mac = await macClient(dir);
+  try {
+    if (!recorded) throw new Error("missing typed approval reply");
+    mac.sendRawEvent(recorded);
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "receipt" && event.data.eventId === answerId)).toBe(true));
+    expect(fetch).not.toHaveBeenCalled(); expect(readThreadEvents("t1", dir)).toHaveLength(before);
+    expect(existsSync(join(dir, "channel-outbox.json"))).toBe(false);
+  } finally { mac.close(); }
 });

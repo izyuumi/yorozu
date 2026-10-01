@@ -4,7 +4,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use yorozu_host_core::transport::{Emit, Transports};
 use yorozu_host_core::{
-    AttachmentStore, admission::Admissions, now_ms, outbox::ChannelOutbox, stops::Stops,
+    AttachmentStore, accepted::Accepted, admission::Admissions, now_ms, outbox::ChannelOutbox,
+    stops::Stops,
 };
 
 fn run() -> io::Result<()> {
@@ -20,6 +21,7 @@ fn run() -> io::Result<()> {
     let mut outbox: Option<ChannelOutbox> = None;
     let mut admissions: Option<Admissions> = None;
     let mut stops: Option<Stops> = None;
+    let mut accepted: Option<Accepted> = None;
     let mut input = io::stdin().lock();
     let output = Arc::new(Mutex::new(io::stdout()));
     let write_frame: Emit = Arc::new(move |frame| {
@@ -72,6 +74,21 @@ fn run() -> io::Result<()> {
             .is_some_and(|op| op.starts_with("transport_"))
         {
             transports.request(&request)
+        } else if request
+            .get("op")
+            .and_then(Value::as_str)
+            .is_some_and(|op| op.starts_with("accepted_"))
+        {
+            if accepted.is_none() {
+                match Accepted::open(Path::new(&dir)) {
+                    Ok(store) => accepted = Some(store),
+                    Err(_) => {
+                        write_frame(json!({"id":id,"result":{"error":"accepted-storage-failed"}}))?;
+                        continue;
+                    }
+                }
+            }
+            accepted.as_mut().unwrap().request(&request)
         } else if request
             .get("op")
             .and_then(Value::as_str)

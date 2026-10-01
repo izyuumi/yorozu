@@ -1,5 +1,6 @@
 //! Portable durable attachment ingress. No UI, Swift, gateway or credential dependency.
 //! The surrounding host still owns message admission; assembling files never admits a turn.
+pub mod accepted;
 pub mod admission;
 mod journal;
 pub mod outbox;

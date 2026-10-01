@@ -10,8 +10,9 @@ separate conversations. These are migration requirements, not claims about the c
 - `apps/mac` and `apps/ios` provide Swift/SwiftUI interfaces. The shared Swift `ChatModel` and
   `ThreadCache` own encrypted client drafts, attachments, saved-draft recovery and pending sends.
 - The Mac launches the bundled Node executable and `packages/runtime/dist/serve.js`. The
-  TypeScript host currently owns relay transport, admission, sequencing, approvals,
-  thread history, recovery and orchestration. This is approximately 4,000 lines in `serve.ts`,
+  TypeScript host currently owns relay transport, admission policy, sequencing, approvals,
+  thread-history projections, recovery and orchestration. Rust owns the extracted durable
+  attachment/outbox/expiry/Stop/accepted-message stores and Unix listeners. This is approximately 4,000 lines in `serve.ts`,
   plus its supporting modules; replacing a launcher alone would not rewrite the backend.
 - Claude uses a TypeScript SDK adapter; Codex has both SDK and native app-server adapters.
   OpenClaw's separate channel plugin uses a local JSON-lines socket and durable acknowledged
@@ -175,6 +176,61 @@ force persistence failure and verify startup connection gating. The final comple
 workers, and the production runtime build passes. Cross-platform execution and physical
 power-loss behavior remain unverified locally.
 
+## Immutable accepted-message extraction
+
+Rust now owns receipt-backed user-message identity and immutable accepted bodies in a separate
+`accepted-messages` store. Each record retains original text, attachment data, explicit reply
+identity, model choice, client timestamp, deadline, unknown event fields and execution purpose.
+A Rust content fingerprint independently binds the client-owned fields even if a caller claims
+an unchanged wire fingerprint. A duplicate returns the original body and purpose; it cannot
+retarget a conversation or turn a previously consumed approval reply into new agent work.
+
+An OS-held writer lock excludes another accepted-store owner. Records are published through
+an exclusive hard link from a private, synced temporary file, then both directories are synced
+before acknowledgement. Integrity envelopes detect changed committed bytes. Corrupt or
+unsupported final paths are retained and fail closed. Interrupted private temporary files remain
+recoverable and do not become accepted operations. Bounds are 32 MiB per record, 65,536 identities,
+4 GiB including retained temporary bytes and 128 interrupted temporaries. Exceeding a bound
+stops acceptance without discarding original history. Metadata snapshots are paged at 256
+identities and never collect attachment bodies; restoration fetches one body at a time.
+
+Startup imports known legacy user records without rewriting valid thread logs, then repairs
+missing accepted-message projections before local greetings, relay registration or native
+recovery. A partial projection tail is copied into a private synced recovery file before only
+those incomplete bytes are removed. The repaired user-message projection is synced. Restoration
+alone never starts a new turn. Existing native queue/run/completion state and same-ID client
+retry decide execution, preserving uncertain backend outcomes.
+
+Identical pending messages share one Rust save. No receipt, native execution or fresh thread-log
+projection precedes that save. A pending acceptance can be withdrawn through durable Stop, even
+before a channel outbox exists. Admission queries wait for pending persistence and report
+uncertainty after failure rather than misidentifying pending work as unknown. Persistence failure
+fences subsequent user messages. The update gate includes pending acceptance and restarts its
+idle countdown when new acceptance begins; installation cannot race a still-pending save.
+
+The complete event log, thread index, transcript writer, delivery/steering transitions, approval
+outcomes, execution markers and providers remain compatibility-host responsibilities. This is
+the immutable receipt currency boundary, not the completed standalone history engine or host.
+The development Rust profile now uses optimization level 1 with debug/overflow checks retained;
+release builds keep their separate profile. Repeated checksum serialization was also removed.
+No production speed claim follows from these changes.
+
+Nine new Rust tests and all 47 core tests pass, including actual worker termination with
+attachment-bearing accepted content, corruption, ownership, bounds, retained temporary data,
+client-content conflicts, numeric compatibility and bounded metadata pages. Six facade tests
+cover pending identity, original approval purpose, failed paths, owner shutdown and non-BMP
+paging. Host fixtures verify delayed receipts, pending queries, Stop during acceptance for
+native/channel turns, interrupted projection recovery, same-ID execution and storage fencing.
+The latest history/host verification passes 302 tests across four files with unchanged test
+budgets. Earlier complete runs recorded a native Stop restart timeout and multi-step upload/update
+timeouts; the isolated Stop reproduction passed without a production fix. Subsequent work removed
+redundant integrity processing and fenced pending acceptance during updates. The remaining
+upload timeout in a development build motivated bounded-payload optimization with debug checks
+retained. These earlier failures are retained as evidence, not silently counted as passes.
+The final complete runtime suite passes 802 tests with one skipped across 46 files using four
+workers, and the production runtime build passes. Test timing budgets remain unchanged. Windows
+execution and physical power-loss durability remain unverified locally.
+
 ## Following migration boundaries
 
 1. Move the durable event/admission/outbox state engine to Rust with one authoritative writer.
@@ -271,11 +327,21 @@ and reports aggregate counts without exposing tester identities. Its injected-AP
 credentials. The API's `hasAccessToAllBuilds` attribute alone is not treated as proof of the separate
 automatic-distribution setting in the App Store Connect UI.
 
-Live group membership and automatic distribution remain unverified. Automatic approval review
-rejected adding ASC credentials to a pull-request workflow because branch code could expose them;
-that credential workflow was not added. The parent's separate official ASC browser audit reached Apple passkey confirmation and is waiting
-for the user's device action; authenticated access and group readback are not yet verified. Safari
-is left untouched by this implementation task.
+The parent's authenticated App Store Connect browser audit on October 1 verified app
+6811274963 (`to.yumi.yorozu.ios`), exactly one Internal group with one owner, and a Public group
+with three recipients: the same owner and two external-only beta testers. All reported installed
+builds were 0.5.0 (10121). Internal Automatic for Xcode Builds was enabled. This verifies eligibility;
+individual device automatic-update settings were not inspected. No group, setting or grant changed.
+The Mac application identity remains separately `to.yumi.yorozu`.
+
+The owner overlap is expected for the explicitly chosen internal alpha. Upload routing must
+use Apple's TestFlight Internal Only option where supported, preventing external distribution
+([Apple documentation](https://developer.apple.com/help/app-store-connect/test-a-beta-version/add-internal-testers/)),
+and must never assign 0.6.0 to Public. The current canonical Public-group assignment workflow
+still requires a separate alpha route. The existing 0.5.0 beta updater must remain isolated.
+The browser audit and Safari belong to the parent task and are untouched by this implementation.
+An earlier automatic approval review rejected adding ASC credentials to a pull-request workflow
+because branch code could expose them; that credential job was not added.
 No release has been dispatched, no tester access changed, and no version or tag overwritten.
 Gateway authorization remains pending; no gateway connection or credential issuance/rotation is
 part of this migration.

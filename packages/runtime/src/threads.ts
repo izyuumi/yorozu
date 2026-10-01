@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { appendFileSync, createReadStream, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, constants, createReadStream, fstatSync, fsyncSync, ftruncateSync, openSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   validAgentId,
@@ -519,6 +519,39 @@ export function appendThreadEvent(event: YorozuEvent, dir = stateDir()): void {
   appendFileSync(logFile(event.threadId, dir), `${JSON.stringify(event)}\n`,
     { mode: 0o600, flush: event.kind === "approval_status" || event.kind === "stop_status" || event.kind === "thread_rewound" ||
       event.kind === "message" && event.data.delivery === "steer" && event.clientTs !== undefined });
+}
+
+/** Restore a Rust-backed accepted body, retaining any interrupted projection before repair.
+ * Startup calls this synchronously while new client work is gated; canonical acceptance
+ * remains in Rust. Never guess or remove a complete legacy event. */
+export function restoreAcceptedThreadEvent(event: YorozuEvent, dir = stateDir()): void {
+  mkdirSync(threadsDir(dir), { recursive: true, mode: 0o700 });
+  const path = logFile(event.threadId, dir);
+  if (!existsSync(path)) {
+    appendThreadEvent(event, dir);
+    const fd = openSync(path, constants.O_RDWR | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW));
+    try { fsyncSync(fd); } finally { closeSync(fd); }
+    return;
+  }
+  const fd = openSync(path, constants.O_RDWR | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW));
+  try {
+    const metadata = fstatSync(fd);
+    if (!metadata.isFile()) throw new Error("Invalid accepted history projection");
+    const original = readFileSync(fd);
+    if (original.length && original.at(-1) !== 10) {
+      const backup = join(threadsDir(dir), `.accepted-projection-recovery.${randomUUID()}.jsonl`);
+      writeFileSync(backup, original, { flag: "wx", mode: 0o600, flush: true });
+      if (process.platform !== "win32") {
+        const parent = openSync(threadsDir(dir), constants.O_RDONLY);
+        try { fsyncSync(parent); } finally { closeSync(parent); }
+      }
+      if (fstatSync(fd).size !== original.length) throw new Error("Changed accepted history projection");
+      ftruncateSync(fd, original.lastIndexOf(10) + 1);
+      fsyncSync(fd);
+    }
+    appendThreadEvent(event, dir);
+    fsyncSync(fd);
+  } finally { closeSync(fd); }
 }
 
 /** The thread's events, oldest first. Unreadable lines are skipped. */

@@ -17,3 +17,8 @@ libc = "0.2"
 [[bin]]
 name = "yorozu-host-core"
 path = "src/main.rs"
+
+# Keep debug/overflow checks while reducing payload validation overhead
+# in the development worker used by native fixtures. Release builds keep their own profile.
+[profile.dev]
+opt-level = 1
