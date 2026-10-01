@@ -533,9 +533,15 @@ website and iOS compilation/catalog checks. Windows strict Clippy exposed an exi
 import used only by a Unix Stop test; that import is now local to its Unix fixture. Assertions and
 lint rules remain intact. The follow-up CI at `43b3a569` passes Rust checks/tests on all three
 platforms and the TypeScript suites, release checks, web, relay image and iOS compilation/catalog.
-The shared Swift suite then fails its short-deadline sign-in fixture; that native gate is being
-repaired without dropping coverage. This is not proof of the still-unimplemented Windows local
-transport or a standalone host.
+The shared Swift suite exposed a short-deadline sign-in fixture race: an explicitly delivered
+failure could lose to the unrelated 100 ms timeout under full-suite load. The fixture now separates
+actual short expiry from delivered legacy/failure replies using the production deadline. All original
+draft, attachment, retry, correlation and failure assertions remain; production timing is unchanged.
+The three focused readiness tests and all 455 shared Swift tests pass locally, including the relay
+and reconnect harness. Temporary build products avoid generated Finder-metadata signing failures.
+The local toolchain is Xcode 27, and CI latest-stable currently uses Xcode 26.6; neither proves the
+required iOS 26.5 release gate. This is not proof of the still-unimplemented Windows local transport
+or a standalone host.
 
 ## Accepted conversation and storage target (implementation pending)
 

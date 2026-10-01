@@ -597,7 +597,7 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
 }
 
 @MainActor
-@Test func signInCheckTimeoutAndLegacyAnswersRemainRetryableWithoutDraftLoss() async throws {
+@Test func signInCheckTimeoutRemainsRetryableWithoutDraftLoss() async throws {
     let transport = FakeTransport()
     let model = ChatModel(transport: transport, agentStatusTimeout: .milliseconds(100))
     await transport.yield(.state(.paired))
@@ -613,11 +613,32 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     #expect(await eventually { !model.agentStatusChecking && model.agentStatusFailure != nil })
     model.requestAgentStatus()
     #expect(model.agentStatusChecking)
+    #expect(model.agentStatus == nil)
+    #expect(model.drafts["home"] == "keep draft")
+    #expect(model.attachments["home"] == [file])
+}
+
+@MainActor
+@Test func legacyAndFailedSignInAnswersRemainRetryableWithoutDraftLoss() async throws {
+    let transport = FakeTransport()
+    // Reply handling uses the production deadline. The separate timeout case above
+    // exercises 100 ms expiry without racing these deliberately delivered responses.
+    let model = ChatModel(transport: transport)
+    await transport.yield(.state(.paired))
+    await transport.yield(.ownerOnline(true))
+    model.start()
+    defer { model.close() }
+    #expect(await eventually { model.canDeliver })
+    model.drafts["home"] = "keep draft"
+    let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "aGk=")
+    model.attachments["home"] = [file]
+    model.requestAgentStatus()
+    #expect(model.agentStatusChecking)
     await transport.yield(.event(event("legacy-check", .agentStatus(AgentStatusData(codex: .init(ok: true))))))
     #expect(await eventually { !model.agentStatusChecking && model.agentStatusFailure?.contains("Update") == true })
     #expect(model.agentStatus == nil)
     model.requestAgentStatus()
-    #expect(await eventually { await transport.sent.filter { $0.payload.kind == .agentStatus }.count == 3 })
+    #expect(await eventually { await transport.sent.filter { $0.payload.kind == .agentStatus }.count == 2 })
     let request = try #require(await transport.sent.last(where: { $0.payload.kind == .agentStatus }))
     await transport.yield(.event(event("failed-check", .agentStatus(AgentStatusData(requestId: request.id, failed: true)))))
     #expect(await eventually { !model.agentStatusChecking && model.agentStatusFailure?.contains("Could not check") == true })
