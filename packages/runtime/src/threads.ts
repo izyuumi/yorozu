@@ -92,6 +92,7 @@ const LOGGED: ReadonlySet<EventKind> = new Set<EventKind>([
   "approval_answer",
   "approval_status",
   "stop_status",
+  "admission_status",
   "question_card",
   "question_answer",
   "progress_card",

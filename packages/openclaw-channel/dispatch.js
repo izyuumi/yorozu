@@ -56,6 +56,12 @@ export const createInboundDispatcher = (sdk) => async ({ cfg, accountId, message
       commandBody: message.text,
     },
     ...(media.length ? { media } : {}),
+    ...(message.replyContext ? { supplemental: { quote: {
+      id: message.replyContext.id,
+      body: message.replyContext.text,
+      sender: message.replyContext.sender,
+      isQuote: true,
+    } } } : {}),
     access: { commands: { authorized: true } },
     channelIngress: "unsupported",
     extra: { NativeDirectUserId: peer.id, OriginatingChannel: "yorozu" },

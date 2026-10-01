@@ -5397,7 +5397,7 @@ test("old OpenClaw plugins keep chat without model capability; pending model req
   await vi.waitFor(() => expect(mac.events.some((e) => e.kind === "model_list")).toBe(true));
   // Connected but silent: clients hear what it lacks, and no turn state is created.
   await vi.waitFor(() => expect(mac.events.findLast((e) => e.kind === "model_list")?.data).toMatchObject({
-    channelCapabilities: ["missing:run-boundary-v1", "missing:progress-v1", "missing:model-select-v1", "missing:media-v1", "missing:reply-stream-v1"] }));
+    channelCapabilities: ["missing:run-boundary-v1", "missing:progress-v1", "missing:model-select-v1", "missing:media-v1", "missing:reply-stream-v1", "missing:reply-context-v1"] }));
   createThread(undefined, dir, "old");
   mac.send({ kind: "message", threadId: "old", data: { role: "user", text: "works" } } as never);
   await vi.waitFor(() => expect(plugin.frames.some((f) => f.type === "inbound")).toBe(true));
@@ -5698,4 +5698,110 @@ test.each(["complete", "stop", "withdraw"])("steering confirmation racing %s nev
   expect(history.some((event) => event.kind === "stop_status" && event.data.targetEventId === follow && event.data.status === "withdrawn"))
     .toBe(false);
   expect(run).toHaveBeenCalledTimes(1);
+});
+
+test("explicit replies resolve host history, preserve IDs on repeat, and reject retargeting", async () => {
+  const { dir, send, eventsUntil, plugin, target } = await channelRun(["run-boundary-v1", "reply-context-v1"]);
+  try {
+    const reply = send({ kind: "message", data: { role: "user", text: "日本語の続き", replyTo: target } });
+    await eventsUntil((event) => event.id === reply && event.kind === "message");
+    await vi.waitFor(() => expect(plugin.frames).toContainEqual(expect.objectContaining({ type: "inbound",
+      message: expect.objectContaining({ id: reply, text: "日本語の続き",
+        replyContext: { id: target, text: "work", sender: "owner" } }),
+    })));
+    const logged = readThreadEvents("t1", dir).find((event) => event.id === reply)!;
+    expect(logged.kind === "message" && logged.data.replyTo).toBe(target);
+    sendRaw({ ...logged, ts: logged.clientTs ?? logged.ts });
+    await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === reply);
+    expect(plugin.frames.filter((frame) => frame.type === "inbound" && frame.message.id === reply)).toHaveLength(1);
+    sendRaw({ ...logged, ts: logged.clientTs ?? logged.ts, data: { ...logged.data, replyTo: "different" } } as YorozuEvent);
+    const rejection = (await eventsUntil((event) => event.kind === "admission_status" && event.data.eventId === reply)).at(-1);
+    expect(rejection).toMatchObject({ data: { status: "rejected", reason: "conflicting-message-id" } });
+    expect(readThreadEvents("t1", dir).filter((event) => event.id === reply)).toHaveLength(1);
+  } finally { plugin.close(); }
+});
+
+test("reply admission refuses missing, foreign, unfinished and delegated targets without forwarding", async () => {
+  const { dir, send, eventsUntil, plugin } = await channelRun(["run-boundary-v1", "reply-context-v1"]);
+  try {
+    createThread(undefined, dir, "other");
+    appendThreadEvent({ id: "foreign", threadId: "other", ts: 1, agentId: "main", kind: "message",
+      data: { role: "agent", text: "private", done: true } }, dir);
+    appendThreadEvent({ id: "unfinished", threadId: "t1", ts: 2, agentId: "main", kind: "message",
+      data: { role: "agent", text: "still writing" } }, dir);
+    appendThreadEvent({ id: "delegated", threadId: "t1", ts: 3, agentId: "child", parentAgentId: "main", kind: "message",
+      data: { role: "agent", text: "internal", done: true } }, dir);
+    for (const replyTo of ["missing", "foreign", "unfinished", "delegated", "", 1]) {
+      const id = send({ kind: "message", data: { role: "user", text: "keep my input", replyTo } } as never);
+      const rejection = (await eventsUntil((event) => event.kind === "admission_status" && event.data.eventId === id)).at(-1);
+      expect(rejection).toMatchObject({ data: { status: "rejected", reason: "reply-target-unavailable" } });
+      expect(readThreadEvents("t1", dir).some((event) => event.id === id)).toBe(false);
+      expect(plugin.frames.some((frame) => frame.type === "inbound" && frame.message.id === id)).toBe(false);
+    }
+    const bounded = "日本語".repeat(4000);
+    appendThreadEvent({ id: "long-parent", threadId: "t1", ts: 4, agentId: "main", kind: "message",
+      data: { role: "agent", text: bounded, done: true } }, dir);
+    const id = send({ kind: "message", data: { role: "user", text: "continue", replyTo: "long-parent" } });
+    await eventsUntil((event) => event.id === id && event.kind === "message");
+    await vi.waitFor(() => expect(plugin.frames.find((frame) => frame.type === "inbound" && frame.message.id === id))
+      .toMatchObject({ message: { replyContext: { id: "long-parent", text: bounded.slice(0, 4096), sender: "Yorozu" } } }));
+  } finally { plugin.close(); }
+});
+
+test("old adapters reject an explicit reply while ordinary chat keeps working", async () => {
+  const { dir, send, eventsUntil, plugin, target } = await channelRun(["run-boundary-v1"]);
+  try {
+    const id = send({ kind: "message", data: { role: "user", text: "quoted", replyTo: target } });
+    const rejection = (await eventsUntil((event) => event.kind === "admission_status" && event.data.eventId === id)).at(-1);
+    expect(rejection).toMatchObject({ data: { status: "rejected", reason: "reply-context-unsupported" } });
+    expect(readThreadEvents("t1", dir).some((event) => event.id === id)).toBe(false);
+    const plain = send({ kind: "message", data: { role: "user", text: "ordinary" } });
+    await eventsUntil((event) => event.id === plain && event.kind === "message");
+    await vi.waitFor(() => expect(plugin.frames.some((frame) => frame.type === "inbound" && frame.message.id === plain)).toBe(true));
+  } finally { plugin.close(); }
+});
+
+test("reply support lost before dispatch produces durable, recoverable rejection", async () => {
+  const { dir, send, eventsUntil, plugin, target } = await channelRun(["run-boundary-v1", "reply-context-v1", "model-select-v1"]);
+  try {
+    const id = send({ kind: "message", data: { role: "user", text: "saved follow up", replyTo: target, channelModel: { model: null } } });
+    const pick = await modelRequest(plugin, "model_select", "t1");
+    plugin.send({ type: "hello", capabilities: ["run-boundary-v1", "model-select-v1"] });
+    plugin.send({ type: "model_select_result", requestId: pick.requestId, ok: true, model: null });
+    const rejection = (await eventsUntil((event) => event.kind === "admission_status" && event.data.eventId === id)).at(-1);
+    expect(rejection).toMatchObject({ threadId: "t1", data: { status: "rejected", reason: "reply-context-unsupported" } });
+    expect(readThreadEvents("t1", dir).find((event) => event.id === `${id}:rejected`)).toEqual(rejection);
+    expect(plugin.frames.some((frame) => frame.type === "inbound" && frame.message.id === id)).toBe(false);
+    const query = send({ kind: "admission_query", data: { eventId: id } });
+    expect((await eventsUntil((event) => event.kind === "admission_status" && event.data.requestId === query)).at(-1))
+      .toMatchObject({ data: { status: "rejected", reason: "reply-context-unsupported" } });
+    const logged = readThreadEvents("t1", dir).find((event) => event.id === id)!;
+    sendRaw({ ...logged, ts: logged.clientTs ?? logged.ts });
+    expect((await eventsUntil((event) => event.kind === "admission_status" && event.data.eventId === id)).at(-1))
+      .toMatchObject({ data: { status: "rejected", reason: "reply-context-unsupported" } });
+    expect(readThreadEvents("t1", dir).filter((event) => event.id === `${id}:rejected`)).toHaveLength(1);
+  } finally { plugin.close(); }
+});
+
+test.each([false, true])("lost reply ack/restart never becomes a false rejection on downgrade (files=%s)", async (files) => {
+  const { dir, send, eventsUntil, plugin, target } = await channelRun(["run-boundary-v1", "reply-context-v1", "media-v1"]);
+  const id = send({ kind: "message", data: { role: "user", text: "may have started", replyTo: target,
+    ...(files ? { attachments: [{ name: "notes.pdf", mime: "application/pdf", data: "aGk=" }] } : {}) } });
+  await eventsUntil((event) => event.id === id && event.kind === "message");
+  await vi.waitFor(() => expect(plugin.frames.some((frame) => frame.type === "inbound" && frame.message.id === id)).toBe(true));
+  plugin.close();
+  await sidecar.close();
+  sidecar = serve({ relayUrl: `ws://127.0.0.1:${relay.port}`, stateDir: dir });
+  const old = await channelPlugin(dir, files ? ["run-boundary-v1", "reply-context-v1"] : ["run-boundary-v1"]);
+  const mac = await macClient(dir);
+  try {
+    await vi.waitFor(() => expect(mac.events.some((event) => event.kind === "thread_models" &&
+      event.data.requestId === id && event.data.error?.includes("unconfirmed"))).toBe(true));
+    expect(readThreadEvents("t1", dir).some((event) => event.kind === "admission_status" && event.data.eventId === id)).toBe(false);
+    expect(old.frames.some((frame) => frame.type === "inbound" && frame.message.id === id)).toBe(false);
+    old.send({ type: "hello", capabilities: ["run-boundary-v1", "reply-context-v1", "media-v1"] });
+    await vi.waitFor(() => expect(old.frames.filter((frame) => frame.type === "inbound" && frame.message.id === id)).toHaveLength(1));
+    const forwarded = old.frames.find((frame) => frame.type === "inbound" && frame.message.id === id)!;
+    expect(forwarded).not.toHaveProperty("message.replyAttempted");
+  } finally { old.close(); mac.close(); }
 });

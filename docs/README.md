@@ -8,6 +8,8 @@ Start with the [project README](../README.md) for installation and development. 
 | System design, pairing, relay, threads, and apps | [Architecture](architecture.md) |
 | Proposed continuous chat, PAIOS memory ownership, and replaceable execution | [Design v0.0](design/continuous-chat-memory-v0.0.md) |
 | Issue 283 composer delivery, validation and remaining native work | [Composer slice](issue-283-composer.md) |
+| Issue 283 explicit reply composition and recovery | [Reply slice](issue-283-replies.md) |
+| Issue 283 verified scheduling contracts and authorization boundary | [Schedule checkpoint](issue-283-schedule-contract.md) |
 | Sizing from the container, never from a guessed number | [UI layout](ui-layout.md) |
 | Release branches, candidates, and promotion | [Release workflow](RELEASE_WORKFLOW.md) |
 | Signing, packaging, TestFlight, and relay hosting | [Releasing](releasing.md) |

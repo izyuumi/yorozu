@@ -467,13 +467,15 @@ public struct ThreadModelsData: Codable, Equatable, Sendable {
 }
 
 public struct AttachmentCommitData: Codable, Equatable, Sendable {
+    public var replyTo: String?
     public var delivery: MessageDelivery?
     public var channelModel: ChannelModelChoice?
     public var text: String
     public var attachments: [AttachmentDescriptor]
     public var admissionDeadline: Int
 
-    public init(text: String, attachments: [AttachmentDescriptor], admissionDeadline: Int, delivery: MessageDelivery? = nil, channelModel: ChannelModelChoice? = nil) {
+    public init(text: String, attachments: [AttachmentDescriptor], admissionDeadline: Int, delivery: MessageDelivery? = nil, channelModel: ChannelModelChoice? = nil, replyTo: String? = nil) {
+        self.replyTo = replyTo
         self.delivery = delivery
         self.channelModel = channelModel
         self.text = text
@@ -628,6 +630,8 @@ public struct TurnChangesData: Codable, Equatable, Sendable {
 }
 
 public struct MessageData: Codable, Equatable, Sendable {
+    /// Explicit user reply target, or the triggering user message for an agent answer.
+    public var replyTo: String?
     public var delivery: MessageDelivery?
     public var channelModel: ChannelModelChoice?
     public enum Role: String, Codable, Sendable { case user, agent }
@@ -664,8 +668,10 @@ public struct MessageData: Codable, Equatable, Sendable {
         runId: String? = nil,
         completionId: String? = nil,
         delivery: MessageDelivery? = nil,
-        channelModel: ChannelModelChoice? = nil
+        channelModel: ChannelModelChoice? = nil,
+        replyTo: String? = nil
     ) {
+        self.replyTo = replyTo
         self.delivery = delivery
         self.channelModel = channelModel
         self.role = role
@@ -680,10 +686,11 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel }
+    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel, replyTo }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        replyTo = try c.decodeIfPresent(String.self, forKey: .replyTo)
         delivery = try c.decodeIfPresent(MessageDelivery.self, forKey: .delivery)
         channelModel = try c.decodeIfPresent(ChannelModelChoice.self, forKey: .channelModel)
         role = try c.decode(Role.self, forKey: .role)
@@ -703,6 +710,7 @@ public struct MessageData: Codable, Equatable, Sendable {
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(replyTo, forKey: .replyTo)
         try c.encodeIfPresent(delivery, forKey: .delivery)
         try c.encodeIfPresent(channelModel, forKey: .channelModel)
         try c.encode(role, forKey: .role)

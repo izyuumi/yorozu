@@ -78,7 +78,7 @@ The installed runtimes are iOS 27.0/27.1; the separate release gate on iOS 26.5 
 | Slice | Required next behavior |
 | --- | --- |
 | Chat ownership | Implement the Yorozu-owned durable message/task records and explicit context contracts from design v0.0 before presenting one continuous chat as production behavior. |
-| Reply composition | Add explicit reply target, visible quoted context and cancel that preserves typed text/attachments. Current run reply correlation is not this composer feature. |
+| Reply composition | Delivered for negotiated assistant-channel conversations in the [reply slice](issue-283-replies.md). Direct-agent context and the new continuous-chat task store remain separate contracts. |
 | Native navigation | Implement Chat, Schedules and Settings tabs against real models. The approved prototype's schedules are in-memory examples, not a production scheduler. |
 | Connection/readiness | Present independently confirmed link, adapter and execution readiness; preserve honest unknown/offline states and actionable diagnostics/permission requests. |
 | Adapter migration | Keep existing direct-agent/model/workspace capabilities until replacements and recovery exist. Removing controls speculatively would strand current work. |

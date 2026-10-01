@@ -19,6 +19,10 @@ export const channelSocketPath = (dir: string): string => join(dir, "channel.soc
 const outboxFile = (dir: string): string => join(dir, "channel-outbox.json");
 
 export interface ChannelInbound {
+  /** Host outbox marker persisted before sending a quoted request; stripped from plugin frames. */
+  replyAttempted?: boolean;
+  /** Host-resolved, bounded quoted context; never supplied as command text. */
+  replyContext?: { id: string; text: string; sender: string };
   channelModel?: ChannelModelChoice;
   id: string;
   threadId: string;
@@ -237,19 +241,54 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
             break;
           }
         }
-        const { channelModel: _, ...ready } = message;
+        const { channelModel: _, replyAttempted: __, ...ready } = message;
+        const reply = ready.replyContext !== undefined;
+        if (reply && ![...announcedBy.values()].some((caps) => caps.has("reply-context-v1"))) {
+          if (plugins.size === 0 || undecided.size > 0) break;
+          if (message.replyAttempted) {
+            options.onDeliveryError?.(ready, "reply-delivery-unconfirmed");
+            break;
+          }
+          options.onRejected?.(ready, "reply-context-unsupported");
+          outbox = outbox.filter((m) => m.id !== message.id);
+          saveJson(outboxFile(dir), outbox);
+          continue;
+        }
         const media = Boolean(ready.attachments?.length);
         if (media && mediaPlugins.size === 0) {
           // Keep order: nothing behind it goes out until we know whether it can.
           if (plugins.size === 0 || undecided.size > 0) break;
+          if (reply && message.replyAttempted) {
+            options.onDeliveryError?.(ready, "reply-delivery-unconfirmed");
+            break;
+          }
           outbox = outbox.filter((m) => m.id !== message.id);
           saveJson(outboxFile(dir), outbox);
           options.onRejected?.(ready, "attachments-unsupported");
           continue;
         }
-        if (plugins.size) options.forwarded(ready);
-        for (const [device, send] of plugins) {
-          if (media && !mediaPlugins.has(device)) continue;
+        const eligible = [...plugins].filter(([device]) =>
+          (!media || mediaPlugins.has(device)) && (!reply || announcedBy.get(device)?.has("reply-context-v1")));
+        if (!eligible.length) {
+          if (!plugins.size || undecided.size) break;
+          if (message.replyAttempted) {
+            options.onDeliveryError?.(ready, "reply-delivery-unconfirmed");
+            break;
+          }
+          options.onRejected?.(ready, "reply-context-unsupported");
+          outbox = outbox.filter((m) => m.id !== message.id);
+          saveJson(outboxFile(dir), outbox);
+          continue;
+        }
+        // Losing an ack cannot turn a possibly executed reply into a definite rejection.
+        // Preserve this marker across host restart before the first socket write.
+        if (reply && !message.replyAttempted) {
+          const attempted = outbox.map((item) => item.id === message.id ? { ...item, replyAttempted: true } : item);
+          saveJson(outboxFile(dir), attempted);
+          outbox = attempted;
+        }
+        options.forwarded(ready);
+        for (const [device, send] of eligible) {
           if (sent.get(device)?.has(message.id)) continue;
           sent.get(device)?.add(message.id);
           send({ type: "inbound", message: ready });

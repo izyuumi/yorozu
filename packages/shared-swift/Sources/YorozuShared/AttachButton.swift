@@ -74,6 +74,7 @@ func stagePastedImage(
 /// is refused here, in front of the person who chose it, rather than at the other end where
 /// there is nobody to tell.
 struct AttachButton: View {
+    private static let glyphSize: CGFloat = 18
     /// How many more attachments this message may take. The pickers select up to it, and the
     /// composer disables the whole button at zero.
     let remaining: Int
@@ -119,7 +120,7 @@ struct AttachButton: View {
         } label: {
             Group {
                 if isLoading { ProgressView().controlSize(.small) }
-                else { Image(systemName: "plus").font(.scaled(.body).weight(.semibold)) }
+                else { Image(systemName: "plus").font(.system(size: Self.glyphSize, weight: .semibold)) }
             }
                 .foregroundStyle(.secondary)
                 .frame(width: controlTarget, height: controlTarget)
@@ -425,6 +426,7 @@ private struct StagedThumbnail: View {
     let onRemove: () -> Void
 
     private static let side: CGFloat = 100
+    private static let dismissGlyph: CGFloat = 16
 
     var body: some View {
         thumbnail
@@ -435,7 +437,7 @@ private struct StagedThumbnail: View {
                     Image(systemName: "xmark.circle.fill")
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(.white, .black.opacity(0.6))
-                        .font(.scaled(.body))
+                        .font(.system(size: Self.dismissGlyph))
                         .padding(2)
                         // Hit area wider than the glyph; hangs past the thumbnail's corner.
                         .frame(width: controlTarget, height: controlTarget, alignment: .topTrailing)

@@ -51,6 +51,8 @@ public struct MessageBubble: View {
     private let queuedStatus: String?
     private let rejectionReason: String?
     private let attachmentTransferLabels: [String]?
+    private let onReply: (() -> Void)?
+    private let replyPreview: ReplyTarget?
     private let onEditFromHere: (() -> Void)?
     private let editFromHereEnabled: Bool
     private let onRetry: (() -> Void)?
@@ -76,6 +78,8 @@ public struct MessageBubble: View {
         queuedStatus: String? = nil,
         rejectionReason: String? = nil,
         attachmentTransferLabels: [String]? = nil,
+        onReply: (() -> Void)? = nil,
+        replyPreview: ReplyTarget? = nil,
         onEditFromHere: (() -> Void)? = nil,
         editFromHereEnabled: Bool = false,
         onRetry: (() -> Void)? = nil,
@@ -97,6 +101,8 @@ public struct MessageBubble: View {
         self.queuedStatus = queuedStatus
         self.rejectionReason = rejectionReason
         self.attachmentTransferLabels = attachmentTransferLabels
+        self.onReply = onReply
+        self.replyPreview = replyPreview
         self.onEditFromHere = onEditFromHere
         self.editFromHereEnabled = editFromHereEnabled
         self.onRetry = onRetry
@@ -124,6 +130,16 @@ public struct MessageBubble: View {
 
     public var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: LayoutMetrics.tight) {
+            if isUser, data.replyTo != nil {
+                VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
+                    Label("Reply to message", systemImage: "arrowshape.turn.up.left")
+                        .font(.scaled(.caption).weight(.semibold))
+                    if let replyPreview { Text(replyPreview.preview).font(.scaled(.caption)).lineLimit(2) }
+                }
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: bubbleMaxWidth, alignment: .leading)
+                .accessibilityElement(children: .combine)
+            }
             if !data.attachments.isEmpty {
                 AttachmentsView(attachments: data.attachments)
             }
@@ -178,7 +194,7 @@ public struct MessageBubble: View {
             if let status, queuedStatus == nil || ![.queued, .confirming, .withdrawalPending].contains(status) {
                 caption(status)
             }
-            if !data.text.isEmpty || onEditFromHere != nil || onRetry != nil || onDelete != nil || timestamp != nil {
+            if !data.text.isEmpty || onReply != nil || onEditFromHere != nil || onRetry != nil || onDelete != nil || timestamp != nil {
                 HStack(spacing: LayoutMetrics.inner) {
                     if isUser { Spacer(minLength: 0) }
                     #if os(macOS)
@@ -213,6 +229,7 @@ public struct MessageBubble: View {
 
     /// The explicit menu keeps secondary actions available without taking over selection.
     @ViewBuilder private var actions: some View {
+        if let onReply { Button("Reply", systemImage: "arrowshape.turn.up.left", action: onReply) }
         if copyAvailable, !data.text.isEmpty, !streaming {
             Button("Copy", systemImage: "doc.on.doc") { copy() }
         }
@@ -228,7 +245,8 @@ public struct MessageBubble: View {
         }
         if let onRetry {
             Button(rejectionReason?.hasPrefix("thread-create-rejected:") == true || rejectionReason == "thread-not-created"
-                ? String(localized: "Use in new chat") : String(localized: "Retry"),
+                ? String(localized: "Use in new chat") : rejectionReason?.hasPrefix("reply-") == true
+                    ? String(localized: "Use in composer") : String(localized: "Retry"),
                 systemImage: "arrow.clockwise", action: onRetry)
         }
         if let onWithdraw {
@@ -367,6 +385,8 @@ public struct MessageBubble: View {
         case "conflicting-message-id": String(localized: "Not sent · message changed after sending")
         case "invalid-admission-deadline": String(localized: "Not sent · invalid message deadline")
         case "thread-not-created": String(localized: "Not sent · chat does not exist. Use in new chat to keep attachments.")
+        case "reply-target-unavailable": String(localized: "Not sent · the quoted message is unavailable. Use in composer to edit and send again.")
+        case "reply-context-unsupported": String(localized: "Not sent · this connection cannot receive replies. Use in composer to cancel the reply or try again.")
         case "attachments-unsupported":
             String(localized: "Not sent · OpenClaw can't receive attachments. Update the Yorozu plugin.")
         case "conflicting-thread-create": String(localized: "Not sent · chat creation changed")

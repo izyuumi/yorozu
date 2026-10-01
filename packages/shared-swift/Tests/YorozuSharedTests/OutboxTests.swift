@@ -844,3 +844,44 @@ private func reconnect(_ transport: QueueTransport) async {
     #expect(capped.first?.id == "m0")
     #expect(capped.last?.id == "m59")
 }
+
+@MainActor
+@Test func replyTargetSurvivesAnInterruptedSendOnlyUntilOutboxCommits() throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
+    cache.save(threads: [thread])
+    let target = ReplyTarget(eventId: "parent", message: MessageData(role: .agent, text: "日本語", done: true))
+    let file = MessageAttachment(name: "notes.pdf", mime: "application/pdf", data: "aGk=")
+    let message = YorozuEvent(id: "prepared", threadId: thread.id, ts: 1, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "follow up", attachments: [file], replyTo: target.eventId)))
+    try cache.save(composer: .init(drafts: [thread.id: "follow up"], attachments: [thread.id: [file]], threads: [],
+        preparedSend: [thread.id: message.id]))
+    try cache.save(draftState: .init(drafts: [thread.id: "follow up"], preparedSend: [thread.id: message.id],
+        threads: [], replyTargets: [thread.id: target]))
+    let beforeCommit = ChatModel(transport: QueueTransport(), cache: cache)
+    #expect(beforeCommit.replyTargets[thread.id] == target)
+    #expect(beforeCommit.drafts[thread.id] == "follow up")
+    #expect(beforeCommit.attachments[thread.id] == [file])
+    // Model initialization reconciles failed prepares. Recreate the exact crash snapshot
+    // before checking the separate crash-after-commit boundary.
+    try cache.save(composer: .init(drafts: [thread.id: "follow up"], attachments: [thread.id: [file]], threads: [],
+        preparedSend: [thread.id: message.id]))
+    try cache.save(draftState: .init(drafts: [thread.id: "follow up"], preparedSend: [thread.id: message.id],
+        threads: [], replyTargets: [thread.id: target]))
+    try cache.savePending([OutboxItem(event: message)])
+    let committed = ChatModel(transport: QueueTransport(), cache: cache)
+    #expect(committed.replyTargets[thread.id] == nil)
+    #expect(committed.drafts[thread.id] == "")
+    #expect(committed.attachments[thread.id] == nil)
+    #expect(committed.outbox.map(\.id) == [message.id])
+    let data = try JSONEncoder().encode(committed.outbox[0].event)
+    let decoded = try JSONDecoder().decode(YorozuEvent.self, from: data)
+    #expect(decoded == message)
+    guard case .message(let payload) = decoded.payload else { Issue.record("no message"); return }
+    #expect(payload.replyTo == target.eventId)
+    let again = ChatModel(transport: QueueTransport(), cache: cache)
+    #expect(again.replyTargets.isEmpty)
+    #expect(again.outbox.count == 1)
+}

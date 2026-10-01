@@ -52,3 +52,9 @@ apps/ios/e2e/ui-tests.sh    # add -only-testing:YorozuUITests/ConnectionTests fo
 It builds, runs on a throwaway iPhone simulator, and keeps the result bundle, harness log and,
 on failure, the app's device log in `apps/ios/e2e/.ui`. CI runs the same script nightly and
 before every release candidate (`.github/workflows/ui-tests.yml`).
+
+The two reply composer tests in `ShowcaseFlowTests` use synthetic reply capability and a staged
+image through the native debug showcase. They verify keyboard focus on Reply, repeated Cancel
+preserving text and files, attachment removal, and Send remaining fully on screen at normal and
+largest accessibility text sizes. Run both on iPhone and iPad; retained screenshots document the
+actual production composer. These fixtures do not establish live provider or schedule readiness.

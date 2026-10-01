@@ -297,6 +297,46 @@ public final class ChatModel {
             saveComposerNow()
         }
     }
+    public private(set) var replyTargets: [String: ReplyTarget] = [:] {
+        didSet { saveDraftsNow() }
+    }
+    private var channelReplyContext = false
+
+    public func supportsReplies(in threadId: String) -> Bool {
+        guard case .compatible(_, let capabilities) = compatibility,
+              capabilities.contains("reply-context-v1"), channelReplyContext,
+              let thread = synced.first(where: { $0.id == threadId }),
+              (thread.agent ?? .yorozu) == .yorozu else { return false }
+        return true
+    }
+
+    public func canReply(to event: YorozuEvent) -> Bool {
+        guard supportsReplies(in: event.threadId), event.parentAgentId == nil,
+              pendingComposerCards(in: event.threadId).isEmpty,
+              outboxStatus(of: event.id) == nil,
+              timeline(event.threadId).events.contains(where: { $0.id == event.id }),
+              case .message(let data) = event.payload,
+              !data.text.isEmpty || !data.attachments.isEmpty else { return false }
+        return data.role == .user || data.done == true
+    }
+
+    @discardableResult
+    public func beginReply(to event: YorozuEvent) -> Bool {
+        guard canReply(to: event), case .message(let data) = event.payload else { return false }
+        replyTargets[event.threadId] = ReplyTarget(eventId: event.id, message: data)
+        return true
+    }
+
+    /// Cancelling a reply never edits the user's text or staged files.
+    public func cancelReply(in threadId: String) { replyTargets[threadId] = nil }
+
+    public func replyPreview(for data: MessageData, in threadId: String) -> ReplyTarget? {
+        guard data.role == .user, let id = data.replyTo,
+              let original = timeline(threadId).events.first(where: { $0.id == id }),
+              case .message(let message) = original.payload else { return nil }
+        return ReplyTarget(eventId: id, message: message)
+    }
+
     public private(set) var stashes: [String: [ThreadCache.StashedDraft]] = [:]
     private var promptHistory: [String: String] = [:]
     private var recallingPrompt = false
@@ -440,6 +480,7 @@ public final class ChatModel {
         ("progress-v1", String(localized: "progress")),
         ("model-select-v1", String(localized: "model picker")),
         ("media-v1", String(localized: "attachments")),
+        ("reply-context-v1", String(localized: "replies")),
     ]
 
     /// The host reports `missing:<capability>` for a connected plugin that did not announce it.
@@ -606,7 +647,8 @@ public final class ChatModel {
     private func saveDraftState() throws {
         try cache?.save(draftState: .init(drafts: drafts, preparedSend: preparedSend,
                                           threads: draftThreads, openThread: openThread,
-                                          lastRun: lastRun, channelModels: draftChannelModels.filter { isDraft($0.key) }))
+                                          lastRun: lastRun, channelModels: draftChannelModels.filter { isDraft($0.key) },
+                                          replyTargets: replyTargets.isEmpty ? nil : replyTargets))
     }
 
     /// Staged files change rarely, but must survive immediate termination too.
@@ -715,6 +757,7 @@ public final class ChatModel {
         draftChannelModels = draftState?.channelModels ?? [:]
         var composerPrepared: [String: String] = [:]
         restoringComposer = true
+        replyTargets = draftState?.replyTargets ?? [:]
         let composer = cache.composer()
         if let composer {
             composerPrepared = composer.preparedSend ?? [:]
@@ -748,6 +791,7 @@ public final class ChatModel {
             for threadId in committedSends {
                 if let eventId = activePrepared[threadId], outbox.contains(where: { $0.id == eventId }) {
                     drafts[threadId] = ""
+                    replyTargets[threadId] = nil
                 }
                 attachments[threadId] = nil
             }
@@ -791,6 +835,7 @@ public final class ChatModel {
             if case .message = item.event.payload { upsert(item.event, persist: false) }
             if item.event.payload.kind != .approvalAnswer { applyAnswerState(item.event) }
         }
+        for thread in synced { restoreRejectedReplies(in: thread.id) }
         armOutboxRetry()
     }
 
@@ -983,6 +1028,10 @@ public final class ChatModel {
         let text = (drafts[thread.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let attachments = attachments[thread.id] ?? []
         if let card = pendingComposerCards(in: thread.id).first {
+            guard replyTargets[thread.id] == nil else {
+                failure = String(localized: "Finish the pending request or cancel the reply before sending.")
+                return
+            }
             guard case .questionCard(let question) = card.payload, !text.isEmpty else { return }
             guard answerQuestion(question.questionId, in: thread.id, text) else { return }
             drafts[thread.id] = ""
@@ -995,6 +1044,7 @@ public final class ChatModel {
         guard queueMessage(text, in: thread.id, attachments: attachments, fromComposer: true, alternateDelivery: alternateDelivery) else { return }
         drafts[thread.id] = ""
         self.attachments[thread.id] = nil
+        replyTargets[thread.id] = nil
         preparedSend[thread.id] = nil
         do {
             try saveComposer()
@@ -1008,13 +1058,18 @@ public final class ChatModel {
         send(text, in: threadId, attachments: attachment.map { [$0] } ?? [])
     }
 
-    public func send(_ text: String, in threadId: String, attachments: [MessageAttachment]) {
-        if queueMessage(text, in: threadId, attachments: attachments) { flush() }
+    public func send(_ text: String, in threadId: String, attachments: [MessageAttachment], replyTo: String? = nil) {
+        if queueMessage(text, in: threadId, attachments: attachments, replyTo: replyTo) { flush() }
     }
 
     @discardableResult
     private func queueMessage(_ text: String, in threadId: String, attachments: [MessageAttachment],
-                              fromComposer: Bool = false, alternateDelivery: Bool = false) -> Bool {
+                              fromComposer: Bool = false, alternateDelivery: Bool = false, replyTo: String? = nil) -> Bool {
+        let replyTo = fromComposer ? replyTargets[threadId]?.eventId : replyTo
+        if replyTo != nil, !supportsReplies(in: threadId) {
+            failure = String(localized: "Connect to a host that supports replies, or cancel the reply to send without it.")
+            return false
+        }
         guard !stopped else { return false }
         guard !attachments.contains(where: \.isDeferred) else {
             failure = String(localized: "Wait for attachment download before sending.")
@@ -1053,7 +1108,7 @@ public final class ChatModel {
             payload: .message(MessageData(role: .user, text: text, attachments: attachments,
                 admissionDeadline: createdAt + 30 * 60_000,
                 delivery: alternateDelivery ? (followUpBehavior == .queue ? .steer : .queue) : followUpBehavior,
-                channelModel: channelChoice))
+                channelModel: channelChoice, replyTo: replyTo))
         )
         // Persist creation and its first message in one encrypted write. A failed write leaves
         // the composer and draft thread intact, with no phantom bubble or unsaved outbox item.
@@ -1192,7 +1247,7 @@ public final class ChatModel {
         let ts = Int(Date().timeIntervalSince1970 * 1000)
         let renewed = YorozuEvent(id: UUID().uuidString, threadId: old.threadId, ts: ts,
             agentId: device, payload: .message(MessageData(role: .user, text: original.text,
-                attachments: original.attachments, admissionDeadline: ts + 30 * 60_000, delivery: original.delivery)))
+                attachments: original.attachments, admissionDeadline: ts + 30 * 60_000, delivery: original.delivery, replyTo: original.replyTo)))
         var pending = outbox
         // A draft's creation and settings must reach the host before its renewed first message.
         // Their original IDs are safe to retry; the host deduplicates accepted operations.
@@ -1404,7 +1459,7 @@ public final class ChatModel {
         let commit = YorozuEvent(id: item.id, threadId: item.event.threadId, ts: item.event.ts,
             agentId: item.event.agentId, payload: .attachmentCommit(AttachmentCommitData(
                 text: message.text, attachments: descriptors, admissionDeadline: deadline, delivery: message.delivery,
-                channelModel: message.channelModel)))
+                channelModel: message.channelModel, replyTo: message.replyTo)))
         inFlightUpload[item.id] = (item.id, -1)
         try await transport.send(commit)
     }
@@ -1549,7 +1604,8 @@ public final class ChatModel {
         guard let index = outbox.firstIndex(where: { $0.id == status.eventId }) else {
             // The host took this message and only later found it cannot go out (a plugin without
             // attachment support connected). Its outbox entry is gone, so the timeline's copy becomes one.
-            if status.status == .rejected, status.reason == "attachments-unsupported",
+            if status.status == .rejected,
+               status.reason == "attachments-unsupported" || status.reason?.hasPrefix("reply-") == true,
                let sent = timelines.values.lazy.flatMap(\.events).first(where: { $0.id == status.eventId }),
                case .message(let data) = sent.payload, data.role == .user {
                 outbox.append(OutboxItem(event: sent, admissionStatus: .rejected, rejectionReason: status.reason))
@@ -1902,6 +1958,23 @@ public final class ChatModel {
         }
     }
 
+    private func restoreRejectedReplies(in threadId: String) {
+        for event in timeline(threadId).events {
+            if case .admissionStatus(let status) = event.payload,
+               status.status == .rejected, status.reason?.hasPrefix("reply-") == true { reconcile(status) }
+        }
+    }
+
+    /// Recover an explicitly rejected reply without resending it or replacing another draft.
+    /// Repeated recovery is idempotent, just like a confirmed withdrawal.
+    public func recoverRejectedReply(_ eventId: String) {
+        guard let item = outbox.first(where: { $0.id == eventId }),
+              item.admissionStatus == .rejected, item.rejectionReason?.hasPrefix("reply-") == true else { return }
+        restoreWithdrawnMessage(item.event)
+        saveComposerNow()
+        saveDraftsNow()
+    }
+
     private func restoreWithdrawnMessage(_ original: YorozuEvent) {
         guard !restoredWithdrawals.contains(original.id),
               case .message(let message) = original.payload, message.role == .user else { return }
@@ -1909,6 +1982,10 @@ public final class ChatModel {
         liveWithdrawals.remove(original.id)
         let threadId = original.threadId
         let draft = drafts[threadId] ?? ""
+        if draft.isEmpty, (attachments[threadId] ?? []).isEmpty, replyTargets[threadId] == nil,
+           let reply = replyPreview(for: message, in: threadId) {
+            replyTargets[threadId] = reply
+        }
         drafts[threadId] = [draft, message.text].filter { !$0.isEmpty }.joined(separator: "\n\n")
         attachments[threadId, default: []].append(contentsOf: message.attachments)
         if message.attachments.contains(where: \.isDeferred) { requestAttachmentDownloads(original) }
@@ -2006,6 +2083,7 @@ public final class ChatModel {
         drafts[threadId] = nil
         stashes[threadId] = nil
         attachments[threadId] = nil
+        replyTargets[threadId] = nil
     }
 
     /// Creates a thread on the runtime straight away, title and all. Only the end-to-end harness
@@ -2476,6 +2554,7 @@ public final class ChatModel {
             self.state = state
             if state != .paired {
                 channelModelsDisconnected()
+                channelReplyContext = false
                 inFlightUpload.removeAll()
                 downloadInFlight.removeAll()
                 downloadRetries.values.forEach { $0.cancel() }
@@ -2565,7 +2644,10 @@ public final class ChatModel {
                 let syncedThreads = Set(data.events.map(\.threadId))
                     .union((data.current ?? []).map(\.threadId))
                     .union(data.threadId.map { [$0] } ?? [])
-                for threadId in syncedThreads { restoreWithdrawals(in: threadId) }
+                for threadId in syncedThreads {
+                    restoreWithdrawals(in: threadId)
+                    restoreRejectedReplies(in: threadId)
+                }
                 if let id = data.threadId {
                     historyInFlight.remove(id)
                     if data.more != true { historyLoaded.insert(id) }
@@ -2636,6 +2718,7 @@ public final class ChatModel {
             case .threadModelsRequest:
                 break
             case .modelList(let data):
+                channelReplyContext = data.channelCapabilities?.contains("reply-context-v1") == true
                 channelModelSelection = data.channelCapabilities?.contains("model-select-v1") == true
                 noteMissingPluginFeatures(data.channelCapabilities)
                 if !channelModelSelection {
@@ -2678,6 +2761,7 @@ public final class ChatModel {
                 attachmentDownloadChunk(data, in: event.threadId)
             case .admissionStatus(let data):
                 reconcile(data)
+                if !event.threadId.isEmpty { applyEvent(event) }
             case .stopStatus(let data):
                 reconcileStop(data)
                 applyEvent(event)
@@ -2722,6 +2806,7 @@ public final class ChatModel {
             restoreWithdrawals(in: event.threadId)
         } else if case .message(let message) = event.payload, message.role == .user {
             restoreWithdrawals(in: event.threadId)
+            restoreRejectedReplies(in: event.threadId)
         }
         switch event.payload {
         case .approvalAnswer, .approvalStatus, .questionAnswer: flush()

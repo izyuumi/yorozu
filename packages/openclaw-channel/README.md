@@ -45,11 +45,26 @@ Newline-delimited JSON over the socket. Both directions are at least once and ac
 | `inbound` | Yorozu → plugin | A user message, with `attachments` (`{ name, mime, data }`, base64) when it has any and `text` empty when it is only attachments (`media-v1`). Each is saved to OpenClaw's media store and passed as one media fact, in order. Acked once OpenClaw has dispatched it; resent on every connect until then. |
 | `deliver` | plugin → Yorozu | An OpenClaw reply. An unknown thread id opens a new thread. |
 | `ack` / `error` | both | Receipt by id. |
-| `hello` | plugin → Yorozu | First frame on every connection: `{ capabilities: ["run-boundary-v1", "progress-v1", "model-select-v1", "media-v1", "reply-stream-v1"] }`. |
+| `hello` | plugin → Yorozu | First frame on every connection: `{ capabilities: ["run-boundary-v1", "progress-v1", "model-select-v1", "media-v1", "reply-stream-v1", "reply-context-v1"] }`. |
 | `run_started` / `run_finished` | plugin → Yorozu | `run-boundary-v1`: one run per `inbound`, from OpenClaw starting on it to its end (`completed`, `failed` or `aborted`), however many replies or none. Runs are serialized per thread, and an unfinished run is re-announced after a reconnect. |
 | `abort` | Yorozu → plugin | Cancels exactly that run's OpenClaw turn; the real outcome comes back in `run_finished`. |
 | `tool_started` / `tool_finished` | plugin → Yorozu | `progress-v1`: the tool calls of the running message, from OpenClaw's `before_tool_call` / `after_tool_call` hooks for `yorozu` requesters only. The hooks only observe; frames are best effort and not acked. |
 | `model_catalog_request` / `model_selection_request` / `model_select` | Yorozu → plugin | `model-select-v1`. Answered with `model_catalog`, `model_selection` and `model_select_result`; every request gets a reply. |
+
+### Explicit reply context
+
+`reply-context-v1` lets a native composer reply to one settled message in the same conversation.
+The phone sends only `MessageData.replyTo`, also retained through attachment commits. The host
+validates the reference against its own history and passes a bounded `replyContext` object
+(`{ id, text, sender }`) with the channel inbound message. The adapter gives the official SDK this
+as `supplemental.quote`; the current user's body and command text remain unchanged. Quoted
+attachments contribute their names, not implicitly fetched or reattached file contents.
+
+A plugin lacking this capability never receives a quoted request as ordinary chat. A request
+refused before any dispatch has a durable rejection and editable native recovery. Once any socket
+handoff may have happened, the host records the attempt before sending and preserves uncertainty
+through lost acknowledgments, adapter downgrade and host restart. Restoring support retries the
+same ID; it does not invent a new operation. The host-only attempt marker never reaches the SDK.
 
 ### Reply streaming
 

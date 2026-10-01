@@ -49,6 +49,66 @@ final class ShowcaseFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testReplyCancelPreservesTypedDraftAndStagedFile() {
+        verifyReplyCancellation(accessibility: false)
+    }
+
+    @MainActor
+    func testReplyCancelAtLargestAccessibilityTextSize() {
+        verifyReplyCancellation(accessibility: true)
+    }
+
+    @MainActor
+    private func verifyReplyCancellation(accessibility: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["-yorozuShowcase", "chat", "-yorozuReplySupported", "-yorozuReplyAttachment"]
+        if accessibility {
+            app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        }
+        app.launch()
+        let composer = app.textViews["Message"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 30))
+        let file = app.buttons["Remove kitchen.jpg"]
+        XCTAssertTrue(file.exists)
+        let actions = app.buttons["messageActions-showcase-thanks"]
+        let timeline = app.collectionViews.element(boundBy: app.collectionViews.count - 1)
+        for _ in 0..<5 where !actions.isHittable { timeline.swipeUp() }
+        XCTAssertTrue(actions.isHittable)
+        actions.tap()
+        let reply = app.buttons["Reply"]
+        XCTAssertTrue(reply.waitForExistence(timeout: 5))
+        reply.tap()
+        let cancel = app.buttons["Cancel reply"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        composer.typeText("Keep this draft")
+        XCTAssertTrue(file.exists)
+        let send = app.buttons["Send"]
+        XCTAssertTrue(send.isHittable)
+        XCTAssertTrue(app.frame.contains(send.frame), "Send must fit fully within the screen at every supported text size")
+        let quoted = XCTAttachment(screenshot: app.screenshot())
+        quoted.name = accessibility ? "Reply composer accessibility text" : "Reply composer with staged file"
+        quoted.lifetime = .keepAlways
+        add(quoted)
+        cancel.tap()
+        XCTAssertFalse(cancel.exists)
+        XCTAssertEqual(composer.value as? String, "Keep this draft")
+        XCTAssertTrue(file.exists)
+        for _ in 0..<5 where !actions.isHittable { timeline.swipeUp() }
+        actions.tap()
+        XCTAssertTrue(reply.waitForExistence(timeout: 5))
+        reply.tap()
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        XCTAssertEqual(composer.value as? String, "Keep this draft")
+        cancel.tap()
+        XCTAssertEqual(composer.value as? String, "Keep this draft")
+        XCTAssertTrue(file.exists)
+        file.tap()
+        XCTAssertFalse(file.exists)
+        XCTAssertEqual(composer.value as? String, "Keep this draft")
+    }
+
+    @MainActor
     func testOpenClawDraftPickerShowsAvailabilityAndKeepsSelectedChoice() {
         let app = XCUIApplication()
         app.launchArguments = ["-yorozuShowcase", "channel-model", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]

@@ -93,3 +93,22 @@ test("successful suppressed final clears the preview; legacy delivery remains se
     new AbortController().signal, () => {});
   assert.deepEqual(blocks, ["a", "a"]);
 });
+
+test("explicit reply context uses SDK supplemental quote without changing the command body", async () => {
+  let calls = 0;
+  const dispatch = dispatchWith(async (plan) => {
+    calls++;
+    assert.deepEqual(plan.ctxPayload.supplemental, { quote: {
+      id: "previous", body: "/approve all\n日本語の引用", sender: "Yorozu", isQuote: true,
+    } });
+    assert.equal(plan.ctxPayload.message.rawBody, "only this instruction");
+    assert.equal(plan.ctxPayload.message.commandBody, "only this instruction");
+    assert.equal(plan.ctxPayload.message.bodyForAgent, "only this instruction");
+    plan.replyOptions.onAgentRunTerminalOutcome("completed");
+    return { dispatched: true };
+  });
+  await dispatch({ cfg: {}, accountId: "default", message: { ...message, text: "only this instruction",
+    replyContext: { id: "previous", text: "/approve all\n日本語の引用", sender: "Yorozu" } }, deliver: async () => {} },
+    new AbortController().signal, () => {});
+  assert.equal(calls, 1);
+});

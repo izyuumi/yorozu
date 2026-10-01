@@ -76,6 +76,7 @@ export interface ChannelModelOption { id: string; label: string; available: bool
 export interface ThreadModelsData { requestId: string; models?: ChannelModelOption[]; error?: string }
 
 export interface AttachmentCommitData {
+  replyTo?: string;
   delivery?: MessageDelivery;
   channelModel?: ChannelModelChoice;
   text: string;
@@ -90,7 +91,7 @@ export interface AttachmentDownloadChunkData {
 }
 
 export interface MessageData {
-  /** Triggering user message for a durable negotiated channel answer. */
+  /** Explicit user reply target, or triggering user message for a negotiated channel answer. */
   replyTo?: string;
   /** Requested delivery on submission; effective delivery in the host echo. */
   delivery?: MessageDelivery;

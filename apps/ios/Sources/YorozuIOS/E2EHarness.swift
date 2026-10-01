@@ -79,6 +79,9 @@ final class E2EHarness {
                 for thread in model?.threads.prefix(2) ?? [] { model?.previewChat(in: thread.id) }
                 guard let thread = model?.threads.first?.id else { return }
                 model?.previewModels(in: thread)
+                if CommandLine.arguments.contains("-yorozuReplyAttachment") {
+                    model?.attachments[thread] = Array(showcaseImages().prefix(1))
+                }
             }
             seed()
             model.onThreads = seed

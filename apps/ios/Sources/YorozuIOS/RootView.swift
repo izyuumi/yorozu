@@ -62,6 +62,11 @@ private actor ShowcaseTransport: ChatTransport {
             self.continuation = continuation
             continuation.yield(.ownerOnline(launchArgument("yorozuShowcase") != "queued"))
             continuation.yield(.state(.paired))
+            if CommandLine.arguments.contains("-yorozuReplySupported") {
+                continuation.yield(.compatibility(.compatible(version: 1, capabilities: ["reply-context-v1", "attachment-chunks-v1"])))
+                continuation.yield(.event(YorozuEvent(id: "reply-capability", threadId: "", ts: 0, agentId: "main",
+                    payload: .modelList(ModelListData(models: [], channelCapabilities: ["reply-context-v1"])))))
+            }
             if launchArgument("yorozuShowcase") == "channel-model" {
                 continuation.yield(.event(YorozuEvent(id: "channel-capability", threadId: "", ts: 0, agentId: "main",
                     payload: .modelList(ModelListData(models: [], channelCapabilities: ["model-select-v1"])))))

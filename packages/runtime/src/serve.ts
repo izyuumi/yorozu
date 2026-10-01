@@ -355,6 +355,7 @@ function userMessageIdentity(event: YorozuEvent & { kind: "message" }): string {
     event.threadId, event.clientTs ?? event.ts, event.data.role, event.data.text, event.data.admissionDeadline ?? null,
     (event.data.attachments ?? []).map(({ name, mime, data }) => [name, mime, data]),
     ...(event.data.channelModel !== undefined ? [event.data.channelModel.model ?? null] : []),
+    ...(event.data.replyTo !== undefined ? ["replyTo", event.data.replyTo] : []),
   ])).digest("hex");
 }
 
@@ -1421,7 +1422,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   const effortsFor = (agent: ThreadAgent, model: string | undefined): ReasoningEffort[] =>
     (modelsFor(agent).find((m) => m.id === model) ?? modelsFor(agent)[0])?.efforts ?? [];
   /** What plugins can do, in the order clients name what is missing. */
-  const CHANNEL_CAPABILITIES = ["run-boundary-v1", "progress-v1", "model-select-v1", "media-v1", "reply-stream-v1"];
+  const CHANNEL_CAPABILITIES = ["run-boundary-v1", "progress-v1", "model-select-v1", "media-v1", "reply-stream-v1", "reply-context-v1"];
   /**
    * What the connected plugin announced, then `missing:<capability>` for each it did not, so a
    * client can tell an outdated plugin (some `missing:`) from no plugin (empty).
@@ -2418,7 +2419,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
           } else if (result.attachments) {
             handleEvent({ ...event, kind: "message", data: { role: "user", text: event.data.text,
               attachments: result.attachments, admissionDeadline: event.data.admissionDeadline, delivery: event.data.delivery,
-              ...(event.data.channelModel !== undefined ? { channelModel: event.data.channelModel } : {}) } },
+              ...(event.data.channelModel !== undefined ? { channelModel: event.data.channelModel } : {}),
+              ...(event.data.replyTo !== undefined ? { replyTo: event.data.replyTo } : {}) } },
               reply, pairedAt, from, localDevice);
           }
         }).catch((error) => state(`attachment-commit-error ${String(error)}`))
@@ -2611,6 +2613,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
         stored.kind === "message" && stored.data.role === "user" && stored.id === id);
       const expired = expiredAdmissions.get(id);
       const withdrawal = stoppedTurns.get(id);
+      const rejectedReply = history.findLast((stored) => stored.kind === "admission_status" &&
+        stored.data.eventId === id && stored.data.status === "rejected" && stored.data.reason?.startsWith("reply-"));
       const recordedCompletionId = user?.data.completionId;
       const oldOpenClawCompletionId = user && viaChannel(event.threadId) ? `openclaw:${id}:final` : undefined;
       const candidate = recordedCompletionId ?? oldOpenClawCompletionId;
@@ -2618,7 +2622,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         stored.id === candidate && stored.kind === "message" && stored.data.role === "agent" && stored.data.done === true) : undefined;
       const completionId = recordedCompletionId ?? (final ? oldOpenClawCompletionId : undefined);
       const status = withdrawal?.threadId === event.threadId && withdrawal.status === "withdrawn"
-        ? "withdrawn" : !user ? expired?.threadId === event.threadId ? "expired" : "unknown" : final ? "completed"
+        ? "withdrawn" : rejectedReply ? "rejected" : !user ? expired?.threadId === event.threadId ? "expired" : "unknown" : final ? "completed"
         : activeTurnIds.has(id) || user?.data.delivery === "steer" &&
           recordedCompletionId === completionIdFor(event.threadId, runningEventIds.get(event.threadId) ?? "") ? "running"
         : admittedTurns.has(id) ? "queued" : "indeterminate";
@@ -2629,6 +2633,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         eventId: id, status, requestId: event.id,
         ...(user?.data.delivery ? { delivery: user.data.delivery } : {}),
         ...(status === "expired" ? { reason: "admission-deadline" } : {}),
+        ...(rejectedReply?.kind === "admission_status" ? { reason: rejectedReply.data.reason } : {}),
         ...(runId ? { runId } : {}), ...(completionId ? { completionId } : {}),
       } }));
       return;
@@ -2751,6 +2756,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       : undefined;
     if (event.kind === "message" && knownMessage && (knownMessage.kind !== "message" ||
       knownMessage.data.role !== event.data.role || knownMessage.data.text !== event.data.text ||
+      knownMessage.data.replyTo !== event.data.replyTo ||
       (knownMessage.data.channelModel?.model ?? null) !== (event.data.channelModel?.model ?? null) ||
       (knownMessage.data.channelModel !== undefined) !== (event.data.channelModel !== undefined) ||
       (knownMessage.clientTs ?? knownMessage.ts) !== event.ts || knownMessage.data.admissionDeadline !== event.data.admissionDeadline ||
@@ -2761,6 +2767,39 @@ export function serve(options: ServeOptions = {}): Sidecar {
       }))) {
       rejectUserMessage("conflicting-message-id");
       return state("rejected-conflicting-message-id");
+    }
+    if (knownMessage && event.kind === "message" && event.data.role === "user") {
+      const rejection = readThreadEvents(event.threadId, dir).findLast((stored) => stored.kind === "admission_status" &&
+        stored.data.eventId === event.id && stored.data.status === "rejected" && stored.data.reason?.startsWith("reply-"));
+      if (rejection?.kind === "admission_status") {
+        rejectUserMessage(rejection.data.reason!);
+        return;
+      }
+    }
+    // Resolve references from this conversation only. Clients send an ID, never trusted
+    // quoted text. Accepted duplicates retain their existing operation identity on reconnect.
+    const quotedMessage = event.kind === "message" && event.data.role === "user" && event.data.replyTo !== undefined
+      ? readThreadEvents(event.threadId, dir).findLast((parent) => parent.id === event.data.replyTo && parent.kind === "message")
+      : undefined;
+    const replyContext = quotedMessage?.kind === "message" ? {
+      id: quotedMessage.id,
+      text: (quotedMessage.data.text || (quotedMessage.data.attachments ?? []).map((file) => file.name).join(", ")).slice(0, 4096),
+      sender: quotedMessage.data.role === "user" ? "owner" : "Yorozu",
+    } : undefined;
+    if (event.kind === "message" && event.data.role === "user" && event.data.replyTo !== undefined && !knownMessage) {
+      const replyCompatibility = from ? devices.get(from)?.compatibility : undefined;
+      if (typeof event.data.replyTo !== "string" || !event.data.replyTo || event.data.replyTo.length > 128 ||
+          event.data.replyTo === event.id || !quotedMessage || quotedMessage.parentAgentId !== undefined ||
+          !visibleThreadEvents(event.threadId, dir).some((parent) => parent.id === event.data.replyTo) ||
+          quotedMessage.kind !== "message" || quotedMessage.data.role === "agent" && quotedMessage.data.done !== true) {
+        rejectUserMessage("reply-target-unavailable");
+        return;
+      }
+      if (!viaChannel(event.threadId) || !channel.announced.has("reply-context-v1") ||
+          from && (replyCompatibility?.state !== "compatible" || !replyCompatibility.capabilities.includes("reply-context-v1"))) {
+        rejectUserMessage("reply-context-unsupported");
+        return;
+      }
     }
     if (event.kind === "message" && event.data.role === "user" && !knownMessage) {
       const rejected = (status: "expired" | "rejected" | "withdrawn", reason: string): void =>
@@ -2858,7 +2897,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const duplicateMessage = Boolean(knownMessage);
     const oldest = event.kind === "message" && event.data.role === "user"
       ? [...pending.values()].find((card) => card.threadId === event.threadId) : undefined;
-    const typed = oldest && event.kind === "message" ? typedAnswer(event.data.text, oldest.card) : undefined;
+    const typed = oldest && event.kind === "message" && event.data.replyTo === undefined ? typedAnswer(event.data.text, oldest.card) : undefined;
     if (duplicateMessage) {
       if (!visibleThreadEvents(event.threadId, dir).some((known) => known.id === event.id)) {
         receipt();
@@ -2880,6 +2919,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (event.kind === "message" && event.data.role === "user" && !typed &&
           viaChannel(event.threadId)) {
         channel.forward({ id: event.id, threadId: event.threadId, ts: event.ts, text: event.data.text,
+          ...(replyContext ? { replyContext } : {}),
           ...(event.data.channelModel !== undefined ? { channelModel: event.data.channelModel } : {}),
           ...(event.data.attachments?.length ? { attachments: event.data.attachments } : {}) });
       }
@@ -3066,6 +3106,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     if (viaChannel(event.threadId)) {
       title(event.threadId, event.data.text);
       channel.forward({ id: event.id, threadId: event.threadId, ts: event.ts, text: event.data.text,
+        ...(replyContext ? { replyContext } : {}),
         ...(event.data.channelModel !== undefined ? { channelModel: event.data.channelModel } : {}),
         ...(event.data.attachments?.length ? { attachments: event.data.attachments } : {}) });
       return broadcast(logged);
@@ -3104,9 +3145,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
     },
     onDeliveryError: (message, error) => {
       if (!stopped) broadcast({ id: randomUUID(), threadId: message.threadId, ts: Date.now(), agentId: MAIN_AGENT,
-        kind: "thread_models", data: { requestId: message.id, error: `Message queued: ${error}. Will retry when OpenClaw reconnects.` } });
+        kind: "thread_models", data: { requestId: message.id, error: error === "reply-delivery-unconfirmed"
+          ? "Reply delivery is unconfirmed. This connection cannot receive replies. Restore its reply support, or cancel the send before trying again."
+          : `Message queued: ${error}. Will retry when OpenClaw reconnects.` } });
     },
     onRejected: (message, reason) => {
+      if (reason.startsWith("reply-")) {
+        const rejection: YorozuEvent = { id: `${message.id}:rejected`, threadId: message.threadId,
+          ts: Date.now(), agentId: MAIN_AGENT, kind: "admission_status", data: { eventId: message.id, status: "rejected", reason } };
+        if (!readThreadEvents(message.threadId, dir).some((event) => event.id === rejection.id)) appendThreadEvent(rejection, dir);
+        if (!stopped) broadcast(rejection);
+        return;
+      }
       if (!stopped) broadcast(control({ kind: "admission_status", data: { eventId: message.id, status: "rejected", reason } }));
     },
     forwarded: ({ id, threadId }) => {

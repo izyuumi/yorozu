@@ -157,6 +157,7 @@ public struct ThreadCache: Sendable {
         /// The model and effort last chosen for each agent, which a new thread starts on.
         var lastRun: [String: RunChoice]?
         var channelModels: [String: ChannelModelChoice]?
+        var replyTargets: [String: ReplyTarget]? = nil
     }
 
     func draftState() -> DraftState? {

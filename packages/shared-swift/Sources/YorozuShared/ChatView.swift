@@ -84,6 +84,7 @@ public struct ChatView: View {
         @FocusState private var composerFocused: Bool
         @AppStorage(ChatView.sendWithCommandReturnKey) private var sendWithCommandReturn = false
     #endif
+    @State private var replyFocusRequest: UUID?
     @State private var channelModelPicker = false
     @State private var channelPickerWidth: CGFloat?
     @State private var searching = false
@@ -946,6 +947,12 @@ public struct ChatView: View {
                     queuedStatus: queuedStatus,
                     rejectionReason: rejectionReason,
                     attachmentTransferLabels: model.attachmentTransferLabels(of: event.id),
+                    onReply: model.canReply(to: event) ? {
+                        if model.beginReply(to: event) {
+                            focusReplyComposer()
+                        }
+                    } : nil,
+                    replyPreview: model.replyPreview(for: data, in: thread.id),
                     onEditFromHere: data.role == .user && model.supportsRewind(in: thread.id)
                         ? { model.editFromHere(event) } : nil,
                     editFromHereEnabled: model.canEditFromHere(event),
@@ -954,6 +961,9 @@ public struct ChatView: View {
                         ? { if needsNewChat {
                                 recoveryMessage = data
                                 choosingAgent = true
+                            } else if rejectionReason?.hasPrefix("reply-") == true {
+                                model.recoverRejectedReply(event.id)
+                                focusReplyComposer()
                             } else { retry(data) } } : messageActions.retry.map { prompt in
                                 { retry(prompt) }
                             },
@@ -1245,6 +1255,10 @@ public struct ChatView: View {
         // send control all live inside the same rounded container, so the eye reads one thing
         // to type into rather than three controls in a row.
         VStack(alignment: .leading, spacing: 0) {
+            if let target = model.replyTargets[thread.id] {
+                ReplyComposerContext(target: target) { model.cancelReply(in: thread.id) }
+                    .padding(.leading, 12).padding(.trailing, 4).padding(.top, 8)
+            }
             if let attachmentFailure {
                 HStack(alignment: .top, spacing: 8) {
                     Label(attachmentFailure, systemImage: "exclamationmark.circle")
@@ -1294,7 +1308,8 @@ public struct ChatView: View {
                     onQuestionOption: questionOption,
                     onPromptHistory: { model.recallPrompt(in: thread.id, older: $0) },
                     onPasteProviders: { pasteAttachments(sources: clipboardAttachmentSources($0)) },
-                    focusThread: startsFocused ? thread.id : nil
+                    focusThread: startsFocused ? thread.id : nil,
+                    focusRequest: replyFocusRequest
                 )
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
@@ -1636,7 +1651,7 @@ public struct ChatView: View {
             model.interrupt(in: thread.id)
         } label: {
             Image(systemName: "stop.fill")
-                .font(.scaled(.footnote).weight(.bold))
+                .font(.system(size: sendCircle / 2, weight: .bold))
                 .foregroundStyle(.background)
                 .frame(width: sendCircle, height: sendCircle)
                 .background(Color.primary, in: Circle())
@@ -1656,7 +1671,7 @@ public struct ChatView: View {
             send()
         } label: {
             Image(systemName: "arrow.up")
-                .font(.scaled(.body).weight(.bold))
+                .font(.system(size: sendCircle / 2, weight: .bold))
                 .foregroundStyle(canSend ? Color.white : Color.secondary)
                 .frame(width: sendCircle, height: sendCircle)
                 .background(canSend ? YorozuPalette.vermilion : Color.clear, in: Circle())
@@ -1715,8 +1730,16 @@ public struct ChatView: View {
 
     /// Sends the same thing again, as a new message. The original stays where it is — a
     /// transcript that quietly rewrote itself would not be one.
+    private func focusReplyComposer() {
+        #if os(macOS)
+            composerFocused = true
+        #else
+            replyFocusRequest = UUID()
+        #endif
+    }
+
     private func retry(_ data: MessageData) {
-        model.send(data.text, in: thread.id, attachments: data.attachments)
+        model.send(data.text, in: thread.id, attachments: data.attachments, replyTo: data.replyTo)
         sends += 1
         atBottom = true
         newestScroll.followLatest()

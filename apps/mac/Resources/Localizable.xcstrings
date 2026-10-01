@@ -15034,6 +15034,116 @@
           }
         }
       }
+    },
+    "Reply to message": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メッセージへの返信"
+          }
+        }
+      }
+    },
+    "Replying to you": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "あなたのメッセージに返信"
+          }
+        }
+      }
+    },
+    "Replying to Yorozu": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozuへの返信"
+          }
+        }
+      }
+    },
+    "Cancel reply": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "返信をキャンセル"
+          }
+        }
+      }
+    },
+    "Keeps your text and attachments": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "入力したテキストと添付ファイルは保持されます"
+          }
+        }
+      }
+    },
+    "Connect to a host that supports replies, or cancel the reply to send without it.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "返信に対応したホストに接続するか、返信をキャンセルして通常のメッセージとして送信してください。"
+          }
+        }
+      }
+    },
+    "Use in composer": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "入力欄で編集"
+          }
+        }
+      }
+    },
+    "Not sent · the quoted message is unavailable. Use in composer to edit and send again.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未送信・引用元のメッセージを利用できません。入力欄で編集して再度送信してください。"
+          }
+        }
+      }
+    },
+    "Not sent · this connection cannot receive replies. Use in composer to cancel the reply or try again.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未送信・この接続では返信を受信できません。入力欄で返信をキャンセルするか、再度お試しください。"
+          }
+        }
+      }
+    },
+    "replies": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "返信"
+          }
+        }
+      }
+    },
+    "Finish the pending request or cancel the reply before sending.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留中のリクエストを完了するか、返信をキャンセルしてから送信してください。"
+          }
+        }
+      }
     }
   }
 }

@@ -3363,3 +3363,194 @@ func silentSuccessfulReplyClearsItsPreviewWithoutABlankBubble(final: MessageData
     #expect(await eventually { model.channelModelSelection })
     #expect(model.pluginNotice == nil)
 }
+
+/// Reply targets have their own durability boundary; cancelling never writes into typed input.
+@MainActor
+@Test func replyDraftRestoresAndRepeatedCancelPreservesTextAndFiles() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let key = SymmetricKey(size: .bits256)
+    let cache = ThreadCache(directory: directory, key: key)
+    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
+    cache.save(threads: [thread])
+    let parent = event("parent", .message(MessageData(role: .agent, text: "日本語の元の返信", done: true)))
+    cache.save(events: [parent], threadId: thread.id, lastSeen: parent.id)
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    defer { model.close() }
+    model.start()
+    await transport.yield(.state(.paired))
+    await transport.yield(.ownerOnline(true))
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["reply-context-v1"])))
+    await transport.yield(.event(event("capabilities", .modelList(ModelListData(models: [], channelCapabilities: ["reply-context-v1"])))))
+    #expect(await eventually { model.supportsReplies(in: "home") })
+    let file = MessageAttachment(name: "notes.pdf", mime: "application/pdf", data: "aGk=")
+    model.drafts["home"] = "  日本語の下書き\ncontinued  "
+    model.attachments["home"] = [file]
+    #expect(model.beginReply(to: parent))
+    #expect(model.beginReply(to: parent))
+    model.openThread = "other"
+    #expect(model.replyTargets["other"] == nil)
+    #expect(model.replyTargets["home"]?.preview == "日本語の元の返信")
+    let restored = ChatModel(transport: FakeTransport(), cache: ThreadCache(directory: directory, key: key))
+    #expect(restored.replyTargets["home"]?.eventId == parent.id)
+    #expect(restored.drafts["home"] == model.drafts["home"])
+    #expect(restored.attachments["home"] == [file])
+    restored.cancelReply(in: "home")
+    restored.cancelReply(in: "home")
+    let again = ChatModel(transport: FakeTransport(), cache: ThreadCache(directory: directory, key: key))
+    #expect(again.replyTargets.isEmpty)
+    #expect(again.drafts["home"] == model.drafts["home"])
+    #expect(again.attachments["home"] == [file])
+    #expect(again.outbox.isEmpty)
+    let independentHost = ChatModel(transport: FakeTransport())
+    #expect(independentHost.replyTargets.isEmpty)
+    #expect(!independentHost.beginReply(to: parent))
+}
+
+@MainActor
+@Test func repliesRequireNegotiatedSupportAndASettledMessageInThisConversation() async {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
+    let parent = event("parent", .message(MessageData(role: .agent, text: "settled", done: true)))
+    await transport.yield(.event(event("threads", .threadList(ThreadListData(threads: [thread])))))
+    await transport.yield(.event(parent))
+    #expect(await eventually { model.events["home"]?.contains(parent) == true })
+    #expect(!model.beginReply(to: parent))
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["reply-context-v1"])))
+    await transport.yield(.event(event("caps", .modelList(ModelListData(models: [], channelCapabilities: ["reply-context-v1"])))))
+    #expect(await eventually { model.supportsReplies(in: "home") })
+    #expect(model.beginReply(to: parent))
+    let unfinished = event("streaming", .message(MessageData(role: .agent, text: "still writing")))
+    await transport.yield(.event(unfinished))
+    #expect(await eventually { model.events["home"]?.contains(unfinished) == true })
+    #expect(!model.beginReply(to: unfinished))
+    #expect(!model.beginReply(to: event("parent", parent.payload, thread: "other")))
+    model.drafts["home"] = "keep this"
+    await transport.yield(.event(event("old-caps", .modelList(ModelListData(models: [], channelCapabilities: [])))))
+    #expect(await eventually { !model.supportsReplies(in: "home") })
+    model.send(in: thread)
+    #expect(model.drafts["home"] == "keep this")
+    #expect(model.replyTargets["home"]?.eventId == parent.id)
+    #expect(model.outbox.isEmpty)
+    #expect(model.failure != nil)
+    model.cancelReply(in: "home")
+    model.send(in: thread)
+    #expect(model.outbox.count == 1)
+    guard case .message(let sent) = model.outbox[0].event.payload else { Issue.record("no message"); return }
+    #expect(sent.replyTo == nil)
+}
+
+@MainActor
+@Test func replyAttachmentCommitAndRejectedRecoveryKeepOneIntent() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
+    let parent = event("parent", .message(MessageData(role: .agent, text: "quoted", done: true)))
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["reply-context-v1", "attachment-chunks-v1"])))
+    await transport.yield(.event(event("threads", .threadList(ThreadListData(threads: [thread])))))
+    await transport.yield(.event(parent))
+    await transport.yield(.event(event("caps", .modelList(ModelListData(models: [], channelCapabilities: ["reply-context-v1"])))))
+    #expect(await eventually { model.canReply(to: parent) })
+    let file = MessageAttachment(name: "notes.pdf", mime: "application/pdf", data: "aGk=")
+    model.attachments["home"] = [file]
+    #expect(model.beginReply(to: parent))
+    model.send(in: thread)
+    let pending = try #require(model.outbox.first)
+    #expect(model.drafts["home"] == "")
+    #expect(model.attachments["home"] == nil)
+    #expect(model.replyTargets["home"] == nil)
+    #expect(!model.canReply(to: pending.event))
+    #expect(await eventually { await transport.sent.contains { $0.payload.kind == .attachmentChunk } })
+    let chunkEvent = try #require(await transport.sent.first { $0.payload.kind == .attachmentChunk })
+    guard case .attachmentChunk(let chunk) = chunkEvent.payload else { Issue.record("no chunk"); return }
+    await transport.yield(.event(event("progress", .attachmentProgress(AttachmentProgressData(requestId: chunkEvent.id,
+        messageId: pending.id, index: 0, nextOffset: chunk.totalBytes)))))
+    #expect(await eventually { await transport.sent.contains { $0.payload.kind == .attachmentCommit } })
+    let commitEvent = try #require(await transport.sent.first { $0.payload.kind == .attachmentCommit })
+    guard case .attachmentCommit(let commit) = commitEvent.payload else { Issue.record("no commit"); return }
+    #expect(commit.replyTo == parent.id)
+    #expect(commit.text.isEmpty)
+    #expect(commit.attachments.map(\.name) == [file.name])
+    await transport.yield(.event(event("rejection", .admissionStatus(AdmissionStatusData(eventId: pending.id,
+        status: .rejected, reason: "reply-context-unsupported")))))
+    #expect(await eventually { model.outboxStatus(of: pending.id) == .rejected })
+    model.drafts["home"] = "a newer thought"
+    model.recoverRejectedReply(pending.id)
+    model.recoverRejectedReply(pending.id)
+    #expect(model.drafts["home"] == "a newer thought")
+    #expect(model.attachments["home"] == [file])
+    #expect(model.replyTargets["home"] == nil, "an unrelated current draft must keep its target")
+    #expect(model.outbox.count == 1)
+}
+
+@MainActor
+@Test func aLateRejectedReplyRestoresFromHistoryAndRecoveryDoesNotDuplicateInput() throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let key = SymmetricKey(size: .bits256)
+    let cache = ThreadCache(directory: directory, key: key)
+    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
+    cache.save(threads: [thread])
+    let file = MessageAttachment(name: "notes.pdf", mime: "application/pdf", data: "aGk=")
+    let parent = event("parent", .message(MessageData(role: .agent, text: "quoted", done: true)))
+    let sent = event("sent", .message(MessageData(role: .user, text: "follow up", attachments: [file], replyTo: parent.id)))
+    let rejected = event("sent:rejected", .admissionStatus(AdmissionStatusData(eventId: sent.id,
+        status: .rejected, reason: "reply-context-unsupported")))
+    cache.save(events: [parent, sent, rejected], threadId: thread.id, lastSeen: rejected.id)
+    let model = ChatModel(transport: FakeTransport(), cache: cache)
+    #expect(model.outboxStatus(of: sent.id) == .rejected)
+    model.recoverRejectedReply(sent.id)
+    model.recoverRejectedReply(sent.id)
+    #expect(model.drafts["home"] == "follow up")
+    #expect(model.attachments["home"] == [file])
+    #expect(model.replyTargets["home"]?.eventId == parent.id)
+    model.cancelReply(in: "home")
+    let again = ChatModel(transport: FakeTransport(), cache: ThreadCache(directory: directory, key: key))
+    again.recoverRejectedReply(sent.id)
+    #expect(again.drafts["home"] == "follow up")
+    #expect(again.attachments["home"] == [file])
+    #expect(again.replyTargets["home"] == nil)
+    #expect(again.outbox.count == 1)
+}
+
+@Test func replyPreviewsBoundBytesBeforeCountingCombiningCharacters() {
+    let source = "a" + String(repeating: "\u{0301}", count: 5000)
+    let target = ReplyTarget(eventId: "parent", message: MessageData(role: .agent, text: source, done: true))
+    #expect(target.preview.utf8.count <= 2003)
+    #expect(target.preview != source)
+}
+
+@MainActor
+@Test func aQuestionArrivingDuringReplyCompositionCannotConsumeTheDraft() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
+    let parent = event("parent", .message(MessageData(role: .agent, text: "quoted", done: true)))
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["reply-context-v1", "turn-state-v1"])))
+    await transport.yield(.event(event("threads", .threadList(ThreadListData(threads: [thread])))))
+    await transport.yield(.event(parent))
+    await transport.yield(.event(event("caps", .modelList(ModelListData(models: [], channelCapabilities: ["reply-context-v1"])))))
+    #expect(await eventually { model.canReply(to: parent) })
+    #expect(model.beginReply(to: parent))
+    model.drafts["home"] = "yes"
+    let file = MessageAttachment(name: "notes.pdf", mime: "application/pdf", data: "aGk=")
+    model.attachments["home"] = [file]
+    var working = thread
+    working.turnState = .running
+    await transport.yield(.event(event("working", .threadList(ThreadListData(threads: [working])))))
+    #expect(await eventually { model.generating.contains("home") })
+    await transport.yield(.event(event("question", .questionCard(QuestionCardData(questionId: "q1", question: "Which?", options: ["yes", "no"])))))
+    #expect(await eventually { !model.pendingComposerCards(in: "home").isEmpty })
+    model.send(in: thread)
+    #expect(model.drafts["home"] == "yes")
+    #expect(model.attachments["home"] == [file])
+    #expect(model.replyTargets["home"]?.eventId == parent.id)
+    #expect(model.questionChoices.isEmpty)
+    #expect(model.outbox.isEmpty)
+    #expect(model.failure != nil)
+}

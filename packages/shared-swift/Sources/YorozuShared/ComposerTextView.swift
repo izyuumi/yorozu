@@ -14,6 +14,7 @@
         /// The thread to take the keyboard for, once each: a thread just started. Nil leaves
         /// focus wherever it is.
         var focusThread: String?
+        var focusRequest: UUID?
 
         private static let maxLines: CGFloat = 6
 
@@ -54,6 +55,10 @@
             view.onQuestionOption = onQuestionOption
             view.onPromptHistory = onPromptHistory
             view.onPasteProviders = onPasteProviders
+            if focusRequest != view.focusRequest {
+                view.focusRequest = focusRequest
+                if focusRequest != nil { view.focus() }
+            }
             if focusThread != view.focusThread {
                 view.focusThread = focusThread
                 if focusThread != nil { view.focus() }
@@ -96,6 +101,7 @@
         var onPromptHistory: (Bool) -> Bool = { _ in false }
         var onPasteProviders: (([NSItemProvider]) -> Void)?
         var focusThread: String?
+        var focusRequest: UUID?
         private var focusPending = false
 
         /// A view not yet in a window cannot be first responder, so the request waits for one.
