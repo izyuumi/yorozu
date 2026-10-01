@@ -17,6 +17,7 @@ import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-run
 import { applySessionModelSelection } from "openclaw/plugin-sdk/model-session-runtime";
 import { buildPreparedModelsProviderData } from "openclaw/plugin-sdk/models-provider-runtime";
 import { getSessionEntry, resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
+import { getRuntimeConfigSnapshot } from "openclaw/plugin-sdk/runtime-config-snapshot";
 import { createInboundDispatcher } from "./dispatch.js";
 import { CAPABILITIES } from "./capabilities.js";
 import { createAttachmentSaver } from "./media.js";
@@ -131,13 +132,14 @@ export const yorozuPlugin = createChatChannelPlugin({
           capabilities: CAPABILITIES,
           onOpen: () => accountRuns.replay(),
           onAbort: (messageId) => accountRuns.abort(messageId),
-          onModelRequest: (frame) => respondModel({ cfg: ctx.cfg, accountId: ctx.accountId, frame }),
+          onModelRequest: (frame) => respondModel({ cfg: getRuntimeConfigSnapshot() ?? ctx.cfg, accountId: ctx.accountId, frame }),
           onStatus: (connected) => ctx.setStatus({ accountId: ctx.accountId, running: true, connected }),
           onError: (message) => ctx.log?.warn?.(`yorozu: ${message}`),
           onInbound: (message) =>
             accountRuns.run(message, (signal, begin) =>
               dispatchInbound({
-                cfg: ctx.cfg,
+                // Hot reload replaces the snapshot without necessarily restarting this account.
+                cfg: getRuntimeConfigSnapshot() ?? ctx.cfg,
                 accountId: ctx.accountId,
                 message,
                 log: ctx.log,
