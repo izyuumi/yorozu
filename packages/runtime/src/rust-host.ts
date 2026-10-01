@@ -17,7 +17,7 @@ export function rustHostCommand(): string {
   return existsSync(bundled) ? bundled : join(import.meta.dirname, "..", "..", "host-core", "target", "debug", name);
 }
 type Pending = { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof ioTimeout>; bytes: number };
-export type HostTransportEvent = { type: "transport_event"; transportId: string; device: string; event: "open" | "frame" | "close" | "error" | "lost"; frame?: unknown };
+export type HostTransportEvent = { type: "transport_event"; transportId: string; device: string; event: "open" | "frame" | "close" | "error" | "lost"; frame?: unknown; receiveToken?: unknown };
 class Worker {
   owners = 0;
   get pid(): number | undefined { return this.child?.pid; }

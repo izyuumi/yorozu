@@ -9,14 +9,18 @@ export class RustRelaySocket extends EventEmitter {
   readyState = 1;
   bufferedAmount = 0;
   private writes = Promise.resolve();
+  private pending = 0;
+  private input: { frame: string; token: string | undefined; bytes: number }[] = [];
+  private inputBytes = 0;
+  private reading = false;
   constructor(private readonly dir: string, private readonly port: string, readonly device: string) { super(); }
   send(frame: string): void {
     if (this.readyState !== 1) throw new Error("Relay connection is closed");
     const bytes = Buffer.byteLength(frame);
-    if (bytes > FRAME_BYTES || this.bufferedAmount + bytes > OUTPUT_BYTES) {
+    if (bytes > FRAME_BYTES || this.bufferedAmount + bytes > OUTPUT_BYTES || this.pending >= 64) {
       this.close(); throw new Error("Relay output limit");
     }
-    this.bufferedAmount += bytes;
+    this.bufferedAmount += bytes; this.pending++;
     this.writes = this.writes.then(async () => {
       // Unsent work remains bound to this socket, even when Rust has already reconnected.
       if (this.readyState !== 1) return;
@@ -25,7 +29,43 @@ export class RustRelaySocket extends EventEmitter {
     }).catch(() => {
       if (this.readyState !== 1) return;
       this.emit("error", new Error("Relay write remains unconfirmed")); this.close();
-    }).finally(() => { this.bufferedAmount -= bytes; });
+    }).finally(() => { this.bufferedAmount -= bytes; this.pending--; });
+  }
+  /** Preserve arrival order while a handler's response/ack writes drain. */
+  receive(frame: string, token: string | undefined): void {
+    if (this.readyState !== 1) return;
+    const bytes = Buffer.byteLength(frame);
+    if (bytes > FRAME_BYTES || this.input.length >= 64 || this.inputBytes + bytes > OUTPUT_BYTES) {
+      this.close(); return;
+    }
+    this.input.push({ frame, token, bytes }); this.inputBytes += bytes;
+    if (this.reading) return;
+    this.reading = true;
+    const drain = (): void => {
+      const next = this.readyState === 1 ? this.input.shift() : undefined;
+      if (!next) { this.input = []; this.inputBytes = 0; this.reading = false; return; }
+      this.inputBytes -= next.bytes;
+      try { this.emit("message", next.frame, next.token); }
+      catch { this.close(); }
+      // This waits for synchronous response writes, never provider task completion.
+      void this.writes.then(drain, () => { this.close(); drain(); });
+    };
+    drain();
+  }
+  /** Report the synchronous application boundary; Rust owns the cumulative replay fence. */
+  handled(receiveToken: string | undefined, handled: boolean): void {
+    if (receiveToken === undefined || this.readyState !== 1) return;
+    if (this.pending >= 64) { this.close(); return; }
+    this.pending++;
+    this.writes = this.writes.then(async () => {
+      if (this.readyState !== 1) return;
+      const result = await hostRequest(this.dir, { op: "relay_handled", transportId: this.port,
+        device: this.device, receiveToken, handled }) as { sent?: unknown };
+      if (result?.sent !== true) throw new Error("Relay handling remains unconfirmed");
+    }).catch(() => {
+      if (this.readyState !== 1) return;
+      this.emit("error", new Error("Relay handling remains unconfirmed")); this.close();
+    }).finally(() => { this.pending--; });
   }
   close(): void {
     if (this.readyState !== 1) return;
@@ -65,7 +105,7 @@ export function startRustRelay(options: { dir: string; url: string; heartbeat: {
       options.onState(typeof event.frame === "string" && known.includes(event.frame) ? event.frame : "relay-frame-error");
     } else if (socket?.device === event.device) {
       if (event.event === "close") { socket.closed(); socket = undefined; }
-      else if (event.event === "frame" && typeof event.frame === "string") socket.emit("message", event.frame);
+      else if (event.event === "frame" && typeof event.frame === "string") socket.receive(event.frame, typeof event.receiveToken === "string" ? event.receiveToken : undefined);
     }
   });
   async function open(): Promise<void> {

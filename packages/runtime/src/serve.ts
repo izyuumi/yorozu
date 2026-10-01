@@ -3481,8 +3481,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
     relayReady = false;
     socket = ws;
     let room: string | null = null;
-    /** Set once a replayed frame on this socket threw; nothing after it is acked. */
-    let ackBlocked = false;
 
     const signedFrame = (body: FrameBody): { payload: string; sig: string } => {
       const payload = toBase64Url(Buffer.from(JSON.stringify(body)));
@@ -3837,7 +3835,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
 
     ws.on("open", () => state("connected"));
 
-    ws.on("message", (data) => {
+    ws.on("message", (data, receiveToken?: string) => {
+      let handled = true;
       try {
         // Inside the try: the relay is the one peer that can hand us a frame that is not JSON
         // at all, and a parse error here would end the process rather than the frame.
@@ -3910,12 +3909,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
               try {
                 onFrame(body);
               } catch (e) {
-                if (typeof msg.seq === "number") ackBlocked = true;
+                handled = false;
                 throw e;
               }
-            }
-            if (typeof msg.seq === "number" && !ackBlocked) {
-              ws.send(JSON.stringify({ type: "ack", seq: msg.seq }));
             }
             return;
           }
@@ -3925,7 +3921,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
             return state(`relay-${String(msg.state).replace(/\s+/g, " ").slice(0, 200)}`);
         }
       } catch (e) {
+        handled = false;
         state(`frame-error ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        ws.handled(receiveToken, handled);
       }
     });
 

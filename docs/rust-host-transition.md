@@ -580,6 +580,38 @@ reacquisition/no-mutation assertions without sleeps or retries. The final comple
 107 tests, formatting and strict Clippy. Failed verification logs are retained alongside the final runs.
 Catch-up selection and registration/frame policy still remain to migrate.
 
+## Rust relay replay acknowledgement ownership
+
+The relay owner now assigns opaque, connection-scoped receive tokens to buffered frames on both
+text and binary paths. The compatibility handler reports success or failure after its existing
+synchronous boundary; Rust acknowledges only the successfully handled prefix. A failed handler
+fences all later cumulative acknowledgements until reconnect. Malformed inner frame bodies remain
+deliberately disposable. Live frames have no replay token. Receive tokens and relay buffer sequences
+are separate from durable encrypted channel counters, accepted-message proof and provider completion.
+
+Rust retains at most 32 pending buffered receipts. A full window pauses socket reads while commands
+and shutdown remain active; it does not reconnect merely because a legitimate replay burst exceeds
+one window. The oldest unresolved receipt has a 30-second deadline. Heartbeat reads receive fresh
+grace after a full window drains. Stale connection/token results and repeated completions are rejected
+before touching the prefix. Unhandled overflow/failure/timeout leaves the relay's retained copy intact.
+
+The Node facade preserves incoming order and waits for each synchronous handler's response/ack
+writes to drain before delivering the next frame. Incoming and outgoing encoded buffers are each
+bounded to 8 MiB, individual frames to 1 MiB and facade command/input queues to 64 entries. This
+prevents ordinary reply amplification (receipt plus thread/project lists) from exhausting the command
+queue during a healthy replay burst. No task/provider completion is awaited by the acknowledgement.
+
+A real Rust socket fixture covers 40 buffered frames, mixed text/binary delivery, sequence zero,
+failure fencing, new-connection recovery and stale results. A prefix check covers out-of-order
+results, duplicate results and integral exponent notation. A real Node/Rust fixture additionally
+covers 40 replayed requests producing 120 response writes without reconnect or loss. Affected existing
+malformed-frame, catch-up and actual worker-termination cases pass. The first socket-test driver
+lost concurrently arriving frames while waiting for results; its corrected bounded inbox retains them,
+with the original assertions intact. Failed and successful verification logs are preserved. Final
+complete verification passed all 109 Rust tests, formatting, strict Clippy and production build,
+plus 819 runtime tests and one skip across 50 files. Read-only review found no remaining blocker
+after the ordered-input repair. History page selection and catch-up job policy remain TypeScript.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

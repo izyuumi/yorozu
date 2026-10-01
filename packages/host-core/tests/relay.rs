@@ -198,3 +198,121 @@ fn a_self_signed_relay_cannot_become_an_open_connection() {
     relays.request(&json!({"op":"relay_close","transportId":"owner"}));
     server.join().unwrap();
 }
+
+fn preserving_until(
+    receiver: &mpsc::Receiver<Value>,
+    pending: &mut std::collections::VecDeque<Value>,
+    predicate: impl Fn(&Value) -> bool,
+) -> Value {
+    if let Some(index) = pending.iter().position(&predicate) {
+        return pending.remove(index).unwrap();
+    }
+    let deadline = Instant::now() + Duration::from_secs(6);
+    loop {
+        let event = receiver
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap();
+        if predicate(&event) {
+            return event;
+        }
+        pending.push_back(event);
+        assert!(pending.len() < 128);
+    }
+}
+
+#[test]
+fn buffered_replay_uses_a_bounded_receive_window_and_fences_failed_handlers_per_connection() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        for phase in 0..3 {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut socket = tokio_tungstenite::tungstenite::accept(stream).unwrap();
+            let count = if phase == 0 {
+                40
+            } else if phase == 1 {
+                2
+            } else {
+                1
+            };
+            for n in 0..count {
+                let seq = if phase == 1 { n + 100 } else { n };
+                let frame = json!({"type":"frame","seq":seq,"payload":"opaque"}).to_string();
+                socket
+                    .send(if n % 2 == 0 {
+                        Message::Text(frame.into())
+                    } else {
+                        Message::Binary(frame.into_bytes().into())
+                    })
+                    .unwrap();
+            }
+            if phase == 1 {
+                socket
+                    .get_ref()
+                    .set_read_timeout(Some(Duration::from_millis(250)))
+                    .unwrap();
+                let error = socket.read().unwrap_err();
+                assert!(
+                    matches!(error, tokio_tungstenite::tungstenite::Error::Io(ref e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut))
+                );
+            } else {
+                for seq in 0..count {
+                    let received = socket.read().unwrap().into_text().unwrap();
+                    assert_eq!(
+                        serde_json::from_str::<Value>(&received).unwrap(),
+                        json!({"type":"ack","seq":seq})
+                    );
+                }
+            }
+            socket.close(None).unwrap();
+        }
+    });
+    let (mut relays, events) = owner();
+    assert_eq!(relays.request(&json!({"op":"relay_open","transportId":"owner","url":format!("ws://{address}"),"pingMs":10000,"pongMs":1000})).unwrap()["ready"], true);
+    let mut pending = std::collections::VecDeque::new();
+    let mut failed_connection = Value::Null;
+    let mut failed_token = Value::Null;
+    for phase in 0..3 {
+        let connection =
+            preserving_until(&events, &mut pending, |v| v["event"] == "open")["device"].clone();
+        let count = if phase == 0 {
+            40
+        } else if phase == 1 {
+            2
+        } else {
+            1
+        };
+        if phase == 2 {
+            assert!(relays.request(&json!({"id":"stale","op":"relay_handled","transportId":"owner","device":failed_connection,"receiveToken":failed_token,"handled":true})).is_none());
+            assert!(
+                preserving_until(&events, &mut pending, |v| v["id"] == "stale")["result"]
+                    .get("error")
+                    .is_some()
+            );
+        }
+        for n in 0..count {
+            let event = preserving_until(&events, &mut pending, |v| v["event"] == "frame");
+            assert!(event["receiveToken"].is_string());
+            let id = format!("handled-{phase}-{n}");
+            if phase == 1 && n == 0 {
+                failed_connection = connection.clone();
+                failed_token = event["receiveToken"].clone();
+            }
+            assert!(relays.request(&json!({"id":id,"op":"relay_handled","transportId":"owner","device":connection,"receiveToken":event["receiveToken"],"handled":!(phase == 1 && n == 0)})).is_none());
+            assert_eq!(
+                preserving_until(&events, &mut pending, |v| v["id"] == id)["result"]["sent"],
+                true
+            );
+        }
+    }
+    server.join().unwrap();
+    assert_eq!(
+        relays
+            .request(&json!({"op":"relay_close","transportId":"owner"}))
+            .unwrap()["closed"],
+        true
+    );
+}

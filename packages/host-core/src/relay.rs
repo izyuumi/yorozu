@@ -3,7 +3,7 @@ use crate::transport::Emit;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     io,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
     sync::Arc,
@@ -34,6 +34,63 @@ struct Command {
     id: String,
     connection: String,
     frame: Option<String>,
+    handled: Option<(String, bool)>,
+}
+// Receive tokens name this connection's opaque handler boundary, never channel currency.
+struct Receipt {
+    token: String,
+    sequence: Value,
+    handled: Option<bool>,
+    deadline: Instant,
+}
+#[derive(Default)]
+struct Replay {
+    serial: u64,
+    pending: VecDeque<Receipt>,
+    blocked: bool,
+}
+impl Replay {
+    fn receive(&mut self, connection: &str, frame: &str) -> Result<Option<String>, ()> {
+        let Ok(value) = serde_json::from_str::<Value>(frame) else {
+            return Ok(None);
+        };
+        if value["type"] != "frame" || !value["seq"].is_number() {
+            return Ok(None);
+        }
+        if self.pending.len() >= COMMANDS {
+            return Err(());
+        }
+        self.serial = self.serial.checked_add(1).ok_or(())?;
+        let token = format!("{connection}:{}", self.serial);
+        self.pending.push_back(Receipt {
+            token: token.clone(),
+            sequence: value["seq"].clone(),
+            handled: None,
+            deadline: Instant::now() + Duration::from_secs(30),
+        });
+        Ok(Some(token))
+    }
+    fn complete(&mut self, token: &str, handled: bool) -> Result<Option<Value>, ()> {
+        let receipt = self
+            .pending
+            .iter_mut()
+            .find(|item| item.token == token)
+            .ok_or(())?;
+        if receipt.handled.is_some() {
+            return Err(());
+        }
+        receipt.handled = Some(handled);
+        self.blocked |= !handled;
+        let mut sequence = None;
+        while self
+            .pending
+            .front()
+            .is_some_and(|item| item.handled.is_some())
+        {
+            sequence = Some(self.pending.pop_front().unwrap().sequence);
+        }
+        Ok(if self.blocked { None } else { sequence })
+    }
 }
 struct Relay {
     commands: mpsc::Sender<Command>,
@@ -55,6 +112,9 @@ struct Events {
 impl Events {
     fn event(&self, connection: &str, event: &str, frame: Value) -> bool {
         (self.emit)(json!({"type":"transport_event","transportId":self.id,"device":connection,"event":event,"frame":frame})).is_ok()
+    }
+    fn frame(&self, connection: &str, frame: &str, token: Option<String>) -> bool {
+        (self.emit)(json!({"type":"transport_event","transportId":self.id,"device":connection,"event":"frame","frame":frame,"receiveToken":token})).is_ok()
     }
     fn answer(&self, id: &str, sent: bool) -> bool {
         let result = if sent {
@@ -151,16 +211,47 @@ async fn run(
             if !events.event(&connection, "open", Value::Null) {
                 break;
             }
+            let mut replay = Replay::default();
             let mut next_ping = Instant::now() + Duration::from_millis(ping_ms);
             let mut pong_deadline: Option<Instant> = None;
             loop {
-                let wake = pong_deadline.unwrap_or(next_ping);
+                let full = replay.pending.len() == COMMANDS;
+                let heartbeat_wake = pong_deadline.unwrap_or(next_ping);
+                let wake = replay
+                    .pending
+                    .front()
+                    .map(|item| {
+                        if full {
+                            item.deadline
+                        } else {
+                            item.deadline.min(heartbeat_wake)
+                        }
+                    })
+                    .unwrap_or(heartbeat_wake);
                 tokio::select! {
                     _ = stop.changed() => break 'owner,
                     command = commands.recv() => {
                         let Some(command) = command else { break 'owner; };
                         if command.connection != connection {
                             if !events.answer(&command.id, false) { break 'owner; }
+                            continue;
+                        }
+                        if let Some((token, handled)) = command.handled {
+                            let Ok(sequence) = replay.complete(&token, handled) else {
+                                if !events.answer(&command.id, false) { break 'owner; }
+                                continue;
+                            };
+                            // A full receive window pauses heartbeat reads; resume with fresh grace.
+                            if full { pong_deadline = None; next_ping = Instant::now() + Duration::from_millis(ping_ms); }
+                            let written = if let Some(sequence) = sequence {
+                                let frame = json!({"type":"ack","seq":sequence}).to_string();
+                                tokio::select! {
+                                    _ = stop.changed() => { let _ = events.answer(&command.id, false); break 'owner; },
+                                    result = timeout(WRITE_TIMEOUT, socket.send(Message::Text(frame.into()))) => matches!(result, Ok(Ok(()))),
+                                }
+                            } else { true };
+                            if !events.answer(&command.id, written) { break 'owner; }
+                            if !written { break; }
                             continue;
                         }
                         let Some(frame) = command.frame else {
@@ -175,13 +266,14 @@ async fn run(
                         if !events.answer(&command.id, written) { break 'owner; }
                         if !written { break; }
                     },
-                    incoming = socket.next() => match incoming {
+                    incoming = socket.next(), if !full => match incoming {
                         Some(Ok(Message::Text(text))) => {
                             if let Ok(value) = serde_json::from_str::<Value>(&text) {
                                 if value["type"] == "pong" { pong_deadline = None; }
                                 if value["type"] == "registered" { retry = FIRST_RETRY; }
                             }
-                            if !events.event(&connection, "frame", json!(text.as_str())) { break 'owner; }
+                            let Ok(token) = replay.receive(&connection, text.as_str()) else { break; };
+                            if !events.frame(&connection, text.as_str(), token) { break 'owner; }
                         },
                         Some(Ok(Message::Binary(bytes))) => {
                             // The historical host also reads binary JSON as UTF-8 text.
@@ -190,7 +282,8 @@ async fn run(
                                 if value["type"] == "pong" { pong_deadline = None; }
                                 if value["type"] == "registered" { retry = FIRST_RETRY; }
                             }
-                            if !events.event(&connection, "frame", json!(text)) { break 'owner; }
+                            let Ok(token) = replay.receive(&connection, &text) else { break; };
+                            if !events.frame(&connection, &text, token) { break 'owner; }
                         },
                         Some(Ok(Message::Ping(_))) => {
                             // Tungstenite queues the protocol pong; flush it even on a quiet link.
@@ -204,6 +297,10 @@ async fn run(
                         _ => break,
                     },
                     _ = sleep_until(wake) => {
+                        if replay.pending.front().is_some_and(|item| item.deadline <= Instant::now()) {
+                            if !events.event(&connection, "error", json!("relay-handler-timeout")) { break 'owner; }
+                            break;
+                        }
                         if pong_deadline.is_some() {
                             if !events.event(&connection, "error", json!("heartbeat-timeout")) { break 'owner; }
                             break;
@@ -329,7 +426,7 @@ impl Relays {
                 );
                 Some(json!({"ready":true}))
             }
-            Some("relay_send" | "relay_disconnect") => {
+            Some("relay_send" | "relay_disconnect" | "relay_handled") => {
                 let Some(relay) = self.relays.get(id) else {
                     return Some(json!({"error":"relay-write-unconfirmed"}));
                 };
@@ -350,10 +447,25 @@ impl Relays {
                 } else {
                     None
                 };
+                let handled = if request["op"] == "relay_handled" {
+                    let Some(token) = request["receiveToken"]
+                        .as_str()
+                        .filter(|s| !s.is_empty() && s.len() <= 160)
+                    else {
+                        return Some(json!({"error":"invalid-relay-request"}));
+                    };
+                    let Some(handled) = request["handled"].as_bool() else {
+                        return Some(json!({"error":"invalid-relay-request"}));
+                    };
+                    Some((token.to_owned(), handled))
+                } else {
+                    None
+                };
                 let command = Command {
                     id: request["id"].as_str().unwrap_or("").to_owned(),
                     connection: connection.to_owned(),
                     frame,
+                    handled,
                 };
                 if relay.commands.try_send(command).is_err() {
                     return Some(json!({"error":"relay-output-limit"}));
@@ -366,5 +478,43 @@ impl Relays {
             }
             _ => Some(json!({"error":"invalid-relay-request"})),
         }
+    }
+}
+
+#[cfg(test)]
+mod replay_tests {
+    use super::*;
+    #[test]
+    fn acknowledgement_waits_for_the_handled_prefix_and_never_crosses_a_failure() {
+        let mut replay = Replay::default();
+        let first = replay
+            .receive("connection", r#"{"type":"frame","seq":0}"#)
+            .unwrap()
+            .unwrap();
+        let second = replay
+            .receive("connection", r#"{"type":"frame","seq":1e3}"#)
+            .unwrap()
+            .unwrap();
+        assert_eq!(replay.complete(&second, true), Ok(None));
+        assert_eq!(
+            replay.complete(&first, true).unwrap().unwrap().as_f64(),
+            Some(1000.0)
+        );
+        assert!(replay.complete(&first, true).is_err());
+        let third = replay
+            .receive("connection", r#"{"type":"frame","seq":1001}"#)
+            .unwrap()
+            .unwrap();
+        let fourth = replay
+            .receive("connection", r#"{"type":"frame","seq":1002}"#)
+            .unwrap()
+            .unwrap();
+        assert_eq!(replay.complete(&fourth, false), Ok(None));
+        assert_eq!(replay.complete(&third, true), Ok(None));
+        assert!(replay.pending.is_empty());
+        assert_eq!(
+            replay.receive("connection", r#"{"type":"frame"}"#),
+            Ok(None)
+        );
     }
 }
