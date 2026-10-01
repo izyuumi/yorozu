@@ -1,4 +1,5 @@
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -270,4 +271,236 @@ fn issued_attempts_fence_replaced_stopped_and_restarted_workers_without_losing_e
         false
     );
     assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), retained);
+}
+
+fn snapshot(temp: &Temp) -> Value {
+    let bytes = fs::read(temp.0.join("threads.json")).unwrap();
+    json!({"threads":serde_json::from_slice::<Value>(&bytes).unwrap(),"hash":format!("{:x}",Sha256::digest(&bytes))})
+}
+fn pause(host: &mut History, temp: &Temp) -> Value {
+    let read = snapshot(temp);
+    let mut index = read["threads"].clone();
+    index[0]["nativeTurn"] = json!({"id":"native:origin:final","state":"interrupted","userEventId":"origin","recoveryAttempts":3,"pauseReason":"unconfirmed","future":{"kept":true}});
+    assert_eq!(
+        host.request(
+            &json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index})
+        )["stored"],
+        true
+    );
+    json!({"threadId":"thread","turnId":"native:origin:final","eventId":"origin","attemptId":null})
+}
+fn control(host: &mut History, scope: &Value, action: &str) -> Value {
+    let mut request = scope.clone();
+    request["op"] = json!(action);
+    host.request(&request)
+}
+#[test]
+fn interrupted_controls_repair_only_empty_legacy_queue_and_retain_exact_scope() {
+    let temp = Temp::new();
+    let (mut host, _) = open(&temp);
+    seed(&mut host, "origin", "legacy");
+    let mut scope = pause(&mut host, &temp);
+    assert_eq!(
+        host.request(&json!({"op":"queue_remove","threadId":"thread","eventId":"origin"}))["stored"],
+        true
+    );
+    assert_eq!(
+        control(&mut host, &scope, "run_turn_retry")["applied"],
+        true
+    );
+    let read = snapshot(&temp);
+    assert_eq!(read["threads"][0]["nativeTurn"]["recoveryAttempts"], 0);
+    assert!(
+        read["threads"][0]["nativeTurn"]
+            .get("pauseReason")
+            .is_none()
+    );
+    assert_eq!(read["threads"][0]["nativeTurn"]["future"]["kept"], true);
+    let claimed = host.request(
+        &json!({"op":"run_attempt_claim","threadId":"thread","eventId":"origin","recovering":true}),
+    );
+    assert_eq!(claimed["recoveryAttempts"], 1);
+    let read = snapshot(&temp);
+    let mut index = read["threads"].clone();
+    index[0]["nativeTurn"]["state"] = json!("interrupted");
+    assert_eq!(
+        host.request(
+            &json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index})
+        )["stored"],
+        true
+    );
+    let retained = fs::read(temp.0.join("threads.json")).unwrap();
+    assert_eq!(
+        control(&mut host, &scope, "run_turn_retry")["applied"],
+        false
+    );
+    assert_eq!(
+        control(&mut host, &scope, "run_turn_dismiss")["applied"],
+        false
+    );
+    assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), retained);
+    scope["attemptId"] = claimed["attemptId"].clone();
+    assert_eq!(
+        control(&mut host, &scope, "run_turn_retry")["applied"],
+        true
+    );
+}
+#[test]
+fn interrupted_retry_respects_operational_policy_and_never_reorders_a_successor() {
+    for guard in [
+        "stop",
+        "expiry",
+        "steering",
+        "terminal",
+        "terminal-without-queue",
+        "missing-history",
+        "successor",
+        "metadata",
+    ] {
+        let temp = Temp::new();
+        let (mut host, _) = open(&temp);
+        seed(&mut host, "origin", "conversation");
+        let scope = pause(&mut host, &temp);
+        match guard {
+            "stop" => {
+                assert!(host.request(&json!({"op":"stop_save","record":{"targetEventId":"origin","threadId":"thread","status":"requested","requestIds":["cancel"]}}))["record"].is_object());
+            }
+            "expiry" => {
+                assert_eq!(host.request(&json!({"op":"admission_expire","entry":{"id":"origin","threadId":"thread","identity":"a".repeat(64),"deadline":1},"now":2}))["status"], "expired");
+            }
+            "steering" => {
+                assert_eq!(host.request(&json!({"op":"steering_begin","record":{"eventId":"follow-up","threadId":"thread","attemptId":"attempt","activeEventId":"origin","completionId":"native:origin:final","identity":"a".repeat(64)}}))["reserved"], true);
+            }
+            "terminal" | "terminal-without-queue" => {
+                if guard == "terminal-without-queue" {
+                    assert_eq!(
+                        host.request(
+                            &json!({"op":"queue_remove","threadId":"thread","eventId":"origin"})
+                        )["stored"],
+                        true
+                    );
+                }
+                assert_eq!(host.request(&json!({"op":"history_append","operationId":"final","thread":true,"transcript":true,"event":{"id":"native:origin:final","threadId":"thread","ts":2000,"agentId":"main","kind":"message","data":{"role":"agent","text":"done","done":true}}}))["stored"], true);
+            }
+            "missing-history" => {
+                assert_eq!(
+                    host.request(
+                        &json!({"op":"queue_remove","threadId":"thread","eventId":"origin"})
+                    )["stored"],
+                    true
+                );
+                fs::write(temp.0.join("threads/thread.jsonl"), "").unwrap();
+            }
+            "successor" => {
+                assert_eq!(
+                    host.request(
+                        &json!({"op":"queue_remove","threadId":"thread","eventId":"origin"})
+                    )["stored"],
+                    true
+                );
+                seed(&mut host, "waiting", "conversation");
+            }
+            _ => {
+                fs::write(
+                    temp.0.join("threads.json.tmp"),
+                    "retained metadata conflict",
+                )
+                .unwrap();
+            }
+        }
+        let metadata = fs::read(temp.0.join("threads.json")).unwrap();
+        let queue = fs::read(temp.0.join("native-turn-queue.json")).unwrap();
+        assert_ne!(
+            control(&mut host, &scope, "run_turn_retry")["applied"],
+            true,
+            "{guard}"
+        );
+        assert_eq!(
+            fs::read(temp.0.join("threads.json")).unwrap(),
+            metadata,
+            "{guard}"
+        );
+        assert_eq!(
+            fs::read(temp.0.join("native-turn-queue.json")).unwrap(),
+            queue,
+            "{guard}"
+        );
+    }
+}
+#[test]
+fn dismiss_preserves_failed_queue_then_reports_partial_metadata_without_replaying_work() {
+    let temp = Temp::new();
+    let (mut host, _) = open(&temp);
+    seed(&mut host, "origin", "conversation");
+    let scope = pause(&mut host, &temp);
+    let metadata = fs::read(temp.0.join("threads.json")).unwrap();
+    let queue = fs::read(temp.0.join("native-turn-queue.json")).unwrap();
+    fs::write(
+        temp.0.join("native-turn-queue.json.tmp"),
+        "retained queue conflict",
+    )
+    .unwrap();
+    assert_eq!(
+        control(&mut host, &scope, "run_turn_dismiss")["applied"],
+        false
+    );
+    assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), metadata);
+    assert_eq!(
+        fs::read(temp.0.join("native-turn-queue.json")).unwrap(),
+        queue
+    );
+    fs::remove_file(temp.0.join("native-turn-queue.json.tmp")).unwrap();
+    fs::write(
+        temp.0.join("threads.json.tmp"),
+        "retained metadata conflict",
+    )
+    .unwrap();
+    let partial = control(&mut host, &scope, "run_turn_dismiss");
+    assert_eq!(
+        partial,
+        json!({"applied":false,"queueRemoved":true,"reason":"metadata-unconfirmed"})
+    );
+    assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), metadata);
+    assert_eq!(
+        host.request(&json!({"op":"queue_head","threadId":"thread"}))["eventId"],
+        Value::Null
+    );
+    fs::remove_file(temp.0.join("threads.json.tmp")).unwrap();
+    assert_eq!(
+        control(&mut host, &scope, "run_turn_retry")["applied"],
+        true
+    );
+    assert_eq!(
+        control(&mut host, &scope, "run_turn_dismiss")["applied"],
+        true
+    );
+    assert!(snapshot(&temp)["threads"][0].get("nativeTurn").is_none());
+    assert!(host.request(&json!({"op":"accepted_get","messageId":"origin"}))["entry"].is_object());
+}
+#[test]
+fn no_origin_legacy_dismiss_still_refuses_a_matching_stop() {
+    let temp = Temp::new();
+    let (mut host, _) = open(&temp);
+    seed(&mut host, "origin", "legacy");
+    let mut scope = pause(&mut host, &temp);
+    let read = snapshot(&temp);
+    let mut index = read["threads"].clone();
+    index[0]["nativeTurn"]
+        .as_object_mut()
+        .unwrap()
+        .remove("userEventId");
+    assert_eq!(
+        host.request(
+            &json!({"op":"thread_index_replace","expectedHash":read["hash"],"threads":index})
+        )["stored"],
+        true
+    );
+    scope["eventId"] = Value::Null;
+    assert!(host.request(&json!({"op":"stop_save","record":{"targetEventId":"origin","threadId":"thread","status":"requested","requestIds":["cancel"]}}))["record"].is_object());
+    let metadata = fs::read(temp.0.join("threads.json")).unwrap();
+    assert_eq!(
+        control(&mut host, &scope, "run_turn_dismiss")["reason"],
+        "stopped"
+    );
+    assert_eq!(fs::read(temp.0.join("threads.json")).unwrap(), metadata);
 }

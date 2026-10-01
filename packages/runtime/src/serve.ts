@@ -125,7 +125,7 @@ import { claudeCodeRunner, type NativeAgentRunner, type NativeTurn } from "./nat
 import { isProjectFolder, listProjects } from "./projects.js";
 import { questionDesk, QUESTION_TIMEOUT_MS } from "./tools/cards.js";
 import { persistThreadAndTranscript, persistThreadAndTranscriptBatch } from "./transcripts.js";
-import { retainSyncHost, syncHostRequest } from "./rust-sync.js";
+import { retainSyncHost, syncHostRequest, syncHostResult } from "./rust-sync.js";
 
 const DEFAULT_STATE_DIR = join(homedir(), "Library", "Application Support", "Yorozu");
 
@@ -2198,7 +2198,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
       event.kind === "message" && event.data.role === "user");
     if (original?.kind !== "message") return false;
     if (retry) {
-      setNativeTurn(threadId, { ...marker, recoveryAttempts: 0, pauseReason: undefined }, dir);
+      let proof: Record<string, unknown>;
+      try { proof = syncHostResult(dir, { op: "run_turn_retry", threadId, turnId: marker.id,
+        eventId: marker.userEventId, attemptId: marker.attemptId ?? null }); }
+      catch { nativeStorageFenced.add(threadId); state("native-retry-unconfirmed"); return false; }
+      if (proof.queueRepaired === true && !queuedNative.some((entry) => entry.eventId === marker.userEventId)) {
+        queuedNative.push({ threadId, eventId: marker.userEventId });
+      }
+      if (proof.applied !== true || proof.recoveryAttempts !== 0) {
+        if (proof.error || proof.reason === "metadata-unconfirmed" || proof.reason === "queue-unconfirmed") nativeStorageFenced.add(threadId);
+        state("native-retry-unconfirmed");
+        return false;
+      }
       nativeStorageFenced.delete(threadId);
     }
     nativeRecoveryStarted.add(threadId);
@@ -3332,9 +3343,24 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (event.data.action === "continue") {
           resumeNativeTurn(event.threadId, true);
         } else {
-          setNativeTurn(event.threadId, undefined, dir);
-          if (thread.nativeTurn.userEventId) removeNativeQueue(thread.nativeTurn.userEventId);
+          let proof: Record<string, unknown>;
+          try { proof = syncHostResult(dir, { op: "run_turn_dismiss", threadId: event.threadId,
+            turnId: thread.nativeTurn.id, eventId: thread.nativeTurn.userEventId ?? null,
+            attemptId: thread.nativeTurn.attemptId ?? null }); }
+          catch { nativeStorageFenced.add(event.threadId); state("native-dismiss-unconfirmed"); return; }
+          if (proof.queueRemoved === true && thread.nativeTurn.userEventId) {
+            const index = queuedNative.findIndex((entry) => entry.eventId === thread.nativeTurn!.userEventId);
+            if (index >= 0) queuedNative.splice(index, 1);
+          }
+          if (proof.applied !== true) {
+            nativeStorageFenced.add(event.threadId);
+            state("native-dismiss-unconfirmed");
+            broadcast(threadList());
+            return;
+          }
+          nativeStorageFenced.delete(event.threadId);
           broadcast(threadList());
+          drainQueuedNative(event.threadId);
         }
         return;
       }

@@ -870,6 +870,46 @@ recovery/Stop/queue/restart tests pass. The final explicit-pause extension addit
 same-host and restarted-host Retry cases without automatically launching a replacement worker or
 changing the recovery budget. All commands are terminal; baseline and passing logs are retained.
 
+## Rust-owned interrupted run controls
+
+Explicit Retry and Dismiss now use typed Rust operations against the existing interrupted nativeTurn.
+Both match the exact thread, completion, retained origin and optional issued attempt; an omitted
+attempt only matches a legacy marker with no attempt. Retry validates accepted conversation history,
+FIFO ownership, Stop, expiry, uncertain steering and stable terminal evidence before resetting the
+recovery counter and clearing the explicit pause reason through metadata CAS. A legacy interrupted
+origin missing its queue row can repair an empty per-thread queue only after all non-queue
+eligibility and retained evidence pass; it cannot move behind or reorder a successor. Repair status
+is mirrored even if a later transition remains unconfirmed. A retained completed origin or missing
+history cannot create a queue row. Dispatch still claims and rechecks readiness separately.
+
+Dismiss durably removes its queue row before clearing the checked interrupted marker. A failed queue
+write retains both. If queue removal succeeds but metadata CAS fails, Rust reports that partial
+outcome: the compatibility host updates its queue mirror, preserves the marker and fences automatic
+execution. Retrying Dismiss after storage repair can clear the exact marker and advance waiting work;
+it cannot clear a replacement index revision. Existing Stop denial also applies to legacy markers
+without an origin by checking their canonical completion's Stop target. No-origin legacy Dismiss
+remains supported. Accepted origins and historical evidence are preserved rather than fabricated as
+completed replies.
+
+The actual previous Dismiss storage regression erased the paused marker while its queue removal
+failed. The retained negative baseline and repaired workflows cover both queue failure and partial
+metadata failure, preservation of waiting work and exactly one successor execution after confirmed
+Dismiss. Core cases also cover empty legacy queue repair, issued-scope mismatch, Stop/expiry/steering,
+terminal evidence, successor FIFO protection, recovery snapshots and legacy Stop denial.
+
+This slice transfers explicit interrupted-control policy only. Generic marker lifecycle/startup and
+successful-result resets still use Node compatibility paths; the claim recovery flag and full approval
+currency remain unfinished item3 work. The provider-worker contract, platform IPC, standalone
+launcher/conversation persistence and native release gates remain required later items.
+
+Validation for interrupted controls: all119 Rust tests, formatting, strictClippy and production
+build pass. The full runtime/plugin suite passes837 tests plus1skip/52files. That full aggregate
+preceded the final eligibility-before-repair fix; after the fix, all119 Rust tests, strictClippy,
+production build and104 affected native/summary/recovery/Stop/queue/restart cases pass. The retained
+terminal-without-queue negative baseline demonstrates the repair bug; repaired guards also cover
+missing retained history without modifying queue bytes. Earlier new-fixture/read-operation and
+Clippy failures were corrected, with their logs preserved separately. All commands are terminal.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

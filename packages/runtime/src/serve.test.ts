@@ -4224,6 +4224,38 @@ test("three failed native recoveries pause across restart until Retry", async ()
   expect(readThreadEvents("cc", dir).filter((event) => event.kind === "message" && event.data.role === "user")).toHaveLength(1);
 });
 
+test.each(["queue", "metadata"] as const)("failed Dismiss storage preserves the paused origin and waiting work (%s)", async (store) => {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-dismiss-storage-"));
+  createThread("Work", dir, "cc", { agent: "codex", cwd: proj });
+  appendThreadEvent({ id: "original", threadId: "cc", ts: 1, agentId: "main", kind: "message",
+    data: { role: "user", text: "original task" } }, dir);
+  setNativeTurn("cc", { id: "native:original:final", state: "interrupted", userEventId: "original", recoveryAttempts: 3 }, dir);
+  writeFileSync(join(dir, "native-turn-queue.json"), JSON.stringify([{ threadId: "cc", eventId: "original" }]));
+  const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "waiting task completed" });
+  const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
+  await eventsUntil((event) => event.kind === "thread_list");
+  const waiting = send({ kind: "message", data: { role: "user", text: "waiting task" } }, "cc");
+  await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === waiting);
+  const pending = join(dir, store === "queue" ? "native-turn-queue.json.tmp" : "threads.json.tmp");
+  writeFileSync(pending, "owned Dismiss storage conflict fixture");
+  try {
+    send({ kind: "thread_recover", data: { turnId: "native:original:final", action: "dismiss" } }, "cc");
+    const barrier = send({ kind: "thread_list", data: { threads: [], peerInfo: localPeerInfo("test") } });
+    await eventsUntil((event) => event.kind === "thread_list" && event.data.peerInfoReplyTo === barrier);
+    expect(listThreads(dir).find((thread) => thread.id === "cc")?.nativeTurn)
+      .toMatchObject({ id: "native:original:final", state: "interrupted", userEventId: "original" });
+    expect(JSON.parse(readFileSync(join(dir, "native-turn-queue.json"), "utf8")))
+      .toEqual(store === "queue" ? [{ threadId: "cc", eventId: "original" }, { threadId: "cc", eventId: waiting }]
+        : [{ threadId: "cc", eventId: waiting }]);
+    expect(run).not.toHaveBeenCalled();
+    expect(readFileSync(pending, "utf8")).toBe("owned Dismiss storage conflict fixture");
+  } finally { rmSync(pending); }
+  send({ kind: "thread_recover", data: { turnId: "native:original:final", action: "dismiss" } }, "cc");
+  await eventsUntil((event) => event.kind === "message" && event.id === `native:${waiting}:final` && event.data.done === true);
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(readThreadEvents("cc", dir).some((event) => event.id === "native:original:final")).toBe(false);
+});
+
 test("new completed tool work resets the native recovery budget", async () => {
   const dir = mkdtempSync(join(tmpdir(), "yorozu-native-progress-"));
   createThread("Work", dir, "cc", { agent: "codex", cwd: proj });

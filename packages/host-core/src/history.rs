@@ -719,6 +719,10 @@ impl History {
         self.steering_delivered(&record)
     }
     fn run_ready(&mut self, request: &Value) -> io::Result<Value> {
+        self.run_ready_with_fifo(request, true)
+    }
+    // FIFO is mandatory for dispatch. Only interrupted control preflight can defer it.
+    fn run_ready_with_fifo(&mut self, request: &Value, fifo: bool) -> io::Result<Value> {
         let thread = request["threadId"]
             .as_str()
             .filter(|id| !invalid_id(id))
@@ -772,12 +776,14 @@ impl History {
         if active["unconfirmed"] == true {
             return Ok(blocked("follow-up-unconfirmed"));
         }
-        let queue = self.request(&json!({"op":"queue_head","threadId":thread}));
-        if queue.get("error").is_some() {
-            return Ok(queue);
-        }
-        if queue["eventId"] != origin {
-            return Ok(blocked("not-queue-head"));
+        if fifo {
+            let queue = self.request(&json!({"op":"queue_head","threadId":thread}));
+            if queue.get("error").is_some() {
+                return Ok(queue);
+            }
+            if queue["eventId"] != origin {
+                return Ok(blocked("not-queue-head"));
+            }
         }
         let bytes = crate::thread_index::current(&self.root)?.ok_or_else(invalid)?;
         let index: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
@@ -810,6 +816,128 @@ impl History {
         }
         Ok(
             json!({"ready":true,"eventId":origin,"threadId":thread,"agent":home["agent"],"completionId":completion}),
+        )
+    }
+    fn run_turn_request(&mut self, request: &Value) -> io::Result<Value> {
+        let thread = request["threadId"]
+            .as_str()
+            .filter(|id| !invalid_id(id))
+            .ok_or_else(invalid)?;
+        let action = request["op"]
+            .as_str()
+            .filter(|op| ["run_turn_retry", "run_turn_dismiss"].contains(op))
+            .ok_or_else(invalid)?;
+        let denied = |reason: &str| json!({"applied":false,"queueRemoved":false,"reason":reason});
+        let bytes = crate::thread_index::current(&self.root)?.ok_or_else(invalid)?;
+        let mut index: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        let home = index
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|row| row["id"] == thread)
+            .ok_or_else(invalid)?;
+        let marker = home["nativeTurn"].clone();
+        if marker["state"] != "interrupted"
+            || marker["id"] != request["turnId"]
+            || marker["userEventId"] != request["eventId"]
+            || marker["attemptId"] != request["attemptId"]
+            || home["agent"]
+                .as_str()
+                .is_none_or(|agent| agent.is_empty() || agent == "yorozu")
+        {
+            return Ok(denied("another-run-owned"));
+        }
+        let legacy_stop = marker["id"]
+            .as_str()
+            .and_then(|id| id.strip_prefix("native:")?.strip_suffix(":final"));
+        let origin = marker["userEventId"].as_str();
+        if let Some(target) = origin.or(legacy_stop) {
+            let stop = self.request(&json!({"op":"stop_get","targetEventId":target}));
+            if stop.get("error").is_some() {
+                return Ok(stop);
+            }
+            if !stop["record"].is_null() {
+                return Ok(denied("stopped"));
+            }
+        }
+        let mut queue_removed = false;
+        let mut queue_repaired = false;
+        if action == "run_turn_retry" {
+            let Some(origin) = origin else {
+                return Ok(denied("missing-origin"));
+            };
+            if marker["id"] != format!("native:{origin}:final") {
+                return Ok(denied("another-run-owned"));
+            }
+            let query = json!({"op":"run_ready","threadId":thread,"eventId":origin});
+            let mut proof = self.run_ready(&query)?;
+            if proof["reason"] == "not-queue-head" {
+                let eligibility = self.run_ready_with_fifo(&query, false)?;
+                if eligibility["ready"] != true {
+                    return Ok(eligibility);
+                }
+                let head = self.queue_request(&json!({"op":"queue_head","threadId":thread}));
+                if head.get("error").is_some() {
+                    return Ok(head);
+                }
+                // Legacy interrupted work can lack its row. Never append behind a successor.
+                if head["eventId"].is_null() {
+                    let stored = self.queue_request(
+                        &json!({"op":"queue_enqueue","threadId":thread,"eventId":origin}),
+                    );
+                    if stored["stored"] != true {
+                        return Ok(denied("queue-unconfirmed"));
+                    }
+                    queue_repaired = true;
+                    proof = self
+                        .run_ready(&query)
+                        .unwrap_or_else(|_| json!({"error":"run-readiness-unconfirmed"}));
+                }
+            }
+            if proof["ready"] != true {
+                if queue_repaired {
+                    proof["queueRepaired"] = json!(true);
+                }
+                return Ok(proof);
+            }
+            home["nativeTurn"]["recoveryAttempts"] = json!(0);
+            home["nativeTurn"]
+                .as_object_mut()
+                .unwrap()
+                .remove("pauseReason");
+        } else {
+            if let Some(origin) = origin {
+                let stored = self.queue_request(
+                    &json!({"op":"queue_remove","threadId":thread,"eventId":origin}),
+                );
+                if stored["stored"] != true {
+                    return Ok(denied("queue-unconfirmed"));
+                }
+                queue_removed = true;
+            }
+            home.as_object_mut().unwrap().remove("nativeTurn");
+        }
+        // Keep the original checked revision through queue removal; never clear a replacement.
+        let stored = crate::thread_index::request_native(
+            &self.root,
+            &json!({"op":"replace","expectedHash":digest(&bytes),"threads":index}),
+        );
+        if stored["stored"] != true {
+            let mut outcome = json!({"applied":false,"queueRemoved":queue_removed,"reason":"metadata-unconfirmed"});
+            if queue_repaired {
+                outcome["queueRepaired"] = json!(true);
+            }
+            return Ok(outcome);
+        }
+        if action == "run_turn_dismiss"
+            && self.attempts.get(thread).is_some_and(|owner| {
+                marker["userEventId"] == owner.0 && marker["attemptId"] == owner.1
+            })
+        {
+            self.attempts.remove(thread);
+        }
+        Ok(
+            json!({"applied":true,"queueRemoved":queue_removed,"queueRepaired":queue_repaired,"recoveryAttempts":if action == "run_turn_retry" { Some(0) } else { None }}),
         )
     }
     fn attempt_request(&mut self, request: &Value) -> io::Result<Value> {
@@ -1028,6 +1156,14 @@ impl History {
         }
         if self.failed {
             return json!({"error":"history-storage-failed"});
+        }
+        if request["op"]
+            .as_str()
+            .is_some_and(|op| op.starts_with("run_turn_"))
+        {
+            return self
+                .run_turn_request(request)
+                .unwrap_or_else(|_| json!({"error":"run-control-unconfirmed"}));
         }
         if request["op"]
             .as_str()
