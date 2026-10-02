@@ -10,6 +10,7 @@ Start with the [project README](../README.md) for installation and development. 
 | Issue 283 composer delivery, validation and remaining native work | [Composer slice](issue-283-composer.md) |
 | Issue 283 explicit reply composition and recovery | [Reply slice](issue-283-replies.md) |
 | Issue 283 native destinations and truthful setup checks | [Navigation slice](issue-283-navigation.md) |
+| Computer-use Mac-first scope, preserved checkpoint and native blocker | [Mac computer-use plan](computer-use-mac-scope.md) |
 | Portable Rust core, migration boundaries and alpha isolation | [Rust host transition](rust-host-transition.md) |
 | Issue 283 verified scheduling contracts and authorization boundary | [Schedule checkpoint](issue-283-schedule-contract.md) |
 | Sizing from the container, never from a guessed number | [UI layout](ui-layout.md) |
