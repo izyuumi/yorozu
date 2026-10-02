@@ -1,8 +1,9 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, readdirSync, renameSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { syncHostRequest, retainSyncHost } from "./rust-sync.js";
+import { syncHostRequest, syncHostResult, retainSyncHost } from "./rust-sync.js";
 import { CHILD_ENV_KEYS, CHILD_ENV_PREFIXES, childEnv, claudeCodeRunner, type QueryFn } from "./native.js";
 
 /** A stand-in for the SDK's Query: the messages it will yield, plus close(). */
@@ -452,4 +453,17 @@ test("boot retires a Root-scoped native question without fabricating an SDK answ
     { data: { questionId: card.data.questionId, status: "no-longer-needed" } },
   ]);
   expect(threadSummaries(dir).find((thread) => thread.id === "cc")?.awaitingQuestion).toBeUndefined();
+});
+
+// A blocked settings open must not strand the live Root owner or lose its issued epoch.
+test.skipIf(process.platform === "win32")("native startup policy rejects a FIFO and keeps its owner responsive", () => {
+  const { dir, scopes } = permissionDesk([]);
+  const scope = scopes.get("cc")!;
+  const current = { op: "run_attempt_current", threadId: "cc", ...scope, mode: "effect" };
+  expect(syncHostRequest(dir, current).current).toBe(true);
+  execFileSync("mkfifo", [join(dir, "approval.json")]);
+  const proof = syncHostResult(dir, { op: "run_attempt_policy", version: 1, threadId: "cc", ...scope, source: "claude-code" }, undefined, 1_000);
+  expect(proof.error).toBe("run-attempt-unconfirmed");
+  expect(proof.execute).not.toBe(true);
+  expect(syncHostRequest(dir, current).current).toBe(true);
 });

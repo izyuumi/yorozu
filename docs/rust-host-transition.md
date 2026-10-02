@@ -1391,6 +1391,31 @@ strict Clippy, both production builds and two shared peer-negotiation tests pass
 assertions or global worker configuration were weakened. This completes the bounded native question
 admission slice, not the remaining finite migration or native release gates.
 
+Root now offers version1 `run_attempt_policy` for the captured conversation, origin, canonical
+reply, issued attempt and cached SDK source. It admits only the current accepted, visible,
+non-stopped owner and ignores caller-supplied bypass. It samples the existing `approval.json`
+grant: literal `yolo=true` with a finite future `yoloUntil` permits bypass; missing, malformed,
+expired or legacy grants default off. Both bounded reads reject non-regular files and links,
+use nonblocking opens on Unix and require stable bytes and retained file identity. The writer
+lease does not serialize hand edits or Node settings saves.
+
+The sampled policy, Root clock, settings hash and applicable expiry commit through the existing
+journal to the operational transcript only. The immutable key includes version and exact scope,
+not settings contents. Authenticated original-entry replay returns the original policy before
+resampling settings, including after restart, with `execute=false`. A lost acknowledgement cannot
+mint another start permit. Public history append cannot claim the reserved operation prefix.
+This is the Root API slice; Node still configures SDK bypass from its compatibility settings
+reader until the next adoption slice. Dynamic permission callbacks and late approve-all behavior
+remain separate. Full worker packets and native release gates remain unfinished.
+
+Verification: initial owner-boundary tests fail against the missing API; the candidate passes
+all156 Rust tests, formatting, strict Clippy, the runtime build and31 focused Node tests. Review
+then identifies a blocking FIFO open. A distinct retained-owner IPC regression reaches an actually
+current issued scope and reproduces the timeout. Its existing bounded IPC cleanup kills the
+blocked child. The repaired sampler passes all156 Rust tests, formatting, strict Clippy, the production
+build and32 focused Node checks. FIFO rejection leaves the same issued owner responsive.
+Passing this API slice alone does not establish SDK startup admission or alpha readiness.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

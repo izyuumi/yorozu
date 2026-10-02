@@ -165,3 +165,180 @@ fn native_permission_card_age_and_partial_storage_never_authorize_execution() {
         }
     }
 }
+
+#[test]
+fn startup_policy_is_root_sampled_transcript_only_and_replays_original_without_starting() {
+    for mode in [
+        "missing",
+        "grant",
+        "expired",
+        "legacy",
+        "malformed",
+        "wrong-type",
+    ] {
+        let temp = Temp::new();
+        let ts = now_ms();
+        let (mut host, card) = setup(&temp, "Bash", ts);
+        let scope = &card["data"]["nativeRun"];
+        let settings = temp.0.join("approval.json");
+        match mode {
+            "grant" => fs::write(
+                &settings,
+                json!({"yolo":true,"yoloUntil":ts+60_000}).to_string(),
+            )
+            .unwrap(),
+            "expired" => {
+                fs::write(&settings, json!({"yolo":true,"yoloUntil":ts-1}).to_string()).unwrap()
+            }
+            "legacy" => fs::write(&settings, r#"{"yolo":true}"#).unwrap(),
+            "malformed" => fs::write(&settings, "{broken").unwrap(),
+            "wrong-type" => fs::write(
+                &settings,
+                json!({"yolo":"true","yoloUntil":ts+60_000}).to_string(),
+            )
+            .unwrap(),
+            _ => {}
+        }
+        let request = json!({"op":"run_attempt_policy","version":1,"threadId":"thread","eventId":scope["eventId"],"turnId":scope["turnId"],"attemptId":scope["attemptId"],"source":"codex","bypass":true});
+        let before = fs::read(temp.0.join("threads/thread.jsonl")).unwrap();
+        let proof = host.request(&request);
+        assert_eq!(proof["stored"], true, "{mode}: {proof}");
+        assert_eq!(proof["execute"], true);
+        assert_eq!(proof["replayed"], false);
+        assert_eq!(proof["policy"]["bypass"], mode == "grant");
+        let sampled = proof["policy"]["sampledAt"].as_u64().unwrap();
+        assert!(sampled >= ts && sampled <= now_ms());
+        if mode == "grant" {
+            assert_eq!(proof["policy"]["yoloUntil"], ts + 60_000);
+        } else {
+            assert!(proof["policy"]["yoloUntil"].is_null());
+        }
+        assert_eq!(proof["policy"]["source"], "codex");
+        assert_eq!(proof["policy"]["eventId"], "origin");
+        assert_eq!(proof["policy"]["turnId"], "native:origin:final");
+        assert_eq!(proof["policy"]["attemptId"], scope["attemptId"]);
+        assert_eq!(
+            fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+            before
+        );
+        let transcript = fs::read(
+            temp.0
+                .join("transcripts")
+                .read_dir()
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .path(),
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(transcript.clone())
+                .unwrap()
+                .lines()
+                .filter(
+                    |line| serde_json::from_str::<Value>(line).unwrap()["kind"] == "worker_policy"
+                )
+                .count(),
+            1
+        );
+        fs::write(
+            &settings,
+            json!({"yolo":true,"yoloUntil":ts+120_000}).to_string(),
+        )
+        .unwrap();
+        let replay = host.request(&request);
+        assert_eq!(replay["stored"], true);
+        assert_eq!(replay["execute"], false);
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["policy"], proof["policy"]);
+        assert_eq!(
+            fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+            before
+        );
+        assert_eq!(
+            fs::read(
+                temp.0
+                    .join("transcripts")
+                    .read_dir()
+                    .unwrap()
+                    .next()
+                    .unwrap()
+                    .unwrap()
+                    .path()
+            )
+            .unwrap(),
+            transcript
+        );
+        drop(host);
+        let mut restarted = History::open(&temp.0).unwrap();
+        let replay = restarted.request(&request);
+        assert_eq!(replay["execute"], false);
+        assert_eq!(replay["policy"], proof["policy"]);
+        assert_eq!(restarted.request(&json!({"op":"history_append","operationId":proof["operationId"],"event":{"id":"fake","threadId":"thread","ts":ts,"kind":"worker_policy","data":{}},"transcript":true}))["error"], "reserved-history-operation");
+    }
+}
+
+#[test]
+fn startup_policy_cannot_authorize_a_replaced_stopped_or_unstored_attempt() {
+    for mode in [
+        "current",
+        "source",
+        "canonical-reply",
+        "released",
+        "stop",
+        "storage",
+    ] {
+        let temp = Temp::new();
+        let ts = now_ms();
+        let (mut host, card) = setup(&temp, "Bash", ts);
+        let scope = &card["data"]["nativeRun"];
+        fs::write(
+            temp.0.join("approval.json"),
+            json!({"yolo":true,"yoloUntil":ts+60_000}).to_string(),
+        )
+        .unwrap();
+        let request = json!({"op":"run_attempt_policy","version":1,"threadId":"thread","eventId":scope["eventId"],"turnId":scope["turnId"],"attemptId":scope["attemptId"],"source":"codex"});
+        match mode {
+            "source" | "canonical-reply" => {
+                let path = temp.0.join("threads.json");
+                let mut rows: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                if mode == "source" {
+                    rows[0]["agent"] = json!("claude-code");
+                } else {
+                    rows[0]["nativeTurn"]["id"] = json!("foreign-reply");
+                }
+                fs::write(path, rows.to_string()).unwrap();
+            }
+            "released" => {
+                assert_eq!(host.request(&json!({"op":"run_attempt_release","threadId":"thread","eventId":scope["eventId"],"attemptId":scope["attemptId"]}))["released"], true);
+            }
+            "stop" => {
+                assert_eq!(host.request(&json!({"op":"stop_save","record":{"targetEventId":"origin","threadId":"thread","status":"requested","requestIds":["stop"]}}))["record"]["status"], "requested");
+            }
+            "storage" => {
+                let path = temp
+                    .0
+                    .join("transcripts")
+                    .read_dir()
+                    .unwrap()
+                    .next()
+                    .unwrap()
+                    .unwrap()
+                    .path();
+                fs::rename(&path, path.with_extension("backup")).unwrap();
+                fs::create_dir(path).unwrap();
+            }
+            "current" => {}
+            _ => unreachable!(),
+        }
+        let proof = host.request(&request);
+        if mode == "current" {
+            assert_eq!(proof["execute"], true, "{mode}: {proof}");
+            assert_eq!(proof["stored"], true);
+            continue;
+        }
+        assert_ne!(proof["execute"], true, "{mode}: {proof}");
+        assert_ne!(proof["stored"], true, "{mode}: {proof}");
+    }
+}

@@ -31,6 +31,36 @@ fn open_read(path: &Path) -> io::Result<File> {
     }
     Ok(file)
 }
+// Settings are hand-editable; reject special files without a blocking pathname open.
+fn settings_sample(path: &Path) -> io::Result<(File, Vec<u8>)> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > RECORD_BYTES {
+        return Err(invalid());
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // Also close the regular-file/FIFO replacement race between precheck and open.
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let mut file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() > RECORD_BYTES {
+        return Err(invalid());
+    }
+    same_file(path, &file)?;
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut file)
+        .take(RECORD_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 != metadata.len() || file.metadata()?.len() != metadata.len() {
+        return Err(invalid());
+    }
+    same_file(path, &file)?;
+    Ok((file, bytes))
+}
 fn prefix(file: &mut File, length: u64) -> io::Result<String> {
     file.seek(SeekFrom::Start(0))?;
     let mut input = Read::by_ref(file).take(length);
@@ -2268,6 +2298,137 @@ impl History {
             json!({"stored":true,"execute":status == "applied" && (question || event["data"]["answer"] == "yes"),"replayed":false,"status":outcome,"events":events}),
         )
     }
+    fn worker_policy(&mut self, request: &Value, thread: &str, origin: &str) -> io::Result<Value> {
+        if request["version"].as_u64() != Some(1) {
+            return Err(invalid());
+        }
+        let attempt = request["attemptId"]
+            .as_str()
+            .filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+            .ok_or_else(invalid)?;
+        let source = request["source"]
+            .as_str()
+            .filter(|source| !invalid_id(source) && *source != "yorozu")
+            .ok_or_else(invalid)?;
+        let completion = format!("native:{origin}:final");
+        if request["turnId"] != completion {
+            return Err(invalid());
+        }
+        let scope = json!({"eventId":origin,"turnId":completion,"attemptId":attempt});
+        let operation = format!(
+            "worker-policy:{}",
+            digest(
+                &serde_json::to_vec(&json!([1, thread, origin, completion, attempt, source]))
+                    .map_err(io::Error::other)?
+            )
+        );
+        let key = digest(operation.as_bytes());
+        let root = self.root.clone();
+        let _writer = crate::thread_index::native_writer(&root)?;
+        if let Err(error) = self.recover() {
+            self.failed = true;
+            return Err(error);
+        }
+        // Saved policy precedes settings resampling; an acknowledgement cannot mint another start.
+        if self.committed.contains_key(&key) {
+            let value: Value = serde_json::from_slice(&read_private(
+                &self.directory.join(format!("{key}.json")),
+                RECORD_BYTES,
+            )?)
+            .map_err(io::Error::other)?;
+            let entry: Entry =
+                serde_json::from_value(value["entry"].clone()).map_err(io::Error::other)?;
+            if entry.key != key
+                || entry.operation_id != operation
+                || !self.valid_entry(&entry)
+                || entry.targets.len() != 1
+                || entry.targets[0].folder != "transcripts"
+                || value["checksum"]
+                    != digest(&serde_json::to_vec(&entry).map_err(io::Error::other)?)
+            {
+                return Err(invalid());
+            }
+            let events: Vec<Value> = entry
+                .line
+                .lines()
+                .map(serde_json::from_str)
+                .collect::<Result<_, _>>()
+                .map_err(io::Error::other)?;
+            if events.len() != 1 {
+                return Err(invalid());
+            }
+            let event = &events[0];
+            let policy = &event["data"];
+            if event["id"] != operation
+                || event["kind"] != "worker_policy"
+                || event["threadId"] != thread
+                || policy["version"] != 1
+                || policy["threadId"] != thread
+                || policy["eventId"] != origin
+                || policy["turnId"] != completion
+                || policy["attemptId"] != attempt
+                || policy["source"] != source
+                || !policy["bypass"].is_boolean()
+                || policy["sampledAt"].as_u64().is_none()
+                || event["ts"] != policy["sampledAt"]
+                || !(policy["settingsHash"].is_null()
+                    || policy["settingsHash"].as_str().is_some_and(valid_hash))
+                || policy["bypass"] == true
+                    && policy["yoloUntil"].as_f64().is_none_or(|until| {
+                        !until.is_finite() || until <= policy["sampledAt"].as_u64().unwrap() as f64
+                    })
+            {
+                return Err(invalid());
+            }
+            let proof = self.append(&json!({"op":"history_append","operationId":operation,"event":event,"thread":false,"transcript":true}));
+            if !proof.is_ok_and(|proof| proof["stored"] == true) {
+                self.failed = true;
+                return Err(invalid());
+            }
+            return Ok(
+                json!({"stored":true,"execute":false,"replayed":true,"operationId":operation,"policy":policy}),
+            );
+        }
+        let card = json!({"threadId":thread,"data":{"nativeAgent":source}});
+        if !self.native_prompt_owner(&scope, &card)? {
+            return Ok(json!({"stored":false,"execute":false,"reason":"scope-replaced"}));
+        }
+        let sampled = crate::now_ms();
+        let settings_path = root.join("approval.json");
+        // The metadata lease does not serialize hand edits. Sample bounded, stable bytes only.
+        let settings = match settings_sample(&settings_path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+            Ok((file, bytes)) => {
+                if settings_sample(&settings_path)?.1 != bytes {
+                    return Err(invalid());
+                }
+                same_file(&settings_path, &file)?;
+                Some(bytes)
+            }
+        };
+        let parsed: Value = settings
+            .as_ref()
+            .and_then(|bytes| serde_json::from_slice(bytes).ok())
+            .unwrap_or(Value::Null);
+        let until = parsed["yoloUntil"]
+            .as_f64()
+            .filter(|until| until.is_finite() && *until > sampled as f64);
+        let bypass = parsed["yolo"] == true && until.is_some();
+        let mut policy = json!({"version":1,"threadId":thread,"eventId":origin,"turnId":completion,"attemptId":attempt,"source":source,"bypass":bypass,"sampledAt":sampled,"settingsHash":settings.as_ref().map(|bytes| digest(bytes))});
+        if bypass {
+            policy["yoloUntil"] = parsed["yoloUntil"].clone();
+        }
+        let event = json!({"id":operation,"threadId":thread,"ts":sampled,"agentId":"main","kind":"worker_policy","data":policy});
+        let proof = self.append(&json!({"op":"history_append","operationId":operation,"event":event,"thread":false,"transcript":true}));
+        if !proof.is_ok_and(|proof| proof["stored"] == true) {
+            self.failed = true;
+            return Err(invalid());
+        }
+        Ok(
+            json!({"stored":true,"execute":true,"replayed":false,"operationId":operation,"policy":policy}),
+        )
+    }
     fn attempt_request(&mut self, request: &Value) -> io::Result<Value> {
         use rand_core::{OsRng, RngCore};
         let thread = request["threadId"]
@@ -2282,6 +2443,9 @@ impl History {
             .to_owned();
         if request["op"] == "run_attempt_result" {
             return self.worker_result(request, &thread, &origin);
+        }
+        if request["op"] == "run_attempt_policy" {
+            return self.worker_policy(request, &thread, &origin);
         }
         if ["run_attempt_pause", "run_attempt_finish"]
             .contains(&request["op"].as_str().unwrap_or(""))
@@ -2790,6 +2954,7 @@ impl History {
                     id.starts_with("native-approval-")
                         || id.starts_with("native-question-")
                         || id.starts_with("worker-result:")
+                        || id.starts_with("worker-policy:")
                 }) =>
             {
                 Ok(json!({"error":"reserved-history-operation"}))
