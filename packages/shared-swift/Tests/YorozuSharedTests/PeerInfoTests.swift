@@ -5,9 +5,10 @@ import Testing
 @Test func peerCapabilitiesDriveCompatibilityWithoutVersionComparisons() {
     let local = PeerInfoData(appVersion: "1.0")
     #expect(local.compatibility(with: nil) == .legacy)
-    #expect(local.compatibility(with: PeerInfoData(appVersion: "99.0-beta")) ==
-        .compatible(version: 1, capabilities: ["peer-info", "host-name", "channel-sequence",
-            "admission-status-v1", "admission-expiry-v1", "exact-stop-v1", "turn-state-v1", "steer-v1", "model-select-v1", "thread-rewind-v1", "offline-approval-v1", "thread-search-v1", "attachment-chunks-v1", "reply-context-v1", "update-drain-v1", "open-agents-v1"]))
+    // Version labels do not gate compatible peers; negotiate the explicit common subset.
+    let peer = PeerInfoData(appVersion: "99.0-beta", capabilities: ["channel-sequence", "native-question-status-v1", "future-optional"], requiredCapabilities: ["channel-sequence"])
+    #expect(local.compatibility(with: peer) ==
+        .compatible(version: 1, capabilities: ["channel-sequence", "native-question-status-v1"]))
     if case .updateRequired = local.compatibility(with: PeerInfoData(appVersion: "1.0", protocolMin: 2, protocolMax: 3)) {} else {
         Issue.record("Disjoint protocols must require an update")
     }

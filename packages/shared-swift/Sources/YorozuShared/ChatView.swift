@@ -169,7 +169,7 @@ public struct ChatView: View {
             generating: generating,
             streamingId: streamingId,
             answeredApprovals: model.answered,
-            answeredQuestions: model.answeredQuestions,
+            answeredQuestions: model.resolvedQuestionIds(in: thread.id),
             waitingForOpenClaw: model.isWaitingForOpenClaw(in: thread.id)
         )
     }
@@ -670,7 +670,7 @@ public struct ChatView: View {
 
     @ViewBuilder private func messages(rows: [ChatRow], queuedStatuses: [String: String]) -> some View {
         let activity = chatActivity(in: rows, generating: generating, streamingId: streamingId,
-            answeredApprovals: model.answered, answeredQuestions: model.answeredQuestions,
+            answeredApprovals: model.answered, answeredQuestions: model.resolvedQuestionIds(in: thread.id),
             waitingForOpenClaw: model.isWaitingForOpenClaw(in: thread.id))
         #if os(iOS)
             nativeMessages(rows: rows, activity: activity, queuedStatuses: queuedStatuses)
@@ -717,8 +717,9 @@ public struct ChatView: View {
                     queuedStatuses: queuedStatuses,
                     answered: model.answered,
                     approvalOutcomes: model.approvalOutcomes,
-                    answeredQuestions: model.answeredQuestions,
-                    questionChoices: model.questionChoices,
+                    answeredQuestions: model.resolvedQuestionIds(in: thread.id),
+                    questionChoices: model.questionChoices(in: thread.id),
+                    questionOutcomes: model.questionDispositions(in: thread.id),
                     handledProposals: model.handledProposals,
                     choices: model.choices
                 ),
@@ -1034,8 +1035,10 @@ public struct ChatView: View {
                 QuestionCardView(
                     card: card,
                     agentLabel: card.nativeAgent.map(model.agentLabel),
-                    answered: model.answeredQuestions.contains(card.questionId),
-                    chosen: model.questionChoices[card.questionId]
+                    answered: model.questionAnswered(card.questionId, in: thread.id),
+                    chosen: model.questionChoices(in: thread.id)[card.questionId],
+                    pending: model.questionPending(card.questionId, in: thread.id),
+                    disposition: model.questionDispositions(in: thread.id)[card.questionId]
                 ) { model.answerQuestion(card.questionId, in: thread.id, $0) }
                 .id(event.id)
                 .notificationHighlight(highlightedNotificationRow == event.id)
@@ -1775,6 +1778,7 @@ public struct ChatView: View {
         let approvalOutcomes: [String: ApprovalStatusData.Status]
         let answeredQuestions: Set<String>
         let questionChoices: [String: String]
+        let questionOutcomes: [String: QuestionStatusData.Status]
         let handledProposals: Set<String>
         let choices: [String: ApprovalAnswerData.Answer]
     }

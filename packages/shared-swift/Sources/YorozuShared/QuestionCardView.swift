@@ -10,6 +10,8 @@ public struct QuestionCardView: View {
     /// Answered cards keep their place in the thread but stop offering buttons.
     public let answered: Bool
     public let chosen: String?
+    public let pending: Bool
+    public let disposition: QuestionStatusData.Status?
     public let answer: (String) -> Void
 
     @State private var other = ""
@@ -20,12 +22,16 @@ public struct QuestionCardView: View {
         agentLabel: String? = nil,
         answered: Bool = false,
         chosen: String? = nil,
+        pending: Bool = false,
+        disposition: QuestionStatusData.Status? = nil,
         answer: @escaping (String) -> Void
     ) {
         self.card = card
         self.agentLabel = agentLabel
         self.answered = answered
         self.chosen = chosen
+        self.pending = pending
+        self.disposition = disposition
         self.answer = answer
     }
 
@@ -37,12 +43,22 @@ public struct QuestionCardView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if answered {
+            if pending {
+                Text("Answer pending · waiting for host")
+                    .font(.scaled(.subheadline)).foregroundStyle(.secondary)
+            } else if disposition == .noLongerNeeded || disposition == .expired {
+                Text("No longer needed")
+                    .font(.scaled(.subheadline)).foregroundStyle(.secondary)
+            } else if answered {
                 Label(chosen.map { String(localized: "Answered: \($0)") } ?? String(localized: "Answered"), systemImage: "checkmark.circle.fill")
                     .font(.scaled(.caption))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
+                if disposition == .rejected {
+                    Text("Answer not applied")
+                        .font(.scaled(.subheadline)).foregroundStyle(.secondary)
+                }
                 // One per line: the options are sentences, not words, and a row of them
                 // truncates the moment Dynamic Type grows.
                 VStack(spacing: LayoutMetrics.inner) {

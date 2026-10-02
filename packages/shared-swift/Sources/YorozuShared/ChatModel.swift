@@ -269,6 +269,9 @@ public final class ChatModel {
     public private(set) var approvalOutcomes: [String: ApprovalStatusData.Status] = [:]
     /// The same for question cards, which are answered with a choice rather than a decision.
     public private(set) var answeredQuestions: Set<String> = []
+    private var questionOutcomes: [String: [String: QuestionStatusData.Status]] = [:]
+    private var scopedQuestionIds: [String: Set<String>] = [:]
+    private var scopedQuestionChoices: [String: [String: String]] = [:]
     /// The choice made on this device, so a resolved question keeps its answer visible.
     public private(set) var questionChoices: [String: String] = [:]
     /// Proposals this device has reviewed or waved away, so the card stops offering buttons.
@@ -838,8 +841,14 @@ public final class ChatModel {
             for event in events { applyAnswerState(event) }
         }
         for item in outbox {
+            if item.questionStatusRequired == true, case .questionAnswer(let answer) = item.event.payload {
+                scopedQuestionIds[item.event.threadId, default: []].insert(answer.questionId)
+            }
             if case .message = item.event.payload { upsert(item.event, persist: false) }
-            if item.event.payload.kind != .approvalAnswer { applyAnswerState(item.event) }
+            if item.event.payload.kind != .approvalAnswer &&
+                !(item.event.payload.kind == .questionAnswer && questionRequiresStatus(item)) {
+                applyAnswerState(item.event)
+            }
         }
         for thread in synced { restoreRejectedReplies(in: thread.id) }
         armOutboxRetry()
@@ -1307,7 +1316,8 @@ public final class ChatModel {
     @discardableResult
     private func deliver(_ event: YorozuEvent, queue: Bool) -> Bool {
         guard !stopped else { return false }
-        outbox = Outbox.pruned(outbox + [OutboxItem(event: event)])
+        outbox = Outbox.pruned(outbox + [OutboxItem(event: event,
+            questionStatusRequired: questionRequiresStatus(event) ? true : nil)])
         guard saveOutbox() else { return false }
         if !queue { flush() }
         return true
@@ -1600,7 +1610,8 @@ public final class ChatModel {
         guard outbox.contains(where: { $0.id == eventId }) else { return }
         // Stop's receipt confirms durable intent, not that execution ceased.
         if outbox.contains(where: { $0.id == eventId &&
-            ($0.event.payload.kind == .interrupt || $0.event.payload.kind == .approvalAnswer) }) { return }
+            ($0.event.payload.kind == .interrupt || $0.event.payload.kind == .approvalAnswer ||
+             $0.event.payload.kind == .questionAnswer && questionRequiresStatus($0)) }) { return }
         outbox.removeAll { $0.id == eventId }
         inFlightUpload[eventId] = nil
         if uploadCache?.id == eventId { uploadCache = nil }
@@ -2360,7 +2371,8 @@ public final class ChatModel {
                 return !answered.contains(card.actionId) && !approvalPending(card.actionId) &&
                     approvalOutcomes[card.actionId] != .noLongerNeeded && approvalOutcomes[card.actionId] != .expired
             case .questionCard(let card):
-                return !answeredQuestions.contains(card.questionId)
+                return !questionAnswered(card.questionId, in: threadId) && !questionPending(card.questionId, in: threadId) &&
+                    questionOutcomes[threadId]?[card.questionId] != .noLongerNeeded && questionOutcomes[threadId]?[card.questionId] != .expired
             default: return false
             }
         }
@@ -2390,6 +2402,58 @@ public final class ChatModel {
         retireApproval(status)
         if status.status == .rejected { failure = String(localized: "Approval answer could not be applied.") }
         applyEvent(event)
+    }
+
+    public func questionPending(_ questionId: String, in threadId: String? = nil) -> Bool {
+        outbox.contains { item in
+            if case .questionAnswer(let answer) = item.event.payload {
+                return answer.questionId == questionId && (threadId == nil || item.event.threadId == threadId)
+            }
+            return false
+        }
+    }
+
+    public func questionAnswered(_ questionId: String, in threadId: String) -> Bool {
+        scopedQuestionIds[threadId]?.contains(questionId) == true
+            ? questionOutcomes[threadId]?[questionId] == .applied
+            : answeredQuestions.contains(questionId)
+    }
+
+    public func questionDispositions(in threadId: String) -> [String: QuestionStatusData.Status] {
+        questionOutcomes[threadId] ?? [:]
+    }
+
+    public func resolvedQuestionIds(in threadId: String) -> Set<String> {
+        answeredQuestions.subtracting(scopedQuestionIds[threadId] ?? [])
+            .union((questionOutcomes[threadId] ?? [:]).filter { $0.value != .rejected }.keys)
+    }
+
+    public func questionChoices(in threadId: String) -> [String: String] {
+        questionChoices.filter { scopedQuestionIds[threadId]?.contains($0.key) != true }
+            .merging(scopedQuestionChoices[threadId] ?? [:]) { _, scoped in scoped }
+    }
+
+    private func questionRequiresStatus(_ item: OutboxItem) -> Bool {
+        item.questionStatusRequired == true || questionRequiresStatus(item.event)
+    }
+
+    private func questionRequiresStatus(_ event: YorozuEvent) -> Bool {
+        guard case .questionAnswer(let answer) = event.payload else { return false }
+        return scopedQuestionIds[event.threadId]?.contains(answer.questionId) == true
+    }
+
+    private func retireQuestion(_ status: QuestionStatusData, in threadId: String) {
+        guard let index = outbox.firstIndex(where: { $0.id == status.requestId && $0.event.threadId == threadId }),
+              case .questionAnswer(let answer) = outbox[index].event.payload,
+              answer.questionId == status.questionId else { return }
+        applyQuestionOutcome(status, in: threadId)
+        if status.status == .applied {
+            questionChoices[status.questionId] = answer.answer
+            scopedQuestionChoices[threadId, default: [:]][status.questionId] = answer.answer
+        }
+        outbox.remove(at: index)
+        saveOutbox()
+        flush()
     }
 
     /// Saves a rule: from the proposal card's editor, or from the Rules screen. The runtime
@@ -2428,11 +2492,14 @@ public final class ChatModel {
     /// call is suspended on this: until it arrives, or expires, the turn is parked.
     @discardableResult
     public func answerQuestion(_ questionId: String, in threadId: String, _ answer: String) -> Bool {
-        guard !stopped, !answeredQuestions.contains(questionId) else { return false }
+        guard !stopped, !questionAnswered(questionId, in: threadId), !questionPending(questionId, in: threadId),
+              questionOutcomes[threadId]?[questionId] != .noLongerNeeded, questionOutcomes[threadId]?[questionId] != .expired else { return false }
         let request = event(.questionAnswer(QuestionAnswerData(questionId: questionId, answer: answer)), in: threadId)
         guard deliver(request, queue: !canDeliver) else { return false }
-        answeredQuestions.insert(questionId)
-        questionChoices[questionId] = answer
+        if !questionRequiresStatus(request) {
+            answeredQuestions.insert(questionId)
+            questionChoices[questionId] = answer
+        }
         return true
     }
 
@@ -2671,6 +2738,7 @@ public final class ChatModel {
                 for event in data.current ?? [] { upsert(event, persist: false) }
                 for event in data.events {
                     if case .approvalStatus(let status) = event.payload { retireApproval(status) }
+                    if case .questionStatus(let status) = event.payload { retireQuestion(status, in: event.threadId) }
                     upsert(event, persist: false)
                     if data.threadId == nil { syncLastSeen[event.threadId] = event.syncCursor ?? event.id }
                     else { historyCursors[event.threadId] = event.syncCursor ?? event.id }
@@ -2815,6 +2883,9 @@ public final class ChatModel {
                 applyEvent(event)
             case .approvalStatus(let data):
                 reconcileApproval(data, event: event)
+            case .questionStatus(let data):
+                retireQuestion(data, in: event.threadId)
+                applyEvent(event)
             default:
                 applyEvent(event)
             }
@@ -2858,7 +2929,7 @@ public final class ChatModel {
             restoreRejectedReplies(in: event.threadId)
         }
         switch event.payload {
-        case .approvalAnswer, .approvalStatus, .questionAnswer: flush()
+        case .approvalAnswer, .approvalStatus, .questionAnswer, .questionStatus: flush()
         default: break
         }
     }
@@ -3230,8 +3301,35 @@ public final class ChatModel {
         case .questionAnswer(let data):
             answeredQuestions.insert(data.questionId)
             questionChoices[data.questionId] = data.answer
+            if scopedQuestionIds[event.threadId]?.contains(data.questionId) == true {
+                scopedQuestionChoices[event.threadId, default: [:]][data.questionId] = data.answer
+                applyQuestionOutcome(QuestionStatusData(requestId: event.id, questionId: data.questionId, status: .applied), in: event.threadId)
+            }
+        case .questionStatus(let data):
+            // A receipt from another conversation cannot retire this prompt.
+            if timeline(event.threadId).events.contains(where: { prior in
+                if case .questionCard(let card) = prior.payload { return card.questionId == data.questionId }
+                return false
+            }) { applyQuestionOutcome(data, in: event.threadId) }
+        case .questionCard(let card):
+            if card.nativeRun != nil { scopedQuestionIds[event.threadId, default: []].insert(card.questionId) }
+            // A live receipt can arrive before the next history page supplies its card.
+            for prior in timeline(event.threadId).events {
+                if case .questionStatus(let data) = prior.payload, data.questionId == card.questionId {
+                    applyQuestionOutcome(data, in: event.threadId)
+                }
+            }
         default: break
         }
+    }
+
+    private func applyQuestionOutcome(_ status: QuestionStatusData, in threadId: String) {
+        // Late rejection cannot reopen an already applied or retired prompt.
+        let previous = questionOutcomes[threadId]?[status.questionId]
+        if previous == nil || previous == .rejected || status.status == .applied {
+            questionOutcomes[threadId, default: [:]][status.questionId] = status.status
+        }
+        if status.status == .applied { answeredQuestions.insert(status.questionId) }
     }
 
     private func staleReplyUpdate(_ candidate: YorozuEvent, replacing previous: YorozuEvent) -> Bool {

@@ -1326,6 +1326,29 @@ worker and original deadlines. The two initial Root tests fail against the missi
 initially used a nonexistent Stop method; it now exercises actual durable `stop_save`. The first
 Clippy run exposed identical rejection branches, which are combined without weakening policy.
 
+Swift decodes scoped question cards and separate `question_status` receipts. A captured scoped
+answer remains pending across transport receipts, relaunch and cached-history eviction. Its optional
+`questionStatusRequired` flag is encrypted outbox delivery metadata; it cannot authorize worker
+execution. Captured answers keep retrying beyond the legacy48-hour question expiry because native
+questions retain no timeout. Legacy question behavior remains unchanged. Exact conversation, request
+and question IDs retire only that outbox operation. Applied receipts preserve real answer text,
+including literal `Cancelled`; rejected prompts remain answerable, stale prompts retire quietly, and
+late rejection cannot reopen an applied or retired prompt. Live and history reconciliation use the
+same reducer. Native question outcomes, choices and pending state are scoped by conversation, even
+when two cards share a question ID. The native iOS timeline observes those outcomes; Mac attention
+and notification filters consume the same scoped resolved state. Status rows remain operational
+metadata rather than separate conversation answers. The optional `native-question-status-v1` client
+capability does not alter required capabilities or grant access. SDK adapter publication and filtering
+remain the next finite migration slice, before release or installed-app replacement.
+Verification: all457 shared Swift tests, two watch-link tests,16 Mac tests, the native Mac
+multi-host harness and localization checks pass. Sixty-five focused tests pass with original
+deadlines. Actual old-reducer negatives reproduce premature confirmation and missing reconciliation;
+additional candidate negatives reproduce cached-history eviction, foreign-thread retirement, and
+48-hour delivery loss. Per-thread adoption, captured delivery metadata and expiry handling repair
+those cases. The initial full run has one outdated capability-list fixture failure; the revised test
+checks an independent common subset and omission of an unknown optional claim. Evidence retains
+that failure and the final complete run. Exact iOS26.5 verification remains a separate release gate.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

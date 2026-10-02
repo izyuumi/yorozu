@@ -129,6 +129,8 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         case .ruleUpdate: .ruleUpdate(RuleUpdateData(rule: sampleRule))
         case .ruleDelete: .ruleDelete(RuleDeleteData(ruleId: "r1"))
         case .approvalSettings: .approvalSettings(ApprovalSettingsData(yolo: true))
+        case .questionStatus:
+            .questionStatus(QuestionStatusData(requestId: "answer-1", questionId: "q1", status: .applied))
         case .questionCard:
             .questionCard(
                 QuestionCardData(

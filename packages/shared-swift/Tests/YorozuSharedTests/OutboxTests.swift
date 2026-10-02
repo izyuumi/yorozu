@@ -885,3 +885,90 @@ private func reconnect(_ transport: QueueTransport) async {
     #expect(again.replyTargets.isEmpty)
     #expect(again.outbox.count == 1)
 }
+
+private func scopedQuestion(_ questionId: String, thread: String = "home") throws -> YorozuEvent {
+    let data: [String: Any] = ["id": "card-\(questionId)", "threadId": thread, "ts": 1, "agentId": "main", "kind": "question_card",
+        "data": ["questionId": questionId, "question": "Which?", "options": ["A", "B"], "allowOther": true, "nativeAgent": "codex",
+                 "nativeRun": ["eventId": "origin", "turnId": "native:origin:final", "attemptId": String(repeating: "a", count: 32)]]]
+    return try JSONDecoder().decode(YorozuEvent.self, from: JSONSerialization.data(withJSONObject: data))
+}
+private func questionStatus(_ questionId: String, request: String, status: String, thread: String = "home") throws -> YorozuEvent {
+    let data: [String: Any] = ["id": "status-\(request)-\(status)-\(thread)", "threadId": thread, "ts": 2, "agentId": "main", "kind": "question_status",
+        "data": ["questionId": questionId, "requestId": request, "status": status]]
+    return try JSONDecoder().decode(YorozuEvent.self, from: JSONSerialization.data(withJSONObject: data))
+}
+@MainActor
+@Test(arguments: [false, true]) func scopedQuestionAnswerWaitsForHostAcrossRelaunchAndReceipt(trimHistory: Bool) async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let source = QueueTransport()
+    let offline = ChatModel(transport: source, cache: cache, device: "phone")
+    offline.start()
+    await source.yield(.event(YorozuEvent(id: "threads", threadId: "", ts: 1, agentId: "main", payload: .threadList(ThreadListData(threads: [ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)])))))
+    #expect(await settle { offline.threads.contains { $0.id == "home" } })
+    offline.applyEvent(try scopedQuestion("question"))
+    #expect(offline.answerQuestion("question", in: "home", "Cancelled"))
+    let request = try #require(offline.outbox.first?.id)
+    #expect(!offline.answeredQuestions.contains("question"))
+    #expect(offline.questionChoices["question"] == nil)
+    #expect(!offline.answerQuestion("question", in: "home", "B"))
+    await offline.flushCache()
+    if trimHistory {
+        cache.save(events: [], threadId: "home")
+        var saved = cache.outbox()
+        saved[0].event.ts -= 49 * 60 * 60 * 1000
+        try cache.savePending(saved)
+    }
+    let transport = QueueTransport()
+    let restored = ChatModel(transport: transport, cache: cache, device: "phone")
+    restored.start(); await reconnect(transport)
+    var delivered = false
+    for _ in 0..<300 where !delivered {
+        delivered = await transport.sent.contains { $0.id == request }
+        if !delivered { try? await Task.sleep(for: .milliseconds(10)) }
+    }
+    #expect(delivered)
+    #expect(await settle { restored.outbox.contains { $0.id == request } })
+    #expect(!restored.answeredQuestions.contains("question"))
+    await transport.yield(.event(YorozuEvent(id: "receipt", threadId: "", ts: 2, agentId: "main", payload: .receipt(ReceiptData(eventId: request)))))
+    await transport.yield(.event(try questionStatus("question", request: request, status: "applied")))
+    #expect(await settle { restored.answeredQuestions.contains("question") && restored.outbox.isEmpty })
+    #expect(restored.questionChoices["question"] == "Cancelled")
+    #expect(cache.outbox().isEmpty)
+    await offline.shutdown(); await restored.shutdown()
+}
+@MainActor
+@Test(arguments: [false, true]) func scopedQuestionHistoryRejectsAndRetiresOnlyExactRequests(foreignCard: Bool) async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    await transport.yield(.event(YorozuEvent(id: "threads", threadId: "", ts: 1, agentId: "main", payload: .threadList(ThreadListData(threads: [ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1, turnState: .running)])))))
+    #expect(await settle { model.threads.contains { $0.id == "home" } })
+    model.applyEvent(try scopedQuestion("question")); model.applyEvent(try scopedQuestion("other"))
+    #expect(model.answerQuestion("question", in: "home", "A")); #expect(model.answerQuestion("other", in: "home", "B"))
+    let request = try #require(model.outbox.first?.id)
+    if foreignCard { model.applyEvent(try scopedQuestion("question", thread: "foreign")) }
+    let wrong = try questionStatus("question", request: request, status: "no-longer-needed", thread: "foreign")
+    await transport.yield(.event(wrong))
+    #expect(await settle { model.timeline("foreign").events.contains { $0.id == wrong.id } })
+    #expect(model.outbox.contains { $0.id == request })
+    let status = try questionStatus("question", request: request, status: "rejected")
+    await transport.yield(.event(YorozuEvent(id: "sync", threadId: "", ts: 2, agentId: "main", payload: .syncDelta(SyncDeltaData(events: [status])))))
+    #expect(await settle { !model.outbox.contains { $0.id == request } })
+    #expect(model.outbox.count == 1)
+    #expect(!model.answeredQuestions.contains("question"))
+    #expect(model.pendingComposerCards(in: "home").contains { $0.id == "card-question" })
+    #expect(model.answerQuestion("question", in: "home", "B"))
+    let next = try #require(model.outbox.last?.id)
+    await transport.yield(.event(try questionStatus("question", request: next, status: "no-longer-needed")))
+    #expect(await settle { !model.outbox.contains { $0.id == next } })
+    #expect(!model.pendingComposerCards(in: "home").contains { $0.id == "card-question" })
+    #expect(model.questionChoices["question"] == nil)
+    await transport.yield(.event(status))
+    #expect(!model.pendingComposerCards(in: "home").contains { $0.id == "card-question" })
+    await model.shutdown()
+}
