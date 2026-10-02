@@ -57,6 +57,7 @@ struct Worker {
     child: Child,
     run: String,
     terminal: bool,
+    output_closed: bool,
     started: Instant,
     stopping: Option<Instant>,
 }
@@ -96,6 +97,7 @@ fn launch(
         child,
         run: run.to_owned(),
         terminal: false,
+        output_closed: false,
         started: Instant::now(),
         stopping: None,
     })
@@ -213,6 +215,7 @@ fn run() -> io::Result<()> {
                     )?)?;
                     if ["completed", "stopped", "unconfirmed"].contains(&kind) {
                         current.terminal = true;
+                        current.stopping = Some(Instant::now());
                         current.child.stdin.take();
                         owner.active = None;
                     }
@@ -222,7 +225,9 @@ fn run() -> io::Result<()> {
                 if let Some(current) = &mut worker
                     && current.run == run
                 {
+                    current.output_closed = true;
                     current.child.stdin.take();
+                    current.stopping.get_or_insert_with(Instant::now);
                 }
             }
             Ok(Input::Closed) => {
@@ -238,7 +243,10 @@ fn run() -> io::Result<()> {
             _ => {}
         }
         if let Some(current) = &mut worker {
-            if current.started.elapsed() > Duration::from_secs(190) && current.stopping.is_none() {
+            if !current.terminal
+                && current.started.elapsed() > Duration::from_secs(190)
+                && current.stopping.is_none()
+            {
                 event(owner.record(
                     &current.run,
                     "stop_requested",
@@ -263,7 +271,9 @@ fn run() -> io::Result<()> {
             {
                 let _ = current.child.kill();
             }
-            if current.child.try_wait()?.is_some() {
+            // WorkerClosed follows every packet on this producer's FIFO channel.
+            // Observed child exit alone cannot discard already queued terminal evidence.
+            if current.child.try_wait()?.is_some() && current.output_closed {
                 // Process exit of the bridge does not prove its provider grandchild ceased.
                 if !current.terminal {
                     event(owner.record(

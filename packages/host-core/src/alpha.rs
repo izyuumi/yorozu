@@ -211,6 +211,18 @@ impl Conversation {
         if self.active.is_some() {
             return Ok((json!({"error":"worker-busy"}), None));
         }
+        let encoded = serde_json::to_vec(text).map_err(io::Error::other)?.len();
+        if encoded > EVENT_BYTES - 1024 {
+            return Ok((json!({"error":"invalid-text"}), None));
+        }
+        // Reserve an accepted event, full terminal/partial text, bounded activity and controls.
+        // Refuse before admission rather than lose a retained message or exceed the UI pipe.
+        let retained = serde_json::to_vec(&self.snapshot())
+            .map_err(io::Error::other)?
+            .len();
+        if retained + encoded + 2 * EVENT_BYTES + 16 * 1024 > FRAME_BYTES as usize - 16 * 1024 {
+            return Ok((json!({"error":"profile-size-limit"}), None));
+        }
         let event = self.record(run, "accepted", Some(text), None)?;
         self.runs.insert(run.to_owned(), text.to_owned());
         self.active = Some(run.to_owned());

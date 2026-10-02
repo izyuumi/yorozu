@@ -84,3 +84,123 @@ fn nonempty_unmarked_directory_is_preserved_and_refused() {
     assert!(!root.join("state").exists());
     fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn queued_terminal_is_not_lost_when_worker_exits_while_requests_are_waiting() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let temp = std::env::temp_dir().join(format!(
+        "yorozu-alpha-pipe-{}-{}",
+        std::process::id(),
+        now_ms()
+    ));
+    fs::create_dir(&temp).unwrap();
+    let script = temp.join("worker.sh");
+    let mut script_text = String::from("read request\n");
+    for _ in 0..48 {
+        let packet =
+            json!({"version":1,"runId":"fast-worker","kind":"update","text":"x".repeat(4000)});
+        script_text.push_str(&format!("printf '%s\\n' '{packet}'\n"));
+    }
+    script_text.push_str("printf '%s\\n' '{\"version\":1,\"runId\":\"fast-worker\",\"kind\":\"completed\",\"text\":\"synthetic terminal\",\"data\":{\"evidence\":\"provider-terminal\"}}'\n");
+    fs::write(&script, script_text).unwrap();
+    for attempt in 0..3 {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_yorozu-alpha-host"))
+            .arg(temp.join(format!("profile-{attempt}")))
+            .arg("/bin/sh")
+            .arg(&script)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut input = child.stdin.take().unwrap();
+        writeln!(input, "{}", json!({"version":1,"id":"submit","op":"submit","runId":"fast-worker","text":"one bounded task"})).unwrap();
+        // Ordinary concurrent snapshots make the final worker frame wait behind queued input.
+        for id in 0..64 {
+            writeln!(
+                input,
+                "{}",
+                json!({"version":1,"id":format!("snapshot-{id}"),"op":"snapshot"})
+            )
+            .unwrap();
+        }
+        drop(input);
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success());
+        let frames: Vec<serde_json::Value> = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(
+            frames
+                .iter()
+                .any(|frame| frame["event"]["kind"] == "completed"),
+            "queued terminal was lost on iteration {attempt}"
+        );
+        assert!(
+            !frames
+                .iter()
+                .any(|frame| frame["event"]["kind"] == "unconfirmed"),
+            "owned terminal was downgraded on iteration {attempt}"
+        );
+    }
+    fs::remove_dir_all(temp).unwrap();
+}
+
+#[test]
+fn snapshot_budget_refuses_a_new_task_before_the_native_pipe_limit() {
+    let root = std::env::temp_dir().join(format!(
+        "yorozu-alpha-budget-{}-{}",
+        std::process::id(),
+        now_ms()
+    ));
+    let mut owner = Conversation::open(&root).unwrap();
+    let mut refused = false;
+    for index in 0..12 {
+        let run = format!("large-{index}");
+        let (receipt, _) = owner
+            .submit(&json!({"runId":run,"text":"\"".repeat(16000)}))
+            .unwrap();
+        if receipt["error"] == "profile-size-limit" {
+            refused = true;
+            break;
+        }
+        assert_eq!(receipt["accepted"], true);
+        for _ in 0..2 {
+            owner
+                .record(
+                    &run,
+                    "activity",
+                    None,
+                    Some(json!({"output":"x".repeat(4000)})),
+                )
+                .unwrap();
+        }
+        owner
+            .record(&run, "completed", Some(&"あ".repeat(16000)), None)
+            .unwrap();
+        owner.active = None;
+        let frame = json!({"version":1,"id":"snapshot-request","result":owner.snapshot()});
+        assert!(
+            serde_json::to_vec(&frame).unwrap().len() <= 1_048_576,
+            "valid snapshot exceeded native IPC contract"
+        );
+    }
+    assert!(
+        refused,
+        "profile must refuse more work before exhausting the response budget"
+    );
+    drop(owner);
+    let reopened = Conversation::open(&root).unwrap();
+    assert!(
+        serde_json::to_vec(&json!({"version":1,"id":"snapshot","result":reopened.snapshot()}))
+            .unwrap()
+            .len()
+            <= 1_048_576
+    );
+    drop(reopened);
+    fs::remove_dir_all(root).unwrap();
+}

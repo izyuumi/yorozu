@@ -36,7 +36,9 @@ Snapshot `events` contains projected inner event objects, in seq order. Deduplic
 All user/final/control states are retained; snapshots keep only the latest partial update
 for an active run and the latest two provider activities per run. Full ledger stays on disk.
 Profiles accept at most 12 tasks (`profile-task-limit`); choose a fresh temporary profile
-when full. Provider detail is bounded/truncated, and partial updates are throttled.
+when full. A dynamic `profile-size-limit` also refuses new work before retained
+conversation/final state can exceed the 1 MiB response frame, with room for that task.
+Provider detail is bounded/truncated, and partial updates are throttled.
 Kinds: `accepted` (original user text); `running` (provider invocation begun, not completion);
 `update` (replace partial assistant text); `activity` (provider's existing typed payload in
 `data`); `stop_requested`; `completed` (final text, real provider completed);
