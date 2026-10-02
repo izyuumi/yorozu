@@ -72,3 +72,39 @@ native proof, model adapter, approved durable scheduler/control integration and 
 CI/alpha integration. A draft PR is intentionally deferred: existing PR CI automatically
 runs host-core recovery tests outside this task's boundary. Only the isolated feature
 branch is to be pushed, leaving main/alpha and the paused checkout untouched.
+
+## Ordinary-model and package-CI continuation
+
+Continuation preserves the signed first slice at `b5ef83be5889358b9d0bcf86bfba4463b6668ba0`.
+The new adapter contract/loop uses only synthetic providers in tests; there is no provider
+SDK, HTTP inference transport or credentials route. Schemars derives custom-function
+parameters directly from the action types. Host state stamps ancestry/call correlation;
+model output cannot issue grants or choose target identity. The host retains private
+worker context and evidence after compact outcomes return.
+
+Local verification of this continuation:
+
+- 20 tests passed: 12 existing desktop/context tests plus 8 synthetic-provider tests.
+- Formatting, locked/offline Clippy with warnings denied and all-targets Mac build passed.
+- `actionlint .github/workflows/computer-use.yml` and `git diff --check` passed.
+- No permission probe or native fixture was repeated. No live provider call ran.
+
+The eight provider tests independently exercise image blocks versus text-only receipts,
+provider call IDs, trusted ancestry, completion requiring post-input observation,
+unknown-effect receipt propagation with no subsequent model request, malformed/oversized/
+scope-injecting/native-tool replies, duplicate IDs, model-turn budgets, provider timeouts/
+errors and cancellation of a pending provider future. The happy path uses actual
+queue-generated observation IDs and returns a model completion claim only on the inert
+fixture. It does not verify real screenshots, app effects or live model behavior.
+
+The new `Computer use package CI` workflow triggers only feature-branch pushes affecting
+this package or its own workflow file. Its Linux/macOS/Windows jobs run only this package's
+format/lint/test/build commands. Native examples are compiled, never executed. The
+existing repository CI and release workflows are neither changed nor invoked. Remote CI
+results, once available, are reported with the exact commit in the final handoff.
+
+Exact current native helper/app and future permission scope are recorded separately in
+`NATIVE_APPROVAL.md`. That record requests no OS grant now and distinguishes the separate
+past permission probe from the unverified TCC identity of the unrun fixture helper.
+Native proof, an authorized live BYO transport adapter, durable recursive scheduling and
+approved alpha app integration remain finite follow-ups.

@@ -428,7 +428,7 @@ impl Executor {
         }
     }
 }
-fn valid_id(s: &str) -> Result<(), String> {
+pub(crate) fn valid_id(s: &str) -> Result<(), String> {
     if s.is_empty()
         || s.len() > 128
         || !s

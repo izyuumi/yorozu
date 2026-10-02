@@ -44,6 +44,17 @@ pub struct WorkerOutcome {
     pub status: WorkerStatus,
     pub summary: String,
     pub evidence_ids: Vec<String>,
+    pub last_batch: Option<BatchSummary>,
+}
+
+/// Compact secretary receipt; no images, transforms or action payloads.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BatchSummary {
+    pub batch_id: String,
+    pub statuses: Vec<ActionStatus>,
+    pub input_halted: bool,
+    pub rejection: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -59,7 +70,7 @@ pub enum ActionKind {
     Wait,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Button {
     Left,
@@ -68,7 +79,7 @@ pub enum Button {
 }
 
 /// Balanced key taps only. No held-key state or arbitrary platform keycodes.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Key {
     Return,
@@ -81,14 +92,14 @@ pub enum Key {
     Down,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PixelPoint {
     pub x: u32,
     pub y: u32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
     Screenshot {},

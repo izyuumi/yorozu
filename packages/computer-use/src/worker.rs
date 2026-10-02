@@ -86,6 +86,12 @@ impl WorkerContext {
             status,
             summary,
             evidence_ids,
+            last_batch: self.history.back().map(|batch| BatchSummary {
+                batch_id: batch.batch_id.clone(),
+                statuses: batch.results.iter().map(|r| r.status).collect(),
+                input_halted: batch.input_halted,
+                rejection: batch.rejection.clone(),
+            }),
         })
     }
 }

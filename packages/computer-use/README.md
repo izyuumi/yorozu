@@ -2,7 +2,7 @@
 
 Standalone Rust package based on signed alpha `1673b2e0a099ff4329292309b1b66af4430da9e3`.
 It neither imports nor changes host-core or the paused migration. No app install, release,
-storage migration, process-interposition fixture, model inference, or live input is part
+storage migration, process-interposition fixture, live model inference, or live input is part
 of the automated checks.
 
 ## Implemented
@@ -32,7 +32,8 @@ of the automated checks.
   No automatic recovery/replay API is supplied.
 - `WorkerContext` keeps the dedicated worker's last 16 batch results and at most two
   images. Only its provider adapter receives that history. The secretary receives a
-  bounded summary/status/evidence-ID outcome, never this image history. Steering
+  bounded summary/status/evidence-ID outcome with the last compact batch receipt,
+  never this image history. Steering
   replaces bounded context and does not expand a grant.
 - Native macOS 14+ adapter: ScreenCaptureKit window screenshots via maintained
   `screencapturekit = 11.0.0`; input via `enigo = 0.6.1` behind our own `Desktop` trait;
@@ -46,6 +47,40 @@ click, bounded two-axis scroll, plain Unicode text, balanced taps of a small key
 app focus and bounded waits are supported. Text rejects control characters (including
 newlines/tabs), since Enigo may turn them into key events; use a separately authorized
 key action. No shell, AppleScript, arbitrary code, clipboard or held-key tool exists.
+
+## Ordinary-model contract and synthetic integration
+
+`model.rs` defines an asynchronous `OrdinaryModel` adapter contract and a bounded
+`run_worker` loop. No provider SDK, HTTP client, credentials route or live inference is
+included. The host owns the private `WorkerContext` separately from the secretary's
+model context and retains its evidence after the loop returns.
+
+Adapters receive exactly one generated custom function, `yorozu_desktop_batch`, plus
+separate PNG image blocks and text-only receipts correlated by provider call ID. Schemars
+derives the JSON schema from the existing action types. Model arguments contain only
+action/deadline fields; the host stamps ancestry and batch identity and supplies the
+immutable grant. Unknown fields, arbitrary/native tools, duplicate call IDs and oversized
+arguments stop the worker. Adapters must normalize one call per reply and reject hosted
+computer-use/parallel-tool responses instead of executing them.
+
+Each run has at most 16 model turns, a 120-second total bound and a 30-second per-turn
+bound. A stop token cancels pending provider futures; queue stops retain the executor's
+unknown-effect rules. Provider failures/timeouts and desktop rejections return stuck with
+no retries. Compact outcomes include last batch ID/statuses/input-halted state, without
+raw action payloads, transforms or images. A done claim requires an observation after the
+last input; its freshness is conservatively bounded from batch submission. It is still a
+model claim requiring secretary review, not independent proof of real app acceptance.
+
+The eight synthetic-provider tests use the real queue/context/loop with an inert desktop;
+they cover image/receipt delivery, scope injection, unsupported/malformed calls,
+completion gating, uncertain effects, duplicate calls, turn limits, deadlines and stops.
+A concrete BYO ChatGPT transport adapter is still future integration; it should implement
+this ordinary image/custom-function contract without advertising native hosted tools.
+
+Package-only CI is `.github/workflows/computer-use.yml`: feature-branch pushes affecting
+this package run formatting, Clippy, tests and example compilation on Linux/macOS/Windows.
+It never invokes host-core, native helpers, provider calls, repository CI or releases.
+There is no PR trigger in this independent slice.
 
 ## Run local checks
 
@@ -66,7 +101,10 @@ The ScreenCaptureKit dependencies compile Swift bridges. Build with Xcode tools;
 SwiftPM needs its normal compiler sandbox and writable compiler caches. `build.rs`
 adds the standard system Swift runtime rpath for the resulting Mac executables.
 
-## Coordinated TextEdit fixture (not yet run)
+## Coordinated TextEdit fixture (deferred, not yet run)
+
+Exact helper/app identity and future permission scope are documented separately in
+[NATIVE_APPROVAL.md](NATIVE_APPROVAL.md). No approval is requested now.
 
 The permission-only probe on this Mac mini returned `screen_recording=false` and
 `accessibility=false`. No TCC prompt, permission grant, app launch or input was attempted.
@@ -103,7 +141,8 @@ arbitrary keyboard chords are deliberately unsupported in this slice.
 The process-local replay ledger and native singleton do not survive restarts or exclude
 other processes. The host must ensure one desktop owner across processes and reconcile
 uncertain effects before starting any new session. This package does not implement a
-durable recursive scheduler or a model loop. The control types are its contract only;
+durable recursive scheduler or a concrete live-provider adapter. The hierarchy/control
+types are its contract only;
 Queue/Steer/Stop must be routed by that scheduler, with the StopToken used for stops.
 
 A BYO ChatGPT adapter should provide images and custom functions to an ordinary model;
@@ -114,21 +153,21 @@ Finite remaining integration work:
 
 1. Coordinate existing native permissions and the isolated foreground TextEdit fixture;
    record English/Japanese, capture and display-transform evidence.
-2. Connect an ordinary-model worker loop and its separate provider context, with host
-   grant admission and compact secretary outcomes; no paid calls until authorized.
+2. Implement an authorized BYO ChatGPT transport adapter for the tested ordinary-model
+   contract and connect host grant admission; no live/paid calls until authorized.
 3. Wire durable recursive task/parent/origin/attempt records and steering/queue/stop
    routing into an approved scheduler, including restart reconciliation and a single
    desktop owner across processes. Do not overlap paused host-core files now.
-4. Add package-only CI and coordinated alpha integration after scope review. Existing
-   repository PR CI runs host-core recovery tests, so this first slice is pushed as a
-   feature branch without opening a PR that would automatically run that suite.
+4. Coordinate alpha app/scheduler integration and broader CI after scope review. The
+   separate package CI is implemented. Existing repository PR CI runs host-core recovery
+   tests, so this work remains on the feature branch without opening a PR.
 
 ## Dependencies and licenses
 
 Dependency versions/checksums are retained in the standalone Cargo.lock. This package
 uses the repository MIT license. Enigo is MIT; ScreenCaptureKit, its apple-cf/apple-metal
 bridges, CoreGraphics/CoreFoundation and PNG are MIT OR Apache-2.0; objc2/AppKit is
-MIT OR Apache-2.0 OR Zlib. Tokio, Serde/serde_json and UUID use permissive upstream
+MIT OR Apache-2.0 OR Zlib. Tokio, Serde/serde_json, Schemars and UUID use permissive upstream
 licenses recorded in their Cargo manifests. No upstream source was copied into the
 module. Preserve upstream notices/license texts when packaging dependencies for release.
 

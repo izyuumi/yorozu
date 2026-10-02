@@ -4,3 +4,5 @@ pub mod executor;
 pub mod macos;
 
 pub mod worker;
+
+pub mod model;
