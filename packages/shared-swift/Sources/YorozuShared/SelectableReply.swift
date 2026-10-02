@@ -271,7 +271,16 @@
     /// gap after it on its final line only — a newline the author wrote inside a paragraph is a
     /// line break, not a block break, and gets no gap.
     private func finished(_ piece: NSMutableAttributedString, _ paragraph: NSMutableParagraphStyle, gap: CGFloat, last: Bool) -> NSAttributedString {
-        if !last { piece.append(NSAttributedString(string: "\n")) }
+        if !last {
+            let newline = NSMutableAttributedString(string: "\n")
+            // TextKit uses the paragraph terminator's font for line metrics. An unstyled
+            // newline falls back to 12pt and compresses every wrapped line before it,
+            // even though the Japanese glyphs are still drawn at the body/heading size.
+            if piece.length > 0, let font = piece.attribute(.font, at: piece.length - 1, effectiveRange: nil) {
+                newline.addAttribute(.font, value: font, range: NSRange(location: 0, length: 1))
+            }
+            piece.append(newline)
+        }
         let body = NSRange(location: 0, length: max(0, piece.length - (last ? 0 : 1)))
         piece.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: piece.length))
         let lastBreak = (piece.string as NSString).range(of: "\n", options: .backwards, range: body)

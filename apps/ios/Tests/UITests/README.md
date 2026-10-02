@@ -1,5 +1,23 @@
 # Composer keyboard regression
 
+Japanese reply glyph geometry runs in `YorozuRenderingTests` on iOS, because the Mac
+package tests use SwiftUI instead of the phone's selectable TextKit reply. After generating
+the workspace, use `xcodebuild test -workspace apps/ios/Yorozu.xcworkspace
+-scheme YorozuRenderingTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`.
+The UI-test script runs it at normal and maximum accessibility text size. Its matrix covers
+all reply fonts, 180/280-point proposals, long Japanese, mixed Latin/emoji/inline code,
+explicit line breaks, headings, ordered/unordered lists, tables, code blocks, and rules.
+Core Text glyph outlines must fit inside the measured reply without intersecting adjacent
+lines. The pre-fix block separator uses an unstyled newline and fails this check.
+
+For real Simulator captures without a host/account, launch with `-yorozuShowcase japanese`
+or `-yorozuShowcase japanese-streaming`. These are synthetic offline messages; the streaming
+fixture holds an unfinished reply for inspecting wrapping and the completion handoff.
+Add `-yorozuFinishJapanese on -followUpBehavior steer` and send `Continue`, then `Finish`,
+to deliver growing and completed replies through the offline transport. `JapaneseStreamingTests`
+drives those messages through the real composer, checks the table appears during growth,
+and verifies the completed reply becomes selectable without losing its Markdown blocks.
+
 Generate with `tuist generate --no-open --path apps/ios`, then run:
 
 ```sh

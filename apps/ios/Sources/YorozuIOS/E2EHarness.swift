@@ -82,6 +82,8 @@ final class E2EHarness {
             }
             seed()
             model.onThreads = seed
+        case "japanese", "japanese-streaming":
+            model.previewThreads()
         case "activity":
             model.previewThreads()
             model.previewActivity(in: model.threads[0].id)
