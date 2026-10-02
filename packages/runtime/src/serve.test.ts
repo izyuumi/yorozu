@@ -1431,7 +1431,7 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
     [`${agent}:cc:result:toolu_1`, "tool_result"],
   ]);
   const cut = first.find((event) => event.kind === "tool_result") as YorozuEvent & { kind: "tool_result" };
-  expect(cut.data).toEqual({ callId: "toolu_1", ok: true, output: "L".repeat(4096), truncated: true });
+  expect(cut.data).toEqual({ callId: "toolu_1", ok: true, output: "L".repeat(4096), truncated: true, fullResultRef: expect.stringMatching(/^[a-f0-9]{64}$/) });
   expect(readThreadEvents("cc", dir).find((event) => event.kind === "tool_result")).toEqual(cut);
   // One tap asks for the rest: the same event, whole, to this device alone.
   send({ kind: "tool_result_request", data: { callId: "toolu_1" } }, "cc");
@@ -7499,4 +7499,95 @@ test.each(["storage", "replay", "lost-ack", "source", "canonical-reply"] as cons
     expect(listThreads(dir).find((thread) => thread.id === "policy-start")?.nativeTurn?.userEventId).toBe(origin);
     expect(readThreadEvents("policy-start", dir).some((event) => event.id === `native:${origin}:final`)).toBe(false);
   } finally { if (disrupted) { rmSync(path, { recursive: true }); renameSync(backup, path); } }
+});
+
+// Accepted downloads keep their evidence despite late workers, corruption, or file replacement.
+test.each(["source", "tail", "utf8", "symlink", "fifo"] as const)("retained native tool evidence survives %s replacement", async (mode) => {
+  const output = mode === "utf8" ? `${"A".repeat(4_999)}\uFFFD` : "A".repeat(5_000);
+  const finish = Promise.withResolvers<{ text: string }>();
+  let worker: NativeTurn | undefined;
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    worker = turn;
+    turn.onActivity!("result:accepted", { kind: "tool_result", data: { callId: "shared", ok: true, output } });
+    return finish.promise;
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
+  send({ kind: "thread_create", data: { title: "Work", agent: "codex", cwd: proj } }, "result-owner");
+  send({ kind: "message", data: { role: "user", text: "work" } }, "result-owner");
+  const preview = (await eventsUntil((event) => event.kind === "tool_result" && event.data.callId === "shared")).at(-1)!;
+  try {
+    if (mode === "source") {
+      const request = rustSyncModule.syncHostRequest;
+      let replace = true; let replacement: string | undefined;
+      vi.spyOn(rustSyncModule, "syncHostRequest").mockImplementation((root, data, bytes) => {
+        const proof = request(root, data, bytes);
+        if (root === dir && replace && data.op === "run_attempt_current" && data.threadId === "result-owner" && data.mode === "effect" && proof.current === true) {
+          replace = false;
+          const path = join(dir, "threads.json");
+          const rows = JSON.parse(readFileSync(path, "utf8"));
+          rows.find((row: { id: string }) => row.id === "result-owner").agent = "claude-code";
+          writeFileSync(path, JSON.stringify(rows)); replacement = readFileSync(path, "utf8");
+        }
+        return proof;
+      });
+      worker!.onActivity!("result:denied", { kind: "tool_result", data: { callId: "shared", ok: true, output: "B".repeat(5_000) } });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(replacement).toBeDefined();
+      expect(readThreadEvents("result-owner", dir).filter((event) => event.kind === "tool_result").map((event) => event.id)).toEqual([preview.id]);
+      send({ kind: "tool_result_request", data: { callId: "shared" } }, "result-owner");
+      const full = (await eventsUntil((event) => event.kind === "tool_result" && event.data.callId === "shared" && event.data.output.length === 5_000)).at(-1)!;
+      expect(full).toMatchObject({ id: preview.id, data: { output } });
+      expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(replacement);
+    } else {
+      // Discover the actual artifact by its admitted identity, independent of cache naming.
+      const paths = readdirSync(threadStorage.threadsDir(dir), { recursive: true, withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+        .map((entry) => join(entry.parentPath, entry.name));
+      const path = paths.find((path) => {
+        const event = JSON.parse(readFileSync(path, "utf8"));
+        return event.id === preview.id && event.data?.output === output;
+      });
+      expect(path).toBeDefined();
+      if (!path) throw new Error("missing full evidence");
+      if (mode === "tail") {
+        const corrupt = JSON.parse(readFileSync(path, "utf8"));
+        corrupt.data.output = `${"A".repeat(4_999)}B`; // Same preview and scope, different tail.
+        writeFileSync(path, JSON.stringify(corrupt));
+      } else if (mode === "utf8") {
+        const bytes = readFileSync(path);
+        const position = bytes.indexOf(Buffer.from("\uFFFD"));
+        expect(position).toBeGreaterThan(-1);
+        writeFileSync(path, Buffer.concat([bytes.subarray(0, position), Buffer.from([0xff]), bytes.subarray(position + 3)]));
+      } else {
+        // Isolate synchronous filesystem races: even an unsafe FIFO open must not strand Vitest.
+        const child = spawnSync(process.execPath, ["--input-type=module", "-e", `
+          import fs from "node:fs";
+          import { syncBuiltinESMExports } from "node:module";
+          import { execFileSync } from "node:child_process";
+          const input = JSON.parse(fs.readFileSync(0, "utf8"));
+          const original = fs.lstatSync;
+          let replaced = false;
+          fs.lstatSync = function(path, ...args) {
+            const metadata = original(path, ...args);
+            if (!replaced && path === input.path) {
+              replaced = true;
+              fs.renameSync(path, path + ".saved");
+              if (input.mode === "fifo") execFileSync("mkfifo", [path]);
+              else fs.symlinkSync(path + ".saved", path);
+            }
+            return metadata;
+          };
+          syncBuiltinESMExports();
+          const { fullToolResult } = await import(input.module);
+          const result = fullToolResult("result-owner", "shared", input.dir, input.preview);
+          process.exit(replaced && result === undefined ? 0 : 2);
+        `], { input: JSON.stringify({ path, mode, dir, preview, module: new URL("../dist/threads.js", import.meta.url).href }), timeout: 1_500 });
+        expect(child.error).toBeUndefined();
+        expect(child.status).toBe(0);
+        return;
+      }
+      send({ kind: "tool_result_request", data: { callId: "shared" } }, "result-owner");
+      await vi.waitFor(() => expect(states).toContain("tool-result-missing"));
+    }
+  } finally { finish.resolve({ text: "done" }); }
 });

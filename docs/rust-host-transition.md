@@ -1439,6 +1439,62 @@ its unintended unchanged repeat is stopped through its verified owned process gr
 as interrupted, not passed. No test deadlines or assertions are weakened. This completes the scoped
 SDK startup slice; it does not establish an atomic SDK spawn protocol or full worker contract.
 
+
+SDK full results now carry the captured issued worker scope and an immutable SHA-256 artifact
+reference in the retained preview. These fields describe observations; they grant no permission.
+Large scoped artifacts use create-only private files beside the existing thread history. Download
+selects the latest visible retained preview and verifies raw artifact bytes, event identity,
+thread/call/outcome, preview prefix and exact worker scope. Complete results come directly from
+retained history. A denied old worker cannot replace accepted downloadable evidence by reusing a
+call ID. Unscoped legacy cache formats and Unicode-safe chunk delivery remain supported.
+
+Scoped reads, including existing-artifact verification, open a regular descriptor with Unix
+`O_NOFOLLOW|O_NONBLOCK`, check file and parent identities and reject replacements. Hashing occurs
+before UTF-8 decoding so invalid byte sequences cannot disappear into replacement characters.
+This adds no artifact size cap; the complete bounded worker/blob contract remains a later step.
+Node still stages artifacts and generic history still admits SDK observation batches until the
+next Root activity slice. The scope metadata does not establish that slice's authoritative admission.
+
+Verification: the actual encrypted SDK/download regression first reproduces a denied old result
+overwriting accepted evidence. Separate source/tail cases fail on the actual previous cache owner,
+with automatic byte-exact candidate restoration. The initial candidate then reproduces raw invalid
+UTF-8 acceptance, a symlink replacement serving evidence and a FIFO replacement blocking a bounded
+child process. Guarded reads repair those cases; twelve focused SDK session, artifact, legacy and
+Unicode checks pass. An earlier full run passes887 cases and fails two existing exact preview-field
+assertions; those assertions now include the optional immutable reference while preserving their
+payload, identity and download checks. Final full verification is pending. No test deadline changes,
+credential access, release dispatch or installed-app replacement accompanies this slice.
+
+
+SDK full results now carry the captured issued worker scope and an immutable SHA-256 artifact
+reference in the retained preview. These fields describe observations; they grant no permission.
+Large scoped artifacts use create-only private files beside the existing thread history. Download
+selects the latest visible retained preview and verifies raw artifact bytes, event identity,
+thread/call/outcome, preview prefix and exact worker scope. Complete results come directly from
+retained history. A denied old worker cannot replace accepted downloadable evidence by reusing a
+call ID. Unscoped legacy cache formats and Unicode-safe chunk delivery remain supported.
+
+Scoped reads, including existing-artifact verification, open a regular descriptor with Unix
+`O_NOFOLLOW|O_NONBLOCK`, check file and parent identities and reject replacements. Hashing occurs
+before UTF-8 decoding so invalid byte sequences cannot disappear into replacement characters.
+This adds no artifact size cap; the complete bounded worker/blob contract remains a later step.
+Node still stages artifacts and generic history still admits SDK observation batches until the
+next Root activity slice. The scope metadata does not establish authoritative activity admission.
+
+Verification: the actual encrypted SDK/download regression first reproduces a denied old result
+overwriting accepted evidence. Source/tail cases fail on the actual previous cache owner with
+automatic byte-exact candidate restoration. The initial candidate then reproduces invalid UTF-8
+acceptance, a symlink replacement serving evidence and a FIFO replacement blocking a bounded child.
+Guarded reads repair those cases; twelve focused SDK session, artifact, legacy and Unicode checks
+pass. An earlier full run passes 887 cases and fails two existing exact preview-field assertions;
+those assertions now include the optional reference while preserving payload, identity and download
+checks. The first repaired full run passes 892 cases with one skip and fails an existing relay
+registration wait; the unchanged case passes alone. The unchanged full rerun passes all 893 runtime/
+plugin checks with one existing skip across 52 files in 220.80 seconds. All 60 shared protocol checks
+also pass. The earlier registration failure is retained, without a claimed root-cause repair.
+No test deadline changes, credential access, release dispatch or installed-app replacement accompanies
+this slice.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

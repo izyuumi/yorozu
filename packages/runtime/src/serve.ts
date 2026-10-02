@@ -2015,7 +2015,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
                 } else if (payload.kind === "tool_result") {
                   openToolCalls.get(threadId)?.delete(payload.data.callId);
                 }
-                const event: YorozuEvent = { id: `${agent}:${threadId}:${key}`, threadId, ts: Date.now(), agentId: MAIN_AGENT, ...payload };
+                const event: YorozuEvent = { id: `${agent}:${threadId}:${key}`, threadId, ts: Date.now(), agentId: MAIN_AGENT,
+                  workerRun: { version: 1, threadId, eventId: userEventId!, turnId: id, attemptId: attempt, source: agent }, ...payload };
                 queueActivity(event.kind === "tool_result" ? stashToolResult(event, dir) : event);
                 if (event.kind === "tool_result" && event.data.ok === true && mayAct) {
                   let proof: Record<string, unknown>;
@@ -3571,7 +3572,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
       // The rest of a truncated tool result, to the one device that asked, under the id it
       // already holds so it lands in place. Nothing to say when none was kept.
       case "tool_result_request": {
-        const full = fullToolResult(event.threadId, event.data.callId, dir);
+        const preview = visibleThreadEvents(event.threadId, dir).findLast((known) => known.kind === "tool_result" && known.data.callId === event.data.callId);
+        if (!preview || preview.kind !== "tool_result") return state("tool-result-missing");
+        const full = fullToolResult(event.threadId, event.data.callId, dir, preview);
         if (!full || full.kind !== "tool_result") return state("tool-result-missing");
         const offset = event.data.offset ?? 0;
         if (!Number.isSafeInteger(offset) || offset < 0 || offset > full.data.output.length) return;

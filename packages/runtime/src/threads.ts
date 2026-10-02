@@ -6,7 +6,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, constants, createReadStream, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   validAgentId,
@@ -469,6 +469,27 @@ const hasLog = (threadId: string, dir: string): boolean => {
   }
 };
 
+/** Read scoped evidence through a regular descriptor; never block on a replaced FIFO. */
+function readResultArtifact(folder: string, path: string): Buffer {
+  const directory = lstatSync(folder);
+  const before = lstatSync(path);
+  const unconfirmed = () => new Error("Native result artifact remains unconfirmed");
+  if (!directory.isDirectory() || directory.isSymbolicLink() || !before.isFile() || before.isSymbolicLink()) throw unconfirmed();
+  const flags = constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const fd = openSync(path, flags);
+  try {
+    const opened = fstatSync(fd);
+    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) throw unconfirmed();
+    const bytes = readFileSync(fd);
+    const after = lstatSync(path);
+    const parent = lstatSync(folder);
+    if (!after.isFile() || after.isSymbolicLink() || after.dev !== opened.dev || after.ino !== opened.ino ||
+      after.size !== bytes.length || !parent.isDirectory() || parent.isSymbolicLink() ||
+      parent.dev !== directory.dev || parent.ino !== directory.ino) throw unconfirmed();
+    return bytes;
+  } finally { closeSync(fd); }
+}
+
 /**
  * A tool result too long to travel whole. The head goes in the log and to the phones, flagged;
  * the whole event is kept beside the log, so `tool_result_request` can answer with it under the
@@ -481,9 +502,23 @@ export function stashToolResult(
 ): YorozuEvent & { kind: "tool_result" } {
   if (event.data.output.length <= limit) return event;
   mkdirSync(threadsDir(dir), { recursive: true, mode: 0o700 });
-  writeFileSync(resultFile(event.threadId, event.data.callId, dir), JSON.stringify(event), { mode: 0o600 });
+  const bytes = Buffer.from(JSON.stringify(event));
+  let ref: string | undefined;
+  if (event.workerRun) {
+    ref = createHash("sha256").update(bytes).digest("hex");
+    const folder = threadFile(event.threadId, ".results", dir);
+    mkdirSync(folder, { recursive: true, mode: 0o700 });
+    const metadata = lstatSync(folder);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("Native result artifact remains unconfirmed");
+    const path = join(folder, `${ref}.json`);
+    try { writeFileSync(path, bytes, { flag: "wx", mode: 0o600 }); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (!readResultArtifact(folder, path).equals(bytes)) throw new Error("Native result artifact remains unconfirmed");
+    }
+  } else writeFileSync(resultFile(event.threadId, event.data.callId, dir), bytes, { mode: 0o600 });
   const end = /[\uD800-\uDBFF]/.test(event.data.output[limit - 1]!) ? limit - 1 : limit;
-  return { ...event, data: { ...event.data, output: event.data.output.slice(0, end), truncated: true } };
+  return { ...event, data: { ...event.data, output: event.data.output.slice(0, end), truncated: true, ...(ref ? { fullResultRef: ref } : {}) } };
 }
 
 /** The whole of a stashed tool result, or undefined when none was kept for that call. */
@@ -491,9 +526,24 @@ export function fullToolResult(
   threadId: string,
   callId: string,
   dir = stateDir(),
+  preview?: YorozuEvent & { kind: "tool_result" },
 ): (YorozuEvent & { kind: "tool_result" }) | undefined {
   try {
-    return JSON.parse(readFileSync(resultFile(threadId, callId, dir), "utf8")) as YorozuEvent & { kind: "tool_result" };
+    if (preview && (preview.threadId !== threadId || preview.data.callId !== callId)) return undefined;
+    if (preview && preview.data.truncated !== true) return preview;
+    const ref = preview?.data.fullResultRef;
+    if (preview?.workerRun && (typeof ref !== "string" || !/^[a-f0-9]{64}$/.test(ref))) return undefined;
+    const path = ref ? join(threadFile(threadId, ".results", dir), `${ref}.json`) : resultFile(threadId, callId, dir);
+    if (ref && !/^[a-f0-9]{64}$/.test(ref)) return undefined;
+    const bytes = ref ? readResultArtifact(threadFile(threadId, ".results", dir), path) : readFileSync(path);
+    if (ref && createHash("sha256").update(bytes).digest("hex") !== ref) return undefined;
+    const full = JSON.parse(bytes.toString("utf8")) as YorozuEvent & { kind: "tool_result" };
+    if (preview && (full.kind !== "tool_result" || full.threadId !== threadId || full.id !== preview.id ||
+      full.data.callId !== callId || full.data.ok !== preview.data.ok || typeof full.data.output !== "string" ||
+      !full.data.output.startsWith(preview.data.output) ||
+      ["version", "threadId", "eventId", "turnId", "attemptId", "source"].some((key) =>
+        (full.workerRun as Record<string, unknown> | undefined)?.[key] !== (preview.workerRun as Record<string, unknown> | undefined)?.[key]))) return undefined;
+    return full;
   } catch {
     return undefined;
   }

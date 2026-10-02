@@ -17,6 +17,8 @@ export interface EventBase {
   /** Original device timestamp when the host delays a queued user message in the timeline. */
   clientTs?: number;
   agentId: string;
+  /** Captured Root-issued worker scope; observation metadata, never a permission grant. */
+  workerRun?: { version: 1; threadId: string; eventId: string; turnId: string; attemptId: string; source: string };
   /** Set when the emitting agent was delegated to by another. */
   parentAgentId?: string;
   /** Opaque log position supplied by sync; event ids can repeat for updated cards. */
@@ -184,6 +186,8 @@ export interface ToolResultData {
    * Mac; `tool_result_request` fetches it. Absent means this is all there was.
    */
   truncated?: boolean;
+  /** Immutable host artifact referenced by the retained scoped preview. */
+  fullResultRef?: string;
   /** UTF-16 offsets for pull-based chunks that fit encrypted relay frames. */
   chunkOffset?: number;
   nextOffset?: number;
