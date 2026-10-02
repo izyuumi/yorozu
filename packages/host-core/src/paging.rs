@@ -398,6 +398,81 @@ pub(crate) fn rewind_evidence(
     unchanged(&path, &file, &stamp)?;
     Ok(seen_anchor.then_some(proven))
 }
+// Session reuse follows corrected retained history, including abandoned rewind markers.
+pub(crate) fn latest_rewind(root: &Path, thread: &str) -> io::Result<Option<String>> {
+    let path = root
+        .join("threads")
+        .join(format!("{}.jsonl", crate::thread_index::file_name(thread)));
+    let mut file = open(&path)?;
+    let stamp = Stamp::new(&file.metadata()?);
+    let mut end = 0;
+    // Released Node history does not require a numeric timestamp for corrections or rewind IDs.
+    let retained = |text: &str| -> io::Result<Option<Value>> {
+        match serde_json::from_str(text) {
+            Ok(event) => Ok(Some(event)),
+            Err(error) if unsupported_legacy(&error) => Err(invalid()),
+            Err(_) => Ok(None),
+        }
+    };
+    let mut corrected = HashMap::new();
+    let mut bytes = 0usize;
+    {
+        let mut reader = BufReader::new(&mut file);
+        while let Some(text) = line(&mut reader, &mut end, stamp.length)? {
+            let Some(event) = retained(&text)? else {
+                continue;
+            };
+            // Released history ignores unknown kinds before applying client timestamp corrections.
+            if event.get("clientTs").is_some()
+                && matches!(
+                    event["kind"].as_str(),
+                    Some(
+                        "message"
+                            | "turn_changes"
+                            | "thread_rewound"
+                            | "thought"
+                            | "tool_call"
+                            | "tool_result"
+                            | "approval_card"
+                            | "approval_answer"
+                            | "approval_status"
+                            | "stop_status"
+                            | "admission_status"
+                            | "question_card"
+                            | "question_answer"
+                            | "question_status"
+                            | "progress_card"
+                    )
+                )
+            {
+                let id = event["id"].as_str().ok_or_else(invalid)?;
+                if !corrected.contains_key(id) {
+                    bytes = bytes.checked_add(id.len() + 64).ok_or_else(invalid)?;
+                    if bytes > INDEX_BYTES {
+                        return Err(invalid());
+                    }
+                }
+                corrected.insert(id.to_owned(), end);
+            }
+        }
+    }
+    file.seek(SeekFrom::Start(0))?;
+    end = 0;
+    let mut latest = None;
+    let mut reader = BufReader::new(&mut file);
+    while let Some(text) = line(&mut reader, &mut end, stamp.length)? {
+        if let Some(event) = retained(&text)?
+            && event["kind"] == "thread_rewound"
+        {
+            let id = event["id"].as_str().ok_or_else(invalid)?;
+            if corrected.get(id).is_none_or(|offset| *offset == end) {
+                latest = Some(id.to_owned());
+            }
+        }
+    }
+    unchanged(&path, &file, &stamp)?;
+    Ok(latest)
+}
 #[derive(Default)]
 struct RunEvidence {
     seen: bool,

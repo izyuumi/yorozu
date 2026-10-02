@@ -1558,6 +1558,41 @@ skip across 52 files in 229.35 seconds, with unchanged deadlines. The preceding 
 passes every alpha CI job (36958894144). Full provider launch/context/task contracts, portable IPC,
 SQLite/Markdown migration, standalone launch and native release gates remain unfinished.
 
+Root now supplies version1 `run_attempt_launch`, a bounded immutable SDK launch receipt. It freezes
+Node-prepared text, attachment paths and an optional resolved skill, while Root captures the owned
+working directory, stored model/effort and eligible native session in one leased metadata snapshot.
+The packet retains the existing conversation/origin/canonical reply/issued attempt/source, plus the
+admitted origin fingerprint. It does not invent a task record or account identity: task mapping belongs
+to the approved operational SQLite model, and frozen provider input is not yet Root-authored context
+or proof of provider entitlement.
+
+Launch requires an already committed authenticated startup policy, never creates one, and rechecks
+effect currency, source/canonical ownership, visible accepted origin and absence of terminal evidence.
+The complete generated packet, including metadata, is limited to 8 MiB; input shape and file count are
+also bounded. A startup bypass that expires before launch is disabled using the actual Root clock.
+Reserved `worker-launch:` records use the existing operational transcript journal without adding chat
+rows or a competing store. Authenticated replay returns the original packet with execution disabled
+before consulting a new live epoch; changed prepared input conflicts. Journal, projection or policy
+replay uncertainty fences execution.
+
+Session selection follows the latest eligible retained rewind, including the released correction
+semantics. A bounded two-pass stable JSONL scan filters unknown kinds before applying the last client
+correction per ID. Timestamp-free recognized legacy corrections are preserved; unsupported legacy JSON
+and ambiguous IDs refuse explicitly. This remains a launch API slice: the SDK adapter still uses its
+previous startup path until the next adoption step. Full task/context/subprocess contracts and the
+remaining finite migration/release gates remain open.
+
+Verification: the primary launch regression fails against the missing API. The actual previous Root
+also accepts a forged reserved launch operation; automatic byte-exact restoration preserves the
+candidate. Owner checks cover frozen input/model/directory/session, rewind eligibility, replay after
+settings/source changes and restart, changed-input conflicts, missing-policy refusal, ownership/Stop,
+malformed and complete-packet byte bounds, and actual obstructed storage. Review reproduces two wrong
+session selections: a corrected rewind, then an undated correction accepted by the real thread-only
+append API. Both repairs pass, along with a real-clock expired-grant check. Final verification passes
+all 160 Rust tests, formatting, strict Clippy, the production build and 28 affected SDK startup/bypass,
+activity, session/artifact, progress and Stop checks. Every original deadline remains intact. The
+preceding observation commit passes all alpha CI jobs (36960641080).
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

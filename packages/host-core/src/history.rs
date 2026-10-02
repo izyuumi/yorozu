@@ -2467,6 +2467,217 @@ impl History {
         }
         Ok(json!({"stored":true,"replayed":false,"operationId":operation,"events":events}))
     }
+    fn worker_launch(&mut self, request: &Value, thread: &str, origin: &str) -> io::Result<Value> {
+        let attempt = request["attemptId"]
+            .as_str()
+            .filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+            .ok_or_else(invalid)?;
+        let source = request["source"]
+            .as_str()
+            .filter(|id| !invalid_id(id) && *id != "yorozu")
+            .ok_or_else(invalid)?;
+        let completion = format!("native:{origin}:final");
+        if request["version"] != 1 || request["turnId"] != completion {
+            return Err(invalid());
+        }
+        let input = &request["input"];
+        let nonempty = |value: &Value| value.as_str().is_some_and(|text| !text.is_empty());
+        if !input.is_object()
+            || !input["text"].is_string()
+            || !input
+                .as_object()
+                .unwrap()
+                .keys()
+                .all(|key| ["text", "attachments", "skill"].contains(&key.as_str()))
+            || input.get("attachments").is_some_and(|files| {
+                files.as_array().is_none_or(|files| {
+                    files.len() > 256
+                        || files.iter().any(|file| {
+                            !file.is_object()
+                                || !["name", "mime", "path"]
+                                    .iter()
+                                    .all(|key| nonempty(&file[*key]))
+                                || file
+                                    .as_object()
+                                    .unwrap()
+                                    .keys()
+                                    .any(|key| !["name", "mime", "path"].contains(&key.as_str()))
+                        })
+                })
+            })
+            || input.get("skill").is_some_and(|skill| {
+                !skill.is_object()
+                    || !nonempty(&skill["name"])
+                    || !nonempty(&skill["path"])
+                    || skill
+                        .as_object()
+                        .unwrap()
+                        .keys()
+                        .any(|key| !["name", "path"].contains(&key.as_str()))
+            })
+            || serde_json::to_vec(input).map_err(io::Error::other)?.len() > 8 * 1024 * 1024
+        {
+            return Err(invalid());
+        }
+        let scope = json!({"eventId":origin,"turnId":completion,"attemptId":attempt});
+        let operation = format!(
+            "worker-launch:{}",
+            digest(
+                &serde_json::to_vec(&json!([1, thread, origin, completion, attempt, source]))
+                    .map_err(io::Error::other)?
+            )
+        );
+        let key = digest(operation.as_bytes());
+        let root = self.root.clone();
+        {
+            let _writer = crate::thread_index::native_writer(&root)?;
+            self.recover().inspect_err(|_| self.failed = true)?;
+            if self.committed.contains_key(&key) {
+                let original = (|| -> io::Result<Value> {
+                    let value: Value = serde_json::from_slice(&read_private(
+                        &self.directory.join(format!("{key}.json")),
+                        RECORD_BYTES,
+                    )?)
+                    .map_err(io::Error::other)?;
+                    let entry: Entry =
+                        serde_json::from_value(value["entry"].clone()).map_err(io::Error::other)?;
+                    if entry.key != key
+                        || entry.operation_id != operation
+                        || !self.valid_entry(&entry)
+                        || entry.targets.len() != 1
+                        || entry.targets[0].folder != "transcripts"
+                        || self
+                            .committed
+                            .get(&key)
+                            .is_none_or(|proof| proof.line_hash != digest(entry.line.as_bytes()))
+                        || value["checksum"]
+                            != digest(&serde_json::to_vec(&entry).map_err(io::Error::other)?)
+                    {
+                        return Err(invalid());
+                    }
+                    let events: Vec<Value> = entry
+                        .line
+                        .lines()
+                        .map(serde_json::from_str)
+                        .collect::<Result<_, _>>()
+                        .map_err(io::Error::other)?;
+                    if events.len() != 1 {
+                        return Err(invalid());
+                    }
+                    let event = &events[0];
+                    let packet = &event["data"];
+                    if event["id"] != operation
+                        || event["threadId"] != thread
+                        || event["kind"] != "worker_launch"
+                        || event["ts"] != packet["sampledAt"]
+                        || packet["sampledAt"].as_u64().is_none()
+                        || packet["version"] != 1
+                        || packet["threadId"] != thread
+                        || packet["eventId"] != origin
+                        || packet["turnId"] != completion
+                        || packet["attemptId"] != attempt
+                        || packet["source"] != source
+                        || !packet["bypass"].is_boolean()
+                        || !nonempty(&packet["cwd"])
+                        || !packet["originFingerprint"].as_str().is_some_and(valid_hash)
+                        || serde_json::to_vec(packet).map_err(io::Error::other)?.len()
+                            > 8 * 1024 * 1024
+                    {
+                        return Err(invalid());
+                    }
+                    Ok(event.clone())
+                })()
+                .inspect_err(|_| self.failed = true)?;
+                if original["data"]["input"] != *input {
+                    return Ok(
+                        json!({"stored":false,"execute":false,"reason":"conflicting-request"}),
+                    );
+                }
+                let proof=self.append(&json!({"op":"history_append","operationId":operation,"event":original,"thread":false,"transcript":true})).inspect_err(|_| self.failed = true)?;
+                if proof["stored"] != true {
+                    self.failed = true;
+                    return Err(invalid());
+                }
+                return Ok(
+                    json!({"stored":true,"execute":false,"replayed":true,"operationId":operation,"packet":original["data"]}),
+                );
+            }
+        }
+        let policy_operation =
+            Self::worker_policy_operation(thread, origin, &completion, attempt, source)?;
+        if !self
+            .committed
+            .contains_key(&digest(policy_operation.as_bytes()))
+        {
+            return Ok(json!({"stored":false,"execute":false,"reason":"startup-unconfirmed"}));
+        }
+        let permit = self
+            .worker_policy(request, thread, origin)
+            .inspect_err(|_| self.failed = true)?;
+        if permit["stored"] != true || permit["execute"] != false || permit["replayed"] != true {
+            return Err(invalid());
+        }
+        let _writer = crate::thread_index::native_writer(&root)?;
+        let card = json!({"threadId":thread,"data":{"nativeAgent":source}});
+        if !self.native_prompt_owner(&scope, &card)? {
+            return Ok(json!({"stored":false,"execute":false,"reason":"scope-replaced"}));
+        }
+        let bytes = crate::thread_index::current(&root)?.ok_or_else(invalid)?;
+        let index: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        let home = index
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == thread)
+            .ok_or_else(invalid)?;
+        if home["agent"] != source
+            || home["nativeTurn"]["id"] != completion
+            || home["nativeTurn"]["userEventId"] != origin
+            || home["nativeTurn"]["attemptId"] != attempt
+            || home["nativeTurn"]["state"] != "running"
+        {
+            return Ok(json!({"stored":false,"execute":false,"reason":"scope-replaced"}));
+        }
+        let cwd = home["cwd"]
+            .as_str()
+            .filter(|cwd| !cwd.trim().is_empty())
+            .ok_or_else(invalid)?;
+        let rewind =
+            crate::paging::latest_rewind(&root, thread).inspect_err(|_| self.failed = true)?;
+        let session = if home["nativeSessionRewindId"] == json!(rewind) {
+            home["nativeSessionId"].clone()
+        } else {
+            Value::Null
+        };
+        let accepted = self.request(&json!({"op":"accepted_get","messageId":origin}));
+        let fingerprint =
+            crate::accepted::fingerprint(&accepted["entry"], &accepted["entry"]["event"])
+                .ok_or_else(invalid)?;
+        let sampled = crate::now_ms();
+        // Frozen compatibility input is not yet a Root-authored bounded context packet or account entitlement.
+        let bypass = permit["policy"]["bypass"] == true
+            && permit["policy"]["yoloUntil"]
+                .as_f64()
+                .is_some_and(|until| until > sampled as f64);
+        let packet = json!({"version":1,"threadId":thread,"eventId":origin,"turnId":completion,"attemptId":attempt,"source":source,
+            "originFingerprint":fingerprint,"input":input,"cwd":cwd,"model":home["model"],"effort":home["effort"],"sessionId":session,
+            "rewindId":rewind,"bypass":bypass,"sampledAt":sampled,"policyOperationId":policy_operation});
+        if serde_json::to_vec(&packet).map_err(io::Error::other)?.len() > 8 * 1024 * 1024 {
+            return Err(invalid());
+        }
+        if crate::thread_index::current(&root)?.as_deref() != Some(bytes.as_slice()) {
+            return Ok(json!({"stored":false,"execute":false,"reason":"scope-replaced"}));
+        }
+        let event = json!({"id":operation,"threadId":thread,"ts":sampled,"agentId":"main","kind":"worker_launch","data":packet});
+        let proof=self.append(&json!({"op":"history_append","operationId":operation,"event":event,"thread":false,"transcript":true})).inspect_err(|_|self.failed=true)?;
+        if proof["stored"] != true {
+            self.failed = true;
+            return Err(invalid());
+        }
+        Ok(
+            json!({"stored":true,"execute":true,"replayed":false,"operationId":operation,"packet":packet}),
+        )
+    }
     fn worker_policy(&mut self, request: &Value, thread: &str, origin: &str) -> io::Result<Value> {
         if request["version"].as_u64() != Some(1) {
             return Err(invalid());
@@ -2610,6 +2821,9 @@ impl History {
         }
         if request["op"] == "run_attempt_policy" {
             return self.worker_policy(request, &thread, &origin);
+        }
+        if request["op"] == "run_attempt_launch" {
+            return self.worker_launch(request, &thread, &origin);
         }
         if request["op"] == "run_attempt_activity" {
             return self.worker_activity(request, &thread, &origin);
@@ -3125,6 +3339,7 @@ impl History {
                         || id.starts_with("worker-result:")
                         || id.starts_with("worker-policy:")
                         || id.starts_with("worker-stream:")
+                        || id.starts_with("worker-launch:")
                 }) =>
             {
                 Ok(json!({"error":"reserved-history-operation"}))

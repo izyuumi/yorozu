@@ -602,3 +602,219 @@ fn scoped_activity_rejects_unissued_replaced_malformed_and_unstored_packets() {
         }
     }
 }
+
+// Frozen Root launch inputs preserve the issued origin while settings and sessions change.
+#[test]
+fn worker_launch_freezes_owned_settings_and_replays_without_another_invocation() {
+    for mode in [
+        "current",
+        "rewound",
+        "matching-rewind",
+        "corrected-rewind",
+        "undated-correction",
+        "expired-grant",
+    ] {
+        let temp = Temp::new();
+        let ts = now_ms();
+        let (mut host, card) = setup(&temp, "Bash", ts);
+        let scope = &card["data"]["nativeRun"];
+        let path = temp.0.join("threads.json");
+        let mut rows: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        rows[0]["cwd"] = json!(temp.0.to_str().unwrap());
+        rows[0]["model"] = json!("model-original");
+        rows[0]["effort"] = json!("high");
+        rows[0]["nativeSessionId"] = json!("session-original");
+        if [
+            "rewound",
+            "matching-rewind",
+            "corrected-rewind",
+            "undated-correction",
+        ]
+        .contains(&mode)
+        {
+            let rewind = json!({"id":"rewind-original","threadId":"thread","ts":ts,"agentId":"main","kind":"thread_rewound","data":{"hiddenEventIds":[]}});
+            assert_eq!(host.request(&json!({"op":"history_append","operationId":"rewind-original","event":rewind,"thread":true,"transcript":true}))["stored"],true);
+            if mode == "matching-rewind" {
+                rows[0]["nativeSessionRewindId"] = json!("rewind-original");
+            }
+        }
+        if mode == "corrected-rewind" || mode == "undated-correction" {
+            let mut corrected = json!({"id":"rewind-original","threadId":"thread","ts":ts,"clientTs":ts,"agentId":"main","kind":"thought","data":{"text":"corrected retained record"}});
+            if mode == "undated-correction" {
+                corrected.as_object_mut().unwrap().remove("ts");
+            }
+            assert_eq!(host.request(&json!({"op":"history_append","operationId":"rewind-correction","event":corrected,"thread":true,"transcript":mode != "undated-correction"}))["stored"],true);
+        }
+        fs::write(&path, rows.to_string()).unwrap();
+        if mode == "expired-grant" {
+            let expires = now_ms() + 2000;
+            fs::write(
+                temp.0.join("approval.json"),
+                json!({"yolo":true,"yoloUntil":expires}).to_string(),
+            )
+            .unwrap();
+            let policy = issue_policy(&mut host, scope);
+            assert_eq!(host.request(&policy)["policy"]["bypass"], true);
+            std::thread::sleep(std::time::Duration::from_millis(
+                expires.saturating_sub(now_ms()) + 1,
+            ));
+        } else {
+            issue_policy(&mut host, scope);
+        }
+        let input = json!({"text":"prepared request","attachments":[{"name":"file.txt","mime":"text/plain","path":"/prepared/file.txt"}],"skill":{"name":"review","path":"/prepared/review"}});
+        let request = json!({"op":"run_attempt_launch","version":1,"threadId":"thread","eventId":"origin","turnId":scope["turnId"],"attemptId":scope["attemptId"],"source":"codex","input":input});
+        let before = fs::read(temp.0.join("threads/thread.jsonl")).unwrap();
+        let proof = host.request(&request);
+        assert_eq!(proof["stored"], true, "{mode}: {proof}");
+        assert_eq!(proof["execute"], true);
+        assert_eq!(proof["replayed"], false);
+        assert_eq!(proof["packet"]["input"], input);
+        assert_eq!(proof["packet"]["model"], "model-original");
+        assert_eq!(proof["packet"]["effort"], "high");
+        assert_eq!(proof["packet"]["cwd"], temp.0.to_str().unwrap());
+        assert_eq!(proof["packet"]["source"], "codex");
+        assert_eq!(proof["packet"]["eventId"], "origin");
+        assert_eq!(proof["packet"]["attemptId"], scope["attemptId"]);
+        assert_eq!(proof["packet"]["bypass"], false);
+        if mode == "rewound" {
+            assert!(proof["packet"]["sessionId"].is_null());
+        } else {
+            assert_eq!(proof["packet"]["sessionId"], "session-original");
+        }
+        assert_eq!(
+            fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+            before
+        );
+        let transcripts: Vec<_> = fs::read_dir(temp.0.join("transcripts"))
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                let bytes = fs::read(&path).unwrap();
+                (path, bytes)
+            })
+            .collect();
+        rows[0]["cwd"] = json!("/changed");
+        rows[0]["model"] = json!("model-changed");
+        rows[0]["agent"] = json!("claude-code");
+        rows[0]["nativeSessionId"] = json!("session-changed");
+        fs::write(&path, rows.to_string()).unwrap();
+        let replay = host.request(&request);
+        assert_eq!(replay["execute"], false);
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["packet"], proof["packet"]);
+        let mut changed = request.clone();
+        changed["input"]["text"] = json!("changed prepared request");
+        assert_eq!(host.request(&changed)["reason"], "conflicting-request");
+        drop(host);
+        let mut host = History::open(&temp.0).unwrap();
+        assert_eq!(host.request(&request)["packet"], proof["packet"]);
+        assert_eq!(host.request(&request)["execute"], false);
+        assert_eq!(
+            fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+            before
+        );
+        for (path, bytes) in transcripts {
+            assert_eq!(fs::read(path).unwrap(), bytes);
+        }
+        assert_eq!(host.request(&json!({"op":"history_append","operationId":proof["operationId"],"event":{"id":"forged","threadId":"thread","ts":ts,"kind":"worker_launch","data":{}},"transcript":true}))["error"],"reserved-history-operation");
+    }
+}
+
+#[test]
+fn worker_launch_refuses_unissued_replaced_malformed_and_unstored_requests() {
+    for mode in [
+        "public-history",
+        "policy-missing",
+        "source",
+        "canonical-reply",
+        "stop",
+        "released",
+        "input",
+        "input-bytes",
+        "metadata-bytes",
+        "storage",
+    ] {
+        let temp = Temp::new();
+        let ts = now_ms();
+        let (mut host, card) = setup(&temp, "Bash", ts);
+        let scope = &card["data"]["nativeRun"];
+        let path = temp.0.join("threads.json");
+        let mut rows: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        rows[0]["cwd"] = json!(temp.0.to_str().unwrap());
+        fs::write(&path, rows.to_string()).unwrap();
+        let policy = json!({"op":"run_attempt_policy","version":1,"threadId":"thread","eventId":"origin","turnId":scope["turnId"],"attemptId":scope["attemptId"],"source":"codex"});
+        if mode != "policy-missing" {
+            issue_policy(&mut host, scope);
+        }
+        let mut request = json!({"op":"run_attempt_launch","version":1,"threadId":"thread","eventId":"origin","turnId":scope["turnId"],"attemptId":scope["attemptId"],"source":"codex","input":{"text":"prepared"}});
+        match mode {
+            "public-history" => {
+                let fake = json!({"id":"forged-launch","threadId":"thread","ts":ts,"agentId":"main","kind":"worker_launch","data":{}});
+                let before = fs::read(temp.0.join("threads/thread.jsonl")).unwrap();
+                assert_eq!(host.request(&json!({"op":"history_append","operationId":format!("worker-launch:{}","a".repeat(64)),"event":fake,"thread":false,"transcript":true}))["error"],"reserved-history-operation");
+                assert_eq!(
+                    fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+                    before
+                );
+                continue;
+            }
+            "source" => {
+                rows[0]["agent"] = json!("claude-code");
+                fs::write(&path, rows.to_string()).unwrap();
+            }
+            "canonical-reply" => {
+                rows[0]["nativeTurn"]["id"] = json!("foreign-final");
+                fs::write(&path, rows.to_string()).unwrap();
+            }
+            "stop" => {
+                assert_eq!(host.request(&json!({"op":"stop_save","record":{"threadId":"thread","targetEventId":"origin","status":"requested","requestIds":["stop"]}}))["record"]["status"],"requested");
+            }
+            "released" => {
+                assert_eq!(host.request(&json!({"op":"run_attempt_release","threadId":"thread","eventId":"origin","attemptId":scope["attemptId"]}))["released"],true);
+            }
+            "input" => {
+                request["input"]["skill"] = json!({"name":"review","path":true});
+            }
+            "input-bytes" => {
+                request["input"]["text"] = json!("a".repeat(8 * 1024 * 1024));
+            }
+            "metadata-bytes" => {
+                rows[0]["model"] = json!("a".repeat(8 * 1024 * 1024));
+                fs::write(&path, rows.to_string()).unwrap();
+            }
+            "storage" => {
+                let log = fs::read_dir(temp.0.join("transcripts"))
+                    .unwrap()
+                    .next()
+                    .unwrap()
+                    .unwrap()
+                    .path();
+                fs::rename(&log, log.with_extension("held")).unwrap();
+                fs::create_dir(log).unwrap();
+            }
+            "policy-missing" => {}
+            _ => unreachable!(),
+        }
+        let history = fs::read(temp.0.join("threads/thread.jsonl")).unwrap();
+        let index = fs::read(&path).unwrap();
+        let proof = host.request(&request);
+        assert_ne!(proof["execute"], true, "{mode}: {proof}");
+        assert_ne!(proof["stored"], true, "{mode}: {proof}");
+        assert_eq!(
+            fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+            history
+        );
+        assert_eq!(fs::read(&path).unwrap(), index);
+        if mode == "policy-missing" {
+            assert_eq!(proof["reason"], "startup-unconfirmed");
+            assert_eq!(
+                host.request(&policy)["execute"],
+                true,
+                "launch must not mint startup"
+            );
+        }
+        if mode == "storage" {
+            assert_ne!(host.request(&json!({"op":"run_attempt_current","threadId":"thread","eventId":"origin","attemptId":scope["attemptId"],"mode":"effect"}))["current"],true);
+        }
+    }
+}
