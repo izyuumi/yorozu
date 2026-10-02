@@ -626,6 +626,11 @@ private struct Rig {
 
     private func get<T: Decodable>(_ type: T.Type, _ path: String, query: [URLQueryItem] = []) async throws -> T {
         let url = control.appending(path: path).appending(queryItems: query)
-        return try JSONDecoder().decode(type, from: try await URLSession.shared.data(from: url).0)
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        guard http.statusCode == 200 else {
+            throw NSError(domain: "YorozuUITestHarness.\(path)", code: http.statusCode)
+        }
+        return try JSONDecoder().decode(type, from: data)
     }
 }
