@@ -87,6 +87,8 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [connected], timeout: 45), .completed)
         settings.tap()
         let advanced = app.buttons["Advanced"]
+        XCTAssertFalse(advanced.exists && app.frame.contains(advanced.frame),
+                       "Two long host names must put Advanced below the visible Settings list")
         try revealSettingsControl(advanced)
         XCTAssertTrue(advanced.isHittable)
         advanced.tap()
@@ -496,16 +498,20 @@ final class ConnectionTests: XCTestCase {
 
     // MARK: - Steps
 
-    /// A Settings sheet leaves the thread list in the accessibility tree. Scroll the foreground
-    /// list, and let virtualized rows appear before asking XCTest to compute their hit point.
+    /// A Settings sheet leaves the thread list in the accessibility tree. An offscreen row can
+    /// also exist without a valid activation point, so check its frame before its hittability.
     @MainActor
     private func revealSettingsControl(_ element: XCUIElement) throws {
-        for _ in 0..<6 where !element.exists || !element.isHittable {
-            let list = try XCTUnwrap(app.collectionViews.allElementsBoundByIndex.first { $0.isHittable },
-                                     "No foreground Settings list")
-            list.swipeUp()
+        let list = try XCTUnwrap(app.collectionViews.allElementsBoundByIndex.first { $0.isHittable },
+                                 "No foreground Settings list")
+        for attempt in 0...6 {
+            if element.exists {
+                let frame = element.frame
+                if !frame.isEmpty && list.frame.contains(frame) && element.isHittable { return }
+            }
+            if attempt < 6 { list.swipeUp() }
         }
-        _ = try XCTUnwrap(element.exists ? element : nil, "Settings control is unreachable")
+        XCTFail("Settings control is unreachable")
     }
 
     /// A row's switch is at its trailing edge; a tap on the middle of the row, where the label is,
