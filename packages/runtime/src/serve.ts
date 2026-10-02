@@ -1921,6 +1921,30 @@ export function serve(options: ServeOptions = {}): Sidecar {
               });
               prompt = `Conversation before the rewind (files were not reverted):\n${JSON.stringify(retained)}\n\nNew user request:\n${prompt}`;
             }
+            const model = threadModel(threadId, dir);
+            const effort = threadEffort(threadId, dir);
+            if (turn.signal.aborted || !attemptLive) return;
+            let startup: Record<string, unknown>;
+            try { startup = syncHostResult(dir, { op: "run_attempt_policy", version: 1,
+              threadId, eventId: userEventId, turnId: id, attemptId: attempt, source: agent }); }
+            catch { startup = {}; }
+            const policy = startup.policy && typeof startup.policy === "object" && !Array.isArray(startup.policy)
+              ? startup.policy as Record<string, unknown> : undefined;
+            // A saved replay confirms the sample, never permission to start another SDK invocation.
+            if (startup.stored !== true || startup.execute !== true || startup.replayed !== false ||
+              typeof startup.operationId !== "string" || !/^worker-policy:[a-f0-9]{64}$/.test(startup.operationId) ||
+              !policy || policy.version !== 1 || policy.threadId !== threadId || policy.eventId !== userEventId ||
+              policy.turnId !== id || policy.attemptId !== attempt || policy.source !== agent ||
+              typeof policy.bypass !== "boolean" || !Number.isSafeInteger(policy.sampledAt) || (policy.sampledAt as number) < 0 ||
+              !(policy.settingsHash === null || typeof policy.settingsHash === "string" && /^[a-f0-9]{64}$/.test(policy.settingsHash)) ||
+              policy.bypass && (typeof policy.yoloUntil !== "number" || !Number.isFinite(policy.yoloUntil) || policy.yoloUntil <= (policy.sampledAt as number))) {
+              paused = true;
+              turn.abort();
+              pauseIssuedAttempt(attempt, "unconfirmed");
+              state("native-policy-unconfirmed");
+              return;
+            }
+            if (!effectsAllowed()) return;
             const done = await runner.run({
               threadId,
               text: [prompt, attached].filter(Boolean).join("\n\n"),
@@ -1928,9 +1952,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
               ...(files.length ? { attachments: files } : {}),
               ...currentHome,
               cwd: home.cwd ?? "",
-              bypass: loadSettings(dir).yolo,
-              model: threadModel(threadId, dir),
-              effort: threadEffort(threadId, dir),
+              bypass: policy.bypass,
+              model,
+              effort,
               signal: scopedSignal(turn.signal),
               onSession: (sessionId) => { if (effectsAllowed()) { executionStarted = true; saveNativeSession(sessionId); } },
               onTerminate: (terminate) => { if (attemptLive && attemptCurrent(attempt, "owned")) { if (turn.signal.aborted) terminate(); else terminateRunning.set(threadId, terminate); } },

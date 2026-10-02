@@ -2604,6 +2604,7 @@ impl History {
                 .ok_or_else(invalid)?;
             if home["nativeTurn"]["attemptId"] != request["attemptId"]
                 || home["nativeTurn"]["userEventId"] != origin
+                || home["nativeTurn"]["id"] != format!("native:{origin}:final")
                 || home["agent"] != self.attempts.get(&thread).ok_or_else(invalid)?.3
             {
                 return Ok(json!({"current":false}));
@@ -2658,6 +2659,7 @@ impl History {
             .ok_or_else(invalid)?;
         if home["nativeTurn"]["attemptId"] != attempt
             || home["nativeTurn"]["userEventId"] != origin
+            || home["nativeTurn"]["id"] != format!("native:{origin}:final")
             || home["agent"] != self.attempts.get(&thread).ok_or_else(invalid)?.3
         {
             return Ok(json!({"current":false}));

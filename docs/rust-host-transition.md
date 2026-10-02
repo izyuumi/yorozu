@@ -1416,6 +1416,29 @@ blocked child. The repaired sampler passes all156 Rust tests, formatting, strict
 build and32 focused Node checks. FIFO rejection leaves the same issued owner responsive.
 Passing this API slice alone does not establish SDK startup admission or alpha readiness.
 
+Node now requests a newly committed startup policy after preparing prompt, attachments and model
+selection, immediately before SDK invocation. It requires version, exact source/origin/reply/attempt,
+Root sampling evidence and a new start permit; replay, failed storage or lost acknowledgement
+pauses the captured attempt without starting the SDK or publishing a fabricated final answer.
+The SDK bypass configuration uses only that Root sample. The dynamic permission callback and late
+approve-all behavior remain unchanged. The invocation policy is a snapshot, not a new perpetual
+grant or live SDK revocation protocol.
+Verification in progress: the two existing adapter bypass cases now inspect the actual operational
+receipt at SDK entry. Together with actual Root storage, replay and lost-ack cases, they fail against
+the previous Node owner and pass after adoption; fourteen focused checks and the production build
+pass. The first full runtime/plugin run passes886 cases with one existing skip. Actual post-response
+source/reply-marker replacement cases then reproduce stale SDK startup. A final current-owner check
+repairs source replacement; the central Root currency guard now also requires the canonical reply
+marker. An explicit fixture title excludes unrelated asynchronous naming while keeping byte-exact
+replacement assertions. The next run passes all156 Rust tests, formatting, strict Clippy,
+production build,16 focused checks and888 runtime/plugin tests with one existing skip across52 files.
+The session update's second metadata snapshot then receives the same adjacent canonical guard;
+all156 Rust tests, strict Clippy, the build and28 affected SDK startup/session/stale/FIFO checks
+pass on that final code. An edit guard initially rejects a duplicate match without changing source;
+its unintended unchanged repeat is stopped through its verified owned process group and recorded
+as interrupted, not passed. No test deadlines or assertions are weakened. This completes the scoped
+SDK startup slice; it does not establish an atomic SDK spawn protocol or full worker contract.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

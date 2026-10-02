@@ -4163,7 +4163,13 @@ test.each(["claude-code", "codex"] as const)("%s native card waiting when YOLO i
 
 test.each(["claude-code", "codex"] as const)("%s native bypass shares global YOLO on new and resumed turns", async (agent) => {
   const turns: NativeTurn[] = [];
-  const runner: NativeAgentRunner = { run: async (turn) => { turns.push(turn); return { text: "ok", sessionId: "s" }; } };
+  const policies: unknown[] = [];
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    turns.push(turn);
+    policies.push(readTranscripts(new Date(0), transcriptDir(dir))
+      .filter((event) => event.threadId === turn.threadId && (event.kind as string) === "worker_policy").at(-1)?.data);
+    return { text: "ok", sessionId: "s" };
+  } };
   const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { [agent]: runner } });
   const mac = await macClient(dir);
   send({ kind: "thread_create", data: { agent, cwd: proj } }, "cc");
@@ -4174,9 +4180,12 @@ test.each(["claude-code", "codex"] as const)("%s native bypass shares global YOL
     const list = (await eventsUntil((e) => e.kind === "thread_list" && e.data.threads.some((t) => t.id === "cc" && t.bypass === bypass))).at(-1)!;
     expect(JSON.stringify(list)).toContain(`"bypass":${bypass}`);
     expect(JSON.parse(readFileSync(join(dir, "approval.json"), "utf8")).yolo).toBe(bypass);
-    send({ kind: "message", data: { role: "user", text: "go" } }, "cc");
+    const origin = send({ kind: "message", data: { role: "user", text: "go" } }, "cc");
     await eventsUntil((e) => e.kind === "message" && e.data.done === true);
     expect(turns.at(-1)?.bypass).toBe(bypass);
+    expect(policies.at(-1)).toMatchObject({ version: 1, threadId: "cc", eventId: origin,
+      turnId: `native:${origin}:final`, source: agent, bypass, attemptId: expect.stringMatching(/^[a-f0-9]{32}$/) });
+    expect(readThreadEvents("cc", dir).some((event) => (event.kind as string) === "worker_policy")).toBe(false);
     send({ kind: "approval_settings", data: {} });
     expect((await eventsUntil((e) => e.kind === "approval_settings")).at(-1)).toMatchObject({ data: { yolo: bypass } });
   }
@@ -7442,4 +7451,52 @@ test.each(["source", "foreign-thread"])("an encrypted native question answer can
     send({ kind: "question_answer", data: { questionId: card.data.questionId, answer: "A" } }, "question-scope");
     expect(await response.promise).toBe("A");
   } else expect(await response.promise).toBeUndefined();
+});
+
+// Actual Root storage/replay, rather than a mock authorizing a worker start.
+test.each(["storage", "replay", "lost-ack", "source", "canonical-reply"] as const)("native SDK startup needs a new durable Root policy (%s)", async (mode) => {
+  const run = vi.fn<NativeAgentRunner["run"]>().mockResolvedValue({ text: "must not start" });
+  const { dir, send } = await pairedPhone([], false, { nativeRunners: { codex: { run } } });
+  let path = ""; let backup = ""; let disrupted = false;
+  let issued: Record<string, unknown> | undefined;
+  let delivered: Record<string, unknown> | undefined;
+  let replacement: string | undefined;
+  const request = rustSyncModule.syncHostResult;
+  vi.spyOn(rustSyncModule, "syncHostResult").mockImplementation((root, data, bytes, timeout) => {
+    if (root !== dir || data.op !== "run_attempt_policy") return request(root, data, bytes, timeout);
+    if (mode === "storage" && !disrupted) {
+      path = join(transcriptDir(dir), readdirSync(transcriptDir(dir)).find((name) => name.endsWith(".jsonl"))!);
+      backup = `${path}.backup`; renameSync(path, backup); mkdirSync(path); disrupted = true;
+    }
+    issued = request(root, data, bytes, timeout);
+    if (mode === "source" || mode === "canonical-reply") {
+      const path = join(dir, "threads.json");
+      const rows = JSON.parse(readFileSync(path, "utf8"));
+      const row = rows.find((item: { id: string }) => item.id === "policy-start");
+      if (mode === "source") row.agent = "claude-code";
+      else row.nativeTurn.id = "replacement-reply";
+      writeFileSync(path, JSON.stringify(rows));
+      replacement = readFileSync(path, "utf8");
+    }
+    if (mode === "lost-ack") throw new Error("policy acknowledgement lost after actual Root commit");
+    delivered = mode === "replay" ? request(root, data, bytes, timeout) : issued;
+    return delivered;
+  });
+  try {
+    send({ kind: "thread_create", data: { title: "Work", agent: "codex", cwd: proj } }, "policy-start");
+    const origin = send({ kind: "message", data: { role: "user", text: "work" } }, "policy-start");
+    await vi.waitFor(() => expect(run.mock.calls.length > 0 || states.includes("native-policy-unconfirmed") || states.includes("native-attempt-unconfirmed")).toBe(true));
+    expect(run).not.toHaveBeenCalled();
+    expect(issued).toBeDefined();
+    if (mode === "storage") expect(issued?.stored).not.toBe(true);
+    else {
+      expect(issued).toMatchObject({ stored: true, execute: true, replayed: false });
+      if (mode === "replay") expect(delivered).toMatchObject({ stored: true, execute: false, replayed: true });
+      if (replacement !== undefined) expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(replacement);
+      else expect(listThreads(dir).find((thread) => thread.id === "policy-start")?.nativeTurn)
+        .toMatchObject({ userEventId: origin, state: "interrupted", pauseReason: "unconfirmed" });
+    }
+    expect(listThreads(dir).find((thread) => thread.id === "policy-start")?.nativeTurn?.userEventId).toBe(origin);
+    expect(readThreadEvents("policy-start", dir).some((event) => event.id === `native:${origin}:final`)).toBe(false);
+  } finally { if (disrupted) { rmSync(path, { recursive: true }); renameSync(backup, path); } }
 });
