@@ -3,7 +3,6 @@ import CoreImage.CIFilterBuiltins
 import CoreServices
 import SwiftUI
 import YorozuKeepalive
-import YorozuPermissions
 import YorozuShared
 
 /// The Node runtime sidecar, spawned by the app and killed with it. Its stdout is the
@@ -491,9 +490,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Re-registered rather than only written once: an update moves the bundle, and an
                 // agent pointing at the old path supervises nothing.
                 if Watchdog.isEnabled { Watchdog.install() }
-                LoginItem.enableByDefaultOnce()
             }
-            Task { await Permission.logAll() }
+            // Permission status can itself prompt (e.g. listing protected folders).
+            // Inspect grants only from host setup/settings or an invoked native tool.
             // Starts Sparkle here rather than when Settings is first opened: the whole point of
             // an automatic update is that nobody had to go looking for it.
             Updates.start()

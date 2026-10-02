@@ -242,6 +242,8 @@ final class MacChatSession {
     }
 
     private func startHost() {
+        // Register only after choosing Host, including a live switch from Client.
+        LoginItem.enableByDefaultOnce()
         // A hard quit can leave the old Unix-socket pathname behind. Do not let the new
         // NWConnection race that dead endpoint while the sidecar replaces it: NWConnection
         // does not redial after that failure, leaving Settings with an empty device list.

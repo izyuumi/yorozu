@@ -338,14 +338,4 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
         }
         return (error?[NSAppleScript.errorNumber] as? Int) != automationDeniedCode
     }
-
-    // MARK: - Diagnostics
-
-    /// One line per grant on stdout, so a dev build can be verified without a screenshot.
-    public static func logAll() async {
-        for permission in allCases {
-            print("CHECK \(permission.rawValue) \(await permission.isGranted() ? "granted" : "denied")")
-        }
-        fflush(stdout)
-    }
 }
